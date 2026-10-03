@@ -67,6 +67,9 @@ export type CloudStreamExtensionRow = {
   builder_version: string | null;
   last_build_at: string | null;
   last_build_error: string | null;
+  // Added by 20261102000000_adapter_build_lifecycle.sql.
+  // The build job owning the current building/testing transition.
+  current_build_job_id: string | null;
   last_checked_at: string | null;
   last_error: string | null;
   created_at: string;
@@ -129,6 +132,8 @@ export function toExtensionView(row: CloudStreamExtensionRow, repositoryName: st
     builderVersion: row.builder_version,
     lastBuildAt: row.last_build_at,
     lastBuildError: row.last_build_error,
+    // Durable build lifecycle: the job owning building/testing (poll key).
+    currentBuildJobId: row.current_build_job_id,
   };
 }
 

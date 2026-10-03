@@ -145,6 +145,12 @@ export type CloudStreamExtensionView = {
   lastBuildAt: string | null;
   /** Closed-vocabulary last build failure (code + bounded message). */
   lastBuildError: string | null;
+  /**
+   * Durable build lifecycle (20261102000000): the build job that owns the
+   * current building/testing transition — the admin UI's polling key.
+   * OPTIONAL for back-compat with older fixtures (pre-lifecycle views).
+   */
+  currentBuildJobId?: string | null;
 };
 
 // ---------------------------------------------------------------------------

@@ -6142,3 +6142,144 @@ Supabase SQL editor (activates the global ordering table + retires the
 mavero-downloader-2 row; until then the app runs on the deterministic
 fallback ordering with the legacy addon-position path), and the standing
 Render/Netlify env items remain unchanged.
+
+---
+
+# DURABLE BUILD LIFECYCLE — the 2026-10-03 CineStream stale-building fix
+
+## Session 16 — root cause + durable lifecycle (2026-10-03)
+
+### The incident
+
+CineStream (id `de45ffb4-a87e-4265-b8c5-12355a0b24e6`) was given
+"Create/Build Adapter" from the Admin UI at 2026-10-03T18:16:21Z. The row
+CASed to `building` and NEVER transitioned again — no Builder log activity
+for CineStream, `last_build_error` NULL. The owner recovered it manually
+(`failed` + a `BUILD_STALE_RECOVERY` note). Moviesmod — triggered ~40s
+later — completed normally (`BUILD_UNSUPPORTED_PROVIDER` →
+`runtime_required`).
+
+### Root cause (proven, not guessed)
+
+1. **The pipeline ran synchronously inside the admin HTTP request.**
+   `createAdapterForExtension` awaited the full pipeline (Builder POST →
+   artifact validation → representative test → persistence + promotion)
+   inside the SvelteKit request. Worst case ≈ 150s (client budget) + test
+   budgets — while **Netlify synchronous functions are hard-capped at 10s
+   default / 26s max**, and `netlify.toml` configured NO
+   `[functions] timeout` → the site runs at the 10s default. Even a WARM
+   successful build (~20.4s, the measured p35 E2E) cannot fit.
+2. **CineStream's POST hit a COLD (spun-down) Render free service.**
+   Empirically reproduced during this session: the Builder's `/health`
+   took **32.08s** to answer after spin-up (`uptimeSeconds: 8` on the
+   answering instance). The Netlify function was killed ~10s in — AFTER
+   the CAS to `building`, BEFORE any outcome handling. Render discarded
+   the request when its client disconnected during the spin-up hold → no
+   CineStream activity in the Builder logs.
+3. **Moviesmod survived because it caught the tail of the same spin-up**
+   (last_build_at 18:17:03Z; the Builder listened at 18:17:05Z — woken by
+   CineStream's request) and its refusal is an analysis-stage verdict that
+   returns in seconds — the whole round-trip fit inside the function
+   window.
+4. **The aggravating defect: no recovery was structurally possible.** A
+   stuck `building`/`testing` row hit `BUILD_IN_PROGRESS` on every retry
+   (guard + CAS both refuse), and no stale timeout, job identity, or
+   background execution existed. Only manual SQL could unstick it.
+
+"Render slow" was only the trigger — a warm 20s+ build would have orphaned
+identically. The fix removes BOTH failure classes: execution detached from
+the request, and deterministic recovery of any orphan.
+
+### The durable lifecycle (migration 20261102000000)
+
+```
+ADMIN REQUEST (~0.5s, never build-bound)          BACKGROUND EXECUTOR
+guard → reserve version                           (Netlify background function:
+INSERT job row (queued)                            15-min budget; dev: detached)
+CAS ext → building + job pointer    ──POST 202──▶  claim job (CAS queued→building)
+RETURN { jobId }                                   run the FULL pipeline
+                                                   (every write job-pointer-
+                                                    guarded + heartbeats)
+EVERY POLL / PAGE LOAD / QUEUE runs the RECONCILER:
+  re-dispatch stale queued jobs · recover stale building/testing
+  (budgets derived from the configured Builder/test timeouts) ·
+  recover legacy orphans (the pre-lifecycle CineStream pattern)
+```
+
+- **Job rows** (`cloudstream_adapter_build_jobs`): identity, reserved
+  version, prior state, closed vocabulary
+  `queued→building→testing→succeeded|failed|stale_recovered`, timestamps.
+- **Late-write guard** (`cloudstream_extensions.current_build_job_id`):
+  every pipeline CAS matches the pointer — an old worker can never write a
+  row a newer job (or a recovery) owns.
+- **Atomic versioning**: partial unique indexes (one active job per
+  extension; one active `(canonical_key, version)` reservation) + the
+  artifacts unique constraint.
+- **Stale budgets are DERIVED, not arbitrary**: building ≤ Builder client
+  timeout + 90s margin; testing ≤ 2× the 30s representative-test budget +
+  margin; queued ≤ 10 min hard-stale → honest `EXECUTOR_UNREACHABLE`.
+- **The executor exception path writes an honest terminal**
+  (`BUILD_INCOMPLETE` + failed, retryable) — plus the reconciler sweep as
+  the crash safety net.
+- **The security model is untouched**: builder-client.ts remains the only
+  Builder caller (now from build-lifecycle.ts — build-service.ts is a
+  compatibility shim re-exporting it); the Builder stays standalone and
+  stateless (byte-identical, pinned by tests); `.cs3` never executed; no
+  Nuvio JS execution in Mavero; native precedence unchanged; Downloader 2
+  never imports the lifecycle (pinned).
+- **The background function** is a Netlify-native mechanism — NO new queue
+  technology: a plain HTTP POST to
+  `/.netlify/functions/adapter-build-executor` returns **202 immediately**
+  and the platform runs it detached for up to 15 minutes. The function is
+  PRE-BUNDLED by esbuild (`scripts/build_executor_function.mjs`, part of
+  `pnpm build`) because Netlify's function bundler cannot resolve
+  SvelteKit's `$lib` aliases. Authorized with the same server-side
+  `PRIVATE_ADAPTER_BUILDER_SECRET`; creates its own service-role client
+  from the site env. Dev/preview (no function route) falls back to a local
+  detached execution; a stalled fallback on a real lambda is inert
+  (staleness recovers it).
+
+### Verification
+
+- New suites: `scripts/adapter_build_lifecycle_test.ts` (**158 checks** —
+  queue semantics, normal build, verdicts, unavailable/timeout, stale
+  recovery incl. the exact legacy-orphan CineStream shape, late-result
+  protection, concurrency, retry, generated-intact-after-failed-rebuild,
+  version races, dispatch semantics, the HTTP surface, architecture pins)
+  + `scripts/adapter_build_lifecycle_migration_test.ts` (**29 checks**,
+  PGlite real-DDL: constraints, partial uniques, RLS, pointer, idempotence,
+  a full CineStream-shaped lifecycle).
+- Chain: **214/214 ALL GREEN** (196 + the 18 tail re-verified after a
+  background-driver kill; phase4's one batch flake re-ran green standalone
+  — vite-server resource contention, not a code failure).
+- LIVE (production Supabase + the real Builder code on the local harness,
+  the p35 convention): migration applied via the Management API + tracker
+  entry 20261102000000 (idempotent re-apply verified; ZERO data changes —
+  the user's manual CineStream recovery untouched); the live check
+  **26/26 PASSED**: the reconciler LIVE-recovered a genuinely-crashed
+  worker's stuck row (the safety net, exercised for real); the admin queue
+  action returned in **486ms** with the durable BUILDING state + pointer +
+  reserved version; the caller disconnected and the build completed
+  detached; **CineStream's honest Builder verdict persisted:
+  `runtime_required`** (`BUILD_UNSUPPORTED_PROVIDER: the .cs3 plugin
+  requires the native CloudStream runtime` — the Builder's ACTUAL analysis
+  of the real CineStream.cs3, never force-generated); job row
+  `succeeded/runtime_required`; zero stuck rows catalog-wide;
+  Bollyflix/MoviesDrive/VegaMovies and the nuvio:moviesdrive v1 artifact
+  untouched; the post-state sweep is a no-op; the row is cleanly retryable.
+- Render `/health`: 200 (the deployed service is up; its secret differs
+  from the session harness key — 401 on probe — so live builds ran against
+  the local harness with the identical builder code).
+
+### Owner actions
+
+- **Netlify deploy note**: `pnpm build` now also bundles
+  `netlify/functions/adapter-build-executor.mjs` (git-ignored artifact,
+  regenerated on every build). Background functions must be available on
+  the site's plan (all plans per Netlify docs); if the invoke 404s, the
+  reconciler still guarantees no orphaned builds (honest
+  `EXECUTOR_UNREACHABLE` after the queued hard-stale budget).
+- Migration 20261102000000 is ALREADY APPLIED to production (Management
+  API + tracker) — no owner action needed for the schema.
+- The standing Render go-live + production Netlify env items are
+  unchanged.

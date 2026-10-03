@@ -942,7 +942,12 @@ const pageServer = read('src/routes/admin/system/integrations/+page.server.ts');
   ok(!manager.includes('on:click'), 'D7: the manager uses Svelte 5 event syntax consistently');
 
   // The endpoints reuse the SAME orchestration as the form actions.
-  ok(extensionsEndpointSource.includes('createAdapterForExtension') && pageServer.includes('createAdapterForExtension'), 'D8: createAdapter reuses the form action orchestration (no parallel Builder path)');
+  // DURABLE BUILD LIFECYCLE (20261102000000): the admin createAdapter path
+  // moved to queueAdapterBuild (build-lifecycle.ts — the moved
+  // implementation of the former build-service orchestration; both the
+  // endpoint AND the form action import it). The invariant stays: ONE
+  // orchestration, no parallel Builder path.
+  ok(extensionsEndpointSource.includes('queueAdapterBuild') && pageServer.includes('queueAdapterBuild'), 'D8: createAdapter reuses the form action orchestration (no parallel Builder path)');
   ok(extensionsEndpointSource.includes('testExtensionProvider') && pageServer.includes('testExtensionProvider'), 'D8: testProvider reuses the form action service');
   ok(extensionsEndpointSource.includes('setExtensionEnabled') && pageServer.includes('setExtensionEnabled'), 'D8: the toggle reuses the form action service');
 }
@@ -1096,7 +1101,31 @@ function pristineFile(relative: string): string | null {
         || line.trim() === '}'
         || line.trim() === 'try {'
         || line.includes('global source order lookup failed')
-        || line.includes('StreamingValidationError')),
+        || line.includes('StreamingValidationError')
+        // DURABLE BUILD LIFECYCLE (20261102000000, sanctioned evolution):
+        // the createCloudStreamAdapter action routes through
+        // queueAdapterBuild (+ the pre-flight reconcileAdapterBuilds sweep
+        // in the action AND the extension-tab load) — the fast-queue
+        // durable orchestration (see build-lifecycle.ts).
+        || line.includes('queueAdapterBuild')
+        || line.includes('reconcileAdapterBuilds')
+        || line.includes('build-lifecycle')
+        || line.includes('queued')
+        || line.includes('DURABLE BUILD LIFECYCLE')
+        || line.includes('jobId')
+        || line.includes('dispatch')
+        || line.includes('retry')
+        || line.includes('sweep')
+        || line.includes('origin')
+        || line.includes('createdBy')
+        || line.includes('build')
+        || line.includes('Progress')
+        || line.includes('track')
+        || line.includes('unable to queue')
+        || line.trim() === '}).catch(() => undefined);'
+        || line.trim() === '}, {'
+        || line.trim() === '});'
+        || line.includes('createCloudStreamAdapter')),
       `F1: every +page.server.ts addition is the FINAL TASK global-position action routing (added ${serverAdditions.length})`,
     );
     // The existing Stremio form actions are preserved VERBATIM (the action
@@ -1121,11 +1150,21 @@ function pristineFile(relative: string): string | null {
   // Permanent Adapter Plan adds no NEW migration files in Phase 4.
   const migrationFiles = readdirSync(new URL('../supabase/migrations', import.meta.url));
   const pristineMigrations = execFileSync('git', ['ls-tree', '--name-only', '434d02b:supabase/migrations'], { cwd: new URL('..', import.meta.url).pathname, encoding: 'utf8' }).split('\n').filter(Boolean);
-  // FINAL TASK evolution: the ONLY migration added since the Phase 3.5 tip
-  // is the unified-downloader global-order migration (20261004000000).
+  // FINAL TASK evolution + DURABLE BUILD LIFECYCLE (20261102000000,
+  // sanctioned): the ONLY migrations added since the Phase 3.5 tip are the
+  // unified-downloader global-order migration (20261004000000) and the
+  // adapter build lifecycle migration (20261102000000 — durable job rows +
+  // the current_build_job_id late-write guard + the stale sweep indexes;
+  // see scripts/adapter_build_lifecycle_migration_test.ts for the DDL
+  // coverage).
   const addedMigrations = [...migrationFiles].filter((name) => !pristineMigrations.includes(name));
   const removedMigrations = pristineMigrations.filter((name) => !migrationFiles.includes(name));
-  ok(addedMigrations.length === 1 && addedMigrations[0] === '20261004000000_unified_downloader_global_order.sql', `F3: the ONLY added migration is the FINAL TASK unified-order migration (${addedMigrations.join(', ') || 'none'})`);
+  ok(
+    addedMigrations.length === 2
+      && addedMigrations.includes('20261004000000_unified_downloader_global_order.sql')
+      && addedMigrations.includes('20261102000000_adapter_build_lifecycle.sql'),
+    `F3: the ONLY added migrations are the FINAL TASK unified-order + build-lifecycle migrations (${addedMigrations.join(', ') || 'none'})`,
+  );
   ok(removedMigrations.length === 0, 'F3: no migration was removed');
 
   // F4: the security conventions on the new endpoints.

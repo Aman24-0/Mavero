@@ -203,12 +203,15 @@ function section_registry(): void {
   // unified-downloader global-order migration 20261004000000 — the last
   // one DOES touch download_providers, by the documented retirement
   // statement (disable the mavero-downloader-2 row), plus the additive
-  // ordering table).
+  // ordering table. DURABLE BUILD LIFECYCLE (20261102000000, sanctioned):
+  // the adapter-build-lifecycle migration (job rows + pointer + sweep
+  // indexes; NEVER touches download_providers) is also sanctioned.
   const migrations = execFileSync('ls', [path.join(REPO_ROOT, 'supabase/migrations')], { encoding: 'utf8' }).split('\n').filter(Boolean);
   const pristineMigrations = pristineMigrationNames();
   const phase2Migration = '20261101000002_extension_phase2_unified_adapters.sql';
   const phase3Migration = '20261101000003_extension_phase3_builder.sql';
   const unifiedMigration = '20261004000000_unified_downloader_global_order.sql';
+  const lifecycleMigration = '20261102000000_adapter_build_lifecycle.sql';
   const added = migrations.filter((name) => !pristineMigrations.includes(name));
   const phase2Sql = read(`supabase/migrations/${phase2Migration}`);
   const phase2SqlNoComments = phase2Sql.replace(/--[^\n]*/g, '');
@@ -217,12 +220,19 @@ function section_registry(): void {
   const unifiedSql = read(`supabase/migrations/${unifiedMigration}`);
   const unifiedSqlNoComments = unifiedSql.replace(/--[^\n]*/g, '');
   ok(
-    added.length === 4
+    added.length === 5
       && added.includes(migrationName)
       && added.includes(phase2Migration)
       && added.includes(phase3Migration)
-      && added.includes(unifiedMigration),
-    `§A10: exactly the CS-5 + Phase 2 + Phase 3 + FINAL TASK unified-downloader migrations were added (${added.join(', ') || 'none'})`,
+      && added.includes(unifiedMigration)
+      && added.includes(lifecycleMigration),
+    `§A10: exactly the CS-5 + Phase 2 + Phase 3 + FINAL TASK + build-lifecycle migrations were added (${added.join(', ') || 'none'})`,
+  );
+  const lifecycleSql = read(`supabase/migrations/${lifecycleMigration}`);
+  const lifecycleSqlNoComments = lifecycleSql.replace(/--[^\n]*/g, '');
+  ok(
+    !/\b(download_providers)\b/i.test(lifecycleSqlNoComments),
+    '§A10: the build-lifecycle migration never touches the download_providers registry',
   );
   ok(
     /update\s+public\.download_providers\s+set\s+enabled\s*=\s*false\s+where\s+slug\s*=\s*'mavero-downloader-2'/i.test(unifiedSqlNoComments)

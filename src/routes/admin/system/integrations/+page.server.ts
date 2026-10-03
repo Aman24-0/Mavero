@@ -42,7 +42,7 @@ import {
   deleteRepositoryById,
 } from '$lib/server/cloudstream/repository/service';
 import { listExtensionsForAdmin, setExtensionEnabled } from '$lib/server/cloudstream/extensions/service';
-import { createAdapterForExtension } from '$lib/server/extensions/builder/build-service';
+import { queueAdapterBuild, reconcileAdapterBuilds } from '$lib/server/extensions/builder/build-lifecycle';
 import { testExtensionProvider } from '$lib/server/extensions/builder/test-service';
 import { computeAdminGlobalPositions, setGlobalSourcePosition, validatedAddonOrderKey } from '$lib/server/downloader/source-order';
 import { CloudStreamRepositoryError } from '$lib/server/cloudstream/repository/errors';
@@ -107,6 +107,12 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   let cloudstreamError: string | null = null;
   if (tab === 'extension') {
     try {
+      // DURABLE BUILD LIFECYCLE: sweep stale builds BEFORE the catalog
+      // loads — a page visit alone recovers orphans (the reconciler is
+      // cheap: one indexed query + guarded writes only for stale rows).
+      await reconcileAdapterBuilds(locals.supabase, {
+        origin: url.origin,
+      }).catch(() => undefined);
       [cloudstreamRepositories, cloudstreamExtensions] = await Promise.all([
         listRepositories(locals.supabase),
         listExtensionsForAdmin(locals.supabase),
@@ -313,9 +319,14 @@ export const actions: Actions = {
   },
 
   // -----------------------------------------------------------------
-  // Phase 3 — Permanent Adapter Builder actions (plan §7/§15 — additive)
+  // Phase 3 — Permanent Adapter Builder actions (plan §7/§15 — additive).
+  // DURABLE LIFECYCLE (20261102000000): the no-JS fallback now QUEUES the
+  // build and redirects immediately — the build runs server-side in the
+  // background executor; the redirected page shows the live BUILDING/
+  // TESTING status and refreshing tracks progress (the JS UI polls
+  // /api/admin/integrations/cloudstream/builds).
   // -----------------------------------------------------------------
-  createCloudStreamAdapter: async ({ request, locals }) => {
+  createCloudStreamAdapter: async ({ request, locals, url }) => {
     await requireAdmin(locals, { redirectTo: `${REDIRECT}?tab=extension` });
     try {
       const form = await request.formData();
@@ -328,17 +339,24 @@ export const actions: Actions = {
         testYear: String(form.get('testYear') ?? '') || undefined,
         testImdbId: String(form.get('testImdbId') ?? '') || undefined,
       };
-      const outcome = await createAdapterForExtension(locals.supabase, id, testInputs);
-      if (!outcome.ok) {
-        return fail(outcome.code === 'BUILDER_UNAVAILABLE' || outcome.code === 'BUILDER_TIMEOUT' ? 503 : 400, {
-          message: outcome.message,
+      // Pre-flight sweep so a stale row cannot block the retry.
+      await reconcileAdapterBuilds(locals.supabase, {
+        origin: url.origin,
+      }).catch(() => undefined);
+      const queued = await queueAdapterBuild(locals.supabase, id, testInputs, {
+        origin: url.origin,
+      }, {
+        createdBy: typeof locals.user?.id === 'string' ? locals.user.id : undefined,
+      });
+      if (!queued.ok) {
+        return fail(queued.code === 'BUILDER_UNAVAILABLE' || queued.code === 'BUILDER_TIMEOUT' ? 503 : 400, {
+          message: queued.message,
         });
       }
-      const notice = `Adapter v${outcome.adapterVersion} created and tested (${outcome.testCases.map((testCase) => `${testCase.kind}: ${testCase.linksFound} link${testCase.linksFound === 1 ? '' : 's'}`).join(', ')}). Enable it to use it in Downloader 2.`;
-      throw redirect(303, `${REDIRECT}?tab=extension&notice=${encodeURIComponent(notice)}`);
+      throw redirect(303, `${REDIRECT}?tab=extension&notice=${encodeURIComponent('Adapter build queued — it runs on the server and continues if you close this page. Refresh to track progress.')}`);
     } catch (error) {
       if (isRedirect(error)) throw error;
-      return cloudstreamActionError(error, 'Unable to create the adapter.');
+      return cloudstreamActionError(error, 'Unable to queue the adapter build.');
     }
   },
   testCloudStreamProvider: async ({ request, locals }) => {

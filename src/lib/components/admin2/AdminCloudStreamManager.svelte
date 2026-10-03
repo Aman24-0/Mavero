@@ -271,7 +271,12 @@
     extension?: CloudStreamExtensionView | null;
     extensions?: CloudStreamExtensionView[];
     providerTest?: ProviderTestResultView;
-    outcome?: { adapterVersion?: number; notes?: string; testCases?: Array<{ kind: string; linksFound: number }> };
+    /** DURABLE LIFECYCLE: the createAdapter action queues the build and
+     * returns immediately — the build runs server-side (background
+     * executor); the UI polls /builds for the terminal state. */
+    queued?: boolean;
+    jobId?: string;
+    dispatch?: string;
     /** FINAL TASK: the fresh global position map after a setPosition move. */
     positions?: Record<string, number>;
     error?: { code?: string; message?: string };
@@ -422,20 +427,21 @@
 
   async function createAdapterFor(extension: CloudStreamExtensionView): Promise<void> {
     if (pendingIds.has(extension.id) || bulkRunning) return;
-    if (!confirm('Create a permanent adapter through the external Adapter Builder? This runs a build and live test (up to a few minutes).')) return;
+    if (!confirm('Create a permanent adapter through the external Adapter Builder? The build runs on the server and continues if you close this page — this page tracks its progress.')) return;
     pendingIds.add(extension.id);
     setRowError(extension.id, null);
     localNotice = null;
     try {
       const response = await postExtensionMutation({ action: 'createAdapter', id: extension.id });
       patchRow(response.extension ?? null);
-      if (response.ok) {
-        const summary = (response.outcome?.testCases ?? [])
-          .map((testCase) => `${testCase.kind}: ${testCase.linksFound} link${testCase.linksFound === 1 ? '' : 's'}`)
-          .join(', ');
-        localNotice = `Adapter v${response.outcome?.adapterVersion ?? '?'} created and tested${summary.length > 0 ? ` (${summary})` : ''}. Enable it to use it in Downloader 2.`;
+      if (response.ok && response.queued) {
+        localNotice = 'Adapter build queued — it runs on the server. Progress updates below; you can close this page.';
+        startBuildPolling(extension.id);
+      } else if (response.ok) {
+        localNotice = 'Adapter build queued.';
+        startBuildPolling(extension.id);
       } else {
-        setRowError(extension.id, response.error?.message ?? 'The adapter build failed.');
+        setRowError(extension.id, response.error?.message ?? 'The adapter build could not be queued.');
       }
     } finally {
       pendingIds.delete(extension.id);
@@ -458,6 +464,114 @@
       pendingIds.delete(extension.id);
     }
   }
+
+  // ---------------------------------------------------------------------------
+  // DURABLE BUILD LIFECYCLE (20261102000000) — build-status polling.
+  //
+  // The createAdapter action returns as soon as the build job is queued;
+  // the build itself runs SERVER-SIDE (Netlify background executor / local
+  // detached execution) and is fully independent of this page. The UI polls
+  // the durable DB state — a build is only ever reported as complete when
+  // the ROW (not a promise) says so. Every poll also runs the deterministic
+  // stale-recovery sweep server-side, so BUILDING/TESTING rows can never
+  // linger forever (a stale build becomes failed + retryable).
+  // ---------------------------------------------------------------------------
+
+  /** Poll cadence — every 3s while any build is in flight. */
+  const BUILD_POLL_INTERVAL_MS = 3_000;
+  /** Poll hard cap — 20 minutes (the stale-recovery budget is lower; this is
+   * purely the client giving up on DISPLAY, never the build). */
+  const BUILD_POLL_MAX_MS = 20 * 60_000;
+  /** Consecutive poll failures before the client stops (transient-tolerant). */
+  const BUILD_POLL_MAX_FAILURES = 10;
+
+  const pollTargets = new SvelteMap<string, { elapsedMs: number; failures: number }>();
+  let nowTick = $state(Date.now());
+
+  function startBuildPolling(extensionId: string): void {
+    if (!pollTargets.has(extensionId)) pollTargets.set(extensionId, { elapsedMs: 0, failures: 0 });
+  }
+
+  /** BUILDING/TESTING elapsed label ("42s" / "4m 12s") from the row's own
+   * last-build timestamp — meaningful progress, never a static spinner. */
+  function buildElapsedLabel(extension: CloudStreamExtensionView): string | null {
+    if (extension.adapterState !== 'building' && extension.adapterState !== 'testing') return null;
+    if (extension.lastBuildAt === null) return null;
+    const started = Date.parse(extension.lastBuildAt);
+    if (!Number.isFinite(started)) return null;
+    const seconds = Math.max(0, Math.floor((nowTick - started) / 1000));
+    if (seconds < 60) return `${seconds}s`;
+    const minutes = Math.floor(seconds / 60);
+    const rest = seconds % 60;
+    return minutes >= 60 ? `${Math.floor(minutes / 60)}h ${minutes % 60}m` : `${minutes}m ${rest}s`;
+  }
+
+  async function pollBuildStatusOnce(extensionId: string): Promise<void> {
+    const target = pollTargets.get(extensionId);
+    if (target === undefined) return;
+    try {
+      const res = await fetch(`/api/admin/integrations/cloudstream/builds?extensionId=${encodeURIComponent(extensionId)}`, {
+        headers: { accept: 'application/json' },
+      });
+      const body = (await res.json()) as {
+        ok?: boolean;
+        extension?: CloudStreamExtensionView | null;
+        error?: { message?: string };
+      };
+      if (body?.ok) {
+        target.failures = 0;
+        if (body.extension !== null && body.extension !== undefined) patchRow(body.extension);
+        const state = body.extension?.adapterState;
+        if (state !== 'building' && state !== 'testing') {
+          pollTargets.delete(extensionId);
+          if (state === 'generated') {
+            localNotice = `Adapter v${body.extension?.generatedAdapterVersion ?? '?'} created and tested — enable it to use it in Downloader 2.`;
+          } else if (state === 'runtime_required') {
+            localNotice = 'The Builder determined this provider requires the native runtime (runtime required).';
+          } else if (state === 'failed') {
+            setRowError(extensionId, body.extension?.lastBuildError ?? 'The adapter build failed. Retry is available.');
+          }
+        }
+      } else {
+        target.failures += 1;
+      }
+    } catch {
+      target.failures += 1;
+    }
+    target.elapsedMs += BUILD_POLL_INTERVAL_MS;
+    if (target.failures >= BUILD_POLL_MAX_FAILURES || target.elapsedMs >= BUILD_POLL_MAX_MS) {
+      pollTargets.delete(extensionId);
+    }
+  }
+
+  // Client-side effects (SSR renders the pristine server state; $effect
+  // never runs server-side). Mount-time resume: rows that arrive already
+  // BUILDING/TESTING (a page reload during a build) auto-resume polling —
+  // the build itself survives the browser leaving.
+  $effect(() => {
+    for (const row of rows) {
+      if (row.adapterState === 'building' || row.adapterState === 'testing') {
+        startBuildPolling(row.id);
+      }
+    }
+  });
+
+  // The poll loop + 1s elapsed ticker run ONLY while builds are in flight.
+  $effect(() => {
+    if (pollTargets.size === 0) return;
+    const pollTimer = setInterval(() => {
+      for (const extensionId of [...pollTargets.keys()]) {
+        void pollBuildStatusOnce(extensionId);
+      }
+    }, BUILD_POLL_INTERVAL_MS);
+    const tickTimer = setInterval(() => {
+      nowTick = Date.now();
+    }, 1_000);
+    return () => {
+      clearInterval(pollTimer);
+      clearInterval(tickTimer);
+    };
+  });
 
   // ---------------------------------------------------------------------------
   // §11 bulk operations
@@ -503,7 +617,7 @@
       localNotice = 'None of the selected providers can enter adapter generation (only Adapter Required / Adapter Failed rows are eligible).';
       return;
     }
-    if (!confirm(`Create permanent adapters for ${targets.length} selected provider${targets.length === 1 ? '' : 's'}? Each build runs a live test (up to a few minutes each, sequentially).`)) return;
+    if (!confirm(`Create permanent adapters for ${targets.length} selected provider${targets.length === 1 ? '' : 's'}? Each build runs on the server and continues if you close this page; queued builds run with bounded concurrency.`)) return;
     bulkRunning = true;
     bulkStopRequested = false;
     bulkProgress = { done: 0, total: targets.length, current: null };
@@ -511,35 +625,28 @@
     localNotice = null;
     try {
       let done = 0;
-      let succeeded = 0;
+      let queuedCount = 0;
       for (const target of targets) {
         if (bulkStopRequested) break;
         bulkProgress = { done, total: targets.length, current: target.name ?? target.internalName };
         const response = await postExtensionMutation({ action: 'createAdapter', id: target.id });
         patchRow(response.extension ?? null);
         if (response.ok) {
-          succeeded += 1;
-          const summary = (response.outcome?.testCases ?? [])
-            .map((testCase) => `${testCase.kind}: ${testCase.linksFound} link${testCase.linksFound === 1 ? '' : 's'}`)
-            .join(', ');
-          bulkResults = [...bulkResults, {
-            name: target.name ?? target.internalName,
-            ok: true,
-            message: `Adapter v${response.outcome?.adapterVersion ?? '?'} created${summary.length > 0 ? ` (${summary})` : ''}.`,
-          }];
+          queuedCount += 1;
+          startBuildPolling(target.id);
         } else {
           bulkResults = [...bulkResults, {
             name: target.name ?? target.internalName,
             ok: false,
-            message: response.error?.message ?? 'The adapter build failed.',
+            message: response.error?.message ?? 'The adapter build could not be queued.',
           }];
         }
         done += 1;
         bulkProgress = { done, total: targets.length, current: null };
       }
       localNotice = bulkStopRequested
-        ? `Stopped after ${done} of ${targets.length} builds (${succeeded} succeeded).`
-        : `Adapter builds complete: ${succeeded}/${targets.length} succeeded.`;
+        ? `Stopped after ${done} of ${targets.length} queue requests (${queuedCount} queued).`
+        : `${queuedCount}/${targets.length} build${queuedCount === 1 ? '' : 's'} queued — progress updates below; the page can be closed.`;
     } finally {
       bulkRunning = false;
       bulkStopRequested = false;
@@ -978,6 +1085,15 @@
             <div class="cs-ext-actions">
               <!-- §13 status chip (closed vocabulary) -->
               <AdminStatusBadge label={status.label} tone={statusTone(status.kind)} dot={false} />
+              <!-- DURABLE BUILD LIFECYCLE: live progress for in-flight builds —
+                   phase + elapsed since the durable lastBuildAt (ticking),
+                   never a static/indefinite "BUILDING" label. -->
+              {#if extension.adapterState === 'building' || extension.adapterState === 'testing'}
+                <span class="cs-build-progress" role="status" aria-label={`Adapter build ${status.label.toLowerCase()} for ${rowName(extension)}`}>
+                  <span class="cs-build-progress-dot" aria-hidden="true"></span>
+                  {buildElapsedLabel(extension) ?? 'starting…'}
+                </span>
+              {/if}
               {#if extension.enabled && status.kind !== 'active'}
                 <AdminStatusBadge label="Enabled" tone="good" dot={false} />
               {/if}
@@ -1249,6 +1365,37 @@
   .a2-icon-btn:disabled { opacity: 0.45; cursor: default; }
   .a2-icon-btn:hover { color: var(--a2-cyan); border-color: var(--a2-cyan-border); }
   .cs-build-btn:hover { color: var(--a2-cyan); border-color: var(--a2-cyan-border); }
+  /* DURABLE BUILD LIFECYCLE: the live in-flight progress chip (phase +
+     elapsed, ticking every second — never a static "BUILDING" label). */
+  .cs-build-progress {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--a2-cyan);
+    padding: 2px 8px;
+    border: 1px solid var(--a2-cyan-border);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--a2-cyan) 8%, transparent);
+    font-variant-numeric: tabular-nums;
+  }
+  .cs-build-progress-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--a2-cyan);
+    animation: cs-build-pulse 1.2s ease-in-out infinite;
+    flex-shrink: 0;
+  }
+  @keyframes cs-build-pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.35; transform: scale(0.75); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .cs-build-progress-dot { animation: none; }
+  }
   .cs-row-select, .cs-select-all input { width: 18px; height: 18px; accent-color: var(--a2-cyan); flex-shrink: 0; }
   .cs-select-all {
     display: inline-flex;

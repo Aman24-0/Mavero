@@ -155,3 +155,45 @@ Phase 7B adds only the provider-agnostic Source Resolver and safe playback-resol
 
 [1]: https://docs.netlify.com/build/frameworks/framework-setup-guides/sveltekit/ "Netlify SvelteKit framework setup"
 [2]: https://svelte.dev/docs/kit/adapter-netlify "SvelteKit Netlify adapter"
+
+## Durable adapter-build lifecycle (20261102000000 — the CineStream fix)
+
+The admin **Create Adapter** action no longer runs the build inside the
+HTTP request (Netlify synchronous functions are capped at 10s default /
+26s max — far below a real build's duration). The new flow:
+
+1. The admin request **queues a durable job row** and returns in ~0.5s.
+2. A **Netlify BACKGROUND function** (`adapter-build-executor`) claims the
+   job and runs the full pipeline detached (15-minute platform budget).
+   It is invoked with a plain POST that returns **202 immediately** — no
+   queue service introduced.
+3. The Admin UI polls `/api/admin/integrations/cloudstream/builds` (every
+   3s while a build is in flight; BUILDING/TESTING rows show live elapsed
+   progress). Every poll — and every Integrations page load — also runs
+   the deterministic **stale-recovery sweep**, so no build can remain in
+   `building`/`testing` forever (a stale build becomes `failed` +
+   retryable with a `BUILD_STALE_RECOVERY` reason).
+
+### Build requirements
+
+- `pnpm build` (the Netlify build command) additionally bundles
+  `netlify/functions/adapter-build-executor.mjs` via
+  `scripts/build_executor_function.mjs` (esbuild resolves SvelteKit's
+  `$lib` aliases, which Netlify's function bundler cannot). The file is a
+  git-ignored build artifact, regenerated on every deploy.
+- Background functions must be available on the site's plan (all Netlify
+  plans per current docs). If the invoke route is unavailable, builds
+  fail honestly (`EXECUTOR_UNREACHABLE` after the queued hard-stale
+  budget, ~10 min) — never an orphaned row.
+- Environment (unchanged set): `PUBLIC_SUPABASE_URL`,
+  `PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `PRIVATE_SUPABASE_SERVICE_ROLE_KEY`,
+  `PRIVATE_ADAPTER_BUILDER_URL`, `PRIVATE_ADAPTER_BUILDER_SECRET` (also
+  authorizes the background executor invoke — server-side only),
+  optionally `PRIVATE_ADAPTER_BUILDER_TIMEOUT_MS` (default 150000).
+
+### Database
+
+Migration `20261102000000_adapter_build_lifecycle.sql` (jobs table +
+`current_build_job_id` pointer + partial unique indexes + admin-only RLS)
+— additive and idempotent; safe to re-apply. It was applied to production
+on 2026-10-03 (Management API + tracker entry).

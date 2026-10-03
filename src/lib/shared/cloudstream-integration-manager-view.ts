@@ -502,7 +502,7 @@ export function providerStatusPresentation(extension: CloudStreamExtensionView):
       return {
         kind: extension.adapterState,
         label: extension.adapterState === 'building' ? 'BUILDING' : 'TESTING',
-        note: 'An adapter build is in progress.',
+        note: 'The build runs on the server and continues if you close this page — the status updates automatically.',
         canTest: false,
         canCreateAdapter: false,
         primaryAction: null,

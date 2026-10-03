@@ -1759,6 +1759,10 @@ export type Database = {
           last_build_error: string | null
           last_checked_at: string | null
           last_error: string | null
+          // Added by 20261102000000_adapter_build_lifecycle.sql.
+          // The build job that owns the current building/testing transition
+          // (late-write guard; cleared on terminal writes).
+          current_build_job_id: string | null
           created_at: string
           updated_at: string
         }
@@ -1797,6 +1801,7 @@ export type Database = {
           last_build_error?: string | null
           last_checked_at?: string | null
           last_error?: string | null
+          current_build_job_id?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -1835,6 +1840,7 @@ export type Database = {
           last_build_error?: string | null
           last_checked_at?: string | null
           last_error?: string | null
+          current_build_job_id?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -1900,6 +1906,79 @@ export type Database = {
           created_at?: string
         }
         Relationships: []
+      }
+      // Added by 20261102000000_adapter_build_lifecycle.sql.
+      // Durable adapter-build jobs: the admin create-adapter request queues
+      // a row and returns immediately; a background executor claims it and
+      // runs the full build pipeline; a deterministic reconciler recovers
+      // stale rows (no build can stay in building/testing forever).
+      cloudstream_adapter_build_jobs: {
+        Row: {
+          id: string
+          extension_id: string
+          canonical_key: string
+          attempt: number
+          state: string
+          requested_adapter_version: number
+          prior_adapter_state: string
+          result_kind: string | null
+          result_adapter_version: number | null
+          error_code: string | null
+          error_message: string | null
+          test_inputs: Record<string, unknown> | null
+          created_by: string | null
+          created_at: string
+          started_at: string | null
+          finished_at: string | null
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          extension_id: string
+          canonical_key: string
+          attempt?: number
+          state?: string
+          requested_adapter_version: number
+          prior_adapter_state: string
+          result_kind?: string | null
+          result_adapter_version?: number | null
+          error_code?: string | null
+          error_message?: string | null
+          test_inputs?: Record<string, unknown> | null
+          created_by?: string | null
+          created_at?: string
+          started_at?: string | null
+          finished_at?: string | null
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          extension_id?: string
+          canonical_key?: string
+          attempt?: number
+          state?: string
+          requested_adapter_version?: number
+          prior_adapter_state?: string
+          result_kind?: string | null
+          result_adapter_version?: number | null
+          error_code?: string | null
+          error_message?: string | null
+          test_inputs?: Record<string, unknown> | null
+          created_by?: string | null
+          created_at?: string
+          started_at?: string | null
+          finished_at?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'cloudstream_adapter_build_jobs_extension_id_fkey'
+            columns: ['extension_id']
+            isOneToOne: false
+            referencedRelation: 'cloudstream_extensions'
+            referencedColumns: ['id']
+          },
+        ]
       }
       // Added by 20261004000000_unified_downloader_global_order.sql.
       // FINAL TASK (unified Mavero Downloader): the ONE canonical global

@@ -19,6 +19,17 @@
  * (§11: enable/disable selected, create adapters for selected — the client
  * drives one request per bounded chunk and shows progress).
  *
+ * createAdapter (DURABLE LIFECYCLE, 20261102000000): the action now QUEUES
+ * the build job and returns IMMEDIATELY ({ queued: true, jobId }) — the
+ * build runs in the background executor (Netlify background function /
+ * local detached execution), and the UI polls
+ * /api/admin/integrations/cloudstream/builds for the durable state. The
+ * synchronous pipeline could not survive the Netlify 10s/26s function
+ * ceiling (the CineStream stale-'building' root cause). The lifecycle
+ * guards (native precedence, runtime_required, BUILD_IN_PROGRESS,
+ * EXTENSION_NOT_FOUND, BUILDER_UNAVAILABLE) are IDENTICAL to the
+ * pre-lifecycle contract.
+ *
  * Security (mirrors the preview endpoint contract):
  *   - Admin-only (`requireAdmin` — called BEFORE any catalog/Builder logic
  *     so anon/normal users never reach mutation code paths).
@@ -26,9 +37,10 @@
  *     (MAX_BULK_IDS, single shared constant with the UI chunking).
  *   - Every id UUID-validated before it reaches a query.
  *   - createAdapter is the ONLY action that may contact the external
- *     Adapter Builder — through the SAME createAdapterForExtension
- *     orchestration the form action uses (lifecycle guards, CAS, artifact
- *     hash verification, atomic promotion; never a raw Builder call).
+ *     Adapter Builder — through the SAME durable build lifecycle
+ *     orchestration (queue job → background executor → pipeline with
+ *     lifecycle guards, CAS, artifact hash verification, atomic
+ *     promotion; never a raw Builder call).
  *     testProvider NEVER contacts the Builder (test-what-you-ship).
  *   - Surfaces ONLY safe, curated messages from the closed error
  *     taxonomies — never internals/stack traces.
@@ -48,7 +60,7 @@ import {
   getExtensionViewForAdmin,
 } from '$lib/server/cloudstream/extensions/service';
 import { setExtensionPosition } from '$lib/server/downloader/source-order';
-import { createAdapterForExtension } from '$lib/server/extensions/builder/build-service';
+import { queueAdapterBuild, reconcileAdapterBuilds } from '$lib/server/extensions/builder/build-lifecycle';
 import { testExtensionProvider } from '$lib/server/extensions/builder/test-service';
 import type { CloudStreamExtensionView } from '$lib/server/cloudstream/types';
 
@@ -182,30 +194,37 @@ export const POST: RequestHandler = async ({ request, locals }) => {
   // ---------------------------------------------------------------------
   // createAdapter (plan §11 bulk "create adapters for selected where
   // valid" — one extension per request; the client drives the queue).
+  // DURABLE LIFECYCLE: queue + immediate return; the UI polls the
+  // /builds endpoint for the terminal state.
   // ---------------------------------------------------------------------
   if (action === 'createAdapter') {
     if (typeof body.id !== 'string' || body.id.length === 0) {
       return invalid(400, 'VALIDATION', 'An extension id is required.');
     }
-    const outcome = await createAdapterForExtension(locals.supabase, body.id, readTestInputs(body));
-    // The row view is reloaded BEST-EFFORT even on failure (a failed build
-    // legitimately moves the row to 'failed' + lastBuildError — the UI must
-    // see that state without a page reload).
+    // Pre-flight sweep: a stale building/testing row becomes retryable
+    // BEFORE the guard runs (no permanent orphan can block the action).
+    await reconcileAdapterBuilds(locals.supabase, {
+      origin: new URL(request.url).origin,
+    }).catch(() => undefined);
+    const queued = await queueAdapterBuild(locals.supabase, body.id, readTestInputs(body), {
+      origin: new URL(request.url).origin,
+    }, {
+      createdBy: typeof locals.user?.id === 'string' ? locals.user.id : undefined,
+    });
+    // The row view is reloaded BEST-EFFORT even on failure (a refusal or
+    // queued transition must be visible without a page reload).
     const extension = await getExtensionViewForAdmin(locals.supabase, body.id).catch(() => null);
-    if (!outcome.ok) {
-      const status = outcome.code === 'BUILDER_UNAVAILABLE' || outcome.code === 'BUILDER_TIMEOUT' ? 503 : 400;
-      return invalid(status, outcome.code, outcome.message, extension);
+    if (!queued.ok) {
+      const status = queued.code === 'BUILDER_UNAVAILABLE' || queued.code === 'BUILDER_TIMEOUT' ? 503 : 400;
+      return invalid(status, queued.code, queued.message, extension);
     }
     return json(
       {
         ok: true,
+        queued: true,
+        jobId: queued.jobId,
+        dispatch: queued.dispatch,
         extension,
-        outcome: {
-          adapterVersion: outcome.adapterVersion,
-          verdict: outcome.verdict,
-          notes: outcome.notes,
-          testCases: outcome.testCases,
-        },
       },
       { headers: NO_STORE_HEADERS },
     );

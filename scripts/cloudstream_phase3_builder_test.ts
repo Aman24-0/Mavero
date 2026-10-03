@@ -84,6 +84,10 @@ function createFakeClient() {
     cloudstream_repositories: [],
     cloudstream_extensions: [],
     cloudstream_adapter_artifacts: [],
+    // Durable build lifecycle (20261102000000): the jobs table the
+    // queue/execute/reconcile path writes (additive — existing assertions
+    // target cloudstream_extensions transitions, which are unchanged).
+    cloudstream_adapter_build_jobs: [],
   };
   const calls: Array<{ table: string; method: string; args: unknown[] }> = [];
 
@@ -1368,9 +1372,17 @@ console.log('§K downloader 2 independence');
     ok(!source.includes('ADAPTER_BUILDER_URL'), `K3 ${path.basename(file)} never reads the Builder env`);
   }
   // The builder client itself never enters the runtime path (importers pin).
+  // DURABLE BUILD LIFECYCLE (20261102000000): the admin form action now
+  // imports the queue entry from build-lifecycle (the moved implementation
+  // of build-service); the invariant stays "the ONLY builder entry is the
+  // admin surface" — build-service.ts itself re-exports from
+  // build-lifecycle.ts, which remains builder-client's sole caller.
   const clientImporters = ['src/routes/admin/system/integrations/+page.server.ts'];
   for (const file of clientImporters) {
-    ok(read(file).includes('build-service'), `K4 ${path.basename(file)} is the admin-only builder entry`);
+    ok(
+      read(file).includes('build-lifecycle') || read(file).includes('build-service'),
+      `K4 ${path.basename(file)} is the admin-only builder entry`,
+    );
   }
 
   // Behavioral: a generated adapter resolves with the Builder UNREACHABLE —
