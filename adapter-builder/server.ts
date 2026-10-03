@@ -180,11 +180,13 @@ function validateBuildRequest(body: unknown): { ok: true; request: AdapterBuildR
 // ---------------------------------------------------------------------------
 
 async function fetchNuvioModuleSource(
-  moduleUrl: string | null,
+  moduleUrl: string | null | undefined,
   config: BuilderConfig,
   deps: BuilderExecuteDeps = {},
 ): Promise<{ source: string; sourceRevision: string }> {
-  if (moduleUrl === null || moduleUrl.length === 0) {
+  // NOTE: JSON bodies may omit the key entirely (undefined) as well as send
+  // null — both are the same honest "missing source" (never a 500).
+  if (moduleUrl == null || moduleUrl.length === 0) {
     throw new BuildFailure('BUILD_SOURCE_UNAVAILABLE', 'The provider module URL is missing.');
   }
   let url: URL;

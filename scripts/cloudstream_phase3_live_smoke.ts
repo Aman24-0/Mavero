@@ -30,7 +30,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '$lib/server/supabase/database.types';
 import { createBuilderServer } from '../adapter-builder/server';
 import { readBuilderConfig } from '../adapter-builder/config';
-import { createRepositoryFromUrl, deleteRepositoryById, listRepositories } from '$lib/server/cloudstream/repository/service';
+import { createRepositoryFromUrl, deleteRepositoryById, listRepositories, setRepositoryEnabled } from '$lib/server/cloudstream/repository/service';
 import { createAdapterForExtension } from '$lib/server/extensions/builder/build-service';
 import { testExtensionProvider } from '$lib/server/extensions/builder/test-service';
 import { listCloudStreamDownloadTabs, resolveCloudStreamDownloads } from '$lib/server/cloudstream/downloader/service';
@@ -180,12 +180,16 @@ async function main(): Promise<void> {
     await new Promise<void>((resolve) => setTimeout(resolve, 200));
     console.log('  builder STOPPED — Downloader 2 must resolve from the persisted artifact alone');
 
-    // Enable the row (the admin [Enable] step, plan §7).
+    // Enable the REPOSITORY + the EXTENSION (the admin [Enable] steps — a
+    // fresh repository starts disabled; the Phase 3.5 hardening pins the
+    // generated adapter's participation to its CANONICAL KEY so the checks
+    // can never pass on a native MoviesDrive row from another repository).
+    await setRepositoryEnabled(client, repository.id, true);
     await client.from('cloudstream_extensions').update({ enabled: true }).eq('id', extensionId);
     const tabs = await listCloudStreamDownloadTabs(client, { mediaType: 'movie', contentId: 'movie-27205' }, {
       loadContent: async () => ({ mediaType: 'movie', tmdbId: '27205', title: 'Inception', year: 2010 }),
     });
-    const generatedTab = tabs.tabs.find((tab) => tab.extensionId.toLowerCase().includes('moviesdrive'));
+    const generatedTab = tabs.tabs.find((tab) => tab.extensionId.toLowerCase() === `nuvio:${PROVIDER_ID.toLowerCase()}`);
     ok(generatedTab !== undefined, 'L15 the generated adapter appears in the Downloader 2 tabs (Builder stopped)');
     if (generatedTab !== undefined) {
       console.log(`  tab: ${generatedTab.extensionName}`);
@@ -194,7 +198,7 @@ async function main(): Promise<void> {
     const resolution = await resolveCloudStreamDownloads(client, { mediaType: 'movie', contentId: 'movie-27205' }, {}, {
       loadContent: async () => ({ mediaType: 'movie', tmdbId: '27205', title: 'Inception', year: 2010 }),
     });
-    const group = resolution.groups.find((candidate) => candidate.extensionId.toLowerCase().includes('moviesdrive'));
+    const group = resolution.groups.find((candidate) => candidate.extensionId.toLowerCase() === `nuvio:${PROVIDER_ID.toLowerCase()}`);
     ok(group !== undefined && group.status !== 'failed', 'L16 the generated adapter participates in resolution (Builder stopped)');
     if (group !== undefined) {
       console.log(`  resolve: ${group.status} — ${group.links.length} link(s)`);
@@ -212,7 +216,7 @@ async function main(): Promise<void> {
     const tabs = await listCloudStreamDownloadTabs(client, { mediaType: 'movie', contentId: 'movie-27205' }, {
       loadContent: async () => ({ mediaType: 'movie', tmdbId: '27205', title: 'Inception', year: 2010 }),
     });
-    ok(!tabs.tabs.some((tab) => tab.extensionId.toLowerCase().includes('moviesdrive')), 'L15b an un-promoted provider never appears in Downloader 2');
+    ok(!tabs.tabs.some((tab) => tab.extensionId.toLowerCase() === `nuvio:${PROVIDER_ID.toLowerCase()}`), 'L15b an un-promoted provider never appears in Downloader 2');
   }
 
   // ---------------------------------------------------------------------

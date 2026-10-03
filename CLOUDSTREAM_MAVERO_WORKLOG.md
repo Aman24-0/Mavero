@@ -5104,3 +5104,183 @@ Honest limitations (deferred, never faked):
 - The admin create-adapter action is synchronous (bounded by the builder
   timeout); long builds hold the request open. A queued/background build
   is a Phase 4+ UX consideration, not a correctness gap.
+
+---
+
+## Session 11 — Phase 3.5 DEPLOYMENT RECORD (2026-10-03)
+
+Task: deploy the implemented Phase 3 Permanent Adapter Builder to Render and
+verify the complete production integration (E2E Create Adapter, persistence,
+Builder-independent Downloader 2, rollback safety, security matrix). NO
+Phase 3 redesign, NO Phase 4 work.
+
+Startup audit: origin refreshed; HEAD = 45deaa5 (Phase 3 commits fb8eac8 +
+45deaa5 verified present: adapter-builder/ 6 files, builder/ services,
+20261101000003_extension_phase3_builder.sql migration, 208-check offline
+suite). The local worktree had uncommitted unrelated upload-file deletions +
+mode-bit artifacts — restored to clean HEAD before any work. Phase 3 offline
+suite re-run BEFORE changes: 208 checks PASSED (green baseline).
+
+RENDER RESULT (the honest headline): NEW web-service creation on the
+workspace is BLOCKED — every POST /v1/services variant (default plan,
+plan=starter, plan=free, instanceClass=free, region set, minimal payload)
+returns `402 Payment information is required` (the workspace has no payment
+method; static-site creation succeeds, the pre-existing televault-backend
+starter service is not_suspended). Render API key itself works (owners/
+services/deploys endpoints verified). No billing capability exists via API —
+go-live requires the owner to add a payment method at
+dashboard.render.com/billing; the validated deployment payload + recipe are
+preserved (untracked scripts/p35_create_render_service.py; committed
+adapter-builder/DEPLOYMENT.md documents the full service definition).
+
+BUILDER REPOSITORY ARRANGEMENT: a dedicated Mavero-Adapter-Builder repo was
+STAGED and fully verified locally (the exact 34-file dependency closure of
+adapter-builder/server.ts traced by import graph — adapter-builder/6 +
+src/lib/server/{cloudstream,extensions,streaming}/… + src/lib/shared/…, only
+$lib aliases, zero SvelteKit virtual modules, zero secrets; standalone
+jsconfig.json + minimal package.json [cheerio/undici/tsx/typescript];
+tsc --noEmit clean; boots + serves /health + 401s locally at
+/home/z/my-project/mavero-adapter-builder). It could NOT be pushed: the
+fine-grained GitHub PAT cannot create repositories (403 Resource not
+accessible by personal access token — repo creation is not grantable to
+fine-grained PATs). Deploying from the PUBLIC Mavero repository is therefore
+the production arrangement (Phase 3's own design: "deployment target =
+configuration"; the service runs `pnpm exec tsx --tsconfig ./jsconfig.json
+adapter-builder/server.ts` from the repo root). A dedicated repo remains a
+one-command extraction later if a repo-creation-capable credential appears.
+
+DEPLOYED-BUILDER VERIFICATION (the substitute for the blocked Render host —
+a REAL standalone service process from a CLEAN CHECKOUT of origin/main
+@45deaa5, the exact code/commands Render would run: corepack +
+NODE_ENV=development pnpm install --frozen-lockfile + svelte-kit sync +
+tsx start; BUILDER_SECRET = generated 64-hex openssl secret, never printed,
+never committed — stored only in the untracked live-env convention files
+outside the repo; the clean-checkout boot + build commands were verified
+end-to-end BEFORE deployment):
+
+- scripts/p35_deployed_chain_driver.sh (untracked driver convention) boots
+  the deployed process, functionally verifies auth (valid secret passes
+  bearer, wrong secret 401), then runs the five stages of the NEW committed
+  suite scripts/cloudstream_phase35_deployed_builder_test.ts
+  (verify:cloudstream-phase35):
+- security stage — 19 checks PASSED (§8/§14): /health 200 + version;
+  missing secret 401; incorrect secret 401; malformed JSON 400; wrong shape
+  400; oversized body 413; unknown route 404; GET /build 404 (NO runtime
+  routes); timestamp-skew 400; replay 409; unmatched CloudStream provider
+  422 BUILD_UNSUPPORTED_PROVIDER + verdict REQUIRES_RUNTIME (honest);
+  loopback module URL 502 BUILD_SOURCE_UNAVAILABLE (SSRF guard); missing
+  module URL 502; error bodies carry no stack traces/paths/secret.
+- e2e stage — 26 checks PASSED (§10/§11): the real phisher-nuvio-providers
+  repository (49 providers) added to PRODUCTION Supabase; [Create Adapter]
+  on MoviesDrive over REAL HTTP to the deployed Builder process (sandbox →
+  trace → DSL compile → live verify → Mavero independent test): build OK in
+  20.4s, adapter v1 PARTIALLY_SUPPORTED, movie:12 links; row promoted
+  generated v1 + builder_version + last_tested_at; EXACTLY one immutable
+  artifact row (canonical_key nuvio:moviesdrive, strategy declarative,
+  64-hex hash RECOMPUTED AND VERIFIED against the canonical serialization,
+  test_report.passed, source_revision, created_at); read-time binding works
+  without the Builder; [Test Provider] PASSED (adapterKind=generated,
+  movie:12); the generated adapter appears in Downloader 2 tabs with the
+  canonical-key identity; the REPOSITORY + EXTENSION enable steps performed
+  (the admin flow).
+- independence stage — 7 checks PASSED (§12): the Builder process KILLED
+  (positive control: direct build request → BUILDER_UNAVAILABLE, proving
+  the endpoint is genuinely dead); the READY artifact pointer + rows
+  untouched; Downloader 2 tabs include the generated adapter; full
+  resolveCloudStreamDownloads (the real Downloader 2 machinery, production
+  DB) returns 12 REAL links for the nuvio:moviesdrive group
+  (Hub-Cloud/Pixeldrain/googleusercontent) with NO Builder (native adapters
+  participating; known VegaMovies live EXTRACTOR_FAILED unchanged).
+- rollback stage — 8 checks PASSED (§13): rebuild on a READY row → closed
+  ALREADY_GENERATED refusal with NO builder call; the documented
+  rollback-for-rebuild state (pointer → adapter_required, v1 artifact
+  retained) + rebuild with the Builder DEAD → honest BUILDER_UNAVAILABLE,
+  row reverts to its prior state with the closed code recorded, version
+  pointer NOT destroyed, artifact rows + hashes BYTE-IDENTICAL; pointer
+  restored → Downloader 2 resolves again from the unchanged artifact.
+- cleanup stage — 2 checks PASSED: test repository + artifacts removed
+  (production catalog exactly as the admin left it).
+- Total: 62 checks across the deployed chain, ALL PASSED
+  (scripts/p35_deployed_chain.log, untracked).
+
+TWO REAL DEFECTS FOUND BY THE NEW VERIFICATION (both fixed + re-verified):
+1. adapter-builder/server.ts — a nuvio build request whose provider block
+   OMITS moduleUrl (JSON undefined, not null) crashed fetchNuvioModuleSource
+   with a TypeError → BUILD_INTERNAL_ERROR 500. Fixed: `moduleUrl == null`
+   (both null and undefined) → the honest 502 BUILD_SOURCE_UNAVAILABLE
+   ("The provider module URL is missing."). Phase 3 offline suite re-run
+   after the fix: 208 checks still PASSED.
+2. Phase 3 live smoke false-positive risk — the smoke enabled the EXTENSION
+   but not the REPOSITORY (repositories are created enabled=false by
+   design), and its tab/group checks matched `includes('moviesdrive')` —
+   which can match a NATIVE MoviesDrive tab from an unrelated enabled
+   repository, so the independence evidence could pass without the
+   generated adapter participating. Hardened: the smoke (and the new
+   suite) now enable the repository via setRepositoryEnabled + match the
+   CANONICAL KEY 'nuvio:moviesdrive' exactly. Re-run: 18 checks PASSED,
+   resolve: loaded — 12 links via the generated adapter, Builder stopped.
+
+PRODUCTION MAVERO CONNECTION (§9): the three env names are unchanged and
+authoritative (PRIVATE_ADAPTER_BUILDER_URL / _SECRET / _TIMEOUT_MS —
+.env.example already documents them; no source changes needed; env→config
+plumbing pinned by the §G offline tests). The production site is
+Netlify-deployed (adapter-netlify); NO Netlify credential exists in this
+environment, so the site-level env configuration is documented (exact keys
++ recommended 300000 ms timeout for free-instance cold starts) in
+adapter-builder/DEPLOYMENT.md — it is the single remaining owner action
+alongside the Render billing step. No Render URL is hardcoded anywhere; no
+localhost builder URL exists in tracked source.
+
+§15 sleep/cold-start analog: the independence + rollback stages are the
+worst-case sleeping-Builder scenario (endpoint fully dead): normal
+Downloader 2 resolution NEVER contacts the Builder (proven live); admin
+Create Adapter reports honest BUILDER_UNAVAILABLE within the bounded
+timeout (connection-refused returns in milliseconds). For a real sleeping
+Render free instance, PRIVATE_ADAPTER_BUILDER_TIMEOUT_MS=300000 covers
+cold start + build (documented; the client cap is 600000).
+
+Gates: pnpm check 0 errors/0 warnings; pnpm build PASS (~31.6s, netlify
+adapter); full offline chain (scripts/p35_full_chain_driver.mjs →
+scripts/p35_full_chain.log, untracked driver convention): 208 commands =
+207 PASS + 1 documented pre-existing baseline failure
+(phase4_registry_integration_test.ts — the only baseline member that still
+fails in this environment) + 0 NEW; verify:cloudstream-phase3 18 checks
+PASS (hardened smoke, live); verify:cloudstream-phase35 deployed chain 62
+checks PASS; Phase 3 offline suite 208 checks PASS.
+
+Secret hygiene: the tracked-file scan for the Builder secret / Render key /
+GitHub PAT / Supabase PAT found ZERO exposures; secrets live only in the
+untracked /home/z/my-project/scripts/{p35_creds.env, mavero_live.env}
+(600 perms, outside the repos); no secret in worklog/plan/source/logs;
+the driver scripts reference env vars only.
+
+Files changed (this session):
+- adapter-builder/server.ts (the undefined-moduleUrl honest-502 fix)
+- adapter-builder/DEPLOYMENT.md (NEW — the verified deployment recipe +
+  Render payload + Mavero connection config + the billing blocker record)
+- scripts/cloudstream_phase35_deployed_builder_test.ts (NEW — the
+  deployed-builder verification suite: security/e2e/independence/rollback/
+  cleanup stages, 62 checks)
+- scripts/cloudstream_phase3_live_smoke.ts (hardened: repository enable +
+  canonical-key tab/group matching)
+- package.json (verify:cloudstream-phase35 script)
+- CLOUDSTREAM_MAVERO_WORKLOG.md (this session) +
+  CLOUDSTREAM_MAVERO_PERMANENT_ADAPTER_PLAN.md (Phase 3.5 record)
+
+Commit: <SHA filled at commit time> — pushed to origin/main.
+
+Honest limitations (this session):
+- The Render service itself was NOT created: new web-service creation on
+  the workspace is billing-blocked (402). Everything else — the exact
+  deployment recipe, clean-checkout build/boot, real-process deployment,
+  security matrix, real E2E, production persistence, Builder-independent
+  Downloader 2, rollback safety — is implemented and verified. Go-live =
+  add a payment method, run the preserved payload, set two Netlify env
+  vars.
+- The E2E drives the server-side create-adapter orchestration directly
+  (createAdapterForExtension — the exact function the admin action
+  invokes; the established Phase 3 convention) rather than through an
+  authenticated admin browser session; no production admin session
+  credential exists in this environment.
+- The dedicated Mavero-Adapter-Builder repository remains staged locally
+  (PAT cannot create GitHub repositories).

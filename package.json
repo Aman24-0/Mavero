@@ -19,7 +19,8 @@
     "verify:cloudstream-runtime": "pnpm exec tsx --tsconfig ./jsconfig.json scripts/cloudstream_cs2_live_smoke.ts",
     "verify:cloudstream-downloader": "pnpm exec tsx --tsconfig ./jsconfig.json scripts/cloudstream_cs3_live_smoke.ts",
     "verify:cloudstream-phase2": "pnpm exec tsx --tsconfig ./jsconfig.json scripts/cloudstream_phase2_live_smoke.ts",
-    "verify:cloudstream-phase3": "pnpm exec tsx --tsconfig ./jsconfig.json scripts/cloudstream_phase3_live_smoke.ts"
+    "verify:cloudstream-phase3": "pnpm exec tsx --tsconfig ./jsconfig.json scripts/cloudstream_phase3_live_smoke.ts",
+    "verify:cloudstream-phase35": "pnpm exec tsx --tsconfig ./jsconfig.json scripts/cloudstream_phase35_deployed_builder_test.ts"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.8",

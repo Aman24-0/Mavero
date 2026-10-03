@@ -1126,3 +1126,65 @@ for the complete record, including the honest limitations (Nuvio v1 is
 movie-only/PARTIALLY_SUPPORTED for tv-capable providers; the DSL covers
 the search-page-scraper + two-level families — deeper chains refuse
 honestly).
+
+
+### Phase 3.5 implementation record (2026-10-03)
+
+DEPLOYMENT TASK (Render go-live + full production-integration proof). NO
+Phase 3 redesign, NO Phase 4 work. Outcome, honestly split:
+
+VERIFIED COMPLETE — the production-integration proof, on the exact code a
+Render deployment runs: the Builder was deployed as a REAL standalone
+service process from a CLEAN CHECKOUT of origin/main@45deaa5 (corepack +
+NODE_ENV=development pnpm install --frozen-lockfile + svelte-kit sync +
+`tsx --tsconfig ./jsconfig.json adapter-builder/server.ts`, generated
+64-hex BUILDER_SECRET, all interfaces verified functionally). The NEW
+committed suite cloudstream_phase35_deployed_builder_test.ts
+(verify:cloudstream-phase35; 62 checks across security/e2e/independence/
+rollback/cleanup) proved LIVE against production Supabase: the §8/§14
+endpoint matrix (19 checks — auth 401s, malformed 400, 413, 404 runtime-
+route absence, replay 409, skew 400, SSRF loopback refusal, honest
+REQUIRES_RUNTIME for unmatched .cs3 providers, zero leakage); the §10/§11
+real Create Adapter chain over real HTTP (build 20.4s → v1
+PARTIALLY_SUPPORTED → atomic promotion → EXACTLY one immutable artifact
+row with a RECOMPUTED-VERIFIED 64-hex hash + test report + builder
+metadata); §12 Builder-independence (process KILLED, positive control
+proves dead, Downloader 2 still returns 12 REAL links from the persisted
+artifact — zero Builder contact); §13 rollback safety (rebuild refused
+closed on READY rows; rebuild-with-dead-Builder reverts honestly with the
+old artifact rows BYTE-IDENTICAL and the provider usable again after
+pointer restore); catalog cleanup.
+
+TWO DEFECTS FOUND + FIXED: (1) adapter-builder/server.ts crashed with a
+500 when a nuvio provider block omitted moduleUrl (undefined vs null) —
+now the honest 502 BUILD_SOURCE_UNAVAILABLE; Phase 3 offline suite still
+208/208. (2) the Phase 3 live smoke could pass its Downloader 2 checks by
+matching a NATIVE MoviesDrive tab from another repository (repositories
+are created disabled; the smoke never enabled the repository) — hardened:
+setRepositoryEnabled + canonical-key ('nuvio:moviesdrive') matching;
+re-run 18/18 with the generated adapter resolving 12 links.
+
+BLOCKED (owner action, not code): (a) NEW Render WEB-SERVICE creation on
+the workspace returns 402 Payment information is required (no payment
+method on file — verified across every payload/plan variant; static sites
+create fine) — add a card at dashboard.render.com/billing, then run the
+preserved validated payload (untracked scripts/p35_create_render_service.
+py; the full service definition is committed in
+adapter-builder/DEPLOYMENT.md: public Mavero repo, branch main, node
+runtime, the verified build/start commands, /health check, autoDeploy off,
+BUILDER_PORT=10000 + NODE_VERSION=22 + BUILDER_SECRET). (b) The dedicated
+Mavero-Adapter-Builder repository is fully staged + locally verified (the
+34-file dependency closure) but the fine-grained PAT cannot create GitHub
+repositories — deploying from the public Mavero repo is the sanctioned
+arrangement (Phase 3's own design). (c) No Netlify credential exists in
+this environment — the production Mavero env vars
+(PRIVATE_ADAPTER_BUILDER_URL/_SECRET/_TIMEOUT_MS=300000) are documented in
+DEPLOYMENT.md as the single owner step; the env→config plumbing itself is
+pinned by tests and required no source changes.
+
+Gates: pnpm check 0/0; pnpm build PASS (~31.6s); full offline chain 208
+commands = 207 PASS + 1 documented pre-existing baseline failure
+(phase4_registry_integration_test.ts) + 0 NEW; verify:cloudstream-phase3
+18/18 (hardened); verify:cloudstream-phase35 62/62; secret scan of all
+tracked files: zero exposures. Phase 4 remains NOT started. See
+CLOUDSTREAM_MAVERO_WORKLOG.md Session 11 for the complete record.
