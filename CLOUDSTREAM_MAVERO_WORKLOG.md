@@ -4012,6 +4012,17 @@ Tests:
 Gates: pnpm check 0 errors/0 warnings; pnpm build PASS (~30s);
 verify:cloudstream-phase3 18 checks PASS (live).
 
+Commit: `fb8eac8` (pushed to origin/main) — "feat: permanent adapter
+builder service + generated adapters in downloader 2 (Phase 3)".
+
+Next action: STOP at Phase 3 completion — Phase 4 (Integration Manager
+2.0 redesign: search/filters/bulk operations/pagination for 84+ provider
+repositories) and Phase 5 (full verification matrix) have NOT been
+started, per the plan's phase discipline. The Builder is ready to deploy
+(any host running `BUILDER_SECRET=... pnpm exec tsx --tsconfig
+./jsconfig.json adapter-builder/server.ts`); Mavero connects via
+PRIVATE_ADAPTER_BUILDER_URL/SECRET/TIMEOUT_MS.
+
 Honest limitations (deferred, never faked):
 - Nuvio v1 compiles MOVIE-ONLY artifacts (PARTIALLY_SUPPORTED for tv-
   capable providers; episode-trace compilation lands in a later builder
@@ -4471,6 +4482,17 @@ Tests:
 
 Gates: pnpm check 0 errors/0 warnings; pnpm build PASS (~30s);
 verify:cloudstream-phase3 18 checks PASS (live).
+
+Commit: `fb8eac8` (pushed to origin/main) — "feat: permanent adapter
+builder service + generated adapters in downloader 2 (Phase 3)".
+
+Next action: STOP at Phase 3 completion — Phase 4 (Integration Manager
+2.0 redesign: search/filters/bulk operations/pagination for 84+ provider
+repositories) and Phase 5 (full verification matrix) have NOT been
+started, per the plan's phase discipline. The Builder is ready to deploy
+(any host running `BUILDER_SECRET=... pnpm exec tsx --tsconfig
+./jsconfig.json adapter-builder/server.ts`); Mavero connects via
+PRIVATE_ADAPTER_BUILDER_URL/SECRET/TIMEOUT_MS.
 
 Honest limitations (deferred, never faked):
 - Nuvio v1 compiles MOVIE-ONLY artifacts (PARTIALLY_SUPPORTED for tv-
@@ -5052,6 +5074,17 @@ Tests:
 
 Gates: pnpm check 0 errors/0 warnings; pnpm build PASS (~30s);
 verify:cloudstream-phase3 18 checks PASS (live).
+
+Commit: `fb8eac8` (pushed to origin/main) — "feat: permanent adapter
+builder service + generated adapters in downloader 2 (Phase 3)".
+
+Next action: STOP at Phase 3 completion — Phase 4 (Integration Manager
+2.0 redesign: search/filters/bulk operations/pagination for 84+ provider
+repositories) and Phase 5 (full verification matrix) have NOT been
+started, per the plan's phase discipline. The Builder is ready to deploy
+(any host running `BUILDER_SECRET=... pnpm exec tsx --tsconfig
+./jsconfig.json adapter-builder/server.ts`); Mavero connects via
+PRIVATE_ADAPTER_BUILDER_URL/SECRET/TIMEOUT_MS.
 
 Honest limitations (deferred, never faked):
 - Nuvio v1 compiles MOVIE-ONLY artifacts (PARTIALLY_SUPPORTED for tv-
