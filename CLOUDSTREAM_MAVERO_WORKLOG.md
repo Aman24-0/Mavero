@@ -5779,4 +5779,4 @@ Definition of Done). The Permanent Adapter Plan is now FULLY implemented
 (Phases 1–5). STOP per the phase-boundary rule — no further phase exists;
 the remaining items are the owner's deployment actions listed in §9.
 
-Phase 5 final commit: <SHA recorded post-commit>.
+Phase 5 final commit: `5fcf615` — "fix: phase 5 final verification — sandbox streaming cap, active-version artifact binding, 8 baseline tests root-caused (Phase 5)" (verified HEAD = origin/main after push; the committed tree re-verified: full chain 209/209, phase3 218/218, phase4 213/213, live chains 12/12 + 18/18 + 63/63).
