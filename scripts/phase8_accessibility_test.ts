@@ -55,7 +55,7 @@ assert.match(shell, /if \(element instanceof HTMLElement && element\.isConnected
 assert.match(shell, /try \{ element\.focus\(\); \} catch/, 'restoreFocus wraps focus() in try/catch');
 
 // 2e. Focus sheet close button function exists.
-assert.match(shell, /function focusSheetCloseButton\(which: 'source' \| 'episode' \| 'streams'\)/, 'focusSheetCloseButton function exists (Phase 9: streams sheet included)');
+assert.match(shell, /function focusSheetCloseButton\(which: 'source' \| 'episode'\)/, 'focusSheetCloseButton function exists (the dedicated streams sheet was retired with the obsolete Mavero player branch, 0111d7f; the two live sheets keep focus management)');
 
 // ============================================================
 // 3. Focus trap (Tab/Shift+Tab)
@@ -85,7 +85,7 @@ assert.match(shell, /if \(event\.key === 'Escape'\) \{[\s\S]*?if \(sourceMenuOpe
 assert.match(shell, /else if \(episodeMenuOpen\) closeEpisodeSheet\(\)/, 'Escape closes episode sheet');
 
 // 4b. Sheet keydown takes priority over player shortcuts.
-assert.match(shell, /if \(sourceMenuOpen \|\| episodeMenuOpen \|\| streamsSheetOpen\) \{[\s\S]*?handleSheetKeydown\(event\);[\s\S]*?return;/, 'sheet keydown takes priority over player shortcuts (Phase 9: streams sheet included)');
+assert.match(shell, /if \(sourceMenuOpen \|\| episodeMenuOpen\) \{[\s\S]*?handleSheetKeydown\(event\);[\s\S]*?return;/, 'sheet keydown takes priority over player shortcuts (the retired streams sheet no longer contributes a state)');
 
 // ============================================================
 // 5. Sheet open moves focus into sheet
@@ -198,6 +198,9 @@ assert.match(shell, /function openSourceFromMenu\(\) \{[\s\S]*?openSourceSheet\(
 assert.match(shell, /function openEpisodeFromMenu\(\) \{[\s\S]*?openEpisodeSheet\(playerRoot \?\? document\.activeElement as HTMLElement\)/, 'episode menu entry passes a focus-restore trigger');
 
 // 9c. Streams menu entry routes through the focus-managed opener.
-assert.match(shell, /openStreamsSheet\(playerRoot \?\? document\.activeElement as HTMLElement\)/, 'streams menu entry passes a focus-restore trigger');
+// 9c. The dedicated streams sheet was RETIRED with the obsolete Mavero
+// player branch (0111d7f — "refactor(hosting): retire obsolete mavero player
+// branch"); streams selection is no longer a player sheet, so no streams
+// menu entry exists to route. Source + episode (9a/9b) remain covered.
 
-console.log('Phase 8 accessibility tests passed: aria-modal on source sheet (1); aria-modal on episode sheet (1); backdrop role=presentation (2); focus management functions (5); trigger state variables (2); restoreFocus isConnected guard (2); focus trap Tab/Shift+Tab (3); escape closes sheet (2); sheet keydown priority (1); focus moves into sheet on open (2); only one sheet at a time (2); focus restoration on close (4); source/episode focus independence (3); existing ARIA preserved (9, redesigned controls/menu contract); PlayerControls aria-labels preserved (5); menu entries pass focus-restore triggers (3).');
+console.log('Phase 8 accessibility tests passed: aria-modal on source sheet (1); aria-modal on episode sheet (1); backdrop role=presentation (2); focus management functions (5); trigger state variables (2); restoreFocus isConnected guard (2); focus trap Tab/Shift+Tab (3); escape closes sheet (2); sheet keydown priority (1); focus moves into sheet on open (2); only one sheet at a time (2); focus restoration on close (4); source/episode focus independence (3); existing ARIA preserved (9, redesigned controls/menu contract); PlayerControls aria-labels preserved (5); menu entries pass focus-restore triggers (2, streams sheet retired in 0111d7f).');

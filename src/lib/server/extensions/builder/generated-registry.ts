@@ -147,15 +147,29 @@ function buildAdapterInstance(row: GeneratedAdapterArtifactRow): MaveroCloudStre
  * Builds the canonical-key → instance map over loaded artifact rows (the
  * Downloader 2 selection input). Rows that fail validation are skipped
  * (honest — the corresponding rows stay non-executable).
+ *
+ * DETERMINISM (Phase 5, Session 13): when more than one version of a
+ * canonical key is supplied, the HIGHEST adapter_version binds — a fixed,
+ * order-independent tie-break (the pre-fix first-wins binding depended on
+ * caller row order, which is not guaranteed by any DB select). The catalog
+ * loader supplies exactly the ACTIVE version per key (it filters by the
+ * extension row's generated_adapter_version pointer, so rollback and
+ * re-promotion are respected); the highest-version tie-break is pure
+ * defense-in-depth so this function can never bind nondeterministically.
  */
 export function buildGeneratedAdapterMap(
   rows: readonly GeneratedAdapterArtifactRow[],
 ): Map<string, MaveroCloudStreamAdapter> {
   const map = new Map<string, MaveroCloudStreamAdapter>();
+  const bestVersion = new Map<string, number>();
   for (const row of rows) {
     const adapter = generatedAdapterFromArtifactRow(row);
     if (adapter === null) continue;
-    if (!map.has(row.canonical_key)) map.set(row.canonical_key, adapter);
+    const seenVersion = bestVersion.get(row.canonical_key);
+    if (seenVersion === undefined || row.adapter_version > seenVersion) {
+      bestVersion.set(row.canonical_key, row.adapter_version);
+      map.set(row.canonical_key, adapter);
+    }
   }
   return map;
 }

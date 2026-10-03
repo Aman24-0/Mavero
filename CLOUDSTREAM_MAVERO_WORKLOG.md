@@ -5479,3 +5479,304 @@ search/filters/bulk/pagination + no-refresh toggles + §13 status ux
 (Phase 4)" (pushed to origin/main; 434d02b..ca1b823; verified
 HEAD = origin/main = ca1b823 after push; the committed tree re-verified:
 Phase 4 suite 213/213, admin UI 161/161, Phase 3 offline 208/208).
+
+## 2026-10-03 — Session 13 (Permanent Adapter Plan — Phase 5: Final Verification, Bug Fixing & Production Hardening)
+
+Phase: Phase 5 — Full Verification + hardening (plan §16, the FINAL phase).
+
+Starting HEAD: `8e134cc` (= origin/main; the Phase 4 tip: ca1b823 + the
+worklog-SHA commit 8e134cc; verified by `git rev-parse` + `git status` —
+clean tracked tree before any change).
+
+Repository state: clean at start; pnpm activated via corepack (10.30.3, the
+packageManager pin); the recurring untracked driver/log files under scripts/
+untouched (this session adds p5_* to the same convention).
+
+Plan/worklog read:
+- [x] Plan (CLOUDSTREAM_MAVERO_PERMANENT_ADAPTER_PLAN.md, all sections +
+      the Phase 2/3/3.5/4 implementation records)
+- [x] Worklog (Sessions 8–12 + Phase Completion Log + conventions)
+- [x] adapter-builder/DEPLOYMENT.md + the Phase 3/3.5/4 implementation files
+      (adapter-builder/*, extensions/builder/*, extensions/adapter-registry,
+      downloader/service, repository/service, extensions/service, nuvio.ts,
+      the Phase 4 endpoints + AdminCloudStreamManager.svelte, the p4 chain
+      driver + all suites)
+
+Objective: the FULL Phase 5 mandate — FIND → CLASSIFY → ROOT-CAUSE → FIX →
+TEST → REGRESS → VERIFY. Investigate every failure including the 8 documented
+historical baseline failures (never auto-classify as pre-existing), audit
+areas A–J, run live verification wherever production credentials exist,
+Render production deployment NOT awaited (the standalone/local Builder test
+harness covers Builder-dependent verification; production Render checks stay
+deferred to the owner).
+
+## 1. Fresh baseline (BEFORE any modification)
+
+- pnpm check: 0 errors / 0 warnings.
+- pnpm build: PASS (~32.6s, netlify adapter).
+- Full chain (scripts/p5_full_chain_driver.mjs → p5_full_chain.log, the p4
+  driver convention): 209 commands = 201 PASS + the 8 documented baseline
+  failures + 0 NEW — identical to the Phase 4 record (proves the baseline
+  was faithfully reproduced before Phase 5 changes).
+
+## 2. The 8 historical baseline failures — every one root-caused + FIXED
+
+Method: each failure re-run independently; the failing pin located; the
+sanctioned product change that staled it identified BY COMMIT; the
+functionality verified to still exist in the current implementation; then
+the TEST fixed (never the assertion weakened without the product being
+verified first). Classification of all 8: 7 stale test pins after SANCTIONED
+product changes + 1 test-design defect (live section in the offline chain
+without the skip guard). ZERO product defects among them.
+
+1. adult_mode_test.ts — pinned the pre-Admin-2.0 route
+   (/admin/feature-control); Admin 2.0 (446d8ac..07bd759) moved the
+   adult-policy machinery to /admin/system/content-rules?tab=features (the
+   legacy route is a redirect stub). Machinery verified PRESENT at the new
+   route (loadAdultPolicy, togglePolicy('allowLoggedIn'|'allowGuest'),
+   /api/admin/adult-mode). FIX: the test now reads the live route + pins the
+   actual toggle signature (the file's own documented convention for route
+   migrations).
+2. phase2_repo_hygiene_test.ts — expected .github/workflows/ci.yml, which
+   the owner INTENTIONALLY removed in fe25339 ("chore: remove unused CI
+   workflow and normalize cache headers", verified by git log + show).
+   FIX: the pin enforcement now applies to ANY workflow file that exists
+   (node 22 + pnpm 10.30.3 pins enforced when a workflow is present; the
+   intentional absence is documented in-test).
+3. phase8_accessibility_test.ts — pinned the retired 'streams' sheet
+   (focusSheetCloseButton union + keydown priority + menu entry). The
+   dedicated Mavero streams sheet was RETIRED with the obsolete Mavero
+   player branch in 0111d7f ("refactor(hosting): retire obsolete mavero
+   player branch"). The a11y machinery (focus trap, restoreFocus,
+   focusSheetCloseButton) still exists for the two live sheets. FIX: pins
+   updated to the two-sheet contract; the retired entry point documented.
+4. phase9_source_progress_test.ts — pinned "saved → default → fallback"
+   source-selection priority; 1996029 ("fix: cross-device progress conflict
+   resolution with positionUpdatedAt") deliberately INVERTED it to
+   default → saved → fallback (documented rationale: a stale cross-device
+   savedSourceId must not override the admin-configured default). The
+   three-tier validation+fallback chain is intact. FIX: pin updated with
+   the sanctioned-inversion rationale.
+5. phase9_landscape_test.ts — same streams-sheet retirement
+   (streamsSheetOpen in the auto-hide guard; the two-sheet wide-drawer
+   selector). FIX: pins updated to the live states/CSS.
+6. phase9_fix_test.ts — pinned the createProgressWriter call shape; the
+   call evolved with initialDuration (already documented in-test) and then
+   initialPositionUpdatedAt (1996029). FIX: pin updated (the same
+   documented-evolution convention).
+7. phase9_landscape_drawer_position_test.ts — the .mavero-streams-sheet
+   CSS selector group (retired in 0111d7f); every other drawer contract
+   (absolute positioning, z-index 21, right-drawer on wide, reduced motion)
+   still present. FIX: selectors updated; the streams-drawer width pin
+   removed with the feature.
+8. phase4_registry_integration_test.ts — a LIVE Management-API test baked
+   into the OFFLINE pnpm chain: without SUPABASE_PAT it failed with 401
+   (test-design defect — deviates from the repo's live-skip convention, cf.
+   final_remediation_live_smoke_test.ts), AND its ledger pins
+   (n === 30 / max_version === '20260928213822') were live-data drift (the
+   CloudStream phases legitimately added migrations). FIX: the live sections
+   2–11 skip honestly when SUPABASE_PAT is absent (static sections 1/12/13
+   always enforced); the ledger pins became a FLOOR (n >= 30, max_version
+   >= this phase's migration). An EQUIVALENT live verification ran through
+   the Data API with the service key instead (scripts/p5_live_registry_check.ts,
+   11/11 — see §5).
+
+The p5 chain driver's BASELINE_FAILURES set is now EMPTY (with the full
+root-cause table preserved as the in-file comment): any future failure is a
+NEW failure by definition. Full chain after the fixes: **209/209 — the
+complete suite is ALL GREEN for the first time** (was 201+8).
+
+## 3. Product defects found by the Phase 5 audit + fixed
+
+Two REAL defects (both introduced by the Permanent Adapter phases,
+both fixed with regression tests):
+
+### FIX 1 — sandbox readBodyCapped buffered unbounded response bodies (H: resource abuse)
+
+Root cause: adapter-builder/sandbox.ts's readBodyCapped did
+`await response.arrayBuffer()` BEFORE checking the byte cap — a hostile
+provider host could stream an arbitrarily large body inside the 15s fetch
+window and exhaust Builder-worker memory (the cap only applied after the
+whole body was resident). The CloudStream runtime's own readTextWithLimit
+(http.ts) already solved this correctly (streaming + content-length
+pre-check + abort on overflow); the Builder sandbox had diverged.
+Fix: readBodyCapped now STREAMS the body under the cap (content-length
+pre-check, chunked accumulation, cancel-on-overflow — mirrors the runtime
+semantics, preserving the truncate-don't-fail analysis behavior; no-stream
+fallback for transport stubs). Regression: cloudstream_phase3_builder_test
+§C9–C12 (4 new checks — truncated delivery, stream CANCELLED at the cap,
+producer stopped early, honest byte accounting). Phase 3 suite: 218 checks
+(was 208; +4 cap +6 version-binding below).
+
+### FIX 2 — generated-adapter ACTIVE-version binding ignored the row pointer (rollback/promotion semantics)
+
+Root cause: the Downloader 2 catalog loader (defaultLoadCatalog) selected
+ALL artifact versions for a canonical key (`.in('canonical_key', keys)`,
+no version predicate, no order) and buildGeneratedAdapterMap bound
+FIRST-WINS by DB row order — the extension row's generated_adapter_version
+POINTER was ignored. Consequences: (a) rollback (pointer re-version,
+plan §12/§13) was NOT respected at resolution time — the rolled-FROM
+version could keep serving; (b) a freshly promoted version could NOT serve
+(the stale version kept serving); (c) the bound version was
+NONDETERMINISTIC (DB order); (d) the admin Test Provider path
+(test-service loadActiveArtifact — which filters .eq('adapter_version',
+pointer) correctly) could DIVERGE from what Downloader 2 actually served.
+Fix: (1) defaultLoadCatalog now derives the ACTIVE (canonical_key →
+adapter_version) pairs from the extensions using the selection's own
+first-ELIGIBLE-row-wins discipline (repo enabled + row enabled, repository
+creation order → internal_name) and filters the fetched artifact rows to
+exactly those pairs; (2) buildGeneratedAdapterMap's tie-break is now
+DETERMINISTIC (highest adapter_version, order-independent
+defense-in-depth). Regression: §H14/H15 (deterministic multi-version
+binding, both input orders) + §K9/K9b/K10/K10b (loader-level tests through
+the REAL defaultLoadCatalog: rollback-with-newest-stored-first and
+promotion-with-oldest-stored-first both bind the POINTER version — the
+distinguishable sourceName proves WHICH version served). LIVE proof: the
+p35 rollback stage R8 ("the provider is usable again from the unchanged
+artifact") re-ran GREEN against production Supabase with the fix in the
+tree. cloudstream_registry_integration_test §F5's additions pin evolved
+for the sanctioned fix (documented in-file, the same convention as the
+Phase 2/3 evolutions).
+
+### Minor hardening/cleanup (same phase)
+
+- adapter-builder/sandbox.ts: removed the dead `const cheerio = import('cheerio')`
+  assignment inside requireBridge (a discarded floating promise + dead
+  binding; the preload path is the real one).
+- adapter-builder/server.ts runLiveTest: removed the dead overall
+  AbortController whose signal nothing consumed (the per-case
+  controllers+timers are the real bounds; behavior identical).
+- Audit notes documented as INTENDED behavior (no change): orphaned
+  artifact rows after repository delete are inert at resolution (keyed by
+  canonical_key; the immutable lineage is preserved by design; the
+  re-added repository's rows start a fresh lifecycle); admin mutation
+  endpoints have no rate limiting — the repo-wide convention for the 39
+  requireAdmin endpoints (rate limiting guards the public surfaces; the
+  Downloader 2 endpoints ARE rate-limited); extensionHasExecutableAdapter's
+  export is internal API surface, not dead code.
+
+## 4. Offline verification (the complete gates)
+
+- pnpm check: 0 errors / 0 warnings (after all fixes).
+- pnpm build: PASS (~31s, netlify adapter).
+- FULL CHAIN (209 commands): **209 PASS + 0 baseline + 0 NEW — ALL GREEN**
+  (scripts/p5_full_chain_driver.mjs; the baseline set is now empty BY
+  ROOT-CAUSE, not by hiding).
+- Phase 3 builder suite: 218/218 (208 + 10 new Phase 5 checks).
+- Phase 2 unified adapters: 195/195; Phase 4 integration manager: 213/213;
+  admin UI: 161/161; registry integration: 153/153; downloader API 144/144.
+
+## 5. LIVE verification (production Supabase + real network; Render deferred)
+
+- verify:cloudstream-phase2: 12/12 — REAL Nuvio manifest discovery
+  (phisher-nuvio-providers 49 providers, All-in-One-Nuvio 61 providers).
+- verify:cloudstream-phase3: 18/18 — the REAL end-to-end chain: real
+  repository sync, real module in the sandbox, real compiled artifact,
+  real promotion, real Test Provider (movie:12), then Builder STOPPED and
+  Downloader 2 resolves 12 REAL links from the persisted artifact.
+- Phase 3.5 deployed-builder chain against the REAL standalone Builder
+  process (the exact DEPLOYMENT.md command, local harness on 127.0.0.1:8790
+  — scripts/p5_builder_stage.sh drives the lifecycle):
+  security 20/20 (endpoint matrix: auth 401s, malformed 400, 413, 404
+  runtime-route absence, replay 409, skew, SSRF loopback refusal, honest
+  REQUIRES_RUNTIME, zero leakage — includes the Phase 3.5 moduleUrl fix's
+  S19b) + e2e 26/26 (real Create Adapter over real HTTP → production
+  persistence → exactly one immutable artifact row with a
+  recompute-verified hash; the generated adapter in Downloader 2 tabs) +
+  independence 7/7 (Builder KILLED — positive control proves dead —
+  Downloader 2 returns the persisted adapter's 12 real links) + rollback
+  8/8 (rebuild-with-dead-Builder reverts honestly; old artifact rows
+  BYTE-IDENTICAL; the provider usable again from the unchanged artifact —
+  LIVE proof of FIX 2's pointer-respecting binding) + cleanup 2/2 =
+  **63/63 TOTAL**.
+- CS-1 live smoke: 5/5 (real plugins.json discovery + parse).
+- CS-2 live smoke: PASS (real provider page resolution through the runtime).
+- CS-3 live smoke: PASS (real Downloader 2 resolution: 3 groups,
+  considered=9, real links, ~12.6s total).
+- NEW scripts/p5_live_registry_check.ts (11/11, the phase4_registry
+  equivalents through the Data API with the service key — the Management
+  PAT is not in this environment): Vidara/Abyss provider rows + Mavero 1/2
+  sources verified live (shape, linkage, no credential material);
+  cloudstream_repositories live count = 3; cloudstream_adapter_artifacts
+  live count = 0 (the catalog ends exactly as the admin left it — cleanup
+  proven).
+
+## 6. Security audit summary (area H)
+
+- SSRF/DNS: two-stage guard + connect-time revalidation on EVERY request
+  and redirect hop (verified in ssrf.ts/connect-guard review + the live
+  security stage's loopback refusals).
+- Sandbox: fresh realm, codeGeneration disabled, poisoned constructor
+  chains, bound host methods, realm-native promise bridge, static pre-scan,
+  budgets everywhere; the OOM hole (FIX 1) closed.
+- No eval/new Function anywhere in the server/builder domains (scan clean);
+  .cs3 and Nuvio modules stay metadata-only in Mavero (pinned by tests).
+- Secrets: BUILDER_SECRET never logged/committed; builder-client reads env
+  at call time; secret scan of the full tracked tree + the diff: zero
+  exposures. Live creds stay in the untracked ../scripts/mavero_live.env
+  convention (never printed).
+- Error taxonomy: closed codes at every layer (builder, client,
+  orchestration, endpoints) — no internals leaked (live-verified).
+
+## 7. Files changed
+
+- adapter-builder/sandbox.ts (FIX 1 streaming cap + dead-import cleanup)
+- adapter-builder/server.ts (dead controller cleanup)
+- src/lib/server/cloudstream/downloader/service.ts (FIX 2 active-version
+  binding in defaultLoadCatalog)
+- src/lib/server/extensions/builder/generated-registry.ts (FIX 2
+  deterministic highest-version tie-break)
+- scripts/cloudstream_phase3_builder_test.ts (+10 checks: C9-C12, H14/H15,
+  K9/K9b/K10/K10b)
+- scripts/cloudstream_registry_integration_test.ts (§F5 sanctioned pin
+  evolution for FIX 2)
+- scripts/adult_mode_test.ts, scripts/phase2_repo_hygiene_test.ts,
+  scripts/phase8_accessibility_test.ts, scripts/phase9_source_progress_test.ts,
+  scripts/phase9_landscape_test.ts, scripts/phase9_fix_test.ts,
+  scripts/phase9_landscape_drawer_position_test.ts,
+  scripts/phase4_registry_integration_test.ts (the 8 baseline fixes)
+- scripts/p5_live_registry_check.ts (NEW — the live DB verification
+  equivalent, committed for re-running)
+- CLOUDSTREAM_MAVERO_WORKLOG.md (this session) +
+  CLOUDSTREAM_MAVERO_PERMANENT_ADAPTER_PLAN.md (Phase 5 record)
+- NO migrations (the migration set is identical to 8e134cc — verified).
+
+## 8. Results + quality bar
+
+- pnpm check: 0 errors / 0 warnings. pnpm build: PASS.
+- Full chain: 209/209 (ALL GREEN — no baseline failures remain, none
+  hidden; the historical 8 are root-caused in §2).
+- All relevant suites: phase2 195, phase3 218, phase4 213, admin UI 161,
+  registry 153, downloader API 144, phase1 reliability + all CloudStream/
+  Nuvio/Builder/Admin suites via the chain.
+- Security suites: PASS (live security stage 20/20 + the phase1 hardening
+  suites via the chain).
+- Builder suites: PASS locally (218 offline + the 63-check live chain).
+- Builder-independent Downloader 2: PASS (live independence 7/7 + the
+  phase3 live smoke's Builder-stopped resolution).
+- Live Supabase verification: PASS (12/12 + 18/18 + 63/63 + 5/5 + CS-2/CS-3
+  PASS + 11/11 registry).
+- No new regressions; no unresolved product bugs from the Phase 5 audit
+  (the two real defects found are FIXED with regression coverage).
+
+## 9. Deferred (external/deployment-only — unchanged in nature from Phase 3.5)
+
+- The Render WEB-SERVICE go-live itself (workspace billing — owner action;
+  the complete validated payload is preserved in adapter-builder/DEPLOYMENT.md).
+- The production Netlify env vars (PRIVATE_ADAPTER_BUILDER_URL/_SECRET/
+  _TIMEOUT_MS=300000 — the single owner step; the env→config plumbing is
+  pinned by tests).
+- The SUPABASE_PAT-dependent live sections of phase4_registry_integration
+  (the Data-API equivalent ran instead — §5; the Management-API ledger
+  check remains owner-verifiable with a PAT).
+- Genuinely production-infrastructure-dependent only: a post-go-live
+  re-run of verify:cloudstream-phase35 against the Render URL.
+
+## 10. Next action
+
+Phase 5 is COMPLETE (final verification + hardening phase per plan §16/§19
+Definition of Done). The Permanent Adapter Plan is now FULLY implemented
+(Phases 1–5). STOP per the phase-boundary rule — no further phase exists;
+the remaining items are the owner's deployment actions listed in §9.
+
+Phase 5 final commit: <SHA recorded post-commit>.

@@ -292,10 +292,50 @@ function extractJsonUrlKeys(text: string): Array<{ key: string; valueHost: strin
 }
 
 async function readBodyCapped(response: Response, maxBytes: number): Promise<{ text: string; bytes: number; truncated: boolean }> {
-  const buffer = await response.arrayBuffer();
-  const truncated = buffer.byteLength > maxBytes;
-  const slice = truncated ? buffer.slice(0, maxBytes) : buffer;
-  return { text: new TextDecoder('utf-8', { fatal: false }).decode(slice), bytes: buffer.byteLength, truncated };
+  // Phase 5 hardening: the body is STREAMED under the cap — once maxBytes is
+  // exceeded the download is cancelled immediately. The previous shape
+  // (await response.arrayBuffer() first, cap after) buffered the ENTIRE body
+  // in memory before checking the limit, so a hostile provider could exhaust
+  // Builder-worker memory with an unbounded body inside the fetch timeout
+  // (resource-abuse class). Mirrors the CloudStream runtime's
+  // readTextWithLimit semantics (content-length pre-check + streaming cap +
+  // abort on overflow), preserving the truncate-don't-fail behavior the
+  // analysis relies on.
+  const contentLengthHeader = Number(response.headers.get('content-length') ?? '');
+  const declaredOversize = Number.isFinite(contentLengthHeader) && contentLengthHeader > maxBytes;
+  const decoder = new TextDecoder('utf-8', { fatal: false });
+  let total = 0;
+  let text = '';
+  let truncated = declaredOversize;
+  const body = response.body as unknown as AsyncIterable<Uint8Array> | null;
+  if (body !== null) {
+    try {
+      for await (const chunk of body) {
+        total += chunk.byteLength;
+        if (total > maxBytes) {
+          truncated = true;
+          break; // stop reading; cancel the stream below
+        }
+        text += decoder.decode(chunk, { stream: true });
+      }
+      if (!truncated) text += decoder.decode();
+    } catch {
+      truncated = true; // read failure — body unusable beyond what we have
+    }
+    if (truncated) {
+      try {
+        void (response.body as unknown as ReadableStream<Uint8Array>).cancel();
+      } catch { /* already closed */ }
+    }
+  } else {
+    // No streaming body (transport stub / already-buffered response) — the
+    // arrayBuffer is bounded by what the transport already materialized.
+    const buffer = await response.arrayBuffer();
+    truncated = buffer.byteLength > maxBytes;
+    total = buffer.byteLength;
+    text = decoder.decode(truncated ? buffer.slice(0, maxBytes) : buffer);
+  }
+  return { text, bytes: total, truncated };
 }
 
 function digestOf(text: string): string {
@@ -591,7 +631,6 @@ export async function createModuleSandbox(
       throw new Error('sandbox: module is not allowed');
     }
     if (cheerioModule === null) {
-      const cheerio = import('cheerio') as unknown as typeof import('cheerio');
       // Synchronous require emulation: the module must already be importable.
       // The Builder preloads cheerio before creating the sandbox (see
       // runProviderAnalysis) so this path never throws in practice.

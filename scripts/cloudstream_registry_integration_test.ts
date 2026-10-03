@@ -838,6 +838,20 @@ function section_regression(): void {
           || line.includes('integration_type')
           || line.includes('adapter-registry')
           || line.includes('generated-registry')
+          // Phase 5 (Session 13) sanctioned: the ACTIVE-version binding fix
+          // in defaultLoadCatalog — the loader now filters artifact rows to
+          // the extension row's generated_adapter_version POINTER (rollback
+          // = pointer re-version is respected at resolution time; the
+          // pre-fix shape bound an arbitrary DB-ordered version). The new
+          // identifiers: repoOrder/repoEnabled (the deterministic
+          // first-eligible-row-wins derivation), activeVersionByKey (the
+          // pointer map), and its keys/filter.
+          || line.includes('Phase 5')
+          || line.includes('repoOrder')
+          || line.includes('repoEnabled')
+          || line.includes('activeVersionByKey')
+          || line.includes('a.internal_name.localeCompare(b.internal_name)))')
+          || line.includes('if (keys.length > 0) {')
           || /^\s*(\/\*\*|\*|\/\/|$)/.test(line)
           || line.includes('{ signal: request.signal }')
           || line.includes('signal?: AbortSignal;')

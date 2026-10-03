@@ -267,8 +267,11 @@ async function runLiveTest(
   expectedOutputUrls: string[] | null,
   deps: BuilderExecuteDeps = {},
 ): Promise<{ cases: AdapterTestCaseResult[]; passed: boolean; antiHallucination: boolean }> {
-  const overall = new AbortController();
-  const timer = setTimeout(() => overall.abort(), timeoutMs * (cases.episode !== null ? 2 : 1) + 5_000);
+  // Each case is individually bounded by its own controller+timer below
+  // (movie: timeoutMs; episode: timeoutMs) — the total is therefore bounded
+  // at 2×timeoutMs. (Phase 5 cleanup: the previous version constructed an
+  // additional overall AbortController whose signal nothing consumed — dead
+  // decoration, removed.)
   const results: AdapterTestCaseResult[] = [];
   let passed = true;
   let antiHallucination = true;
@@ -384,8 +387,8 @@ async function runLiveTest(
       // claim cannot be verified, so demote at assembly time (below).
     }
   } finally {
-    clearTimeout(timer);
-    overall.abort();
+    // The per-case timers were cleared in their own finally blocks; nothing
+    // else leaks (the removed overall controller owned no resources).
   }
 
   return { cases: results, passed, antiHallucination };

@@ -1282,3 +1282,69 @@ Deferred (unchanged from Phase 3.5, owner actions): the Render
 web-service go-live (workspace billing) + the production Netlify env
 vars. Phase 5 (Full Verification) NOT started — see
 CLOUDSTREAM_MAVERO_WORKLOG.md Session 12 for the complete record.
+
+
+### Phase 5 implementation record (2026-10-03)
+
+COMPLETED. The FINAL verification/hardening phase (§16 + the §19 Definition
+of Done). Fresh baseline first (check 0/0, build PASS, 209-command chain =
+201 + the 8 documented baseline failures + 0 NEW — identical to Phase 4's
+record), then the full FIND → CLASSIFY → ROOT-CAUSE → FIX → TEST → REGRESS
+→ VERIFY mandate. NO migrations (the set is identical to 8e134cc).
+
+THE 8 HISTORICAL BASELINE FAILURES — all root-caused, all FIXED (7 stale
+test pins after SANCTIONED product changes + 1 live test missing the
+repo's skip convention; ZERO product defects): adult_mode (Admin 2.0 route
+move 446d8ac), phase2_repo_hygiene (owner's CI removal fe25339),
+phase8_accessibility + phase9_landscape + phase9_landscape_drawer_position
+(streams-sheet retirement 0111d7f), phase9_source_progress + phase9_fix
+(the sanctioned 1996029 cross-device progress fix), phase4_registry
+(live Management-API section in the offline chain + drifted ledger pins,
+now floor-pinned). The chain baseline set is now EMPTY by root cause —
+**the full 209-command suite is ALL GREEN for the first time**.
+
+TWO REAL PRODUCT DEFECTS FOUND + FIXED (with regression coverage):
+
+1. SANDBOX OOM HOLE (resource abuse): readBodyCapped buffered the ENTIRE
+   response body before checking the cap (arrayBuffer-first) — a hostile
+   provider could exhaust Builder-worker memory inside the fetch timeout.
+   Now STREAMS under the cap (content-length pre-check, chunked
+   accumulation, cancel-on-overflow — the runtime readTextWithLimit
+   semantics). Regression: builder suite C9–C12.
+
+2. ACTIVE-VERSION BINDING (rollback/promotion semantics): the Downloader 2
+   catalog loader fetched ALL artifact versions per key unordered and
+   first-wins-bound an arbitrary one — the row's generated_adapter_version
+   POINTER (rollback = pointer re-version, §12/§13) was ignored, the
+   binding was nondeterministic, and it diverged from the admin Test
+   Provider path (which filters by the pointer). The loader now derives
+   the ACTIVE (key → version) pairs with the selection's own
+   first-eligible-row-wins discipline and filters the fetched rows to
+   exactly those pairs; buildGeneratedAdapterMap's tie-break is
+   deterministic (highest version). Regression: H14/H15 + K9/K9b/K10/K10b
+   (loader-level, the REAL defaultLoadCatalog); LIVE proof: the p35
+   rollback stage R8 re-ran GREEN against production Supabase.
+
+Plus hardening cleanup: the dead floating `import('cheerio')` assignment
+in requireBridge and the dead (never-consumed) overall AbortController in
+runLiveTest — removed; intended behaviors documented (orphaned artifacts
+after repository delete are inert + lineage-preserving by design; admin
+endpoints follow the repo's 39-endpoint admin-auth-gate convention —
+rate limiting guards the public surfaces, and the Downloader 2 endpoints
+ARE rate-limited).
+
+Gates: pnpm check 0/0; pnpm build PASS; full chain 209/209 ALL GREEN;
+phase3 builder 218/218 (+10 new checks), phase2 195/195, phase4 213/213,
+admin UI 161/161, registry 153/153, downloader API 144/144. LIVE: phase2
+12/12, phase3 18/18 (real build + 12 real links with the Builder STOPPED),
+the p35 deployed-builder chain against the REAL standalone local Builder
+harness 63/63 (security 20, e2e 26, independence 7, rollback 8, cleanup
+2), CS-1 5/5, CS-2 PASS, CS-3 PASS, and the NEW Data-API live registry
+verification 11/11 (Vidara/Abyss/Mavero sources verified; artifacts table
+honestly 0 after cleanup). Secret scans clean (tracked tree + diff).
+
+Deferred (owner actions, unchanged in nature from Phase 3.5): the Render
+go-live (billing) + the production Netlify env vars + the PAT-dependent
+Management-API ledger check + a post-go-live p35 re-run against the Render
+URL. The plan is now FULLY implemented (Phases 1–5). See
+CLOUDSTREAM_MAVERO_WORKLOG.md Session 13 for the complete record.

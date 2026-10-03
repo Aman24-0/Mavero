@@ -501,13 +501,41 @@ async function defaultLoadCatalog(client: CloudStreamClient): Promise<CloudStrea
     (row) => row.adapter_state === 'generated' && row.generated_adapter_version !== null,
   );
   if (activeGenerated.length > 0) {
-    const keys = [...new Set(activeGenerated.map((row) => canonicalAdapterKeyForRow(row)))];
-    const { data: artifactData, error: artifactError } = await client
-      .from('cloudstream_adapter_artifacts')
-      .select('canonical_key, integration_type, provider_id, adapter_version, strategy, artifact, artifact_hash')
-      .in('canonical_key', keys);
-    if (artifactError) throw artifactError;
-    generatedArtifacts = (artifactData ?? []) as unknown as GeneratedAdapterArtifactRow[];
+    // Phase 5 (Session 13) FIX — ACTIVE-version binding: select ONLY each
+    // canonical key's ACTIVE artifact version (the row's
+    // generated_adapter_version pointer; rollback = pointer re-version,
+    // plan §12/§13). The previous shape fetched EVERY version of a key
+    // unordered and let buildGeneratedAdapterMap's first-wins binding pick
+    // arbitrarily — after a rollback (pointer moved to an older version) or
+    // a fresh rebuild (pointer moved to a newer version) Downloader 2 could
+    // resolve a NON-active version, nondeterministically, diverging from
+    // the admin Test Provider path (test-service filters by the pointer).
+    // The active version per canonical key follows the selection's own
+    // first-ELIGIBLE-row-wins discipline (repo enabled + row enabled,
+    // repository creation order → internal_name), so the map and the
+    // selection agree on which row's pointer is authoritative.
+    const repoOrder = new Map(repositories.map((repo, index) => [repo.id, index]));
+    const repoEnabled = new Set(repositories.filter((repo) => repo.enabled).map((repo) => repo.id));
+    const activeVersionByKey = new Map<string, number>();
+    for (const row of [...activeGenerated].sort((a, b) =>
+      (repoOrder.get(a.repository_id) ?? 0) - (repoOrder.get(b.repository_id) ?? 0)
+      || a.internal_name.localeCompare(b.internal_name))) {
+      if (!repoEnabled.has(row.repository_id) || !row.enabled) continue;
+      const key = canonicalAdapterKeyForRow(row);
+      if (!activeVersionByKey.has(key)) activeVersionByKey.set(key, row.generated_adapter_version!);
+    }
+    const keys = [...activeVersionByKey.keys()];
+    if (keys.length > 0) {
+      const { data: artifactData, error: artifactError } = await client
+        .from('cloudstream_adapter_artifacts')
+        .select('canonical_key, integration_type, provider_id, adapter_version, strategy, artifact, artifact_hash')
+        .in('canonical_key', keys);
+      if (artifactError) throw artifactError;
+      const rows = (artifactData ?? []) as unknown as GeneratedAdapterArtifactRow[];
+      generatedArtifacts = rows.filter(
+        (row) => activeVersionByKey.get(row.canonical_key) === row.adapter_version,
+      );
+    }
   }
 
   return { repositories, extensions, generatedArtifacts };

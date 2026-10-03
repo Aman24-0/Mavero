@@ -40,7 +40,9 @@ assert.match(shell, /@keyframes fab-unfold/, 'unfold animation exists');
 // ============================================================
 
 assert.match(shell, /10_000/, '10s auto-hide timer');
-assert.match(shell, /menuOpen.*sourceMenuOpen.*episodeMenuOpen.*streamsSheetOpen/, 'auto-hide checks all open states');
+// The retired streams sheet (0111d7f) no longer contributes a state; the
+// auto-hide guard still checks every live open state (menu + both sheets).
+assert.match(shell, /!menuOpen && !sourceMenuOpen && !episodeMenuOpen/, 'auto-hide checks all open states');
 
 // ============================================================
 // 6. Source sheet: bottom on compact, right drawer on wide (media query)
@@ -48,7 +50,7 @@ assert.match(shell, /menuOpen.*sourceMenuOpen.*episodeMenuOpen.*streamsSheetOpen
 
 assert.match(shell, /\.source-sheet.*bottom: 0/, 'source sheet defaults to bottom');
 assert.match(shell, /@media \(min-width: 769px\)/, 'wide viewport breakpoint at 769px');
-assert.match(shell, /\.source-sheet.*right: 0.*top: 0.*bottom: 0|\.source-sheet, \.episode-sheet, \.mavero-streams-sheet \{[^}]*top: 0; right: 0; bottom: 0/, 'wide viewport: source sheet becomes right drawer');
+assert.match(shell, /\.source-sheet, \.episode-sheet \{[^}]*top: 0; right: 0; bottom: 0/, 'wide viewport: source sheet becomes right drawer');
 
 // ============================================================
 // 7. No persistent header/footer

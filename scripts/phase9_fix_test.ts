@@ -15,9 +15,11 @@ const resolverService = readFileSync(new URL('../src/lib/server/resolver/service
 // replaceProgressSource must call getSourceRuntimes and pass to new writer.
 assert.match(watchRoute, /const sourceRuntimes = writer\.getSourceRuntimes\(\)/, 'replaceProgressSource captures sourceRuntimes from old writer');
 // Current contract adds initialDuration alongside initialCurrentTime (duration
-// resume hardening); the Phase 9 intent — runtimes + known position carried
-// into the replacement writer — is unchanged.
-assert.match(watchRoute, /writer = createProgressWriter\(\{ \.\.\.playbackContext, selectedSourceId, sourceRuntimes, snapshot, initialCurrentTime: knownCurrentTime, initialDuration: knownDuration \}\)/, 'new writer receives sourceRuntimes + initialCurrentTime');
+// resume hardening) and initialPositionUpdatedAt (cross-device conflict
+// resolution, 1996029 — the position timestamp that arbitrates stale
+// cross-device records); the Phase 9 intent — runtimes + known position
+// carried into the replacement writer — is unchanged.
+assert.match(watchRoute, /writer = createProgressWriter\(\{ \.\.\.playbackContext, selectedSourceId, sourceRuntimes, snapshot, initialCurrentTime: knownCurrentTime, initialDuration: knownDuration, initialPositionUpdatedAt: currentPositionUpdatedAt \}\)/, 'new writer receives sourceRuntimes + initialCurrentTime');
 
 // setupProgressContext must load progress BEFORE creating writer (BLOCKER 2).
 assert.match(watchRoute, /getResumeProgress\(playbackContext\)[\s\S]*?writer = createProgressWriter/, 'getResumeProgress called BEFORE createProgressWriter');
@@ -200,8 +202,10 @@ assert.doesNotMatch(shell, /landscape-controls-toggle/, 'Test 19: no landscape-c
 // Test 20 (merged into 18).
 
 // Test 21: Source drawer right-anchored on wide viewports (landscape/desktop/
-// TV) — viewport media query, not a landscapeMode class selector.
-assert.match(shell, /@media \(min-width: 769px\) \{[\s\S]*?\.source-sheet, \.episode-sheet, \.mavero-streams-sheet \{ top: 0; right: 0; bottom: 0; left: auto;/, 'Test 21: source drawer right-anchored on wide viewports');
+// TV) — viewport media query, not a landscapeMode class selector. (The
+// mavero-streams-sheet selector was retired with the obsolete player branch,
+// 0111d7f; the two live sheets keep the right-drawer anchoring.)
+assert.match(shell, /@media \(min-width: 769px\) \{[\s\S]*?\.source-sheet, \.episode-sheet \{ top: 0; right: 0; bottom: 0; left: auto;/, 'Test 21: source drawer right-anchored on wide viewports');
 
 // Test 22: Source drawer uses translateX.
 assert.match(shell, /@keyframes slide-right \{ from \{ transform: translateX\(100\%\)/, 'Test 22: slide-right uses translateX');

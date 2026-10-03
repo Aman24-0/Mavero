@@ -28,8 +28,15 @@ const discoverPage = readFileSync(new URL('../src/lib/components/DiscoverPage.sv
 assert.match(watchRoute, /\$: if \(browser && progressReady && !selectedSourceId && sourceOptions\.length\)/, 'source selection gated on progressReady');
 assert.doesNotMatch(watchRoute, /\$: if \(!selectedSourceId && sourceOptions\.length\)/, 'old ungated source selection removed');
 
-// Priority: saved → default → fallback
-assert.match(watchRoute, /savedValid \? savedSourceId! : \(defaultValid \? defaultSourceId! : sourceOptions\[0\]\.id\)/, 'priority: saved → default → fallback');
+// Priority: default → saved → fallback. This was deliberately INVERTED from
+// the original saved → default → fallback by the cross-device progress
+// conflict fix (1996029 — "fix: cross-device progress conflict resolution with
+// positionUpdatedAt"): a stale local savedSourceId (e.g. SLast from an old
+// session on Device B) must NOT override the admin-configured default; the
+// saved source remains the fallback when no default is configured. The
+// three-tier validation + fallback chain itself (the Phase 9 intent) is
+// unchanged.
+assert.match(watchRoute, /defaultValid \? defaultSourceId! : \(savedValid \? savedSourceId! : sourceOptions\[0\]\.id\)/, 'priority: default → saved → fallback (admin default authoritative, 1996029)');
 
 // prepareSource also gated on progressReady
 assert.match(watchRoute, /\$: if \(browser && progressReady && selectedSourceId && resolutionState === 'idle'\) void prepareSource\(\)/, 'prepareSource gated on progressReady');

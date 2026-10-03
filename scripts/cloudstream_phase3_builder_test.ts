@@ -17,7 +17,7 @@ import {
 import { artifactIntegrityHash, verifyArtifactIntegrity } from '$lib/server/extensions/builder/artifact-hash';
 import { resolveMovieWithSpec, resolveEpisodeWithSpec, searchUrlFromTemplate } from '$lib/server/extensions/builder/dsl-interpreter';
 import { createCloudStreamRuntimeContext } from '$lib/server/cloudstream/runtime/context';
-import { staticScanModuleSource, validateSandboxOutput } from '../adapter-builder/sandbox';
+import { staticScanModuleSource, validateSandboxOutput, createModuleSandbox, runGetStreams } from '../adapter-builder/sandbox';
 import { executeBuild, createBuilderServer, BuildFailure } from '../adapter-builder/server';
 import { readBuilderConfig, BUILDER_VERSION, type BuilderConfig } from '../adapter-builder/config';
 import { matchCloudStreamFamily, buildFamilySpec, listCloudStreamFamilyKeys } from '../adapter-builder/cloudstream-families';
@@ -564,6 +564,67 @@ console.log('§C sandbox');
   const bounded = validateSandboxOutput(Array.from({ length: 100 }, (_, i) => ({ url: `https://example.com/${i}` })));
   ok(bounded.length === 64, 'C7 output bounded to 64 entries');
   ok(validateSandboxOutput([{ url: `https://example.com/${'x'.repeat(3000)}` }]).length === 0, 'C8 oversized URL rejected');
+
+  // C9-C11 — Phase 5 streaming body-cap hardening: the sandbox's guarded
+  // fetch must NEVER buffer an unbounded response body (the pre-Phase-5
+  // readBodyCapped awaited arrayBuffer() BEFORE checking the cap — a hostile
+  // provider could OOM the Builder worker inside the fetch timeout). The
+  // body is streamed, truncated at the cap, and the underlying stream is
+  // CANCELLED at the overflow point (never fully drained).
+  {
+    const CHUNK = 64 * 1024; // 64 KiB per enqueue
+    const CAP = 2 * 1_048_576; // mirrors responseMaxBytes
+    let enqueued = 0;
+    let cancelled = false;
+    const oversizedBody = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        enqueued += 1;
+        controller.enqueue(new TextEncoder().encode('a'.repeat(CHUNK)));
+        if (enqueued >= 100) controller.close(); // 6.4 MiB total — far over the cap
+      },
+      cancel() { cancelled = true; },
+    });
+    const bigRoute = () => new Response(oversizedBody as unknown as BodyInit, { status: 200, headers: { 'content-type': 'text/plain' } });
+    const capFetcher = (async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url === 'https://big.example/body') return bigRoute();
+      return new Response('not found', { status: 404, headers: { 'content-type': 'text/plain' } });
+    }) as typeof fetch;
+
+    const capRequest: AdapterBuildRequest = {
+      requestId: 'req-cap-check', requestedAt: new Date().toISOString(), integrationType: 'nuvio',
+      provider: { id: 'CapProbe', name: 'CapProbe', version: '1.0.0', language: 'en', repository: { name: 'R', url: 'https://r.example' }, moduleUrl: 'https://modules.example/capprobe.js', pluginUrl: null, mediaTypes: ['movie'] },
+      requestedAdapterVersion: 1,
+      test: { movie: { kind: 'movie', tmdbId: '27205', title: 'Inception', year: 2010 }, episode: null },
+    };
+    const moduleSource = [
+      'var received = 0;',
+      'module.exports = {',
+      '  getStreams: async function (type) {',
+      '    var r = await fetch("https://big.example/body");',
+      '    var t = await r.text();',
+      '    received = t.length;',
+      '    return [{ url: "https://result.example/len-" + received, name: "n" }];',
+      '  }',
+      '};',
+    ].join('\n');
+    const capLimits: BuilderConfig['limits'] = {
+      buildTimeoutMs: 30_000, moduleMaxBytes: 524_288, bodyMaxBytes: 65_536, maxNetworkRequests: 40,
+      responseMaxBytes: CAP, totalMaxBytes: 12 * 1_048_576, replayWindowMs: 900_000, testTimeoutMs: 15_000, sandboxScriptTimeoutMs: 5_000,
+    };
+    const sandbox = await createModuleSandbox(moduleSource, capRequest, capLimits, { fetcher: capFetcher, dnsResolver: publicResolver });
+    try {
+      const output = await runGetStreams(sandbox, ['27205', 'movie', null, null], 30_000);
+      const lenMatch = /len-(\d+)/.exec(output[0]?.url ?? '');
+      const received = lenMatch !== null ? Number(lenMatch[1]) : -1;
+      ok(received >= 0 && received <= CAP, `C9 module received a truncated body (<= ${CAP} bytes) — got ${received}`);
+      ok(cancelled, 'C10 the oversized stream was CANCELLED at the cap (never fully drained)');
+      ok(enqueued < 100, `C11 the producer stopped early (enqueued ${enqueued}/100 chunks — no full buffering)`);
+      ok(sandbox.trace.fetches.length === 1 && sandbox.trace.fetches[0]!.responseBytes >= CAP, 'C12 the fetch record honestly reports the capped byte volume');
+    } finally {
+      sandbox.dispose();
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1043,6 +1104,26 @@ console.log('§H generated registry');
     executableAdapterForExtension({ integration_type: 'nuvio', internal_name: 'MoviesDrive' }, map)?.id === 'nuvio:moviesdrive',
     'H13b the generated nuvio row keeps its distinct canonical identity',
   );
+
+  // H14/H15 — Phase 5 (Session 13): multi-version rows bind DETERMINISTICALLY
+  // (highest adapter_version, order-independent). The pre-fix first-wins
+  // binding depended on the caller's row order, which no DB select
+  // guarantees; the catalog loader now supplies exactly the ACTIVE version
+  // (filtered by the extension row's generated_adapter_version pointer), so
+  // this tie-break is defense-in-depth.
+  {
+    const v1Artifact = JSON.parse(JSON.stringify(artifact)) as typeof artifact;
+    const v2Artifact = JSON.parse(JSON.stringify(artifact)) as typeof artifact;
+    v2Artifact.adapterVersion = 2;
+    const v1Row = { ...row, artifact: v1Artifact, adapter_version: 1, artifact_hash: artifactIntegrityHash(v1Artifact) };
+    const v2Row = { ...row, artifact: v2Artifact, adapter_version: 2, artifact_hash: artifactIntegrityHash(v2Artifact) };
+    clearGeneratedAdapterCache();
+    const ascending = buildGeneratedAdapterMap([v1Row, v2Row]);
+    ok(ascending.get('nuvio:moviesdrive')?.version === 'generated-v2', 'H14 multi-version rows bind the highest version (ascending input)');
+    clearGeneratedAdapterCache();
+    const descending = buildGeneratedAdapterMap([v2Row, v1Row]);
+    ok(descending.get('nuvio:moviesdrive')?.version === 'generated-v2', 'H15 multi-version rows bind the highest version (descending input — order-independent)');
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1337,6 +1418,51 @@ console.log('§K downloader 2 independence');
   // K8 — builder unavailability never affects existing adapter_required rows:
   // they are simply ineligible (no builder call, no state change).
   ok(resolution.consideredExtensions === 1, 'K8 the participation baseline is unaffected');
+
+  // K9/K10 — Phase 5 (Session 13) ACTIVE-version binding through the REAL
+  // defaultLoadCatalog (no injected loadCatalog): the artifact version that
+  // resolves is the extension row's generated_adapter_version POINTER, not
+  // an arbitrary DB-ordered row. Rollback (pointer to the older version,
+  // artifacts stored newest-first) and fresh promotion (pointer to the newer
+  // version, artifacts stored oldest-first) are both respected. The v2
+  // artifact carries a distinct sourceName so the resolved links prove
+  // WHICH version served.
+  {
+    const mkVersion = (version: number, sourceName: string) => {
+      const copy = JSON.parse(JSON.stringify(artifact)) as typeof artifact;
+      copy.adapterVersion = version;
+      copy.spec.output.sourceName = sourceName;
+      return {
+        id: `a-v${version}`,
+        canonical_key: copy.adapterId, integration_type: copy.integrationType, provider_id: copy.providerId,
+        adapter_version: version, strategy: copy.strategy, artifact: copy, artifact_hash: artifactIntegrityHash(copy),
+        source_revision: '', builder_version: copy.builderVersion, test_report: null, created_at: '2026-01-01',
+      };
+    };
+    const v1 = mkVersion(1, 'MoviesDriveSourceV1');
+    const v2 = mkVersion(2, 'MoviesDriveSourceV2');
+    const runLoaderResolution = async (pointer: number, stored: Row[]) => {
+      const { client: pClient, tables: pTables } = createFakeClient();
+      pTables['cloudstream_repositories'].push({ id: 'repo-1', name: 'Nuvio', url: 'https://nuvio.example', enabled: true, status: 'active', created_at: '2026-01-01', integration_type: 'nuvio' });
+      pTables['cloudstream_extensions'].push(extensionRow({ adapter_state: 'generated', generated_adapter_version: pointer, enabled: true }));
+      for (const row of stored) pTables['cloudstream_adapter_artifacts'].push({ ...row });
+      clearGeneratedAdapterCache();
+      const result = await resolveCloudStreamDownloads(pClient, { mediaType: 'movie', contentId: 'mv-1' }, {}, {
+        loadContent: async () => ({ mediaType: 'movie', tmdbId: '27205', title: 'Inception', year: 2010 }),
+        fetcher: neverBuilderFetcher,
+        dnsResolver: publicResolver,
+      });
+      return result;
+    };
+    // K9 — ROLLBACK respected: pointer at v1 while the DB stores v2 FIRST.
+    const rolledBack = await runLoaderResolution(1, [v2, v1]);
+    ok(rolledBack.groups.length === 1 && rolledBack.groups[0]!.status === 'loaded', 'K9 rollback: the rolled-back pointer version resolves');
+    ok(rolledBack.groups[0]!.links.every((link) => link.sourceName.startsWith('MoviesDriveSourceV1')), 'K9b the ACTIVE (rolled-back) version serves — not the newest stored artifact');
+    // K10 — fresh promotion respected: pointer at v2 while the DB stores v1 FIRST.
+    const promoted = await runLoaderResolution(2, [v1, v2]);
+    ok(promoted.groups.length === 1 && promoted.groups[0]!.status === 'loaded', 'K10 promotion: the newest pointer version resolves');
+    ok(promoted.groups[0]!.links.every((link) => link.sourceName.startsWith('MoviesDriveSourceV2')), 'K10b the ACTIVE (promoted) version serves — not the oldest stored artifact');
+  }
 }
 
 // ---------------------------------------------------------------------------

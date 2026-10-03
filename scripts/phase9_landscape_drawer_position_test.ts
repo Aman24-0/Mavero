@@ -41,8 +41,8 @@ assert.match(shell, /\.player-shell \{[^}]*position: relative/, 'player-shell is
 // 2. Sheets are player-local absolute surfaces (NEVER viewport-fixed)
 // ============================================================
 
-const baseSheetsMatch = shell.match(/\.source-sheet, \.episode-sheet, \.mavero-streams-sheet \{([^}]+)\}/);
-assert.ok(baseSheetsMatch, 'base sheets rule exists');
+const baseSheetsMatch = shell.match(/\.source-sheet, \.episode-sheet \{([^}]+)\}/);
+assert.ok(baseSheetsMatch, 'base sheets rule exists (the mavero-streams-sheet selector was retired with the obsolete player branch, 0111d7f)');
 const baseSheetsBody = baseSheetsMatch[1];
 
 assert.match(baseSheetsBody, /position: absolute/, 'sheets are absolute (player-local)');
@@ -62,7 +62,7 @@ assert.match(baseSheetsBody, /animation: sheet-up/, 'base sheets use sheet-up (v
 // 3. Wide viewport (landscape/desktop/TV): right-edge full-height drawer
 // ============================================================
 
-const wideRuleMatch = shell.match(/@media \(min-width: 769px\) \{[\s\S]*?\.source-sheet, \.episode-sheet, \.mavero-streams-sheet \{([^}]+)\}/);
+const wideRuleMatch = shell.match(/@media \(min-width: 769px\) \{[\s\S]*?\.source-sheet, \.episode-sheet \{([^}]+)\}/);
 assert.ok(wideRuleMatch, 'wide-viewport drawer rule exists');
 const wideRuleBody = wideRuleMatch[1];
 
@@ -87,9 +87,9 @@ for (const prop of ['top', 'bottom', 'left', 'height', 'max-height', 'animation'
   assert.match(wideRuleBody, new RegExp(`${prop}:`), `wide rule overrides ${prop} (no base-rule leak)`);
 }
 
-// Episode and streams drawers share the same contract with their own widths.
+// Episode drawer shares the same contract with its own width. (The streams
+// drawer width contract was retired with the streams sheet, 0111d7f.)
 assert.match(shell, /\.episode-sheet \{ width: min\(380px, 34vw\); \}/, 'episode drawer width contract');
-assert.match(shell, /\.mavero-streams-sheet \{ width: min\(420px, 38vw\); \}/, 'streams drawer width contract');
 
 // ============================================================
 // 4. Backdrop is player-local
@@ -131,8 +131,8 @@ assert.doesNotMatch(shell, /translate\(-50%, -50%\)/, 'no centered popover trans
 // 7. Drawer list is scrollable and respects the safe area (wide context)
 // ============================================================
 
-assert.match(shell, /@media \(min-width: 769px\) \{[\s\S]*?\.source-sheet \.sheet-list, \.episode-sheet \.sheet-list, \.mavero-streams-sheet \.sheet-list \{[^}]*overflow-y: auto/, 'wide drawer has its own scrollable list (overflow-y: auto)');
-assert.match(shell, /@media \(min-width: 769px\) \{[\s\S]*?\.source-sheet \.sheet-list, \.episode-sheet \.sheet-list, \.mavero-streams-sheet \.sheet-list \{[^}]*padding-bottom: max\(14px, env\(safe-area-inset-bottom\)\)/, 'wide drawer list respects safe-area-inset-bottom');
+assert.match(shell, /@media \(min-width: 769px\) \{[\s\S]*?\.source-sheet \.sheet-list, \.episode-sheet \.sheet-list \{[^}]*overflow-y: auto/, 'wide drawer has its own scrollable list (overflow-y: auto)');
+assert.match(shell, /@media \(min-width: 769px\) \{[\s\S]*?\.source-sheet \.sheet-list, \.episode-sheet \.sheet-list \{[^}]*padding-bottom: max\(14px, env\(safe-area-inset-bottom\)\)/, 'wide drawer list respects safe-area-inset-bottom');
 
 // ============================================================
 // 8. Touch targets remain >=44px
@@ -163,7 +163,7 @@ assert.match(shell, /aria-label=\{landscapeMode \? 'Exit landscape player' : 'To
 
 assert.match(
   shell,
-  /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.source-sheet, \.episode-sheet, \.mavero-streams-sheet \{ animation: none; \}/,
+  /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.source-sheet, \.episode-sheet \{ animation: none; \}/,
   'reduced motion disables sheet entry animations (both sheet-up and slide-right)'
 );
 
