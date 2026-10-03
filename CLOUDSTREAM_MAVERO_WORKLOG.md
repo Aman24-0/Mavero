@@ -5267,7 +5267,7 @@ Files changed (this session):
 - CLOUDSTREAM_MAVERO_WORKLOG.md (this session) +
   CLOUDSTREAM_MAVERO_PERMANENT_ADAPTER_PLAN.md (Phase 3.5 record)
 
-Commit: <SHA filled at commit time> — pushed to origin/main.
+Commit: `3d995e2` — "deploy: production adapter builder verification + honest-502 hardening (Phase 3.5)" (pushed to origin/main; the follow-up worklog-SHA commit records the session tip).
 
 Honest limitations (this session):
 - The Render service itself was NOT created: new web-service creation on
