@@ -20,6 +20,7 @@ import type {
   ProviderProcessingStatus,
   AssetLifecycleState,
 } from '../types';
+import { HostingProviderError } from '../errors';
 import type {
   VidaraAccountResponse,
   VidaraFile,
@@ -164,13 +165,37 @@ export function normalizeVidaraFileList(res: VidaraFileListResponse): ProviderAs
   // VERIFIED (live API): /v1/video/list returns { result: { videos: [...] } }
   // The previous implementation looked for result.files — but the actual
   // field is result.videos. We check both for backward compatibility.
+  //
+  // INVENTORY HARDENING (Abyss zero-inventory false-success fix): a JSON
+  // response that has NONE of the recognized keys (result/videos/files)
+  // throws a typed VALIDATION error instead of silently normalizing to
+  // an empty list — "provider response could not be understood" must
+  // never masquerade as "provider has zero files". Behavior for every
+  // previously-recognized shape (including empty arrays and result:null)
+  // is unchanged.
   const result = res.result;
-  const files = (typeof result === 'object' && result !== null && !Array.isArray(result)
-    ? (result.videos ?? result.files)
-    : undefined) ?? res.videos ?? res.files ?? [];
+  const hasResultKey = res && typeof res === 'object' && !Array.isArray(res) && 'result' in res;
+  const candidates = [
+    (typeof result === 'object' && result !== null && !Array.isArray(result)
+      ? (result.videos ?? result.files)
+      : undefined),
+    res.videos,
+    res.files,
+  ];
+  const defined = candidates.find((c) => c !== undefined);
+  if (defined === undefined && !hasResultKey) {
+    const keys = (res && typeof res === 'object' && !Array.isArray(res))
+      ? Object.keys(res).join(', ') || '(empty object)'
+      : String(res);
+    throw new HostingProviderError('VALIDATION', {
+      message: `Vidara video list response has no recognized file list (expected "result.videos"; saw top-level keys: ${keys}). Inventory discovery failed — refusing to report a false zero-file success.`,
+    });
+  }
+  const files = defined ?? [];
   if (!Array.isArray(files)) return [];
   return files.map(normalizeVidaraFile);
 }
+
 
 export function normalizeVidaraFileInfo(res: VidaraFileInfoResponse): ProviderAssetInfo {
   // Vidara returns either a single file object or an array (single-element).

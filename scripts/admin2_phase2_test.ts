@@ -209,8 +209,11 @@ assert.match(opsService, /unconfiguredProviders = await Promise\.all\(\s*HOSTING
 ok('E4. Operations getBadgeCounts: 3 sequential counts + adapter lookups → parallel Promise.all');
 
 // Hosting service: asset counts + last-sync parallelized
-assert.match(hostingControlService, /const \[assetRes, syncRes\] = await Promise\.all\(/, 'HostingControl.listProviders: asset + sync queries parallelized');
-ok('E5. HostingControl.listProviders: 2 sequential media_assets queries → parallel Promise.all');
+// SANCTIONED EVOLUTION (Abyss direct-upload discovery): the parallel batch
+// gained a third query — the latest provider-sync audit rows (the
+// Assets/Ready/Linked inventory snapshot source). Still one Promise.all.
+assert.match(hostingControlService, /const \[assetRes, syncRes, auditRes\] = await Promise\.all\(/, 'HostingControl.listProviders: asset + sync + audit queries parallelized');
+ok('E5. HostingControl.listProviders: 3 media_assets/media_operations queries → parallel Promise.all');
 
 // Upload page: uses canonical provider resolver (Phase C audit fix)
 // Post-deploy fix + Phase C audit: replaced fragile streaming_providers!inner

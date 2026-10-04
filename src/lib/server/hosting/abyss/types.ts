@@ -39,10 +39,33 @@ export type AbyssAboutResponse = {
   [k: string]: unknown;
 };
 
-/** A single Abyss file/resource. */
+/**
+ * A single Abyss resource row.
+ *
+ * VERIFIED CONTRACT (official dash.abyss.to SPA bundle, API-docs
+ * playground, 2026-10-04): GET /v1/resources returns `items` where each
+ * row is a MIX of files and folders — `isDir` distinguishes them:
+ *
+ *   { isDir: false, id: "ltJEfKQxR", name: "BigBuckBunny.mp4",
+ *     size: 81347747, status: "ready",
+ *     resolutions: ["SD","HD","FullHD","2K","4K"],
+ *     createdAt: "2018-01-01T00:00:00.000Z",
+ *     updatedAt: "2018-01-01T00:00:00.000Z" }
+ *
+ * There is NO `slug` field on resource rows — the identifier is `id`
+ * (the same value the upload endpoint returns under the legacy key
+ * `slug`, and the same value the player URL uses:
+ * https://player.abyssplayer.com/<id>). `resolutions` is the real
+ * quality-variant field (["SD","HD","FullHD","2K","4K"]).
+ *
+ * Observed file status vocabulary (dashboard badge styling):
+ *   waiting, in-processing (in progress) · ready, public (playable) ·
+ *   error, banned (failed). Folders use status "active".
+ */
 export type AbyssFile = {
   id?: string | number;
   slug?: string;
+  isDir?: boolean;
   name?: string;
   filename?: string;
   title?: string;
@@ -52,6 +75,7 @@ export type AbyssFile = {
   state?: string;
   quality?: string;
   qualities?: string[];
+  resolutions?: string[];
   audio_lang?: string;
   audio_language?: string;
   has_subtitles?: boolean;
@@ -63,7 +87,9 @@ export type AbyssFile = {
   folder_id?: string | number;
   folder_name?: string;
   created_at?: string;
+  createdAt?: string;
   updated_at?: string;
+  updatedAt?: string;
   processed?: boolean;
   is_converted?: boolean;
   [k: string]: unknown;
@@ -71,6 +97,16 @@ export type AbyssFile = {
 
 /** Abyss file list response. */
 export type AbyssFileListResponse = {
+  /** VERIFIED: the real list lives under `items` (mixed files+folders). */
+  items?: AbyssFile[];
+  /** Token for the next page (absent on the last page). */
+  pageToken?: string | null;
+  /** Current folder display name. */
+  name?: string | null;
+  breadcrumbs?: unknown[];
+  /** Custom embed domain for the account (null/'' = default player domain). */
+  domainEmbed?: string | null;
+  /** Legacy/tolerated shapes — kept for backward compatibility. */
   data?: AbyssFile[];
   files?: AbyssFile[];
   result?: AbyssFile[];
@@ -88,15 +124,28 @@ export type AbyssFolder = {
   id?: string | number;
   name?: string;
   slug?: string;
+  isDir?: boolean;
   parent_id?: string | number | null;
   parent?: string | number | null;
   files_count?: number;
   folders_count?: number;
+  createdAt?: string;
+  updatedAt?: string;
   [k: string]: unknown;
 };
 
-/** Abyss folder list response. */
+/**
+ * Abyss folder list response.
+ *
+ * VERIFIED CONTRACT (dashboard bundle): GET /v1/folders/list returns
+ * { name, breadcrumbs, items: [folders], pageToken } — items are
+ * folders (isDir true in the resources listing; the folders endpoint
+ * returns them without isDir).
+ */
 export type AbyssFolderListResponse = {
+  items?: AbyssFolder[];
+  pageToken?: string | null;
+  name?: string | null;
   data?: AbyssFolder[];
   folders?: AbyssFolder[];
   result?: AbyssFolder[];

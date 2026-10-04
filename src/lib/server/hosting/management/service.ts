@@ -617,9 +617,19 @@ export class ManagementService {
     playbackUrl: string | null;
   }[]> {
     const adapter = getHostingAdapter(adapterId);
-    if (!adapter) return [];
+    if (!adapter) {
+      // HONEST ERROR (Abyss zero-inventory hardening): an unconfigured
+      // adapter previously returned [] — indistinguishable from "the
+      // provider has no files". The Link Existing File pickers then
+      // showed "No untracked provider files" while the real reason was
+      // missing credentials. Surface the configuration failure instead.
+      throw new HostingProviderError('UNSUPPORTED', {
+        message: `The ${adapterId} hosting adapter is not configured (missing server-side credentials). Cannot list provider files.`,
+      });
+    }
 
-    // List all provider files.
+    // List all provider files (adapter listAssets throws a typed error on
+    // an unrecognized provider response — never a silent empty list).
     const allFiles = await adapter.listAssets(null);
 
     // Find which provider_asset_ids are already linked.
@@ -635,7 +645,13 @@ export class ManagementService {
       .maybeSingle();
 
     const providerSourceId = sourceRow?.id;
-    if (!providerSourceId) return [];
+    if (!providerSourceId) {
+      // HONEST ERROR: a missing provider/source row is a setup problem,
+      // not "zero files".
+      throw new HostingProviderError('NOT_FOUND', {
+        message: `No streaming source row is registered for the ${adapterId} provider. Run the provider registration migration.`,
+      });
+    }
 
     const { data: linkedAssets } = await this.client
       .from('media_assets')

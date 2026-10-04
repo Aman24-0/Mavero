@@ -85,6 +85,7 @@ import {
   normalizeAbyssProcessingStatus,
   normalizeAbyssFile,
   normalizeAbyssFolder,
+  abyssNextPageToken,
 } from './normalize';
 
 // ---------------------------------------------------------------------------
@@ -255,7 +256,11 @@ export class AbyssAdapter implements HostingProviderAdapter {
       throw new HostingProviderError('AUTHENTICATION', { message: 'Abyss login did not return a JWT token. Check server-side credentials.' });
     }
 
-    const expiresInMs = (loginData.expires_in ? loginData.expires_in * 1000 : TOKEN_TTL_MS);
+    // VERIFIED CONTRACT: POST /auth/login → { token: "jwt-token-here",
+    // expiresIn: 3600 } (camelCase). `expires_in` is kept as a tolerated
+    // legacy spelling.
+    const expiresInSeconds = loginData.expires_in ?? (loginData as { expiresIn?: number }).expiresIn;
+    const expiresInMs = expiresInSeconds ? expiresInSeconds * 1000 : TOKEN_TTL_MS;
     this.tokenCache = { token, expiresAt: Date.now() + Math.min(expiresInMs, TOKEN_TTL_MS) };
     return token;
   }
@@ -326,12 +331,47 @@ export class AbyssAdapter implements HostingProviderAdapter {
 
   async listAssets(providerFolderId: string | null, _deps?: HostingAdapterDeps): Promise<ProviderAssetInfo[]> {
     return this.withReadRetry(async () => {
-      const params = new URLSearchParams();
-      if (providerFolderId) params.set('folder_id', providerFolderId);
-      const url = `${this.config.baseUrl}/v1/resources${params.size ? `?${params}` : ''}`;
-      const res = await this.authedRequest({ method: 'GET', url });
-      if (!res.json) return [];
-      return normalizeAbyssFileList(res.json as AbyssFileListResponse);
+      // VERIFIED CONTRACT (official dashboard bundle, 2026-10-04):
+      //   GET /v1/resources?type=files&maxResults=100&orderBy=createdAt:desc
+      //   [&folderId=<id>] [&pageToken=<token>]
+      //   → { name, breadcrumbs, domainEmbed, items: [files+folders],
+      //       pageToken: <next|null> }
+      //
+      //   * `type=files` filters the listing to file rows (the API
+      //     otherwise mixes folders into `items`; the normalizer ALSO
+      //     filters isDir rows defensively).
+      //   * `folderId` (camelCase — the previous `folder_id` param was
+      //     silently ignored by the API, scoping every listing to root).
+      //   * `maxResults` is capped at 100 by the API and DEFAULTS TO 25 —
+      //     without pagination the inventory silently truncates at 25
+      //     files. We page with `pageToken` until it is absent.
+      //   * A non-JSON response throws (below) — it can NEVER silently
+      //     report an empty inventory (the zero-file false-success bug).
+      const assets: ProviderAssetInfo[] = [];
+      const MAX_PAGES = 25; // 25 pages × 100 rows = 2500 files — sanity cap against a runaway loop.
+      let pageToken: string | null = null;
+      for (let page = 0; page < MAX_PAGES; page += 1) {
+        const params = new URLSearchParams();
+        params.set('type', 'files');
+        params.set('maxResults', '100');
+        params.set('orderBy', 'createdAt:desc');
+        if (providerFolderId) params.set('folderId', providerFolderId);
+        if (pageToken) params.set('pageToken', pageToken);
+        const res = await this.authedRequest({
+          method: 'GET',
+          url: `${this.config.baseUrl}/v1/resources?${params}`,
+        });
+        if (!res.json) {
+          throw new HostingProviderError('VALIDATION', {
+            message: `Abyss resources response was empty or non-JSON (content-type: ${res.contentType || 'missing'}). Inventory discovery failed — refusing to report a false zero-file success.`,
+          });
+        }
+        const pageAssets = normalizeAbyssFileList(res.json as AbyssFileListResponse);
+        assets.push(...pageAssets);
+        pageToken = abyssNextPageToken(res.json as AbyssFileListResponse);
+        if (!pageToken) break;
+      }
+      return assets;
     });
   }
 
@@ -345,11 +385,13 @@ export class AbyssAdapter implements HostingProviderAdapter {
   }
 
   async moveAsset(providerAssetId: string, targetFolderId: string | null, _deps?: HostingAdapterDeps): Promise<ProviderAssetInfo> {
-    await this.authedRequest({
-      method: 'PATCH',
-      url: `${this.config.baseUrl}/v1/files/${encodeURIComponent(providerAssetId)}/move`,
-      body: { folder_id: targetFolderId },
-    });
+    // VERIFIED CONTRACT: PATCH /v1/files/:id with query param `parentId`
+    // (the folder to move into; omitted → root). The previous body
+    // {folder_id} form was ignored by the API.
+    const params = new URLSearchParams();
+    if (targetFolderId) params.set('parentId', targetFolderId);
+    const url = `${this.config.baseUrl}/v1/files/${encodeURIComponent(providerAssetId)}/move${params.size ? `?${params}` : ''}`;
+    await this.authedRequest({ method: 'PATCH', url });
     return this.getAsset(providerAssetId);
   }
 
@@ -498,18 +540,43 @@ export class AbyssAdapter implements HostingProviderAdapter {
 
   async listFolders(parentFolderId: string | null, _deps?: HostingAdapterDeps): Promise<ProviderFolderInfo[]> {
     return this.withReadRetry(async () => {
-      const params = new URLSearchParams();
-      if (parentFolderId) params.set('parent_id', parentFolderId);
-      const url = `${this.config.baseUrl}/v1/folders${params.size ? `?${params}` : ''}`;
-      const res = await this.authedRequest({ method: 'GET', url });
-      if (!res.json) return [];
-      return normalizeAbyssFolderList(res.json as AbyssFolderListResponse);
+      // VERIFIED CONTRACT: the folder listing endpoint is
+      // GET /v1/folders/list with `folderId` + `maxResults` + `pageToken`
+      // (the previous GET /v1/folders with `parent_id` was not the
+      // documented list endpoint). Pagination follows `pageToken`.
+      const folders: ProviderFolderInfo[] = [];
+      const MAX_PAGES = 25;
+      let pageToken: string | null = null;
+      for (let page = 0; page < MAX_PAGES; page += 1) {
+        const params = new URLSearchParams();
+        params.set('maxResults', '100');
+        if (parentFolderId) params.set('folderId', parentFolderId);
+        if (pageToken) params.set('pageToken', pageToken);
+        const res = await this.authedRequest({
+          method: 'GET',
+          url: `${this.config.baseUrl}/v1/folders/list?${params}`,
+        });
+        if (!res.json) {
+          throw new HostingProviderError('VALIDATION', {
+            message: `Abyss folders response was empty or non-JSON (content-type: ${res.contentType || 'missing'}).`,
+          });
+        }
+        const pageFolders = normalizeAbyssFolderList(res.json as AbyssFolderListResponse);
+        folders.push(...pageFolders);
+        pageToken = abyssNextPageToken(res.json as AbyssFolderListResponse);
+        if (!pageToken) break;
+      }
+      return folders;
     });
   }
 
   async createFolder(params: CreateFolderParams, _deps?: HostingAdapterDeps): Promise<ProviderFolderInfo> {
+    // VERIFIED CONTRACT: POST /v1/folders body { name, parentId }, response
+    // is the FLAT folder object { id, name, createdAt, updatedAt } (the
+    // dashboard docs show no `data` wrapper — a wrapped legacy shape is
+    // tolerated).
     const body: Record<string, unknown> = { name: params.name };
-    if (params.parentFolderId) body.parent_id = params.parentFolderId;
+    if (params.parentFolderId) body.parentId = params.parentFolderId;
 
     const res = await this.authedRequest({
       method: 'POST',
@@ -520,8 +587,10 @@ export class AbyssAdapter implements HostingProviderAdapter {
       throw new HostingProviderError('VALIDATION', { message: 'Abyss folder create response was empty or non-JSON.' });
     }
     const data = res.json as AbyssOperationResponse & { data?: AbyssFolder };
-    const folder = data.data;
-    if (!folder) throw new HostingProviderError('VALIDATION', { message: 'Abyss folder create did not return folder data.' });
+    const folder = (data.data as AbyssFolder | undefined) ?? (res.json as AbyssFolder);
+    if (!folder || (folder.id == null && folder.name == null)) {
+      throw new HostingProviderError('VALIDATION', { message: 'Abyss folder create did not return folder data.' });
+    }
     return normalizeAbyssFolder(folder);
   }
 
@@ -531,24 +600,27 @@ export class AbyssAdapter implements HostingProviderAdapter {
       url: `${this.config.baseUrl}/v1/folders/${encodeURIComponent(providerFolderId)}`,
       body: { name: newName },
     });
-    // Some providers return empty 200 for successful rename — degrade gracefully.
+    // VERIFIED CONTRACT: the response is the FLAT folder object; a wrapped
+    // legacy shape is tolerated; an empty 200 degrades gracefully.
     if (!res.json) return { providerFolderId, name: newName, parentFolderId: null, childCount: null, raw: {} };
     const data = res.json as AbyssOperationResponse & { data?: AbyssFolder };
-    const folder = data.data;
-    if (!folder) return { providerFolderId, name: newName, parentFolderId: null, childCount: null, raw: data as Record<string, unknown> };
+    const folder = (data.data as AbyssFolder | undefined) ?? (res.json as AbyssFolder);
+    if (!folder || (folder.id == null && folder.name == null)) return { providerFolderId, name: newName, parentFolderId: null, childCount: null, raw: data as Record<string, unknown> };
     return normalizeAbyssFolder(folder);
   }
 
   async moveFolder(providerFolderId: string, targetParentFolderId: string | null, _deps?: HostingAdapterDeps): Promise<ProviderFolderInfo> {
-    const res = await this.authedRequest({
-      method: 'PATCH',
-      url: `${this.config.baseUrl}/v1/folders/${encodeURIComponent(providerFolderId)}/move`,
-      body: { parent_id: targetParentFolderId },
-    });
+    // VERIFIED CONTRACT: PATCH /v1/folders/:id with query param `parentId`
+    // (omitted → root). Response is the FLAT folder object (wrapped legacy
+    // tolerated; empty 200 degrades gracefully).
+    const params = new URLSearchParams();
+    if (targetParentFolderId) params.set('parentId', targetParentFolderId);
+    const url = `${this.config.baseUrl}/v1/folders/${encodeURIComponent(providerFolderId)}/move${params.size ? `?${params}` : ''}`;
+    const res = await this.authedRequest({ method: 'PATCH', url });
     if (!res.json) return { providerFolderId, name: '', parentFolderId: targetParentFolderId, childCount: null, raw: {} };
     const data = res.json as AbyssOperationResponse & { data?: AbyssFolder };
-    const folder = data.data;
-    if (!folder) return { providerFolderId, name: '', parentFolderId: targetParentFolderId, childCount: null, raw: data as Record<string, unknown> };
+    const folder = (data.data as AbyssFolder | undefined) ?? (res.json as AbyssFolder);
+    if (!folder || (folder.id == null && folder.name == null)) return { providerFolderId, name: '', parentFolderId: targetParentFolderId, childCount: null, raw: data as Record<string, unknown> };
     return normalizeAbyssFolder(folder);
   }
 

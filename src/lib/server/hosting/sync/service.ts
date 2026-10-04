@@ -110,6 +110,18 @@ export class SyncService {
     const providerAssets = await adapter.listAssets(null);
     const providerAssetIds = new Set(providerAssets.map((a) => a.providerAssetId).filter(Boolean));
 
+    // INVENTORY AGGREGATES (Hosting Control Assets/Ready counts): the
+    // provider-side truth from THIS listing — counts ALL discovered
+    // provider files (linked or not), which the media_assets read model
+    // alone can never express (media_item_id is NOT NULL, so unlinked
+    // provider files have no row). "Valid" = the file exists and is not
+    // in a failed/banned/deleted state; "ready" = playable per the
+    // status mapping. Recorded on the sync audit so Hosting Control can
+    // read the LATEST provider inventory snapshot without a live API
+    // call (see HostingControlService.listProviders).
+    const inventoryValidFiles = providerAssets.filter((a) => a.status !== 'failed' && a.status !== 'deleted').length;
+    const inventoryReadyFiles = providerAssets.filter((a) => a.status === 'ready').length;
+
     const { data: maveroAssets } = await this.client
       .from('media_assets')
       .select('id, provider_asset_id, status, mavero_status')
@@ -210,7 +222,8 @@ export class SyncService {
     // Phase F: record a sync audit event in media_operations.
     // One summary event per provider sync (NOT one per asset) — keeps
     // the audit trail readable + bounded. Stores aggregate counts in
-    // `details` (safe, non-secret metadata).
+    // `details` (safe, non-secret metadata), including the provider
+    // inventory aggregates (valid/ready files) for Hosting Control.
     await this.recordSyncAudit({
       adapterId,
       providerSourceId,
@@ -221,6 +234,8 @@ export class SyncService {
       unlinkedCount: unlinkedFiles.length,
       errorCount: errors.length,
       firstError: errors[0] ?? null,
+      inventoryValidFiles,
+      inventoryReadyFiles,
     });
 
     return { providerAdapterId: adapterId, totalProviderAssets: providerAssets.length, updatedAssets, deletedAssets, unlinkedFiles, errors };
@@ -343,6 +358,9 @@ export class SyncService {
     unlinkedCount: number;
     errorCount: number;
     firstError: { providerAssetId: string; errorCode: string; errorMessage: string } | null;
+    /** Provider inventory aggregates (files that exist + playable subset) from this sync's listing. */
+    inventoryValidFiles?: number;
+    inventoryReadyFiles?: number;
   }): Promise<void> {
     try {
       await this.client.from('media_operations').insert({
@@ -363,6 +381,10 @@ export class SyncService {
           unlinked_count: params.unlinkedCount,
           error_count: params.errorCount,
           first_error: params.firstError,
+          inventory: {
+            valid_files: params.inventoryValidFiles ?? 0,
+            ready_files: params.inventoryReadyFiles ?? 0,
+          },
         } as never,
         error_code: params.firstError?.errorCode ?? null,
         error_message: params.outcome === 'failed' ? (params.firstError?.errorMessage ?? 'Sync failed.') : null,

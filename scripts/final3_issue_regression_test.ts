@@ -51,6 +51,10 @@ class MockBuilder {
   in(column: string, value: any[]) { this.filters.push({ type: 'in', column, value }); return this; }
   not(_op: string, column: string, value: any) { this.filters.push({ type: 'neq', column, value }); return this; }
   is(column: string, value: any) { this.filters.push({ type: 'is', column, value }); return this; }
+  // jsonb containment (subset needed by the provider-inventory audit
+  // read: { sync: true } matches rows whose details object contains that
+  // exact key/value pair).
+  contains(column: string, value: Record<string, any>) { this.filters.push({ type: 'contains', column, value }); return this; }
   order(column: string, opts?: { ascending?: boolean }) { this.orderClause = { column, ascending: opts?.ascending ?? true }; return this; }
   limit(n: number) { this.limitCount = n; return this; }
   range() { return this; }
@@ -66,6 +70,13 @@ class MockBuilder {
         case 'neq': if (v === f.value) return false; break;
         case 'in': if (!Array.isArray(f.value) || !f.value.includes(v)) return false; break;
         case 'is': if (v !== null) return false; break;
+        case 'contains': {
+          if (typeof v !== 'object' || v === null || Array.isArray(v)) return false;
+          for (const [key, expected] of Object.entries(f.value as Row)) {
+            if ((v as Row)[key] !== expected) return false;
+          }
+          break;
+        }
         default: break;
       }
     }
@@ -264,16 +275,24 @@ for (const [state, label] of [
 }
 
 // A11: single shared semantic — the card, the drawer, and (removed) sync
-// page all render assetCounts from the SAME service; count source is
+// page all render counts from the SAME service; count source is
 // control/service.ts (no parallel count model).
-assert.match(adminHostingProviders, /counts\?\.total/, 'card renders assetCounts.total');
-assert.match(adminHostingProviders, /<dt>Total assets<\/dt>/, 'card shows Total assets label');
-assert.match(adminHostingProviders, /counts\?\.ready/, 'card renders assetCounts.ready');
+// SANCTIONED EVOLUTION (Abyss direct-upload discovery): the provider CARD
+// now renders the PROVIDER INVENTORY triple (Assets/Ready/Linked —
+// assets+ready from the latest successful sync audit, linked live from
+// media_assets) instead of the linked-assets-only Total/Ready pair; the
+// drawer keeps the full assetCounts diagnostic breakdown. The canonical
+// dual-gate predicate pins below are unchanged.
+assert.match(adminHostingProviders, /p\.inventory\?\.assets/, 'card renders inventory.assets (provider files incl. unlinked)');
+assert.match(adminHostingProviders, /<dt>Assets<\/dt>/, 'card shows Assets label (provider inventory)');
+assert.match(adminHostingProviders, /p\.inventory\?\.ready/, 'card renders inventory.ready');
+assert.match(adminHostingProviders, /p\.inventory\?\.linked/, 'card renders inventory.linked (live media_assets association)');
+assert.match(adminHostingProviders, /p\.lastSyncOutcome === 'failed'/, 'card surfaces a failed last sync (health ≠ inventory)');
 assert.match(controlService, /row\.status === 'ready' && row\.mavero_status === 'available'/, 'service uses the canonical dual-gate predicate');
 assert.doesNotMatch(controlService, /c\.total \+= 1;[\s\S]{0,120}?if \(row\.status === 'ready'\)/, 'service no longer counts every row (COUNT(*) semantics removed)');
 assert.match(syncApi, /a\.status === 'ready' && a\.mavero_status === 'available'/, 'GET sync summary uses the same canonical predicate');
 assert.match(hostingTypes, /status='ready' AND mavero_status='available'/, 'type docs pin the semantic');
-ok('A11. provider card + shared service + sync summary all use the SAME canonical predicate');
+ok('A11. provider card (inventory) + shared service + sync summary all use the SAME canonical predicate');
 
 // A12: the predicate matches the playback resolver's dual gate.
 assert.match(resolverSrc, /\.eq\('status', 'ready'\)/, 'resolver gates on status=ready');
@@ -672,15 +691,19 @@ ok('C18. Vidara encoding response contract (encodings/progress_percentage) norma
 }
 ok('C19. adapter consults /v1/video/status first, /v1/video/info as fallback');
 
-// C20: Abyss adapter untouched — its own status model, no Vidara endpoints.
+// C20: Abyss adapter keeps its OWN status model and never calls Vidara
+// endpoints. (Sanctioned evolution note: the Abyss adapter/normalizer were
+// since re-contracted to the REAL /v1/resources shape for the
+// direct-upload discovery task — this pin now guards the boundary, not
+// byte-identity.)
 {
   const abyssNormalize = read('src/lib/server/hosting/abyss/normalize.ts');
   const abyssAdapter = read('src/lib/server/hosting/abyss/adapter.ts');
   assert.match(abyssNormalize, /export function abyssStatusMapper/, 'C20 abyss mapper intact');
-  assert.doesNotMatch(abyssAdapter, /\/v1\/video\/status/, 'C20 abyss does not call Vidara endpoints');
-  assert.doesNotMatch(abyssNormalize, /progress_percentage/, 'C20 abyss normalize untouched');
+  assert.doesNotMatch(abyssAdapter, /\/v1\/video\//, 'C20 abyss does not call Vidara endpoints');
+  assert.doesNotMatch(abyssNormalize, /progress_percentage/, 'C20 abyss normalize has no Vidara encoding progress');
 }
-ok('C20. Abyss adapter + normalize untouched (no cross-provider contamination)');
+ok('C20. Abyss adapter + normalize keep their own contract (no cross-provider contamination)');
 
 // C21: NO migration added — the audit proved no schema change was required
 // (progress_percent + lifecycle statuses already exist in the foundation).

@@ -5,10 +5,16 @@
    * The Providers tab. Shows a card per hosting provider with:
    *   - Identity (name, adapter, slug, enabled state)
    *   - Health status (live from ProviderHealthService — never faked)
-   *   - Asset counts (total / ready = usable per the canonical
-   *     ready+available predicate; processing / failed / deleted /
-   *     detached are diagnostic breakdowns)
-   *   - Last sync timestamp
+   *   - PROVIDER INVENTORY: Assets / Ready / Linked — Assets and Ready
+   *     from the latest successful sync's provider listing (includes
+   *     UNLINKED files, e.g. direct-uploaded dashboard files Abyss
+   *     inventory discovery surfaces); Linked is the live media_assets
+   *     association. "—" = no snapshot yet (honest unknown, never a
+   *     fake zero). A failed last sync shows a red note on the card.
+   *   - Asset counts (drawer: usable per the canonical ready+available
+   *     predicate; processing / failed / deleted / detached are
+   *     diagnostic breakdowns)
+   *   - Last sync timestamp + outcome
    *   - Capabilities (verified — from adapter source, never guessed)
    *   - Quota / resources (where the provider exposes them)
    *
@@ -220,7 +226,6 @@
       {#each providers as p (p.adapterId)}
         {@const h = effectiveHealth(p)}
         {@const configured = h?.configured ?? false}
-        {@const counts = p.assetCounts}
         <li>
           <article class="a2-provider-card" data-adapter={p.adapterId} data-unconfigured={!configured}>
             <header class="a2-provider-card-head">
@@ -250,6 +255,12 @@
               </p>
             {/if}
 
+            {#if p.lastSyncOutcome === 'failed'}
+              <p class="a2-provider-card-error" role="status">
+                <AlertCircle size={11} /> Last sync failed{p.lastSyncError ? ` — ${p.lastSyncError}` : ''}. Inventory may be stale — Sync again.
+              </p>
+            {/if}
+
             <dl class="a2-provider-card-meta">
               <div>
                 <dt>Latency</dt>
@@ -259,13 +270,25 @@
                 <dt>Last sync</dt>
                 <dd>{formatDate(p.lastSyncAt)}</dd>
               </div>
+              <!--
+                PROVIDER INVENTORY (Abyss direct-upload discovery): the
+                Assets/Ready/Linked triple from the latest successful sync's
+                provider listing (assets = valid provider files INCLUDING
+                unlinked; ready = playable subset; linked = live media_assets
+                association). "—" = never synced since the inventory
+                hardening — an honest unknown, never a fake zero.
+              -->
               <div>
-                <dt>Total assets</dt>
-                <dd>{counts?.total ?? '—'}</dd>
+                <dt>Assets</dt>
+                <dd>{p.inventory?.assets ?? '—'}</dd>
               </div>
               <div>
                 <dt>Ready</dt>
-                <dd>{counts?.ready ?? '—'}</dd>
+                <dd>{p.inventory?.ready ?? '—'}</dd>
+              </div>
+              <div>
+                <dt>Linked</dt>
+                <dd>{p.inventory?.linked ?? '—'}</dd>
               </div>
             </dl>
 
@@ -378,7 +401,18 @@
             <h3 class="a2-provider-drawer-section-title"><Clock size={13} /> Sync</h3>
             <dl class="a2-provider-drawer-dl">
               <div><dt>Last sync</dt><dd>{formatDate(selectedProvider.lastSyncAt)}</dd></div>
+              <div><dt>Outcome</dt><dd>{selectedProvider.lastSyncOutcome ?? '—'}</dd></div>
+              <div><dt>Assets</dt><dd>{selectedProvider.inventory?.assets ?? '—'}</dd></div>
+              <div><dt>Ready</dt><dd>{selectedProvider.inventory?.ready ?? '—'}</dd></div>
+              <div><dt>Linked</dt><dd>{selectedProvider.inventory?.linked ?? '—'}</dd></div>
             </dl>
+            {#if selectedProvider.lastSyncOutcome === 'failed'}
+              <p class="a2-provider-drawer-note" role="status">
+                Last sync failed{selectedProvider.lastSyncError ? ` — ${selectedProvider.lastSyncError}` : ''}. Inventory may be stale — run Sync again.
+              </p>
+            {:else if !selectedProvider.inventory}
+              <p class="a2-provider-drawer-note">No provider inventory snapshot yet — run Sync to discover files uploaded outside Mavero.</p>
+            {/if}
           </section>
 
           <section class="a2-provider-drawer-section">

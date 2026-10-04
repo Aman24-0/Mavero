@@ -81,6 +81,40 @@ export type HostingProviderOverview = {
     /** Detached assets: mavero_status='missing' AND status!='deleted' (still linked to a media_item) */
     detached: number;
   } | null;
+  /**
+   * PROVIDER INVENTORY snapshot (Abyss direct-upload discovery): the
+   * provider-side file counts from the LATEST successful/partial sync,
+   * as recorded on the sync audit. This is the only place unlinked
+   * provider files can be counted — media_assets.media_item_id is NOT
+   * NULL, so a provider file with no Mavero link has no row.
+   *
+   *   assets  = provider files that exist and are valid/working
+   *             (not failed/banned/deleted) — includes UNLINKED files
+   *   ready   = subset that is ready/playable per the provider
+   *             integration's status mapping
+   *   linked  = subset associated with Mavero media (LIVE count of
+   *             media_assets rows for this source with a
+   *             provider_asset_id, excluding terminal deleted rows)
+   *
+   * Null when this provider has never completed a post-hardening sync —
+   * the UI shows an honest "—" (unknown), never a fake zero.
+   */
+  inventory: {
+    assets: number;
+    ready: number;
+    linked: number;
+    /** When the snapshot was taken (the sync audit row's created_at). */
+    syncedAt: string;
+  } | null;
+  /**
+   * Outcome of the LATEST sync attempt (any outcome, including failed).
+   * A failed sync must be visible on the card — API health (auth/about)
+   * and inventory discovery are DIFFERENT failure domains; a green
+   * health badge must not mask a broken inventory sync.
+   */
+  lastSyncOutcome: 'success' | 'partial' | 'failed' | null;
+  /** Error message from the latest failed/partial sync (null when none). */
+  lastSyncError: string | null;
   /** Last sync timestamp (max of media_assets.last_synced_at for this source) */
   lastSyncAt: string | null;
 };

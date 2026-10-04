@@ -153,10 +153,10 @@ export class HostingControlService {
     //    parallel (Phase 2 perf). Both queries scan media_assets for the
     //    same sourceIds set and have no dependency on each other.
     const sourceIds = [...sourceByProvider.values()].map((s) => s.id);
-    const [assetRes, syncRes] = await Promise.all([
+    const [assetRes, syncRes, auditRes] = await Promise.all([
       this.client
         .from('media_assets')
-        .select('provider_source_id, status, mavero_status')
+        .select('provider_source_id, provider_asset_id, status, mavero_status')
         .in('provider_source_id', sourceIds),
       sourceIds.length > 0
         ? this.client
@@ -166,6 +166,22 @@ export class HostingControlService {
             .not('last_synced_at', 'is', null)
             .order('last_synced_at', { ascending: false })
         : Promise.resolve({ data: [], error: null }),
+      // PROVIDER INVENTORY SOURCE (Abyss direct-upload discovery): the
+      // LATEST provider-sync audit rows (details.sync=true distinguishes
+      // the per-provider summary events from per-asset reconcile events).
+      // `assets`/`ready` come from the latest SUCCESS/PARTIAL sync (a
+      // failed sync's inventory is unknown, not zero); the latest row of
+      // ANY outcome supplies lastSyncOutcome/lastSyncError so a broken
+      // inventory sync is visible on the provider card even while the
+      // API health check stays green.
+      this.client
+        .from('media_operations')
+        .select('details, created_at')
+        .eq('action', 'sync')
+        .contains('details', { sync: true })
+        .order('created_at', { ascending: false })
+        .limit(40)
+        .then((r) => ({ data: r.data ?? [], error: r.error })),
     ]);
     const assetRows = assetRes.data;
     const assetErr = assetRes.error;
@@ -189,8 +205,15 @@ export class HostingControlService {
     // inventory (queued/processing/failed rows stay visible there); the
     // provider card is the usable-inventory view.
     const countsBySource = new Map<string, { total: number; ready: number; processing: number; failed: number; deleted: number; detached: number }>();
+    // LINKED count per source (provider inventory `linked` field, LIVE):
+    // media_assets rows that associate a REAL provider file with Mavero
+    // media — provider_asset_id present AND not in the terminal deleted
+    // state (a deleted row's remote file no longer exists, so it is not
+    // a link to a working provider file). Detached-but-existing rows
+    // still count as linked (the media association is intact).
+    const linkedBySource = new Map<string, number>();
     if (!assetErr && assetRows) {
-      for (const row of assetRows as Array<{ provider_source_id: string | null; status: string; mavero_status: string }>) {
+      for (const row of assetRows as Array<{ provider_source_id: string | null; provider_asset_id: string | null; status: string; mavero_status: string }>) {
         if (!row.provider_source_id) continue;
         const c = countsBySource.get(row.provider_source_id) ?? { total: 0, ready: 0, processing: 0, failed: 0, deleted: 0, detached: 0 };
         // Usable = ready + available (canonical playback predicate).
@@ -205,6 +228,52 @@ export class HostingControlService {
         // it from playback. The remote file may still exist.
         if (row.mavero_status === 'missing' && row.status !== 'deleted') c.detached += 1;
         countsBySource.set(row.provider_source_id, c);
+        if (row.provider_asset_id && row.status !== 'deleted') {
+          linkedBySource.set(row.provider_source_id, (linkedBySource.get(row.provider_source_id) ?? 0) + 1);
+        }
+      }
+    }
+
+    // 2b. Latest sync-audit maps (provider inventory + last sync outcome).
+    // auditRows are ordered created_at DESC; the first row per adapter is
+    // the LATEST attempt of any outcome (outcome/error), and the first
+    // SUCCESS/PARTIAL row per adapter carries the inventory snapshot.
+    // Pre-hardening audit rows have no details.inventory object — those
+    // are skipped (inventory stays null = honest unknown, not a fake 0).
+    type AuditRow = { details: { adapter?: unknown; outcome?: unknown; inventory?: { valid_files?: unknown; ready_files?: unknown } | null; first_error?: { errorMessage?: string } | null } | null; created_at: string | null; error_message?: string | null };
+    const auditRows = (auditRes.data ?? []) as AuditRow[];
+    const latestAuditByAdapter = new Map<string, AuditRow>();
+    const inventoryAuditByAdapter = new Map<string, AuditRow>();
+    if (!auditRes.error) {
+      for (const row of auditRows) {
+        const adapter = row.details?.adapter;
+        if (typeof adapter !== 'string' || adapter.length === 0) continue;
+        if (!latestAuditByAdapter.has(adapter)) latestAuditByAdapter.set(adapter, row);
+        const outcome = row.details?.outcome;
+        if ((outcome === 'success' || outcome === 'partial') && !inventoryAuditByAdapter.has(adapter)) {
+          inventoryAuditByAdapter.set(adapter, row);
+        }
+      }
+    }
+    const inventoryByAdapter = new Map<string, { assets: number; ready: number; syncedAt: string }>();
+    for (const [adapter, row] of inventoryAuditByAdapter) {
+      const inv = row.details?.inventory;
+      if (!inv || typeof inv !== 'object') continue; // pre-hardening audit — no snapshot
+      const assets = Number(inv.valid_files);
+      const ready = Number(inv.ready_files);
+      if (!Number.isFinite(assets) || !Number.isFinite(ready)) continue;
+      inventoryByAdapter.set(adapter, { assets, ready, syncedAt: row.created_at ?? new Date().toISOString() });
+    }
+    const lastSyncOutcomeByAdapter = new Map<string, 'success' | 'partial' | 'failed'>();
+    const lastSyncErrorByAdapter = new Map<string, string>();
+    for (const [adapter, row] of latestAuditByAdapter) {
+      const outcome = row.details?.outcome;
+      if (outcome === 'success' || outcome === 'partial' || outcome === 'failed') {
+        lastSyncOutcomeByAdapter.set(adapter, outcome);
+      }
+      const message = row.error_message ?? row.details?.first_error?.errorMessage ?? null;
+      if (outcome === 'failed' && typeof message === 'string' && message.length > 0) {
+        lastSyncErrorByAdapter.set(adapter, message);
       }
     }
 
@@ -231,8 +300,22 @@ export class HostingControlService {
       // Skip unknown adapters — only Vidara + Abyss are hosting providers.
       if (!caps) continue;
 
-      const assetCounts = source ? (countsBySource.get(source.id) ?? null) : null;
+      // An existing source with ZERO assets reports honest zeros (not
+      // null — "unavailable" is reserved for query failure / missing
+      // source row).
+      const assetCounts = source
+        ? (countsBySource.get(source.id) ?? { total: 0, ready: 0, processing: 0, failed: 0, deleted: 0, detached: 0 })
+        : null;
       const lastSyncAt = source ? (lastSyncBySource.get(source.id) ?? null) : null;
+      const snapshot = inventoryByAdapter.get(adapterId) ?? null;
+      const inventory = snapshot
+        ? {
+            assets: snapshot.assets,
+            ready: snapshot.ready,
+            linked: source ? (linkedBySource.get(source.id) ?? 0) : 0,
+            syncedAt: snapshot.syncedAt,
+          }
+        : null;
 
       overviews.push({
         adapterId,
@@ -245,6 +328,9 @@ export class HostingControlService {
         capabilities: caps,
         health: null, // filled below
         assetCounts: assetErr ? null : assetCounts,
+        inventory,
+        lastSyncOutcome: lastSyncOutcomeByAdapter.get(adapterId) ?? null,
+        lastSyncError: lastSyncErrorByAdapter.get(adapterId) ?? null,
         lastSyncAt,
       });
     }

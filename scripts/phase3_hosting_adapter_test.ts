@@ -351,6 +351,13 @@ async function testVidaraActiveEncoding(): Promise<void> {
 
 // ===========================================================================
 // 4. Abyss adapter — request construction + response normalization
+//
+// NOTE (2026-10-04): these mocks use the LEGACY tolerated shapes
+// ({data: [...]} with slug/qualities) — they now serve as the
+// backward-compatibility fixtures. The REAL /v1/resources contract
+// ({name, breadcrumbs, domainEmbed, items: [...], pageToken} with
+// id/name/size/status/resolutions + pagination) is covered by
+// scripts/abyss_inventory_link_regression_test.ts (A1-A10).
 // ===========================================================================
 
 async function testAbyssAdapter(): Promise<void> {
