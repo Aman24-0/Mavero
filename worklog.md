@@ -3914,3 +3914,4 @@ Stage Summary:
 - Abyss inventory now follows the REAL API contract and can never silently report zero files; a direct-uploaded Abyss file becomes discoverable (sync) → linkable (Missing Media + Media Library + drawer) → playable (player.abyssplayer.com/<id> embed, allowlisted in the live provider row)
 - Hosting Control shows the task-required Assets/Ready/Linked semantics with honest unknowns and failed-sync visibility; Vidara behavior byte-preserving (only the garbage-shape guard added)
 - Remaining owner actions: run ONE provider sync after deploy to populate the first inventory snapshot; the custom-domainEmbed case (account-configured embed domain) is documented as a limitation (default player domain constructed; allowlist governs serving)
+- FINAL COMMIT: 1ad1401 (implementation, 19 files, +1820/−105) pushed to origin/main; worklog SHA record follows — HEAD = origin/main verified
