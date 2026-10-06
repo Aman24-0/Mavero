@@ -1165,7 +1165,7 @@ cards/logos/links and the streamingProviders pipeline unchanged).
 
 ## Change Log
 
-### 2026-10-06 — Follow-up task complete (all six approved changes)
+### 2026-10-06 — Follow-up task complete (commit `70e04ca`, pushed to origin/main)
 
 -   Explorers live at /movies, /tv-shows, /anime (spotlight + chips +
     sections/filtered feed); old destination/collection UI fully
