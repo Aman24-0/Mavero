@@ -123,24 +123,23 @@
 
 <style>
   .destination-page {
-    /* Mirrors the CollectionPage gutter so rails (full-bleed) and the
-       collection grid share one horizontal rhythm. */
+    /* Full-bleed shell (same model as DiscoverPage): the page container
+       applies NO width constraint and NO padding — each child owns its
+       gutter (hero-content, ContentRail's --d-gutter, the collection
+       section's --c-gutter). One gutter layer, perfectly aligned. */
     --c-gutter: clamp(16px, 5vw, 48px);
-    width: min(1600px, calc(100% - 2 * var(--c-gutter)));
-    margin-inline: auto;
     padding-bottom: 40px;
   }
 
-  /* ── Cinematic hero ── */
+  /* ── Cinematic hero (full-bleed, edge-to-edge at every breakpoint —
+     same treatment as the Discover hero) ── */
   .dest-hero {
     position: relative;
     min-height: clamp(340px, 52vh, 560px);
     display: flex;
     align-items: flex-end;
     overflow: hidden;
-    border-radius: 18px;
     isolation: isolate;
-    margin-top: 20px;
   }
   .hero-media { position: absolute; inset: 0; z-index: -2; }
   .hero-media img {
@@ -162,7 +161,10 @@
   .hero-content {
     display: grid; gap: 10px;
     width: min(640px, 100%);
-    padding: clamp(20px, 4vw, 44px) clamp(18px, 4vw, 48px) clamp(22px, 4vw, 42px);
+    /* Horizontal padding matches the rail/collection gutter exactly
+       (one shared token) so the hero copy, rail headings and grid all
+       align on one left edge. */
+    padding: clamp(20px, 4vw, 44px) var(--c-gutter) clamp(22px, 4vw, 42px);
   }
   .hero-eyebrow {
     display: inline-flex; align-items: center; gap: 7px;
@@ -221,9 +223,12 @@
   .hero-more:hover { border-color: rgba(255, 255, 255, .3); background: rgba(8, 11, 13, .75); }
   .hero-play:focus-visible, .hero-more:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 
-  /* Fallback hero (no featured pick available) — quiet, no fake art. */
+  /* Fallback hero (no featured pick available) — quiet framed block
+     (NOT full-bleed — it is a resting state, not a hero with art). */
   .dest-hero-fallback {
     min-height: auto;
+    margin: 20px var(--c-gutter) 0;
+    border-radius: 16px;
     background:
       radial-gradient(circle at 88% -40%, var(--color-primary-soft), transparent 46%),
       var(--color-bg);
@@ -232,13 +237,14 @@
 
   /* ── Mobile ── */
   @media (max-width: 640px) {
-    .destination-page { width: 100%; margin-inline: 0; padding-inline: var(--c-gutter); }
-    .dest-hero { border-radius: 0; margin-top: 0; min-height: clamp(300px, 46vh, 420px); }
-    .hero-content { padding: 18px 4px 24px; }
+    .dest-hero { min-height: clamp(300px, 46vh, 420px); }
+    .hero-content { padding: 18px var(--c-gutter) 24px; }
     .hero-desc { -webkit-line-clamp: 2; line-clamp: 2; font-size: .78rem; }
     .hero-actions { gap: 8px; }
     .hero-play, .hero-more { flex: 1 1 auto; justify-content: center; padding: 0 14px; }
     .hero-meta { font-size: .7rem; }
+    .dest-hero-fallback { margin: 12px var(--c-gutter) 0; border-radius: 12px; }
+    .dest-hero-fallback .hero-content { padding: 18px 4px 20px; }
   }
 
   @media (prefers-reduced-motion: reduce) {

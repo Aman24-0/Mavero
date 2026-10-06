@@ -142,13 +142,21 @@ assert.match(destinationPage, /<title>\{labels\.plural\} — Mavero<\/title>/, '
 ok('6. one shared label module drives hero, rails copy and collection copy');
 
 // ============================================================
-// 7. MOTION + RESPONSIVE — reduced motion, mobile hero cropping
+// 7. MOTION + RESPONSIVE — reduced motion, mobile hero, gutters
 // ============================================================
 assert.match(destinationPage, /prefers-reduced-motion: reduce[\s\S]*?\.hero-media img \{ animation: none; \}/, 'hero drift disabled under reduced motion');
-assert.match(destinationPage, /@media \(max-width: 640px\)[\s\S]*?\.dest-hero \{[^}]*border-radius: 0/, 'mobile hero goes edge-to-edge (no floating radius)');
+// Phase 5: the hero is FULL-BLEED at every breakpoint (same model as the
+// Discover hero) — no border-radius, no margin, no width constraint on
+// the page container (children own their gutters; ONE gutter layer).
+const heroBase = destinationPage.match(/\.dest-hero \{([\s\S]*?)\}\n/);
+assert.ok(heroBase, 'hero base rule parseable');
+assert.doesNotMatch(heroBase![1], /border-radius|margin/, 'the hero is edge-to-edge at every breakpoint (no floating radius)');
+assert.doesNotMatch(destinationPage.match(/\.destination-page \{([\s\S]*?)\}\n/)![1], /width:|padding-left|padding-right/, 'the page container applies no width constraint or side padding (children own the gutters)');
+assert.match(destinationPage, /padding: clamp\(20px, 4vw, 44px\) var\(--c-gutter\)/, 'hero copy aligns with the shared gutter token');
+assert.match(collection, /\.collection-page\.collection-section \{[\s\S]*?padding-left: var\(--c-gutter\)/, 'the embedded collection uses the same single gutter layer (no double inset)');
 assert.match(destinationPage, /-webkit-line-clamp: 2/, 'mobile hero description clamps to 2 lines');
 assert.match(destinationPage, /min-height: 44px/, 'hero action buttons keep the 44px touch target');
-ok('7. hero honors reduced motion, mobile edge-to-edge cropping, 44px targets');
+ok('7. hero honors reduced motion; single aligned gutter layer; mobile clamps + 44px targets');
 
 // ============================================================
 // 8. DATA SAFETY — no fixture heroes, no schema/API changes

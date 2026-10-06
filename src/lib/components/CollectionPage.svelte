@@ -120,6 +120,16 @@
     width: min(1600px, calc(100% - 2 * var(--c-gutter))); margin-inline: auto;
     padding-bottom: 40px;
   }
+  /* Phase 4/5 — section variant: embedded inside the full-bleed
+     DestinationPage. ONE gutter layer: full width + horizontal padding
+     (aligned exactly with the hero copy and the rail headings — all use
+     the same clamp token). No independent width constraint, so the
+     collection never double-insets inside its parent. */
+  .collection-page.collection-section {
+    width: 100%; margin-inline: 0;
+    padding-left: var(--c-gutter); padding-right: var(--c-gutter);
+    box-sizing: border-box;
+  }
   em { color: #77777f; font-style: normal; }
   .collection-heading { padding: 30px 0 22px; }
   /* Phase 4 section variant — embedded below the destination hero +
