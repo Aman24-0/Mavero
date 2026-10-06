@@ -4,6 +4,7 @@
   import { ArrowLeft, ArrowRight, Layers3 } from 'lucide-svelte';
   import type { ContentType } from '$data/content';
   import { media as fixtureMedia, type MediaItem } from '$data/content';
+  import { DESTINATION_LABELS, DESTINATION_ROUTES } from '$lib/shared/content-labels';
   import FilterBar from '$components/FilterBar.svelte';
   import type { FilterState } from '$components/filter-types';
   import MediaCard from '$components/MediaCard.svelte';
@@ -22,27 +23,21 @@
   export let totalPages: number | undefined = undefined;
   export let collectionFilters: CollectionFilters = {};
   export let errorMessage: string | undefined;
+  // Navigation & Settings Redesign, Phase 4 — 'page' is the standalone
+  // collection experience (owns <svelte:head> + the big cinematic
+  // heading); 'section' embeds the same grid/filters/pagination inside
+  // DestinationPage below the hero + rails (compact heading, no head
+  // chrome — the parent owns the document title).
+  export let variant: 'page' | 'section' = 'page';
   const validSorts = ['For you', 'Top rated', 'Newest'];
   const fallbackGenres = [...new Set(fixtureMedia.filter((item) => item.type === type).flatMap((item) => item.genres))].sort();
   // ============================================================
-  // Navigation & Settings Redesign, Phase 1 — first-class destinations.
-  //
-  // The three former /discover child pages moved to /movies, /tv-shows
-  // and /anime and now render inside the consumer AppShell — so the
-  // "← Discover" back link is GONE (they are top-level destinations,
-  // not Discover children). Destination copy presents "series" as "TV
-  // Shows"; the card classification badges still flow through the
-  // existing formatType/formatBadges pipeline (unchanged).
+  // Phase 4 — labels + routes come from the SHARED module
+  // (src/lib/shared/content-labels.ts) so the destination hero, the
+  // rails and this collection section always agree on copy.
   // ============================================================
-  const COLLECTION_LABELS: Record<ContentType, { plural: string; singular: string; prose: string; description: string }> = {
-    movie: { plural: 'Movies', singular: 'movie', prose: 'movies', description: 'Browse the latest movies, ranked and ready for tonight.' },
-    series: { plural: 'TV Shows', singular: 'TV show', prose: 'TV shows', description: 'Browse the latest TV shows, ranked and ready for tonight.' },
-    anime: { plural: 'Anime', singular: 'anime', prose: 'anime', description: 'Browse the latest anime, ranked and ready for tonight.' }
-  };
-  const COLLECTION_ROUTE: Record<ContentType, string> = { movie: '/movies', series: '/tv-shows', anime: '/anime' };
-  const COLLECTION_ROOTS = ['/movies', '/tv-shows', '/anime'];
-  const isCollectionPath = (pathname: string) => COLLECTION_ROOTS.some((root) => pathname === root || pathname.startsWith(`${root}/`));
-  $: labels = COLLECTION_LABELS[type];
+  const COLLECTION_ROUTE = DESTINATION_ROUTES;
+  $: labels = DESTINATION_LABELS[type];
   $: headingLabel = labels.plural;
   $: filterState = { genre: collectionFilters.genre || 'All', sort: validSorts.includes(collectionFilters.sort || '') ? collectionFilters.sort || 'For you' : 'For you', year: collectionFilters.year || 'All' } satisfies FilterState;
   $: hasActiveFilters = filterState.genre !== 'All' || filterState.year !== 'All' || filterState.sort !== 'For you';
@@ -58,22 +53,41 @@
   // feedback. Cross-route arrivals render SSR content directly, and
   // Back/Forward (popstate) is excluded — restored history content shows
   // instantly from the client-side load cache.
-  $: sameRouteNavigation = Boolean(navigating.from && navigating.to && navigating.type !== 'popstate' && navigating.from.url.pathname === navigating.to.url.pathname && isCollectionPath(navigating.to.url.pathname));
+  $: sameRouteNavigation = Boolean(navigating.from && navigating.to && navigating.type !== 'popstate' && navigating.from.url.pathname === navigating.to.url.pathname && isCollectionRoute(navigating.to.url.pathname));
+  function isCollectionRoute(pathname: string) {
+    return Object.values(DESTINATION_ROUTES).some((root) => pathname === root || pathname.startsWith(`${root}/`));
+  }
   $: skeletonCount = Math.max(4, Math.min(contentItems.length || 12, 20));
   $: hasNextPageSafe = hasNextPage && (totalPages === undefined || currentPage < totalPages);
 </script>
 
-<svelte:head><title>{headingLabel} — Mavero</title><meta name="description" content={`Explore MAVERO's focused collection of ${labels.prose}.`} /><link rel="canonical" href={`${page.url.origin}${page.url.pathname}`} /><meta property="og:title" content={`${headingLabel} — Mavero`} /><meta property="og:description" content={`Explore MAVERO's focused collection of ${labels.prose}.`} /><meta property="og:url" content={`${page.url.origin}${page.url.pathname}`} /><meta name="twitter:card" content="summary" /></svelte:head>
+<svelte:head>
+  {#if variant === 'page'}
+    <title>{headingLabel} — Mavero</title>
+    <meta name="description" content={`Explore MAVERO's focused collection of ${labels.prose}.`} />
+    <link rel="canonical" href={`${page.url.origin}${page.url.pathname}`} />
+    <meta property="og:title" content={`${headingLabel} — Mavero`} />
+    <meta property="og:description" content={`Explore MAVERO's focused collection of ${labels.prose}.`} />
+    <meta property="og:url" content={`${page.url.origin}${page.url.pathname}`} />
+    <meta name="twitter:card" content="summary" />
+  {/if}
+</svelte:head>
 
-<div class="collection-page">
-  <section class="collection-heading">
+<div class="collection-page" class:collection-section={variant === 'section'}>
+  <section class="collection-heading" class:section-heading={variant === 'section'}>
     <div class="eyebrow"><Layers3 size={13} /> Mavero / Explore</div>
     <div class="heading-row">
       <div>
-        <h1>{headingLabel} <em>in focus.</em></h1>
+        {#if variant === 'section'}
+          <h2>{headingLabel} <em>— the full collection.</em></h2>
+        {:else}
+          <h1>{headingLabel} <em>in focus.</em></h1>
+        {/if}
         <p>{labels.description}</p>
       </div>
-      <div class="collection-count"><strong>{contentItems.length}</strong><span>titles on page {currentPage}</span></div>
+      {#if variant === 'page'}
+        <div class="collection-count"><strong>{contentItems.length}</strong><span>titles on page {currentPage}</span></div>
+      {/if}
     </div>
   </section>
   <div class="collection-tools"><FilterBar value={filterState} {genres} onChange={updateFilters} /></div>
@@ -108,6 +122,16 @@
   }
   em { color: #77777f; font-style: normal; }
   .collection-heading { padding: 30px 0 22px; }
+  /* Phase 4 section variant — embedded below the destination hero +
+     rails: tighter rhythm, h2 scale, no count chip (the cinematic
+     content above carries the page identity). */
+  .collection-heading.section-heading { padding: 10px 0 18px; }
+  .collection-heading.section-heading .heading-row { align-items: end; }
+  .collection-heading.section-heading h2 {
+    margin: 8px 0 0; color: #f5f5f5; font-size: clamp(1.4rem, 2.6vw, 2rem);
+    font-weight: 800; line-height: 1.05; letter-spacing: -.02em;
+  }
+  .collection-heading.section-heading p { margin-top: 8px; font-size: .8rem; }
   .heading-row { display: flex; align-items: end; justify-content: space-between; gap: 20px; }
   .collection-heading h1 {
     margin: 10px 0 0; color: #f5f5f5; font-size: clamp(2rem, 4.4vw, 3.4rem);

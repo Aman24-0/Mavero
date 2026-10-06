@@ -105,13 +105,20 @@ for (const [key, server] of Object.entries(legacyServers)) {
 ok('3. legacy routes are permanent query-preserving redirects with zero page implementation');
 
 // ============================================================
-// 4. ROUTES — the new paths use the shared CollectionPage + loader
+// 4. ROUTES — the new paths use the shared DestinationPage (Phase 4)
+//    which embeds the shared CollectionPage as its "full collection"
+//    section
 // ============================================================
-assert.match(routes.movies, /<CollectionPage type="movie"/, '/movies renders the shared CollectionPage');
-assert.match(routes.series, /<CollectionPage type="series"/, '/tv-shows renders the shared CollectionPage');
-assert.match(routes.anime, /<CollectionPage type="anime"/, '/anime renders the shared CollectionPage');
+assert.match(routes.movies, /<DestinationPage\s+type="movie"/, '/movies renders the shared DestinationPage');
+assert.match(routes.series, /<DestinationPage\s+type="series"/, '/tv-shows renders the shared DestinationPage');
+assert.match(routes.anime, /<DestinationPage\s+type="anime"/, '/anime renders the shared DestinationPage');
+const destinationPage = read('../src/lib/components/DestinationPage.svelte');
+assert.match(destinationPage, /variant="section"/, 'DestinationPage embeds CollectionPage in section variant');
+assert.match(destinationPage, /<ContentRail title=\{rail\.title\} items=\{rail\.items\} \/>/, 'rails render through the existing ContentRail component');
+assert.match(destinationPage, /heroItem\.backdrop/, 'the cinematic hero renders the featured item backdrop');
+assert.match(destinationPage, /\/watch\/\$\{heroItem\.type\}\/\$\{heroItem\.id\}/, 'hero Play links to the existing watch route (playback preserved)');
 for (const [key, src] of Object.entries(routes)) assert.match(src, /totalPages=\{data\.totalPages\}/, `${key} route passes totalPages through`);
-ok('4. the three first-class routes reuse one shared CollectionPage shell');
+ok('4. the three first-class routes reuse one shared DestinationPage (hero + rails + embedded collection)');
 
 // ============================================================
 // 5. FILTER — page reset, canonical URLs, server-side safety
@@ -210,10 +217,8 @@ ok('8. empty state: Clear filters works in place; upstream errors stay distinct;
 // ============================================================
 assert.match(collection, /import SkeletonCard from '\$components\/SkeletonCard\.svelte'/, 'loading UX reuses SkeletonCard (no new architecture)');
 assert.match(collection, /sameRouteNavigation = Boolean\(navigating\.from && navigating\.to && navigating\.type !== 'popstate'/, 'skeleton only during same-route forward navigation (Back/Forward stays instant)');
-assert.match(collection, /isCollectionPath\(navigating\.to\.url\.pathname\)/, 'the same-route skeleton is scoped to the collection roots (not /discover/*)');
-const collectionRoots = collection.match(/const COLLECTION_ROOTS = \[([^\]]*)\]/);
-assert.ok(collectionRoots, 'COLLECTION_ROOTS constant present');
-assert.ok(collectionRoots![1].includes("'/movies'") && collectionRoots![1].includes("'/tv-shows'") && collectionRoots![1].includes("'/anime'"), 'COLLECTION_ROOTS lists exactly the three first-class destinations');
+assert.match(collection, /isCollectionRoute\(navigating\.to\.url\.pathname\)/, 'the same-route skeleton is scoped to the collection roots (not /discover/*)');
+assert.match(collection, /Object\.values\(DESTINATION_ROUTES\)\.some/, 'the collection roots derive from the shared DESTINATION_ROUTES constant');
 assert.match(collection, /results-grid results-grid-loading" aria-busy="true"/, 'skeleton grid is announced via aria-busy');
 assert.match(collection, /\{#each Array\(skeletonCount\) as _\}<SkeletonCard compact \/>/, 'skeleton count mirrors the real grid (minimal layout shift)');
 assert.doesNotMatch(collection, /IntersectionObserver|MutationObserver/, 'no custom navigation interception or observers');
@@ -231,14 +236,15 @@ ok('10. scroll: existing SvelteKit snapshot mechanism preserved; no custom scrol
 // ============================================================
 // 11. TERMINOLOGY — TV Shows rename in destination copy only
 // ============================================================
-assert.match(collection, /COLLECTION_LABELS/, 'per-type label map exists');
-const labelsBlock = collection.match(/const COLLECTION_LABELS: Record<ContentType, \{ plural: string; singular: string; prose: string; description: string \}> = \{([\s\S]*?)\};/);
-assert.ok(labelsBlock, 'COLLECTION_LABELS source captured');
-assert.match(labelsBlock![1], /series: \{ plural: 'TV Shows'/, 'series destination is presented as "TV Shows"');
-assert.match(labelsBlock![1], /movie: \{ plural: 'Movies'/, 'movie destination is "Movies"');
-assert.match(labelsBlock![1], /anime: \{ plural: 'Anime'/, 'anime destination stays "Anime" (never "Animes")');
+assert.match(collection + destinationPage, /DESTINATION_LABELS/, 'per-type label map exists (shared module — Phase 4)');
+const labelsModule = read('../src/lib/shared/content-labels.ts');
+const labelsBlock = labelsModule.match(/export const DESTINATION_LABELS: Record<ContentType, \{ plural: string; singular: string; prose: string; description: string \}> = \{([\s\S]*?)\};/);
+assert.ok(labelsBlock, 'DESTINATION_LABELS source captured');
+assert.match(labelsBlock![1], /series: \{\s*plural: 'TV Shows'/, 'series destination is presented as "TV Shows"');
+assert.match(labelsBlock![1], /movie: \{\s*plural: 'Movies'/, 'movie destination is "Movies"');
+assert.match(labelsBlock![1], /anime: \{\s*plural: 'Anime'/, 'anime destination stays "Anime" (never "Animes")');
 assert.match(collection, /\{headingLabel\} <em>in focus\.<\/em>/, 'all three destinations share one consistent heading template');
-assert.match(collection, /const COLLECTION_ROUTE: Record<ContentType, string> = \{ movie: '\/movies', series: '\/tv-shows', anime: '\/anime' \}/, 'empty-state action links target the new canonical routes');
+assert.match(labelsModule, /export const DESTINATION_ROUTES: Record<ContentType, string> = \{\s*movie: '\/movies',\s*series: '\/tv-shows',\s*anime: '\/anime'\s*\}/, 'empty-state action links target the new canonical routes (shared routes map)');
 // The card badge pipeline is untouched — classification still says
 // "Series" on cards (formatType), only destination copy is renamed.
 assert.match(mediaCard, /formatType|formatBadges|isAnime/, 'card classification badges still flow through the existing pipeline');

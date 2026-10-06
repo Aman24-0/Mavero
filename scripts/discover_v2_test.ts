@@ -234,9 +234,13 @@ const appFooter = await readFile(path.join(repoRoot, 'src/lib/components/AppFoot
 // ============================================================================
 {
   // The /anime route (moved from /discover/anime in the Navigation &
-  // Settings Redesign, Phase 1) still uses loadCollectionData('anime', url).
+  // Settings Redesign Phase 1; rich destination page since Phase 4) uses
+  // loadDestinationData('anime', url), which composes the SAME
+  // loadCollectionData('anime', url) for the full-collection section.
   const animeRoute = await readFile(path.join(repoRoot, 'src/routes/anime/+page.server.ts'), 'utf8');
-  assert.match(animeRoute, /loadCollectionData\('anime', url\)/, 'anime route still uses loadCollectionData');
+  assert.match(animeRoute, /loadDestinationData\('anime', url\)/, 'anime route uses loadDestinationData');
+  const loader = await readFile(path.join(repoRoot, 'src/lib/server/content/discover-load.ts'), 'utf8');
+  assert.match(loader, /loadCollectionData\(type, url\)/, 'loadDestinationData composes the existing collection loader');
   // The collection() service function for anime now uses the merged path.
   assert.match(service, /if \(type === 'anime'\) return await getTmdbAnimeMerged/, 'collection(anime) uses merged movie+TV path');
   // Canonical identity is preserved — movies keep type='movie', series keep type='series'.

@@ -354,3 +354,83 @@ export async function loadDiscoverData() {
     errorMessage: errors.length ? `${[...new Set(errors)].join(' ')} Check the server catalog configuration and try again.` : undefined
   };
 }
+
+// ============================================================
+// Navigation & Settings Redesign, Phase 4 — rich destination pages.
+//
+// loadDestinationData(type, url) powers the first-class /movies,
+// /tv-shows and /anime pages. It composes ONLY existing, cached
+// helpers (loadRail / loadTopRated / loadNewest / loadGenreCollection
+// / loadCollectionData) — zero new backend fetching, zero duplicate
+// implementations, existing TTL/LRU caching reused.
+//
+// Contract:
+//   hero     — the best trending/popular item WITH a backdrop becomes
+//              the featured cinematic hero. Empty on failure → the
+//              page renders its fallback heading block (no fake hero).
+//   rails    — destination-scoped rails; empty rails are OMITTED from
+//              the array entirely (the page never renders an empty
+//              section — same honesty contract as Discover).
+//   collection — the existing paginated/filtered collection data
+//              (the "browse the full collection" section below the
+//              cinematic content; URL contract unchanged).
+//
+// "Where supported" per the plan:
+//   - movie/series: Trending + Popular + Top rated + New & recent +
+//     two curated genre rails (genre + Newest sorts are supported by
+//     the TMDB discover path).
+//   - anime: Trending + Popular + Top rated only — the merged anime
+//     path ignores genre/ Newest sorts (they would silently duplicate
+//     Popular), so those rails are intentionally not requested.
+// ============================================================
+export type DestinationRail = { key: string; title: string; items: MediaItem[] };
+
+const DESTINATION_GENRE_RAILS: Partial<Record<ContentType, { genre: string; title: string }[]>> = {
+  movie: [
+    { genre: 'Action', title: 'Action & adrenaline' },
+    { genre: 'Comedy', title: 'Comedy picks' },
+    { genre: 'Sci-Fi', title: 'Sci-Fi worlds' }
+  ],
+  series: [
+    { genre: 'Drama', title: 'Drama deep cuts' },
+    { genre: 'Crime', title: 'Crime & mystery' },
+    { genre: 'Comedy', title: 'Comedy picks' }
+  ]
+};
+
+export async function loadDestinationData(type: ContentType, url: URL) {
+  const genreRailDefs = DESTINATION_GENRE_RAILS[type] ?? [];
+  const [collectionData, trending, popular, topRated, newest, ...genreRails] = await Promise.all([
+    loadCollectionData(type, url),
+    loadRail(type, 'trending'),
+    loadRail(type, 'popular'),
+    loadTopRated(type),
+    type === 'anime' ? Promise.resolve({ items: [] as MediaItem[] } as RailResult) : loadNewest(type),
+    ...genreRailDefs.map((def) => loadGenreCollection(type, def.genre))
+  ]);
+
+  // Featured hero — first trending/popular item that actually has a
+  // backdrop to fill the cinematic layout. No synthetic fallback.
+  const heroItem =
+    [...trending.items, ...popular.items].find((item) => item.backdrop?.trim() && item.title?.trim()) ?? undefined;
+
+  const railDefs: { key: string; title: string; result: RailResult }[] = [
+    { key: 'trending', title: 'Trending now', result: trending },
+    { key: 'popular', title: `Popular ${type === 'anime' ? 'anime' : type === 'movie' ? 'movies' : 'TV shows'}`, result: popular },
+    { key: 'top-rated', title: 'Top rated', result: topRated }
+  ];
+  if (type !== 'anime') {
+    railDefs.push({ key: 'newest', title: 'New & recent', result: newest });
+  }
+  genreRailDefs.forEach((def, index) => {
+    railDefs.push({ key: `genre-${def.genre.toLowerCase()}`, title: def.title, result: genreRails[index] });
+  });
+
+  // Omit empty rails entirely — a failed/empty rail is simply hidden
+  // (same honesty contract as the Discover batch rails; no fixtures).
+  const rails: DestinationRail[] = railDefs
+    .filter((def) => def.result.items.length > 0)
+    .map((def) => ({ key: def.key, title: def.title, items: def.result.items }));
+
+  return { ...collectionData, heroItem, rails };
+}
