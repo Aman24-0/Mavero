@@ -43,9 +43,12 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 const libraryAware = [
   '/my-list',
   '/discover',
-  '/discover/movies',
-  '/discover/series',
-  '/discover/anime',
+  // Navigation & Settings Redesign, Phase 1 — the collection destinations
+  // moved from /discover/{movies,series,anime} to first-class routes and
+  // keep the same library-aware behavior.
+  '/movies',
+  '/tv-shows',
+  '/anime',
   '/watch/movie/123',
   '/watch/series/series-8633518',
   '/watch/anime/anime-94605',

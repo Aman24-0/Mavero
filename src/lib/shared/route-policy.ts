@@ -17,6 +17,12 @@
  *   - /movie/[id]           (DetailPage favorite toggle uses cloud)
  *   - /series/[id]          (DetailPage favorite toggle uses cloud)
  *   - /anime/[id]           (DetailPage favorite toggle uses cloud)
+ *   - /movies               (Navigation & Settings Redesign, Phase 1 — the
+ *                            former /discover/movies collection moved here
+ *                            and keeps the same library-aware behavior)
+ *   - /tv-shows             (former /discover/series — same behavior)
+ *   - /anime                (former /discover/anime — same behavior; the
+ *                            '/anime' prefix also covers /anime/[id])
  *
  * Routes that DON'T need sync (skip the expensive sync call):
  *   - /auth/*               (auth flows — no library state shown)
@@ -39,7 +45,9 @@ const LIBRARY_AWARE_PREFIXES: readonly string[] = [
   '/account',
   '/movie/',
   '/series/',
-  '/anime/',
+  '/anime',
+  '/movies',
+  '/tv-shows',
 ];
 
 /** Exact paths that are library-aware. */

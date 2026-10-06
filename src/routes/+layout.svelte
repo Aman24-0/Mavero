@@ -14,7 +14,7 @@
   import { analytics } from '$lib/client/analytics/dispatcher';
 
   let { children: pageChildren, data }: { children: Snippet; data: LayoutData } = $props();
-  const title = 'Mavero — Movies, series & anime';
+  const title = 'Mavero — Movies, TV shows & anime';
 
   // Phase 2-F (audit PERF-006) — Account sync gating.
   //
@@ -158,19 +158,17 @@
   <meta name="twitter:card" content="summary_large_image" />
 </svelte:head>
 
-{#if page.url.pathname.startsWith('/watch/') || /^\/(movie|series|anime)\/[^/]+/.test(page.url.pathname) || page.url.pathname.startsWith('/auth/') || page.url.pathname.startsWith('/admin') || page.url.pathname.startsWith('/tv-login') || page.url.pathname.startsWith('/authorize') || page.url.pathname.startsWith('/account/scan-tv') || /^\/discover\/(movies|series|anime)\/?$/.test(page.url.pathname)}
+{#if page.url.pathname.startsWith('/watch/') || /^\/(movie|series|anime)\/[^/]+/.test(page.url.pathname) || page.url.pathname.startsWith('/auth/') || page.url.pathname.startsWith('/admin') || page.url.pathname.startsWith('/tv-login') || page.url.pathname.startsWith('/authorize') || page.url.pathname.startsWith('/account/scan-tv')}
   <!-- /admin/* renders bare too: admin pages use AdminAppShell, a
        self-contained administrative layout with its OWN navigation.
        The consumer AppShell (side rail + mobile bottom nav) must not
        render there at all — not hidden, not covered — so admin never
-       shows the normal Discover/Upcoming/Search/My List/Account
+       shows the normal Discover/Movies/TV Shows/Anime/Upcoming/Search
        navigation. -->
-  <!-- /discover/movies|series|anime render bare as well: they are CHILD
-       pages of Discover (each provides its own "← Discover" back link),
-       not top-level consumer destinations. The consumer AppShell —
-       including the mobile bottom nav — is never mounted on these three
-       routes: not hidden, not covered, simply not rendered. The parent
-       /discover page and all other consumer pages keep AppShell. -->
+  <!-- /movies, /tv-shows and /anime are FIRST-CLASS destinations and
+       render inside the consumer AppShell (Navigation & Settings
+       Redesign, Phase 1). The legacy /discover/movies|series|anime paths
+       are server-side 308 redirects and never reach this layout. -->
   {@render pageChildren()}
 {:else}
   <AppShell currentPath={page.url.pathname} showMobileNav={!page.url.pathname.startsWith('/settings')}>

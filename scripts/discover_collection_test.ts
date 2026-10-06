@@ -4,10 +4,13 @@ import { readFile } from 'node:fs/promises';
 const loader = await readFile(new URL('../src/lib/server/content/discover-load.ts', import.meta.url), 'utf8');
 const service = await readFile(new URL('../src/lib/server/content/service.ts', import.meta.url), 'utf8');
 const collection = await readFile(new URL('../src/lib/components/CollectionPage.svelte', import.meta.url), 'utf8');
+// Navigation & Settings Redesign, Phase 1 — the three collection routes
+// moved to /movies, /tv-shows, /anime (the legacy /discover/* paths are
+// permanent redirects with no loaders).
 const routes = await Promise.all([
-  readFile(new URL('../src/routes/discover/movies/+page.server.ts', import.meta.url), 'utf8'),
-  readFile(new URL('../src/routes/discover/series/+page.server.ts', import.meta.url), 'utf8'),
-  readFile(new URL('../src/routes/discover/anime/+page.server.ts', import.meta.url), 'utf8')
+  readFile(new URL('../src/routes/movies/+page.server.ts', import.meta.url), 'utf8'),
+  readFile(new URL('../src/routes/tv-shows/+page.server.ts', import.meta.url), 'utf8'),
+  readFile(new URL('../src/routes/anime/+page.server.ts', import.meta.url), 'utf8')
 ]);
 
 assert.match(loader, /url\.searchParams\.get\('page'\)/);

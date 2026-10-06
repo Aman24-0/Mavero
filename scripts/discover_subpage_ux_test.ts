@@ -1,16 +1,22 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-// MAVERO — Discover Collection Sub-Pages UX/UI Refinement.
+// MAVERO — Collection Destinations UX/UI Contract
+// (Navigation & Settings Redesign, Phase 1).
 //
-// Regression contract for /discover/movies, /discover/series,
-// /discover/anime (all rendering the shared CollectionPage):
+// Regression contract for /movies, /tv-shows, /anime (all rendering the
+// shared CollectionPage as FIRST-CLASS destinations, moved from
+// /discover/{movies,series,anime}):
 //
-//   NAV        — the three sub-pages render BARE (no consumer AppShell /
-//                bottom nav — never hidden, never covered); /discover,
-//                /search, /my-list, /account keep AppShell (since Phase C
-//                /profile and /settings are redirect-only compat routes);
-//                admin bare behavior unchanged.
+//   NAV        — the three destinations render INSIDE the consumer
+//                AppShell (sidebar + bottom nav): they are top-level
+//                routes, not Discover children. The "← Discover" back
+//                link is gone. /discover, /search, /my-list, /account
+//                keep AppShell; admin/watch/auth bare behavior unchanged.
+//   REDIRECTS  — the legacy /discover/{movies,series,anime} paths are
+//                permanent 308 redirects preserving the query string
+//                (page/genre/year/sort); no canonical implementation
+//                remains at the old paths.
 //   FILTER     — genre/year/sort changes reset to page 1, build canonical
 //                shareable URLs, invalid values fail server-side-safe.
 //   PAGINATION — previous/next + disabled state + query preservation +
@@ -18,8 +24,11 @@ import { readFileSync } from 'node:fs';
 //   RESPONSIVE — compact mobile filter control + 2-column grid + no
 //                overflow-prone layouts at 390/360px, desktop unchanged.
 //   SCROLL     — root snapshot mechanism intact; no custom scroll stores.
-//   ANIME      — anime shares the refined shell, keeps its identity, and
-//                no legacy anime architecture is reintroduced.
+//   ANIME      — anime shares the shell, keeps its identity, and no
+//                legacy anime architecture is reintroduced.
+//   TERMINOLOGY — "Series" is presented as "TV Shows" in destination
+//                copy (heading, title, meta) while the card badge
+//                pipeline (formatType) is untouched.
 
 let passed = 0;
 function ok(message: string) {
@@ -40,56 +49,72 @@ const loader = read('../src/lib/server/content/discover-load.ts');
 const types = read('../src/lib/server/content/types.ts');
 const tmdbAdapter = read('../src/lib/server/content/adapters/tmdb.ts');
 const routes = {
-  movies: read('../src/routes/discover/movies/+page.svelte'),
-  series: read('../src/routes/discover/series/+page.svelte'),
-  anime: read('../src/routes/discover/anime/+page.svelte')
+  movies: read('../src/routes/movies/+page.svelte'),
+  series: read('../src/routes/tv-shows/+page.svelte'),
+  anime: read('../src/routes/anime/+page.svelte')
+};
+const legacyServers = {
+  movies: read('../src/routes/discover/movies/+page.server.ts'),
+  series: read('../src/routes/discover/series/+page.server.ts'),
+  anime: read('../src/routes/discover/anime/+page.server.ts')
 };
 
 // ============================================================
-// 1. NAV — the three collection sub-routes render bare
+// 1. NAV — first-class destinations render inside the consumer AppShell
 // ============================================================
 const bareBranch = rootLayout.match(/\{#if page\.url\.pathname[\s\S]*?\{:else\}/);
 assert.ok(bareBranch, 'layout branch structure intact');
 const bare = bareBranch![0];
 assert.match(bare, /startsWith\('\/admin'\)/, '/admin bare behavior unchanged');
 assert.match(bare, /startsWith\('\/watch\/'\)/, '/watch bare behavior unchanged');
-
-// Extract the EXACT regex literal shipped in the layout and evaluate it
-// against the routes that must / must not render bare.
-const literalMatch = rootLayout.match(/\/\^\\\/discover\\\/\(movies\|series\|anime\)\\\/\?\$\//);
-assert.ok(literalMatch, 'the bare branch contains the /discover/(movies|series|anime) exclusion regex literal');
-const shippedRegex = new RegExp(literalMatch![0].slice(1, -1));
-assert.ok(shippedRegex.test('/discover/movies'), '/discover/movies renders bare (no consumer nav)');
-assert.ok(shippedRegex.test('/discover/series'), '/discover/series renders bare (no consumer nav)');
-assert.ok(shippedRegex.test('/discover/anime'), '/discover/anime renders bare (no consumer nav)');
-assert.ok(!shippedRegex.test('/discover'), '/discover itself KEEPS the consumer AppShell');
-assert.ok(!shippedRegex.test('/search'), '/search unaffected');
-assert.ok(!shippedRegex.test('/my-list'), '/my-list unaffected');
-assert.ok(!shippedRegex.test('/account'), '/account unaffected (normal AppShell page)');
-assert.ok(!shippedRegexSource('/discover/movies/extra'), 'no nested discover paths are captured');
-
-function shippedRegexSource(path: string) {
-  return shippedRegex.test(path);
-}
-assert.ok(!shippedRegexSource('/settings'), '/settings unaffected');
-
-assert.match(rootLayout, /must not[\s\S]{0,80}?render there[\s\S]{0,120}?not hidden, not covered/i, 'admin not-hidden-not-covered contract intact');
-assert.match(rootLayout, /never mounted on these three[\s\S]*not hidden, not covered, simply not rendered/, 'the discover sub-page contract is documented in the layout itself');
+// The old discover-sub-page bare-render exclusion is GONE — the new
+// destinations are top-level consumer pages rendered inside AppShell.
+assert.doesNotMatch(rootLayout, /discover\\\/\(movies\|series\|anime\)/, 'the discover sub-page bare-render exclusion regex is removed from the layout');
+// The bare-render CONDITION itself must not mention the new destinations
+// (comments may reference them for documentation — the condition is what
+// decides rendering).
+const bareCondition = bareBranch![0].match(/\{#if ([^}]+)\}/);
+assert.ok(bareCondition, 'the bare-render condition expression is parseable');
+assert.doesNotMatch(bareCondition![1], /'\/movies'|'\/tv-shows'|'\/anime'/, 'the new destinations are never bare-rendered (they render inside AppShell)');
 const elseBranch = rootLayout.slice(rootLayout.indexOf('{:else}'), rootLayout.indexOf('{/if}'));
-assert.match(elseBranch, /<AppShell currentPath=\{page\.url\.pathname\}/, 'consumer pages still render inside AppShell');
+assert.match(elseBranch, /<AppShell currentPath=\{page\.url\.pathname\}/, 'the new destinations render inside AppShell');
 assert.match(elseBranch, /showMobileNav=\{!page\.url\.pathname\.startsWith\('\/settings'\)\}/, '/settings opt-out unchanged');
-ok('1. /discover/{movies,series,anime} render bare; /discover + all other consumers keep AppShell');
+ok('1. /movies, /tv-shows, /anime render inside the consumer AppShell (no bare render)');
 
 // ============================================================
-// 2. NAV — AppShell untouched (no per-page special cases added)
+// 2. NAV — AppShell carries the six destinations; no Discover dependency
 // ============================================================
-assert.match(appShell, /Discover[\s\S]*Upcoming[\s\S]*Search[\s\S]*My List[\s\S]*Account/, 'consumer primary links unchanged (Discover/Upcoming/Search/My List/Account)');
+assert.match(appShell, /Discover[\s\S]*Movies[\s\S]*TV Shows[\s\S]*Anime[\s\S]*Upcoming[\s\S]*Search/, 'consumer primary links: Discover/Movies/TV Shows/Anime/Upcoming/Search');
 assert.match(appShell, /class="mobile-nav"/, 'mobile bottom nav still defined for consumer pages');
-assert.doesNotMatch(appShell, /\/admin|\/discover\/movies/, 'AppShell gains no route special cases (exclusion lives in the layout)');
-ok('2. AppShell untouched — consumer navigation intact everywhere it belongs');
+assert.doesNotMatch(appShell, /\/admin|\/discover\/movies/, 'AppShell gains no route special cases (new destinations are normal AppShell pages)');
+// The back link to Discover is gone — these are not child pages anymore.
+assert.doesNotMatch(collection, /back-link/, 'the "← Discover" back link is removed from the shared collection shell');
+assert.doesNotMatch(collection, /href="\/discover"/, 'no Discover dependency remains in the collection shell');
+ok('2. AppShell carries the six destinations; the collection shell has no Discover dependency');
 
 // ============================================================
-// 3. FILTER — page reset, canonical URLs, server-side safety
+// 3. REDIRECTS — legacy paths redirect permanently, query preserved
+// ============================================================
+assert.match(legacyServers.movies, /throw redirect\(308, `\/movies\$\{url\.search\}`\)/, '/discover/movies → 308 /movies with query');
+assert.match(legacyServers.series, /throw redirect\(308, `\/tv-shows\$\{url\.search\}`\)/, '/discover/series → 308 /tv-shows with query');
+assert.match(legacyServers.anime, /throw redirect\(308, `\/anime\$\{url\.search\}`\)/, '/discover/anime → 308 /anime with query');
+for (const [key, server] of Object.entries(legacyServers)) {
+  assert.doesNotMatch(server, /loadCollectionData/, `${key} legacy route has no collection loader (no duplicate implementation)`);
+  assert.doesNotMatch(server, /export const actions/, `${key} legacy route exports no actions`);
+}
+ok('3. legacy routes are permanent query-preserving redirects with zero page implementation');
+
+// ============================================================
+// 4. ROUTES — the new paths use the shared CollectionPage + loader
+// ============================================================
+assert.match(routes.movies, /<CollectionPage type="movie"/, '/movies renders the shared CollectionPage');
+assert.match(routes.series, /<CollectionPage type="series"/, '/tv-shows renders the shared CollectionPage');
+assert.match(routes.anime, /<CollectionPage type="anime"/, '/anime renders the shared CollectionPage');
+for (const [key, src] of Object.entries(routes)) assert.match(src, /totalPages=\{data\.totalPages\}/, `${key} route passes totalPages through`);
+ok('4. the three first-class routes reuse one shared CollectionPage shell');
+
+// ============================================================
+// 5. FILTER — page reset, canonical URLs, server-side safety
 // ============================================================
 assert.match(collection, /params\.set\('page', '1'\)/, 'every filter change resets to page 1');
 assert.match(collection, /void goto\(`\$\{page\.url\.pathname\}\$\{query \? `\?\$\{query\}` : ''\}`/, 'filter changes build a canonical shareable URL on the same path');
@@ -99,10 +124,10 @@ assert.match(loader, /validCollectionSorts/, 'sort whitelist (server-side valida
 assert.match(loader, /\\d\{4\}/, 'year values still validated as 4-digit (invalid values fail safe)');
 assert.match(loader, /page <= MAX_COLLECTION_PAGE \? page : 1/, 'out-of-range pages clamp safely to 1 (server-side)');
 assert.doesNotMatch(collection, /filteredItems/, 'no client-side filtering — server collection query stays authoritative');
-ok('3. filter behavior preserved: page=1 reset, canonical URLs, server-side validation');
+ok('5. filter behavior preserved: page=1 reset, canonical URLs, server-side validation');
 
 // ============================================================
-// 4. PAGINATION — prev/next, disabled state, of-N, clamp parity
+// 6. PAGINATION — prev/next, disabled state, of-N, clamp parity
 // ============================================================
 assert.match(collection, /href=\{collectionHref\(currentPage - 1\)\}/, 'Previous link present');
 assert.match(collection, /href=\{collectionHref\(currentPage \+ 1\)\}/, 'Next link present');
@@ -134,11 +159,10 @@ assert.equal(clamp(3, 2), 3, 'total never below the current page');
 assert.equal(clamp(0, 1), undefined, 'nonsensical totals are not reported');
 assert.equal(clamp(undefined, 1), undefined, 'missing total falls back to "Page X"');
 assert.equal(clamp(Number.NaN, 1), undefined, 'NaN total falls back to "Page X"');
-for (const [key, src] of Object.entries(routes)) assert.match(src, /totalPages=\{data\.totalPages\}/, `${key} route passes totalPages through`);
-ok('4. pagination: prev/next + disabled + preserved query + safe of-N totals (clamped to the serving window)');
+ok('6. pagination: prev/next + disabled + preserved query + safe of-N totals (clamped to the serving window)');
 
 // ============================================================
-// 5. RESPONSIVE — compact mobile filter control + grid discipline
+// 7. RESPONSIVE — compact mobile filter control + grid discipline
 // ============================================================
 // FilterBar keeps the shared Dropdown (no native selects, no new modal).
 assert.match(filterBar, /import Dropdown from '\$components\/Dropdown\.svelte'/, 'FilterBar reuses the shared Dropdown listbox');
@@ -168,10 +192,10 @@ assert.match(collection, /@media \(max-width: 640px\)[\s\S]*\.results-grid \{ gr
 assert.match(collection, /grid-template-columns: repeat\(auto-fill, minmax\(150px, 182px\)\)/, 'desktop grid unchanged (responsive auto-fill)');
 assert.match(mediaCard, /\.mc-title \{ margin: 0/, 'MediaCard itself untouched (clamp is collection-scoped)');
 assert.match(collection, /padding-bottom: calc\(26px \+ env\(safe-area-inset-bottom, 0px\)\)/, 'pagination keeps safe-area bottom spacing');
-ok('5. responsive: compact mobile filter row, 2-col grid, 2-line titles, safe-area spacing, desktop preserved');
+ok('7. responsive: compact mobile filter row, 2-col grid, 2-line titles, safe-area spacing, desktop preserved');
 
 // ============================================================
-// 6. EMPTY STATE — clear-filters action, error distinction kept
+// 8. EMPTY STATE — clear-filters action, error distinction kept
 // ============================================================
 assert.match(emptyState, /export let onAction: \(\(\) => void\) \| undefined = undefined/, 'EmptyState gains an optional in-place action (backward compatible)');
 assert.match(emptyState, /\{#if onAction\}[\s\S]*<button class="btn btn-secondary" type="button" onclick=\{onAction\}>[\s\S]*\{:else\}[\s\S]*<a class="btn btn-secondary" href=\{actionHref\}/, 'href-based empty states unchanged; action-based renders a real button');
@@ -179,40 +203,51 @@ assert.match(collection, /title="Nothing found"[\s\S]*message="Try changing your
 assert.match(collection, /title="The signal is quiet\."/, 'upstream errors keep their distinct error state');
 assert.match(collection, /errorMessage\}[\s\S]*\{:else if sameRouteNavigation\}/, 'error branch evaluated before empty-state branches (errors never shown as "no results")');
 assert.doesNotMatch(collection, /fake|fixture results|dummy/, 'no fake/fixture results injected for empty states');
-ok('6. empty state: Clear filters works in place; upstream errors stay distinct; no fixture results');
+ok('8. empty state: Clear filters works in place; upstream errors stay distinct; no fixture results');
 
 // ============================================================
-// 7. LOADING — same-route skeleton reuses existing components
+// 9. LOADING — same-route skeleton reuses existing components
 // ============================================================
 assert.match(collection, /import SkeletonCard from '\$components\/SkeletonCard\.svelte'/, 'loading UX reuses SkeletonCard (no new architecture)');
 assert.match(collection, /sameRouteNavigation = Boolean\(navigating\.from && navigating\.to && navigating\.type !== 'popstate'/, 'skeleton only during same-route forward navigation (Back/Forward stays instant)');
+assert.match(collection, /isCollectionPath\(navigating\.to\.url\.pathname\)/, 'the same-route skeleton is scoped to the collection roots (not /discover/*)');
+const collectionRoots = collection.match(/const COLLECTION_ROOTS = \[([^\]]*)\]/);
+assert.ok(collectionRoots, 'COLLECTION_ROOTS constant present');
+assert.ok(collectionRoots![1].includes("'/movies'") && collectionRoots![1].includes("'/tv-shows'") && collectionRoots![1].includes("'/anime'"), 'COLLECTION_ROOTS lists exactly the three first-class destinations');
 assert.match(collection, /results-grid results-grid-loading" aria-busy="true"/, 'skeleton grid is announced via aria-busy');
 assert.match(collection, /\{#each Array\(skeletonCount\) as _\}<SkeletonCard compact \/>/, 'skeleton count mirrors the real grid (minimal layout shift)');
 assert.doesNotMatch(collection, /IntersectionObserver|MutationObserver/, 'no custom navigation interception or observers');
-ok('7. loading: same-route skeleton from existing SkeletonCard; popstate Back/Forward untouched');
+ok('9. loading: same-route skeleton from existing SkeletonCard; popstate Back/Forward untouched');
 
 // ============================================================
-// 8. SCROLL — root snapshot mechanism intact, no custom stores
+// 10. SCROLL — root snapshot mechanism intact, no custom stores
 // ============================================================
 assert.match(rootLayout, /export const snapshot = \{/, 'root layout snapshot (capture/restore) intact');
 assert.match(rootLayout, /requestAnimationFrame/, 'rAF-clamped restore intact');
 assert.doesNotMatch(collection, /window\.scrollTo|history\.back|history\.forward/, 'CollectionPage adds no custom scroll manager');
 assert.doesNotMatch(collection + filterBar, /localStorage|sessionStorage/, 'no storage-based scroll or filter state');
-ok('8. scroll: existing SvelteKit snapshot mechanism preserved; no custom scroll state');
+ok('10. scroll: existing SvelteKit snapshot mechanism preserved; no custom scroll state');
 
 // ============================================================
-// 9. ANIME — shared refined shell, identity kept, no legacy revival
+// 11. TERMINOLOGY — TV Shows rename in destination copy only
 // ============================================================
-assert.match(routes.anime, /<CollectionPage type="anime"/, 'anime collection uses the shared CollectionPage shell');
-assert.match(collection, /headingLabel = type === 'anime' \? 'Anime' : `\$\{label\}s`/, 'anime heading is "Anime in focus." (not "Animes")');
-assert.match(collection, /\{headingLabel\} <em>in focus\.<\/em>/, 'all three collections share one consistent heading template');
-assert.match(collection, /formatType/, 'anime identity still flows through the existing formatType/badge pipeline');
+assert.match(collection, /COLLECTION_LABELS/, 'per-type label map exists');
+const labelsBlock = collection.match(/const COLLECTION_LABELS: Record<ContentType, \{ plural: string; singular: string; prose: string; description: string \}> = \{([\s\S]*?)\};/);
+assert.ok(labelsBlock, 'COLLECTION_LABELS source captured');
+assert.match(labelsBlock![1], /series: \{ plural: 'TV Shows'/, 'series destination is presented as "TV Shows"');
+assert.match(labelsBlock![1], /movie: \{ plural: 'Movies'/, 'movie destination is "Movies"');
+assert.match(labelsBlock![1], /anime: \{ plural: 'Anime'/, 'anime destination stays "Anime" (never "Animes")');
+assert.match(collection, /\{headingLabel\} <em>in focus\.<\/em>/, 'all three destinations share one consistent heading template');
+assert.match(collection, /const COLLECTION_ROUTE: Record<ContentType, string> = \{ movie: '\/movies', series: '\/tv-shows', anime: '\/anime' \}/, 'empty-state action links target the new canonical routes');
+// The card badge pipeline is untouched — classification still says
+// "Series" on cards (formatType), only destination copy is renamed.
+assert.match(mediaCard, /formatType|formatBadges|isAnime/, 'card classification badges still flow through the existing pipeline');
 assert.doesNotMatch(collection + filterBar, /AniList|anilist\.|Yenime|yenime|myanimelist/i, 'no legacy anime provider architecture reintroduced');
 assert.doesNotMatch(collection + filterBar, /anime format/i, 'no anime format filter added in this phase');
-ok('9. anime: refined shared shell, correct heading, identity badges intact, zero legacy revival');
+ok('11. terminology: "TV Shows" in destination copy; card badge pipeline untouched');
 
 // ============================================================
-// 10. DATA SAFETY — additive-only backend surface
+// 12. DATA SAFETY — additive-only backend surface
 // ============================================================
 assert.doesNotMatch(loader, /\badult\b/i, 'collection loader touches no adult logic');
 // Positive assertions: the existing TMDB collection semantics are unchanged.
@@ -223,6 +258,6 @@ assert.match(getTmdbCollection![0], /without_watch_providers/, 'movie watch-prov
 assert.match(getTmdbCollection![0], /include_adult: false/, 'include_adult: false unchanged');
 assert.match(collection, /export let totalPages: number \| undefined = undefined/, 'totalPages is an optional prop — callers not passing it are unaffected');
 assert.match(emptyState, /export let search = false/, 'EmptyState legacy props untouched');
-ok('10. data safety: additive totalPages contract only; TMDB semantics, adult surface, schema untouched');
+ok('12. data safety: additive totalPages contract only; TMDB semantics, adult surface, schema untouched');
 
-console.log(`\nDiscover collection sub-page UX regression tests passed (${passed} check groups).`);
+console.log(`\nCollection destination UX regression tests passed (${passed} check groups).`);

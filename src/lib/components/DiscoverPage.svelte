@@ -71,11 +71,11 @@
   const GALLERY_ROTATION_MS = 7000;
   const MAX_FEATURED_ITEMS = 6;
 
-  const quickChips = [
-    { label: 'Movies', href: '/discover/movies' },
-    { label: 'TV Shows', href: '/discover/series' },
-    { label: 'Anime', href: '/discover/anime' },
-  ];
+  // Navigation & Settings Redesign, Phase 1 — the Movies / TV Shows / Anime
+  // quick chips were REMOVED: their only purpose was to enter the old
+  // /discover/{movies,series,anime} child pages. Those destinations are now
+  // independent first-class routes reachable directly from the primary
+  // navigation, and Discover no longer owns them.
 
   // ============================================================
   // Discover V2 — data-driven section list.
@@ -89,7 +89,7 @@
   // Language-filterable sections render a language dropdown.
   // The OTT section renders a provider dropdown (loaded from
   // /api/discover/providers). Anime sections have NO dropdown —
-  // only a "View all →" link to /discover/anime.
+  // only a "View all →" link to /anime (the first-class route).
   // ============================================================
   type SectionDef = {
     key: DiscoverSectionKey;
@@ -103,10 +103,10 @@
     { key: 'new-ott', title: 'New on OTT', languageFilter: false, providerFilter: true },
     { key: 'popular-movie', title: 'Popular movies', languageFilter: true, providerFilter: false },
     { key: 'popular-series', title: 'Popular TV shows', languageFilter: true, providerFilter: false },
-    { key: 'popular-anime', title: 'Popular anime', languageFilter: false, providerFilter: false, viewAllHref: '/discover/anime' },
+    { key: 'popular-anime', title: 'Popular anime', languageFilter: false, providerFilter: false, viewAllHref: '/anime' },
     { key: 'top-rated-movie', title: 'Top rated movies', languageFilter: true, providerFilter: false },
     { key: 'top-rated-series', title: 'Top rated TV shows', languageFilter: true, providerFilter: false },
-    { key: 'top-rated-anime', title: 'Top rated anime', languageFilter: false, providerFilter: false, viewAllHref: '/discover/anime' },
+    { key: 'top-rated-anime', title: 'Top rated anime', languageFilter: false, providerFilter: false, viewAllHref: '/anime' },
     { key: 'genre-action', title: 'Action', languageFilter: true, providerFilter: false },
     { key: 'genre-adventure', title: 'Adventure', languageFilter: true, providerFilter: false },
     { key: 'genre-comedy', title: 'Comedy', languageFilter: true, providerFilter: false },
@@ -498,10 +498,10 @@
 </script>
 
 <svelte:head>
-  <title>Mavero — Movies, series &amp; anime, all in one place</title>
-  <meta name="description" content="Stream movies, series, and anime on MAVERO." />
+  <title>Mavero — Movies, TV shows &amp; anime, all in one place</title>
+  <meta name="description" content="Stream movies, TV shows, and anime on MAVERO." />
   <link rel="canonical" href={page.url.origin} />
-  <meta property="og:title" content="Mavero — Movies, series & anime, all in one place" />
+  <meta property="og:title" content="Mavero — Movies, TV shows & anime, all in one place" />
   <meta property="og:description" content="A fast, modern home for your next watch." />
   <meta property="og:url" content={page.url.origin} />
   <meta property="og:type" content="website" />
@@ -598,10 +598,6 @@
   <div class="discover-body">
     {#if errorMessage}<div class="catalog-warning" role="alert">{errorMessage}</div>{/if}
     {#if hasCatalog}
-      <nav class="quick-chips" aria-label="Quick discovery">
-        {#each quickChips as chip}<a href={chip.href}>{chip.label}</a>{/each}
-      </nav>
-
       {#if localContinue.length}<ContentRail title="Continue watching" items={localContinue} href="/my-list?status=watching" compact />{/if}
 
       <!-- ============================================================
@@ -746,26 +742,6 @@
   /* === BODY === */
   .discover-body { padding: 0 0 40px; }
 
-  /* Quick chips fill the full row width — three independent equal-flex buttons. */
-  .quick-chips {
-    display: flex; gap: 8px; width: 100%;
-    padding: 14px var(--d-gutter) 0;
-    box-sizing: border-box;
-  }
-  .quick-chips a {
-    flex: 1 1 0; min-width: 0; height: 40px;
-    display: inline-flex; align-items: center; justify-content: center;
-    padding: 0 8px;
-    border-radius: 10px; color: var(--color-text-muted); text-decoration: none;
-    font-size: .74rem; font-weight: 700; letter-spacing: .01em;
-    background: var(--color-surface-elevated); border: 1px solid var(--color-border);
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    transition: color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out);
-  }
-  .quick-chips a:hover { color: var(--color-text); background: var(--color-surface-raised); border-color: var(--color-primary-border); }
-  .quick-chips a:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px; }
-  .quick-chips a:active { transform: scale(.98); }
-
   .catalog-warning { margin: 16px var(--d-gutter) 0; padding: 10px 12px; border: 1px solid rgba(255,194,71,.3); border-radius: var(--radius-sm); color: var(--color-warning); font-size: .7rem; }
 
   /* Tablet hero — slightly shorter than desktop, more compact copy. */
@@ -788,9 +764,6 @@
     .hero-play { flex: 1; justify-content: center; }
     .hero-nav-btn { display: none; }
     .hero-nav { right: 50%; transform: translateX(50%); bottom: 10px; }
-    /* Quick chips keep equal-width split on every mobile viewport. */
-    .quick-chips { gap: 6px; }
-    .quick-chips a { height: 38px; font-size: .72rem; padding: 0 6px; }
   }
 
   /* Landscape mobile (max-height: 480px) — keep the hero compact so the
@@ -823,7 +796,7 @@
 
   @media (prefers-reduced-motion: reduce) {
     .hero-track { scroll-behavior: auto; }
-    .hero-nav-btn, .hero-dot::after, .quick-chips a, .hero-play, .hero-btn { transition: none; }
+    .hero-nav-btn, .hero-dot::after, .hero-play, .hero-btn { transition: none; }
     /* Phase D.E: disable the active-slide text fade-up and image Ken
        Burns scale when the user prefers reduced motion. The slides
        still change, but with no animation. */

@@ -3,7 +3,7 @@
   import { page, navigating } from '$app/state';
   import { ArrowLeft, ArrowRight, Layers3 } from 'lucide-svelte';
   import type { ContentType } from '$data/content';
-  import { media as fixtureMedia, formatType, type MediaItem } from '$data/content';
+  import { media as fixtureMedia, type MediaItem } from '$data/content';
   import FilterBar from '$components/FilterBar.svelte';
   import type { FilterState } from '$components/filter-types';
   import MediaCard from '$components/MediaCard.svelte';
@@ -24,11 +24,26 @@
   export let errorMessage: string | undefined;
   const validSorts = ['For you', 'Top rated', 'Newest'];
   const fallbackGenres = [...new Set(fixtureMedia.filter((item) => item.type === type).flatMap((item) => item.genres))].sort();
-  $: label = formatType(type);
-  // Anime is its own classification, not a pluralised "Animes" — the
-  // heading stays visually consistent across all three collections while
-  // using content-appropriate copy.
-  $: headingLabel = type === 'anime' ? 'Anime' : `${label}s`;
+  // ============================================================
+  // Navigation & Settings Redesign, Phase 1 — first-class destinations.
+  //
+  // The three former /discover child pages moved to /movies, /tv-shows
+  // and /anime and now render inside the consumer AppShell — so the
+  // "← Discover" back link is GONE (they are top-level destinations,
+  // not Discover children). Destination copy presents "series" as "TV
+  // Shows"; the card classification badges still flow through the
+  // existing formatType/formatBadges pipeline (unchanged).
+  // ============================================================
+  const COLLECTION_LABELS: Record<ContentType, { plural: string; singular: string; prose: string; description: string }> = {
+    movie: { plural: 'Movies', singular: 'movie', prose: 'movies', description: 'Browse the latest movies, ranked and ready for tonight.' },
+    series: { plural: 'TV Shows', singular: 'TV show', prose: 'TV shows', description: 'Browse the latest TV shows, ranked and ready for tonight.' },
+    anime: { plural: 'Anime', singular: 'anime', prose: 'anime', description: 'Browse the latest anime, ranked and ready for tonight.' }
+  };
+  const COLLECTION_ROUTE: Record<ContentType, string> = { movie: '/movies', series: '/tv-shows', anime: '/anime' };
+  const COLLECTION_ROOTS = ['/movies', '/tv-shows', '/anime'];
+  const isCollectionPath = (pathname: string) => COLLECTION_ROOTS.some((root) => pathname === root || pathname.startsWith(`${root}/`));
+  $: labels = COLLECTION_LABELS[type];
+  $: headingLabel = labels.plural;
   $: filterState = { genre: collectionFilters.genre || 'All', sort: validSorts.includes(collectionFilters.sort || '') ? collectionFilters.sort || 'For you' : 'For you', year: collectionFilters.year || 'All' } satisfies FilterState;
   $: hasActiveFilters = filterState.genre !== 'All' || filterState.year !== 'All' || filterState.sort !== 'For you';
   $: genres = [...new Set([...fallbackGenres, ...contentItems.flatMap((item) => item.genres)])].sort();
@@ -43,40 +58,39 @@
   // feedback. Cross-route arrivals render SSR content directly, and
   // Back/Forward (popstate) is excluded — restored history content shows
   // instantly from the client-side load cache.
-  $: sameRouteNavigation = Boolean(navigating.from && navigating.to && navigating.type !== 'popstate' && navigating.from.url.pathname === navigating.to.url.pathname && navigating.to.url.pathname.startsWith('/discover/'));
+  $: sameRouteNavigation = Boolean(navigating.from && navigating.to && navigating.type !== 'popstate' && navigating.from.url.pathname === navigating.to.url.pathname && isCollectionPath(navigating.to.url.pathname));
   $: skeletonCount = Math.max(4, Math.min(contentItems.length || 12, 20));
   $: hasNextPageSafe = hasNextPage && (totalPages === undefined || currentPage < totalPages);
 </script>
 
-<svelte:head><title>{headingLabel} — Mavero</title><meta name="description" content={`Explore MAVERO's focused collection of ${label.toLowerCase()} stories.`} /><link rel="canonical" href={`${page.url.origin}${page.url.pathname}`} /><meta property="og:title" content={`${headingLabel} — Mavero`} /><meta property="og:description" content={`Explore MAVERO's focused collection of ${label.toLowerCase()} stories.`} /><meta property="og:url" content={`${page.url.origin}${page.url.pathname}`} /><meta name="twitter:card" content="summary" /></svelte:head>
+<svelte:head><title>{headingLabel} — Mavero</title><meta name="description" content={`Explore MAVERO's focused collection of ${labels.prose}.`} /><link rel="canonical" href={`${page.url.origin}${page.url.pathname}`} /><meta property="og:title" content={`${headingLabel} — Mavero`} /><meta property="og:description" content={`Explore MAVERO's focused collection of ${labels.prose}.`} /><meta property="og:url" content={`${page.url.origin}${page.url.pathname}`} /><meta name="twitter:card" content="summary" /></svelte:head>
 
 <div class="collection-page">
-  <a class="back-link" href="/discover"><ArrowLeft size={15} /> Discover</a>
   <section class="collection-heading">
     <div class="eyebrow"><Layers3 size={13} /> Mavero / Explore</div>
     <div class="heading-row">
       <div>
         <h1>{headingLabel} <em>in focus.</em></h1>
-        <p>Browse the latest {label.toLowerCase()} stories, ranked and ready for tonight.</p>
+        <p>{labels.description}</p>
       </div>
       <div class="collection-count"><strong>{contentItems.length}</strong><span>titles on page {currentPage}</span></div>
     </div>
   </section>
   <div class="collection-tools"><FilterBar value={filterState} {genres} onChange={updateFilters} /></div>
   {#if errorMessage}
-    <EmptyState eyebrow={`MAVERO / ${label} catalog`} title="The signal is quiet." message={errorMessage} actionLabel="View all" actionHref={`/discover/${type === 'movie' ? 'movies' : type === 'series' ? 'series' : 'anime'}`} />
+    <EmptyState eyebrow={`MAVERO / ${labels.plural} catalog`} title="The signal is quiet." message={errorMessage} actionLabel="View all" actionHref={COLLECTION_ROUTE[type]} />
   {:else if sameRouteNavigation}
-    <div class="results-grid results-grid-loading" aria-busy="true" aria-label={`Loading ${label.toLowerCase()}`}>
+    <div class="results-grid results-grid-loading" aria-busy="true" aria-label={`Loading ${labels.prose}`}>
       {#each Array(skeletonCount) as _}<SkeletonCard compact />{/each}
     </div>
   {:else if contentItems.length}
     <div class="results-grid">{#each contentItems as item}<MediaCard {item} compact editorial />{/each}</div>
   {:else if hasActiveFilters}
-    <EmptyState eyebrow={`MAVERO / No ${label.toLowerCase()} matches`} title="Nothing found" message="Try changing your filters or clear them to explore the full collection." actionLabel="Clear filters" onAction={clearFilters} />
+    <EmptyState eyebrow={`MAVERO / No ${labels.singular} matches`} title="Nothing found" message="Try changing your filters or clear them to explore the full collection." actionLabel="Clear filters" onAction={clearFilters} />
   {:else}
-    <EmptyState eyebrow={`MAVERO / No ${label.toLowerCase()} matches`} title="A quieter cut." message={`There are no ${label.toLowerCase()} titles to show right now. Check back soon.`} actionLabel={`View all ${label.toLowerCase()}`} actionHref={`/discover/${type === 'movie' ? 'movies' : type === 'series' ? 'series' : 'anime'}`} />
+    <EmptyState eyebrow={`MAVERO / No ${labels.singular} matches`} title="A quieter cut." message={`There are no ${labels.singular} titles to show right now. Check back soon.`} actionLabel={`View all ${labels.prose}`} actionHref={COLLECTION_ROUTE[type]} />
   {/if}
-  <nav class="pagination" aria-label={`${label} collection pagination`}>
+  <nav class="pagination" aria-label={`${labels.plural} collection pagination`}>
     <div>{#if currentPage > 1}<a class="pagination-link" href={collectionHref(currentPage - 1)}><ArrowLeft size={14} /> Previous</a>{:else}<span class="pagination-link disabled"><ArrowLeft size={14} /> Previous</span>{/if}</div>
     <span class="pagination-page">{#if totalPages !== undefined}Page {currentPage} of {totalPages}{:else}Page {currentPage}{/if}</span>
     <div>{#if hasNextPageSafe}<a class="pagination-link" href={collectionHref(currentPage + 1)}>Next <ArrowRight size={14} /></a>{:else}<span class="pagination-link disabled">Next <ArrowRight size={14} /></span>{/if}</div>
@@ -93,12 +107,6 @@
     padding-bottom: 40px;
   }
   em { color: #77777f; font-style: normal; }
-  .back-link {
-    display: inline-flex; align-items: center; gap: 7px; padding-top: 28px;
-    color: #77777f; font-size: .74rem; font-weight: 700; text-decoration: none;
-    transition: color 200ms cubic-bezier(.22,1,.36,1), transform 200ms cubic-bezier(.22,1,.36,1);
-  }
-  .back-link:hover { color: #f5f5f5; transform: translateX(-2px); }
   .collection-heading { padding: 30px 0 22px; }
   .heading-row { display: flex; align-items: end; justify-content: space-between; gap: 20px; }
   .collection-heading h1 {
@@ -138,7 +146,8 @@
       width: 100%; margin-inline: 0;
       padding-left: var(--c-gutter); padding-right: var(--c-gutter);
     }
-    .back-link { padding-top: calc(10px + env(safe-area-inset-top)); }
+    /* The page now renders inside the AppShell — the mobile topbar owns
+       the safe-area top spacing, so no local top padding is needed. */
     /* Vertical efficiency: the first poster row should appear sooner.
        Tightened heading rhythm + a short 2-line description block — no
        information removed, whitespace trimmed. */

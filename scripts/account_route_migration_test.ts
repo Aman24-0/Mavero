@@ -108,13 +108,18 @@ assert.match(upcomingPage, /dayGroups/, 'release day grouping intact');
 ok('6. Upcoming back-pill removed (main navigation page); Upcoming functionality untouched');
 
 // ============================================================
-// 7. PRIMARY NAV — the five-destination contract holds
+// 7. PRIMARY NAV — the six-destination contract holds
+//    (Navigation & Settings Redesign, Phase 1: Discover, Movies,
+//    TV Shows, Anime, Upcoming, Search. My List + Account left the
+//    primary nav; Account stays reachable via the topbar/sidebar
+//    control until the Phase 2/3 header sheet.)
 // ============================================================
 const linksBlock = appShell.match(/const primaryLinks = \[([\s\S]*?)\];/);
 assert.ok(linksBlock, 'AppShell still defines primaryLinks');
 const labels = [...linksBlock![1].matchAll(/label: '([^']+)'/g)].map((m) => m[1]);
-assert.deepEqual(labels, ['Discover', 'Upcoming', 'Search', 'My List', 'Account'], 'primary nav: Discover, Upcoming, Search, My List, Account');
-ok('7. primary navigation unchanged: Discover, Upcoming, Search, My List, Account');
+assert.deepEqual(labels, ['Discover', 'Movies', 'TV Shows', 'Anime', 'Upcoming', 'Search'], 'primary nav: Discover, Movies, TV Shows, Anime, Upcoming, Search');
+assert.match(appShell, /class="topbar-account"/, 'Account remains reachable via the header account control (Phase 2/3 sheet lands later)');
+ok('7. primary navigation: Discover, Movies, TV Shows, Anime, Upcoming, Search + header account control');
 
 // ============================================================
 // 8. NO DEAD LINKS — no internal navigation to legacy routes

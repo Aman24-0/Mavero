@@ -230,11 +230,12 @@ const appFooter = await readFile(path.join(repoRoot, 'src/lib/components/AppFoot
 }
 
 // ============================================================================
-// M. Anime Explore — /discover/anime can return movie + series and preserves canonical type.
+// M. Anime Explore — /anime can return movie + series and preserves canonical type.
 // ============================================================================
 {
-  // The /discover/anime route still uses loadCollectionData('anime', url).
-  const animeRoute = await readFile(path.join(repoRoot, 'src/routes/discover/anime/+page.server.ts'), 'utf8');
+  // The /anime route (moved from /discover/anime in the Navigation &
+  // Settings Redesign, Phase 1) still uses loadCollectionData('anime', url).
+  const animeRoute = await readFile(path.join(repoRoot, 'src/routes/anime/+page.server.ts'), 'utf8');
   assert.match(animeRoute, /loadCollectionData\('anime', url\)/, 'anime route still uses loadCollectionData');
   // The collection() service function for anime now uses the merged path.
   assert.match(service, /if \(type === 'anime'\) return await getTmdbAnimeMerged/, 'collection(anime) uses merged movie+TV path');
@@ -270,10 +271,14 @@ const appFooter = await readFile(path.join(repoRoot, 'src/lib/components/AppFoot
   assert.match(discoverPage, /aria-label="Previous title"/);
   assert.match(discoverPage, /aria-label="Next title"/);
   assert.match(discoverPage, /role="tablist"/);
-  // Quick chips unchanged.
-  assert.match(discoverPage, /label: 'Movies'.*?href: '\/discover\/movies'/);
-  assert.match(discoverPage, /label: 'TV Shows'.*?href: '\/discover\/series'/);
-  assert.match(discoverPage, /label: 'Anime'.*?href: '\/discover\/anime'/);
+  // Quick chips REMOVED (Navigation & Settings Redesign, Phase 1): their
+  // only purpose was entering the old /discover/{movies,series,anime}
+  // child pages, which are now first-class routes in the primary nav.
+  assert.doesNotMatch(discoverPage, /quickChips/, 'quick chips const removed');
+  assert.doesNotMatch(discoverPage, /quick-chips/, 'quick chips markup/styles removed');
+  assert.doesNotMatch(discoverPage, /\/discover\/(movies|series|anime)/, 'no links to the legacy child pages remain');
+  // Anime rail View-all links target the first-class /anime route.
+  assert.match(discoverPage, /viewAllHref: '\/anime'/, 'anime View-all targets /anime');
   // Continue watching unchanged.
   assert.match(discoverPage, /ContentRail title="Continue watching"/);
   assert.match(discoverPage, /href="\/my-list\?status=watching"/);

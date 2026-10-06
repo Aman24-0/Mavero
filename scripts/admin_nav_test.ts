@@ -6,7 +6,8 @@ import { join } from 'node:path';
 //
 // The root layout wrapped EVERY page (except watch/detail/auth) in
 // AppShell, which renders the consumer side rail + the mobile bottom nav
-// (Discover / Upcoming / Search / My List / Account). Admin pages therefore showed
+// (Navigation & Settings Redesign, Phase 1: Discover / Movies / TV Shows /
+// Anime / Upcoming / Search + header account control). Admin pages therefore showed
 // the normal consumer navigation — inappropriate for an administrative
 // surface. The fix renders /admin/* BARE (exactly like /watch/*): the
 // consumer AppShell is never mounted there — not hidden, not covered —
@@ -98,12 +99,12 @@ assert.equal(adminShellImporters.length, 0, 'no source file imports AdminShell (
 ok('2. overview uses AdminAppShell; legacy registry pages are Phase 1 redirect stubs to canonical workspaces; AdminShell.svelte deleted (no source imports it)');
 
 // ============================================================
-// 3. AppShell untouched — consumer navigation intact elsewhere
+// 3. AppShell carries the six consumer destinations (Phase 1)
 // ============================================================
-assert.match(appShell, /Discover[\s\S]*Upcoming[\s\S]*Search[\s\S]*My List[\s\S]*Account/, 'consumer primary links unchanged (Discover/Upcoming/Search/My List/Account)');
+assert.match(appShell, /Discover[\s\S]*Movies[\s\S]*TV Shows[\s\S]*Anime[\s\S]*Upcoming[\s\S]*Search/, 'consumer primary links: Discover/Movies/TV Shows/Anime/Upcoming/Search (Navigation & Settings Redesign, Phase 1)');
 assert.match(appShell, /class="mobile-nav"/, 'mobile bottom nav unchanged for consumer pages');
 assert.doesNotMatch(appShell, /\/admin/, 'AppShell has no admin special case (the exclusion lives in the layout branch)');
-ok('3. consumer navigation untouched (mobile + desktop consumers unaffected)');
+ok('3. consumer navigation intact (six destinations; mobile + desktop consumers unaffected)');
 
 // ============================================================
 // 4. Global comment documents the not-hidden-not-covered contract

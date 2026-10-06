@@ -1,4 +1,16 @@
-import { loadCollectionData } from '$lib/server/content/discover-load';
+import { redirect } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
 
-export const load: PageServerLoad = async ({ url }) => loadCollectionData('anime', url);
+// Navigation & Settings Redesign, Phase 1 — legacy compatibility redirect.
+//
+// /discover/anime is no longer a canonical destination: the anime
+// experience moved to /anime. The page component was MOVED (not
+// duplicated) — this directory is intentionally redirect-only, exactly
+// like the existing /profile and /settings compatibility routes.
+//
+// Permanent 308 preserves the full query string (page / genre / year /
+// sort) so bookmarked filtered views keep working. The load always throws,
+// so no page ever renders here.
+export const load: PageServerLoad = ({ url }) => {
+  throw redirect(308, `/anime${url.search}`);
+};

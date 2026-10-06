@@ -321,8 +321,7 @@ ok('Mobile responsive (wordmark + progress bar shrink on <380px screens)');
 // ============================================================
 console.log('\n16. +layout.svelte existing architecture preserved');
 
-// The bare-render regex (watch/admin/auth/detail/discover-subpages)
-// must be unchanged.
+// The bare-render regex (watch/admin/auth/detail) must be unchanged.
 assert.match(layoutSource, /page\.url\.pathname\.startsWith\('\/watch\/'\)/,
   '/watch/ bare-render preserved');
 assert.match(layoutSource, /page\.url\.pathname\.startsWith\('\/admin'\)/,
@@ -331,8 +330,12 @@ assert.match(layoutSource, /page\.url\.pathname\.startsWith\('\/auth\/'\)/,
   '/auth/ bare-render preserved');
 assert.match(layoutSource, /\^\\\/\(movie\|series\|anime\)\\\/\[\^\/\]\+/,
   'movie/series/anime detail bare-render preserved');
-assert.match(layoutSource, /\^\\\/discover\\\/\(movies\|series\|anime\)\\\/\?\$/,
-  'discover sub-pages bare-render preserved');
+// Navigation & Settings Redesign, Phase 1 — the /discover/{movies,series,anime}
+// sub-page bare-render regex is REMOVED: those paths are permanent 308
+// redirects and the first-class /movies, /tv-shows, /anime destinations
+// render inside the consumer AppShell.
+assert.doesNotMatch(layoutSource, /\^\\\/discover\\\/\(movies\|series\|anime\)\\\/\?\$/,
+  'discover sub-pages bare-render regex removed (redirects; new routes render in AppShell)');
 // AppShell render must be unchanged.
 assert.match(layoutSource, /<AppShell currentPath=\{page\.url\.pathname\} showMobileNav=\{!page\.url\.pathname\.startsWith\('\/settings'\)\}>/,
   'AppShell render preserved');

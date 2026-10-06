@@ -1,17 +1,24 @@
 <script lang="ts">
   import { onMount, type Snippet } from 'svelte';
-  import { Bookmark, CalendarClock, Compass, Search, UserRound, Clapperboard, PanelLeftClose, PanelLeft } from 'lucide-svelte';
+  import { CalendarClock, Compass, Search, UserRound, Clapperboard, Film, PanelLeftClose, PanelLeft, Sparkles, Tv } from 'lucide-svelte';
   import { haptic } from '$lib/client/haptics';
 
   let { children, currentPath = '/', showMobileNav = true }: { children: Snippet; currentPath?: string; showMobileNav?: boolean } = $props();
   let shell: HTMLElement;
 
+  // Navigation & Settings Redesign, Phase 1 — the six primary destinations.
+  // ONE source of truth feeds BOTH the desktop sidebar and the mobile bottom
+  // nav (no duplicated hardcoded nav logic anywhere). My List is reachable
+  // from the Account page today and from the Account sheet in Phase 3.
+  // Account itself stays reachable via the header control (mobile topbar)
+  // and the sidebar bottom link (desktop) until the Phase 2/3 header sheet.
   const primaryLinks = [
     { label: 'Discover', href: '/discover', key: '/discover', icon: Compass },
+    { label: 'Movies', href: '/movies', key: '/movies', icon: Film },
+    { label: 'TV Shows', href: '/tv-shows', key: '/tv-shows', icon: Tv },
+    { label: 'Anime', href: '/anime', key: '/anime', icon: Sparkles },
     { label: 'Upcoming', href: '/upcoming', key: '/upcoming', icon: CalendarClock },
-    { label: 'Search', href: '/search', key: '/search', icon: Search },
-    { label: 'My List', href: '/my-list', key: '/my-list', icon: Bookmark },
-    { label: 'Account', href: '/account', key: '/account', icon: UserRound }
+    { label: 'Search', href: '/search', key: '/search', icon: Search }
   ];
 
   const isActive = (key: string) => currentPath === key || currentPath.startsWith(`${key}/`);
@@ -73,6 +80,10 @@
       {/each}
     </nav>
     <div class="sidebar-bottom">
+      <a class:active={isActive('/account')} class="sidebar-link" href="/account" aria-current={isActive('/account') ? 'page' : undefined} title={sidebarCollapsed ? 'Account' : undefined}>
+        <span class="sidebar-icon"><UserRound size={19} strokeWidth={isActive('/account') ? 2.3 : 1.8} /></span>
+        {#if !sidebarCollapsed}<span class="sidebar-label">Account</span>{/if}
+      </a>
       <div class="sidebar-rule"></div>
       {#if !sidebarCollapsed}<span class="sidebar-caption">Your screen. Your story.</span>{/if}
     </div>
@@ -85,6 +96,9 @@
       <a class="mobile-brand" href="/discover" aria-label="MAVERO home">
         <span class="brand-symbol"><Clapperboard size={15} strokeWidth={2.2} /></span>
         <span class="brand-word">MAVERO</span>
+      </a>
+      <a class:active={isActive('/account')} class="topbar-account" href="/account" aria-label="Account" aria-current={isActive('/account') ? 'page' : undefined} onclick={() => { if (!isActive('/account')) haptic('light'); }}>
+        <UserRound size={20} strokeWidth={isActive('/account') ? 2.3 : 1.8} />
       </a>
     </header>
 
@@ -185,6 +199,7 @@
   /* ---- Mobile topbar ---- */
   .topbar { display: none; }
   .mobile-brand { display: none; }
+  .topbar-account { display: none; }
 
   /* ---- Responsive ---- */
   /* Tablet and mobile: hide sidebar, show topbar */
@@ -199,6 +214,28 @@
       background: rgba(5, 7, 8, .88); backdrop-filter: blur(22px);
     }
     .mobile-brand { display: inline-flex; align-items: center; gap: 9px; }
+    /* Account control on the topbar right side (Phase 1 transitional —
+       replaced by the compact Account sheet trigger in Phase 2/3). */
+    .topbar-account {
+      display: grid; place-items: center;
+      margin-left: auto;
+      width: 40px; height: 40px;
+      border: 1px solid var(--color-border);
+      border-radius: 12px;
+      color: var(--color-text-muted);
+      background: rgba(8, 11, 13, .5);
+      text-decoration: none;
+      transition: color var(--motion-fast), background var(--motion-fast), border-color var(--motion-fast);
+    }
+    .topbar-account:hover { color: var(--color-primary); border-color: var(--color-primary-border); }
+    .topbar-account.active {
+      color: var(--color-primary);
+      border-color: var(--color-primary-border);
+      background: var(--color-primary-soft);
+      box-shadow: var(--glow-primary);
+    }
+    .topbar-account.active :global(svg) { color: var(--color-primary); }
+    .topbar-account:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
   }
 
   @media (max-width: 640px) {
@@ -220,7 +257,7 @@
       width: min(calc(100% - 24px), 420px);
     }
     .mobile-nav-inner {
-      display: grid; grid-template-columns: repeat(5, 1fr);
+      display: grid; grid-template-columns: repeat(6, 1fr);
       align-items: center; gap: 2px; padding: 6px;
       border: 1px solid var(--color-border-strong); border-radius: 999px;
       background: rgba(8, 11, 13, .85); backdrop-filter: blur(20px);
@@ -250,6 +287,6 @@
     .page-shell.no-mobile-nav { padding-bottom: 0; }
   }
   @media (prefers-reduced-motion: reduce) {
-    .sidebar-link, .mobile-nav a { transition: none; }
+    .sidebar-link, .topbar-account, .mobile-nav a { transition: none; }
   }
 </style>
