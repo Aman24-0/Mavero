@@ -4,7 +4,7 @@
 **Worklog:** `MAVERO_NAVIGATION_SETTINGS_REDESIGN_WORKLOG.md`\
 **Repository:** `Aman24-0/Mavero`\
 **Implementation agent:** GLM AI Agent\
-**Status:** Phases 1-3 COMPLETE — Phases 4-6 pending
+**Status:** Phases 1-4 COMPLETE — Phases 5-6 pending
 
 ## Current Baseline
 
@@ -459,64 +459,135 @@ affected suites green.
 
 # Phase 4 --- Rich Movies / TV Shows / Anime
 
-**Status:** NOT STARTED
+**Status:** COMPLETE
 
 ### Movies
 
--   [ ] Cinematic featured/hero.
--   [ ] Popular.
--   [ ] Trending.
--   [ ] Top Rated.
--   [ ] Recent/current where supported.
--   [ ] Genre/curated rails where supported.
+-   [x] Cinematic featured/hero (featured trending pick with backdrop;
+       honest fallback block when the catalog is unavailable).
+-   [x] Popular (Popular movies rail).
+-   [x] Trending (Trending now rail).
+-   [x] Top Rated (Top rated rail).
+-   [x] Recent/current (New & recent rail — Newest sort).
+-   [x] Genre/curated rails (Action & adrenaline, Comedy picks,
+       Sci-Fi worlds).
 
 ### TV Shows
 
--   [ ] Featured/hero.
--   [ ] Popular.
--   [ ] Trending.
--   [ ] Top Rated.
--   [ ] Airing/recent where supported.
--   [ ] Genre/curated rails where supported.
+-   [x] Featured/hero.
+-   [x] Popular (Popular TV shows rail).
+-   [x] Trending.
+-   [x] Top Rated.
+-   [x] Airing/recent (New & recent — Newest sort).
+-   [x] Genre/curated rails (Drama deep cuts, Crime & mystery, Comedy
+       picks).
 
 ### Anime
 
--   [ ] Featured/hero.
--   [ ] Trending.
--   [ ] Popular.
--   [ ] Top Rated.
--   [ ] Airing/recent where supported.
--   [ ] Genre/curated rails where supported.
+-   [x] Featured/hero.
+-   [x] Trending.
+-   [x] Popular.
+-   [x] Top Rated.
+-   [x] Airing/recent + genre rails: intentionally NOT requested — the
+       merged anime path ignores genre/Newest filters (they would
+       silently duplicate Popular); "where supported" per the plan.
 
 ### Rules
 
--   [ ] Reuse existing Mavero/TMDB services.
--   [ ] Avoid duplicate backend fetching.
--   [ ] Reuse existing caching.
--   [ ] Preserve playback.
--   [ ] Preserve loading/error/empty states.
--   [ ] Browsing is primary.
--   [ ] Avoid directory/filter-dashboard appearance.
+-   [x] Reuse existing Mavero/TMDB services (loadRail / loadTopRated /
+       loadNewest / loadGenreCollection / loadCollectionData).
+-   [x] Avoid duplicate backend fetching (one parallel burst of cached
+       calls via loadDestinationData).
+-   [x] Reuse existing caching (same getOrSet TTL/LRU paths).
+-   [x] Preserve playback (hero Play + MediaCard links use the existing
+       /watch/[type]/[id] and /[type]/[id] patterns).
+-   [x] Preserve loading/error/empty states (same-route skeleton grid,
+       distinct error state, empty rails omitted server-side).
+-   [x] Browsing is primary (hero + rails first; collection grid below).
+-   [x] Avoid directory/filter-dashboard appearance (filters live in
+       the embedded "full collection" section, not at the top).
 
 ### Verification
 
--   [ ] Movies.
--   [ ] TV Shows.
--   [ ] Anime.
--   [ ] Hero.
--   [ ] Rails.
--   [ ] Cards.
--   [ ] Playback.
--   [ ] Empty/error states.
--   [ ] Mobile.
+-   [x] Movies (route + page + fallback hero + collection section).
+-   [x] TV Shows.
+-   [x] Anime.
+-   [x] Hero (fallback path verified live at 1440px + 390px; populated
+       hero verified via loader code path + helper tests — local dev
+       has no TMDB credentials).
+-   [x] Rails (server composition + empty-rail omission contracts).
+-   [x] Cards (MediaCard unchanged — playback + detail links intact).
+-   [x] Playback (watch route pattern preserved in hero + cards).
+-   [x] Empty/error states (fallback hero surfaces the server error
+       message; skeleton grid contract unchanged).
+-   [x] Mobile (edge-to-edge hero at ≤640px, 2-line description clamp,
+       44px action targets, reduced-motion).
 
 ### Notes
 
-*To be filled by GLM.*
+**Architecture.** One shared `DestinationPage.svelte` serves all three
+routes; one `loadDestinationData(type, url)` server loader composes
+ONLY the existing cached helpers in a single parallel Promise.all —
+zero new backend fetching, zero duplicate page implementations. The
+three route files are thin wrappers (route → component + loader).
+
+**Hero.** The featured pick is the first trending/popular item with a
+real backdrop + title (`.find(backdrop && title)` — no synthetic
+heroes). Cinematic treatment: full-bleed backdrop with a slow Ken
+Burns drift (disabled under reduced motion), dual-gradient scrim,
+destination eyebrow (MAVERO / Movies · TV Shows · Anime), balanced
+title, meta line (year · rating · genres), 3-line clamped description,
+Play + More details (existing route patterns). Fallback when the
+catalog is unavailable: quiet bordered block with the eyebrow +
+"{plural} in focus." + the server error message — the same honesty
+contract as Discover's hero-fallback.
+
+**Rails.** Rendered with the existing ContentRail (poster rails,
+scroll-snap, hover arrows, focus-visible). Server-side rail set:
+Trending now / Popular {movies|TV shows|anime} / Top rated / New &
+recent + three curated genre rails per type (movie: Action, Comedy,
+Sci-Fi; series: Drama, Crime, Comedy). Empty rails are OMITTED from
+the payload (the page never renders an empty section — same contract
+as the Discover batch rails). Anime intentionally gets NO genre/Newest
+rails: the merged anime path ignores those filters and would return
+Popular duplicates.
+
+**Collection section.** The existing CollectionPage gained a
+`variant: 'page' | 'section'` prop. In section mode it renders below
+the cinematic content with a compact h2 heading ("{plural} — the full
+collection."), skips its <svelte:head> chrome (the parent owns the
+title) and drops the page-count chip. ALL filter/grid/pagination/
+skeleton contracts are unchanged — the same-route skeleton guard now
+derives its roots from the shared DESTINATION_ROUTES constant.
+
+**Shared labels.** New `src/lib/shared/content-labels.ts` — one
+source of truth for destination copy (plural/singular/prose/
+description + canonical routes), consumed by DestinationPage and
+CollectionPage. This prevents the pluralization drift class of bug
+(fixed "Seriess" in Phase 1) from reappearing across the new surfaces.
+
+**Tests.** New `destination_page_test.ts` (8 groups: loader
+composition with zero direct TMDB calls, hero + honest fallback,
+rails scope + anime limits, collection embedding order (rails BEFORE
+grid — browsing primary), thin routes, shared labels, motion +
+responsive contracts, data safety) — registered in the pnpm test
+suite. Updated: discover_collection (loader contract), discover_v2
+(section M — anime route), discover_subpage_ux (section 4 —
+DestinationPage + shared labels + DESTINATION_ROUTES).
+
+**Verification method.** pnpm check 0/0; pnpm build OK; live dev
+server checks at 1440px and 390px (fallback hero + collection
+section render, edge-to-edge mobile hero, correct titles/eyebrows;
+screenshots: docs/qa/phase4-destination-verification/). Local dev has
+no TMDB credentials, so the populated-hero/rails path was verified
+via the loader's code path (destination_page_test asserts the exact
+helper composition) plus the existing cached-helper test coverage;
+the fallback path was exercised live.
 
 ### Commit
 
-*To be filled.*
+-   Implementation: `b68dffc` — "feat: rich cinematic Movies / TV
+    Shows / Anime destination pages (Phase 4)"
 
 ------------------------------------------------------------------------
 
@@ -646,6 +717,22 @@ affected suites green.
 ------------------------------------------------------------------------
 
 ## Change Log
+
+### 2026-10-06 --- Phase 4 complete (commit `b68dffc`)
+
+-   One shared DestinationPage (cinematic hero + ContentRail rails +
+    embedded full-collection section) serves /movies, /tv-shows,
+    /anime via one loadDestinationData composed from existing cached
+    loaders.
+-   Browsing primary; filters live below the cinematic content;
+    playback links preserved; empty rails omitted server-side;
+    honest fallback hero.
+-   Shared content-labels module (one copy source of truth);
+    destination_page_test.ts added to the suite (8 groups) + 3
+    existing contracts updated.
+-   Gates: pnpm check 0/0, pnpm build OK, live fallback verification at
+    1440px/390px (screenshots in docs/qa/phase4-destination-
+    verification/).
 
 ### 2026-10-06 --- Phase 3 complete (commit `740a1ca`)
 
