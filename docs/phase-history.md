@@ -185,3 +185,52 @@ accessible, and polished.
   they exercise real code paths. Deletion would lose regression coverage.
 
 **Status**: COMPLETE.
+
+---
+
+## Navigation, Content Destinations & Settings Redesign (2026-10-06)
+
+**Objective**: Movies, TV Shows and Anime become independent first-class
+destinations instead of Discover subpages; mobile gets six primary
+destinations; desktop gets a proper sidebar; Account becomes a compact
+header sheet; the Account page converts to `/settings`.
+
+**Plan / Worklog**: `MAVERO_NAVIGATION_SETTINGS_REDESIGN_PLAN.md`
+(authoritative specification) and
+`MAVERO_NAVIGATION_SETTINGS_REDESIGN_WORKLOG.md` (implementation state).
+
+**Major completed work** (six phases, all COMPLETE):
+- Phase 1 — Routes: `/movies`, `/tv-shows`, `/anime` (implementations
+  MOVED from `/discover/{movies,series,anime}` — git renames, zero
+  duplication); legacy paths are permanent 308 redirects preserving
+  query strings; six-destination primary nav; TV Shows rename.
+- Phase 2 — Shell: touch pill spans the full ≤1024px range (the
+  641-1024px tablet nav gap is CLOSED); desktop sidebar (Browse label,
+  collapse) + header account control on the right side.
+- Phase 3 — Account sheet (compact dialog: identity + sync + My List +
+  Settings ONLY) + Settings conversion: `/settings` canonical (page +
+  form actions MOVED from `/account`); `/account` + `/profile` are 308
+  redirects; Your library / About / standalone Session sections
+  removed; "Login on Big Screen" → "Login With QR" (route moved to
+  `/settings/scan-tv`).
+- Phase 4 — Rich cinematic destination pages: one DestinationPage
+  (hero + ContentRail rails + embedded full-collection section) + one
+  loadDestinationData composed from existing cached TMDB loaders.
+- Phase 5 — Polish: full-bleed hero + single aligned gutter layer;
+  responsive matrix verified 360→1920; a11y contracts verified.
+- Phase 6 — Cleanup (standalone CollectionPage page-variant removed)
+  + final gates.
+
+**Architectural decisions**:
+- Zero database/migration changes (verified: zero files under
+  `supabase/` touched).
+- Card classification badges keep "Series" (formatType pipeline) —
+  destination copy only was renamed to TV Shows.
+- `/api/account/*` endpoints keep their namespace (server API, not
+  user-facing navigation).
+- The anime merged path intentionally gets NO genre/Newest rails
+  (upstream ignores those filters).
+
+**Status**: COMPLETE. All gates pass (`pnpm check` 0/0, `pnpm test`
+220 scripts, `pnpm build` OK); full live regression verified on the
+production build.

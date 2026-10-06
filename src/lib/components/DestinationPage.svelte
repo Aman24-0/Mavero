@@ -111,7 +111,6 @@
   <!-- The full collection: filters + grid + pagination (browsing primary) -->
   <CollectionPage
     {type}
-    variant="section"
     {contentItems}
     {currentPage}
     {hasNextPage}

@@ -104,12 +104,14 @@ assert.doesNotMatch(loader, /anime:\s*\[\s*\{ genre:/, 'anime requests NO genre 
 ok('3. rails: existing ContentRail, empty rails omitted, anime scope intentionally narrower');
 
 // ============================================================
-// 4. COLLECTION — embedded section variant, contracts preserved
+// 4. COLLECTION — embedded below the cinematic content (Phase 6
+//    cleanup: CollectionPage is ONLY the embedded collection section —
+//    the standalone page variant was removed with the old architecture)
 // ============================================================
-assert.match(destinationPage, /variant="section"/, 'DestinationPage embeds CollectionPage in section variant');
-assert.match(collection, /export let variant: 'page' \| 'section' = 'page';/, 'CollectionPage exposes the variant prop (backward compatible)');
-assert.match(collection, /\{#if variant === 'page'\}/, 'head chrome renders only in page variant (the parent owns the title)');
-assert.match(collection, /class:section-heading=\{variant === 'section'\}/, 'the section variant ships a compact heading treatment');
+assert.match(destinationPage, /<CollectionPage\s+\{type\}/, 'DestinationPage embeds the shared CollectionPage below the cinematic content');
+assert.doesNotMatch(collection, /export let variant/, 'the dead standalone-page variant prop is removed (Phase 6 cleanup)');
+assert.doesNotMatch(collection, /<svelte:head>/, 'the collection component owns no head chrome (the parent owns the title)');
+assert.match(collection, /class="collection-page collection-section"/, 'the collection renders as the embedded section');
 // The filter/pagination contracts are unchanged.
 assert.match(collection, /params\.set\('page', '1'\)/, 'filter changes still reset to page 1');
 assert.match(collection, /href=\{collectionHref\(currentPage \+ 1\)\}/, 'pagination preserved');
@@ -153,7 +155,7 @@ assert.ok(heroBase, 'hero base rule parseable');
 assert.doesNotMatch(heroBase![1], /border-radius|margin/, 'the hero is edge-to-edge at every breakpoint (no floating radius)');
 assert.doesNotMatch(destinationPage.match(/\.destination-page \{([\s\S]*?)\}\n/)![1], /width:|padding-left|padding-right/, 'the page container applies no width constraint or side padding (children own the gutters)');
 assert.match(destinationPage, /padding: clamp\(20px, 4vw, 44px\) var\(--c-gutter\)/, 'hero copy aligns with the shared gutter token');
-assert.match(collection, /\.collection-page\.collection-section \{[\s\S]*?padding-left: var\(--c-gutter\)/, 'the embedded collection uses the same single gutter layer (no double inset)');
+assert.match(collection, /\.collection-page \{[\s\S]*?padding-left: var\(--c-gutter\)/, 'the embedded collection uses the single shared gutter layer (no double inset)');
 assert.match(destinationPage, /-webkit-line-clamp: 2/, 'mobile hero description clamps to 2 lines');
 assert.match(destinationPage, /min-height: 44px/, 'hero action buttons keep the 44px touch target');
 ok('7. hero honors reduced motion; single aligned gutter layer; mobile clamps + 44px targets');

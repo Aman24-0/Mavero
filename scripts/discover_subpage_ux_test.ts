@@ -113,7 +113,7 @@ assert.match(routes.movies, /<DestinationPage\s+type="movie"/, '/movies renders 
 assert.match(routes.series, /<DestinationPage\s+type="series"/, '/tv-shows renders the shared DestinationPage');
 assert.match(routes.anime, /<DestinationPage\s+type="anime"/, '/anime renders the shared DestinationPage');
 const destinationPage = read('../src/lib/components/DestinationPage.svelte');
-assert.match(destinationPage, /variant="section"/, 'DestinationPage embeds CollectionPage in section variant');
+assert.match(destinationPage, /<CollectionPage\s+\{type\}/, 'DestinationPage embeds the shared CollectionPage below the cinematic content');
 assert.match(destinationPage, /<ContentRail title=\{rail\.title\} items=\{rail\.items\} \/>/, 'rails render through the existing ContentRail component');
 assert.match(destinationPage, /heroItem\.backdrop/, 'the cinematic hero renders the featured item backdrop');
 assert.match(destinationPage, /\/watch\/\$\{heroItem\.type\}\/\$\{heroItem\.id\}/, 'hero Play links to the existing watch route (playback preserved)');
@@ -243,7 +243,7 @@ assert.ok(labelsBlock, 'DESTINATION_LABELS source captured');
 assert.match(labelsBlock![1], /series: \{\s*plural: 'TV Shows'/, 'series destination is presented as "TV Shows"');
 assert.match(labelsBlock![1], /movie: \{\s*plural: 'Movies'/, 'movie destination is "Movies"');
 assert.match(labelsBlock![1], /anime: \{\s*plural: 'Anime'/, 'anime destination stays "Anime" (never "Animes")');
-assert.match(collection, /\{headingLabel\} <em>in focus\.<\/em>/, 'all three destinations share one consistent heading template');
+assert.match(collection, /\{headingLabel\} <em>— the full collection\.<\/em>/, 'all three destinations share one consistent collection heading template');
 assert.match(labelsModule, /export const DESTINATION_ROUTES: Record<ContentType, string> = \{\s*movie: '\/movies',\s*series: '\/tv-shows',\s*anime: '\/anime'\s*\}/, 'empty-state action links target the new canonical routes (shared routes map)');
 // The card badge pipeline is untouched — classification still says
 // "Series" on cards (formatType), only destination copy is renamed.

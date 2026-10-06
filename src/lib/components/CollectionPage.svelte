@@ -23,12 +23,6 @@
   export let totalPages: number | undefined = undefined;
   export let collectionFilters: CollectionFilters = {};
   export let errorMessage: string | undefined;
-  // Navigation & Settings Redesign, Phase 4 — 'page' is the standalone
-  // collection experience (owns <svelte:head> + the big cinematic
-  // heading); 'section' embeds the same grid/filters/pagination inside
-  // DestinationPage below the hero + rails (compact heading, no head
-  // chrome — the parent owns the document title).
-  export let variant: 'page' | 'section' = 'page';
   const validSorts = ['For you', 'Top rated', 'Newest'];
   const fallbackGenres = [...new Set(fixtureMedia.filter((item) => item.type === type).flatMap((item) => item.genres))].sort();
   // ============================================================
@@ -61,33 +55,14 @@
   $: hasNextPageSafe = hasNextPage && (totalPages === undefined || currentPage < totalPages);
 </script>
 
-<svelte:head>
-  {#if variant === 'page'}
-    <title>{headingLabel} — Mavero</title>
-    <meta name="description" content={`Explore MAVERO's focused collection of ${labels.prose}.`} />
-    <link rel="canonical" href={`${page.url.origin}${page.url.pathname}`} />
-    <meta property="og:title" content={`${headingLabel} — Mavero`} />
-    <meta property="og:description" content={`Explore MAVERO's focused collection of ${labels.prose}.`} />
-    <meta property="og:url" content={`${page.url.origin}${page.url.pathname}`} />
-    <meta name="twitter:card" content="summary" />
-  {/if}
-</svelte:head>
-
-<div class="collection-page" class:collection-section={variant === 'section'}>
-  <section class="collection-heading" class:section-heading={variant === 'section'}>
+<div class="collection-page collection-section">
+  <section class="collection-heading section-heading">
     <div class="eyebrow"><Layers3 size={13} /> Mavero / Explore</div>
     <div class="heading-row">
       <div>
-        {#if variant === 'section'}
-          <h2>{headingLabel} <em>— the full collection.</em></h2>
-        {:else}
-          <h1>{headingLabel} <em>in focus.</em></h1>
-        {/if}
+        <h2>{headingLabel} <em>— the full collection.</em></h2>
         <p>{labels.description}</p>
       </div>
-      {#if variant === 'page'}
-        <div class="collection-count"><strong>{contentItems.length}</strong><span>titles on page {currentPage}</span></div>
-      {/if}
     </div>
   </section>
   <div class="collection-tools"><FilterBar value={filterState} {genres} onChange={updateFilters} /></div>
@@ -115,41 +90,25 @@
 
 <style>
   .collection-page {
-    /* Single consistent mobile→desktop content gutter — matches Discover/ContentRail. */
+    /* Phase 6 cleanup — this component is now ONLY the embedded
+       "full collection" section inside DestinationPage. ONE gutter
+       layer: full width + horizontal padding using the shared clamp
+       token (aligned with the hero copy and the rail headings). */
     --c-gutter: clamp(16px, 5vw, 48px);
-    width: min(1600px, calc(100% - 2 * var(--c-gutter))); margin-inline: auto;
-    padding-bottom: 40px;
-  }
-  /* Phase 4/5 — section variant: embedded inside the full-bleed
-     DestinationPage. ONE gutter layer: full width + horizontal padding
-     (aligned exactly with the hero copy and the rail headings — all use
-     the same clamp token). No independent width constraint, so the
-     collection never double-insets inside its parent. */
-  .collection-page.collection-section {
     width: 100%; margin-inline: 0;
     padding-left: var(--c-gutter); padding-right: var(--c-gutter);
     box-sizing: border-box;
+    padding-bottom: 40px;
   }
   em { color: #77777f; font-style: normal; }
-  .collection-heading { padding: 30px 0 22px; }
-  /* Phase 4 section variant — embedded below the destination hero +
-     rails: tighter rhythm, h2 scale, no count chip (the cinematic
-     content above carries the page identity). */
-  .collection-heading.section-heading { padding: 10px 0 18px; }
-  .collection-heading.section-heading .heading-row { align-items: end; }
-  .collection-heading.section-heading h2 {
+  .collection-heading { padding: 10px 0 18px; }
+  .collection-heading .heading-row { align-items: end; }
+  .collection-heading h2 {
     margin: 8px 0 0; color: #f5f5f5; font-size: clamp(1.4rem, 2.6vw, 2rem);
     font-weight: 800; line-height: 1.05; letter-spacing: -.02em;
   }
-  .collection-heading.section-heading p { margin-top: 8px; font-size: .8rem; }
   .heading-row { display: flex; align-items: end; justify-content: space-between; gap: 20px; }
-  .collection-heading h1 {
-    margin: 10px 0 0; color: #f5f5f5; font-size: clamp(2rem, 4.4vw, 3.4rem);
-    font-weight: 800; line-height: 1.02; letter-spacing: -.025em;
-  }
-  .collection-heading p { max-width: 520px; margin: 12px 0 0; color: #77777f; font-size: .84rem; line-height: 1.6; }
-  .collection-count { display: grid; justify-items: end; gap: 3px; color: #77777f; font-size: .64rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
-  .collection-count strong { color: #f5f5f5; font-size: 1.8rem; font-weight: 800; line-height: 1; }
+  .collection-heading p { max-width: 520px; margin: 8px 0 0; color: #77777f; font-size: .8rem; line-height: 1.6; }
   .collection-tools { margin: 0 0 28px; padding: 14px 0; border-top: 1px solid rgba(255,255,255,.06); border-bottom: 1px solid rgba(255,255,255,.06); }
   .results-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 182px)); justify-content: start; gap: 28px 16px; padding-bottom: 34px; }
   /* Collection grid: card titles may wrap to two lines but never more,
@@ -173,26 +132,18 @@
   .pagination-link.disabled { color: #444444; opacity: .5; pointer-events: none; }
   .pagination-page { color: #77777f; font-size: .68rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
   @media (max-width: 640px) {
-    .collection-page {
-      /* On mobile, take the full width and use padding for the gutter so the
-         filter bar can stretch edge-to-edge within that gutter, matching the
-         Discover chips behaviour. */
-      width: 100%; margin-inline: 0;
-      padding-left: var(--c-gutter); padding-right: var(--c-gutter);
-    }
-    /* The page now renders inside the AppShell — the mobile topbar owns
+    /* The page renders inside the AppShell — the mobile topbar owns
        the safe-area top spacing, so no local top padding is needed. */
     /* Vertical efficiency: the first poster row should appear sooner.
        Tightened heading rhythm + a short 2-line description block — no
        information removed, whitespace trimmed. */
     .collection-heading { padding: 16px 0 12px; }
     .heading-row { align-items: start; }
-    .collection-heading h1 { margin-top: 6px; font-size: 2.1rem; }
+    .collection-heading h2 { margin-top: 6px; font-size: 1.5rem; }
     .collection-heading p {
       display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical;
-      overflow: hidden; margin-top: 7px; font-size: .8rem;
+      overflow: hidden; margin-top: 7px; font-size: .78rem;
     }
-    .collection-count { padding-top: 3px; }
     .collection-tools { margin-bottom: 16px; padding: 10px 0; }
     .results-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px 11px; padding-bottom: 34px; }
     .pagination { padding-bottom: calc(26px + env(safe-area-inset-bottom, 0px)); }
