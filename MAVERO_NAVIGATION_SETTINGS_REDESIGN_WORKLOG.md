@@ -4,7 +4,7 @@
 **Worklog:** `MAVERO_NAVIGATION_SETTINGS_REDESIGN_WORKLOG.md`\
 **Repository:** `Aman24-0/Mavero`\
 **Implementation agent:** GLM AI Agent\
-**Status:** Phase 1 + Phase 2 COMPLETE — Phases 3-6 pending
+**Status:** Phases 1-3 COMPLETE — Phases 4-6 pending
 
 ## Current Baseline
 
@@ -298,70 +298,162 @@ search_state_scroll_restoration, adult_phase8_ui).
 
 # Phase 3 --- Account Sheet + Settings
 
-**Status:** NOT STARTED
+**Status:** COMPLETE
 
 ### Account sheet
 
--   [ ] Header account control.
--   [ ] Compact identity block.
--   [ ] Name.
--   [ ] Email.
--   [ ] Database/cloud sync status.
--   [ ] My List.
--   [ ] Settings.
--   [ ] Dismiss behavior.
--   [ ] Focus behavior.
--   [ ] Mobile/desktop positioning.
+-   [x] Header account control.
+-   [x] Compact identity block.
+-   [x] Name.
+-   [x] Email.
+-   [x] Database/cloud sync status.
+-   [x] My List.
+-   [x] Settings.
+-   [x] Dismiss behavior (close button, backdrop click, Escape).
+-   [x] Focus behavior (focus moves in, Tab trapped, focus restored to
+    the trigger on close).
+-   [x] Mobile/desktop positioning (bottom sheet ≤640px with
+       safe-area; popover under the header control above).
 
 ### Settings
 
--   [ ] Canonical `/settings`.
--   [ ] Settings naming throughout affected code.
--   [ ] Profile & security.
--   [ ] Adult Mode.
--   [ ] Devices & Sessions.
--   [ ] Login on Big Screen → Login With QR.
--   [ ] Active session list.
--   [ ] Per-device revoke.
--   [ ] Sign out all other devices.
--   [ ] Remove standalone Session section.
--   [ ] Delete account.
--   [ ] CineLog.
--   [ ] Footer.
--   [ ] Remove Your library.
--   [ ] Remove About.
--   [ ] Redirect old `/account` if present.
+-   [x] Canonical `/settings`.
+-   [x] Settings naming throughout affected code (title, eyebrow,
+       classes, descriptions, scan-tv labels, test names).
+-   [x] Profile & security.
+-   [x] Adult Mode.
+-   [x] Devices & Sessions.
+-   [x] Login on Big Screen → Login With QR.
+-   [x] Active session list.
+-   [x] Per-device revoke.
+-   [x] Sign out all other devices.
+-   [x] Remove standalone Session section.
+-   [x] Delete account.
+-   [x] CineLog.
+-   [x] Footer.
+-   [x] Remove Your library.
+-   [x] Remove About.
+-   [x] Redirect old `/account` → `/settings` (308, query preserved;
+       `/profile` retargeted too).
 
 ### Explicitly do not change
 
--   [ ] Session database logic.
--   [ ] Revoked-session retention.
--   [ ] Authentication logic.
--   [ ] Supabase schema.
+-   [x] Session database logic.
+-   [x] Revoked-session retention.
+-   [x] Authentication logic.
+-   [x] Supabase schema.
 
 ### Verification
 
--   [ ] Sheet open/close.
--   [ ] Identity.
--   [ ] Sync status.
--   [ ] My List.
--   [ ] Settings.
--   [ ] Profile save.
--   [ ] Email update.
--   [ ] Password.
--   [ ] Adult Mode.
--   [ ] QR login.
--   [ ] Device revoke.
--   [ ] Sign out all other devices.
--   [ ] Delete account.
+-   [x] Sheet open/close (SSR trigger contracts + source contracts —
+       see method note).
+-   [x] Identity (name/email/initials logic preserved from the page).
+-   [x] Sync status (getSyncStatus, no network roundtrip).
+-   [x] My List (sheet entry + dedicated route).
+-   [x] Settings (sheet entry + canonical route).
+-   [x] Profile save (?/profile action unchanged).
+-   [x] Email update (?/email action unchanged).
+-   [x] Password (?/password action unchanged).
+-   [x] Adult Mode (server-authoritative GET/PUT unchanged).
+-   [x] QR login (route moved to /settings/scan-tv, auth gating
+       verified live: guest → 303 sign-in redirect).
+-   [x] Device revoke (per-device Revoke preserved for non-current).
+-   [x] Sign out all other devices (unchanged flow).
+-   [x] Delete account (two-step DELETE confirmation unchanged).
 
 ### Notes
 
-*To be filled by GLM.*
+**Route conversion.** The /account page component and its form actions
+were MOVED to /settings (git-tracked renames; action names ?/profile,
+?/email, ?/password unchanged — they delegate to the same shared
+$lib/server/account/actions module, so there is still exactly ONE
+security implementation). /account is now a redirect-only
+compatibility route (308 → /settings with url.search preserved,
+exactly the pre-Phase-3 pattern /settings and /profile used — the
+Phase C direction reversed per this plan). /profile retargeted to
+/settings. All post-auth defaults now point to /settings: root page
+exchangeCodeForSession redirect, sign-in/sign-up servers + forms,
+auth callback, auth reset, authorize "Go to Settings" CTA, AuthShell
+default backHref, and the safeRedirectPath fallback default.
+
+**Account sheet.** New `src/lib/components/AccountSheet.svelte` — a
+compact dialog (role=dialog, aria-modal, aria-label=Account) with:
+identity block (avatar initials, display name or email-prefix,
+email, compact cloud sync status read from the existing
+getSyncStatus() module state, guest "Sign in to sync" hint) and
+EXACTLY two menu rows: My List and Settings. Dismissible via close
+button, backdrop click and Escape. Keyboard: focus moves to the close
+button on open, Tab is trapped inside, focus is restored to the
+trigger on close. Body scroll is locked while open
+(html[data-account-sheet-open] — same pattern as the admin sheet).
+Mobile (≤640px): bottom sheet above the nav pill with safe-area
+bottom padding; larger viewports: popover anchored under the header
+account control. One subtle entry animation, fully disabled under
+prefers-reduced-motion. The sheet is MUCH smaller than the Settings
+page by construction — no sections, no forms, no device list.
+
+The two header account controls (topbar ≤1024px, desktop chip
+≥1025px) became buttons that open the sheet (aria-haspopup=dialog,
+aria-expanded, haptic). The root layout projects user +
+isAuthenticated into AppShell for the identity block (the existing
+Phase 2-B projection — no new server payload).
+
+**Section removals.** "Your library" (stat strip + the library stats
+loading path) — My List is a dedicated destination, and the identity
+header keeps the compact sync status; the authenticated
+syncAuthenticatedState() side effect is PRESERVED (the Settings page
+remains library-aware via route-policy '/settings'). "About" — TMDB
+attribution stays via the shared AppFooter which remains last.
+Standalone "Session → Sign out" section — removed per the plan
+("active device management already covers this"); to make that
+rationale TRUE, the CURRENT device's session card now carries the
+Sign out action (the exact existing /auth/sign-out flow +
+ConfirmDialog, relocated — no auth logic changed), while non-current
+devices keep Revoke.
+
+**Login With QR.** "Login on Big Screen" renamed to "Login With QR"
+(QrCode icon). The phone-side QR scanner route moved to
+/settings/scan-tv (git rename; title "Login With QR — Mavero", cancel
+goal goto('/settings'), back aria-label updated; auth-gating load
+preserved — verified live: guest gets 303 → /auth/sign-in?…). The
+legacy /account/scan-tv path is a redirect-only compatibility route.
+The root layout bare-render condition updated accordingly.
+
+**Environment notes.** The devtool-protection layer blocks automated
+browsers by design (content replacement under CDP after ~1s), so the
+sheet's interactive behavior is covered by source-contract tests
+(account_route_migration_test 7b: dialog role, aria-modal, Escape,
+Tab trap, focus restoration, scroll lock, ONLY My List + Settings
+entries) plus SSR checks (both trigger buttons render with
+aria-haspopup/aria-expanded; no /account links remain in the shell).
+This follows the repo's established testing convention (the entire
+suite is source-contract based). Live curl checks: /settings 200,
+/account → 308 → /settings (query preserved), /account/scan-tv → 308,
+/profile → 308, /settings/scan-tv auth-gated. `phase6_auth_test`
+requires live Supabase credentials (environmental; fails identically
+on the pre-change baseline without creds).
+
+**Tests updated (31 files).** account_page_test (rewritten for the
+Settings page contract — 16 groups), account_route_migration_test
+(rewritten for the reversed Phase 3 direction + sheet contract — 13
+groups), account_sessions_test (current-session Sign out card),
+navigation_primary_test (sheet triggers + new redirects),
+phase2_sync_gating_test (/settings library-aware),
+big_screen_qr_regression_test, big_screen_qr_ux_test,
+phase5_tv_login_ui_test, phase6_phone_qr_scanner_test,
+phase9_device_auth_regression_test (QR route + rename),
+upcoming_test, pwa_boot_overlay_test (layout props),
+account_deletion_test, signout_reliability_test, adult_mode_test,
+phase2/phase3/phase8/device_session/discover_v2_fix suite path
+updates.
+
+**Gates.** pnpm check: 0 errors / 0 warnings. pnpm build: OK. All
+affected suites green.
 
 ### Commit
 
-*To be filled.*
+-   Implementation: `740a1ca` — "feat: account header sheet + Settings
+    conversion (Phase 3)"
 
 ------------------------------------------------------------------------
 
@@ -554,6 +646,25 @@ search_state_scroll_restoration, adult_phase8_ui).
 ------------------------------------------------------------------------
 
 ## Change Log
+
+### 2026-10-06 --- Phase 3 complete (commit `740a1ca`)
+
+-   Account is now a compact header sheet (identity + sync + My List +
+    Settings ONLY) opened from the header controls on every
+    breakpoint; dialog a11y (Escape, Tab trap, focus restoration,
+    scroll lock, reduced motion).
+-   /settings is the canonical account-management route (page + form
+    actions MOVED from /account; action names unchanged; one shared
+    security implementation). /account + /profile are permanent 308
+    redirects; all auth-flow defaults retargeted.
+-   Sections removed per plan: Your library, About, standalone
+    Session (Sign out relocated onto the current device's session
+    card — same endpoint flow). CineLog + footer kept last.
+-   "Login on Big Screen" → "Login With QR"; QR scanner route moved
+    to /settings/scan-tv (legacy path redirects; auth gating
+    preserved).
+-   31 test files updated; pnpm check 0/0; pnpm build OK; live route
+    verification OK.
 
 ### 2026-10-06 --- Phase 2 complete (commit `feb90cd`)
 
