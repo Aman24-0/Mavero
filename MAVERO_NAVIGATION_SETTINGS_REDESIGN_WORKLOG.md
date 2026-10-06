@@ -1526,3 +1526,14 @@ updated + scripts/explorer_ui_hardening_test.ts (NEW, registered)
   clearance token, detail −10px, MediaCard Play-hover fix.
 - Gates: check 0/0, test exit 0 (223 scripts), build OK; 133 live
   checks passed; screenshots + VLM visual inspection done.
+
+### 2026-10-07 — Follow-up task 2 complete (commit `32d0cfe`, pushed to origin/main)
+
+- All 14 audited issues fixed with their root causes documented above;
+  every gate + live viewport matrix + visual inspection passed.
+- Baseline `71e96b7` → implementation `32d0cfe` (one commit, surgical
+  diff: 19 modified files + 2 new test/verification scripts + the
+  screenshot evidence directory).
+- No database/schema/auth/session/provider/hosting/CloudStream/
+  downloader/admin/analytics changes (verified via empty diffs over the
+  protected areas); the Search page diff is EMPTY (audit-only).
