@@ -4,7 +4,7 @@
 **Worklog:** `MAVERO_NAVIGATION_SETTINGS_REDESIGN_WORKLOG.md`\
 **Repository:** `Aman24-0/Mavero`\
 **Implementation agent:** GLM AI Agent\
-**Status:** Phase 1 COMPLETE — Phases 2-6 pending
+**Status:** Phase 1 + Phase 2 COMPLETE — Phases 3-6 pending
 
 ## Current Baseline
 
@@ -193,51 +193,106 @@ guest-data, or auth logic changes.
 
 # Phase 2 --- Responsive Global Shell & Navigation
 
-**Status:** NOT STARTED
+**Status:** COMPLETE
 
-### Mobile
+### Mobile + tablet (≤1024px)
 
--   [ ] Discover
--   [ ] Movies
--   [ ] TV Shows
--   [ ] Anime
--   [ ] Upcoming
--   [ ] Search
--   [ ] Account removed from bottom navigation.
--   [ ] Safe-area handling.
--   [ ] Active states.
+-   [x] Discover
+-   [x] Movies
+-   [x] TV Shows
+-   [x] Anime
+-   [x] Upcoming
+-   [x] Search
+-   [x] Account removed from bottom navigation.
+-   [x] Safe-area handling (topbar safe-area + pill safe-area preserved).
+-   [x] Active states.
+-   [x] Tablet navigation gap CLOSED (pill now spans the full ≤1024px
+    touch range; the former 641-1024px window had NO navigation at all).
 
-### Desktop
+### Desktop (≥1025px)
 
--   [ ] Proper sidebar.
--   [ ] Discover
--   [ ] Movies
--   [ ] TV Shows
--   [ ] Anime
--   [ ] Upcoming
--   [ ] Search
--   [ ] Desktop spacing/collapse behavior.
--   [ ] Account control in header right corner.
+-   [x] Proper sidebar.
+-   [x] Discover / Movies / TV Shows / Anime / Upcoming / Search.
+-   [x] Desktop spacing/collapse behavior (persisted collapse, icon-only
+    rail, 44px targets, hover/active language).
+-   [x] Browse hierarchy label (desktop-appropriate structure — not a
+    copy of the mobile pill composition).
+-   [x] Account control in header right corner (fixed top-right glass
+    chip, floating over full-bleed pages; no persistent bar).
+-   [x] Sidebar carries ONLY the six content destinations — the
+    transitional Phase 1 sidebar-bottom Account link was removed.
 
 ### Verification
 
--   [ ] Narrow Android.
--   [ ] Standard Android.
--   [ ] Tablet.
--   [ ] Desktop.
--   [ ] Direct navigation.
--   [ ] Refresh.
--   [ ] Active state.
--   [ ] Accessibility.
--   [ ] Reduced motion.
+-   [x] Narrow Android (360px): no pill overflow, labels fit.
+-   [x] Standard Android (390px): pill 6-col + topbar account + no
+    sidebar/header chip.
+-   [x] Tablet (820px): pill 6-col 480px + sticky topbar — gap closed.
+-   [x] Desktop (1440px): sidebar + fixed top-right header account.
+-   [x] Direct navigation (SSR active state per route).
+-   [x] Refresh (SSR active state per route — same render path).
+-   [x] Active state (exactly one aria-current="page" link per
+    composition; verified on all six routes).
+-   [x] Accessibility (anchors, focus-visible outlines, 44px targets,
+    aria-current, aria-labels).
+-   [x] Reduced motion (transition:none set incl. header-account).
 
 ### Notes
 
-*To be filled by GLM.*
+**Compositions.** One `primaryLinks` source of truth, two intentionally
+different compositions: the floating pill (touch range ≤1024px) and
+the vertical sidebar with Browse label + collapse (≥1025px). The plan
+requirement "do not copy the mobile bottom-nav composition onto
+desktop" is satisfied — the sidebar is a vertical labeled rail with
+section hierarchy, persistent collapse state and hover translate; the
+pill is a centered floating glass bar.
+
+**Tablet gap fix (audit finding).** The previous shell rendered NO
+navigation UI in the 641-1024px window: the pill was hidden
+(`min-width: 641px` rule) and the sidebar hidden (`max-width: 1024px`).
+Tablet users could only navigate via in-page links. Phase 2 closes
+this: the pill media query is now `max-width: 1024px` (base
+`.mobile-nav { display: none; }` for desktop), the 641px hide rule is
+gone, and phones keep their compact refinements scoped to ≤640px
+(420px pill + .54rem labels) while tablets get a roomier 480px pill.
+
+**Desktop header account control.** Per the Final IA ("Account/Settings
+is accessed from the header right side"), the desktop control is a
+fixed top-right glass chip (40px, focus-visible, active state,
+reduced-motion) floating over the cinematic full-bleed pages — a
+persistent header BAR would steal vertical space from every hero. The
+Phase 1 transitional sidebar-bottom Account link was removed so the
+sidebar matches the plan exactly (six destinations only). Both the
+topbar control (≤1024px) and the header chip (≥1025px) become the
+compact Account sheet trigger in Phase 3 (same position, new
+behavior).
+
+**Verification method note.** Live verification used the dev server +
+headless Chromium (computed-style checks per viewport: pill display,
+grid columns, sidebar/header-account display, topbar position). The
+app's devtool-protection layer (disable-devtool) by DESIGN replaces
+content under automated/CDP browsers after its ~5s detection window —
+all DOM checks were captured pre-detection, and the active-state /
+refresh matrix was completed via SSR HTML checks (curl: exactly one
+aria-current="page" link per composition on each of the six routes).
+Verification screenshots: docs/qa/phase2-shell-verification/ (390px,
+360px, 820px, 1440px).
+
+**Tests.** `navigation_primary_test.ts` updated for the Phase 2
+contracts: header-account + topbar-account presence, sidebar-bottom
+carries no Account link, Browse hierarchy label, pill shown inside
+the ≤1024px media query, the old 641px+ hide rule removed, 44px
+targets, focus-visible + reduced-motion coverage (still 11 check
+groups). `pnpm check` 0/0, `pnpm build` OK, affected suites green
+(account_route_migration, discover_subpage_ux, admin_nav,
+pwa_boot_overlay, phase8_accessibility, phase4_ux_a11y,
+search_state_scroll_restoration, adult_phase8_ui).
 
 ### Commit
 
-*To be filled.*
+-   Implementation: `feb90cd` — "feat: responsive global shell — tablet
+    nav gap closed, header account control, desktop sidebar hierarchy
+    (Phase 2)"
 
 ------------------------------------------------------------------------
 
@@ -499,6 +554,20 @@ guest-data, or auth logic changes.
 ------------------------------------------------------------------------
 
 ## Change Log
+
+### 2026-10-06 --- Phase 2 complete (commit `feb90cd`)
+
+-   One primaryLinks source, two intentional compositions: touch pill
+    (≤1024px) + vertical desktop sidebar with Browse hierarchy label.
+-   Tablet navigation gap (641-1024px had NO nav UI) closed — the pill
+    spans the full touch range.
+-   Account control in the header right side on every breakpoint
+    (topbar control ≤1024px; fixed top-right glass chip ≥1025px);
+    sidebar now carries only the six content destinations.
+-   Active states verified per route via SSR (direct nav + refresh);
+    a11y (focus-visible, 44px targets, aria-current) and reduced
+    motion preserved; 360px fit verified.
+-   Screenshots: docs/qa/phase2-shell-verification/.
 
 ### 2026-10-06 --- Phase 1 complete (commit `5e84391`)
 
