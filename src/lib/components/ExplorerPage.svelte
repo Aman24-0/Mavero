@@ -2,11 +2,11 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { navigating, page } from '$app/state';
-  import { Check, LoaderCircle, RotateCw, SlidersHorizontal } from 'lucide-svelte';
+  import { Check, LoaderCircle, RotateCw } from 'lucide-svelte';
   import type { ContentType } from '$data/content';
   import type { MediaItem } from '$data/content';
   import { DESTINATION_LABELS } from '$lib/shared/content-labels';
-  import { EXPLORER_GENRES, EXPLORER_LANGUAGES } from '$lib/shared/explorer-taxonomy';
+  import { EXPLORER_GENRES, EXPLORER_LANGUAGES, EXPLORER_SORT_TITLES, type ExplorerSort } from '$lib/shared/explorer-taxonomy';
   import ContentRail from '$components/ContentRail.svelte';
   import SpotlightCarousel from '$components/SpotlightCarousel.svelte';
   import MediaCard from '$components/MediaCard.svelte';
@@ -56,12 +56,12 @@
   }: {
     type: ContentType;
     spotlight?: MediaItem[];
-    sections?: { key: string; title: string; items: MediaItem[] }[];
+    sections?: { key: string; title: string; items: MediaItem[]; showMoreHref?: string }[];
     filteredItems?: MediaItem[];
     currentPage?: number;
     hasNextPage?: boolean;
     totalPages?: number | undefined;
-    filters?: { genre?: string; language?: string };
+    filters?: { genre?: string; language?: string; sort?: string };
     errorMessage?: string | undefined;
   } = $props();
 
@@ -71,27 +71,33 @@
 
   const selectedGenre = $derived(filters.genre || '');
   const selectedLanguage = $derived(filters.language && filters.language !== 'all' ? filters.language : '');
-  const filtersActive = $derived(Boolean(selectedGenre || selectedLanguage));
+  const selectedSort = $derived(filters.sort === 'popular' || filters.sort === 'top-rated' ? (filters.sort as ExplorerSort) : undefined);
+  const filtersActive = $derived(Boolean(selectedGenre || selectedLanguage || selectedSort));
 
   // ============================================================
   // Filter chip interactions — URL is the source of truth (the same
   // replaceState/noScroll/keepFocus contract the collection page used:
   // filter changes never pollute the history stack).
+  // Follow-up task 2 (§10): the sort dimension (the Show-more state)
+  // is carried along when the user narrows with chips, and "Clear
+  // filters" clears EVERYTHING (genre + language + sort) back to the
+  // default unfiltered Explorer.
   // ============================================================
-  function updateFilters(next: { genre?: string; language?: string }) {
+  function updateFilters(next: { genre?: string; language?: string; sort?: string }) {
     const params = new URLSearchParams();
     if (next.genre && next.genre !== 'All') params.set('genre', next.genre);
     if (next.language && next.language !== 'all') params.set('language', next.language);
+    if (next.sort && (next.sort === 'popular' || next.sort === 'top-rated')) params.set('sort', next.sort);
     const query = params.toString();
     void goto(`${page.url.pathname}${query ? `?${query}` : ''}`, { replaceState: true, noScroll: true, keepFocus: true });
   }
 
   function toggleGenre(name: string) {
-    updateFilters({ genre: selectedGenre === name ? 'All' : name, language: selectedLanguage || 'all' });
+    updateFilters({ genre: selectedGenre === name ? 'All' : name, language: selectedLanguage || 'all', sort: selectedSort });
   }
 
   function toggleLanguage(code: string) {
-    updateFilters({ genre: selectedGenre || 'All', language: selectedLanguage === code ? 'all' : code });
+    updateFilters({ genre: selectedGenre || 'All', language: selectedLanguage === code ? 'all' : code, sort: selectedSort });
   }
 
   function clearAllFilters() {
@@ -207,6 +213,7 @@
       const params = new URLSearchParams({ type, page: String(feedPage + 1) });
       if (selectedGenre) params.set('genre', selectedGenre);
       if (selectedLanguage) params.set('language', selectedLanguage);
+      if (selectedSort) params.set('sort', selectedSort);
       const response = await fetch(`/api/explorer/feed?${params.toString()}`);
       if (seq !== requestSequence || !routeActive) return;
       const payload = await response.json();
@@ -306,7 +313,17 @@
   );
 
   const skeletonCount = $derived(Math.min(Math.max(feedItems.length || 10, 8), 20));
-  const activeFilterCount = $derived((selectedGenre ? 1 : 0) + (selectedLanguage ? 1 : 0));
+  const activeFilterCount = $derived((selectedGenre ? 1 : 0) + (selectedLanguage ? 1 : 0) + (selectedSort ? 1 : 0));
+  // The filtered-view heading: the sort label (Popular / Top rated)
+  // leads when present — the exact continuation state "Show more →"
+  // navigated to — then the active chips (genre · language).
+  const resultsHeading = $derived(
+    [
+      selectedSort ? `${EXPLORER_SORT_TITLES[selectedSort]} ${labels.plural.toLowerCase()}` : '',
+      selectedGenre,
+      selectedLanguage ? languageOptions.find((option) => option.value === selectedLanguage)?.label : ''
+    ].filter(Boolean).join(' · ') || labels.plural
+  );
 </script>
 
 <svelte:head>
@@ -330,18 +347,25 @@
     </section>
   {/if}
 
-  <!-- Genre + Language filter rows (sticky while browsing results) -->
+  <!-- Genre + Language filter rows (sticky while browsing results).
+       Follow-up task 2 (§6): the visible "Genre"/"Language" row labels
+       are REMOVED — the chip options make the purpose obvious — but the
+       programmatic semantics stay: each row is a role="group" with its
+       full accessible label below (screen readers keep the context).
+       Follow-up task 2 (§7): the Language row renders EXACTLY ONE
+       "All" chip (the synthetic no-filter chip; the option lists no
+       longer carry a duplicate 'all' entry). -->
   <div class="explorer-filters" data-active={filtersActive || null}>
     <div class="filters-inner">
       <div class="chip-row" role="group" aria-label={`Filter ${labels.prose} by genre`}>
-        <span class="chip-row-label"><SlidersHorizontal size={13} aria-hidden="true" /> Genre</span>
         <div class="chip-scroll" data-chip-row="genre">
           <button
             class="filter-chip"
             class:active={!selectedGenre}
             type="button"
             aria-pressed={!selectedGenre}
-            onclick={() => updateFilters({ genre: 'All', language: selectedLanguage || 'all' })}
+            aria-label="All genres"
+            onclick={() => updateFilters({ genre: 'All', language: selectedLanguage || 'all', sort: selectedSort })}
           >All</button>
           {#each genreOptions as genre (genre.name)}
             <button
@@ -355,14 +379,14 @@
         </div>
       </div>
       <div class="chip-row" role="group" aria-label={`Filter ${labels.prose} by language`}>
-        <span class="chip-row-label">Language</span>
         <div class="chip-scroll" data-chip-row="language">
           <button
             class="filter-chip"
             class:active={!selectedLanguage}
             type="button"
             aria-pressed={!selectedLanguage}
-            onclick={() => updateFilters({ genre: selectedGenre || 'All', language: 'all' })}
+            aria-label="All languages"
+            onclick={() => updateFilters({ genre: selectedGenre || 'All', language: 'all', sort: selectedSort })}
           >All</button>
           {#each languageOptions as option (option.value)}
             <button
@@ -385,9 +409,7 @@
          ============================================================ -->
     <div class="explorer-results">
       <div class="results-heading">
-        <h2 class="results-title">
-          {[selectedGenre, selectedLanguage ? languageOptions.find((o) => o.value === selectedLanguage)?.label : ''].filter(Boolean).join(' · ') || labels.plural}
-        </h2>
+        <h2 class="results-title">{resultsHeading}</h2>
         {#if activeFilterCount > 0}
           <button class="clear-filters" type="button" onclick={clearAllFilters}>Clear filters</button>
         {/if}
@@ -446,13 +468,19 @@
     <!-- ============================================================
          UNFILTERED EXPLORER SECTIONS — Popular + Top Rated (server
          composed, cross-section deduped; empty sections omitted).
+         Follow-up task 2 (§10): each rail carries a "Show more →"
+         header CTA (secondary weight, aligned with the section title,
+         keyboard-accessible) that navigates to the canonical full
+         collection state for that section — the SAME route/query
+         mechanism (?sort=popular | top-rated), server-validated, no
+         new backend endpoint.
          ============================================================ -->
     <div class="explorer-sections">
       {#if errorMessage}
         <div class="catalog-warning" role="alert">{errorMessage}</div>
       {/if}
       {#each sections as section (section.key)}
-        <ContentRail title={section.title} items={section.items} />
+        <ContentRail title={section.title} items={section.items} href={section.showMoreHref || ''} linkLabel="Show more" />
       {/each}
     </div>
   {/if}
@@ -464,7 +492,16 @@
   .explorer-page {
     --c-gutter: clamp(16px, 5vw, 48px);
     padding-top: 14px;
+    /* Follow-up task 2 (§14): the floating touch pill is fixed across
+       the ENTIRE ≤1024px range; the shared token (nav occupancy +
+       comfortable gap + safe-area) replaces the old flat 40px so the
+       last rail/card row always scrolls fully clear of the nav.
+       Desktop keeps the comfortable 40px base padding. */
     padding-bottom: 40px;
+  }
+
+  @media (max-width: 1024px) {
+    .explorer-page { padding-bottom: var(--mobile-nav-clearance, 96px); }
   }
 
   /* ── Spotlight fallback (no lineup available) — quiet framed block ── */
@@ -517,19 +554,13 @@
     display: grid;
     gap: 6px;
   }
+  /* Follow-up task 2 (§6): the chip-row is now label-less — the chip
+     options themselves communicate the purpose (the accessible
+     role=group labels above carry the semantics). */
   .chip-row {
     display: flex;
     align-items: center;
-    gap: 10px;
     min-width: 0;
-  }
-  .chip-row-label {
-    display: inline-flex; align-items: center; gap: 5px;
-    flex-shrink: 0;
-    color: var(--color-text-deep);
-    font-size: .6rem; font-weight: 800;
-    letter-spacing: .12em; text-transform: uppercase;
-    width: 74px;
   }
   .chip-scroll {
     display: flex;
@@ -671,7 +702,6 @@
     .explorer-page { padding-top: 10px; }
     .explorer-filters { top: var(--topbar-h-safe); margin-top: 10px; }
     .filters-inner { width: calc(100% - 24px); gap: 5px; }
-    .chip-row-label { width: auto; }
     /* Comfortable touch targets while keeping both rows compact. */
     .filter-chip { min-height: 40px; padding: 0 13px; }
     .explorer-results { width: calc(100% - 24px); padding-top: 14px; }

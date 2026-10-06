@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { ArrowRight, ChevronLeft, ChevronRight } from 'lucide-svelte';
   import type { MediaItem } from '$lib/data/content';
   import MediaCard from '$components/MediaCard.svelte';
@@ -8,6 +9,7 @@
     eyebrow = '',
     items = [],
     href = '',
+    linkLabel = 'View all',
     compact = false,
     variant = 'default'
   }: {
@@ -15,6 +17,11 @@
     eyebrow?: string;
     items?: MediaItem[];
     href?: string;
+    /** Header CTA label. Default "View all" keeps every existing
+     *  caller byte-identical; the Explorer passes "Show more" (the
+     *  Follow-up task 2 §10 continuation CTA on the Popular / Top
+     *  Rated rails). */
+    linkLabel?: string;
     compact?: boolean;
     variant?: 'default' | 'editorial';
   } = $props();
@@ -22,6 +29,29 @@
   let railEl: HTMLElement;
 
   const railId = $derived(`rail-${title.toLowerCase().replaceAll(' ', '-')}`);
+
+  // ============================================================
+  // Follow-up task 2 (§11) — real edge state for the rail arrows.
+  //
+  // The arrows are no longer hover-only: on desktop/tablet/TV pointer
+  // surfaces they render at full opacity so horizontal scrolling is
+  // discoverable, and they DISABLE (not just dim) at the actual scroll
+  // ends so a dead arrow is never offered as clickable. The state is
+  // derived from the rail's own scrollLeft/scrollWidth on every scroll
+  // event (passive) + after the item set or viewport changes (Resize
+  // entry on the rail). No layout measurement on scroll — scrollLeft
+  // and scrollWidth are already computed values the browser maintains.
+  // ============================================================
+  let atStart = $state(true);
+  let atEnd = $state(false);
+
+  function updateScrollState() {
+    if (!railEl) return;
+    const max = railEl.scrollWidth - railEl.clientWidth;
+    const current = railEl.scrollLeft;
+    atStart = current <= 1;
+    atEnd = max - current <= 1;
+  }
 
   function scrollByCard(direction: 1 | -1) {
     if (!railEl) return;
@@ -35,6 +65,21 @@
       : railEl.clientWidth * 0.6;
     railEl.scrollBy({ left: direction * step * 2, behavior: 'smooth' });
   }
+
+  onMount(() => {
+    updateScrollState();
+    const rail = railEl;
+    const resize = new ResizeObserver(() => updateScrollState());
+    resize.observe(rail);
+    return () => resize.disconnect();
+  });
+
+  // Re-sync the edge state whenever the item set changes (a rail whose
+  // items grow may no longer be at the end).
+  $effect(() => {
+    void items.length;
+    updateScrollState();
+  });
 </script>
 
 <section
@@ -48,20 +93,26 @@
       <h2 class="section-title" id={railId}>{title}</h2>
     </div>
     {#if href}
-      <a class="section-link" href={href} aria-label={`View all ${title}`}>
-        View all <ArrowRight size={13} />
+      <a class="section-link" href={href} aria-label={`${linkLabel} ${title}`}>
+        {linkLabel} <ArrowRight size={13} />
       </a>
     {/if}
   </div>
 
   <div class="rail-wrap">
-    <!-- Rail navigation arrows. Only visible on hover/focus and only on
-         pointer devices — touch users scroll natively. Arrows sit OUTSIDE
-         the rail viewport so they never overlap poster content. -->
+    <!-- Rail navigation arrows (Follow-up task 2 §11): edge-aligned,
+         vertically centered against the card row, VISIBLE by default on
+         ≥641px pointer surfaces (no longer hover-only — desktop/TV/trackpad
+         users get a discoverable scroll affordance), disabled at the
+         actual scroll ends, still hidden on ≤640px phones where native
+         swipe is the primary interaction. They sit OUTSIDE the rail
+         scrollport (a true edge overlay) so they never cover card
+         content mid-scroll. -->
     <button
       type="button"
       class="rail-nav rail-nav-prev"
       aria-label={`Scroll ${title} left`}
+      disabled={atStart}
       onclick={() => scrollByCard(-1)}
     >
       <ChevronLeft size={18} />
@@ -70,6 +121,7 @@
       type="button"
       class="rail-nav rail-nav-next"
       aria-label={`Scroll ${title} right`}
+      disabled={atEnd}
       onclick={() => scrollByCard(1)}
     >
       <ChevronRight size={18} />
@@ -81,6 +133,7 @@
       bind:this={railEl}
       role="list"
       aria-label={title}
+      onscroll={updateScrollState}
     >
       {#each items as item (item.type + ':' + item.id)}
         <div role="listitem"><MediaCard {item} {compact} editorial={variant === 'editorial'} /></div>
@@ -152,9 +205,13 @@
      the detail page and other secondary rails). */
   .rail.compact { grid-auto-columns: clamp(120px, 30vw, 170px); gap: 10px; }
 
-  /* ---- Rail navigation arrows ----
+  /* ---- Rail navigation arrows (Follow-up task 2 §11) ----
      Hidden on touch / small viewports (where native horizontal scroll
-     is the expected interaction). Revealed on hover/focus on desktop. */
+     is the expected interaction). VISIBLE by default on ≥641px pointer
+     surfaces — no longer hover-only (the spec's requirement: explicit
+     arrow controls for pointer/remote/keyboard environments, native
+     scrolling preserved for touch/trackpad). Disabled at the actual
+     scroll ends so a dead arrow is never clickable. */
   .rail-nav {
     position: absolute; top: 50%; transform: translateY(-50%);
     z-index: 6;
@@ -164,18 +221,22 @@
     background: rgba(8, 11, 13, .82); backdrop-filter: blur(12px);
     color: var(--color-text);
     cursor: pointer;
-    opacity: 0;
-    transition: opacity var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out);
+    transition: opacity var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out), box-shadow var(--motion-fast) var(--ease-out);
   }
   .rail-nav:focus-visible {
-    opacity: 1;
     outline: 2px solid var(--color-focus); outline-offset: 2px;
   }
-  .rail-wrap:hover .rail-nav { opacity: 1; }
   .rail-nav:hover {
     background: rgba(0, 255, 156, .12);
     border-color: var(--color-primary-border);
     box-shadow: var(--glow-primary);
+  }
+  /* Edge state: visibly and functionally off at the scroll ends (the
+     layout slot stays — no arrow appear/disappear jumpiness). */
+  .rail-nav:disabled {
+    opacity: .22;
+    pointer-events: none;
+    box-shadow: none;
   }
   .rail-nav-prev { left: 6px; }
   .rail-nav-next { right: 6px; }
@@ -185,7 +246,6 @@
     .rail { grid-auto-columns: clamp(150px, 22vw, 200px); gap: 14px; }
     .rail.compact { grid-auto-columns: clamp(130px, 18vw, 170px); }
   }
-
   /* ---- DESKTOP 1025–1899px ---- */
   @media (min-width: 1025px) {
     .rail { grid-auto-columns: clamp(160px, 14vw, 200px); gap: 16px; }

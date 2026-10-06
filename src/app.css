@@ -97,6 +97,18 @@
   --topbar-h-safe: calc(var(--topbar-h) + env(safe-area-inset-top, 0px));
   --shell-content-top: 0px;
 
+  /* ---- mobile bottom-nav clearance (consumer shell) ----
+     Follow-up task 2 (§14): the floating touch pill is fixed at
+     `bottom: 14px + safe-area` and is ~58px tall (6px padding ×2 +
+     44px min-height links + borders), so its top edge sits ~72px +
+     safe-area above the viewport bottom across the ENTIRE ≤1024px
+     range. This token = pill occupancy (72px) + a comfortable visual
+     gap (24px) + the safe-area inset — pages apply it as bottom
+     padding so the last card/rail can always scroll fully clear of
+     the pill. Reusable by any consumer surface that scrolls under
+     the touch nav (the admin shell has its own --a2-mobile-nav-h-safe). */
+  --mobile-nav-clearance: calc(96px + env(safe-area-inset-bottom, 0px));
+
   /* ---- legacy aliases (for admin/player compatibility) ---- */
   --ink: var(--color-text);
   --ink-soft: var(--color-text-muted);
@@ -150,7 +162,16 @@ img { max-width: 100%; }
 
 /* ---- page shells ---- */
 .page-shell, .discover-page, .my-list-page, .profile-page, .collection-page, .detail-wrap { min-height: 100dvh; }
-.page-shell { overflow-x: hidden; background: var(--color-bg); }
+.page-shell { overflow-x: clip; background: var(--color-bg); }
+/* Follow-up task 2 (§8): `overflow-x: clip` (was `hidden`) — `hidden`
+   computes the other axis to `auto`, which made .page-shell a scroll
+   container; on the ≤1024px window-scrolling range the sticky filter
+   surface's nearest scrollport became this never-scrolling element, so
+   sticky NEVER activated (the chips scrolled away with the page).
+   `clip` clips overflow identically but does NOT create a scroll
+   container (clip never forces the sibling axis to auto), so sticky
+   resolves against the viewport again. Desktop was already correct
+   (its nearest scrollport is the scrolling .app-main). */
 .container-wide {
   width: min(1600px, calc(100% - clamp(20px, 6vw, 96px)));
   margin-inline: auto;

@@ -436,24 +436,24 @@
 <svelte:head><title>Settings — Mavero</title><meta name="description" content="Your Mavero settings, account and preferences in one place." /><meta name="robots" content="noindex,nofollow" /></svelte:head>
 
 <div class="settings-page">
-  <!-- Back to Discover (Explorer redesign, Change 2) — Settings is a
-       dedicated/direct destination, so the page carries an explicit
-       back affordance. It uses replace-state navigation so the phone/
-       browser Back button afterwards does not loop straight back into
-       Settings. -->
-  <div class="back-row">
-    <a
-      class="back-to-discover"
-      href="/discover"
-      aria-label="Back to Discover"
-      onclick={(event) => { event.preventDefault(); void goto('/discover', { replaceState: true }); }}
-    >
-      <ArrowLeft size={15} /> <span>Back</span>
-    </a>
-  </div>
-  <!-- Compact identity header: avatar + name + email + sync state -->
+  <!-- Compact identity header: back + eyebrow + avatar + name + email +
+       sync state. Follow-up task 2 §13 moved the Back-to-Discover
+       control INTO the header (first child of the inner container) so it
+       shares the header's surface, gutter and background — no
+       standalone full-width back row, no blank right side, no detached
+       background strip; the page identity begins naturally below it.
+       It uses replace-state navigation so the phone/browser Back
+       button afterwards does not loop straight back into Settings. -->
   <header class="settings-top">
     <div class="top-inner">
+      <a
+        class="back-to-discover"
+        href="/discover"
+        aria-label="Back to Discover"
+        onclick={(event) => { event.preventDefault(); void goto('/discover', { replaceState: true }); }}
+      >
+        <ArrowLeft size={15} /> <span>Back</span>
+      </a>
       <div class="page-eyebrow"><UserRound size={12} /> MAVERO / Settings</div>
       <div class="identity-row">
         <div class="avatar" aria-hidden="true">{initials()}</div>
@@ -732,12 +732,15 @@
       radial-gradient(circle at 88% -40%, var(--color-primary-soft), transparent 46%),
       var(--color-bg);
   }
-  /* Back to Discover (Change 2) — same gutter + design language as the
-     shell controls (glass chip, focus-visible, reduced motion). */
-  .back-row { padding: 16px var(--a-gutter) 0; }
+  /* Back to Discover (Change 2; Follow-up task 2 §13) — same gutter
+     + design language as the shell controls (glass chip, focus-visible,
+     reduced motion). First child of the header inner container: shares
+     the header surface/gutter; the identity block begins naturally
+     below it (no standalone full-width back row). */
   .back-to-discover {
     display: inline-flex; align-items: center; gap: 7px;
     min-height: 44px; padding: 0 16px;
+    margin-bottom: 14px;
     border: 1px solid var(--color-border);
     border-radius: 999px;
     color: var(--color-text-muted);
@@ -1102,7 +1105,7 @@
   }
   @media (min-width: 900px) {
     .settings-top { padding-top: 26px; }
-    .back-row { padding-top: 22px; }
+    .back-to-discover { margin-bottom: 18px; }
     .avatar { width: 52px; height: 52px; font-size: 1.02rem; }
     .identity-copy h1 { font-size: 1.26rem; }
     .settings-section { padding: 15px 18px 17px; }

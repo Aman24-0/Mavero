@@ -275,23 +275,27 @@
 </svelte:head>
 
 <div class="my-list-page">
-  <!-- Back to Discover (Explorer redesign, Change 2) — My List is a
-       dedicated/direct destination, so the page carries an explicit
-       back affordance. It uses replace-state navigation so the phone/
-       browser Back button afterwards does not loop straight back into
-       My List. -->
-  <div class="back-row">
-    <a
-      class="back-to-discover"
-      href="/discover"
-      aria-label="Back to Discover"
-      onclick={(event) => { event.preventDefault(); void goto('/discover', { replaceState: true }); }}
-    >
-      <ArrowLeft size={15} /> <span>Back</span>
-    </a>
-  </div>
   <header class="list-header">
     <div class="header-inner">
+      <!-- Back to Discover (Explorer redesign, Change 2; Follow-up task 2
+           §13) — My List is a dedicated/direct destination, so the page
+           carries an explicit back affordance. It uses replace-state
+           navigation so the phone/browser Back button afterwards does
+           not loop straight back into My List. Follow-up task 2 moved
+           the control INTO the page header (first child of the inner
+           container): it now shares the header's surface, gutter and
+           background instead of sitting in its own full-width row
+           above the header — no blank right side, no detached
+           background strip, no wasted vertical space; the page
+           identity begins naturally below the control. -->
+      <a
+        class="back-to-discover"
+        href="/discover"
+        aria-label="Back to Discover"
+        onclick={(event) => { event.preventDefault(); void goto('/discover', { replaceState: true }); }}
+      >
+        <ArrowLeft size={15} /> <span>Back</span>
+      </a>
       <!-- Simplified header: only the eyebrow (promoted to the page
            heading) and the sync status line. The previous H1 "My List"
            and the marketing subtitle have been removed. -->
@@ -469,12 +473,15 @@
       radial-gradient(circle at 80% -20%, var(--color-primary-soft), transparent 50%),
       var(--color-bg);
   }
-  /* Back to Discover (Change 2) — same gutter + design language as the
-     shell controls (glass chip, focus-visible, reduced motion). */
-  .back-row { padding: 18px var(--l-gutter) 0; }
+  /* Back to Discover (Change 2; Follow-up task 2 §13) — same gutter
+     + design language as the shell controls (glass chip, focus-visible,
+     reduced motion). Now the FIRST child of the header inner container:
+     it shares the header surface/gutter and the identity block begins
+     naturally below it (no standalone full-width back row). */
   .back-to-discover {
     display: inline-flex; align-items: center; gap: 7px;
     min-height: 44px; padding: 0 16px;
+    margin-bottom: 14px;
     border: 1px solid var(--color-border);
     border-radius: 999px;
     color: var(--color-text-muted);
@@ -789,7 +796,7 @@
   @media (max-width: 760px) {
     .list-header { padding-top: 22px; }
     .header-status-row { gap: 10px; }
-    .back-row { padding: 12px var(--l-gutter) 0; }
+    .back-to-discover { margin-bottom: 12px; }
   }
   @media (max-width: 640px) {
     .status-chip { min-height: 36px; padding: 0 11px; font-size: .68rem; gap: 6px; }

@@ -270,7 +270,18 @@
   /* Tablet and mobile: hide sidebar, show topbar + bottom pill */
   @media (max-width: 1024px) {
     .app-sidebar { display: none; }
-    .app-main { margin-left: 0 !important; height: auto !important; overflow-y: visible !important; }
+    /* Follow-up task 2 (§8) — the sticky fix, app-main side: the base
+       rule carries `overflow-x: hidden`, and a hidden x-axis COERCES a
+       `visible` y-axis to `auto` — app-main stayed a scroll container
+       (one that never actually scrolls, since height is auto here), so
+       sticky descendants (the Explorer filter surface) resolved against
+       its dead scrollport and never pinned. `overflow-x: clip` clips
+       identically but never coerces the sibling axis — app-main stops
+       being a scroll container below 1025px and sticky resolves against
+       the real (window) scroller again. Desktop keeps the base
+       overflow-y: auto scroll container (the only desktop scroll
+       surface). */
+    .app-main { margin-left: 0 !important; height: auto !important; overflow-y: visible !important; overflow-x: clip !important; }
     .topbar {
       position: sticky; top: 0; z-index: 40;
       display: flex; align-items: center;

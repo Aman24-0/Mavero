@@ -1,29 +1,49 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
-  import { ArrowLeft, ArrowRight, Clapperboard, Info, Play } from 'lucide-svelte';
+  import { ArrowLeft, ArrowRight, Info, Play } from 'lucide-svelte';
   import type { MediaItem } from '$data/content';
   import { haptic } from '$lib/client/haptics';
 
   // MAVERO — Explorer Spotlight Carousel (Movies / TV Shows / Anime
-  // Explorer redesign, Change 1A).
+  // Explorer redesign, Change 1A; visual redesign + autoplay lifecycle
+  // hardening per Follow-up task 2 §3/§4/§12).
   //
-  // A cinematic 6-slide carousel at the top of each Explorer page:
-  //   - Exactly up to 6 slides in the data/rendering window (the server
-  //     lineup targets 6; fewer only when the catalog is genuinely thin).
-  //   - Auto-rotates every 4 seconds (SPOTLIGHT_ROTATION_MS).
-  //   - Occupies ~90% of the available viewport width (width: 90%;
-  //     margin-inline: auto) with a capped max for very wide screens.
-  //   - Responsive at every breakpoint — no hardcoded dimensions that
-  //     break large/small viewports (height is clamp/vh based).
-  //   - Honors prefers-reduced-motion (no auto rotation, no smooth
-  //     scroll, no entry animation) — the app-wide contract.
-  //   - Play / More-details navigation uses the EXISTING route patterns
-  //     (/watch/{type}/{id} and /{type}/{id}) — playback preserved.
+  // Cinematic hero composition — deliberate layout LAYERS, not
+  // absolutely-positioned miscellany:
+  //     1. media layer      (the scroll-snap slide track + artwork)
+  //     2. scrim layer      (readability gradients)
+  //     3. content layer    (title / meta / description / CTAs)
+  //     4. edge nav layer   (prev arrow at the LEFT edge, next arrow at
+  //                         the RIGHT edge — both vertically centered
+  //                         against the media, glass/dark, same control
+  //                         language as the ContentRail arrows but
+  //                         slightly larger — the hero is the primary
+  //                         control surface)
+  //     5. pagination layer (dots at the BOTTOM CENTER, compact, clearly
+  //                         separated from the CTA row — never touching
+  //                         "More details")
+  // The old bottom-right navigation capsule and the "MAVERO /
+  // Spotlight" eyebrow are gone.
   //
-  // Interaction contracts mirror the Discover hero gallery (pointer/
-  // focus pause, visibility pause, keyboard arrows/Home/End/Space,
-  // scroll-snap track, dots + prev/next buttons) — the established
-  // carousel a11y pattern in this codebase.
+  // AUTOPLAY LIFECYCLE (Follow-up task 2 §4 — the exact 4s contract):
+  //   - ONE deterministic timer. On fire: advance, then RE-QUEUE (the
+  //     old implementation advanced once and never re-queued — rotation
+  //     silently stopped after the first tick).
+  //   - Manual navigation (arrows, dots, keyboard) shows the slide
+  //     immediately and RESETS the countdown — the next automatic
+  //     transition is a full 4s later (never the old 8-12s release
+  //     window).
+  //   - Pointer over the carousel / keyboard focus inside it pauses;
+  //     leaving resumes with a fresh 4s countdown. Visibility hidden
+  //     clears the timer; returning re-queues. Reduced motion disables
+  //     automatic movement entirely. No duplicate timers by
+  //     construction (queueRotation always clears before setting).
+  //
+  // Responsive height is per-breakpoint (viewport width + height
+  // aware): compact-but-cinematic on phones so the first rail begins
+  // naturally, substantially more spacious on desktop/TV. Play /
+  // More-details keep the existing route patterns (/watch/{type}/{id}
+  // and /{type}/{id}) — playback preserved.
 
   let {
     items = [],
@@ -44,9 +64,7 @@
   let reducedMotion = false;
   let motionQuery: MediaQueryList | undefined;
   let rotationTimer: ReturnType<typeof setTimeout> | undefined;
-  let releaseTimer: ReturnType<typeof setTimeout> | undefined;
   let scrollTimer: ReturnType<typeof setTimeout> | undefined;
-  let isScrolling = false;
   let destroyed = false;
 
   let activeSlide = $derived(slides[activeIndex]);
@@ -62,21 +80,25 @@
 
   function clearTimers() {
     if (rotationTimer) clearTimeout(rotationTimer);
-    if (releaseTimer) clearTimeout(releaseTimer);
     if (scrollTimer) clearTimeout(scrollTimer);
     rotationTimer = undefined;
-    releaseTimer = undefined;
     scrollTimer = undefined;
   }
 
+  // ONE rotation entry point: always clears any pending timer first —
+  // duplicate timers are impossible by construction.
   function queueRotation() {
     if (slides.length < 2 || paused || reducedMotion || destroyed) return;
     if (rotationTimer) clearTimeout(rotationTimer);
     rotationTimer = setTimeout(() => {
       rotationTimer = undefined;
-      if (!paused && !document.hidden) {
-        scrollToSlide((activeIndex + 1) % slides.length, true);
-      }
+      if (paused || reducedMotion || destroyed || document.hidden) return;
+      scrollToSlide((activeIndex + 1) % slides.length, true);
+      // THE lifecycle fix: re-queue after every automatic advance so
+      // the normal cadence is exactly 4s forever (the old code stopped
+      // after the first tick). While hidden, the visibilitychange
+      // handler re-queues on return.
+      queueRotation();
     }, SPOTLIGHT_ROTATION_MS);
   }
 
@@ -91,14 +113,6 @@
     queueRotation();
   }
 
-  function releaseInteractionPause() {
-    if (releaseTimer) clearTimeout(releaseTimer);
-    releaseTimer = setTimeout(() => {
-      releaseTimer = undefined;
-      resume();
-    }, SPOTLIGHT_ROTATION_MS * 2);
-  }
-
   function scrollToSlide(index: number, notify = false) {
     if (!track || slides.length === 0) return;
     activeIndex = index;
@@ -106,12 +120,19 @@
     if (notify) haptic('light');
   }
 
+  // Manual navigation: the slide shows IMMEDIATELY and the countdown
+  // RESETS to a full 4s (a no-op while the user is actively hovering /
+  // focused — leaving the interaction area resumes with a fresh
+  // countdown). The old 8s "interaction release" window is gone.
+  function manualNav(index: number) {
+    scrollToSlide(index, true);
+    queueRotation();
+  }
+
   function handleScroll() {
     if (!track || slides.length === 0) return;
-    isScrolling = true;
     if (scrollTimer) clearTimeout(scrollTimer);
     scrollTimer = setTimeout(() => {
-      isScrolling = false;
       if (!track) return;
       const newIndex = Math.round(track.scrollLeft / track.clientWidth);
       if (newIndex !== activeIndex) {
@@ -123,10 +144,10 @@
 
   function handleKeydown(event: KeyboardEvent) {
     if (!slides.length) return;
-    if (event.key === 'ArrowRight') { event.preventDefault(); pause(); releaseInteractionPause(); scrollToSlide((activeIndex + 1) % slides.length, true); }
-    else if (event.key === 'ArrowLeft') { event.preventDefault(); pause(); releaseInteractionPause(); scrollToSlide((activeIndex - 1 + slides.length) % slides.length, true); }
-    else if (event.key === 'Home') { event.preventDefault(); pause(); releaseInteractionPause(); scrollToSlide(0, true); }
-    else if (event.key === 'End') { event.preventDefault(); pause(); releaseInteractionPause(); scrollToSlide(slides.length - 1, true); }
+    if (event.key === 'ArrowRight') { event.preventDefault(); manualNav((activeIndex + 1) % slides.length); }
+    else if (event.key === 'ArrowLeft') { event.preventDefault(); manualNav((activeIndex - 1 + slides.length) % slides.length); }
+    else if (event.key === 'Home') { event.preventDefault(); manualNav(0); }
+    else if (event.key === 'End') { event.preventDefault(); manualNav(slides.length - 1); }
     else if (event.key === ' ') { event.preventDefault(); if (paused) resume(); else pause(); }
   }
 
@@ -189,6 +210,7 @@
     onfocusout={resume}
     onkeydown={handleKeydown}
   >
+    <!-- 1 + 2. media + scrim layers (the scroll-snap track) -->
     <div class="spotlight-track" bind:this={track} onscroll={handleScroll}>
       {#each slides as slide, index (slide.type + ':' + slide.id)}
         <div class="spotlight-slide" class:active={index === activeIndex}>
@@ -211,9 +233,9 @@
             {/if}
           </div>
           <div class="slide-scrim" aria-hidden="true"></div>
+          <!-- 3. content layer -->
           <div class="slide-content">
             <div class="slide-copy" aria-live={index === activeIndex ? 'polite' : 'off'}>
-              <div class="slide-eyebrow"><Clapperboard size={12} /> MAVERO / Spotlight</div>
               <h2 class="slide-title">{slide.title}</h2>
               {#if metaLine(slide)}<p class="slide-meta">{metaLine(slide)}</p>{/if}
               {#if slide.description?.trim()}
@@ -234,26 +256,40 @@
     </div>
 
     {#if slides.length > 1}
-      <div class="spotlight-nav">
-        <button class="spotlight-nav-btn" type="button" aria-label="Previous spotlight title" onclick={() => { pause(); releaseInteractionPause(); scrollToSlide((activeIndex - 1 + slides.length) % slides.length, true); }}>
-          <ArrowLeft size={13} />
-        </button>
-        <div class="spotlight-dots" role="tablist" aria-label="Choose spotlight title">
-          {#each slides as slide, index (slide.type + ':' + slide.id)}
-            <button
-              class:active={index === activeIndex}
-              class="spotlight-dot"
-              type="button"
-              role="tab"
-              aria-selected={index === activeIndex}
-              aria-label={`Show ${slide.title}`}
-              onclick={() => { pause(); releaseInteractionPause(); scrollToSlide(index, true); }}
-            ></button>
-          {/each}
-        </div>
-        <button class="spotlight-nav-btn" type="button" aria-label="Next spotlight title" onclick={() => { pause(); releaseInteractionPause(); scrollToSlide((activeIndex + 1) % slides.length, true); }}>
-          <ArrowRight size={13} />
-        </button>
+      <!-- 4. edge navigation layer — LEFT edge, vertically centered -->
+      <button
+        class="spotlight-arrow spotlight-arrow-prev"
+        type="button"
+        aria-label="Previous spotlight title"
+        onclick={() => manualNav((activeIndex - 1 + slides.length) % slides.length)}
+      >
+        <ArrowLeft size={18} />
+      </button>
+      <!-- 4. edge navigation layer — RIGHT edge, vertically centered -->
+      <button
+        class="spotlight-arrow spotlight-arrow-next"
+        type="button"
+        aria-label="Next spotlight title"
+        onclick={() => manualNav((activeIndex + 1) % slides.length)}
+      >
+        <ArrowRight size={18} />
+      </button>
+
+      <!-- 5. pagination layer — bottom center, independent of the CTA
+           row, with deliberate separation (the content layer reserves
+           the space via its bottom padding). -->
+      <div class="spotlight-dots" role="tablist" aria-label="Choose spotlight title">
+        {#each slides as slide, index (slide.type + ':' + slide.id)}
+          <button
+            class:active={index === activeIndex}
+            class="spotlight-dot"
+            type="button"
+            role="tab"
+            aria-selected={index === activeIndex}
+            aria-label={`Show ${slide.title}`}
+            onclick={() => manualNav(index)}
+          ></button>
+        {/each}
       </div>
     {/if}
   </section>
@@ -290,9 +326,11 @@
     position: relative;
     flex: 0 0 100%;
     scroll-snap-align: start;
-    /* Height adapts to the viewport (cinematic on every breakpoint —
-       no hardcoded pixel dimensions). */
-    min-height: clamp(300px, 46vh, 480px);
+    /* Responsive cinematic height (Follow-up task 2 §3): one
+       per-breakpoint model instead of a single fixed height —
+       desktop/TV feel substantially more spacious; mobile stays
+       compact enough that the first content rail begins naturally. */
+    min-height: clamp(420px, 56dvh, 620px);
     display: flex;
     align-items: flex-end;
     overflow: hidden;
@@ -318,14 +356,9 @@
   .slide-content {
     display: grid;
     width: min(620px, 100%);
-    padding: clamp(18px, 3.6vw, 40px) clamp(16px, 4vw, 44px) clamp(18px, 3.4vw, 38px);
-  }
-  .slide-eyebrow {
-    display: inline-flex; align-items: center; gap: 7px;
-    color: var(--color-primary);
-    font-size: .6rem; font-weight: 800;
-    letter-spacing: .14em; text-transform: uppercase;
-    text-shadow: 0 0 12px rgba(0, 255, 156, .35);
+    /* Bottom padding reserves the pagination layer's space — the CTA
+       row and the dots never touch (Follow-up task 2 §3). */
+    padding: clamp(28px, 4.5vh, 52px) clamp(20px, 4vw, 48px) 92px;
   }
   .slide-title {
     margin: 0;
@@ -348,7 +381,7 @@
     font-size: .8rem; line-height: 1.6;
     max-width: 520px;
   }
-  .slide-actions { display: flex; align-items: center; gap: 10px; margin-top: 6px; flex-wrap: wrap; }
+  .slide-actions { display: flex; align-items: center; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
   .slide-play, .slide-more {
     display: inline-flex; align-items: center; gap: 7px;
     min-height: 44px; padding: 0 20px;
@@ -377,29 +410,46 @@
     outline: 2px solid var(--color-focus); outline-offset: 2px;
   }
 
-  /* Nav + dots */
-  .spotlight-nav {
-    position: absolute; bottom: 12px; right: clamp(12px, 2.4vw, 24px); z-index: 5;
-    display: flex; align-items: center; gap: 10px;
-    padding: 6px 10px;
-    border-radius: 999px;
-    background: rgba(4, 6, 8, .55);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-    border: 1px solid rgba(255, 255, 255, .1);
-  }
-  .spotlight-nav-btn {
+  /* ── 4. Edge navigation layer (§12) — the same glass/dark control
+     language as the ContentRail arrows, slightly LARGER because the
+     Spotlight is the primary hero control. Vertically centered against
+     the media, clear of the copy block (the copy is width-capped at
+     min(620px, 100%), so on ≥641px viewports the arrows never overlap
+     the text). The carousel loops, so both arrows stay enabled. ── */
+  .spotlight-arrow {
+    position: absolute; top: 50%; transform: translateY(-50%);
+    z-index: 5;
     display: grid; place-items: center;
-    width: 30px; height: 30px;
-    border: 1px solid transparent; border-radius: 8px;
-    color: #e7e7ea; background: transparent; cursor: pointer;
-    transition: color var(--motion-fast), background var(--motion-fast), border-color var(--motion-fast);
+    width: 46px; height: 46px;
+    border: 1px solid var(--color-border-strong); border-radius: 14px;
+    background: rgba(8, 11, 13, .72);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    color: var(--color-text);
+    cursor: pointer;
+    transition: background var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out), box-shadow var(--motion-fast) var(--ease-out);
   }
-  .spotlight-nav-btn:hover { color: var(--color-primary); background: rgba(255, 255, 255, .08); }
-  .spotlight-nav-btn:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
-  .spotlight-dots { display: flex; align-items: center; gap: 6px; }
+  .spotlight-arrow:hover {
+    color: var(--color-primary);
+    background: rgba(0, 255, 156, .12);
+    border-color: var(--color-primary-border);
+    box-shadow: var(--glow-primary);
+  }
+  .spotlight-arrow:active { transform: translateY(-50%) scale(.96); }
+  .spotlight-arrow:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+  .spotlight-arrow-prev { left: clamp(12px, 2vw, 24px); }
+  .spotlight-arrow-next { right: clamp(12px, 2vw, 24px); }
+
+  /* ── 5. Pagination layer — bottom CENTER, compact, independent of
+     the CTA row. No capsule/pill container (§3: no giant pill unless
+     the design benefits — it doesn't here). ── */
+  .spotlight-dots {
+    position: absolute; bottom: 22px; left: 50%; transform: translateX(-50%);
+    z-index: 5;
+    display: flex; align-items: center; gap: 7px;
+  }
   .spotlight-dot {
-    width: 7px; height: 7px; padding: 0;
+    width: 8px; height: 8px; padding: 0;
     border: none; border-radius: 999px;
     background: rgba(255, 255, 255, .32);
     cursor: pointer;
@@ -407,26 +457,36 @@
   }
   .spotlight-dot:hover { background: rgba(255, 255, 255, .6); }
   .spotlight-dot.active {
-    width: 18px;
+    width: 20px;
     background: var(--color-primary);
     box-shadow: 0 0 10px rgba(0, 255, 156, .5);
   }
   .spotlight-dot:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 
-  /* ── Mobile: the ~90% width + cinematic treatment still hold; copy
-     tightens so the carousel never eats the whole viewport. ── */
+  /* ── Tablet 641–1024px: roomier than phones, tighter than desktop. ── */
+  @media (min-width: 641px) and (max-width: 1024px) {
+    .spotlight-slide { min-height: clamp(360px, 48dvh, 480px); }
+    .slide-content { padding: clamp(24px, 4vh, 40px) clamp(18px, 3.5vw, 36px) 84px; }
+  }
+
+  /* ── Mobile ≤640px: cinematic but compact — the first content rail
+     still begins naturally. Native swipe stays the primary navigation
+     (the edge arrows stay desktop/tablet-only, matching the
+     ContentRail contract); the dots remain for direct selection. ── */
   @media (max-width: 640px) {
     .spotlight { width: 90%; border-radius: 14px; }
-    .spotlight-slide { min-height: clamp(280px, 42vh, 380px); }
-    .slide-content { padding: 16px 16px 54px; }
+    .spotlight-slide { min-height: clamp(300px, 44dvh, 400px); }
+    .slide-content { padding: 18px 18px 64px; }
     .slide-desc { -webkit-line-clamp: 2; line-clamp: 2; font-size: .76rem; }
     .slide-play, .slide-more { flex: 0 1 auto; padding: 0 16px; }
-    .spotlight-nav { bottom: 10px; right: 10px; }
+    .slide-actions { margin-top: 10px; }
+    .spotlight-arrow { display: none; }
+    .spotlight-dots { bottom: 16px; gap: 6px; }
   }
 
   @media (prefers-reduced-motion: reduce) {
     .slide-media img { animation: none; }
     .spotlight-track { scroll-behavior: auto; }
-    .slide-play, .slide-more, .spotlight-dot, .spotlight-nav-btn { transition: none; }
+    .slide-play, .slide-more, .spotlight-dot, .spotlight-arrow { transition: none; }
   }
 </style>

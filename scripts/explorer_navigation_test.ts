@@ -46,8 +46,17 @@ for (const [name, src] of [['My List', myList], ['Settings', settings]] as const
   assert.match(src, /min-height: 44px/, `${name} back control keeps the 44px touch target`);
   assert.match(src, /ArrowLeft size=\{15\}/, `${name} back control uses the shell's arrow language`);
   assert.match(src, /prefers-reduced-motion: reduce[\s\S]*back-to-discover/, `${name} back control honors reduced motion`);
+  // Follow-up task 2 (§13): the back control lives INSIDE the page
+  // header (contextual header composition) — NO standalone full-width
+  // back row, no blank detached strip above the header.
+  assert.doesNotMatch(src, /class="back-row"/, `${name} has NO standalone full-width back row (Follow-up task 2 §13)`);
+  if (name === 'My List') {
+    assert.match(src, /<header class="list-header">[\s\S]*?<a\s*\n?\s*class="back-to-discover"/, 'My List back is the first control inside the page header surface');
+  } else {
+    assert.match(src, /<header class="settings-top">[\s\S]*?<a\s*\n?\s*class="back-to-discover"/, 'Settings back is the first control inside the page header surface');
+  }
 }
-ok('1. Change 2: My List + Settings both expose an accessible Back → /discover control');
+ok('1. Change 2: My List + Settings back controls — contextual header composition, accessible, → /discover, replace-state');
 
 // ============================================================
 // 2. CHANGE 3 — history fix via replace-state on account surfaces
@@ -107,7 +116,10 @@ ok('3. Change 4: recent-searches row only — storage module, a11y, horizontal s
 const mobilePosterRule = detailPage.match(/@media \(max-width: 640px\)[\s\S]*?\.poster-wrap \{ margin-top: (\d+)px; \}/);
 assert.ok(mobilePosterRule, 'the mobile poster-wrap top spacing rule is present');
 const posterTop = Number(mobilePosterRule![1]);
-assert.ok(posterTop === 132, `the mobile top spacing is reduced by 18px (150 → ${posterTop})`);
+// Follow-up task 2 (§2): the audited computed layout confirmed
+// .poster-wrap's mobile margin-top as the responsible vertical driver;
+// reduced by the specified ~10px (132 → 122).
+assert.ok(posterTop === 122, `the mobile top spacing is reduced by 10px (132 → ${posterTop})`);
 // The action pipeline is untouched.
 assert.match(detailPage, /class="play-btn"/, 'Play/Resume action untouched');
 assert.match(detailPage, /class="download-btn"/, 'Download action untouched');
@@ -118,7 +130,7 @@ assert.match(detailPage, /openTrailer/, 'Trailer action untouched');
 assert.match(detailPage, /@media \(min-width: 1025px\)[\s\S]*?padding-top: clamp\(96px, 14vh, 160px\)/, 'desktop hero spacing untouched');
 assert.match(detailPage, /@media \(min-width: 641px\) and \(max-width: 1024px\)[\s\S]*?\.poster-wrap \{ justify-content: flex-start; margin-top: 0; \}/, 'tablet poster composition untouched');
 assert.match(detailPage, /min-height: clamp\(440px, 78vh, 760px\)/, 'hero min-height (backdrop composition) untouched');
-ok('4. Change 5: mobile top spacing −18px (150→132); actions, breakpoints and hero composition untouched');
+ok('4. Change 5 (Follow-up task 2 §2): mobile top spacing −10px (132→122); actions, breakpoints and hero composition untouched');
 
 // ============================================================
 // 5. CHANGE 6 — "Available on" rename (copy only)

@@ -68,7 +68,15 @@
   type GalleryCategory = 'Movie' | 'Series' | 'Anime';
   type FeaturedHeroItem = { item: MediaItem; category: GalleryCategory };
 
-  const GALLERY_ROTATION_MS = 7000;
+  // Follow-up task 2 (§5): the Discover hero autoplay lifecycle is
+  // hardened to the EXACT 4-second contract (was 7000ms). Same rules
+  // as the Explorer spotlight: one deterministic timer that RE-QUEUES
+  // after every automatic advance (the old code advanced once and
+  // never re-queued — rotation stopped after the first tick), manual
+  // navigation resets the countdown to a full 4s (the old 8s
+  // "interaction release" window is removed), pointer/focus pause,
+  // visibility pause, reduced motion disables automatic movement.
+  const GALLERY_ROTATION_MS = 4000;
   const MAX_FEATURED_ITEMS = 6;
 
   // Navigation & Settings Redesign, Phase 1 — the Movies / TV Shows / Anime
@@ -246,10 +254,8 @@
   let galleryPaused = false;
   let reducedMotion = false;
   let galleryRotationTimer: ReturnType<typeof setTimeout> | undefined;
-  let interactionReleaseTimer: ReturnType<typeof setTimeout> | undefined;
   let destroyed = false;
   let motionQuery: MediaQueryList | undefined;
-  let isScrolling = false;
   let scrollTimeout: ReturnType<typeof setTimeout> | undefined;
   let heroFavoriteSet = $state(new Set<string>());
 
@@ -363,21 +369,23 @@
 
   function clearTimers() {
     if (galleryRotationTimer) clearTimeout(galleryRotationTimer);
-    if (interactionReleaseTimer) clearTimeout(interactionReleaseTimer);
     if (scrollTimeout) clearTimeout(scrollTimeout);
     galleryRotationTimer = undefined;
-    interactionReleaseTimer = undefined;
     scrollTimeout = undefined;
   }
 
+  // ONE rotation entry point: always clears any pending timer first —
+  // duplicate timers are impossible by construction.
   function queueGalleryRotation() {
     if (featuredItems.length < 2 || galleryPaused || reducedMotion || destroyed) return;
     if (galleryRotationTimer) clearTimeout(galleryRotationTimer);
     galleryRotationTimer = setTimeout(() => {
       galleryRotationTimer = undefined;
-      if (!galleryPaused && !document.hidden) {
-        scrollToSlide((activeIndex + 1) % featuredItems.length, true);
-      }
+      if (galleryPaused || reducedMotion || destroyed || document.hidden) return;
+      scrollToSlide((activeIndex + 1) % featuredItems.length, true);
+      // THE lifecycle fix (Follow-up task 2 §5): re-queue after every
+      // automatic advance so the normal cadence is exactly 4s forever.
+      queueGalleryRotation();
     }, GALLERY_ROTATION_MS);
   }
 
@@ -392,9 +400,13 @@
     queueGalleryRotation();
   }
 
-  function releaseInteractionPause() {
-    if (interactionReleaseTimer) clearTimeout(interactionReleaseTimer);
-    interactionReleaseTimer = setTimeout(() => { interactionReleaseTimer = undefined; resumeGallery(); }, GALLERY_ROTATION_MS * 2);
+  // Manual navigation: show the slide immediately + reset the autoplay
+  // countdown to a full 4s (a no-op while the user is hovering/focused —
+  // leaving the interaction area resumes with a fresh countdown). The
+  // old 8-second release window is gone (never wait 8+ seconds).
+  function manualHeroNav(index: number) {
+    scrollToSlide(index, true);
+    queueGalleryRotation();
   }
 
   function preloadImage(url: string) {
@@ -417,10 +429,8 @@
 
   function handleHeroScroll() {
     if (!heroTrack || featuredItems.length === 0) return;
-    isScrolling = true;
     if (scrollTimeout) clearTimeout(scrollTimeout);
     scrollTimeout = setTimeout(() => {
-      isScrolling = false;
       if (!heroTrack) return;
       const slideWidth = heroTrack.clientWidth;
       const newIndex = Math.round(heroTrack.scrollLeft / slideWidth);
@@ -433,10 +443,10 @@
 
   function handleHeroKeydown(event: KeyboardEvent) {
     if (!featuredItems.length) return;
-    if (event.key === 'ArrowRight') { event.preventDefault(); pauseGallery(); releaseInteractionPause(); scrollToSlide((activeIndex + 1) % featuredItems.length, true); }
-    else if (event.key === 'ArrowLeft') { event.preventDefault(); pauseGallery(); releaseInteractionPause(); scrollToSlide((activeIndex - 1 + featuredItems.length) % featuredItems.length, true); }
-    else if (event.key === 'Home') { event.preventDefault(); pauseGallery(); releaseInteractionPause(); scrollToSlide(0, true); }
-    else if (event.key === 'End') { event.preventDefault(); pauseGallery(); releaseInteractionPause(); scrollToSlide(featuredItems.length - 1, true); }
+    if (event.key === 'ArrowRight') { event.preventDefault(); manualHeroNav((activeIndex + 1) % featuredItems.length); }
+    else if (event.key === 'ArrowLeft') { event.preventDefault(); manualHeroNav((activeIndex - 1 + featuredItems.length) % featuredItems.length); }
+    else if (event.key === 'Home') { event.preventDefault(); manualHeroNav(0); }
+    else if (event.key === 'End') { event.preventDefault(); manualHeroNav(featuredItems.length - 1); }
     else if (event.key === ' ') { event.preventDefault(); if (galleryPaused) resumeGallery(); else pauseGallery(); }
   }
 
@@ -575,13 +585,13 @@
 
       {#if featuredItems.length > 1}
         <div class="hero-nav">
-          <button class="hero-nav-btn" type="button" aria-label="Previous title" onclick={() => { pauseGallery(); releaseInteractionPause(); scrollToSlide((activeIndex - 1 + featuredItems.length) % featuredItems.length, true); }}><ArrowLeft size={13} /></button>
+          <button class="hero-nav-btn" type="button" aria-label="Previous title" onclick={() => manualHeroNav((activeIndex - 1 + featuredItems.length) % featuredItems.length)}><ArrowLeft size={13} /></button>
           <div class="hero-dots" role="tablist" aria-label="Choose featured title">
             {#each featuredItems as slide, index}
-              <button class:active={index === activeIndex} class="hero-dot" type="button" role="tab" aria-selected={index === activeIndex} aria-label={`Show ${slide.item.title}`} onclick={() => { pauseGallery(); releaseInteractionPause(); scrollToSlide(index, true); }}></button>
+              <button class:active={index === activeIndex} class="hero-dot" type="button" role="tab" aria-selected={index === activeIndex} aria-label={`Show ${slide.item.title}`} onclick={() => manualHeroNav(index)}></button>
             {/each}
           </div>
-          <button class="hero-nav-btn" type="button" aria-label="Next title" onclick={() => { pauseGallery(); releaseInteractionPause(); scrollToSlide((activeIndex + 1) % featuredItems.length, true); }}><ArrowRight size={13} /></button>
+          <button class="hero-nav-btn" type="button" aria-label="Next title" onclick={() => manualHeroNav((activeIndex + 1) % featuredItems.length)}><ArrowRight size={13} /></button>
         </div>
       {/if}
     </section>

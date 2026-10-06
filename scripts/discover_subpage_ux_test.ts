@@ -115,7 +115,7 @@ assert.match(routes.movies, /<ExplorerPage\s+type="movie"/, '/movies renders the
 assert.match(routes.series, /<ExplorerPage\s+type="series"/, '/tv-shows renders the shared ExplorerPage');
 assert.match(routes.anime, /<ExplorerPage\s+type="anime"/, '/anime renders the shared ExplorerPage');
 assert.match(explorerPage, /<SpotlightCarousel items=\{spotlight\}/, 'the Explorer embeds the spotlight carousel');
-assert.match(explorerPage, /<ContentRail title=\{section\.title\} items=\{section\.items\} \/>/, 'unfiltered sections render through the existing ContentRail component');
+assert.match(explorerPage, /<ContentRail title=\{section\.title\} items=\{section\.items\} href=\{section\.showMoreHref \|\| ''\} linkLabel="Show more" \/>/, 'unfiltered sections render through the existing ContentRail (+ the Follow-up task 2 Show-more CTA)');
 assert.match(spotlightCarousel, /\/watch\/\$\{slide\.type\}\/\$\{slide\.id\}/, 'spotlight Play links to the existing watch route (playback preserved)');
 for (const [key, src] of Object.entries(routes)) assert.match(src, /totalPages=\{data\.totalPages\}/, `${key} route passes totalPages through`);
 ok('4. the three first-class routes reuse one shared ExplorerPage (spotlight + chips + sections/feed)');
@@ -124,8 +124,8 @@ ok('4. the three first-class routes reuse one shared ExplorerPage (spotlight + c
 // 5. FILTER — canonical URLs, first-page reset, server-side safety
 // ============================================================
 assert.match(explorerPage, /void goto\(`\$\{page\.url\.pathname\}\$\{query \? `\?\$\{query\}` : ''\}`/, 'filter changes build a canonical shareable URL on the same path');
-assert.match(explorerPage, /function updateFilters\(next: \{ genre\?: string; language\?: string \}\)/, 'filter changes carry only the Explorer dimensions (genre/language)');
-assert.match(explorerPage, /function clearAllFilters\(\)/, 'clear filters drops genre + language');
+assert.match(explorerPage, /function updateFilters\(next: \{ genre\?: string; language\?: string; sort\?: string \}\)/, 'filter changes carry the Explorer dimensions (genre/language/sort)');
+assert.match(explorerPage, /function clearAllFilters\(\)/, 'clear filters drops genre + language + sort');
 assert.doesNotMatch(explorerPage, /localStorage|sessionStorage/, 'no browser persistence for filter state');
 assert.match(loader, /isExplorerGenre\(type, genreParam\)/, 'genre values validated against the closed taxonomy (server-side)');
 assert.match(loader, /isExplorerLanguage\(type, languageParam\)/, 'language values validated per type (server-side)');
@@ -156,7 +156,7 @@ ok('6. progressive results: observer sentinel, dedup, request guards, honest end
 // ============================================================
 // Chips render from the shared taxonomy (no native selects, no new
 // modal) and scroll horizontally within their own row.
-assert.match(explorerPage, /import \{ EXPLORER_GENRES, EXPLORER_LANGUAGES \} from '\$lib\/shared\/explorer-taxonomy';/, 'chips come from the shared taxonomy module');
+assert.match(explorerPage, /import \{ EXPLORER_GENRES, EXPLORER_LANGUAGES, EXPLORER_SORT_TITLES, type ExplorerSort \} from '\$lib\/shared\/explorer-taxonomy';/, 'chips + sort labels come from the shared taxonomy module');
 assert.doesNotMatch(explorerPage, /<select/, 'no native <select> elements');
 assert.match(explorerPage, /\.chip-scroll \{[\s\S]*?overflow-x: auto/, 'chip rows scroll horizontally');
 assert.match(explorerPage, /\.chip-scroll \{[\s\S]*?flex-wrap: nowrap/, 'chip rows never wrap (no vertical stacking on phones)');

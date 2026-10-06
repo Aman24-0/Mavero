@@ -4,7 +4,8 @@ import { getOrSetValidated } from './cache';
 import { getTmdbHeroMoviePool, getTmdbHeroSeriesPool, getTmdbAnimeMerged, type AnimeGenreConstraint } from './adapters/tmdb';
 import { heroDailyBucket, selectSpotlightLineup, SPOTLIGHT_SIZE, type SpotlightResult } from './hero-select';
 import { isDiscoverLanguageValue, type CollectionFilters, type ContentType, type ContentList, type DiscoverLanguage, type NormalizedMediaItem } from './types';
-import { isExplorerGenre, isExplorerLanguage, explorerGenreId, EXPLORER_GENRES } from '$lib/shared/explorer-taxonomy';
+import { isExplorerGenre, isExplorerLanguage, isExplorerSort, explorerGenreId, EXPLORER_GENRES, type ExplorerSort } from '$lib/shared/explorer-taxonomy';
+import { DESTINATION_ROUTES } from '$lib/shared/content-labels';
 import type { MediaItem } from '$data/content';
 
 // ============================================================
@@ -23,16 +24,23 @@ import type { MediaItem } from '$data/content';
 //                     taxonomy (closed list; invalid values ignored).
 //   ?language=<code> — validated against the per-type Explorer
 //                     language list (closed; invalid values ignored).
+//   ?sort=<value>   — Follow-up task 2 (§10): closed two-value union
+//                     (popular | top-rated) — the Show-more target
+//                     state for the Popular / Top Rated rails. The
+//                     same route/query mechanism the legacy collection
+//                     route carried, mapped onto existing services.
 //   ?page=<1..20>   — feed page for the SSR seed of the filtered view.
 //
-//   Unfiltered (no genre/language): spotlight + Popular + Top Rated.
-//   Filtered: spotlight + the filtered feed page (SSR seed); the
-//   client tops up responsively and continues infinitely.
+//   Unfiltered (no genre/language/sort): spotlight + Popular + Top
+//   Rated rails.
+//   Filtered (genre and/or language and/or sort): spotlight + the
+//   filtered feed page (SSR seed); the client tops up responsively
+//   and continues infinitely.
 // ============================================================
 
-export type ExplorerFilters = { genre?: string; language?: DiscoverLanguage };
+export type ExplorerFilters = { genre?: string; language?: DiscoverLanguage; sort?: ExplorerSort };
 
-export type ExplorerSection = { key: 'popular' | 'top-rated'; title: string; items: MediaItem[] };
+export type ExplorerSection = { key: 'popular' | 'top-rated'; title: string; items: MediaItem[]; showMoreHref: string };
 
 export type ExplorerFeedResult = {
   items: MediaItem[];
@@ -55,14 +63,16 @@ export function parseExplorerPage(value: string | null): number {
 export function parseExplorerFilters(url: URL, type: ContentType): ExplorerFilters {
   const genreParam = url.searchParams.get('genre')?.trim();
   const languageParam = url.searchParams.get('language')?.trim();
+  const sortParam = url.searchParams.get('sort')?.trim();
   return {
     genre: isExplorerGenre(type, genreParam) ? genreParam : undefined,
-    language: isDiscoverLanguageValue(languageParam) && isExplorerLanguage(type, languageParam) ? languageParam : undefined
+    language: isDiscoverLanguageValue(languageParam) && isExplorerLanguage(type, languageParam) ? languageParam : undefined,
+    sort: isExplorerSort(sortParam) ? sortParam : undefined
   };
 }
 
 export function hasExplorerFilters(filters: ExplorerFilters): boolean {
-  return Boolean(filters.genre || (filters.language && filters.language !== 'all'));
+  return Boolean(filters.genre || (filters.language && filters.language !== 'all') || filters.sort);
 }
 
 function explorerErrorMessage(type: ContentType): string {
@@ -154,10 +164,17 @@ export async function loadExplorerSpotlight(type: ContentType): Promise<MediaIte
 //   movie/series → the existing collection() path with the genre id
 //                  resolved per-type and the language filter passed
 //                  through (getTmdbCollection's language walk).
+//                  Follow-up task 2 (§10): sort=top-rated routes to the
+//                  EXISTING 'Top rated' collection ordering; sort=popular
+//                  with no genre/language uses the EXISTING popular()
+//                  service (the exact service that feeds the Popular
+//                  rail — the Show-more continuation is the same data).
 //   anime        → the existing merged anime path with the per-side
 //                  genre constraint. Language: the merged path is
 //                  'ja' by construction; 'all'/'ja' are equivalent
 //                  and other codes cannot reach here (closed union).
+//                  sort=top-rated maps to the merged 'top-rated' mode
+//                  (the same mode the Top Rated anime rail uses).
 // ============================================================
 
 export async function explorerFeed(type: ContentType, filters: ExplorerFilters, page: number): Promise<ExplorerFeedResult> {
@@ -168,7 +185,22 @@ export async function explorerFeed(type: ContentType, filters: ExplorerFilters, 
       const constraint: AnimeGenreConstraint | undefined = genreDef
         ? { movieGenreId: genreDef.movieId, tvGenreId: genreDef.seriesId }
         : undefined;
-      const result: ContentList = await getTmdbAnimeMerged('popularity', safePage, constraint);
+      const result: ContentList = await getTmdbAnimeMerged(filters.sort === 'top-rated' ? 'top-rated' : 'popularity', safePage, constraint);
+      if (result.source.provider === 'fixtures') {
+        return { items: [], page: safePage, hasNextPage: false, totalPages: undefined, error: explorerErrorMessage(type) };
+      }
+      return {
+        items: result.items.map(toMediaItem),
+        page: result.page ?? safePage,
+        hasNextPage: result.hasNextPage,
+        totalPages: undefined
+      };
+    }
+    // Popular Show-more continuation (no genre/language narrowing):
+    // the exact popular() service that feeds the Popular rail — the
+    // full collection state the "Show more →" CTA promises.
+    if (filters.sort === 'popular' && !filters.genre && !(filters.language && filters.language !== 'all')) {
+      const result = await popular(type, safePage);
       if (result.source.provider === 'fixtures') {
         return { items: [], page: safePage, hasNextPage: false, totalPages: undefined, error: explorerErrorMessage(type) };
       }
@@ -182,7 +214,7 @@ export async function explorerFeed(type: ContentType, filters: ExplorerFilters, 
     const genreId = filters.genre ? explorerGenreId(type, filters.genre) : undefined;
     const collectionFilters: CollectionFilters = {
       ...(genreId !== undefined ? { genre: String(genreId) } : {}),
-      sort: 'For you',
+      sort: filters.sort === 'top-rated' ? 'Top rated' : 'For you',
       ...(filters.language && filters.language !== 'all' ? { language: filters.language } : {})
     };
     const result = await collection(type, safePage, collectionFilters);
@@ -263,10 +295,14 @@ async function loadExplorerSections(type: ContentType): Promise<{ sections: Expl
   const sections: ExplorerSection[] = [];
 
   // Popular first (intentional ordering — the broadest entry rail).
+  // Follow-up task 2 (§10): each section carries its canonical
+  // Show-more target — the Explorer route's own ?sort= state over the
+  // SAME service that feeds the rail (no new endpoint, the legacy
+  // collection-route URL mechanism restored).
   const popularItems = excludeSeen(popularRail.items, seen);
   popularItems.forEach((item) => seen.add(itemKey(item)));
   if (popularItems.length > 0) {
-    sections.push({ key: 'popular', title: SECTION_TITLES[type].popular, items: popularItems });
+    sections.push({ key: 'popular', title: SECTION_TITLES[type].popular, items: popularItems, showMoreHref: `${DESTINATION_ROUTES[type]}?sort=popular` });
   }
 
   // Top rated — deduped against Popular + spotlight-independent.
@@ -279,7 +315,7 @@ async function loadExplorerSections(type: ContentType): Promise<{ sections: Expl
   }
   topRatedItems.forEach((item) => seen.add(itemKey(item)));
   if (topRatedItems.length > 0) {
-    sections.push({ key: 'top-rated', title: SECTION_TITLES[type].topRated, items: topRatedItems });
+    sections.push({ key: 'top-rated', title: SECTION_TITLES[type].topRated, items: topRatedItems, showMoreHref: `${DESTINATION_ROUTES[type]}?sort=top-rated` });
   }
 
   const errorMessage = popularRail.error && topRatedRail.error ? `${popularRail.error} ${topRatedRail.error} Check the server catalog configuration and try again.` : undefined;

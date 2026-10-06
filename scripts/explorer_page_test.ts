@@ -3,7 +3,9 @@ import { readFileSync } from 'node:fs';
 
 // MAVERO — Explorer pages contract (Movies / TV Shows / Anime Explorer
 // redesign — the approved replacement for the Phase 4 destination
-// pages).
+// pages). UPDATED for Follow-up task 2 (final UI/UX correction +
+// responsive carousel hardening): sort/Show-more dimension, single
+// Language All, label-less chip rows, hardened spotlight.
 //
 // Regression contract for the three dedicated Explorers:
 //
@@ -190,9 +192,14 @@ ok('5. filtered results: responsive first batch (columns × rows, bounded), infi
 // ============================================================
 // 6. UNFILTERED SECTIONS — Popular + Top Rated, deduped, distinct
 // ============================================================
-assert.match(explorerPage, /\{#each sections as section \(section\.key\)\}[\s\S]*?<ContentRail title=\{section\.title\} items=\{section\.items\} \/>/, 'unfiltered sections render through the existing ContentRail');
+// Follow-up task 2 (§10): every section rail carries the canonical
+// Show-more CTA (header position, "Show more" label, the route's own
+// ?sort= query state).
+assert.match(explorerPage, /\{#each sections as section \(section\.key\)\}[\s\S]*?<ContentRail title=\{section\.title\} items=\{section\.items\} href=\{section\.showMoreHref \|\| ''\} linkLabel="Show more" \/>/, 'unfiltered sections render through the existing ContentRail with the Show-more CTA');
 assert.match(loader, /key: 'popular'[\s\S]*?key: 'top-rated'/, 'the server composes exactly the Popular + Top Rated sections');
 assert.match(loader, /SECTION_TITLES: Record<ContentType/, 'section titles are per-type');
+assert.match(loader, /showMoreHref: `\$\{DESTINATION_ROUTES\[type\]\}\?sort=popular`/, 'Popular Show-more targets the canonical ?sort=popular route state');
+assert.match(loader, /showMoreHref: `\$\{DESTINATION_ROUTES\[type\]\}\?sort=top-rated`/, 'Top Rated Show-more targets the canonical ?sort=top-rated route state');
 assert.match(loader, /excludeSeen\(topRatedRail\.items, seen\)/, 'Top Rated is deduplicated against Popular (no title repeats across sections)');
 assert.match(loader, /topRatedItems\.length < MIN_SECTION_ITEMS[\s\S]*?excludeSeen\(trending, new Set/, 'a dedup-thinned section is topped up with eligible non-duplicates');
 assert.match(loader, /if \(popularItems\.length > 0\)/, 'empty sections are omitted (never an empty section)');
@@ -257,8 +264,12 @@ assert.doesNotMatch(explorerPage, /fixtureMedia/, 'the Explorer never renders fi
 assert.match(loader, /provider !== 'fixtures'/, 'fixture responses are treated as unavailable (honesty contract)');
 assert.ok(contentRail.includes('role="list"'), 'ContentRail list semantics preserved');
 assert.match(loader, /MAX_EXPLORER_FEED_PAGE = 20/, 'the feed keeps the 1..20 serving window (the existing pagination contract)');
-assert.match(loader, /sort: 'For you'[\s\S]*?language/, 'the movie/series feed reuses the collection sort + language path');
-assert.match(loader, /getTmdbAnimeMerged\('popularity', safePage, constraint\)/, 'the anime feed reuses the merged anime path with the per-side genre constraint');
+// Follow-up task 2 (§10): the feed reuses the collection sort +
+// language path (top-rated maps to the existing 'Top rated' ordering)
+// and the popular Show-more continuation reuses the popular() service.
+assert.match(loader, /sort: filters\.sort === 'top-rated' \? 'Top rated' : 'For you'/, 'the movie/series feed reuses the collection sort + language path');
+assert.match(loader, /filters\.sort === 'popular' && !filters\.genre[\s\S]*?popular\(type, safePage\)/, 'the popular Show-more continuation reuses the existing popular() service');
+assert.match(loader, /getTmdbAnimeMerged\(filters\.sort === 'top-rated' \? 'top-rated' : 'popularity', safePage, constraint\)/, 'the anime feed reuses the merged anime path with the per-side genre constraint');
 ok('10. data safety: no fixtures, no schema changes, existing pagination/caching semantics reused');
 
 console.log(`\nExplorer page tests passed (${passed} check groups).`);

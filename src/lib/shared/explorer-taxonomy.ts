@@ -24,6 +24,17 @@ import type { DiscoverLanguage } from '$lib/server/content/types';
 // classifier, so the anime catalog is entirely Japanese: the anime
 // language row honestly offers All + Japanese only (any other code
 // would either return nothing or break the classifier contract).
+//
+// Follow-up task 2 (§7): 'all' is NOT a language — it is the
+// no-filter state, rendered by the row's dedicated synthetic "All"
+// chip in ExplorerPage. The old lists ALSO carried { value: 'all' }
+// here, so the renderer produced TWO "All" chips (synthetic + data).
+// The data/render contract is fixed at the source: the option lists
+// contain only CHOICEABLE languages. URL values of language=all
+// continue to validate-then-degrade to "no filter" (the loader treats
+// a value that fails the closed-union check as absent — identical
+// semantics, since hasExplorerFilters always treated 'all' as
+// inactive).
 // ============================================================
 
 export type ExplorerGenre = {
@@ -80,8 +91,9 @@ export const EXPLORER_GENRES: Record<ContentType, readonly ExplorerGenre[]> = {
   ]
 };
 
+// Follow-up task 2 (§7): EXACTLY the choosable languages — 'all' is
+// the row's synthetic no-filter chip, never a list entry (one All).
 const MOVIE_SERIES_LANGUAGES: readonly ExplorerLanguageOption[] = [
-  { value: 'all', label: 'All' },
   { value: 'en', label: 'English' },
   { value: 'hi', label: 'Hindi' },
   { value: 'ta', label: 'Tamil' },
@@ -92,9 +104,34 @@ const MOVIE_SERIES_LANGUAGES: readonly ExplorerLanguageOption[] = [
 ];
 
 const ANIME_LANGUAGES: readonly ExplorerLanguageOption[] = [
-  { value: 'all', label: 'All' },
   { value: 'ja', label: 'Japanese' }
 ];
+
+// ============================================================
+// Follow-up task 2 (§10) — the Show-more SORT dimension.
+//
+// "Show more →" on the Popular / Top Rated rails must lead to the
+// correct FULL collection state. The canonical route/query mechanism
+// is the Explorer route's own URL contract — the same mechanism the
+// legacy collection route used to carry (?sort=Top%20rated), now as a
+// closed two-value union mapped onto the EXISTING service calls
+// (popular(type, page) and collection(type, page, { sort: 'Top
+// rated' })) — no new backend endpoint, no invented services.
+// ============================================================
+
+export type ExplorerSort = 'popular' | 'top-rated';
+
+export const EXPLORER_SORTS: readonly ExplorerSort[] = ['popular', 'top-rated'];
+
+export const EXPLORER_SORT_TITLES: Record<ExplorerSort, string> = {
+  popular: 'Popular',
+  'top-rated': 'Top rated'
+};
+
+/** Closed-union sort validation (URL/API values must match exactly). */
+export function isExplorerSort(value: string | null | undefined): value is ExplorerSort {
+  return value === 'popular' || value === 'top-rated';
+}
 
 export const EXPLORER_LANGUAGES: Record<ContentType, readonly ExplorerLanguageOption[]> = {
   movie: MOVIE_SERIES_LANGUAGES,
@@ -107,7 +144,7 @@ export function isExplorerGenre(type: ContentType, value: string | null | undefi
   return typeof value === 'string' && value.length > 0 && EXPLORER_GENRES[type].some((genre) => genre.name === value);
 }
 
-/** Closed-union language validation per type (anime only allows all/ja). */
+/** Closed-union language validation per type (anime only allows ja). */
 export function isExplorerLanguage(type: ContentType, value: string | null | undefined): value is DiscoverLanguage {
   if (typeof value !== 'string' || value.length === 0) return false;
   return EXPLORER_LANGUAGES[type].some((option) => option.value === value);

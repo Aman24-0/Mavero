@@ -245,7 +245,7 @@ const appFooter = await readFile(path.join(repoRoot, 'src/lib/components/AppFoot
   const animeRoute = await readFile(path.join(repoRoot, 'src/routes/anime/+page.server.ts'), 'utf8');
   assert.match(animeRoute, /loadExplorerData\('anime', url\)/, 'anime route uses loadExplorerData');
   const explorerLoader = await readFile(path.join(repoRoot, 'src/lib/server/content/explorer-load.ts'), 'utf8');
-  assert.match(explorerLoader, /getTmdbAnimeMerged\('popularity', safePage, constraint\)/, 'the anime explorer feed composes the existing merged path');
+  assert.match(explorerLoader, /getTmdbAnimeMerged\(filters\.sort === 'top-rated' \? 'top-rated' : 'popularity', safePage, constraint\)/, 'the anime explorer feed composes the existing merged path (+ the top-rated Show-more mode)');
   // The collection() service function for anime now uses the merged path.
   assert.match(service, /if \(type === 'anime'\) return await getTmdbAnimeMerged/, 'collection(anime) uses merged movie+TV path');
   // Canonical identity is preserved — movies keep type='movie', series keep type='series'.

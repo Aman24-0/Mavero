@@ -1198,13 +1198,16 @@
       padding-top: clamp(56px, 12vh, 100px);
     }
     .hero-composition { gap: 18px; }
-    /* Explorer redesign, Change 5 — surgical ~18px reduction of the
-       top spacing above the poster/identity block (150px → 132px) so
-       the primary action buttons (Resume/Play, Download, Watching,
-       Share, Trailer) are visible sooner when the detail page opens
-       on a phone. The backdrop composition, aspect ratio, button
-       behavior and every other breakpoint are untouched. */
-    .poster-wrap { margin-top: 132px; }
+    /* Follow-up task 2 (§2) — second surgical ~10px reduction of the
+       mobile top spacing above the poster/identity block (132px →
+       122px). The audited computed layout confirmed .poster-wrap's
+       mobile margin-top as the responsible vertical driver: it pulls
+       the poster (and the identity/actions stack below it) down, so
+       lowering it lifts Resume/Play, Download, Watching, Share and
+       Trailer ~10px earlier into the viewport at 360x800 / 390x844.
+       The backdrop composition, aspect ratio, button behavior and
+       every other breakpoint remain untouched. */
+    .poster-wrap { margin-top: 122px; }
     .poster-img { width: clamp(120px, 36vw, 142px); border-radius: 10px; }
     .detail-title { font-size: clamp(1.5rem, 6.4vw, 2rem); }
     .meta-row { font-size: .7rem; gap: 6px; }

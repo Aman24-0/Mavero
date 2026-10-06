@@ -361,7 +361,23 @@
     border-color: var(--color-primary-border);
   }
   .mc-wrap:has(.mc-card-link:hover) .mc-play, .mc-wrap:has(.mc-card-link:focus-visible) .mc-play { opacity: 1; transform: scale(1.06); }
-  .mc-play:hover { background: var(--color-primary); filter: brightness(1.06); transform: scale(1.12); box-shadow: 0 6px 20px rgba(0,255,156,.4), var(--glow-primary); }
+  /* Follow-up task 2 (§15) — Play-on-Play hover fix. `.mc-play` is a
+     SIBLING positioned ABOVE `.mc-card-link` (z-index 3), so moving the
+     pointer from the poster onto the Play button un-hovers the card
+     link — the `:has(.mc-card-link:hover)` reveal goes FALSE and Play
+     faded back to opacity:0 WHILE the user hovered it (the old
+     `.mc-play:hover` rule styled scale/background but never opacity).
+     CSS-only state model — Play now stays fully opaque whenever the
+     button ITSELF is hovered, and the poster keeps its elevated
+     hover treatment while Play is hovered/focused so the pointer
+     transition poster → Play causes no flicker. Keyboard focus
+     (:focus-visible) and TV-style focus were already covered below. */
+  .mc-play:hover { opacity: 1; background: var(--color-primary); filter: brightness(1.06); transform: scale(1.12); box-shadow: 0 6px 20px rgba(0,255,156,.4), var(--glow-primary); }
+  .mc-wrap:has(.mc-play:hover) .mc-poster, .mc-wrap:has(.mc-play:focus-visible) .mc-poster {
+    transform: translateY(-4px) scale(1.04);
+    box-shadow: 0 18px 36px rgba(0,0,0,.55), 0 0 0 1px var(--color-primary-border), var(--glow-primary);
+    border-color: var(--color-primary-border);
+  }
   /* Phase 2-M (A11Y-1): reveal Play/Details controls on their OWN keyboard focus
      too, not just when the parent card link is focused. Without this, Tab-ing
      from the card link onto the Play link leaves Play invisible (opacity:0)

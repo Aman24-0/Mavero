@@ -1176,3 +1176,353 @@ cards/logos/links and the streamingProviders pipeline unchanged).
     behavioral + viewport verification passed; screenshots captured.
 -   No database/schema/auth/session/provider changes (verified via
     empty diff over supabase/ and the protected areas).
+
+------------------------------------------------------------------------
+
+# Follow-up Task 2 — Final UI/UX Correction + Responsive Carousel Hardening
+
+**Status:** IN PROGRESS\
+**Baseline:** `71e96b7` (clean tree, origin/main identical — verified).\
+**Task file:** "MAVERO — FINAL UI/UX CORRECTION + RESPONSIVE CAROUSEL
+HARDENING" (29 sections).
+
+## Audit (pre-implementation) — root cause of every reported issue
+
+1.  **Detail mobile spacing (§2).** `DetailPage.svelte:1207` —
+    `@media (max-width: 640px) .poster-wrap { margin-top: 132px; }`.
+    This margin pulls the poster (and the identity/actions block below
+    it) down; reducing it lifts Play/Download/secondary rows. Fix:
+    132px → 122px (−10px, exactly as specified).
+2.  **Spotlight composition (§3/§12).** `SpotlightCarousel.svelte` —
+    navigation is ONE bottom-right capsule (`.spotlight-nav`:
+    prev + dots + next docked at `bottom: 12px; right: …`), the
+    "MAVERO / Spotlight" eyebrow renders on every populated slide
+    (line 216), and the height is one modest clamp
+    (`clamp(300px, 46vh, 480px)`). Root cause: the component's own
+    layout model, so the fix is a real component redesign — edge
+    arrows vertically centered, dots bottom-center in their own layer,
+    eyebrow removed, responsive per-breakpoint heights.
+3.  **Spotlight autoplay (§4).** `queueRotation()`'s timer callback
+    advances ONE slide and NEVER re-queues — rotation silently stops
+    after the first 4s tick (only hover/focus churn can accidentally
+    resume it). `releaseInteractionPause()` then holds a manual
+    interaction pause for `SPOTLIGHT_ROTATION_MS * 2` (8s), so a manual
+    change is followed by an 8–12s gap. Root causes: missing re-queue +
+    the 8s release window.
+4.  **Discover hero autoplay (§5).** Same lifecycle bugs in
+    `DiscoverPage.svelte` PLUS `GALLERY_ROTATION_MS = 7000` (the spec
+    requires 4000). Visual layout stays untouched (§5: harden lifecycle
+    only).
+5.  **Filter chip labels (§6).** `.chip-row-label` spans render the
+    visible "Genre"/"Language" text. ARIA group labels already exist
+    (`role="group"` + `aria-label="Filter … by genre/language"`), so
+    removing the visible spans loses no semantics.
+6.  **Duplicate Language "All" (§7).** Data-level duplication:
+    `explorer-taxonomy.ts` language lists include
+    `{ value: 'all', label: 'All' }` AND `ExplorerPage.svelte` renders
+    a synthetic All chip → two "All" chips. Fix at the data/render
+    contract: remove 'all' from the option lists (it is the no-filter
+    state, not a language). `?language=all` continues to degrade to
+    "no filter" (identical semantics — today it validates, then
+    `hasExplorerFilters` treats it as inactive).
+7.  **Sticky filters (§8).** `app.css:153` —
+    `.page-shell { overflow-x: hidden }`. Computed `overflow-y` becomes
+    `auto`, so `.page-shell` is a SCROLL CONTAINER. On ≤1024px
+    (window-scrolling range) the sticky chips' nearest scrollport is
+    the non-scrolling page-shell → sticky NEVER activates (the
+    screenshot bug). Desktop was unaffected because `.app-main`
+    (overflow-y: auto) is the nearest scrollport there. Fix:
+    `overflow-x: clip` — clips identically but does NOT create a scroll
+    container (overflow: clip never forces the other axis to auto).
+    z-index (30 < topbar 40) and the opaque blurred backdrop are
+    already correct.
+8.  **Responsive first batch (§9).** Already implemented and compliant
+    (measured gridTemplateColumns + first-card row height + viewport
+    below grid top, clamped [8,30], whole 10-item feed pages, ≤3
+    top-up pages). This task must VERIFY and PRESERVE it — no change.
+9.  **Show More (§10).** The Explorer sections render ContentRail with
+    NO href — rails end without a continuation action. The canonical
+    route/query mechanism for "popular/top-rated full collection" is
+    the Explorer route's own query contract (the old collection URL
+    carried `?sort=Top%20rated`; the service layer already supports
+    `popular(type, page)` and `collection(type, page, { sort: 'Top
+    rated' })`). Fix: extend the Explorer URL + feed contracts with a
+    closed-union `?sort=popular|top-rated` dimension (no new endpoint;
+    existing services only) + a "Show more →" header CTA on each
+    section rail (ContentRail gains an optional `linkLabel` prop —
+    default "View all" keeps every existing caller byte-identical).
+10. **ContentRail arrows (§11).** Arrows exist but are hover-only
+    (`opacity: 0` + `.rail-wrap:hover .rail-nav { opacity: 1 }`) and
+    have no edge state. Fix: visible by default on ≥641px pointer
+    surfaces (still `display: none` ≤640px — native swipe stays
+    primary), disabled + dimmed at the actual scroll ends (state from
+    a passive scroll listener + settle callback), 2-card step kept.
+11. **My List/Settings Back row (§13).** The Back control sits in its
+    own full-width `.back-row` block ABOVE the page header → blank
+    right side, wasted vertical space, detached header background.
+    Fix: integrate the Back link INTO the page header
+    (`.list-header`/`.settings-top`) as the first child of the inner
+    container — same surface, same gutter, page identity begins
+    naturally below it. Destination/replace-state/a11y contracts
+    unchanged.
+12. **Bottom nav overlap (§14).** `ExplorerPage.svelte` ends with
+    `padding-bottom: 40px` while the floating pill (fixed, bottom
+    14px + safe-area, ~58px tall) spans the ENTIRE ≤1024px range —
+    its top edge (~72px + safe-area) covers the last rail. AppShell's
+    scoped `.page-shell { padding-bottom: 0 }` (≤640px) also overrides
+    app.css's 96px fallback. Fix: a reusable
+    `--mobile-nav-clearance: calc(96px + env(safe-area-inset-bottom,
+    0px))` token in app.css (nav height 58 + bottom offset 14 +
+    comfortable gap 24) applied as the Explorer bottom padding across
+    the ≤1024px pill range.
+13. **MediaCard Play hover (§15).** `.mc-play` is a SIBLING of
+    `.mc-card-link` sitting on top of it (z-index 3). When the pointer
+    moves from the poster link onto the Play button, the link loses
+    `:hover` → `:has(.mc-card-link:hover)` goes false → Play fades
+    back to `opacity: 0` WHILE being hovered, because
+    `.mc-play:hover` sets scale/background but NOT opacity. Fix
+    (CSS-only): `.mc-play:hover { opacity: 1; … }` + keep the poster
+    elevation alive while Play is hovered/focused via
+    `:has(.mc-play:hover)` / `:has(.mc-play:focus-visible)` (no
+    flicker, keyboard/TV focus already covered by the existing
+    focus-visible rule).
+14. **Search (§16).** AUDIT ONLY — the approved Recent Searches row
+    already exists exactly per the approved implementation (storage
+    module + row + removal + re-run + hidden-when-empty). Zero search
+    diff planned; the regression test pins it.
+
+Protected areas verified untouched by this plan: Supabase (`supabase/`
+diff stays empty), providers, downloader, playback, auth/session,
+hosting, CloudStream, admin, analytics.
+
+## Implementation
+
+### §2 — Detail mobile spacing
+`DetailPage.svelte` — the audited root cause (the mobile
+`.poster-wrap { margin-top }` pulling the poster/identity/actions stack
+down) reduced 132px → 122px (−10px, exactly as specified). Verified
+live: computed 122px at 390x844 AND 360x800; Play + Download render on
+the hero; every other breakpoint byte-identical.
+
+### §3/§12 — SpotlightCarousel redesign
+Complete component redesign to the 5-layer model (media / scrim /
+content / edge-nav / pagination):
+- Prev/next arrows: LEFT/RIGHT edges, `top: 50%` translateY(-50%),
+  46px glass/dark controls (larger than the 38px rail arrows — the
+  hero is the primary control), primary hover, focus-visible, looping
+  (never disabled).
+- Dots: `bottom: 22px; left: 50%; translateX(-50%)`, compact, no
+  capsule; the content layer reserves 92px (mobile 64px) bottom
+  padding so the CTA row and dots can never touch.
+- "MAVERO / Spotlight" eyebrow REMOVED from populated slides (the
+  fallback block keeps its own honest "MAVERO / {plural}" eyebrow —
+  different contract, unchanged).
+- The old bottom-right `.spotlight-nav` capsule is deleted.
+- Responsive per-breakpoint heights (viewport height aware):
+  desktop `clamp(420px, 56dvh, 620px)`, tablet
+  `clamp(360px, 48dvh, 480px)`, mobile `clamp(300px, 44dvh, 400px)`.
+- Arrows hidden ≤640px (native swipe primary — matches the
+  ContentRail contract); dots on all breakpoints.
+
+### §4/§5 — Autoplay lifecycle (Spotlight + Discover hero)
+Both carousels hardened to the EXACT 4-second contract:
+- THE core fix: the timer callback now RE-QUEUES after advancing
+  (both components previously advanced once and silently stopped).
+- Discover: `GALLERY_ROTATION_MS` 7000 → 4000.
+- Manual navigation (arrows/dots/keyboard) → `manualNav()` /
+  `manualHeroNav()`: slide shows immediately + countdown resets to a
+  full interval; the 8s `releaseInteractionPause` window is DELETED
+  from both components (root cause of the "wait 8+ seconds" reports).
+- One deterministic timer (queueRotation always clears before
+  setting — duplicate timers impossible); pointer/focus pause,
+  pointer/focus leave resume, visibilitychange pause/re-queue,
+  reduced-motion disables rotation — all preserved.
+
+### §6 — Filter chip labels
+The visible "Genre"/"Language" `.chip-row-label` spans are removed
+(plus the SlidersHorizontal icon); each row keeps `role="group"` +
+its full `aria-label` ("Filter {movies} by genre/language") and the
+All chips gained explicit `aria-label="All genres"/"All languages"`.
+
+### §7 — ONE Language "All"
+Data-contract fix (not CSS hiding): `{ value: 'all' }` removed from
+`MOVIE_SERIES_LANGUAGES` and `ANIME_LANGUAGES` in
+explorer-taxonomy.ts — the option lists now contain only CHOICEABLE
+languages; the row's single synthetic All chip is the one All.
+`?language=all` still degrades to "no filter" (identical semantics).
+Verified live: exactly one All per row at every viewport (visual
+inspection: 2 All chips total, one per row).
+
+### §8 — Sticky filters (the real architecture fix)
+TWO ancestors were breaking sticky on the ≤1024px window-scrolling
+range (sticky resolved against a never-scrolling scrollport):
+1. `.page-shell { overflow-x: hidden }` (app.css) — a hidden x-axis
+   coerces a visible y-axis to `auto` → page-shell was a scroll
+   container. Fixed to `overflow-x: clip` (clips identically, never
+   creates a scroll container).
+2. `.app-main` (AppShell ≤1024px override) — the base
+   `overflow-x: hidden` was never reset, so `overflow-y: visible
+   !important` still computed to `auto` (same coercion). Fixed by
+   adding `overflow-x: clip !important` to the ≤1024px override.
+   Desktop (≥1025px) keeps the intended app-main scroll container.
+Verified live (behavioral, not just computed styles): after
+scrolling a spacer-extended filtered page 1500px at 390px, the filter
+surface stays pinned at top 56px (== the fixed topbar bottom) with
+position: sticky. z-index (30 < topbar 40) and the opaque blurred
+backdrop were already correct.
+
+### §9 — Responsive first batch
+Audited and PRESERVED unchanged (no regression): the measured
+capacity model (rendered gridTemplateColumns × first-card row height
+× viewport below grid top, clamped [8,30], whole 10-item feed pages,
+≤3 top-up pages) — pinned by the explorer_page_test contract suite.
+
+### §10 — Show more
+- `explorer-taxonomy.ts`: new closed-union `ExplorerSort` dimension
+  ('popular' | 'top-rated') + `isExplorerSort` + label map.
+- `explorer-load.ts`: `?sort=` URL parsing/validation; an active sort
+  renders the full filtered-collection grid (the SSR seed + the same
+  client top-up/infinite machinery); sections carry `showMoreHref`
+  (`/{route}?sort=popular|top-rated`); the feed routes sort=popular
+  (no chips) to the EXISTING `popular()` service and sort=top-rated
+  to the EXISTING `collection(..., { sort: 'Top rated' })` ordering;
+  anime maps to the merged path's existing 'top-rated' mode. NO new
+  backend endpoint — the URL mechanism the legacy collection route
+  used (`?sort=Top%20rated`), restored on the Explorer architecture.
+- Feed endpoint: validated `sort` param (closed union, 400 on
+  invalid; an active sort satisfies the filter requirement).
+- `ContentRail`: optional `linkLabel` prop (default "View all" —
+  every existing caller byte-identical); the Explorer passes
+  "Show more" — header position, aligned with the title, secondary
+  weight (verified in shipped CSS), keyboard-accessible anchor.
+- `ExplorerPage`: updateFilters carries the sort dimension;
+  "Clear filters" clears genre+language+sort; the results heading
+  leads with the sort label ("Popular movies" / "Top rated movies").
+
+### §11 — ContentRail arrows
+No longer hover-only: the base `.rail-nav` rule lost its
+`opacity: 0` + `.rail-wrap:hover` reveal — arrows render at full
+opacity on ≥641px pointer surfaces (still `display: none` ≤640px;
+native swipe/trackpad scrolling untouched). Real edge state:
+`atStart`/`atEnd` derived from scrollLeft/scrollWidth on scroll +
+ResizeObserver + item changes; arrows DISABLE (opacity .22,
+pointer-events none, keeps layout slot) at the actual ends. The
+2-card scroll step is preserved. Verified live (shipped-CSS probe
+at every viewport + live DOM on the fixture detail page's rail:
+short rail → both arrows correctly disabled).
+
+### §13 — My List/Settings Back composition
+The standalone full-width `.back-row` above the header is DELETED on
+both pages; the Back control is now the FIRST child inside the page
+header's inner container (`.list-header .header-inner` /
+`.settings-top .top-inner`) — same surface, same gutter, page
+identity begins naturally below it. Destination (/discover),
+replace-state navigation, a11y, 44px target, focus-visible,
+reduced-motion all preserved. Verified live (header.contains(back)
++ navigates to /discover) and visually (no blank row, no detached
+background strip).
+
+### §14 — Bottom nav clearance
+New reusable token in app.css:
+`--mobile-nav-clearance: calc(96px + env(safe-area-inset-bottom,
+0px))` (pill occupancy ~72px + 24px comfortable gap + safe-area).
+ExplorerPage applies it as bottom padding across the ENTIRE ≤1024px
+pill range (phones AND tablets — the pill spans both); desktop keeps
+the 40px base. Verified live at 390 and 820: fully scrolled, the
+last content clears the pill top edge with the padding active.
+
+### §15 — MediaCard Play hover
+CSS-only root-cause fix: `.mc-play:hover` now carries `opacity: 1`
+(the old rule styled scale/background but never opacity — moving the
+pointer from the poster link onto the sibling Play button un-hovered
+the card link and Play faded to invisible WHILE hovered). The poster
+also keeps its elevated treatment while Play is hovered/focused
+(`:has(.mc-play:hover/:focus-visible)`) so the pointer transition
+causes no flicker. Verified live: Play computed opacity 1.0 under
+direct hover on the fixture detail page's card.
+
+### §16 — Search
+AUDIT ONLY — zero diff (verified: `git diff -- src/routes/search/`
+is empty). The approved Recent Searches row already matches the
+specification exactly; explorer_navigation_test pins it.
+
+### Files changed
+src/lib/components/SpotlightCarousel.svelte (redesign),
+DiscoverPage.svelte (autoplay), ContentRail.svelte (arrows +
+linkLabel), ExplorerPage.svelte (labels/sort/Show more/clearance),
+MediaCard.svelte (Play hover), AppShell.svelte (app-main clip),
+DetailPage.svelte (122px), app.css (clip + token),
+explorer-taxonomy.ts, explorer-load.ts,
+api/explorer/feed/+server.ts, my-list/+page.svelte,
+settings/+page.svelte, package.json (test chain) + 4 test files
+updated + scripts/explorer_ui_hardening_test.ts (NEW, registered)
++ scripts/followup2_live_verification.mjs (NEW) + screenshots.
+
+## Verification
+
+- **Gates:** `pnpm check` 0 errors / 0 warnings; `pnpm test` FULL
+  suite exit 0 (223 scripts incl. the new explorer_ui_hardening_test);
+  `pnpm build` OK (Netlify adapter + executor function);
+  `git diff --check` clean.
+- **Live (production preview + headless Chromium under the
+  devtool-protection-exempt Lighthouse UA — the repo's established
+  method):** 133 checks, ALL PASSED
+  (scripts/followup2_live_verification.mjs):
+  - Viewport matrix 360/390/412/820/1024/1280/1440/1920 ×
+    /movies, /tv-shows, /anime, ?genre+language, ?sort=popular,
+    ?sort=top-rated: ZERO horizontal overflow at every viewport.
+  - One language All chip at every viewport; zero chip-row labels;
+    sticky top offsets correct per breakpoint (56px+safe / 72px / 0).
+  - STICKY ACTIVATION (behavioral, spacer-extended scroll): the
+    filter surface stays pinned below the topbar while scrolling —
+    the §8 fix proven in-browser.
+  - Rail arrows (shipped CSS at every viewport): no hover-only
+    reveal, base rule not transparent, phone hide, disabled edge
+    state; live DOM on the fixture rail: visible-by-default + edge
+    state correct (short rail → both disabled).
+  - ?sort=popular|top-rated: the full-collection grid view renders
+    with the sort heading at 390 + 1440.
+  - Bottom clearance (390 + 820): last content clears the pill;
+    padding 96px active.
+  - My List + Settings: Back inside the header surface + navigates
+    to /discover.
+  - Detail: computed 122px at 390 AND 360; Play/Download render.
+  - MediaCard: Play opacity 1.0 under direct hover.
+  - Screenshot matrix (13 unique captures after the 1.5s
+    post-boot-overlay window): docs/qa/followup2-verification/.
+- **Visual inspection (VLM-assisted, §23 requirement):** movies-390
+  (label-less chip rows, one All per row, content clear of the nav,
+  no broken composition), detail-390 (Play/Download/My List/Share
+  visible above the fold, poster/title near the top, Back top-left,
+  no clipping), my-list-back-390 (Back inside the header surface, no
+  blank row / detached strip), movies-1440 (sidebar + centered
+  composition + chips, no overflow/misalignment).
+- **Autoplay cadence:** the local environment has no TMDB
+  credentials, so the populated carousel never renders locally
+  (fallback state) — the 4s re-queue lifecycle, manual-reset and
+  no-release-window contracts are pinned by
+  explorer_ui_hardening_test (§B: 10 assertions across BOTH
+  components) and the earlier source-contract suites; the populated
+  path follows the same loader code-path contracts as every prior
+  phase (production renders it with real TMDB env).
+- **Regression diff review:** ONLY the follow-up task's changes +
+  tests + docs; `git status -- supabase/` EMPTY; providers/hosting/
+  admin/auth/downloader/CloudStream/playback untouched; search page
+  diff EMPTY (audit-only); watch/detail route patterns preserved
+  (pinned by tests).
+
+## Change Log
+
+### 2026-10-07 — Follow-up task 2 implemented (this commit)
+
+- Spotlight redesigned (edge arrows + bottom-center dots + no
+  eyebrow + responsive heights); exact-4s autoplay with re-queue +
+  manual reset on BOTH carousels (Discover 7000→4000ms).
+- Sticky filters actually work on mobile/tablet now (two-ancestor
+  overflow-x: clip fix — the audited root cause).
+- One language All (data fix), label-less chip rows (aria kept),
+  Show more → ?sort= route state, always-visible rail arrows with
+  real edge state, header-integrated Back buttons, bottom-nav
+  clearance token, detail −10px, MediaCard Play-hover fix.
+- Gates: check 0/0, test exit 0 (223 scripts), build OK; 133 live
+  checks passed; screenshots + VLM visual inspection done.
