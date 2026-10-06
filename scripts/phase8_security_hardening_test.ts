@@ -51,7 +51,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // C. SCANNER ACCEPTS VALID FRAGMENT SECRET
 // ============================================================
 {
-  const scanner = read('src/routes/account/scan-tv/+page.svelte');
+  const scanner = read('src/routes/settings/scan-tv/+page.svelte');
 
   // Scanner parses the fragment (#s=<secret>).
   ok(scanner.includes('fragmentParams'), 'C. scanner: parses fragment params');
@@ -68,7 +68,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // D. SCANNER REJECTS QUERY-BASED SECRET
 // ============================================================
 {
-  const scanner = read('src/routes/account/scan-tv/+page.svelte');
+  const scanner = read('src/routes/settings/scan-tv/+page.svelte');
 
   // Scanner does NOT read secret from query params.
   ok(!scanner.includes("url.searchParams.get('s')"), 'D. scanner: does NOT read secret from query (?s=)');
@@ -83,7 +83,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // E. SCANNER REJECTS UNEXPECTED QUERY PARAMS
 // ============================================================
 {
-  const scanner = read('src/routes/account/scan-tv/+page.svelte');
+  const scanner = read('src/routes/settings/scan-tv/+page.svelte');
 
   ok(scanner.includes("url.searchParams.toString() !== ''"), 'E. scanner: checks searchParams.toString()');
   ok(scanner.includes("'unexpected-query-params'"), 'E. scanner: rejects unexpected query params');
@@ -95,7 +95,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // F. SCANNER REJECTS UNEXPECTED FRAGMENT FORMAT
 // ============================================================
 {
-  const scanner = read('src/routes/account/scan-tv/+page.svelte');
+  const scanner = read('src/routes/settings/scan-tv/+page.svelte');
 
   // Missing fragment.
   ok(scanner.includes("'missing-fragment'"), 'F. scanner: rejects missing fragment');
@@ -113,7 +113,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // G. SCANNER REJECTS WRONG ORIGIN
 // ============================================================
 {
-  const scanner = read('src/routes/account/scan-tv/+page.svelte');
+  const scanner = read('src/routes/settings/scan-tv/+page.svelte');
 
   ok(scanner.includes('url.origin'), 'G. scanner: checks URL origin');
   ok(scanner.includes('window.location.origin'), 'G. scanner: enforces same-origin');
@@ -126,7 +126,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // H. SCANNER REJECTS WRONG PATHNAME
 // ============================================================
 {
-  const scanner = read('src/routes/account/scan-tv/+page.svelte');
+  const scanner = read('src/routes/settings/scan-tv/+page.svelte');
 
   ok(scanner.includes("url.pathname !== '/authorize'"), 'H. scanner: rejects non-/authorize paths');
   ok(scanner.includes("'wrong-path'"), 'H. scanner: rejects wrong-path URLs');
@@ -334,7 +334,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // ============================================================
 {
   const createApi = read('src/routes/api/auth/device-pairing/create/+server.ts');
-  const scanner = read('src/routes/account/scan-tv/+page.svelte');
+  const scanner = read('src/routes/settings/scan-tv/+page.svelte');
   const authorize = read('src/routes/authorize/+page.svelte');
   const infoApi = read('src/routes/api/auth/device-pairing/info/+server.ts');
   const approveApi = read('src/routes/api/auth/device-pairing/approve/+server.ts');

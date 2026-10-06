@@ -20,14 +20,14 @@ function ok(condition: unknown, label: string) {
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 'utf8');
 
-const account = read('src/routes/account/+page.svelte');
+const account = read('src/routes/settings/+page.svelte');
 const signIn = read('src/routes/auth/sign-in/+page.svelte');
 const tvLogin = read('src/routes/tv-login/+page.svelte');
 const layout = read('src/routes/+layout.server.ts');
 const appHtml = read('src/app.html');
 const appDts = read('src/app.d.ts');
 const sessionsApi = read('src/routes/api/account/sessions/+server.ts');
-const scanTv = read('src/routes/account/scan-tv/+page.svelte');
+const scanTv = read('src/routes/settings/scan-tv/+page.svelte');
 const authorize = read('src/routes/authorize/+page.svelte');
 
 // ============================================================
@@ -97,14 +97,14 @@ const authorize = read('src/routes/authorize/+page.svelte');
   ok(isBigScreen('mobile') === false && isBigScreen('tablet') === false, 'G39a: mobile/tablet are not big screens (helper)');
   ok(/isBigScreen\(data\?\.deviceType\)/.test(signIn) && !/isMobile.*Login with QR|Login with QR.*isMobile/.test(signIn), 'G39b: no client-side screen-size gate for the QR CTA (server class only)');
 
-  // 41/42. phone + tablet account pages show "Login on Big Screen".
-  ok(account.includes('Login on Big Screen'), 'G41a: Account CTA is named "Login on Big Screen"');
-  ok(account.includes('const showBigScreenLogin = $derived(isQrScannerDevice(data.deviceType))'), 'G41b: CTA gated to QR-scanner devices (phone/tablet)');
+  // 41/42. phone + tablet account pages show "Login With QR".
+  ok(account.includes('Login With QR'), 'G41a: Account CTA is named "Login With QR"');
+  ok(account.includes('const showQrLogin = $derived(isQrScannerDevice(data.deviceType))'), 'G41b: CTA gated to QR-scanner devices (phone/tablet)');
   ok(!account.includes('>Login on TV<'), 'G41c: TV-specific wording removed from the general account UI');
 
   // 43/44. desktop/TV account pages hide the button.
   ok(!isBigScreen('mobile') && !isBigScreen('tablet') && !isQrScannerDevice('desktop') && !isQrScannerDevice('tv'), 'G43a: helper classes are mutually exclusive for the two flows');
-  ok(account.includes('{#if showBigScreenLogin}'), 'G43b: the CTA is wrapped in the device-class conditional');
+  ok(account.includes('{#if showQrLogin}'), 'G43b: the CTA is wrapped in the device-class conditional');
   ok(!isQrScannerDevice('unknown'), 'G44a: unknown device class hides the scanner CTA (safest fallback)');
 
   // 45. QR expires correctly (tv-login states + countdown).

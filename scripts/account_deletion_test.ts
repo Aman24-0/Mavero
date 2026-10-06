@@ -80,7 +80,7 @@ assert.deepEqual(authFailure.deletedUserIds, ['test-user-id'], 'auth deletion fa
 const endpoint = await readFile(new URL('../src/routes/api/account/delete/+server.ts', import.meta.url), 'utf8');
 // Since Phase C the canonical delete + sign-out surface is /account; the
 // legacy /profile and /settings pages are redirect-only compatibility routes.
-const account = await readFile(new URL('../src/routes/account/+page.svelte', import.meta.url), 'utf8');
+const account = await readFile(new URL('../src/routes/settings/+page.svelte', import.meta.url), 'utf8');
 const dialog = await readFile(new URL('../src/lib/components/ConfirmDialog.svelte', import.meta.url), 'utf8');
 // Phase 2-A: identity comes from the hook-resolved locals.user (no second
 // auth roundtrip). The endpoint still requires an authenticated user and

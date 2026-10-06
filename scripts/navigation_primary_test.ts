@@ -34,8 +34,9 @@ import { readFileSync } from 'node:fs';
 //                behavior) — a composition intentionally DIFFERENT from
 //                the mobile pill. Account lives in the header right
 //                side, not the sidebar.
-//   ACCOUNT    — /account remains the canonical account route until
-//                Phase 3 flips it to /settings (Plan: Phase 3).
+//   ACCOUNT    — /settings is the canonical account-management route
+//                (Phase 3 flipped the old /account direction); /account and
+//                /profile are permanent redirects.
 
 let passed = 0;
 function ok(message: string) {
@@ -47,8 +48,9 @@ const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf
 
 const appShell = read('../src/lib/components/AppShell.svelte');
 const rootLayout = read('../src/routes/+layout.svelte');
-const accountPage = read('../src/routes/account/+page.svelte');
+const accountPage = read('../src/routes/settings/+page.svelte');
 const profileServer = read('../src/routes/profile/+page.server.ts');
+const accountServer = read('../src/routes/account/+page.server.ts');
 const settingsServer = read('../src/routes/settings/+page.server.ts');
 const discoverPage = read('../src/lib/components/DiscoverPage.svelte');
 const legacyMoviesServer = read('../src/routes/discover/movies/+page.server.ts');
@@ -115,7 +117,7 @@ assert.doesNotMatch(linksBlock![1], /\/account/, 'primaryLinks carries no /accou
 // Phase 2 — Account lives in the HEADER, not the sidebar:
 assert.match(appShell, /class="topbar-account"/, 'mobile/tablet topbar account control exists (≤1024px)');
 assert.match(appShell, /class="header-account"/, 'desktop header account control exists (≥1025px)');
-assert.match(appShell, /href="\/account"/, 'an /account access point remains in the shell');
+assert.match(appShell, /class="account-sheet"|AccountSheet/, 'the compact Account sheet is mounted in the shell');
 assert.match(appShell, /aria-label="Account"/, 'the account control is announced to assistive tech');
 // The desktop sidebar carries ONLY the six content destinations — no
 // Account link inside the sidebar.
@@ -134,12 +136,12 @@ assert.match(legacyAnimeServer, /redirect\(308, `\/anime\$\{url\.search\}`\)/, '
 for (const server of [legacyMoviesServer, legacySeriesServer, legacyAnimeServer]) {
   assert.doesNotMatch(server, /loadCollectionData/, 'legacy routes export no collection loader (no duplicate canonical implementation)');
 }
-// /profile and /settings remain redirect-only compat routes to /account
-// (Phase C) — Phase 3 of this redesign flips /account → /settings.
-assert.match(profileServer, /redirect\(308, '\/account'\)/, '/profile is a permanent server-side redirect to /account');
-assert.match(settingsServer, /redirect\(308, '\/account'\)/, '/settings is a permanent server-side redirect to /account');
+// /profile and /account remain redirect-only compat routes to /settings
+// (Phase 3 flipped the old Phase C direction).
+assert.match(profileServer, /redirect\(308, '\/settings'\)/, '/profile is a permanent server-side redirect to /settings');
+assert.match(accountServer, /redirect\(308, `\/settings\$\{url\.search\}`\)/, '/account is a permanent server-side redirect to /settings (query preserved)');
 assert.doesNotMatch(profileServer, /export const actions/, '/profile exports no form actions');
-assert.doesNotMatch(settingsServer, /export const actions/, '/settings exports no form actions (mutations live on /account)');
+assert.doesNotMatch(accountServer, /export const actions/, '/account exports no form actions (mutations live on /settings)');
 ok('5. legacy routes redirect permanently; canonical implementations live only at the new paths');
 
 // ============================================================
@@ -186,16 +188,16 @@ assert.match(appShell, /prefers-reduced-motion: reduce[\s\S]*?\.header-account/,
 ok('8. desktop: vertical sidebar (Browse label, collapse, 44px targets) + fixed top-right header account control');
 
 // ============================================================
-// 9. ACCOUNT ROUTE — /account still the canonical account experience
+// 9. SETTINGS ROUTE — the canonical account-management experience
 // ============================================================
-assert.match(accountPage, /<title>Account — Mavero<\/title>/, 'account page sets its title');
-assert.match(accountPage, /action="\?\/profile"/, 'account page hosts the real profile form (Phase B)');
-assert.doesNotMatch(accountPage, /href="\/(profile|settings)"/, 'account page carries no Profile/Settings fallback links');
+assert.match(accountPage, /<title>Settings — Mavero<\/title>/, 'settings page sets its title');
+assert.match(accountPage, /action="\?\/profile"/, 'settings page hosts the real profile form');
+assert.doesNotMatch(accountPage, /href="\/(profile|account)"/, 'settings page carries no legacy Profile/Account links');
 // The new first-class destinations render INSIDE the consumer AppShell —
 // the former discover-sub-page bare-render exclusion is gone.
 assert.doesNotMatch(rootLayout, /discover\\\/\(movies\|series\|anime\)/, 'the discover sub-page bare-render exclusion regex is removed');
-assert.match(rootLayout, /startsWith\('\/account\/scan-tv'\)/, 'the QR login route still renders bare');
-ok('9. /account unchanged this phase; the new destinations render inside the AppShell');
+assert.match(rootLayout, /startsWith\('\/settings\/scan-tv'\)/, 'the QR login route still renders bare (moved to /settings/scan-tv)');
+ok('9. /settings is canonical; the new destinations render inside the AppShell');
 
 // ============================================================
 // 10. LAYOUT — existing opt-out + bare-render contracts untouched

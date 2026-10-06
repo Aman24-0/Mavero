@@ -1,31 +1,37 @@
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 
-// MAVERO — Compact Account page (Phase B).
+// MAVERO — Settings page (Phase B → C → Navigation & Settings Redesign,
+// Phase 3).
 //
-// Regression contract for the merged Profile + Settings experience at
-// /account:
+// Regression contract for the account-management experience at /settings
+// (moved from /account in Phase 3 — /account is now a permanent redirect):
 //
-//   ROUTE      — /account exists with server actions + client page.
-//   IDENTITY   — compact header reuses the Profile identity logic
-//                (name/email/initials/sync status labels, real data path).
+//   ROUTE      — /settings exists with server actions + client page.
+//   IDENTITY   — compact header reuses the identity logic
+//                (name/email/initials/sync status labels).
 //   PROFILE    — display name form posts ?/profile with validation intact.
 //   EMAIL      — email form posts ?/email.
 //   PASSWORD   — ?/password behind an accessible disclosure.
-//   EXPERIENCE — localStorage mavero.settings with original defaults.
 //   ADULT      — server-authoritative /api/settings/adult-mode, GET + PUT,
 //                control only rendered when the server reports availability.
-//   SESSION    — sign-out via POST /auth/sign-out + ConfirmDialog.
+//   SESSIONS   — device list + per-device Revoke + Sign out all other
+//                devices; the CURRENT device's card carries Sign out
+//                (Phase 3 removed the standalone Session section).
 //   DANGER     — delete account via POST /api/account/delete with the
 //                two-step "type DELETE" confirmation, clearLocalData(),
 //                navigation to /discover.
 //   GUEST      — authenticated controls live behind {#if data.user};
 //                guests get a sign-in CTA instead.
 //   SHARED     — ONE server implementation in $lib/server/account/actions;
-//                since Phase C the legacy /profile and /settings routes are
-//                permanent redirect-only compatibility routes to /account.
-//   COMPACT    — no Upcoming/Settings quick-action duplication, no giant
-//                hero, bottom padding reserved for the 5-item mobile nav.
+//                the legacy /account and /profile routes are permanent
+//                redirect-only compatibility routes to /settings.
+//   PHASE 3    — "Your library" + "About" + standalone "Session" sections
+//                REMOVED per the approved plan; "Login on Big Screen"
+//                renamed to "Login With QR" (route moved to
+//                /settings/scan-tv); CineLog + footer kept last.
+//   COMPACT    — no Upcoming quick-action duplication, no giant hero,
+//                bottom padding reserved for the floating mobile nav.
 
 let passed = 0;
 function ok(message: string) {
@@ -35,27 +41,28 @@ function ok(message: string) {
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8');
 
-const accountPage = read('../src/routes/account/+page.svelte');
-const accountServer = read('../src/routes/account/+page.server.ts');
+const accountPage = read('../src/routes/settings/+page.svelte');
+const accountServer = read('../src/routes/settings/+page.server.ts');
 const sharedActions = read('../src/lib/server/account/actions.ts');
-const settingsServer = read('../src/routes/settings/+page.server.ts');
+const legacyAccountServer = read('../src/routes/account/+page.server.ts');
+const legacyAccountPageExists = existsSync(new URL('../src/routes/account/+page.svelte', import.meta.url));
 const profileServer = read('../src/routes/profile/+page.server.ts');
 
 // ============================================================
-// 1. ROUTE — /account exists (page + server actions)
+// 1. ROUTE — /settings exists (page + server actions)
 // ============================================================
-assert.ok(accountPage.length > 0, '/account page exists');
-assert.ok(accountServer.length > 0, '/account server exists');
-assert.match(accountServer, /export const actions: Actions = \{/, 'account server defines actions');
+assert.ok(accountPage.length > 0, '/settings page exists');
+assert.ok(accountServer.length > 0, '/settings server exists');
+assert.match(accountServer, /export const actions: Actions = \{/, 'settings server defines actions');
 for (const action of ['profile', 'email', 'password']) {
-  assert.match(accountServer, new RegExp(String.raw`\s${action}: \(event\) =>`), `account ?/${action} action exists`);
+  assert.match(accountServer, new RegExp(String.raw`\s${action}: \(event\) =>`), `settings ?/${action} action exists`);
 }
-ok('1. /account route exists with profile/email/password server actions');
+ok('1. /settings route exists with profile/email/password server actions');
 
 // ============================================================
 // 2. IDENTITY — compact header, real identity + sync logic
 // ============================================================
-assert.match(accountPage, /<title>Account — Mavero<\/title>/, 'account title set');
+assert.match(accountPage, /<title>Settings — Mavero<\/title>/, 'settings title set');
 assert.match(accountPage, /<h1>\{accountName\(\)\}<\/h1>/, 'identity header renders the account name');
 assert.match(accountPage, /function accountName\(\)/, 'accountName logic preserved');
 assert.match(accountPage, /function initials\(\)/, 'initials logic preserved');
@@ -122,7 +129,8 @@ assert.match(accountPage, /window\.location\.reload\(\)/, 'server-authoritative 
 ok('7. Adult Mode UI reflects server state; no client-side authorization');
 
 // ============================================================
-// 8. SESSION — sign out via existing endpoint + ConfirmDialog
+// 8. SESSIONS — sign out via existing endpoint + ConfirmDialog (Phase 3:
+// the current device's session card owns Sign out)
 // ============================================================
 assert.match(accountPage, /fetch\('\/auth\/sign-out', \{/, 'sign-out uses the existing POST /auth/sign-out endpoint');
 assert.match(accountPage, /window\.location\.replace\(target\)/, 'sign-out navigates via full page replacement');
@@ -154,34 +162,51 @@ for (const secret of ['action="?/profile"', 'action="?/email"', 'action="?/passw
 assert.match(accountPage, /\{#if !isAuthenticated\}/, 'guest branch renders the sign-in CTA');
 // Everything rendered BEFORE the first authenticated guard (header + error banner)
 // must not contain any authenticated form action.
-const templateStart = accountPage.indexOf('<div class="account-page">');
+const templateStart = accountPage.indexOf('<div class="settings-page">');
 const firstGuard = accountPage.indexOf('{#if data.user}');
 assert.ok(templateStart >= 0 && firstGuard > templateStart, 'template structure is parseable');
 assert.doesNotMatch(accountPage.slice(templateStart, firstGuard), /action="\?\//, 'no authenticated form action renders before the guest/authenticated split');
 ok('10. guests never receive authenticated/destructive controls');
 
 // ============================================================
-// 11. LIBRARY — real data path, no hardcoded stats
+// 11. PHASE 3 STRUCTURE — removed sections + renamed QR login + sync
 // ============================================================
-assert.match(accountPage, /syncAuthenticatedState\(\)/, 'authenticated sync path preserved');
-assert.match(accountPage, /getLocalFavorites\(\), getLocalProgressRecords\(\), listFavoriteDeletions\(\)/, 'guest local-library path preserved');
-assert.match(accountPage, /mergeFavoritesWithProgress/, 'merge logic preserved');
-assert.match(accountPage, /watchedSeconds = cloud\.progress\.reduce/, 'watch time computed from real progress records');
-assert.match(accountPage, /watchedSeconds = progressRecords\.reduce/, 'guest watch time computed from real local records');
-assert.match(accountPage, /\{loaded \? `\$\{favoriteCount\}/, 'My List count rendered from loaded state');
-assert.doesNotMatch(accountPage, /['"]2 titles['"]|['"]1m['"]/, 'no hardcoded library values');
-ok('11. library summary uses the real data path (no hardcoded values)');
+// "Your library" is REMOVED (My List is a dedicated destination; the
+// Account sheet owns the compact entry point).
+assert.doesNotMatch(accountPage, /Your library/, 'the "Your library" summary section is removed (Phase 3)');
+assert.doesNotMatch(accountPage, /id="library-title"/, 'no library section landmark remains');
+assert.doesNotMatch(accountPage, /favoriteCount|watchedLabel|stat-strip/, 'library stat computations removed with the section');
+// "About" is REMOVED (TMDB attribution remains via the shared AppFooter).
+assert.doesNotMatch(accountPage, /id="about-title"/, 'the About section is removed (Phase 3)');
+assert.doesNotMatch(accountPage, /about-list|about-row/, 'About styles removed with the section');
+// The standalone "Session" section is REMOVED — the current device's
+// session card carries Sign out instead.
+assert.doesNotMatch(accountPage, /id="session-title"/, 'the standalone Session section is removed (Phase 3)');
+assert.doesNotMatch(accountPage, /class="settings-section session-section"/, 'no session-section class remains');
+assert.match(accountPage, /\{#if session\.isCurrent\}\s*<!--[\s\S]{0,200}?Sign out[\s\S]{0,300}?class="signout-btn"/, 'the current device\'s session card carries the Sign out action');
+// "Login on Big Screen" → "Login With QR", route moved to /settings/scan-tv.
+assert.match(accountPage, /Login With QR/, 'the QR login CTA is renamed to "Login With QR"');
+assert.doesNotMatch(accountPage, /Login on Big Screen/, 'the old "Login on Big Screen" label is gone');
+assert.match(accountPage, /href="\/settings\/scan-tv"/, 'the QR login CTA targets /settings/scan-tv');
+assert.doesNotMatch(accountPage, /href="\/account\/scan-tv"/, 'no link to the legacy /account/scan-tv path');
+// CineLog + footer stay.
+assert.match(accountPage, /cinelog-strip/, 'CineLog strip kept (Phase 3)');
+assert.match(accountPage, /<AppFooter \/>/, 'footer kept last (Phase 3)');
+// The authenticated cloud sync side effect is preserved (library-aware
+// route) — but only for the sync status, not for removed stats.
+assert.match(accountPage, /syncAuthenticatedState\(\)/, 'authenticated sync path preserved (identity sync status)');
+assert.doesNotMatch(accountPage, /getLocalFavorites\(\), getLocalProgressRecords\(\)/, 'guest library stats loading removed with the section');
+ok('11. Phase 3 structure: library/About/Session removed; QR login renamed + rescoped; sync preserved');
 
 // ============================================================
 // 12. COMPACT — no quick-action duplication, no giant hero
 // ============================================================
 assert.doesNotMatch(accountPage, /href="\/upcoming"/, 'no Upcoming quick action (primary nav owns it now)');
-assert.doesNotMatch(accountPage, /href="\/settings"/, 'no Settings quick action or fallback link');
 assert.doesNotMatch(accountPage, /Quick actions/, 'no quick-actions section');
 assert.doesNotMatch(accountPage, /1200px/, 'no giant hero/container widths');
 assert.match(accountPage, /min\(800px/, 'desktop content capped at a compact 800px column');
-assert.match(accountPage, /padding-bottom: calc\(110px \+ env\(safe-area-inset-bottom, 0px\)\)/, 'bottom padding reserved for the 5-item mobile nav');
-assert.doesNotMatch(accountPage, /back-pill/, 'no giant back-to-Profile button');
+assert.match(accountPage, /padding-bottom: calc\(110px \+ env\(safe-area-inset-bottom, 0px\)\)/, 'bottom padding reserved for the floating mobile nav');
+assert.doesNotMatch(accountPage, /back-pill/, 'no giant back button');
 ok('12. compact structure: no duplicated quick actions, mobile-nav safe padding');
 
 // ============================================================
@@ -195,8 +220,8 @@ assert.match(sharedActions, /\.upsert\(\{ id: user\.id, display_name: displayNam
 assert.match(sharedActions, /rollbackError/, 'auth-metadata rollback preserved on profiles failure');
 assert.match(sharedActions, /friendlyAuthMessage/, 'friendly auth errors preserved');
 assert.match(sharedActions, /'Check your inbox to confirm the new email address\.'/, 'email confirmation messaging preserved');
-assert.match(accountServer, /import \{ saveProfile, updateEmail, updatePassword \} from '\$lib\/server\/account\/actions';/, '/account delegates to the shared module');
-assert.doesNotMatch(settingsServer, /export const actions/, 'legacy /settings no longer exposes actions — redirect only');
+assert.match(accountServer, /import \{ saveProfile, updateEmail, updatePassword \} from '\$lib\/server\/account\/actions';/, '/settings delegates to the shared module');
+assert.doesNotMatch(legacyAccountServer, /export const actions/, 'legacy /account exports no actions — redirect only');
 assert.doesNotMatch(profileServer, /export const actions/, 'legacy /profile exports no actions');
 assert.equal(
   (sharedActions.match(/\.upsert\(/g) ?? []).length, 1,
@@ -218,36 +243,35 @@ ok('14. accessible feedback, dialogs, and shared components preserved');
 // ============================================================
 // 15. LEGACY ROUTES — permanent redirect-only compatibility routes
 // ============================================================
-assert.match(profileServer, /redirect\(308, '\/account'\)/, '/profile permanently redirects to /account server-side');
-assert.match(settingsServer, /redirect\(308, '\/account'\)/, '/settings permanently redirects to /account server-side');
-assert.ok(!existsSync(new URL('../src/routes/profile/+page.svelte', import.meta.url)), 'legacy Profile UI component retired');
-assert.ok(!existsSync(new URL('../src/routes/settings/+page.svelte', import.meta.url)), 'legacy Settings UI component retired');
-ok('15. legacy /profile and /settings are redirect-only compatibility routes (UI retired)');
+assert.match(profileServer, /redirect\(308, '\/settings'\)/, '/profile permanently redirects to /settings server-side');
+assert.match(legacyAccountServer, /redirect\(308, `\/settings\$\{url\.search\}`\)/, '/account permanently redirects to /settings server-side (query preserved)');
+assert.ok(!legacyAccountPageExists, 'legacy /account page component retired (moved to /settings)');
+ok('15. legacy /account and /profile are redirect-only compatibility routes (UI moved to /settings)');
 
 // ============================================================
-// 16. COMPACT REFINEMENT (Phase D) — density + a11y structure
+// 16. COMPACT REFINEMENT (Phase D + Redesign Phase 3) — density + a11y
 // ============================================================
 // Every conceptual section keeps a real labelled heading target.
 // Phase 2-J: 'experience-title' removed (the dead "Playback & interface"
-// section was removed). Adult Mode and the other functional sections
-// keep their heading targets.
-for (const id of ['profile-security-title', 'adult-title', 'library-title', 'about-title', 'session-title', 'danger-title']) {
+// section was removed). Phase 3: 'library-title', 'about-title' and
+// 'session-title' removed with their sections — the remaining
+// functional sections keep their heading targets.
+for (const id of ['profile-security-title', 'adult-title', 'sessions-title', 'danger-title']) {
   assert.match(accountPage, new RegExp(`id="${id}"`), `section heading #${id} exists`);
 }
+for (const removed of ['library-title', 'about-title', 'session-title']) {
+  assert.doesNotMatch(accountPage, new RegExp(`id="${removed}"`), `removed section heading #${removed} is gone (Phase 3)`);
+}
 // Section glyphs are decorative inline icons, not boxed chips.
-// Phase 2-J: was 7 sections; the dead "Playback & interface" section was
-// removed (audit UIX-1), so we now have 6 decorative icons.
+// Phase 2-J: was 7 sections; Phase 3: 4 labelled sections remain
+// (profile & security, adult mode, devices & sessions, danger zone).
 const decorativeIcons = (accountPage.match(/class="section-icon[^"]*" aria-hidden="true"/g) ?? []).length;
-assert.ok(decorativeIcons >= 6, 'all section icons are decorative inline glyphs (aria-hidden) — Phase 2-J: 6 remaining after dead-settings removal');
-// Library stats stay flat — no nested bordered container inside the section card.
-const statBlock = accountPage.match(/\.stat-strip \{([\s\S]*?)\}/);
-assert.ok(statBlock, '.stat-strip styles exist');
-assert.doesNotMatch(statBlock![1], /border:|background:/, 'library stat strip is flat (no nested card)');
+assert.ok(decorativeIcons >= 4, 'all section icons are decorative inline glyphs (aria-hidden) — 4 labelled sections remain after Phase 3 removals');
 // Touch targets preserved: inputs ≥44px, form CTAs ≥40px, switch keeps its target.
 assert.match(accountPage, /min-height: 44px/, 'inputs keep a 44px touch target');
 assert.match(accountPage, /min-height: 40px/, 'buttons keep ≥40px touch targets');
 assert.match(accountPage, /width: 42px; height: 24px/, 'toggle switch keeps its 42×24 target');
-ok('16. compact refinement: labelled sections, flat stat strip, preserved touch targets');
+ok('16. compact refinement: labelled sections, preserved touch targets');
 
-console.log(`\nAccount page (Phase B) tests passed (${passed} check groups).`);
+console.log(`\nSettings page (Phase B → Redesign Phase 3) tests passed (${passed} check groups).`);
 

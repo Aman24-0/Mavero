@@ -109,7 +109,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // C. PHASE 2 → ACCOUNT SESSIONS UI
 // ============================================================
 {
-  const accountPage = read('src/routes/account/+page.svelte');
+  const accountPage = read('src/routes/settings/+page.svelte');
   const sessionsApi = read('src/routes/api/account/sessions/+server.ts');
 
   // Sessions UI loads device sessions.
@@ -125,11 +125,11 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   ok(!accountPage.includes('refresh_token'), 'C. account: no refresh_token');
 
   // Current session cannot be revoked via individual revoke.
-  ok(accountPage.includes('{#if !session.isCurrent}'), 'C. account: hides revoke button for current session');
+  ok(accountPage.includes('{#if session.isCurrent}'), 'C. settings: current session carries Sign out; non-current keep Revoke (Phase 3)');
 
   // Login on TV entry point.
   ok(accountPage.includes('Login on TV'), 'C. account: has Login on TV button');
-  ok(accountPage.includes('/account/scan-tv'), 'C. account: links to scanner route');
+  ok(accountPage.includes('/settings/scan-tv'), 'C. account: links to scanner route');
 
   ok('C. Phase 2 account sessions UI preserved');
 }
@@ -260,8 +260,8 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // G. PHASE 6 → PHONE SCANNER
 // ============================================================
 {
-  const scanner = read('src/routes/account/scan-tv/+page.svelte');
-  const serverLoad = read('src/routes/account/scan-tv/+page.server.ts');
+  const scanner = read('src/routes/settings/scan-tv/+page.svelte');
+  const serverLoad = read('src/routes/settings/scan-tv/+page.server.ts');
 
   // Scanner requires authentication.
   ok(serverLoad.includes('locals.user'), 'G. scanner load: checks locals.user');
@@ -410,9 +410,9 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // ============================================================
 {
   const tvLogin = read('src/routes/tv-login/+page.svelte');
-  const scanner = read('src/routes/account/scan-tv/+page.svelte');
+  const scanner = read('src/routes/settings/scan-tv/+page.svelte');
   const authorize = read('src/routes/authorize/+page.svelte');
-  const accountPage = read('src/routes/account/+page.svelte');
+  const accountPage = read('src/routes/settings/+page.svelte');
   const hooks = read('src/hooks.server.ts');
   const approveApi = read('src/routes/api/auth/device-pairing/approve/+server.ts');
   const exchangeApi = read('src/routes/api/auth/device-pairing/exchange/+server.ts');
@@ -493,7 +493,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // a client boundary where it should not.
 {
   const createApi = read('src/routes/api/auth/device-pairing/create/+server.ts');
-  const scanner = read('src/routes/account/scan-tv/+page.svelte');
+  const scanner = read('src/routes/settings/scan-tv/+page.svelte');
   const authorize = read('src/routes/authorize/+page.svelte');
   const infoApi = read('src/routes/api/auth/device-pairing/info/+server.ts');
   const approveApi = read('src/routes/api/auth/device-pairing/approve/+server.ts');
@@ -589,7 +589,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   const revokeApi = read('src/routes/api/account/sessions/revoke/+server.ts');
   const revokeAllApi = read('src/routes/api/account/sessions/revoke-all/+server.ts');
   const exchangeApi = read('src/routes/api/auth/device-pairing/exchange/+server.ts');
-  const scanner = read('src/routes/account/scan-tv/+page.svelte');
+  const scanner = read('src/routes/settings/scan-tv/+page.svelte');
   const service = read('src/lib/server/auth/device-pairing.ts');
   const sessionsService = read('src/lib/server/auth/device-sessions.ts');
 

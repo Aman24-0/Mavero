@@ -1,26 +1,22 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { Check, Cloud, Info, LockKeyhole, LogIn, LogOut, Mail, Monitor, ShieldCheck, Smartphone, Sparkles, Trash2, Tv, UserRound, Laptop, LoaderCircle } from 'lucide-svelte';
+  import { Check, LockKeyhole, LogIn, LogOut, Mail, Monitor, ShieldCheck, Smartphone, Sparkles, Trash2, Tv, UserRound, Laptop, LoaderCircle, QrCode } from 'lucide-svelte';
   import type { PageData } from './$types';
-  import type { MediaItem } from '$data/content';
   import ConfirmDialog from '$components/ConfirmDialog.svelte';
   import AppFooter from '$components/AppFooter.svelte';
   import ScrollToTop from '$components/ScrollToTop.svelte';
-  import { clearLocalData, listFavoriteDeletions } from '$lib/client/progress/database';
-  import { getLocalFavorites, getLocalProgressRecords } from '$lib/client/progress/service';
-  import { favoriteToMedia } from '$lib/client/progress/presenter';
+  import { clearLocalData } from '$lib/client/progress/database';
   import { syncAuthenticatedState, getSyncStatus, type SyncStatus } from '$lib/client/progress/cloud';
-  import { mergeFavoritesWithProgress } from '$lib/shared/progress-merge';
   import { isQrScannerDevice, deviceTypeLabel } from '$lib/shared/device-class';
   import { haptic } from '$lib/client/haptics';
   import { showSuccessToast, showErrorToast } from '$lib/client/toast.svelte';
 
   let { data, form }: { data: PageData; form?: { section?: string; success?: boolean; message?: string } } = $props();
 
-  // ── Identity (migrated from Profile) ────────────────────────────
-  // Phase 2-B: the layout payload is now a projection — no full Supabase
-  // User object is serialized to the client. We read the projected
-  // `displayName` / `email` fields directly.
+  // ── Identity ────────────────────────────────────────────────
+  // The layout payload is a projection — no full Supabase User object
+  // is serialized to the client. We read the projected `displayName` /
+  // `email` fields directly.
   const displayName = $derived(data.user?.displayName ?? '');
   const userEmail = $derived(data.user?.email ?? '');
   let isAuthenticated = $derived(data.isAuthenticated);
@@ -41,36 +37,28 @@
     return ({ synced: 'Synced across devices', syncing: 'Syncing your library…', pending: 'Sync pending', offline: 'Offline · Local cache active', error: 'Cloud sync will retry later' } satisfies Record<SyncStatus, string>)[status];
   }
 
-  // ── Library summary (migrated from Profile — real data path) ────
-  let favoriteItems = $state<MediaItem[]>([]);
-  let watchedSeconds = $state(0);
-  let loaded = $state(false);
-  let errorMessage = $state('');
+  // ── Sync status (identity header only) ─────────────────────────
+  // Navigation & Settings Redesign, Phase 3: the library summary
+  // section was REMOVED from Settings per the approved plan (My List is
+  // a dedicated destination). What remains here is the compact sync
+  // status in the identity header. For authenticated users the
+  // syncAuthenticatedState() side effect is PRESERVED (the Settings page
+  // is a library-aware route — this call is what reconciles cloud state);
+  // guests keep the static local-library label.
   let syncStatus = $state<SyncStatus>('pending');
 
-  async function loadLocalState() {
-    errorMessage = '';
-    try {
-      if (data.user) {
+  async function loadSyncStatus() {
+    if (data.user) {
+      try {
         const cloud = await syncAuthenticatedState();
         syncStatus = cloud.status;
-        favoriteItems = mergeFavoritesWithProgress(cloud.favorites, cloud.progress, cloud.favoriteDeletions).map((record) => favoriteToMedia(record, cloud.progress));
-        watchedSeconds = cloud.progress.reduce((total, record) => total + record.currentTime, 0);
-      } else {
-        const [favoriteRecords, progressRecords, deletions] = await Promise.all([getLocalFavorites(), getLocalProgressRecords(), listFavoriteDeletions()]);
-        favoriteItems = mergeFavoritesWithProgress(favoriteRecords, progressRecords, deletions).map((record) => favoriteToMedia(record, progressRecords));
-        watchedSeconds = progressRecords.reduce((total, record) => total + record.currentTime, 0);
+      } catch {
+        try { syncStatus = getSyncStatus(); } catch { /* stays pending */ }
       }
-      loaded = true;
-    } catch {
-      syncStatus = getSyncStatus();
-      errorMessage = 'Your library is temporarily unavailable, but browsing and playback remain available.';
-      loaded = true;
+    } else {
+      try { syncStatus = getSyncStatus(); } catch { /* stays pending */ }
     }
   }
-
-  let watchedLabel = $derived(watchedSeconds >= 3600 ? `${(watchedSeconds / 3600).toFixed(1)}h` : `${Math.round(watchedSeconds / 60)}m`);
-  let favoriteCount = $derived(favoriteItems.length);
 
   // Phase 2-J (audit UIX-1): the previous "Playback & interface" settings
   // section (autoplay / autoResume / reducedMotion) was DEAD — written to
@@ -127,7 +115,9 @@
     if (passwordOpen) haptic('light');
   }
 
-  // ── Sign out (migrated from Profile) ────────────────────────────
+  // ── Sign out (lives on the current device's session card — Phase 3
+  // removed the standalone Session section because device management
+  // covers it) ────────────────────────────
   let signoutOpen = $state(false);
   let signoutBusy = $state(false);
   let signoutError = $state('');
@@ -176,11 +166,12 @@
   // A can NEVER overwrite B's newer data.
   let sessionRequestSeq = 0;
 
-  // Newtask §10/§28 — the "Login on Big Screen" CTA (opens the phone QR
-  // scanner) is only shown on QR-scanner devices (phone/tablet).
+  // Newtask §10/§28 — the "Login With QR" CTA (renamed from "Login on
+  // Big Screen" in the Navigation & Settings Redesign, Phase 3; opens the
+  // phone QR scanner) is only shown on QR-scanner devices (phone/tablet).
   // Desktop/TV users are the QR-DISPLAY side and should not be expected
   // to use a camera; unknown classes hide it (safest fallback).
-  const showBigScreenLogin = $derived(isQrScannerDevice(data.deviceType));
+  const showQrLogin = $derived(isQrScannerDevice(data.deviceType));
 
   // Newtask §29 — absolute timestamp (consistent, locale-formatted).
   // The stored UTC value is untouched; this is display-only.
@@ -405,7 +396,7 @@
     // Phase 2-J (audit UIX-1): the dead mavero.settings localStorage load
     // was removed (autoplay / autoResume / reducedMotion toggles were
     // never read by runtime code). Adult Mode loads via loadAdultMode below.
-    void loadLocalState();
+    void loadSyncStatus();
     void loadSessions();
     void loadAdultMode();
 
@@ -441,13 +432,13 @@
   });
 </script>
 
-<svelte:head><title>Account — Mavero</title><meta name="description" content="Your Mavero account, library and preferences in one place." /><meta name="robots" content="noindex,nofollow" /></svelte:head>
+<svelte:head><title>Settings — Mavero</title><meta name="description" content="Your Mavero settings, account and preferences in one place." /><meta name="robots" content="noindex,nofollow" /></svelte:head>
 
-<div class="account-page">
+<div class="settings-page">
   <!-- Compact identity header: avatar + name + email + sync state -->
-  <header class="account-top">
+  <header class="settings-top">
     <div class="top-inner">
-      <div class="page-eyebrow"><UserRound size={12} /> MAVERO / Account</div>
+      <div class="page-eyebrow"><UserRound size={12} /> MAVERO / Settings</div>
       <div class="identity-row">
         <div class="avatar" aria-hidden="true">{initials()}</div>
         <div class="identity-copy">
@@ -467,18 +458,11 @@
     </div>
   </header>
 
-  <div class="account-body">
-    {#if errorMessage}
-      <section class="error-banner" role="alert">
-        <strong>Your local library is resting.</strong>
-        <span>{errorMessage}</span>
-        <button type="button" onclick={loadLocalState}>Retry</button>
-      </section>
-    {/if}
+  <div class="settings-body">
 
     {#if data.user}
-      <!-- ACCOUNT — profile & security -->
-      <section class="account-section" aria-labelledby="profile-security-title">
+      <!-- SETTINGS — profile & security -->
+      <section class="settings-section" aria-labelledby="profile-security-title">
         <div class="section-title-row">
           <span class="section-icon" aria-hidden="true"><UserRound size={14} /></span>
           <h2 id="profile-security-title">Profile &amp; security</h2>
@@ -546,9 +530,9 @@
          scope); a fake setting is worse than no setting. The Adult Mode
          section below remains intact — it's server-authoritative. -->
 
-    <!-- CONTENT — Adult Mode (server-authoritative; only when available) -->
+    <!-- SETTINGS — Adult Mode (server-authoritative; only when available) -->
     {#if adultAvailable}
-      <section class="account-section" aria-labelledby="adult-title">
+      <section class="settings-section" aria-labelledby="adult-title">
         <div class="section-title-row">
           <span class="section-icon" aria-hidden="true"><ShieldCheck size={14} /></span>
           <h2 id="adult-title">Adult Mode</h2>
@@ -568,47 +552,10 @@
       </section>
     {/if}
 
-    <!-- LIBRARY — real summary values -->
-    <section class="account-section" aria-labelledby="library-title">
-      <div class="section-title-row">
-        <span class="section-icon" aria-hidden="true"><Cloud size={14} /></span>
-        <h2 id="library-title">Your library</h2>
-      </div>
-      <div class="stat-strip">
-        <div class="stat-cell">
-          <span class="stat-label">My List</span>
-          <strong>{loaded ? `${favoriteCount} ${favoriteCount === 1 ? 'title' : 'titles'}` : '…'}</strong>
-        </div>
-        <div class="stat-cell">
-          <span class="stat-label">Watch time</span>
-          <strong>{loaded ? watchedLabel : '…'}</strong>
-        </div>
-        <div class="stat-cell">
-          <span class="stat-label">Sync</span>
-          <strong>{isAuthenticated ? 'Cloud' : 'Guest'}</strong>
-          <small>{isAuthenticated ? 'Account synced' : 'Local-only profile'}</small>
-        </div>
-      </div>
-    </section>
-
-    <!-- ABOUT — compact -->
-    <section class="account-section" aria-labelledby="about-title">
-      <div class="section-title-row">
-        <span class="section-icon" aria-hidden="true"><Info size={14} /></span>
-        <h2 id="about-title">About</h2>
-      </div>
-      <div class="about-list">
-        <div class="about-row"><span>Application</span><strong>Mavero</strong></div>
-        <div class="about-row"><span>Category</span><strong>Movies, series &amp; anime</strong></div>
-        <div class="about-row"><span>Data source</span><strong>TMDB</strong></div>
-        <div class="about-row">
-          <span>Attribution</span>
-          <a class="tmdb-link" href="https://www.themoviedb.org/about/logos-attribution?language=en-US" target="_blank" rel="noreferrer">
-            <img class="tmdb-logo" src="https://upload.wikimedia.org/wikipedia/commons/8/89/Tmdb.new.logo.svg" alt="The Movie Database" />
-          </a>
-        </div>
-      </div>
-    </section>
+    <!-- Navigation & Settings Redesign, Phase 3: the library summary
+         section was REMOVED per the approved plan — My List is a dedicated
+         destination reachable from the Account sheet and the sync state
+         lives in the identity header above. -->
 
     <!-- CineLog — compact promotion near the session footer -->
     <section class="cinelog-strip" aria-label="Try CineLog">
@@ -620,23 +567,24 @@
     </section>
 
     {#if data.user}
-      <!-- ACCOUNT — device sessions (Phase 2) -->
-      <section class="account-section" aria-labelledby="sessions-title">
+      <!-- SETTINGS — Devices & Sessions -->
+      <section class="settings-section" aria-labelledby="sessions-title">
         <div class="section-title-row">
           <span class="section-icon" aria-hidden="true"><Monitor size={14} /></span>
           <h2 id="sessions-title">Devices &amp; Sessions</h2>
         </div>
 
-        <!-- Newtask §9/§10/§28 — "Login on Big Screen". Opens the phone-side
+        <!-- Navigation & Settings Redesign, Phase 3 — "Login With QR"
+             (renamed from the legacy big-screen CTA label). Opens the phone-side
              QR scanner so the authenticated user can scan a big screen's
              QR code and approve it. Shown ONLY on QR-scanner devices
              (phone/tablet); desktop/TV are the QR-display side and
              unknown classes hide it (safest fallback). The whole section
              remains inside {#if data.user}. -->
-        {#if showBigScreenLogin}
+        {#if showQrLogin}
           <div class="login-tv-row">
-            <a class="login-tv-btn" href="/account/scan-tv">
-              <Monitor size={13} /> <span>Login on Big Screen</span>
+            <a class="login-tv-btn" href="/settings/scan-tv">
+              <QrCode size={14} /> <span>Login With QR</span>
             </a>
           </div>
         {/if}
@@ -673,7 +621,16 @@
                 </div>
                 <div class="session-card-foot">
                   <span class="session-time" title={absoluteTime(session.lastSeenAt)}>{relativeTime(session.lastSeenAt)}</span>
-                  {#if !session.isCurrent}
+                  {#if session.isCurrent}
+                    <!-- Phase 3 — the standalone Session section was removed;
+                         the CURRENT device's card carries Sign out (same
+                         /auth/sign-out flow as before, just relocated) so
+                         device management covers signing out as the plan
+                         specifies. -->
+                    <button class="signout-btn" type="button" onclick={openSignout} disabled={signoutBusy}>
+                      <LogOut size={12} /> <span>Sign out</span>
+                    </button>
+                  {:else}
                     <button class="revoke-btn" type="button" onclick={() => openRevoke(session)} disabled={revokeBusy}>
                       Revoke
                     </button>
@@ -697,16 +654,10 @@
         {/if}
       </section>
 
-      <!-- ACCOUNT — session -->
-      <section class="account-section session-section" aria-labelledby="session-title">
-        <div class="section-title-row">
-          <span class="section-icon" aria-hidden="true"><LogOut size={14} /></span>
-          <h2 id="session-title">Session</h2>
-        </div>
-        <button type="button" class="signout-btn" onclick={openSignout}>
-          <LogOut size={14} /> <span>Sign out</span>
-        </button>
-      </section>
+      <!-- Navigation & Settings Redesign, Phase 3: the standalone
+           "Session → Sign out" section was REMOVED per the approved plan —
+           active device management already covers it (the CURRENT device's
+           session card above carries the Sign out action). -->
 
       <!-- DANGER ZONE -->
       <section class="danger-zone" aria-labelledby="danger-title">
@@ -750,15 +701,15 @@
 <ScrollToTop />
 
 <style>
-  .account-page {
+  .settings-page {
     --a-gutter: clamp(16px, 4vw, 40px);
     min-height: calc(100dvh - 76px);
-    /* Reserved space so the floating 5-item mobile nav never covers content. */
+    /* Reserved space so the floating mobile nav never covers content. */
     padding-bottom: calc(110px + env(safe-area-inset-bottom, 0px));
   }
 
   /* ── Compact identity header ── */
-  .account-top {
+  .settings-top {
     padding: 18px var(--a-gutter) 16px;
     border-bottom: 1px solid var(--color-border);
     background:
@@ -847,43 +798,14 @@
   }
 
   /* ── Body ── */
-  .account-body {
+  .settings-body {
     width: min(800px, calc(100% - 2 * var(--a-gutter)));
     margin-inline: auto;
     padding-top: 12px;
   }
 
-  .error-banner {
-    display: grid;
-    grid-template-columns: 1fr auto;
-    gap: 6px 12px;
-    align-items: center;
-    padding: 12px 14px;
-    margin-bottom: 12px;
-    border: 1px solid rgba(255,194,71,.22);
-    border-radius: var(--radius-md);
-    background: rgba(255,194,71,.04);
-    color: var(--color-text);
-    font-size: .74rem;
-  }
-  .error-banner strong { color: var(--color-warning); font-weight: 800; }
-  .error-banner span { color: var(--color-text-muted); }
-  .error-banner button {
-    padding: 6px 13px;
-    border: 1px solid var(--color-border-strong);
-    border-radius: 999px;
-    color: var(--color-text);
-    background: var(--color-primary-soft);
-    font: inherit;
-    font-size: .68rem; font-weight: 700;
-    cursor: pointer;
-    transition: background var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out);
-  }
-  .error-banner button:hover { background: var(--color-primary-soft); border-color: var(--color-primary-border); box-shadow: var(--glow-primary); }
-  .error-banner button:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
-
   /* ── Sections: single-level, compact outlined groups ── */
-  .account-section {
+  .settings-section {
     margin-top: 12px;
     padding: 13px 14px 15px;
     border: 1px solid var(--color-border);
@@ -917,7 +839,7 @@
     padding: 10px 0 2px;
     border-top: 1px solid var(--color-border);
   }
-  .account-section .inline-form:first-of-type { border-top: 0; }
+  .settings-section .inline-form:first-of-type { border-top: 0; }
   .field { display: grid; gap: 5px; min-width: 0; }
   .field-label {
     color: var(--color-text-muted);
@@ -1020,48 +942,6 @@
   .toggle-switch input:checked + i::after { transform: translateX(18px); background: #050708; }
   .toggle-switch input:focus-visible + i { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 
-  /* ── Library stat strip — flat columns, no nested card ── */
-  .stat-strip {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    margin-top: 8px;
-  }
-  .stat-cell {
-    display: grid; gap: 3px;
-    padding: 8px 12px;
-    border-left: 1px solid var(--color-border);
-    min-width: 0;
-  }
-  .stat-cell:first-child { border-left: 0; padding-left: 0; }
-  .stat-label {
-    color: var(--color-text-muted);
-    font-size: .56rem; font-weight: 700;
-    letter-spacing: .08em; text-transform: uppercase;
-    white-space: nowrap;
-  }
-  .stat-cell strong {
-    color: var(--color-text);
-    font-size: .95rem; font-weight: 800;
-    letter-spacing: -.01em;
-    line-height: 1;
-    white-space: nowrap;
-  }
-  .stat-cell small { color: var(--color-text-muted); font-size: .62rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
-  /* ── About ── */
-  .about-list { margin-top: 2px; }
-  .about-row {
-    display: flex; align-items: center; justify-content: space-between; gap: 12px;
-    padding: 8px 0;
-    border-top: 1px solid var(--color-border);
-    font-size: .78rem;
-  }
-  .about-row:first-child { border-top: 0; }
-  .about-row span { color: var(--color-text-muted); font-size: .7rem; }
-  .about-row strong { color: var(--color-text); font-weight: 700; }
-  .tmdb-link { display: inline-flex; align-items: center; }
-  .tmdb-logo { width: 38px; height: 27px; object-fit: contain; }
-
   /* ── CineLog compact strip ── */
   .cinelog-strip {
     display: flex; align-items: center; justify-content: space-between; gap: 12px;
@@ -1100,24 +980,20 @@
   .cinelog-cta:hover { background: var(--color-primary-soft); border-color: var(--color-primary-border); box-shadow: var(--glow-primary); }
   .cinelog-cta:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 
-  /* ── Session + danger ── */
+  /* ── Sign out (current device's session card action — Phase 3) ── */
   .signout-btn {
-    display: inline-flex; align-items: center; gap: 7px;
-    margin-top: 8px;
-    min-height: 40px;
-    padding: 0 16px;
-    border: 1px solid rgba(255,194,71,.28);
-    border-radius: 999px;
-    color: var(--color-warning);
-    background: rgba(255,194,71,.05);
-    font: inherit;
-    font-size: .74rem; font-weight: 700;
-    cursor: pointer;
+    display: inline-flex; align-items: center; gap: 6px;
+    min-height: 32px; padding: 0 12px;
+    border: 1px solid rgba(255,194,71,.3); border-radius: 999px;
+    color: var(--color-warning); background: transparent;
+    font: inherit; font-size: .64rem; font-weight: 700; cursor: pointer;
     transition: background var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
   }
-  .signout-btn:hover { background: rgba(255,194,71,.12); border-color: rgba(255,194,71,.5); color: #ffd17a; }
+  .signout-btn:hover:not(:disabled) { background: rgba(255,194,71,.1); border-color: rgba(255,194,71,.55); color: #ffd17a; }
   .signout-btn:active { transform: scale(.98); }
   .signout-btn:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+
+  .signout-btn:disabled { opacity: .5; cursor: not-allowed; }
 
   .danger-zone {
     margin-top: 12px;
@@ -1188,19 +1064,16 @@
   /* ── Responsive ── */
   @media (max-width: 560px) {
     .password-fields { grid-template-columns: 1fr; }
-    .stat-cell { padding: 8px 10px; }
-    .stat-cell:first-child { padding-left: 0; }
-    .stat-cell strong { font-size: .9rem; }
   }
   @media (min-width: 900px) {
-    .account-top { padding-top: 26px; }
+    .settings-top { padding-top: 26px; }
     .avatar { width: 52px; height: 52px; font-size: 1.02rem; }
     .identity-copy h1 { font-size: 1.26rem; }
-    .account-section { padding: 15px 18px 17px; }
+    .settings-section { padding: 15px 18px 17px; }
   }
   /* Large desktop / TV — wider body so the sectioned form layout has room. */
   @media (min-width: 1900px) {
-    .account-body { width: min(1100px, calc(100% - 2 * var(--a-gutter))); }
+    .settings-body { width: min(1100px, calc(100% - 2 * var(--a-gutter))); }
     .top-inner { width: min(1100px, 100%); }
   }
   @media (prefers-reduced-motion: reduce) {
@@ -1270,7 +1143,7 @@
   .signout-all-btn:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
   .signout-all-btn:disabled { opacity: .5; cursor: not-allowed; }
 
-  /* Phase 6 — Login on TV button. */
+  /* Phase 3 — Login With QR button (renamed from "Login on TV"). */
   .login-tv-row { margin-bottom: 12px; display: flex; justify-content: flex-start; }
   .login-tv-btn {
     display: inline-flex; align-items: center; gap: 7px;

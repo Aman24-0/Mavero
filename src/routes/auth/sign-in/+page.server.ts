@@ -18,7 +18,7 @@ export const actions: Actions = {
     const formData = await request.formData();
     const email = String(formData.get('email') ?? '').trim().toLowerCase();
     const password = String(formData.get('password') ?? '');
-    const next = safeRedirectPath(String(formData.get('next') ?? url.searchParams.get('next') ?? '/account'));
+    const next = safeRedirectPath(String(formData.get('next') ?? url.searchParams.get('next') ?? '/settings'));
 
     if (!email || !password) return fail(400, { message: 'Enter your email and password.', email });
 

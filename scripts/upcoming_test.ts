@@ -916,7 +916,7 @@ assert.doesNotMatch(upcomingPageSrc, /class="back-pill"/, 'Upcoming back-pill is
 assert.doesNotMatch(upcomingPageSrc, /<span>Account<\/span>/, 'Account back-pill label is gone from the page');
 assert.doesNotMatch(upcomingPageSrc, /href="\/profile"/, 'no legacy back link to /profile on Upcoming');
 // /profile remains reachable only as a permanent redirect-only compatibility route
-assert.match(profileServerSrc, /redirect\(308, '\/account'\)/, '/profile is a permanent server-side redirect to /account');
+assert.match(profileServerSrc, /redirect\(308, '\/settings'\)/, '/profile is a permanent server-side redirect to /settings');
 
 // --- Auth spacing fix: back-pill is in flow, not absolute ---
 assert.match(authShellSrc, /auth-top-bar/, 'AuthShell has auth-top-bar wrapper for back-pill');

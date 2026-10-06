@@ -31,6 +31,7 @@ function isPrivateOrDynamicRequest(request, url) {
     || url.pathname.startsWith('/auth/')
     || url.pathname.startsWith('/admin')
     || url.pathname.startsWith('/profile')
+    || url.pathname.startsWith('/account')
     || url.pathname.startsWith('/settings')
     || url.pathname.startsWith('/my-list')
     || url.pathname.startsWith('/watch/');

@@ -1,15 +1,17 @@
-import { redirect } from '@sveltejs/kit';
-import type { PageServerLoad } from './$types';
+import { saveProfile, updateEmail, updatePassword } from '$lib/server/account/actions';
+import type { Actions } from './$types';
 
-// /settings is retained only as a compatibility redirect (Phase C).
+// Navigation & Settings Redesign, Phase 3 — Settings page actions.
 //
-// All three mutations (?/profile, ?/email, ?/password) now live on the
-// canonical /account route and delegate to the shared
-// $lib/server/account/actions module (ONE security implementation:
-// auth requirement, validation limits, Supabase auth updates, profiles
-// upsert + auth-metadata rollback). This load always throws a permanent
-// server-side redirect, so the legacy Settings UI can never render —
-// the old page component was removed.
-export const load: PageServerLoad = () => {
-  throw redirect(308, '/account');
+// All three mutations delegate to the shared $lib/server/account/actions
+// module (the same implementation the legacy /settings fallback used and
+// the /account page used before it moved here): authentication
+// requirement, validation limits, Supabase auth updates, and the
+// profiles upsert + auth-metadata rollback are preserved exactly.
+// The action names (?/profile, ?/email, ?/password) are unchanged —
+// existing form action URLs keep working.
+export const actions: Actions = {
+  profile: (event) => saveProfile(event),
+  email: (event) => updateEmail(event),
+  password: (event) => updatePassword(event)
 };

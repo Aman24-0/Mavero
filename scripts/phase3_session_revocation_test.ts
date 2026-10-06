@@ -306,7 +306,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // 7. ACCOUNT UI — SIGN OUT ALL DEVICES BUTTON
 // ============================================================
 {
-  const page = read('src/routes/account/+page.svelte');
+  const page = read('src/routes/settings/+page.svelte');
 
   // The button exists.
   // Newtask §15: wording matches endpoint semantics (all OTHER devices; current preserved).
@@ -421,7 +421,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   ok(hooks.includes('extractSessionId(auth.session.access_token)'), 'hooks: derives session_id from JWT (NOT from client)');
 
   // No service-role keys in client code.
-  const page = read('src/routes/account/+page.svelte');
+  const page = read('src/routes/settings/+page.svelte');
   ok(!page.includes('PRIVATE_SUPABASE_SERVICE_ROLE_KEY'), 'account page: no service-role key');
   ok(!page.includes('createSupabaseAdminClient'), 'account page: no admin client import');
 

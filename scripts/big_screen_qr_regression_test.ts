@@ -59,8 +59,8 @@ const infoApi = read('src/routes/api/auth/device-pairing/info/+server.ts');
 const lookupApi = read('src/routes/api/auth/device-pairing/lookup/+server.ts');
 const tvLogin = read('src/routes/tv-login/+page.svelte');
 const authorize = read('src/routes/authorize/+page.svelte');
-const scanTv = read('src/routes/account/scan-tv/+page.svelte');
-const accountPage = read('src/routes/account/+page.svelte');
+const scanTv = read('src/routes/settings/scan-tv/+page.svelte');
+const accountPage = read('src/routes/settings/+page.svelte');
 const signInPage = read('src/routes/auth/sign-in/+page.svelte');
 const authShell = read('src/lib/components/AuthShell.svelte');
 const leaseMigration = read('supabase/migrations/20261003000000_device_pairing_exchange_lease.sql');
@@ -227,7 +227,7 @@ console.log('D. UI contract');
   ok(tvLogin.includes('Scan with your phone or tablet'), 'D25d. TV page: scanner-aware instruction');
   ok(tvLogin.includes('Waiting for scan — approve login on your phone'), 'D25e. TV page: waiting copy matches the requested states');
   ok(tvLogin.includes('Or enter code manually:'), 'D25f. TV page: manual code label present');
-  ok(scanTv.includes('Login on Big Screen — Mavero'), 'D25g. scan page: Big Screen title');
+  ok(scanTv.includes('Login With QR — Mavero'), 'D25g. scan page: Big Screen title');
 
   // 26. Manual code input exists on the phone.
   ok(scanTv.includes('manual-code-card'), 'D26. scan page: manual-code card rendered');
@@ -265,10 +265,10 @@ console.log('D. UI contract');
   ok(!isBigScreen('mobile') && !isBigScreen('tablet'), 'D30c. isBigScreen: phone + tablet excluded');
 
   // 31–32. Phone + tablet account CTA.
-  ok(accountPage.includes('showBigScreenLogin'), 'D31. account: Login on Big Screen derived flag');
+  ok(accountPage.includes('showQrLogin'), 'D31. settings: Login With QR derived flag (Phase 3 rename)');
   ok(accountPage.includes('isQrScannerDevice(data.deviceType)'), 'D31b. account: CTA visibility from the server-derived deviceType');
   ok(isQrScannerDevice('mobile') && isQrScannerDevice('tablet'), 'D32. isQrScannerDevice: mobile + tablet');
-  ok(accountPage.includes('Login on Big Screen'), 'D32b. account: CTA label');
+  ok(accountPage.includes('Login With QR'), 'D32b. account: CTA label');
 
   // 33–34. Desktop/TV account CTA hidden.
   ok(!isQrScannerDevice('desktop') && !isQrScannerDevice('tv'), 'D33. isQrScannerDevice: desktop + tv hidden by construction');

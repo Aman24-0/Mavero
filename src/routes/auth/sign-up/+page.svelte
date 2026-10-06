@@ -21,7 +21,7 @@
   title="Your next story"
   titleAccent="travels with you."
   subtitle="Create an account to keep your progress, watchlist, and history synced across devices."
-  backHref="/account"
+  backHref="/settings"
   backLabel="Back to Account"
 >
   {#if form?.message}
@@ -33,7 +33,7 @@
 
   {#if !form?.success}
     <form method="POST" action="?/signUp" class="auth-form">
-      <input type="hidden" name="next" value="/account" />
+      <input type="hidden" name="next" value="/settings" />
 
       <label class="field">
         <span class="field-label">Name</span>

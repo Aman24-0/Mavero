@@ -158,7 +158,7 @@
   <meta name="twitter:card" content="summary_large_image" />
 </svelte:head>
 
-{#if page.url.pathname.startsWith('/watch/') || /^\/(movie|series|anime)\/[^/]+/.test(page.url.pathname) || page.url.pathname.startsWith('/auth/') || page.url.pathname.startsWith('/admin') || page.url.pathname.startsWith('/tv-login') || page.url.pathname.startsWith('/authorize') || page.url.pathname.startsWith('/account/scan-tv')}
+{#if page.url.pathname.startsWith('/watch/') || /^\/(movie|series|anime)\/[^/]+/.test(page.url.pathname) || page.url.pathname.startsWith('/auth/') || page.url.pathname.startsWith('/admin') || page.url.pathname.startsWith('/tv-login') || page.url.pathname.startsWith('/authorize') || page.url.pathname.startsWith('/settings/scan-tv')}
   <!-- /admin/* renders bare too: admin pages use AdminAppShell, a
        self-contained administrative layout with its OWN navigation.
        The consumer AppShell (side rail + mobile bottom nav) must not
@@ -171,7 +171,7 @@
        are server-side 308 redirects and never reach this layout. -->
   {@render pageChildren()}
 {:else}
-  <AppShell currentPath={page.url.pathname} showMobileNav={!page.url.pathname.startsWith('/settings')}>
+  <AppShell currentPath={page.url.pathname} showMobileNav={!page.url.pathname.startsWith('/settings')} user={data.user} isAuthenticated={data.isAuthenticated}>
     {#snippet children()}
       {@render pageChildren()}
     {/snippet}

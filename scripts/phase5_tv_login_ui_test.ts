@@ -469,7 +469,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   ok(!page.includes('ZXing'), '23. no ZXing import (Phase 6 separation)');
   ok(!page.includes('@zxing'), '23. no @zxing import (Phase 6 separation)');
   ok(!page.includes('Login on TV'), '23. no "Login on TV" entry point (Phase 6 separation)');
-  ok(!page.includes('/account/scan-tv'), '23. no /account/scan-tv route (Phase 6 separation)');
+  ok(!page.includes('/settings/scan-tv'), '23. no /settings/scan-tv route (Phase 6 separation)');
 
   ok('23. no camera / phone-scanner APIs (Phase 6 separation maintained)');
 }

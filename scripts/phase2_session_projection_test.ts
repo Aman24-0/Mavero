@@ -154,7 +154,7 @@ for (const prop of forbiddenLeak) {
 // ============================================================
 // 6. The account page reads the projected shape (not user_metadata).
 // ============================================================
-const accountPage = read('src/routes/account/+page.svelte');
+const accountPage = read('src/routes/settings/+page.svelte');
 ok(/data\.user\?\.displayName/.test(accountPage), '6a. account page reads data.user.displayName (projected)');
 ok(/data\.isAuthenticated/.test(accountPage), '6b. account page reads data.isAuthenticated (projected)');
 ok(!/data\.user\?\.user_metadata/.test(accountPage), '6c. account page no longer reads data.user.user_metadata (full User object not serialized)');

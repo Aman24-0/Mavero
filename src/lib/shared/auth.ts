@@ -1,6 +1,9 @@
 export const MIN_PASSWORD_LENGTH = 8;
 
-export function safeRedirectPath(value: string | null | undefined, fallback = '/account') {
+// Navigation & Settings Redesign, Phase 3 — the post-auth fallback
+// destination is /settings (the account-management page). Callers that
+// pass an explicit fallback keep their own target.
+export function safeRedirectPath(value: string | null | undefined, fallback = '/settings') {
   if (!value || !value.startsWith('/') || value.startsWith('//') || value.includes('://')) return fallback;
   return value;
 }

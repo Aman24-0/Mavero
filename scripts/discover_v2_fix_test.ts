@@ -8,7 +8,7 @@ const tmdb = await readFile(path.join(repoRoot, 'src/lib/server/content/adapters
 const discoverPage = await readFile(path.join(repoRoot, 'src/lib/components/DiscoverPage.svelte'), 'utf8');
 // Since Phase C the legacy Profile page is a redirect-only route; the shared
 // AppFooter contract is asserted on the canonical Account page instead.
-const accountPage = await readFile(path.join(repoRoot, 'src/routes/account/+page.svelte'), 'utf8');
+const accountPage = await readFile(path.join(repoRoot, 'src/routes/settings/+page.svelte'), 'utf8');
 const appFooter = await readFile(path.join(repoRoot, 'src/lib/components/AppFooter.svelte'), 'utf8');
 const railEndpoint = await readFile(path.join(repoRoot, 'src/routes/api/discover/rail/+server.ts'), 'utf8');
 

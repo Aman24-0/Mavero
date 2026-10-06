@@ -11,7 +11,7 @@
     : page.url.searchParams.get('error') === 'missing_confirmation'
       ? 'That confirmation link is incomplete. Please request a new one.'
       : '';
-  const nextPath = page.url.searchParams.get('next') ?? '/account';
+  const nextPath = page.url.searchParams.get('next') ?? '/settings';
 
   // Newtask §8/§27 — the QR-DISPLAY login option is only offered on
   // big screens (desktop / TV). Phones and tablets are the QR-scanning
@@ -39,7 +39,7 @@
   title="Welcome back to"
   titleAccent="Mavero."
   subtitle="Sign in to sync Continue Watching, favorites, and history across your devices. You can keep exploring without an account."
-  backHref="/account"
+  backHref="/settings"
   backLabel="Back to Account"
 >
   {#if form?.message || queryMessage}

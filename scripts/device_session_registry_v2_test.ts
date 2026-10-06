@@ -527,7 +527,7 @@ function signOutSrcHasLocalScope(): boolean {
   // 27. affected sessions revoked — covered above.
 
   // 28. UI wording matches semantics (button + dialog + endpoint).
-  const account = read('src/routes/account/+page.svelte');
+  const account = read('src/routes/settings/+page.svelte');
   ok(account.includes('Sign out all other devices'), 'E28a: button says "Sign out all other devices"');
   ok(!account.includes('>Sign out all devices<'), 'E28b: ambiguous old wording removed');
   const revokeAllApi = read('src/routes/api/account/sessions/revoke-all/+server.ts');

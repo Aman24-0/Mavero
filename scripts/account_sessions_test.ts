@@ -82,7 +82,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // 3. ACCOUNT UI — SESSIONS SECTION
 // ============================================================
 {
-  const page = read('src/routes/account/+page.svelte');
+  const page = read('src/routes/settings/+page.svelte');
 
   ok(page.includes('Devices & Sessions') || page.includes('sessions-title'), 'account page: has Devices & Sessions section');
   ok(page.includes('loadSessions'), 'account page: has loadSessions function');
@@ -123,7 +123,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 {
   const sessionsApi = read('src/routes/api/account/sessions/+server.ts');
   const revokeApi = read('src/routes/api/account/sessions/revoke/+server.ts');
-  const page = read('src/routes/account/+page.svelte');
+  const page = read('src/routes/settings/+page.svelte');
 
   // Sessions API never trusts client-supplied user_id.
   ok(!sessionsApi.includes('searchParams.*user_id'), 'sessions API: no user_id from query');
@@ -153,12 +153,16 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   ok(revokeApi.includes('targetRow.supabase_session_id === currentSessionId'), 'revoke API: compares target to current session');
   ok(revokeApi.includes('Use sign out to end your current session'), 'revoke API: returns helpful message for current session');
 
-  // The UI hides the Revoke button for the current session.
-  const page = read('src/routes/account/+page.svelte');
-  ok(page.includes('session.isCurrent'), 'account page: checks isCurrent');
-  ok(page.includes('{#if !session.isCurrent}'), 'account page: hides Revoke button for current session');
+  // The UI shows Sign out (not Revoke) for the current session — Phase 3 of
+  // the Navigation & Settings Redesign removed the standalone Session
+  // section and moved Sign out onto the current device's session card.
+  const page = read('src/routes/settings/+page.svelte');
+  ok(page.includes('session.isCurrent'), 'settings page: checks isCurrent');
+  ok(page.includes('{#if session.isCurrent}'), 'settings page: current session renders the Sign out action branch');
+  ok(page.includes('openSignout'), 'settings page: current session signs out via the existing /auth/sign-out flow');
+  ok(page.includes('{:else}'), 'settings page: non-current sessions keep the Revoke branch');
 
-  ok('5. current session: cannot be revoked from sessions UI (use sign-out instead)');
+  ok('5. current session: cannot be revoked from sessions UI (Sign out lives on the current device card — Phase 3)');
 }
 
 // ============================================================

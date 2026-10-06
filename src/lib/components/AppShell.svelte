@@ -1,9 +1,10 @@
 <script lang="ts">
   import { onMount, type Snippet } from 'svelte';
   import { CalendarClock, Compass, Search, UserRound, Clapperboard, Film, PanelLeftClose, PanelLeft, Sparkles, Tv } from 'lucide-svelte';
+  import AccountSheet from '$components/AccountSheet.svelte';
   import { haptic } from '$lib/client/haptics';
 
-  let { children, currentPath = '/', showMobileNav = true }: { children: Snippet; currentPath?: string; showMobileNav?: boolean } = $props();
+  let { children, currentPath = '/', showMobileNav = true, user = null, isAuthenticated = false }: { children: Snippet; currentPath?: string; showMobileNav?: boolean; user?: { id: string; email?: string | null; displayName?: string | null } | null; isAuthenticated?: boolean } = $props();
   let shell: HTMLElement;
 
   // Navigation & Settings Redesign, Phase 1 — the six primary destinations.
@@ -29,6 +30,23 @@
   ];
 
   const isActive = (key: string) => currentPath === key || currentPath.startsWith(`${key}/`);
+
+  // Phase 3 — the compact Account sheet, opened from the header account
+  // control (topbar ≤1024px, header chip ≥1025px). Contains ONLY the
+  // identity block + My List + Settings per the plan; everything else
+  // lives on the /settings page.
+  let accountSheetOpen = $state(false);
+  const isAccountSurface = $derived(isActive('/settings'));
+
+  function openAccountSheet() {
+    if (accountSheetOpen) return;
+    haptic('light');
+    accountSheetOpen = true;
+  }
+
+  function closeAccountSheet() {
+    accountSheetOpen = false;
+  }
 
   // Sidebar collapse — persisted in localStorage
   let sidebarCollapsed = $state(false);
@@ -101,21 +119,42 @@
         <span class="brand-symbol"><Clapperboard size={15} strokeWidth={2.2} /></span>
         <span class="brand-word">MAVERO</span>
       </a>
-      <a class:active={isActive('/account')} class="topbar-account" href="/account" aria-label="Account" aria-current={isActive('/account') ? 'page' : undefined} onclick={() => { if (!isActive('/account')) haptic('light'); }}>
-        <UserRound size={20} strokeWidth={isActive('/account') ? 2.3 : 1.8} />
-      </a>
+      <button
+        type="button"
+        class:active={isAccountSurface}
+        class="topbar-account"
+        aria-haspopup="dialog"
+        aria-expanded={accountSheetOpen}
+        aria-label="Account"
+        aria-current={isAccountSurface ? 'page' : undefined}
+        onclick={openAccountSheet}
+      >
+        <UserRound size={20} strokeWidth={isAccountSurface ? 2.3 : 1.8} />
+      </button>
     </header>
 
     <main>{@render children()}</main>
   </div>
 
-  <!-- Desktop header account control (right side, 1025px+) — the
-       sidebar carries the six content destinations; Account lives in
-       the header per the Final IA. Phase 3 turns this into the compact
-       Account sheet trigger. -->
-  <a class:active={isActive('/account')} class="header-account" href="/account" aria-label="Account" aria-current={isActive('/account') ? 'page' : undefined} onclick={() => { if (!isActive('/account')) haptic('light'); }}>
-    <UserRound size={20} strokeWidth={isActive('/account') ? 2.3 : 1.8} />
-  </a>
+  <!-- Desktop header account control (right side, 1025px+) — opens the
+       compact Account sheet (Phase 3). The sidebar carries the six
+       content destinations; Account lives in the header per the
+       Final IA. -->
+  <button
+    type="button"
+    class:active={isAccountSurface}
+    class="header-account"
+    aria-haspopup="dialog"
+    aria-expanded={accountSheetOpen}
+    aria-label="Account"
+    aria-current={isAccountSurface ? 'page' : undefined}
+    onclick={openAccountSheet}
+  >
+    <UserRound size={20} strokeWidth={isAccountSurface ? 2.3 : 1.8} />
+  </button>
+
+  <!-- Compact Account sheet (Phase 3): identity + My List + Settings -->
+  <AccountSheet open={accountSheetOpen} onClose={closeAccountSheet} {user} {isAuthenticated} />
 
   <!-- Mobile + tablet bottom nav (touch composition, ≤1024px) -->
   {#if showMobileNav}
@@ -240,8 +279,8 @@
       background: rgba(5, 7, 8, .88); backdrop-filter: blur(22px);
     }
     .mobile-brand { display: inline-flex; align-items: center; gap: 9px; }
-    /* Account control on the topbar right side (Phase 1 transitional —
-       replaced by the compact Account sheet trigger in Phase 3). */
+    /* Account control on the topbar right side (≤1024px) — opens the
+       compact Account sheet (Phase 3). */
     .topbar-account {
       display: grid; place-items: center;
       margin-left: auto;
@@ -250,7 +289,7 @@
       border-radius: 12px;
       color: var(--color-text-muted);
       background: rgba(8, 11, 13, .5);
-      text-decoration: none;
+      cursor: pointer;
       transition: color var(--motion-fast), background var(--motion-fast), border-color var(--motion-fast);
     }
     .topbar-account:hover { color: var(--color-primary); border-color: var(--color-primary-border); }
@@ -320,8 +359,7 @@
   /* Desktop (≥1025px): the header account control on the right side —
      a quiet glass chip floating at the top-right of the content area,
      above the cinematic full-bleed pages (no persistent bar stealing
-     vertical space). Replaced by the compact Account sheet trigger in
-     Phase 3 (same position, new behavior). */
+     vertical space). Opens the compact Account sheet (Phase 3). */
   @media (min-width: 1025px) {
     .header-account {
       position: fixed; top: 18px; right: 22px; z-index: 60;
@@ -333,7 +371,7 @@
       background: rgba(8, 11, 13, .55);
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
-      text-decoration: none;
+      cursor: pointer;
       transition: color var(--motion-fast), background var(--motion-fast), border-color var(--motion-fast);
     }
     .header-account:hover { color: var(--color-primary); border-color: var(--color-primary-border); }

@@ -356,6 +356,15 @@ html[data-admin-sheet-open] body { overflow: hidden; }
 html[data-admin-sheet-open] body { touch-action: none; }
 
 /* ============================================================
+   Account sheet scroll lock (Navigation & Settings Redesign,
+   Phase 3) — same pattern as the admin sheet. The AccountSheet
+   component toggles this attribute on <html> while the compact
+   account sheet is open so the underlying page cannot scroll.
+   ============================================================ */
+html[data-account-sheet-open] body { overflow: hidden; }
+html[data-account-sheet-open] body { touch-action: none; }
+
+/* ============================================================
    ADMIN 2.0 — NEON NOIR CONTROL SYSTEM
    Phase A: Design Foundation
    ============================================================

@@ -235,7 +235,7 @@
         {:else}
           <p>The device is completing sign-in on its screen…</p>
         {/if}
-        <a class="authorize-done-btn" href="/account">Go to my account</a>
+        <a class="authorize-done-btn" href="/settings">Go to Settings</a>
       </div>
     {:else if expired}
       <div class="authorize-expired">

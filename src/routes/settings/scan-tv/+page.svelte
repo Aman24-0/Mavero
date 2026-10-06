@@ -382,8 +382,9 @@
   function cancel() {
     haptic('light');
     stopCamera();
-    // Navigate back to the Account page.
-    void goto('/account');
+    // Navigate back to the Settings page (the QR login flow lives under
+    // Devices & Sessions there).
+    void goto('/settings');
   }
 
   function retry() {
@@ -393,7 +394,7 @@
 </script>
 
 <svelte:head>
-  <title>Login on Big Screen — Mavero</title>
+  <title>Login With QR — Mavero</title>
   <meta name="description" content="Scan the QR code shown on the big screen, or enter the TV code, to sign in on that device." />
   <meta name="robots" content="noindex,nofollow" />
 </svelte:head>
@@ -401,7 +402,7 @@
 <div class="scan-page">
   <!-- Top bar: back/cancel button -->
   <div class="scan-top-bar">
-    <button class="back-btn" type="button" onclick={cancel} aria-label="Cancel and go back to account">
+    <button class="back-btn" type="button" onclick={cancel} aria-label="Cancel and go back to settings">
       <ArrowLeft size={16} /> <span>Back</span>
     </button>
   </div>

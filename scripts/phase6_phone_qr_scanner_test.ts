@@ -28,11 +28,11 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // 1. ACCOUNT PAGE — "LOGIN ON TV" ENTRY POINT
 // ============================================================
 {
-  const account = read('src/routes/account/+page.svelte');
+  const account = read('src/routes/settings/+page.svelte');
 
   ok(account.includes('Login on TV'), '1. account page: has "Login on TV" button');
   ok(account.includes('login-tv-btn'), '1. account page: has login-tv-btn class');
-  ok(account.includes('/account/scan-tv'), '1. account page: links to /account/scan-tv');
+  ok(account.includes('/settings/scan-tv'), '1. account page: links to /settings/scan-tv');
   ok(account.includes('Tv'), '1. account page: uses Tv icon');
 
   // Only shown for authenticated users (inside {#if data.user}).
@@ -59,12 +59,12 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // 2. SCANNER ROUTE EXISTS
 // ============================================================
 {
-  const page = read('src/routes/account/scan-tv/+page.svelte');
-  const serverLoad = read('src/routes/account/scan-tv/+page.server.ts');
+  const page = read('src/routes/settings/scan-tv/+page.svelte');
+  const serverLoad = read('src/routes/settings/scan-tv/+page.server.ts');
 
   ok(page.length > 1000, '2. scanner page exists and is substantial');
   ok(page.includes('<svelte:head>'), '2. scanner page has svelte:head');
-  ok(page.includes('Login on Big Screen'), '2. scanner page title (Big Screen wording, §9)');
+  ok(page.includes('Login With QR'), '2. scanner page title (Big Screen wording, §9)');
   ok(page.includes('noindex,nofollow'), '2. scanner page has noindex');
 
   // Server load — auth required.
@@ -80,7 +80,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // 3. CAMERA API USAGE — ONLY IN SCANNER
 // ============================================================
 {
-  const scanner = read('src/routes/account/scan-tv/+page.svelte');
+  const scanner = read('src/routes/settings/scan-tv/+page.svelte');
 
   // getUserMedia is used in the scanner.
   ok(scanner.includes('navigator.mediaDevices.getUserMedia'), '3. scanner: uses getUserMedia');
@@ -89,7 +89,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   const otherFiles = [
     'src/routes/tv-login/+page.svelte',
     'src/routes/authorize/+page.svelte',
-    'src/routes/account/+page.svelte',
+    'src/routes/settings/+page.svelte',
     'src/hooks.server.ts',
   ];
   for (const f of otherFiles) {
@@ -104,7 +104,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // 4. ENVIRONMENT CAMERA PREFERENCE
 // ============================================================
 {
-  const scanner = read('src/routes/account/scan-tv/+page.svelte');
+  const scanner = read('src/routes/settings/scan-tv/+page.svelte');
 
   // Prefers rear/environment-facing camera.
   ok(scanner.includes('facingMode'), '4. scanner: uses facingMode constraint');
@@ -121,7 +121,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // 5. CAMERA TRACKS STOPPED DURING CLEANUP
 // ============================================================
 {
-  const scanner = read('src/routes/account/scan-tv/+page.svelte');
+  const scanner = read('src/routes/settings/scan-tv/+page.svelte');
 
   // stopCamera function exists.
   ok(scanner.includes('function stopCamera'), '5. scanner: has stopCamera function');
@@ -143,7 +143,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // 6. SUCCESSFUL SCAN STOPS CAMERA
 // ============================================================
 {
-  const scanner = read('src/routes/account/scan-tv/+page.svelte');
+  const scanner = read('src/routes/settings/scan-tv/+page.svelte');
 
   // handleDecodedQR calls stopCamera before navigating.
   const fnStart = scanner.indexOf('async function handleDecodedQR');
@@ -160,7 +160,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // 7. DUPLICATE SCAN CALLBACK PREVENTION
 // ============================================================
 {
-  const scanner = read('src/routes/account/scan-tv/+page.svelte');
+  const scanner = read('src/routes/settings/scan-tv/+page.svelte');
 
   // scanResolved guard prevents duplicate callbacks.
   ok(scanner.includes('scanResolved'), '7. scanner: has scanResolved guard');
@@ -180,7 +180,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // 8. QR PAYLOAD VALIDATION
 // ============================================================
 {
-  const scanner = read('src/routes/account/scan-tv/+page.svelte');
+  const scanner = read('src/routes/settings/scan-tv/+page.svelte');
 
   // validateMaveroPairingURL function exists.
   ok(scanner.includes('function validateMaveroPairingURL'), '8. scanner: has validateMaveroPairingURL function');
@@ -212,7 +212,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // 9. ONLY EXPECTED /authorize?s= PAYLOAD ACCEPTED
 // ============================================================
 {
-  const scanner = read('src/routes/account/scan-tv/+page.svelte');
+  const scanner = read('src/routes/settings/scan-tv/+page.svelte');
 
   // Phase 8: scanner navigates to /authorize#s=<secret> (fragment, not query).
   ok(scanner.includes('goto(`/authorize#s='), '9. scanner: navigates to /authorize#s=<secret> (fragment)');
@@ -230,7 +230,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // 10. ARBITRARY EXTERNAL URLS REJECTED
 // ============================================================
 {
-  const scanner = read('src/routes/account/scan-tv/+page.svelte');
+  const scanner = read('src/routes/settings/scan-tv/+page.svelte');
 
   // Rejects dangerous schemes.
   ok(scanner.includes('javascript:'), '10. scanner: rejects javascript: scheme');
@@ -262,7 +262,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // 11. SECRET NOT LOGGED
 // ============================================================
 {
-  const scanner = read('src/routes/account/scan-tv/+page.svelte');
+  const scanner = read('src/routes/settings/scan-tv/+page.svelte');
 
   // No console.log/error/warn with secret material.
   ok(!scanner.match(/console\.\w+.*secret/i), '11. scanner: no secret logging');
@@ -284,7 +284,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // 12. INVALID QR HAS RETRY PATH
 // ============================================================
 {
-  const scanner = read('src/routes/account/scan-tv/+page.svelte');
+  const scanner = read('src/routes/settings/scan-tv/+page.svelte');
 
   // Invalid QR shows an error with a retry option.
   ok(scanner.includes("isn't a Mavero sign-in code"), '12. scanner: invalid QR message (device-neutral wording, §9)');
@@ -301,7 +301,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // 13. PERMISSION DENIED HAS USEFUL UI
 // ============================================================
 {
-  const scanner = read('src/routes/account/scan-tv/+page.svelte');
+  const scanner = read('src/routes/settings/scan-tv/+page.svelte');
 
   // NotAllowedError → permission denied message.
   ok(scanner.includes('NotAllowedError'), '13. scanner: handles NotAllowedError');
@@ -319,7 +319,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // 14. CAMERA UNAVAILABLE HAS USEFUL UI
 // ============================================================
 {
-  const scanner = read('src/routes/account/scan-tv/+page.svelte');
+  const scanner = read('src/routes/settings/scan-tv/+page.svelte');
 
   // NotFoundError → no camera found.
   ok(scanner.includes('NotFoundError'), '14. scanner: handles NotFoundError');
@@ -343,7 +343,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // 15. SCANNER CANCELLATION CLEANS UP CAMERA
 // ============================================================
 {
-  const scanner = read('src/routes/account/scan-tv/+page.svelte');
+  const scanner = read('src/routes/settings/scan-tv/+page.svelte');
 
   // cancel() function stops camera before navigating away.
   const fnStart = scanner.indexOf('function cancel()');
@@ -351,7 +351,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   const fnBody = scanner.slice(fnStart, fnEnd !== -1 ? fnEnd : undefined);
 
   ok(fnBody.includes('stopCamera()'), '15. cancel: calls stopCamera before navigating');
-  ok(fnBody.includes("goto('/account')"), '15. cancel: navigates back to /account');
+  ok(fnBody.includes("goto('/settings')"), '15. cancel: navigates back to /settings (Phase 3 move)');
 
   ok('15. scanner cancellation cleans up camera');
 }
@@ -360,7 +360,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // 16. EXISTING /authorize FLOW REMAINS CONNECTED
 // ============================================================
 {
-  const scanner = read('src/routes/account/scan-tv/+page.svelte');
+  const scanner = read('src/routes/settings/scan-tv/+page.svelte');
   const authorize = read('src/routes/authorize/+page.svelte');
 
   // Scanner navigates to /authorize on valid QR.
@@ -380,7 +380,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // 17. SCANNER DOES NOT DIRECTLY APPROVE THE PAIRING
 // ============================================================
 {
-  const scanner = read('src/routes/account/scan-tv/+page.svelte');
+  const scanner = read('src/routes/settings/scan-tv/+page.svelte');
 
   // Scanner does NOT call the approve endpoint.
   ok(!scanner.includes('/api/auth/device-pairing/approve'), '17. scanner: does NOT call approve endpoint');
@@ -429,7 +429,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // 19. ACCESSIBILITY ATTRIBUTES / LABELS
 // ============================================================
 {
-  const scanner = read('src/routes/account/scan-tv/+page.svelte');
+  const scanner = read('src/routes/settings/scan-tv/+page.svelte');
 
   // Semantic heading.
   ok(scanner.includes('<h2>'), '19. scanner: has semantic heading');
@@ -461,7 +461,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // 20. REDUCED-MOTION HANDLING
 // ============================================================
 {
-  const scanner = read('src/routes/account/scan-tv/+page.svelte');
+  const scanner = read('src/routes/settings/scan-tv/+page.svelte');
 
   ok(scanner.includes('prefers-reduced-motion'), '20. scanner: has prefers-reduced-motion');
   ok(scanner.includes('animation: none'), '20. scanner: disables spin animation');
@@ -471,21 +471,21 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 }
 
 // ============================================================
-// 21. BARE ROUTE — /account/scan-tv RENDERS WITHOUT APPSHELL
+// 21. BARE ROUTE — /settings/scan-tv RENDERS WITHOUT APPSHELL
 // ============================================================
 {
   const layout = read('src/routes/+layout.svelte');
 
-  ok(layout.includes('/account/scan-tv'), '21. layout: /account/scan-tv in bare-route list');
+  ok(layout.includes('/settings/scan-tv'), '21. layout: /settings/scan-tv in bare-route list');
 
-  ok('21. /account/scan-tv renders bare (no AppShell sidebar)');
+  ok('21. /settings/scan-tv renders bare (no AppShell sidebar)');
 }
 
 // ============================================================
 // 22. NO CAMERA FRAMES SENT TO SERVER
 // ============================================================
 {
-  const scanner = read('src/routes/account/scan-tv/+page.svelte');
+  const scanner = read('src/routes/settings/scan-tv/+page.svelte');
 
   // The scanner does NOT POST/PUT camera frames to any endpoint.
   // It only navigates to /authorize?s=<secret> on success.
@@ -501,7 +501,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // 23. STATE MACHINE — NO INVALID STATE TRANSITIONS
 // ============================================================
 {
-  const scanner = read('src/routes/account/scan-tv/+page.svelte');
+  const scanner = read('src/routes/settings/scan-tv/+page.svelte');
 
   // State machine states.
   ok(scanner.includes("'idle'"), '23. scanner: idle state');
@@ -538,7 +538,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // 25. NO PHASE 7 WORK — SCANNER DOES NOT EXCHANGE
 // ============================================================
 {
-  const scanner = read('src/routes/account/scan-tv/+page.svelte');
+  const scanner = read('src/routes/settings/scan-tv/+page.svelte');
 
   // Scanner does NOT call exchangeCodeForSession.
   ok(!scanner.includes('exchangeCodeForSession'), '25. scanner: does NOT call exchangeCodeForSession (Phase 7 = TV side)');
@@ -568,7 +568,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // NOT via conditional mount/unmount. This ensures the video ref is
 // available when getUserMedia() resolves.
 {
-  const scanner = read('src/routes/account/scan-tv/+page.svelte');
+  const scanner = read('src/routes/settings/scan-tv/+page.svelte');
 
   // The video element is NOT inside an {#if scanState === 'scanning'} block.
   // Verify by checking that the <video> tag appears BEFORE any {#if} block
@@ -627,7 +627,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // FIX: the unconditional transform: scaleX(-1) is removed. The
 // rear-camera preview now renders in normal orientation.
 {
-  const scanner = read('src/routes/account/scan-tv/+page.svelte');
+  const scanner = read('src/routes/settings/scan-tv/+page.svelte');
 
   // Extract the .scan-video CSS rule and verify it does NOT have scaleX(-1).
   const videoRuleStart = scanner.indexOf('.scan-video {');
@@ -649,7 +649,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // ============================================================
 // Verify the camera is stopped in every terminal path after the fix.
 {
-  const scanner = read('src/routes/account/scan-tv/+page.svelte');
+  const scanner = read('src/routes/settings/scan-tv/+page.svelte');
 
   // startCamera() calls stopCamera() at the beginning (retry cleanup).
   const startFn = scanner.slice(

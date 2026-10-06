@@ -52,7 +52,7 @@ const libraryAware = [
   '/watch/movie/123',
   '/watch/series/series-8633518',
   '/watch/anime/anime-94605',
-  '/account',
+  '/settings',
   '/movie/123',
   '/series/94605',
   '/anime/94605'

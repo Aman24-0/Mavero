@@ -35,7 +35,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // ============================================================
 // Phase 2-J — dead Account settings removed.
 // ============================================================
-const account = read('src/routes/account/+page.svelte');
+const account = read('src/routes/settings/+page.svelte');
 
 // The settings state, persistence helpers, and localStorage load must be gone.
 ok(!/let settings = \$state\(\{ autoplay:/.test(account), '2J-1a. settings state (autoplay/autoResume/reducedMotion) removed');

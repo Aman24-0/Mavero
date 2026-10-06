@@ -22,7 +22,7 @@ const root = new URL('../', import.meta.url);
 
 const [signOutSrc, accountSrc, hooksSrc] = await Promise.all([
   readFile(new URL('src/routes/auth/sign-out/+server.ts', root), 'utf8'),
-  readFile(new URL('src/routes/account/+page.svelte', root), 'utf8'),
+  readFile(new URL('src/routes/settings/+page.svelte', root), 'utf8'),
   readFile(new URL('src/hooks.server.ts', root), 'utf8')
 ]);
 

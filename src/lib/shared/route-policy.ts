@@ -13,7 +13,9 @@
  *   - /my-list              (Continue Watching + My List cloud reconciliation)
  *   - /discover*            (Continue Watching rail uses cloud progress)
  *   - /watch/[type]/[id]    (cloud progress for resume position + history)
- *   - /account              (cloud state shown in the account header)
+ *   - /settings             (the account-management page — identity
+ *                            sync state; Navigation & Settings
+ *                            Redesign, Phase 3: former /account)
  *   - /movie/[id]           (DetailPage favorite toggle uses cloud)
  *   - /series/[id]          (DetailPage favorite toggle uses cloud)
  *   - /anime/[id]           (DetailPage favorite toggle uses cloud)
@@ -42,7 +44,7 @@ const LIBRARY_AWARE_PREFIXES: readonly string[] = [
   '/my-list',
   '/discover',
   '/watch/',
-  '/account',
+  '/settings',
   '/movie/',
   '/series/',
   '/anime',
