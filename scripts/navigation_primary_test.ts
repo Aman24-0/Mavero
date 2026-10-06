@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-// MAVERO — Primary Navigation Architecture (Navigation & Settings Redesign,
-// Phase 1).
+// MAVERO — Primary Navigation Architecture (Navigation & Settings
+// Redesign, Phase 1 + Phase 2).
 //
-// Regression contract for the six-destination primary navigation:
+// Regression contract for the six-destination primary navigation and
+// its two responsive compositions:
 //
 //   SOURCE     — one primaryLinks array in AppShell feeds BOTH the desktop
 //                side rail and the mobile floating pill. No duplicate
@@ -16,16 +17,23 @@ import { readFileSync } from 'node:fs';
 //                (lucide-svelte only).
 //   REMOVALS   — My List and Account are NOT primary destinations anymore.
 //                My List is reachable from the Account page today and from
-//                the Account sheet in Phase 3. Account stays reachable via
-//                the mobile topbar control + the desktop sidebar bottom
-//                link until the Phase 2/3 header sheet replaces them.
+//                the Account sheet in Phase 3. Account is reachable from
+//                the HEADER (Phase 2): the topbar control (≤1024px) and
+//                the fixed top-right header control (≥1025px). The
+//                sidebar carries ONLY the six content destinations.
 //   ROUTES     — /discover/movies|series|anime are permanent 308
 //                compatibility redirects to /movies, /tv-shows, /anime
 //                (query strings preserved). The canonical page components
 //                live ONLY at the new paths — no duplicate implementations.
 //   ACTIVE     — one isActive() semantics (exact match or nested path).
 //   MOBILE     — six equal grid columns, floating pill + glass/blur +
-//                haptics preserved.
+//                haptics preserved. Phase 2: the pill serves the ENTIRE
+//                touch range (phones AND tablets, ≤1024px) — the former
+//                641-1024px window with no navigation is closed.
+//   DESKTOP    — vertical sidebar (Browse hierarchy label, collapse
+//                behavior) — a composition intentionally DIFFERENT from
+//                the mobile pill. Account lives in the header right
+//                side, not the sidebar.
 //   ACCOUNT    — /account remains the canonical account route until
 //                Phase 3 flips it to /settings (Plan: Phase 3).
 
@@ -104,13 +112,18 @@ assert.doesNotMatch(appShell, /label: 'My List'/, 'no My List primary nav entry'
 assert.doesNotMatch(appShell, /label: 'Account'/, 'no Account primary nav entry');
 assert.doesNotMatch(linksBlock![1], /\/my-list/, 'primaryLinks carries no /my-list href');
 assert.doesNotMatch(linksBlock![1], /\/account/, 'primaryLinks carries no /account href');
-// Account stays reachable during the phased rollout: the mobile topbar
-// control + the desktop sidebar bottom link (replaced by the Phase 2/3
-// compact Account sheet).
-assert.match(appShell, /class="topbar-account"/, 'mobile topbar account control exists');
+// Phase 2 — Account lives in the HEADER, not the sidebar:
+assert.match(appShell, /class="topbar-account"/, 'mobile/tablet topbar account control exists (≤1024px)');
+assert.match(appShell, /class="header-account"/, 'desktop header account control exists (≥1025px)');
 assert.match(appShell, /href="\/account"/, 'an /account access point remains in the shell');
 assert.match(appShell, /aria-label="Account"/, 'the account control is announced to assistive tech');
-ok('4. My List + Account removed from primary navigation; Account stays reachable via header control');
+// The desktop sidebar carries ONLY the six content destinations — no
+// Account link inside the sidebar.
+const sidebarBottom = appShell.match(/<div class="sidebar-bottom">([\s\S]*?)<\/div>/);
+assert.ok(sidebarBottom, 'sidebar-bottom block captured');
+assert.doesNotMatch(sidebarBottom![1], /\/account/, 'the sidebar bottom block carries no Account link (the header owns Account)');
+assert.match(appShell, /sidebar-section-label/, 'the desktop sidebar has a Browse hierarchy label (desktop-appropriate structure)');
+ok('4. My List + Account removed from primary navigation; Account is a header control on every breakpoint');
 
 // ============================================================
 // 5. ROUTE ARCHITECTURE — legacy paths are 308 redirects (Phase 1)
@@ -138,26 +151,39 @@ assert.match(appShell, /aria-current=\{isActive\(link\.key\) \? 'page' : undefin
 ok('6. single isActive() system (exact + nested routes) drives active state');
 
 // ============================================================
-// 7. MOBILE — six equal columns, pill language preserved
+// 7. MOBILE + TABLET — six equal columns across the touch range
 // ============================================================
 assert.match(appShell, /grid-template-columns: repeat\(6, 1fr\)/, 'mobile pill grid is six equal columns');
-assert.match(appShell, /width: min\(calc\(100% - 24px\), 420px\)/, 'floating pill keeps its viewport width model');
+assert.match(appShell, /width: min\(calc\(100% - 24px\), 420px\)/, 'floating pill keeps its phone-size viewport width model');
 assert.match(appShell, /backdrop-filter: blur\(20px\)/, 'glass/blur treatment preserved');
 assert.match(appShell, /border-radius: 999px/, 'pill shape preserved');
 assert.match(appShell, /haptic\('light'\)/, 'haptic behavior preserved');
 assert.match(appShell, /white-space: nowrap/, 'labels never wrap at 360px-class widths');
 assert.match(appShell, /aria-label="Mobile navigation"/, 'mobile navigation landmark preserved');
-ok('7. mobile pill: 6 columns, labels nowrap, glass + haptics + pill shape intact');
+// Phase 2 — the pill covers the ENTIRE touch range: it is shown inside
+// the ≤1024px media query and hidden by default above it (the former
+// 641px+ hide rule is gone — tablets now have navigation).
+const pillQuery = appShell.match(/@media \(max-width: 1024px\) \{[\s\S]*?\.mobile-nav \{\s*display: block;/);
+assert.ok(pillQuery, 'the pill is shown inside the ≤1024px touch media query');
+assert.match(appShell, /\.mobile-nav \{ display: none; \}/, 'the pill is hidden by default (desktop)');
+assert.doesNotMatch(appShell, /@media \(min-width: 641px\) \{ \.mobile-nav \{ display: none; \} \}/, 'the old 641px+ pill hide rule is REMOVED (tablet gap closed)');
+ok('7. mobile + tablet pill: 6 columns across the ≤1024px touch range, nowrap labels, glass + haptics intact');
 
 // ============================================================
-// 8. DESKTOP — rail language preserved with the six entries
+// 8. DESKTOP — vertical sidebar composition (intentionally different
+//    from the mobile pill) + header account control
 // ============================================================
 assert.match(appShell, /aria-label="Primary navigation"/, 'desktop rail landmark preserved');
 assert.match(appShell, /class="brand-lockup"/, 'brand lockup preserved');
 assert.match(appShell, /class="sidebar-nav"/, 'sidebar nav container preserved');
 assert.match(appShell, /class="sidebar-caption"/, 'sidebar caption preserved');
-assert.match(appShell, /class="sidebar-bottom"/, 'sidebar bottom container preserved (hosts the Account link)');
-ok('8. desktop rail keeps brand/spacing/active language with the six destinations');
+assert.match(appShell, /class="sidebar-bottom"/, 'sidebar bottom container preserved (rule + caption only)');
+assert.match(appShell, /@media \(min-width: 1025px\)[\s\S]*?\.header-account \{[\s\S]*?position: fixed; top: 18px; right: 22px;/, 'the desktop header account control is fixed at the top-right (header right side)');
+assert.match(appShell, /min-height: 44px/, 'sidebar links keep the 44px touch/keyboard target');
+assert.match(appShell, /\.sidebar-link:focus-visible/, 'sidebar links expose focus-visible outlines');
+assert.match(appShell, /\.header-account:focus-visible/, 'the header account control exposes focus-visible outlines');
+assert.match(appShell, /prefers-reduced-motion: reduce[\s\S]*?\.header-account/, 'the header account control honors reduced motion');
+ok('8. desktop: vertical sidebar (Browse label, collapse, 44px targets) + fixed top-right header account control');
 
 // ============================================================
 // 9. ACCOUNT ROUTE — /account still the canonical account experience

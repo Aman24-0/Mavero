@@ -7,11 +7,18 @@
   let shell: HTMLElement;
 
   // Navigation & Settings Redesign, Phase 1 — the six primary destinations.
-  // ONE source of truth feeds BOTH the desktop sidebar and the mobile bottom
-  // nav (no duplicated hardcoded nav logic anywhere). My List is reachable
-  // from the Account page today and from the Account sheet in Phase 3.
-  // Account itself stays reachable via the header control (mobile topbar)
-  // and the sidebar bottom link (desktop) until the Phase 2/3 header sheet.
+  // ONE source of truth feeds BOTH the desktop sidebar and the mobile
+  // bottom nav (no duplicated hardcoded nav logic anywhere). My List is
+  // reachable from the Account page today and from the Account sheet in
+  // Phase 3.
+  //
+  // Phase 2 — responsive compositions:
+  //   MOBILE + TABLET (≤1024px): floating pill bottom nav (touch
+  //   composition) + topbar with the Account control on the right.
+  //   DESKTOP (≥1025px): proper vertical sidebar (Browse hierarchy,
+  //   collapse behavior) + the Account control in the header right side.
+  // The pill and the sidebar are intentionally DIFFERENT compositions —
+  // the mobile pill is never copied onto desktop and vice versa.
   const primaryLinks = [
     { label: 'Discover', href: '/discover', key: '/discover', icon: Compass },
     { label: 'Movies', href: '/movies', key: '/movies', icon: Film },
@@ -71,6 +78,7 @@
       {#if sidebarCollapsed}<PanelLeft size={16} />{:else}<PanelLeftClose size={16} />{/if}
     </button>
     <nav class="sidebar-nav">
+      {#if !sidebarCollapsed}<div class="sidebar-section-label" aria-hidden="true">Browse</div>{/if}
       {#each primaryLinks as link}
         {@const Icon = link.icon}
         <a class:active={isActive(link.key)} class="sidebar-link" href={link.href} aria-current={isActive(link.key) ? 'page' : undefined} title={sidebarCollapsed ? link.label : undefined}>
@@ -80,10 +88,6 @@
       {/each}
     </nav>
     <div class="sidebar-bottom">
-      <a class:active={isActive('/account')} class="sidebar-link" href="/account" aria-current={isActive('/account') ? 'page' : undefined} title={sidebarCollapsed ? 'Account' : undefined}>
-        <span class="sidebar-icon"><UserRound size={19} strokeWidth={isActive('/account') ? 2.3 : 1.8} /></span>
-        {#if !sidebarCollapsed}<span class="sidebar-label">Account</span>{/if}
-      </a>
       <div class="sidebar-rule"></div>
       {#if !sidebarCollapsed}<span class="sidebar-caption">Your screen. Your story.</span>{/if}
     </div>
@@ -105,7 +109,15 @@
     <main>{@render children()}</main>
   </div>
 
-  <!-- Mobile bottom nav -->
+  <!-- Desktop header account control (right side, 1025px+) — the
+       sidebar carries the six content destinations; Account lives in
+       the header per the Final IA. Phase 3 turns this into the compact
+       Account sheet trigger. -->
+  <a class:active={isActive('/account')} class="header-account" href="/account" aria-label="Account" aria-current={isActive('/account') ? 'page' : undefined} onclick={() => { if (!isActive('/account')) haptic('light'); }}>
+    <UserRound size={20} strokeWidth={isActive('/account') ? 2.3 : 1.8} />
+  </a>
+
+  <!-- Mobile + tablet bottom nav (touch composition, ≤1024px) -->
   {#if showMobileNav}
     <nav class="mobile-nav" aria-label="Mobile navigation">
       <div class="mobile-nav-inner">
@@ -164,7 +176,14 @@
     color: var(--color-primary); background: var(--color-primary-soft);
     border-color: var(--color-border);
   }
-  .sidebar-nav { display: grid; gap: 2px; margin-top: 28px; }
+  .sidebar-nav { display: grid; gap: 2px; margin-top: 22px; }
+  /* Desktop hierarchy: a quiet section label above the six destinations.
+     Hidden when collapsed (icon-only rail keeps no text chrome). */
+  .sidebar-section-label {
+    padding: 0 12px; margin-bottom: 8px;
+    color: var(--color-text-deep);
+    font-size: .6rem; font-weight: 800; letter-spacing: .16em; text-transform: uppercase;
+  }
   .sidebar-link {
     display: flex; align-items: center; gap: 13px; min-height: 44px; padding: 0 12px;
     border: 1px solid transparent; border-radius: 10px;
@@ -196,13 +215,20 @@
     justify-content: center; padding: 0;
   }
 
-  /* ---- Mobile topbar ---- */
+  /* ---- Mobile topbar (≤1024px) ---- */
   .topbar { display: none; }
   .mobile-brand { display: none; }
   .topbar-account { display: none; }
 
+  /* ---- Desktop header account control (≥1025px, header right side) ---- */
+  .header-account { display: none; }
+
+  /* ---- Mobile + tablet bottom pill (touch composition) ----
+     Hidden by default (desktop); shown + positioned at ≤1024px below. */
+  .mobile-nav { display: none; }
+
   /* ---- Responsive ---- */
-  /* Tablet and mobile: hide sidebar, show topbar */
+  /* Tablet and mobile: hide sidebar, show topbar + bottom pill */
   @media (max-width: 1024px) {
     .app-sidebar { display: none; }
     .app-main { margin-left: 0 !important; height: auto !important; overflow-y: visible !important; }
@@ -215,7 +241,7 @@
     }
     .mobile-brand { display: inline-flex; align-items: center; gap: 9px; }
     /* Account control on the topbar right side (Phase 1 transitional —
-       replaced by the compact Account sheet trigger in Phase 2/3). */
+       replaced by the compact Account sheet trigger in Phase 3). */
     .topbar-account {
       display: grid; place-items: center;
       margin-left: auto;
@@ -236,25 +262,16 @@
     }
     .topbar-account.active :global(svg) { color: var(--color-primary); }
     .topbar-account:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
-  }
 
-  @media (max-width: 640px) {
-    .topbar {
-      position: fixed; top: 0; left: 0; right: 0;
-      width: 100%; box-sizing: border-box;
-      height: var(--topbar-h-safe);
-      padding: env(safe-area-inset-top, 0px) 16px 0;
-      border-bottom: 1px solid var(--color-border);
-    }
-    .app-main { padding-top: var(--shell-content-top); }
-    .page-shell { padding-bottom: 0; }
-
-    /* Floating pill bottom nav */
+    /* Floating pill bottom nav — the touch composition for phones AND
+       tablets (Phase 2: closes the former 641-1024px navigation gap where
+       neither the sidebar nor the pill was visible). */
     .mobile-nav {
+      display: block;
       position: fixed; left: 50%; bottom: calc(14px + env(safe-area-inset-bottom, 0px));
       transform: translateX(-50%);
       z-index: 50;
-      width: min(calc(100% - 24px), 420px);
+      width: min(calc(100% - 24px), 480px);
     }
     .mobile-nav-inner {
       display: grid; grid-template-columns: repeat(6, 1fr);
@@ -268,7 +285,7 @@
       min-width: 0; min-height: 44px; padding: 6px 2px;
       border-radius: 999px;
       color: var(--color-text-deep);
-      font-size: .54rem; font-weight: 700; letter-spacing: .02em;
+      font-size: .58rem; font-weight: 700; letter-spacing: .02em;
       text-decoration: none;
       transition: color 180ms ease, background 180ms ease;
     }
@@ -282,11 +299,58 @@
     }
     .mobile-nav a.active :global(svg) { color: var(--color-primary); }
   }
-  @media (min-width: 641px) { .mobile-nav { display: none; } }
+
+  @media (max-width: 640px) {
+    .topbar {
+      position: fixed; top: 0; left: 0; right: 0;
+      width: 100%; box-sizing: border-box;
+      height: var(--topbar-h-safe);
+      padding: env(safe-area-inset-top, 0px) 16px 0;
+      border-bottom: 1px solid var(--color-border);
+    }
+    .app-main { padding-top: var(--shell-content-top); }
+    .page-shell { padding-bottom: 0; }
+
+    /* Phone-size refinements for the shared touch pill: tighter max
+       width + compact labels (the tablet range keeps the roomier size). */
+    .mobile-nav { width: min(calc(100% - 24px), 420px); }
+    .mobile-nav a { font-size: .54rem; }
+  }
+
+  /* Desktop (≥1025px): the header account control on the right side —
+     a quiet glass chip floating at the top-right of the content area,
+     above the cinematic full-bleed pages (no persistent bar stealing
+     vertical space). Replaced by the compact Account sheet trigger in
+     Phase 3 (same position, new behavior). */
+  @media (min-width: 1025px) {
+    .header-account {
+      position: fixed; top: 18px; right: 22px; z-index: 60;
+      display: grid; place-items: center;
+      width: 40px; height: 40px;
+      border: 1px solid var(--color-border);
+      border-radius: 12px;
+      color: var(--color-text-muted);
+      background: rgba(8, 11, 13, .55);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      text-decoration: none;
+      transition: color var(--motion-fast), background var(--motion-fast), border-color var(--motion-fast);
+    }
+    .header-account:hover { color: var(--color-primary); border-color: var(--color-primary-border); }
+    .header-account.active {
+      color: var(--color-primary);
+      border-color: var(--color-primary-border);
+      background: var(--color-primary-soft);
+      box-shadow: var(--glow-primary);
+    }
+    .header-account.active :global(svg) { color: var(--color-primary); }
+    .header-account:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+  }
+
   @media (max-width: 640px) {
     .page-shell.no-mobile-nav { padding-bottom: 0; }
   }
   @media (prefers-reduced-motion: reduce) {
-    .sidebar-link, .topbar-account, .mobile-nav a { transition: none; }
+    .sidebar-link, .topbar-account, .header-account, .mobile-nav a { transition: none; }
   }
 </style>
