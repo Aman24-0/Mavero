@@ -1,5 +1,7 @@
 <script lang="ts">
   import { Bookmark, Settings, X } from 'lucide-svelte';
+  import { goto } from '$app/navigation';
+  import { page } from '$app/state';
   import { getSyncStatus, type SyncStatus } from '$lib/client/progress/cloud';
   import { haptic } from '$lib/client/haptics';
 
@@ -26,6 +28,18 @@
   //                 (top-right).
   //   MOTION      — one subtle entry animation, disabled entirely under
   //                 prefers-reduced-motion.
+  //
+  // HISTORY CONTRACT (Explorer redesign, Change 3): My List and Settings
+  // are independent destinations — Back from either must land on
+  // /discover, never on the other account surface. Opening the sheet
+  // while ALREADY on /my-list or /settings and choosing the other entry
+  // therefore navigates with replaceState (the current account-surface
+  // entry is replaced, not stacked) — so
+  //   Discover → Account → My List → Account → Settings → Back = Discover.
+  // From any non-account surface the entries keep normal push navigation
+  // — Discover → Account → My List → Back = Discover. The sheet itself
+  // never created history entries (it is an overlay), so no global
+  // history manipulation is involved.
 
   let {
     open = false,
@@ -110,9 +124,22 @@
     }
   }
 
-  function menuNavigate() {
+  const ACCOUNT_SURFACES = ['/my-list', '/settings'];
+
+  function menuNavigate(event: MouseEvent, href: string) {
     haptic('light');
     close();
+    // Change 3 history fix: when the sheet is opened while already on
+    // My List/Settings, choosing the other entry REPLACES the current
+    // history entry instead of stacking — Back from the destination then
+    // returns to whatever preceded the account surfaces (Discover), and
+    // My List/Settings never coexist in the history stack.
+    if (ACCOUNT_SURFACES.includes(page.url.pathname)) {
+      event.preventDefault();
+      void goto(href, { replaceState: true });
+    }
+    // Otherwise the anchor's default push navigation is used — normal
+    // SvelteKit client-side navigation, no history manipulation.
   }
 </script>
 
@@ -152,14 +179,14 @@
 
     <!-- The ONLY two entries per the plan: My List + Settings -->
     <nav class="sheet-menu" aria-label="Account menu">
-      <a class="menu-row" href="/my-list" onclick={menuNavigate}>
+      <a class="menu-row" href="/my-list" onclick={(event) => menuNavigate(event, '/my-list')}>
         <span class="menu-icon"><Bookmark size={17} /></span>
         <span class="menu-copy">
           <strong>My List</strong>
           <small>Your saved titles and watch progress</small>
         </span>
       </a>
-      <a class="menu-row" href="/settings" onclick={menuNavigate}>
+      <a class="menu-row" href="/settings" onclick={(event) => menuNavigate(event, '/settings')}>
         <span class="menu-icon"><Settings size={17} /></span>
         <span class="menu-copy">
           <strong>Settings</strong>

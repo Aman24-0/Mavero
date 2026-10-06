@@ -394,23 +394,60 @@ export async function getTmdbCollection(type: Exclude<ContentType, 'anime'>, pag
   const adultIds = type === 'movie' ? await getResolvedAdultProviderIds() : [];
   const providerExclusion = type === 'movie' && adultIds.length > 0 ? adultIds.join('|') : undefined;
   const adultExclusion = networkExclusion ?? providerExclusion;
-  const key = `tmdb:collection:${type}:${page}:${genreId ?? ''}:${year ?? ''}:${filters.sort ?? ''}:${adultExclusion ?? 'no-adult'}`;
+  // Explorer language filter — validated against the closed
+  // DiscoverLanguage union by the caller; 'all'/undefined keeps the
+  // pre-Explorer single-page behavior byte-for-byte.
+  const language = filters.language && filters.language !== 'all' ? filters.language : undefined;
+  const langParam = language && language !== 'other' ? DISCOVER_LANGUAGE_PARAM[language] : undefined;
+  const key = `tmdb:collection:${type}:${page}:${genreId ?? ''}:${year ?? ''}:${filters.sort ?? ''}:${language ?? 'all'}:${adultExclusion ?? 'no-adult'}`;
   const { value, stale } = await getOrSet(key, listPolicy, async () => {
     const path = type === 'movie' ? '/discover/movie' : '/discover/tv';
-    const params: Record<string, string | number | boolean | undefined> = {
-      page,
-      include_adult: false,
-      sort_by: sortBy,
-      with_genres: genreId,
-      ...(type === 'movie' ? { primary_release_year: year } : { first_air_date_year: year }),
-      ...(filters.sort === 'Top rated' ? { 'vote_count.gte': 250 } : {}),
-      ...(filters.sort === 'Newest' ? type === 'movie' ? { 'release_date.lte': new Date().toISOString().slice(0, 10) } : { 'first_air_date.lte': new Date().toISOString().slice(0, 10) } : {}),
-      ...(networkExclusion ? { without_networks: networkExclusion } : {}),
-      ...(providerExclusion ? { 'without_watch_providers': providerExclusion, watch_region: 'IN' } : {}),
-    };
-    const result = await tmdbRequest<TmdbList<TmdbMedia>>(path, params);
-    const items = (result.results ?? []).filter((item) => hasRequiredListMetadata(item, type)).map((item) => mapTmdb(item, type));
-    return { items, page: result.page ?? page, hasNextPage: (result.page ?? page) < (result.total_pages ?? page), totalPages: result.total_pages, source: tmdbSource() };
+    // Language-filtered walk — the EXACT deterministicSoapWalk pattern
+    // from getTmdbPopularByLanguage: for a specific language the walk
+    // starts at upstream page 1 EVERY time, so feed page N = survivor
+    // rows [(N-1)*10, N*10) — disjoint, stable, no gaps. 'other' walks
+    // with the exclusion filter. Without a language filter the original
+    // single-upstream-page behavior is preserved exactly.
+    const isLanguageWalk = Boolean(language);
+    const survivorTarget = isLanguageWalk ? page * DISCOVER_PAGE_SIZE : DISCOVER_PAGE_SIZE;
+    const maxWalked = isLanguageWalk ? Math.min(MAX_OTHER_LANGUAGE_PAGES * page, 30) : 1;
+    const collected: TmdbMedia[] = [];
+    let upstreamPage = isLanguageWalk ? 1 : page;
+    let upstreamHasNext = true;
+    let pagesWalked = 0;
+    let lastTotalPages: number | undefined;
+    while (collected.length < Math.max(1, survivorTarget) && upstreamHasNext && pagesWalked < maxWalked) {
+      const params: Record<string, string | number | boolean | undefined> = {
+        page: upstreamPage,
+        include_adult: false,
+        sort_by: sortBy,
+        with_genres: genreId,
+        ...(type === 'movie' ? { primary_release_year: year } : { first_air_date_year: year }),
+        ...(filters.sort === 'Top rated' ? { 'vote_count.gte': 250 } : {}),
+        ...(filters.sort === 'Newest' ? type === 'movie' ? { 'release_date.lte': new Date().toISOString().slice(0, 10) } : { 'first_air_date.lte': new Date().toISOString().slice(0, 10) } : {}),
+        ...(networkExclusion ? { without_networks: networkExclusion } : {}),
+        ...(providerExclusion ? { 'without_watch_providers': providerExclusion, watch_region: 'IN' } : {}),
+        ...(langParam ? { with_original_language: langParam } : {}),
+        ...(type === 'movie' ? { region: 'IN' } : {})
+      };
+      const result = await tmdbRequest<TmdbList<TmdbMedia>>(path, params);
+      lastTotalPages = result.total_pages;
+      const raw = (result.results ?? []).filter((item) => hasRequiredListMetadata(item, type));
+      const filtered = language ? applyLanguageFilter(raw, language) : raw;
+      for (const item of filtered) {
+        if (!collected.some((existing) => existing.id === item.id)) collected.push(item);
+      }
+      upstreamHasNext = (result.page ?? upstreamPage) < (result.total_pages ?? upstreamPage);
+      upstreamPage += 1;
+      pagesWalked += 1;
+      if (!isLanguageWalk) break;
+    }
+    const sliceStart = isLanguageWalk ? (page - 1) * DISCOVER_PAGE_SIZE : 0;
+    const items = collected.slice(sliceStart, sliceStart + DISCOVER_PAGE_SIZE).map((item) => mapTmdb(item, type));
+    const hasNextPage = isLanguageWalk
+      ? collected.length >= sliceStart + DISCOVER_PAGE_SIZE && upstreamHasNext
+      : (page) < (lastTotalPages ?? page);
+    return { items, page, hasNextPage, totalPages: lastTotalPages, source: tmdbSource() };
   });
   return { ...value, source: { ...value.source, stale } };
 }
@@ -710,6 +747,7 @@ const DISCOVER_LANGUAGE_PARAM: Record<DiscoverLanguage, string | undefined> = {
   te: 'te',
   ml: 'ml',
   kn: 'kn',
+  ja: 'ja',
   // 'other' has no direct TMDB param — handled via server-side exclusion.
   other: undefined,
 };
@@ -1164,28 +1202,46 @@ export async function getTmdbGenreByLanguage(genreId: number, language: Discover
  * For pagination we accumulate across upstream pages so each "Show
  * more" returns the next 10 valid unique anime titles.
  */
-export async function getTmdbAnimeMerged(sort: 'popularity' | 'top-rated', page = 1): Promise<ContentList> {
-  const key = `tmdb:anime-merged:${sort}:${page}`;
+/**
+ * Anime Explorer genre constraint. Anime movies and anime series carry
+ * DIFFERENT TMDB genre taxonomies (movie: 28 Action / 878 Sci-Fi…;
+ * TV: 10759 Action & Adventure / 10765 Sci-Fi & Fantasy…), so one
+ * Explorer genre maps to an optional id PER side. When a side has no
+ * matching genre (e.g. TV has no Horror genre), that side is skipped
+ * entirely — never queried with an invented id.
+ */
+export type AnimeGenreConstraint = { movieGenreId?: number; tvGenreId?: number };
+
+export async function getTmdbAnimeMerged(sort: 'popularity' | 'top-rated', page = 1, genre?: AnimeGenreConstraint): Promise<ContentList> {
+  const key = `tmdb:anime-merged:${sort}:${page}:${genre?.movieGenreId ?? ''}:${genre?.tvGenreId ?? ''}`;
   const { value, stale } = await getOrSet(key, listPolicy, async () => {
     const sortBy = sort === 'top-rated' ? 'vote_average.desc' : 'popularity.desc';
     const voteCountGte = sort === 'top-rated' ? 200 : undefined;
+    // Anime base genre (16 Animation) + the optional Explorer genre.
+    // With both, TMDB requires BOTH ids on the row (comma-AND).
+    const movieGenres = genre?.movieGenreId ? `16,${genre.movieGenreId}` : 16;
+    const tvGenres = genre?.tvGenreId ? `16,${genre.tvGenreId}` : 16;
     const [movieResult, tvResult] = await Promise.all([
-      tmdbRequest<TmdbList<TmdbMovie>>('/discover/movie', {
-        page,
-        include_adult: false,
-        sort_by: sortBy,
-        with_genres: 16,
-        with_original_language: 'ja',
-        ...(voteCountGte ? { 'vote_count.gte': voteCountGte } : {})
-      }).catch(() => ({ results: [], page, total_pages: page } as TmdbList<TmdbMovie>)),
-      tmdbRequest<TmdbList<TmdbTv>>('/discover/tv', {
-        page,
-        include_adult: false,
-        sort_by: sortBy,
-        with_genres: 16,
-        with_original_language: 'ja',
-        ...(voteCountGte ? { 'vote_count.gte': voteCountGte } : {})
-      }).catch(() => ({ results: [], page, total_pages: page } as TmdbList<TmdbTv>)),
+      genre && genre.movieGenreId === undefined
+        ? Promise.resolve({ results: [], page, total_pages: page } as TmdbList<TmdbMovie>)
+        : tmdbRequest<TmdbList<TmdbMovie>>('/discover/movie', {
+          page,
+          include_adult: false,
+          sort_by: sortBy,
+          with_genres: movieGenres,
+          with_original_language: 'ja',
+          ...(voteCountGte ? { 'vote_count.gte': voteCountGte } : {})
+        }).catch(() => ({ results: [], page, total_pages: page } as TmdbList<TmdbMovie>)),
+      genre && genre.tvGenreId === undefined
+        ? Promise.resolve({ results: [], page, total_pages: page } as TmdbList<TmdbTv>)
+        : tmdbRequest<TmdbList<TmdbTv>>('/discover/tv', {
+          page,
+          include_adult: false,
+          sort_by: sortBy,
+          with_genres: tvGenres,
+          with_original_language: 'ja',
+          ...(voteCountGte ? { 'vote_count.gte': voteCountGte } : {})
+        }).catch(() => ({ results: [], page, total_pages: page } as TmdbList<TmdbTv>))
     ]);
     const movieItems = (movieResult.results ?? []).filter((item) => hasRequiredListMetadata(item, 'movie')).map((item) => mapTmdb(item, 'movie'));
     const tvItems = (tvResult.results ?? []).filter((item) => hasRequiredListMetadata(item, 'series')).map((item) => mapTmdb(item, 'series'));

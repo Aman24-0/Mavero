@@ -5,10 +5,9 @@ import type { ContentType } from '$data/content';
  *
  * ONE source of truth for how each content destination is presented in
  * user-facing copy (headings, titles, rails, meta). Consumed by
- * DestinationPage (hero + rails) and CollectionPage (the embedded
- * "browse the full collection" section). Keeping this map shared
- * prevents the "Seriess"-class pluralization drift this redesign
- * already fixed once.
+ * ExplorerPage (the Movies / TV Shows / Anime Explorers). Keeping this
+ * map shared prevents the "Seriess"-class pluralization drift this
+ * redesign already fixed once.
  */
 export const DESTINATION_LABELS: Record<ContentType, { plural: string; singular: string; prose: string; description: string }> = {
   movie: {

@@ -1,18 +1,18 @@
 <script lang="ts">
-  import DestinationPage from '$components/DestinationPage.svelte';
+  import ExplorerPage from '$components/ExplorerPage.svelte';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
 </script>
 
-<DestinationPage
+<ExplorerPage
   type="series"
-  heroItem={data.heroItem}
-  rails={data.rails}
-  contentItems={data.items}
+  spotlight={data.spotlight}
+  sections={data.sections}
+  filteredItems={data.filteredItems}
   currentPage={data.page}
   hasNextPage={data.hasNextPage}
   totalPages={data.totalPages}
-  collectionFilters={data.filters}
+  filters={data.filters}
   errorMessage={data.errorMessage}
 />

@@ -234,3 +234,32 @@ header sheet; the Account page converts to `/settings`.
 **Status**: COMPLETE. All gates pass (`pnpm check` 0/0, `pnpm test`
 220 scripts, `pnpm build` OK); full live regression verified on the
 production build.
+
+---
+
+## 2026-10-06 — Explorer + Navigation + Search + Detail UX (follow-up)
+
+**Approved six-change task on top of the completed redesign:**
+
+- /movies, /tv-shows, /anime are now dedicated Explorers: a 6-slide
+  Spotlight Carousel (4s auto-rotation, ~90% available width,
+  deterministic daily rotation over recent popular titles), sticky
+  Genre + Language chip rows from ONE shared closed taxonomy of real
+  TMDB ids, Popular + Top Rated sections (cross-section deduped) when
+  no filter is active, and a responsive progressive/infinite filtered
+  feed when one is. The old DestinationPage/CollectionPage/FilterBar
+  UI is fully removed; the legacy /discover/* redirects remain.
+- /my-list and /settings gained explicit Back → /discover controls,
+  and the account sheet's history behavior was fixed
+  (Discover → Account → My List → Account → Settings → Back =
+  Discover, no account-surface history loop).
+- The Search page gained ONLY a Recent Searches row (localStorage,
+  bounded, re-runnable, individually removable, hidden when empty).
+- The detail page's mobile top spacing was reduced by ~18px
+  (150→132px) and its provider heading renamed to "Available on".
+
+**Status**: COMPLETE. All gates pass (`pnpm check` 0/0, `pnpm test`
+222 scripts, `pnpm build` OK); live behavioral + viewport
+verification (360/390/820/1440) passed — see
+MAVERO_NAVIGATION_SETTINGS_REDESIGN_WORKLOG.md and
+docs/qa/explorer-verification/.

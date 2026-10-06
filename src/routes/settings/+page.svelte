@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { Check, LockKeyhole, LogIn, LogOut, Mail, Monitor, ShieldCheck, Smartphone, Sparkles, Trash2, Tv, UserRound, Laptop, LoaderCircle, QrCode } from 'lucide-svelte';
+  import { goto } from '$app/navigation';
+  import { ArrowLeft, Check, LockKeyhole, LogIn, LogOut, Mail, Monitor, ShieldCheck, Smartphone, Sparkles, Trash2, Tv, UserRound, Laptop, LoaderCircle, QrCode } from 'lucide-svelte';
   import type { PageData } from './$types';
   import ConfirmDialog from '$components/ConfirmDialog.svelte';
   import AppFooter from '$components/AppFooter.svelte';
@@ -435,6 +436,21 @@
 <svelte:head><title>Settings — Mavero</title><meta name="description" content="Your Mavero settings, account and preferences in one place." /><meta name="robots" content="noindex,nofollow" /></svelte:head>
 
 <div class="settings-page">
+  <!-- Back to Discover (Explorer redesign, Change 2) — Settings is a
+       dedicated/direct destination, so the page carries an explicit
+       back affordance. It uses replace-state navigation so the phone/
+       browser Back button afterwards does not loop straight back into
+       Settings. -->
+  <div class="back-row">
+    <a
+      class="back-to-discover"
+      href="/discover"
+      aria-label="Back to Discover"
+      onclick={(event) => { event.preventDefault(); void goto('/discover', { replaceState: true }); }}
+    >
+      <ArrowLeft size={15} /> <span>Back</span>
+    </a>
+  </div>
   <!-- Compact identity header: avatar + name + email + sync state -->
   <header class="settings-top">
     <div class="top-inner">
@@ -716,6 +732,25 @@
       radial-gradient(circle at 88% -40%, var(--color-primary-soft), transparent 46%),
       var(--color-bg);
   }
+  /* Back to Discover (Change 2) — same gutter + design language as the
+     shell controls (glass chip, focus-visible, reduced motion). */
+  .back-row { padding: 16px var(--a-gutter) 0; }
+  .back-to-discover {
+    display: inline-flex; align-items: center; gap: 7px;
+    min-height: 44px; padding: 0 16px;
+    border: 1px solid var(--color-border);
+    border-radius: 999px;
+    color: var(--color-text-muted);
+    background: rgba(8, 11, 13, .55);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    font-size: .74rem; font-weight: 800; letter-spacing: .02em;
+    text-decoration: none;
+    transition: color var(--motion-fast), border-color var(--motion-fast), background var(--motion-fast), transform var(--motion-fast);
+  }
+  .back-to-discover:hover { color: var(--color-primary); border-color: var(--color-primary-border); background: var(--color-primary-soft); }
+  .back-to-discover:active { transform: scale(.97); }
+  .back-to-discover:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
   .top-inner { width: min(800px, 100%); margin-inline: auto; }
   .page-eyebrow {
     display: inline-flex; align-items: center; gap: 6px;
@@ -1067,6 +1102,7 @@
   }
   @media (min-width: 900px) {
     .settings-top { padding-top: 26px; }
+    .back-row { padding-top: 22px; }
     .avatar { width: 52px; height: 52px; font-size: 1.02rem; }
     .identity-copy h1 { font-size: 1.26rem; }
     .settings-section { padding: 15px 18px 17px; }
@@ -1077,7 +1113,7 @@
     .top-inner { width: min(1100px, 100%); }
   }
   @media (prefers-reduced-motion: reduce) {
-    .sign-in-cta, .secondary-cta, .toggle-switch i, .toggle-switch i::after, .signout-btn, .delete-account-btn, .cinelog-cta, .identity-meta > span.syncing { transition: none; animation: none; }
+    .sign-in-cta, .secondary-cta, .toggle-switch i, .toggle-switch i::after, .signout-btn, .delete-account-btn, .cinelog-cta, .identity-meta > span.syncing, .back-to-discover { transition: none; animation: none; }
   }
 
   /* ── Device sessions (Phase 2) ── */

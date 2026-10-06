@@ -126,7 +126,11 @@ const POLICY_OFF = { allowLoggedIn: false, allowGuest: false };
   for (const lang of ['hi', 'ta', 'te', 'ml', 'kn']) {
     assert.equal(isDiscoverLanguageValue(lang), true, `India-first language '${lang}' still valid`);
   }
-  assert.equal(DISCOVER_LANGUAGES.length, 8, 'the closed language union is unchanged');
+  // Explorer redesign: the union gained the real TMDB code 'ja' (the
+  // anime catalog's original language — offered honestly by the anime
+  // Explorer language row). The India-first set above is unchanged and
+  // the union stays closed.
+  assert.equal(DISCOVER_LANGUAGES.length, 9, 'the closed language union is unchanged (8 India-first values + ja)');
   ok('2. Popular TV keeps India region/OTT + language + adult constraints alongside the genre exclusion');
 }
 

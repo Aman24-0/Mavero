@@ -12,14 +12,13 @@ import { readFile } from 'node:fs/promises';
 
 const root = new URL('../', import.meta.url);
 
-const [tmdbSrc, typesSrc, presenterSrc, contentSrc, detailSrc, dropdownSrc, filterSrc] = await Promise.all([
+const [tmdbSrc, typesSrc, presenterSrc, contentSrc, detailSrc, dropdownSrc] = await Promise.all([
   readFile(new URL('src/lib/server/content/adapters/tmdb.ts', root), 'utf8'),
   readFile(new URL('src/lib/server/content/types.ts', root), 'utf8'),
   readFile(new URL('src/lib/server/content/presenter.ts', root), 'utf8'),
   readFile(new URL('src/lib/data/content.ts', root), 'utf8'),
   readFile(new URL('src/lib/components/DetailPage.svelte', root), 'utf8'),
-  readFile(new URL('src/lib/components/Dropdown.svelte', root), 'utf8'),
-  readFile(new URL('src/lib/components/FilterBar.svelte', root), 'utf8')
+  readFile(new URL('src/lib/components/Dropdown.svelte', root), 'utf8')
 ]);
 
 console.log('Trailer + cast data-flow contract tests');
@@ -83,14 +82,13 @@ for (const key of ["'ArrowDown'", "'ArrowUp'", "'Home'", "'End'", "'Enter'", "'E
 }
 assert.match(dropdownSrc, /handleDocumentClick/, 'Dropdown closes on outside click');
 
-// --- 11. FilterBar no longer uses native <select> ---
-assert.doesNotMatch(filterSrc, /<select/, 'FilterBar no longer uses native <select>');
-assert.match(filterSrc, /import Dropdown from/, 'FilterBar imports Dropdown component');
-assert.match(filterSrc, /<Dropdown/, 'FilterBar uses Dropdown component');
-
-// --- 12. Year filter is dynamic (current year → 1960, newest first) ---
-assert.match(filterSrc, /const currentYear = new Date\(\)\.getFullYear\(\)/, 'Year filter uses dynamic current year');
-assert.match(filterSrc, /currentYear - 1959/, 'Year filter spans current year back to 1960');
-assert.match(filterSrc, /currentYear - i/, 'Year filter iterates newest first (current year - i)');
+// --- 11. Filter UI (Explorer redesign) ---
+// The old FilterBar (Genre/Year/Sort dropdowns of the deleted collection
+// page) was removed with the collection UI. The Explorer filter chips
+// carry the filter contract now — no native <select> anywhere in them
+// (covered in depth by explorer_page_test / discover_subpage_ux_test).
+// The shared Dropdown listbox component is still used by the Discover
+// surfaces — its outside-click contract remains relevant here.
+assert.doesNotMatch(dropdownSrc, /<select/, 'Dropdown is not a native <select>');
 
 console.log('\nAll trailer + cast data-flow + UI contract tests passed');

@@ -152,6 +152,12 @@ export type CollectionFilters = {
   genre?: string;
   year?: string;
   sort?: CollectionSort;
+  /**
+   * Explorer language filter (original-language), validated against the
+   * existing DiscoverLanguage union. Undefined = no language constraint
+   * (the pre-Explorer behavior — every existing caller passes nothing).
+   */
+  language?: DiscoverLanguage;
 };
 
 export type SearchFilters = {
@@ -184,13 +190,15 @@ export type DiscoverLanguage =
   | 'te'    // Telugu
   | 'ml'    // Malayalam
   | 'kn'    // Kannada
-  | 'other'; // every TMDB original_language NOT in the above 6
+  | 'ja'    // Japanese (Explorer redesign: the anime catalog is genre 16 + 'ja' by the central classifier — a real TMDB code the Explorer anime language row offers honestly)
+  | 'other'; // every TMDB original_language NOT in the above 7
 
 // Single source of truth for the language union guard (Phase 7): both the
 // normal Discover rail surface (service.isDiscoverLanguage) and the Adult
 // Discover contract (adult-discover.ts) validate against THIS list, so the
-// two surfaces can never drift apart.
-export const DISCOVER_LANGUAGES: readonly DiscoverLanguage[] = ['all', 'hi', 'en', 'ta', 'te', 'ml', 'kn', 'other'];
+// two surfaces can never drift apart. The Discover language dropdown keeps
+// its own hardcoded option list (no Japanese option is offered there).
+export const DISCOVER_LANGUAGES: readonly DiscoverLanguage[] = ['all', 'hi', 'en', 'ta', 'te', 'ml', 'kn', 'ja', 'other'];
 
 export function isDiscoverLanguageValue(value: string | null | undefined): value is DiscoverLanguage {
   return typeof value === 'string' && (DISCOVER_LANGUAGES as readonly string[]).includes(value);

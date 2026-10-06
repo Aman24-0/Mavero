@@ -2,7 +2,7 @@
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
-  import { ArrowRight, Bookmark, CheckCircle2, Clock3, Eye, ListVideo, LoaderCircle, CheckSquare, Square, Trash2, X } from 'lucide-svelte';
+  import { ArrowLeft, ArrowRight, Bookmark, CheckCircle2, Clock3, Eye, ListVideo, LoaderCircle, CheckSquare, Square, Trash2, X } from 'lucide-svelte';
   import type { PageData } from './$types';
   import type { MediaItem } from '$data/content';
   import MediaCard from '$components/MediaCard.svelte';
@@ -275,6 +275,21 @@
 </svelte:head>
 
 <div class="my-list-page">
+  <!-- Back to Discover (Explorer redesign, Change 2) — My List is a
+       dedicated/direct destination, so the page carries an explicit
+       back affordance. It uses replace-state navigation so the phone/
+       browser Back button afterwards does not loop straight back into
+       My List. -->
+  <div class="back-row">
+    <a
+      class="back-to-discover"
+      href="/discover"
+      aria-label="Back to Discover"
+      onclick={(event) => { event.preventDefault(); void goto('/discover', { replaceState: true }); }}
+    >
+      <ArrowLeft size={15} /> <span>Back</span>
+    </a>
+  </div>
   <header class="list-header">
     <div class="header-inner">
       <!-- Simplified header: only the eyebrow (promoted to the page
@@ -454,6 +469,25 @@
       radial-gradient(circle at 80% -20%, var(--color-primary-soft), transparent 50%),
       var(--color-bg);
   }
+  /* Back to Discover (Change 2) — same gutter + design language as the
+     shell controls (glass chip, focus-visible, reduced motion). */
+  .back-row { padding: 18px var(--l-gutter) 0; }
+  .back-to-discover {
+    display: inline-flex; align-items: center; gap: 7px;
+    min-height: 44px; padding: 0 16px;
+    border: 1px solid var(--color-border);
+    border-radius: 999px;
+    color: var(--color-text-muted);
+    background: rgba(8, 11, 13, .55);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    font-size: .74rem; font-weight: 800; letter-spacing: .02em;
+    text-decoration: none;
+    transition: color var(--motion-fast), border-color var(--motion-fast), background var(--motion-fast), transform var(--motion-fast);
+  }
+  .back-to-discover:hover { color: var(--color-primary); border-color: var(--color-primary-border); background: var(--color-primary-soft); }
+  .back-to-discover:active { transform: scale(.97); }
+  .back-to-discover:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
   .header-inner { width: min(1400px, 100%); margin-inline: auto; }
   .header-eyebrow {
     display: inline-flex; align-items: center; gap: 6px;
@@ -755,6 +789,7 @@
   @media (max-width: 760px) {
     .list-header { padding-top: 22px; }
     .header-status-row { gap: 10px; }
+    .back-row { padding: 12px var(--l-gutter) 0; }
   }
   @media (max-width: 640px) {
     .status-chip { min-height: 36px; padding: 0 11px; font-size: .68rem; gap: 6px; }
@@ -779,6 +814,6 @@
     .media-grid { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 32px 18px; }
   }
   @media (prefers-reduced-motion: reduce) {
-    .status-chip, .loading-state :global(svg), .list-status span.syncing, .empty-action, .action-bar { transition: none; animation: none; }
+    .status-chip, .loading-state :global(svg), .list-status span.syncing, .empty-action, .action-bar, .back-to-discover { transition: none; animation: none; }
   }
 </style>

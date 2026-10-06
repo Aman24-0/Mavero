@@ -59,8 +59,8 @@ await assert.rejects(
     'Search page must NOT use $effect to sync results from data');
   assert.doesNotMatch(searchSource, /\buntrack\b/,
     'Search page must NOT import or use untrack');
-  assert.match(searchSource, /import \{ onDestroy \} from 'svelte'/,
-    'Search page must still import onDestroy from svelte');
+  assert.match(searchSource, /import \{ (?:onDestroy|onDestroy, onMount|onMount, onDestroy) \} from 'svelte'/,
+    'Search page must still import onDestroy from svelte (now alongside onMount for the recent-searches seed)');
 
   // The Search page must export a SvelteKit snapshot.
   assert.match(searchSource, /export const snapshot = \{/,

@@ -592,4 +592,116 @@ export function buildStreamingIdSet(items: HeroCandidate[]): Set<string> {
   return out;
 }
 
+// ============================================================
+// EXPLORER SPOTLIGHT — deterministic daily 6-slide lineup for the
+// Movies / TV Shows / Anime Explorers.
+//
+// Differences from the Discover hero lineup (selectHeroLineup):
+//   - SINGLE-type: all slides come from ONE destination's pool (the
+//     Movies spotlight is 6 movies — no M/S/M/S interleaving).
+//   - EXACTLY 6 slots: when fresh (30-day window) candidates are
+//     fewer than 6, the lineup is topped up with the best
+//     non-fresh eligible candidates (popularity-ranked) — the
+//     spec's "sensible fallback" — so the carousel keeps six
+//     slides instead of shrinking. NO stale fill when the catalog
+//     has enough fresh candidates.
+//   - Same rotation mechanics: deterministic, bucket-based, within
+//     the top relevance window — same bucket = same spotlight,
+//     different days can rotate different titles in.
+//   - Same purity: no Svelte, no network, no Math.random — fully
+//     unit-testable.
+// ============================================================
+
+export const SPOTLIGHT_SIZE = 6;
+// Rotation window for the fresh pool: never pick below the top 18 by
+// score. With 6 slots that gives 13 distinct daily offsets — the same
+// controlled-rotation idea as the hero, sized for a single pool.
+export const SPOTLIGHT_RELEVANCE_WINDOW_SIZE = 18;
+
+export type SpotlightResult<T extends HeroCandidate = HeroCandidate> = {
+  spotlight: T[];
+  freshCount: number;
+  fallbackCount: number;
+  eligibleCount: number;
+  rawCount: number;
+  bucket: number;
+};
+
+/**
+ * Select the Explorer Spotlight lineup for one content type.
+ *
+ * Contract:
+ *   - Up to SPOTLIGHT_SIZE (6) slides; fewer only when the catalog
+ *     genuinely cannot supply 6 usable (deduped, backdrop-bearing,
+ *     non-adult) titles; NEVER synthetic.
+ *   - FRESH FIRST: candidates passing isFreshForHero (movies:
+ *     30-day release window; series: current activity or 30-day
+ *     premiere) fill the slots first, ranked by scoreHeroCandidate.
+ *   - SENSIBLE FALLBACK: remaining slots are topped up with the
+ *     best NON-fresh eligible candidates (popularity-led score).
+ *   - DETERMINISTIC ROTATION: within the top fresh
+ *     SPOTLIGHT_RELEVANCE_WINDOW_SIZE candidates, the 6-slide window
+ *     start rotates by `bucket % (window - 6 + 1)` — different days
+ *     surface different titles, same day is stable (SSR/hydration
+ *     safe). The fallback fill is score-ranked (no rotation needed —
+ *     it only appears when the fresh pool is already thin).
+ *   - No duplicate `type:id` within a lineup.
+ */
+export function selectSpotlightLineup<T extends HeroCandidate = HeroCandidate>(
+  items: T[],
+  activeSeriesIds: Set<string>,
+  bucket: number,
+  now: number = Date.now()
+): SpotlightResult<T> {
+  // Dedupe + adult + backdrop gates (same stage order as the hero pool).
+  const seen = new Set<string>();
+  const usable: { item: T; score: number; fresh: boolean }[] = [];
+  for (const item of items) {
+    if (isAdultTagged(item)) continue;
+    if (!hasHeroBackdrop(item)) continue;
+    const key = `${item.type}:${item.id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    usable.push({
+      item,
+      score: scoreHeroCandidate(item, new Set<string>(), activeSeriesIds, now),
+      fresh: isFreshForHero(item, activeSeriesIds, now)
+    });
+  }
+
+  const fresh = usable.filter((entry) => entry.fresh).sort((a, b) => b.score - a.score);
+  const fallback = usable.filter((entry) => !entry.fresh).sort((a, b) => b.score - a.score);
+
+  const spotlight: T[] = [];
+
+  // Fresh picks with controlled daily rotation (same bucket math as the
+  // hero: offset within the top relevance window).
+  if (fresh.length > 0) {
+    const windowSize = Math.min(SPOTLIGHT_RELEVANCE_WINDOW_SIZE, fresh.length);
+    const window = fresh.slice(0, windowSize);
+    if (window.length <= SPOTLIGHT_SIZE) {
+      spotlight.push(...window.map((entry) => entry.item));
+    } else {
+      const maxOffset = window.length - SPOTLIGHT_SIZE;
+      const offset = bucket % (maxOffset + 1);
+      spotlight.push(...window.slice(offset, offset + SPOTLIGHT_SIZE).map((entry) => entry.item));
+    }
+  }
+
+  // Sensible fallback fill — only the REMAINING slots.
+  const freshCount = spotlight.length;
+  if (spotlight.length < SPOTLIGHT_SIZE) {
+    spotlight.push(...fallback.slice(0, SPOTLIGHT_SIZE - spotlight.length).map((entry) => entry.item));
+  }
+
+  return {
+    spotlight,
+    freshCount,
+    fallbackCount: spotlight.length - freshCount,
+    eligibleCount: usable.length,
+    rawCount: items.length,
+    bucket
+  };
+}
+
 export type { NormalizedMediaItem };

@@ -634,10 +634,13 @@
        disconnected cards.
        ============================================================ -->
   <div class="detail-body">
-    <!-- P3: Streaming on — India flatrate OTT providers from TMDB. -->
+    <!-- P3: Available on (renamed from "Streaming on" in the Explorer
+         redesign, Change 6 — label copy only; the provider cards/logos
+         and their behavior are unchanged) — India flatrate OTT
+         providers from TMDB. -->
     {#if item.streamingProviders && item.streamingProviders.length > 0}
       <section class="streaming-section" aria-labelledby="streaming-heading">
-        <h2 class="section-h" id="streaming-heading">Streaming on</h2>
+        <h2 class="section-h" id="streaming-heading">Available on</h2>
         <div class="streaming-providers" role="list">
           {#each item.streamingProviders as provider (provider.id)}
             <div class="streaming-provider" role="listitem">
@@ -992,7 +995,7 @@
   }
 
   /* Cast rail */
-  /* P3: Streaming on section — compact, above Cast. */
+  /* P3: Available on section (renamed copy, Change 6) — compact, above Cast. */
   .streaming-section { margin-top: clamp(28px, 4vw, 40px); }
   .streaming-providers { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
   .streaming-provider { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border: 1px solid var(--color-border-strong); border-radius: 999px; background: var(--color-surface); }
@@ -1195,7 +1198,13 @@
       padding-top: clamp(56px, 12vh, 100px);
     }
     .hero-composition { gap: 18px; }
-    .poster-wrap { margin-top: 150px; }
+    /* Explorer redesign, Change 5 — surgical ~18px reduction of the
+       top spacing above the poster/identity block (150px → 132px) so
+       the primary action buttons (Resume/Play, Download, Watching,
+       Share, Trailer) are visible sooner when the detail page opens
+       on a phone. The backdrop composition, aspect ratio, button
+       behavior and every other breakpoint are untouched. */
+    .poster-wrap { margin-top: 132px; }
     .poster-img { width: clamp(120px, 36vw, 142px); border-radius: 10px; }
     .detail-title { font-size: clamp(1.5rem, 6.4vw, 2rem); }
     .meta-row { font-size: .7rem; gap: 6px; }

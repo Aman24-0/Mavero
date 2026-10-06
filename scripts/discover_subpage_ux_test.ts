@@ -1,34 +1,37 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-// MAVERO — Collection Destinations UX/UI Contract
-// (Navigation & Settings Redesign, Phase 1).
+// MAVERO — Explorer Destinations UX/UI Contract
+// (Navigation & Settings Redesign Phase 1 + the Explorer redesign).
 //
-// Regression contract for /movies, /tv-shows, /anime (all rendering the
-// shared CollectionPage as FIRST-CLASS destinations, moved from
-// /discover/{movies,series,anime}):
+// Regression contract for /movies, /tv-shows, /anime — the three
+// first-class destinations, now rendered as dedicated Explorers
+// (spotlight carousel + genre/language chips + Popular/Top Rated
+// sections, or the filtered progressive feed):
 //
 //   NAV        — the three destinations render INSIDE the consumer
 //                AppShell (sidebar + bottom nav): they are top-level
 //                routes, not Discover children. The "← Discover" back
-//                link is gone. /discover, /search, /my-list, /account
+//                link is gone. /discover, /search, /my-list, /settings
 //                keep AppShell; admin/watch/auth bare behavior unchanged.
 //   REDIRECTS  — the legacy /discover/{movies,series,anime} paths are
-//                permanent 308 redirects preserving the query string
-//                (page/genre/year/sort); no canonical implementation
-//                remains at the old paths.
-//   FILTER     — genre/year/sort changes reset to page 1, build canonical
-//                shareable URLs, invalid values fail server-side-safe.
-//   PAGINATION — previous/next + disabled state + query preservation +
-//                "Page X of Y" only when the server provides a total.
-//   RESPONSIVE — compact mobile filter control + 2-column grid + no
-//                overflow-prone layouts at 390/360px, desktop unchanged.
+//                permanent 308 redirects preserving the query string.
+//   ROUTES     — one shared ExplorerPage serves all three destinations
+//                (no duplicate canonical implementations).
+//   FILTER     — genre/language chips build canonical shareable URLs,
+//                reset to the feed's first page, and every value is
+//                validated server-side against closed taxonomies.
+//   RESULTS    — progressive/infinite loading with dedup, guarded
+//                requests and a responsive first batch (the detailed
+//                contracts live in explorer_page_test.ts).
+//   RESPONSIVE — horizontally scrollable chip rows + 2-column mobile
+//                grid + no overflow-prone layouts at 390/360px.
 //   SCROLL     — root snapshot mechanism intact; no custom scroll stores.
 //   ANIME      — anime shares the shell, keeps its identity, and no
 //                legacy anime architecture is reintroduced.
 //   TERMINOLOGY — "Series" is presented as "TV Shows" in destination
-//                copy (heading, title, meta) while the card badge
-//                pipeline (formatType) is untouched.
+//                copy while the card badge pipeline (formatType) is
+//                untouched.
 
 let passed = 0;
 function ok(message: string) {
@@ -40,12 +43,11 @@ const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf
 
 const rootLayout = read('../src/routes/+layout.svelte');
 const appShell = read('../src/lib/components/AppShell.svelte');
-const collection = read('../src/lib/components/CollectionPage.svelte');
-const filterBar = read('../src/lib/components/FilterBar.svelte');
-const dropdown = read('../src/lib/components/Dropdown.svelte');
-const emptyState = read('../src/lib/components/EmptyState.svelte');
+const explorerPage = read('../src/lib/components/ExplorerPage.svelte');
+const spotlightCarousel = read('../src/lib/components/SpotlightCarousel.svelte');
 const mediaCard = read('../src/lib/components/MediaCard.svelte');
-const loader = read('../src/lib/server/content/discover-load.ts');
+const taxonomy = read('../src/lib/shared/explorer-taxonomy.ts');
+const loader = read('../src/lib/server/content/explorer-load.ts');
 const types = read('../src/lib/server/content/types.ts');
 const tmdbAdapter = read('../src/lib/server/content/adapters/tmdb.ts');
 const routes = {
@@ -87,10 +89,11 @@ ok('1. /movies, /tv-shows, /anime render inside the consumer AppShell (no bare r
 assert.match(appShell, /Discover[\s\S]*Movies[\s\S]*TV Shows[\s\S]*Anime[\s\S]*Upcoming[\s\S]*Search/, 'consumer primary links: Discover/Movies/TV Shows/Anime/Upcoming/Search');
 assert.match(appShell, /class="mobile-nav"/, 'mobile bottom nav still defined for consumer pages');
 assert.doesNotMatch(appShell, /\/admin|\/discover\/movies/, 'AppShell gains no route special cases (new destinations are normal AppShell pages)');
-// The back link to Discover is gone — these are not child pages anymore.
-assert.doesNotMatch(collection, /back-link/, 'the "← Discover" back link is removed from the shared collection shell');
-assert.doesNotMatch(collection, /href="\/discover"/, 'no Discover dependency remains in the collection shell');
-ok('2. AppShell carries the six destinations; the collection shell has no Discover dependency');
+// The back link to Discover is gone — these are not child pages anymore,
+// and the Explorer UI carries no Discover dependency.
+assert.doesNotMatch(explorerPage, /back-link/, 'no "← Discover" back link in the Explorer shell');
+assert.doesNotMatch(explorerPage, /href="\/discover"/, 'no Discover dependency remains in the Explorer shell');
+ok('2. AppShell carries the six destinations; the Explorer shell has no Discover dependency');
 
 // ============================================================
 // 3. REDIRECTS — legacy paths redirect permanently, query preserved
@@ -99,129 +102,99 @@ assert.match(legacyServers.movies, /throw redirect\(308, `\/movies\$\{url\.searc
 assert.match(legacyServers.series, /throw redirect\(308, `\/tv-shows\$\{url\.search\}`\)/, '/discover/series → 308 /tv-shows with query');
 assert.match(legacyServers.anime, /throw redirect\(308, `\/anime\$\{url\.search\}`\)/, '/discover/anime → 308 /anime with query');
 for (const [key, server] of Object.entries(legacyServers)) {
-  assert.doesNotMatch(server, /loadCollectionData/, `${key} legacy route has no collection loader (no duplicate implementation)`);
+  assert.doesNotMatch(server, /loadCollectionData|loadExplorerData/, `${key} legacy route has no page loader (no duplicate implementation)`);
   assert.doesNotMatch(server, /export const actions/, `${key} legacy route exports no actions`);
 }
 ok('3. legacy routes are permanent query-preserving redirects with zero page implementation');
 
 // ============================================================
-// 4. ROUTES — the new paths use the shared DestinationPage (Phase 4)
-//    which embeds the shared CollectionPage as its "full collection"
-//    section
+// 4. ROUTES — the new paths use the shared ExplorerPage (one Explorer
+//    per destination: spotlight + chips + sections / filtered feed)
 // ============================================================
-assert.match(routes.movies, /<DestinationPage\s+type="movie"/, '/movies renders the shared DestinationPage');
-assert.match(routes.series, /<DestinationPage\s+type="series"/, '/tv-shows renders the shared DestinationPage');
-assert.match(routes.anime, /<DestinationPage\s+type="anime"/, '/anime renders the shared DestinationPage');
-const destinationPage = read('../src/lib/components/DestinationPage.svelte');
-assert.match(destinationPage, /<CollectionPage\s+\{type\}/, 'DestinationPage embeds the shared CollectionPage below the cinematic content');
-assert.match(destinationPage, /<ContentRail title=\{rail\.title\} items=\{rail\.items\} \/>/, 'rails render through the existing ContentRail component');
-assert.match(destinationPage, /heroItem\.backdrop/, 'the cinematic hero renders the featured item backdrop');
-assert.match(destinationPage, /\/watch\/\$\{heroItem\.type\}\/\$\{heroItem\.id\}/, 'hero Play links to the existing watch route (playback preserved)');
+assert.match(routes.movies, /<ExplorerPage\s+type="movie"/, '/movies renders the shared ExplorerPage');
+assert.match(routes.series, /<ExplorerPage\s+type="series"/, '/tv-shows renders the shared ExplorerPage');
+assert.match(routes.anime, /<ExplorerPage\s+type="anime"/, '/anime renders the shared ExplorerPage');
+assert.match(explorerPage, /<SpotlightCarousel items=\{spotlight\}/, 'the Explorer embeds the spotlight carousel');
+assert.match(explorerPage, /<ContentRail title=\{section\.title\} items=\{section\.items\} \/>/, 'unfiltered sections render through the existing ContentRail component');
+assert.match(spotlightCarousel, /\/watch\/\$\{slide\.type\}\/\$\{slide\.id\}/, 'spotlight Play links to the existing watch route (playback preserved)');
 for (const [key, src] of Object.entries(routes)) assert.match(src, /totalPages=\{data\.totalPages\}/, `${key} route passes totalPages through`);
-ok('4. the three first-class routes reuse one shared DestinationPage (hero + rails + embedded collection)');
+ok('4. the three first-class routes reuse one shared ExplorerPage (spotlight + chips + sections/feed)');
 
 // ============================================================
-// 5. FILTER — page reset, canonical URLs, server-side safety
+// 5. FILTER — canonical URLs, first-page reset, server-side safety
 // ============================================================
-assert.match(collection, /params\.set\('page', '1'\)/, 'every filter change resets to page 1');
-assert.match(collection, /void goto\(`\$\{page\.url\.pathname\}\$\{query \? `\?\$\{query\}` : ''\}`/, 'filter changes build a canonical shareable URL on the same path');
-assert.match(collection, /function clearFilters\(\) \{ updateFilters\(\{ genre: 'All', sort: 'For you', year: 'All' \}\); \}/, 'clear filters drops genre/year/sort and returns to page 1');
-assert.doesNotMatch(collection, /localStorage|sessionStorage/, 'no browser persistence for filter state');
-assert.match(loader, /validCollectionSorts/, 'sort whitelist (server-side validation) intact');
-assert.match(loader, /\\d\{4\}/, 'year values still validated as 4-digit (invalid values fail safe)');
-assert.match(loader, /page <= MAX_COLLECTION_PAGE \? page : 1/, 'out-of-range pages clamp safely to 1 (server-side)');
-assert.doesNotMatch(collection, /filteredItems/, 'no client-side filtering — server collection query stays authoritative');
-ok('5. filter behavior preserved: page=1 reset, canonical URLs, server-side validation');
+assert.match(explorerPage, /void goto\(`\$\{page\.url\.pathname\}\$\{query \? `\?\$\{query\}` : ''\}`/, 'filter changes build a canonical shareable URL on the same path');
+assert.match(explorerPage, /function updateFilters\(next: \{ genre\?: string; language\?: string \}\)/, 'filter changes carry only the Explorer dimensions (genre/language)');
+assert.match(explorerPage, /function clearAllFilters\(\)/, 'clear filters drops genre + language');
+assert.doesNotMatch(explorerPage, /localStorage|sessionStorage/, 'no browser persistence for filter state');
+assert.match(loader, /isExplorerGenre\(type, genreParam\)/, 'genre values validated against the closed taxonomy (server-side)');
+assert.match(loader, /isExplorerLanguage\(type, languageParam\)/, 'language values validated per type (server-side)');
+assert.match(loader, /page >= 1 && page <= MAX_EXPLORER_FEED_PAGE \? page : 1/, 'out-of-range pages clamp safely to 1 (server-side)');
+assert.doesNotMatch(explorerPage, /feedItems = feedItems\.filter\(item => item\.genres/, 'no client-side genre filtering — the server feed stays authoritative');
+ok('5. filter behavior: canonical URLs, closed-taxonomy validation, server-side clamping');
 
 // ============================================================
-// 6. PAGINATION — prev/next, disabled state, of-N, clamp parity
+// 6. PROGRESSIVE RESULTS — infinite loading contracts (the old
+//    prev/next pagination was replaced by the approved progressive UX)
 // ============================================================
-assert.match(collection, /href=\{collectionHref\(currentPage - 1\)\}/, 'Previous link present');
-assert.match(collection, /href=\{collectionHref\(currentPage \+ 1\)\}/, 'Next link present');
-assert.match(collection, /class="pagination-link disabled"><ArrowLeft size=\{14\} \/> Previous/, 'disabled Previous rendered as a non-link span');
-assert.match(collection, /hasNextPageSafe = hasNextPage && \(totalPages === undefined \|\| currentPage < totalPages\)/, 'Next disables at the server serving window (no page-21 wrap to page 1)');
-assert.match(collection, /Page \{currentPage\} of \{totalPages\}/, '"Page X of Y" when a total is provided');
-assert.match(collection, /totalPages !== undefined\}Page \{currentPage\} of \{totalPages\}\{:else\}Page \{currentPage\}/, 'falls back to plain "Page X" when no total exists (anime merged path)');
-assert.match(collection, /const params = new URLSearchParams\(page\.url\.searchParams\)/, 'pagination preserves genre/year/sort query params');
+assert.match(explorerPage, /IntersectionObserver/, 'progressive loading uses an observer sentinel');
+assert.match(explorerPage, /rootMargin: '600px 0px'/, 'the sentinel prefetches before it is fully visible');
+assert.match(explorerPage, /if \(loadingMore \|\| !feedHasNext \|\| feedExhausted \|\| feedPage >= MAX_FEED_PAGE\) return;/, 'duplicate requests, rapid scrolls and the serving window are all guarded');
+assert.match(explorerPage, /feedExhausted = true/, 'end-of-results is derived from hasNextPage/totalPages');
+assert.match(explorerPage, /You've reached the end of the results\./, 'the end state is user-visible');
 assert.match(types, /totalPages\?: number/, 'ContentList carries an optional, non-breaking totalPages');
 assert.match(tmdbAdapter, /totalPages: result\.total_pages/, 'movie/series collection exposes the upstream total_pages');
-
 // The anime merged path must NOT invent a total (spec: never invent N).
 const animeMerged = tmdbAdapter.match(/export async function getTmdbAnimeMerged[\s\S]*?\n\}/);
 assert.ok(animeMerged, 'getTmdbAnimeMerged source captured');
 assert.doesNotMatch(animeMerged![0], /\btotalPages\b/, 'anime merged path does NOT report a total');
-
-assert.match(loader, /export const MAX_COLLECTION_PAGE = 20/, 'the 1..20 serving window is a single named constant');
-
-// Behavioral check of the shipped clamp logic (extracted, TS-stripped,
-// and evaluated with the shipped MAX_COLLECTION_PAGE constant).
-const clampSource = loader.match(/function clampTotalPages\(value: unknown, page: number\): number \| undefined \{[\s\S]*?\n\}/);
-assert.ok(clampSource, 'clampTotalPages helper present');
-const maxPageMatch = loader.match(/export const MAX_COLLECTION_PAGE = (\d+)/);
-assert.ok(maxPageMatch, 'MAX_COLLECTION_PAGE constant present');
-const clampJs = clampSource![0].replace(/function clampTotalPages\(value: unknown, page: number\): number \| undefined/, 'function clampTotalPages(value, page)');
-const clamp = new Function('MAX_COLLECTION_PAGE', `return ${clampJs};`)(Number(maxPageMatch![1])) as (value: unknown, page: number) => number | undefined;
-assert.equal(clamp(500, 1), 20, 'TMDB total of 500 clamps to the 20-page serving window');
-assert.equal(clamp(3, 2), 3, 'total never below the current page');
-assert.equal(clamp(0, 1), undefined, 'nonsensical totals are not reported');
-assert.equal(clamp(undefined, 1), undefined, 'missing total falls back to "Page X"');
-assert.equal(clamp(Number.NaN, 1), undefined, 'NaN total falls back to "Page X"');
-ok('6. pagination: prev/next + disabled + preserved query + safe of-N totals (clamped to the serving window)');
+assert.match(loader, /MAX_EXPLORER_FEED_PAGE = 20/, 'the 1..20 serving window is a single named constant');
+ok('6. progressive results: observer sentinel, dedup, request guards, honest end state (1..20 window)');
 
 // ============================================================
-// 7. RESPONSIVE — compact mobile filter control + grid discipline
+// 7. RESPONSIVE — scrollable chip rows + grid discipline
 // ============================================================
-// FilterBar keeps the shared Dropdown (no native selects, no new modal).
-assert.match(filterBar, /import Dropdown from '\$components\/Dropdown\.svelte'/, 'FilterBar reuses the shared Dropdown listbox');
-assert.match(filterBar, /<Dropdown/, 'FilterBar renders shared Dropdown instances');
-assert.doesNotMatch(filterBar, /<select/, 'no native <select> elements');
-assert.match(filterBar, /filter-row-desktop[\s\S]*filter-genre[\s\S]*filter-year[\s\S]*filter-sort/, 'desktop keeps the full labelled Genre/Year/Sort bar');
-assert.match(filterBar, /filters-toggle[\s\S]*aria-expanded=\{panelOpen\}[\s\S]*aria-controls="collection-filter-panel"/, 'mobile Filters toggle exposes expanded state + controlled surface');
-assert.match(filterBar, /aria-label=\{activeFilterCount > 0 \? `Filters, \$\{activeFilterCount\} active` : 'Filters'\}/, 'Filters toggle carries an accessible name (with active count)');
-assert.match(filterBar, /id="filter-sort-mobile" label="Sort" hideLabel/, 'mobile Sort dropdown hides its visual label');
-assert.match(dropdown, /class:sr-only=\{hideLabel\}/, 'Dropdown hideLabel keeps the label in the accessibility tree (sr-only)');
-assert.match(dropdown, /\.dropdown-label\.sr-only[\s\S]*clip: rect\(0 0 0 0\)/, 'sr-only pattern is a real visually-hidden implementation');
-assert.match(filterBar, /id="filter-genre-mobile"[\s\S]*id="filter-year-mobile"/, 'mobile filter surface holds Genre + Year');
-assert.match(filterBar, /@media \(max-width: 640px\)[\s\S]*\.filter-row-desktop \{ display: none; \}/, 'labelled bar is hidden on mobile');
-assert.match(filterBar, /@media \(min-width: 641px\)[\s\S]*\.filter-row-mobile \{ display: none; \}/, 'compact control is hidden on desktop');
-assert.match(filterBar, /\.filter-panel\[hidden\] \{ display: none; \}/, 'the collapsible surface actually hides via [hidden]');
-assert.match(filterBar, /if \(!panelOpen \|\| event\.key !== 'Escape' \|\| event\.defaultPrevented\) return/, 'Escape closes the surface but never fights a nested Dropdown listbox Escape');
-assert.match(filterBar, /panelOpen = false;[\s\S]*filtersToggle\?\.focus\(\)/, 'closing the surface returns focus to the Filters toggle');
-assert.match(filterBar, /min-height: 38px/, 'Filters toggle keeps a comfortable touch target');
-assert.match(filterBar, /grid-template-columns: minmax\(0, 1fr\) minmax\(0, 118px\)/, 'mobile primary row cannot overflow (minmax(0, …) tracks)');
-
-// Collection shell: mobile efficiency + grid discipline.
-assert.match(collection, /@media \(max-width: 640px\)[\s\S]*\.collection-heading \{ padding: 16px 0 12px; \}/, 'mobile heading rhythm tightened (content appears sooner)');
-assert.match(collection, /\.collection-heading p \{[\s\S]*-webkit-line-clamp: 2/, 'mobile description limited to a short 2-line block');
-assert.match(collection, /\.results-grid :global\(\.mc-title\) \{[\s\S]*-webkit-line-clamp: 2/, 'card titles clamp to 2 lines (scoped to the collection grid)');
-assert.match(collection, /\.results-grid :global\(\.mc-title\) \{[\s\S]*min-height: 2\.5em/, 'two-line title block reserved → uniform card heights');
-assert.match(collection, /@media \(max-width: 640px\)[\s\S]*\.results-grid \{ grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/, 'mobile grid stays 2 columns (never forced to 3)');
-assert.match(collection, /grid-template-columns: repeat\(auto-fill, minmax\(150px, 182px\)\)/, 'desktop grid unchanged (responsive auto-fill)');
-assert.match(mediaCard, /\.mc-title \{ margin: 0/, 'MediaCard itself untouched (clamp is collection-scoped)');
-assert.match(collection, /padding-bottom: calc\(26px \+ env\(safe-area-inset-bottom, 0px\)\)/, 'pagination keeps safe-area bottom spacing');
-ok('7. responsive: compact mobile filter row, 2-col grid, 2-line titles, safe-area spacing, desktop preserved');
+// Chips render from the shared taxonomy (no native selects, no new
+// modal) and scroll horizontally within their own row.
+assert.match(explorerPage, /import \{ EXPLORER_GENRES, EXPLORER_LANGUAGES \} from '\$lib\/shared\/explorer-taxonomy';/, 'chips come from the shared taxonomy module');
+assert.doesNotMatch(explorerPage, /<select/, 'no native <select> elements');
+assert.match(explorerPage, /\.chip-scroll \{[\s\S]*?overflow-x: auto/, 'chip rows scroll horizontally');
+assert.match(explorerPage, /\.chip-scroll \{[\s\S]*?flex-wrap: nowrap/, 'chip rows never wrap (no vertical stacking on phones)');
+assert.match(explorerPage, /\.chip-scroll::-webkit-scrollbar \{ display: none; \}/, 'chip rows hide their scrollbar (contained, no page-level overflow)');
+assert.match(explorerPage, /\.filter-chip \{[\s\S]*?white-space: nowrap/, 'chips never wrap mid-label');
+// Explorer results grid discipline.
+assert.match(explorerPage, /\.explorer-grid :global\(\.mc-title\) \{[\s\S]*-webkit-line-clamp: 2/, 'card titles clamp to 2 lines (scoped to the results grid)');
+assert.match(explorerPage, /\.explorer-grid :global\(\.mc-title\) \{[\s\S]*min-height: 2\.5em/, 'two-line title block reserved → uniform card heights');
+assert.match(explorerPage, /@media \(max-width: 640px\)[\s\S]*?\.explorer-grid \{ grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/, 'mobile grid stays 2 columns (never forced to 3)');
+assert.match(explorerPage, /grid-template-columns: repeat\(auto-fill, minmax\(150px, 182px\)\)/, 'desktop grid keeps the responsive auto-fill');
+assert.match(mediaCard, /\.mc-title \{ margin: 0/, 'MediaCard itself untouched (clamp is results-grid-scoped)');
+// Spotlight occupies ~90% of the viewport width at every breakpoint.
+assert.match(spotlightCarousel, /\.spotlight \{[\s\S]*?width: 90%;/, 'the spotlight spans ~90% of the viewport width');
+assert.match(spotlightCarousel, /@media \(max-width: 640px\)[\s\S]*?\.spotlight \{ width: 90%;/, 'the ~90% width holds on mobile');
+// Sticky chips respect the shell (topbar offsets per breakpoint).
+assert.match(explorerPage, /@media \(max-width: 640px\)[\s\S]*?\.explorer-filters \{ top: var\(--topbar-h-safe\)/, 'mobile: sticky chips sit below the fixed topbar (safe-area aware)');
+assert.match(explorerPage, /@media \(min-width: 641px\) and \(max-width: 1024px\)[\s\S]*?\.explorer-filters \{ top: 72px; \}/, 'tablet: sticky chips sit below the sticky topbar');
+assert.match(explorerPage, /@media \(min-width: 1025px\)[\s\S]*?\.explorer-filters \{ top: 0; \}/, 'desktop: sticky chips stick at the scroll container top (no sidebar collision)');
+ok('7. responsive: scrollable chip rows, 2-col grid, 2-line titles, sticky offsets per breakpoint, ~90% spotlight');
 
 // ============================================================
 // 8. EMPTY STATE — clear-filters action, error distinction kept
 // ============================================================
-assert.match(emptyState, /export let onAction: \(\(\) => void\) \| undefined = undefined/, 'EmptyState gains an optional in-place action (backward compatible)');
-assert.match(emptyState, /\{#if onAction\}[\s\S]*<button class="btn btn-secondary" type="button" onclick=\{onAction\}>[\s\S]*\{:else\}[\s\S]*<a class="btn btn-secondary" href=\{actionHref\}/, 'href-based empty states unchanged; action-based renders a real button');
-assert.match(collection, /title="Nothing found"[\s\S]*message="Try changing your filters or clear them to explore the full collection\."[\s\S]*actionLabel="Clear filters"[\s\S]*onAction=\{clearFilters\}/, 'filtered zero results → "Nothing found" + working Clear filters');
-assert.match(collection, /title="The signal is quiet\."/, 'upstream errors keep their distinct error state');
-assert.match(collection, /errorMessage\}[\s\S]*\{:else if sameRouteNavigation\}/, 'error branch evaluated before empty-state branches (errors never shown as "no results")');
-assert.doesNotMatch(collection, /fake|fixture results|dummy/, 'no fake/fixture results injected for empty states');
+const emptyState = read('../src/lib/components/EmptyState.svelte');
+assert.match(emptyState, /export let onAction: \(\(\) => void\) \| undefined = undefined/, 'EmptyState keeps the optional in-place action (backward compatible)');
+assert.match(explorerPage, /title="Nothing found"[\s\S]*?actionLabel="Clear filters"[\s\S]*?onAction=\{clearAllFilters\}/, 'filtered zero results → "Nothing found" + working Clear filters');
+assert.match(explorerPage, /title="The signal is quiet\."/, 'upstream errors keep their distinct error state');
+assert.match(explorerPage, /errorMessage \&\& feedItems\.length === 0\}[\s\S]*?\{:else if sameRouteNavigation\}/, 'error branch evaluated before empty-state branches (errors never shown as "no results")');
+assert.doesNotMatch(explorerPage, /fake|fixture results|dummy/, 'no fake/fixture results injected for empty states');
 ok('8. empty state: Clear filters works in place; upstream errors stay distinct; no fixture results');
 
 // ============================================================
 // 9. LOADING — same-route skeleton reuses existing components
 // ============================================================
-assert.match(collection, /import SkeletonCard from '\$components\/SkeletonCard\.svelte'/, 'loading UX reuses SkeletonCard (no new architecture)');
-assert.match(collection, /sameRouteNavigation = Boolean\(navigating\.from && navigating\.to && navigating\.type !== 'popstate'/, 'skeleton only during same-route forward navigation (Back/Forward stays instant)');
-assert.match(collection, /isCollectionRoute\(navigating\.to\.url\.pathname\)/, 'the same-route skeleton is scoped to the collection roots (not /discover/*)');
-assert.match(collection, /Object\.values\(DESTINATION_ROUTES\)\.some/, 'the collection roots derive from the shared DESTINATION_ROUTES constant');
-assert.match(collection, /results-grid results-grid-loading" aria-busy="true"/, 'skeleton grid is announced via aria-busy');
-assert.match(collection, /\{#each Array\(skeletonCount\) as _\}<SkeletonCard compact \/>/, 'skeleton count mirrors the real grid (minimal layout shift)');
-assert.doesNotMatch(collection, /IntersectionObserver|MutationObserver/, 'no custom navigation interception or observers');
+assert.match(explorerPage, /import SkeletonCard from '\$components\/SkeletonCard\.svelte';/, 'loading UX reuses SkeletonCard (no new architecture)');
+assert.match(explorerPage, /sameRouteNavigation = \$derived\(\s*\n?\s*Boolean\(\s*\n?\s*navigating\.from &&\s*\n?\s*navigating\.to &&\s*\n?\s*navigating\.type !== 'popstate'/, 'skeleton only during same-route forward navigation (Back/Forward stays instant)');
+assert.match(explorerPage, /aria-busy="true"/, 'skeleton grid is announced via aria-busy');
+assert.match(explorerPage, /\{#each Array\(skeletonCount\) as _, index \(index\)\}<SkeletonCard compact \/>/, 'skeleton count mirrors the real grid (minimal layout shift)');
 ok('9. loading: same-route skeleton from existing SkeletonCard; popstate Back/Forward untouched');
 
 // ============================================================
@@ -229,41 +202,38 @@ ok('9. loading: same-route skeleton from existing SkeletonCard; popstate Back/Fo
 // ============================================================
 assert.match(rootLayout, /export const snapshot = \{/, 'root layout snapshot (capture/restore) intact');
 assert.match(rootLayout, /requestAnimationFrame/, 'rAF-clamped restore intact');
-assert.doesNotMatch(collection, /window\.scrollTo|history\.back|history\.forward/, 'CollectionPage adds no custom scroll manager');
-assert.doesNotMatch(collection + filterBar, /localStorage|sessionStorage/, 'no storage-based scroll or filter state');
+assert.doesNotMatch(explorerPage, /window\.scrollTo|history\.back|history\.forward/, 'the Explorer adds no custom scroll manager');
 ok('10. scroll: existing SvelteKit snapshot mechanism preserved; no custom scroll state');
 
 // ============================================================
 // 11. TERMINOLOGY — TV Shows rename in destination copy only
 // ============================================================
-assert.match(collection + destinationPage, /DESTINATION_LABELS/, 'per-type label map exists (shared module — Phase 4)');
+assert.match(explorerPage, /DESTINATION_LABELS/, 'per-type label map exists (shared module)');
 const labelsModule = read('../src/lib/shared/content-labels.ts');
 const labelsBlock = labelsModule.match(/export const DESTINATION_LABELS: Record<ContentType, \{ plural: string; singular: string; prose: string; description: string \}> = \{([\s\S]*?)\};/);
 assert.ok(labelsBlock, 'DESTINATION_LABELS source captured');
 assert.match(labelsBlock![1], /series: \{\s*plural: 'TV Shows'/, 'series destination is presented as "TV Shows"');
 assert.match(labelsBlock![1], /movie: \{\s*plural: 'Movies'/, 'movie destination is "Movies"');
 assert.match(labelsBlock![1], /anime: \{\s*plural: 'Anime'/, 'anime destination stays "Anime" (never "Animes")');
-assert.match(collection, /\{headingLabel\} <em>— the full collection\.<\/em>/, 'all three destinations share one consistent collection heading template');
-assert.match(labelsModule, /export const DESTINATION_ROUTES: Record<ContentType, string> = \{\s*movie: '\/movies',\s*series: '\/tv-shows',\s*anime: '\/anime'\s*\}/, 'empty-state action links target the new canonical routes (shared routes map)');
+assert.match(labelsModule, /export const DESTINATION_ROUTES: Record<ContentType, string> = \{\s*movie: '\/movies',\s*series: '\/tv-shows',\s*anime: '\/anime'\s*\}/, 'canonical routes map unchanged');
 // The card badge pipeline is untouched — classification still says
 // "Series" on cards (formatType), only destination copy is renamed.
 assert.match(mediaCard, /formatType|formatBadges|isAnime/, 'card classification badges still flow through the existing pipeline');
-assert.doesNotMatch(collection + filterBar, /AniList|anilist\.|Yenime|yenime|myanimelist/i, 'no legacy anime provider architecture reintroduced');
-assert.doesNotMatch(collection + filterBar, /anime format/i, 'no anime format filter added in this phase');
+assert.doesNotMatch(explorerPage + taxonomy, /AniList|anilist\.|Yenime|yenime|myanimelist/i, 'no legacy anime provider architecture reintroduced');
+assert.doesNotMatch(explorerPage, /anime format/i, 'no anime format filter added');
 ok('11. terminology: "TV Shows" in destination copy; card badge pipeline untouched');
 
 // ============================================================
 // 12. DATA SAFETY — additive-only backend surface
 // ============================================================
-assert.doesNotMatch(loader, /\badult\b/i, 'collection loader touches no adult logic');
+assert.doesNotMatch(loader, /\badult\b/i, 'the explorer loader touches no adult logic');
 // Positive assertions: the existing TMDB collection semantics are unchanged.
 const getTmdbCollection = tmdbAdapter.match(/export async function getTmdbCollection[\s\S]*?\n\}/);
 assert.ok(getTmdbCollection, 'getTmdbCollection source captured');
 assert.match(getTmdbCollection![0], /without_networks: networkExclusion/, 'series adult-network exclusion unchanged');
 assert.match(getTmdbCollection![0], /without_watch_providers/, 'movie watch-provider exclusion unchanged');
 assert.match(getTmdbCollection![0], /include_adult: false/, 'include_adult: false unchanged');
-assert.match(collection, /export let totalPages: number \| undefined = undefined/, 'totalPages is an optional prop — callers not passing it are unaffected');
 assert.match(emptyState, /export let search = false/, 'EmptyState legacy props untouched');
-ok('12. data safety: additive totalPages contract only; TMDB semantics, adult surface, schema untouched');
+ok('12. data safety: additive language dimension only; TMDB semantics, adult surface, schema untouched');
 
-console.log(`\nCollection destination UX regression tests passed (${passed} check groups).`);
+console.log(`\nExplorer destination UX regression tests passed (${passed} check groups).`);

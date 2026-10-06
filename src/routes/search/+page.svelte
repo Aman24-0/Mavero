@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import { replaceState } from '$app/navigation';
   import { page } from '$app/state';
-  import { Search, LoaderCircle, X, Compass } from 'lucide-svelte';
+  import { Search, LoaderCircle, X, Compass, History, XCircle } from 'lucide-svelte';
   import ScrollToTop from '$components/ScrollToTop.svelte';
+  import { getRecentSearches, recordRecentSearch, removeRecentSearch } from '$lib/client/recent-searches';
   import type { PageData } from './$types';
   import type { MediaItem } from '$data/content';
 
@@ -149,6 +150,10 @@
       if (!response.ok || !payload.ok) throw new Error(payload.error?.message || 'Search is temporarily unavailable.');
       if (requestId !== requestSequence || !isSearchRouteActive()) return;
       results = payload.items as MediaItem[];
+      // Recent searches (Change 4): record the query once the search
+      // executes successfully — the row is the ONLY addition to this
+      // page; the search behavior itself is unchanged.
+      recentSearches = recordRecentSearch(normalized);
     } catch (error) {
       if (controller.signal.aborted || requestId !== requestSequence || !isSearchRouteActive()) return;
       errorMessage = error instanceof Error ? error.message : 'Search is temporarily unavailable.';
@@ -184,6 +189,32 @@
     errorMessage = '';
     syncUrl();
     searchInputEl?.focus();
+  }
+
+  // ============================================================
+  // Recent searches (Explorer redesign, Change 4 — the ONLY addition
+  // to this page). A compact horizontal row between the search
+  // controls and the results/empty state, shown only while no query
+  // is active (so it never pushes results down mid-search). Empty
+  // list → the row is hidden entirely. Each entry re-runs the search;
+  // each entry has its own remove control.
+  // ============================================================
+  let recentSearches = $state<string[]>([]);
+
+  onMount(() => {
+    recentSearches = getRecentSearches();
+  });
+
+  let showRecentSearches = $derived(!query.trim() && !loading && recentSearches.length > 0);
+
+  function runRecentSearch(entry: string) {
+    query = entry;
+    searchInputEl?.focus();
+    void runSearch();
+  }
+
+  function dropRecentSearch(entry: string) {
+    recentSearches = removeRecentSearch(entry);
   }
 
   // TMDB-tagged anime content carries isAnime === true but its `type` is
@@ -260,6 +291,35 @@
           {/each}
         </div>
       </div>
+
+      <!-- Recent searches (Explorer redesign, Change 4 — the ONLY new
+           element on this page). Horizontal row below the search
+           controls; hidden entirely when empty; each entry re-runs the
+           search and has its own remove control. -->
+      {#if showRecentSearches}
+        <div class="recent-searches" aria-label="Recent searches">
+          <span class="recent-label"><History size={13} aria-hidden="true" /> Recent</span>
+          <div class="recent-scroll">
+            {#each recentSearches as entry (entry)}
+              <span class="recent-chip">
+                <button
+                  class="recent-run"
+                  type="button"
+                  aria-label={`Search again for ${entry}`}
+                  title={entry}
+                  onclick={() => runRecentSearch(entry)}
+                >{entry}</button>
+                <button
+                  class="recent-remove"
+                  type="button"
+                  aria-label={`Remove recent search ${entry}`}
+                  onclick={() => dropRecentSearch(entry)}
+                ><XCircle size={13} /></button>
+              </span>
+            {/each}
+          </div>
+        </div>
+      {/if}
     </div>
   </section>
 
@@ -400,6 +460,72 @@
 
   /* Filter row */
   .filter-row { margin-top: 14px; }
+
+  /* Recent searches (Explorer redesign, Change 4) — compact horizontal
+     row, contained scroll (never page-level horizontal overflow),
+     hidden entirely when empty. */
+  .recent-searches {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 14px;
+    min-width: 0;
+  }
+  .recent-label {
+    display: inline-flex; align-items: center; gap: 5px;
+    flex-shrink: 0;
+    color: var(--color-text-deep);
+    font-size: .6rem; font-weight: 800;
+    letter-spacing: .12em; text-transform: uppercase;
+  }
+  .recent-scroll {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 8px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    padding: 2px 2px 4px;
+    min-width: 0;
+  }
+  .recent-scroll::-webkit-scrollbar { display: none; }
+  .recent-chip {
+    display: inline-flex; align-items: center;
+    flex-shrink: 0;
+    border: 1px solid var(--color-border);
+    border-radius: 999px;
+    background: var(--color-surface);
+    overflow: hidden;
+  }
+  .recent-run {
+    display: inline-flex; align-items: center;
+    min-height: 34px;
+    max-width: 220px;
+    padding: 0 6px 0 13px;
+    border: none;
+    background: transparent;
+    color: var(--color-text-muted);
+    font: inherit;
+    font-size: .74rem; font-weight: 700;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+    transition: color var(--motion-fast);
+  }
+  .recent-run:hover { color: var(--color-primary); }
+  .recent-remove {
+    display: grid; place-items: center;
+    width: 30px; height: 30px;
+    margin-right: 4px;
+    border: none; border-radius: 999px;
+    background: transparent;
+    color: var(--color-text-deep);
+    cursor: pointer;
+    transition: color var(--motion-fast), background var(--motion-fast);
+  }
+  .recent-remove:hover { color: #ff9c9c; background: rgba(255, 120, 120, .12); }
+  .recent-run:focus-visible, .recent-remove:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px; }
   .type-segmented {
     display: inline-flex; gap: 4px;
     padding: 4px;
@@ -552,6 +678,6 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .search-field, .type-seg, .clear-btn, .search-message.loading :global(svg), .empty-action { transition: none; animation: none; }
+    .search-field, .type-seg, .clear-btn, .search-message.loading :global(svg), .empty-action, .recent-run, .recent-remove { transition: none; animation: none; }
   }
 </style>

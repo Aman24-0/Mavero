@@ -214,8 +214,13 @@ const appFooter = await readFile(path.join(repoRoot, 'src/lib/components/AppFoot
 {
   assert.match(tmdb, /function getTmdbAnimeMerged/, 'anime merged function exists');
   // Queries BOTH movie and TV.
-  assert.match(tmdb, /tmdbRequest<TmdbList<TmdbMovie>>\('\/discover\/movie'[\s\S]*?with_genres: 16[\s\S]*?with_original_language: 'ja'/, 'queries TMDB movie with genre 16 + ja');
-  assert.match(tmdb, /tmdbRequest<TmdbList<TmdbTv>>\('\/discover\/tv'[\s\S]*?with_genres: 16[\s\S]*?with_original_language: 'ja'/, 'queries TMDB TV with genre 16 + ja');
+  // Explorer redesign: with_genres is now built from the base 16 (Animation)
+  // plus the optional per-side Explorer genre — the base 16 + ja contract
+  // is unchanged, the constraint is additive.
+  assert.match(tmdb, /const movieGenres = genre\?\.movieGenreId \? `16,\$\{genre\.movieGenreId\}` : 16;/, 'anime movie query keeps base genre 16 (+ optional Explorer genre)');
+  assert.match(tmdb, /const tvGenres = genre\?\.tvGenreId \? `16,\$\{genre\.tvGenreId\}` : 16;/, 'anime TV query keeps base genre 16 (+ optional Explorer genre)');
+  assert.match(tmdb, /tmdbRequest<TmdbList<TmdbMovie>>\('\/discover\/movie'[\s\S]*?with_genres: movieGenres[\s\S]*?with_original_language: 'ja'/, 'queries TMDB movie with genre 16 + ja');
+  assert.match(tmdb, /tmdbRequest<TmdbList<TmdbTv>>\('\/discover\/tv'[\s\S]*?with_genres: tvGenres[\s\S]*?with_original_language: 'ja'/, 'queries TMDB TV with genre 16 + ja');
   // Filters to isAnime === true.
   assert.match(tmdb, /filter\(\(item\) => item\.isAnime === true\)/, 'filters to isAnime === true');
   // Merges + dedupes by canonical type+id.
@@ -234,13 +239,13 @@ const appFooter = await readFile(path.join(repoRoot, 'src/lib/components/AppFoot
 // ============================================================================
 {
   // The /anime route (moved from /discover/anime in the Navigation &
-  // Settings Redesign Phase 1; rich destination page since Phase 4) uses
-  // loadDestinationData('anime', url), which composes the SAME
-  // loadCollectionData('anime', url) for the full-collection section.
+  // Settings Redesign Phase 1; Explorer page since the Explorer redesign)
+  // uses loadExplorerData('anime', url), which composes the SAME
+  // collection()/getTmdbAnimeMerged service path for the filtered feed.
   const animeRoute = await readFile(path.join(repoRoot, 'src/routes/anime/+page.server.ts'), 'utf8');
-  assert.match(animeRoute, /loadDestinationData\('anime', url\)/, 'anime route uses loadDestinationData');
-  const loader = await readFile(path.join(repoRoot, 'src/lib/server/content/discover-load.ts'), 'utf8');
-  assert.match(loader, /loadCollectionData\(type, url\)/, 'loadDestinationData composes the existing collection loader');
+  assert.match(animeRoute, /loadExplorerData\('anime', url\)/, 'anime route uses loadExplorerData');
+  const explorerLoader = await readFile(path.join(repoRoot, 'src/lib/server/content/explorer-load.ts'), 'utf8');
+  assert.match(explorerLoader, /getTmdbAnimeMerged\('popularity', safePage, constraint\)/, 'the anime explorer feed composes the existing merged path');
   // The collection() service function for anime now uses the merged path.
   assert.match(service, /if \(type === 'anime'\) return await getTmdbAnimeMerged/, 'collection(anime) uses merged movie+TV path');
   // Canonical identity is preserved — movies keep type='movie', series keep type='series'.
@@ -371,7 +376,7 @@ const appFooter = await readFile(path.join(repoRoot, 'src/lib/components/AppFoot
   assert.match(tmdb, /key = `tmdb:popular-v2:\$\{type\}:\$\{language\}:\$\{page\}:[^`]+`/, 'popular cache key includes type + language + page + adult exclusion');
   assert.match(tmdb, /key = `tmdb:top-rated-v2:\$\{type\}:\$\{language\}:\$\{page\}:[^`]+`/, 'top-rated cache key includes type + language + page + adult exclusion');
   assert.match(tmdb, /key = `tmdb:genre-v2:\$\{genreId\}:\$\{language\}:\$\{page\}:[^`]+`/, 'genre cache key includes genreId + language + page + adult exclusion');
-  assert.match(tmdb, /key = `tmdb:anime-merged:\$\{sort\}:\$\{page\}`/, 'anime-merged cache key includes sort + page');
+  assert.match(tmdb, /key = `tmdb:anime-merged:\$\{sort\}:\$\{page\}:\$\{genre\?\.movieGenreId \?\? ''\}:\$\{genre\?\.tvGenreId \?\? ''\}`/, 'anime-merged cache key includes sort + page + the Explorer genre dimensions');
 }
 
 // ============================================================================

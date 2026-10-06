@@ -7,7 +7,7 @@
   export let actionHref = '/discover';
   export let search = false;
   // Optional in-place action. When provided, the CTA renders as a button
-  // that invokes it (e.g. CollectionPage "Clear filters") instead of
+  // that invokes it (e.g. ExplorerPage "Clear filters") instead of
   // navigating via `actionHref`. Existing href-based usages are unchanged.
   export let onAction: (() => void) | undefined = undefined;
 </script>

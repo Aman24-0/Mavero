@@ -909,3 +909,270 @@ FULL suite — 220 scripts PASS (exit 0); `pnpm build` OK.\
 -   Existing database/session/history/favorites architecture remains
     unchanged.
 -   Implementation is limited to six phases.
+
+------------------------------------------------------------------------
+
+# Follow-up Task — Explorer + Navigation + Search + Detail UX
+
+**Status:** ALL SIX APPROVED CHANGES COMPLETE — all gates + live
+verification passed.
+
+## Audit (pre-implementation)
+
+**Baseline.** HEAD `1147894` (worklog-only commit after Phase 6).
+`origin/main` verified identical to HEAD (no drift). The working
+tree carried 171 uncommitted "changes": 158 were file-mode artifacts
+(100644→100755, clone/extraction side effect — neutralized via
+`core.fileMode false`) and 13 were files deleted from disk but still
+tracked at HEAD (`src/lib/server/hosting/upload/*`,
+`src/routes/admin/media/upload/*`, `src/routes/api/admin/media/upload/*`
+— the admin media-upload infrastructure). Those deletions left the
+tree INCONSISTENT (e.g. `src/routes/admin/hosting/+page.server.ts`
+still imports `$lib/server/hosting/upload/service`), so they were
+local-only accidental state, not work: restored from HEAD to make
+the tree match the actual baseline. No unrelated work was reverted.
+
+**Current implementation inspected.** The three routes were Phase 4
+DestinationPage pages (one hero + ContentRail rails + the embedded
+CollectionPage "full collection" section with FilterBar
+genre/year/sort dropdowns + prev/next pagination), fed by
+`loadDestinationData` (discover-load.ts) over the existing
+collection()/discover()/popular() services. The language taxonomy is
+the existing `DiscoverLanguage` union; genre taxonomy is the TMDB
+id map in the adapter; the Discover hero already implements a
+deterministic daily-rotated 6-slot carousel with 30-day freshness
+gates (hero-select.ts); the rail endpoint
+(`/api/discover/rail`) establishes the client-fetch + closed-union
+validation convention. No OTT selector existed on these routes (the
+only OTT filter is Discover's New on OTT provider dropdown) — the
+spec's "where applicable" is therefore N/A and nothing was invented.
+No existing recent-search/history system existed (search state lives
+in the URL + page snapshot only).
+
+## Implementation
+
+### Change 1 — Explorer redesign
+
+**Server.**
+-   `src/lib/server/content/explorer-load.ts` (NEW) —
+    `loadExplorerData(type, url)` (page loader: spotlight + sections
+    OR the filtered SSR seed) and `explorerFeed(type, filters, page)`
+    (the progressive feed), both composing ONLY the existing
+    collection()/discover()/popular()/hero-pool/merged-anime calls.
+-   `src/lib/shared/explorer-taxonomy.ts` (NEW, client-safe) — ONE
+    closed source of truth for the genre + language chip lists AND
+    the server-side validation: movie genres use REAL TMDB movie ids
+    (Action 28 … Thriller 53), series uses REAL TV ids
+    (Action & Adventure 10759 … Western 37), anime maps each genre to
+    per-side ids (Action: movie 28 / TV 10759; Horror: movie-only —
+    TMDB TV has no Horror genre, so the TV side is skipped, never
+    invented). Languages reuse the existing DiscoverLanguage union;
+    the anime row honestly offers All + Japanese only (the app's
+    anime classifier is genre 16 + original_language 'ja').
+-   `src/routes/api/explorer/feed/+server.ts` (NEW) — validated JSON
+    endpoint (type/genre/language closed unions, page 1..20, at
+    least one active filter required, 400 on invalid values — the
+    discover rail endpoint convention).
+-   `hero-select.ts` — added the pure `selectSpotlightLineup`
+    (single-pool, 6 slots, deterministic bucket rotation within the
+    top-18 relevance window, fresh-first with popularity-scored
+    fallback fill; no Math.random).
+-   `types.ts` — `CollectionFilters.language?: DiscoverLanguage`;
+    the DiscoverLanguage union gained the REAL TMDB code `'ja'`
+    (documented; the Discover dropdown keeps its own hardcoded list —
+    no Discover behavior change).
+-   `adapters/tmdb.ts` — `getTmdbCollection` gained the language
+    dimension (with_original_language + applyLanguageFilter +
+    deterministicSoapWalk-style bounded walk for disjoint stable feed
+    pages; no-language queries keep the original single-page behavior
+    byte-for-byte); `getTmdbAnimeMerged` gained the optional
+    per-side genre constraint (both sides keep genre 16 + 'ja').
+
+**Client.**
+-   `src/lib/components/SpotlightCarousel.svelte` (NEW) — the 6-slide
+    cinematic carousel (4s rotation, ~90% available width, scroll-snap
+    track, dots/prev/next, full keyboard support, pointer/focus/visibility
+    pause, reduced motion). Play/More-details use the existing
+    /watch/[type]/[id] and /[type]/[id] patterns.
+-   `src/lib/components/ExplorerPage.svelte` (NEW) — one shared
+    Explorer: spotlight → sticky Genre row → sticky Language row →
+    (no filter: Popular + Top Rated ContentRails) / (filter active:
+    the filtered results area). Filter state lives in the URL
+    (?genre=&language=, replaceState/noScroll/keepFocus — the
+    collection-page convention). The filtered area renders the SSR
+    seed instantly, then tops up to the RESPONSIVE grid capacity,
+    then infinite-scrolls via the feed endpoint.
+-   Three thin route files (movies/tv-shows/anime) over
+    ExplorerPage + loadExplorerData.
+
+**Responsive batch-size strategy (1D/1E).** The first batch is
+computed from the MEASURED grid: columns come from the rendered
+grid's computed gridTemplateColumns, row height from the first real
+card (or a poster-ratio estimate), rows from the viewport height
+below the grid's top; target = columns × rows clamped to [8, 30].
+The top-up fetches whole 10-item feed pages (max 3) until the target
+is met — no per-card requests, no universal hardcoded 20. Infinite
+scroll: IntersectionObserver sentinel (600px rootMargin) + a
+sequence token + a loading guard (rapid-scroll safe) + type:id dedup
+on append; end-of-results and retry states are explicit.
+
+**Sticky filter strategy (1F).** ONE sticky block for both rows:
+mobile ≤640px sticks below the fixed topbar (`var(--topbar-h-safe)`),
+tablet 641–1024px below the 72px sticky topbar, desktop ≥1025px at
+the app-main scrollport top; z-index 30 slides under the topbar
+(z 40); opaque blurred backdrop keeps chips readable; no second
+scroll container (sticky in normal document flow).
+
+**Unfiltered sections (1G).** Popular then Top Rated per type; the
+server dedups Top Rated against Popular (and tops a dedup-thinned
+section up with trending non-duplicates); empty sections are omitted
+— no title repeats across sections. Spotlight/section overlap is
+intentional hero-vs-rail overlap (standard practice), the sections
+themselves never repeat a title.
+
+**Old UI cleanup (1I).** Deleted as genuinely obsolete (usage-audited
+first — nothing else imported them): DestinationPage.svelte,
+CollectionPage.svelte, FilterBar.svelte, filter-types.ts, the
+`loadDestinationData`/`loadCollectionData` loader surface in
+discover-load.ts (Discover's own loadRail/loadDiscoverData kept).
+Stale comment references in EmptyState/content-labels updated.
+
+### Change 2 — Back buttons
+
+/my-list and /settings each render an accessible Back control
+(44px, focus-visible, reduced-motion, shell glass-chip language)
+targeting /discover with replace-state navigation — browser-back
+afterwards cannot loop back into the account surface.
+
+### Change 3 — history fix
+
+AccountSheet's My List/Settings entries keep normal anchor (push)
+navigation from any non-account surface (Discover → Account → My
+List → Back = Discover) and switch to `goto(href,
+{ replaceState: true })` when the sheet is opened while already on
+/my-list or /settings — so Discover → Account → My List → Account →
+Settings → Back = Discover and the two surfaces never coexist in
+the history stack. No raw history/popstate manipulation anywhere;
+detail/watch/search navigation untouched.
+
+### Change 4 — Recent Searches
+
+`src/lib/client/recent-searches.ts` (NEW) — the first search-history
+system in the app (audit confirmed none existed): bounded (8),
+dedup-move-to-front, SSR/private-mode-safe localStorage access,
+`mavero:recent-searches` key. The search page renders ONE horizontal
+row below the type filters (hidden entirely when empty; visible only
+while no query is active so results are never pushed down), each
+entry re-runs the search and has its own remove control; queries are
+recorded on successful search execution. Everything else on the
+search page is byte-identical behavior (input, debounce, filters,
+API call, snapshot, results, pagination-free rendering).
+
+### Change 5 — Detail top spacing
+
+Mobile `.poster-wrap { margin-top: 150px }` → `132px` (−18px, within
+the approved 15–20px band) so Resume/Play, Download, Watching, Share
+and Trailer appear above the fold on phones. Verified live: computed
+132px at 390px. All other breakpoints/behavior untouched.
+
+### Change 6 — "Available on"
+
+The provider section heading now reads "Available on" (copy only;
+cards/logos/links and the streamingProviders pipeline unchanged).
+
+## Tests
+
+-   NEW `scripts/explorer_page_test.ts` (10 groups: loader
+    composition, spotlight contract, taxonomy real-ids, chips +
+    sticky, responsive batch + infinite loading, sections/dedup,
+    thin routes, old-UI removal, a11y/motion, data safety) — replaces
+    the obsolete destination_page_test.ts in the pnpm test chain.
+-   NEW `scripts/explorer_navigation_test.ts` (5 groups: Back
+    buttons, history fix, recent searches + scope restriction, detail
+    spacing, Available on).
+-   UPDATED to the new contract: discover_subpage_ux_test (12
+    groups, Explorer target), discover_collection_test (feed/pagination
+    contract), discover_v2_test (section M + anime merged genre keys),
+    adult_phase8_ui_test (language union 8→9 with ja), trailer_cast_flow
+    (FilterBar sections removed with the component),
+    search_discover_navigation + search_state_scroll_restoration
+    (onMount companion import), cloudstream_registry_integration
+    (§F1 DetailPage byte-freeze replaced by a §F1c downloader
+    action-model pin — the approved spacing/label changes are
+    sanctioned, the downloader wiring is still line-pinned).
+-   package.json: destination_page_test → explorer_page_test +
+    explorer_navigation_test in the chain.
+
+## Verification
+
+-   **Gates:** `pnpm check` 0 errors / 0 warnings; `pnpm test` FULL
+    suite passes (exit 0, 222 scripts); `pnpm build` OK (Netlify
+    adapter + executor function).
+-   **Live (production preview + headless Chromium under the
+    devtool-protection-exempt Lighthouse UA):**
+    -   Routes: /movies, /tv-shows, /anime (+ ?genre, ?language,
+        combined) all 200; legacy /discover/{movies,series,anime}
+        308 redirects with query preserved; /my-list, /settings,
+        /search, /discover 200.
+    -   Feed endpoint: NO_FILTERS/INVALID_GENRE/INVALID_LANGUAGE 400s
+        behave as designed; valid queries return the honest
+        unavailable error (no local TMDB credentials — the populated
+        path is covered by the loader-contract tests, the same
+        convention as the previous phases).
+    -   Viewport matrix 360/390/820/1440 on all three Explorers +
+        filtered states: ZERO horizontal overflow at every viewport;
+        sticky chips at the correct per-breakpoint tops (56px+safe /
+        72px / 0); chip z-index below the topbar; ~90%-of-available
+        width spotlight; chip rows overflow-x auto; only the two
+        "All" chips active by default; 23 movie chips render.
+    -   Results grid (measured against the live shipped CSS via the
+        component's real scoping class): 2 columns at 360/390,
+        auto-fill ≥5 columns at 1440.
+    -   Back buttons (behavioral): /my-list and /settings Back both
+        navigate to /discover.
+    -   History flow (behavioral): Discover → Account → My List →
+        phone Back = Discover; AND Discover → Account → My List →
+        Account → Settings → phone Back = Discover (the exact
+        Change 3 acceptance flow, no My List loop).
+    -   Recent searches (behavioral): hidden when empty; renders
+        once entries exist; horizontally scrolls at 390px; tapping
+        re-runs the search; removing drops exactly that entry and
+        persists to localStorage.
+    -   Detail (behavioral, fixture fallback): computed 132px mobile
+        top spacing; "Available on" heading; Play/Resume renders.
+    -   Screenshots: docs/qa/explorer-verification/ (10 captures:
+        360/390/820/1440 across the three Explorers, My List,
+        Settings, Search, detail).
+    -   Local verification script kept at
+        scripts/explorer_live_verification.mjs.
+-   **Regression diff review:** git diff contains ONLY the approved
+    task's changes + tests + docs; `git status -- supabase/` is EMPTY
+    (zero schema/migration changes); auth/session/provider/hosting/
+    admin/CloudStream/downloader/analytics code untouched.
+
+## Known pre-existing issues (unchanged, documented)
+
+-   The four orphaned standalone failures documented in Phase 6
+    remain (search_performance_test, detail_back_navigation_test,
+    discover_detail_header_admin_tests, phase6_auth_test) — all fail
+    identically on the pre-change baseline; none is wired into the
+    pnpm test chain; left untouched per the no-unrelated-cleanup rule.
+-   Local TMDB credentials are not configured, so the populated
+    spotlight/rails/feed path is verified through the loader
+    code-path contracts + existing cached-helper coverage; the
+    fallback states were exercised live. Production (with real TMDB
+    env) will render the full cinematic Explorer experience.
+
+## Change Log
+
+### 2026-10-06 — Follow-up task complete (all six approved changes)
+
+-   Explorers live at /movies, /tv-shows, /anime (spotlight + chips +
+    sections/filtered feed); old destination/collection UI fully
+    removed; Discover, Upcoming, Search, My List, playback untouched.
+-   My List/Settings Back buttons + the account-history fix; Search
+    recent-searches row; detail spacing −18px; "Available on".
+-   Gates: check 0/0, test exit 0 (222 scripts), build OK; live
+    behavioral + viewport verification passed; screenshots captured.
+-   No database/schema/auth/session/provider changes (verified via
+    empty diff over supabase/ and the protected areas).

@@ -7,7 +7,7 @@ const source = await readFile(new URL('../src/routes/search/+page.svelte', impor
 // cleanup. The previous $effect/untrack workaround was removed in favor
 // of a SvelteKit `export const snapshot` — the import must NOT include
 // `untrack` anymore.
-assert.match(source, /import \{ onDestroy \} from 'svelte'/);
+assert.match(source, /import \{ (?:onDestroy|onDestroy, onMount|onMount, onDestroy) \} from 'svelte'/);
 assert.doesNotMatch(source, /import \{[^}]*\buntrack\b/);
 assert.match(source, /import \{ replaceState \} from '\$app\/navigation'/);
 assert.match(source, /replaceState\(`/);

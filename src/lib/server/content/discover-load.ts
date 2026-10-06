@@ -1,9 +1,9 @@
-import { collection, discover, popular, selectFeatured, trendingMoviesByLanguages } from './service';
+import { discover, popular, selectFeatured, trendingMoviesByLanguages } from './service';
 import { toMediaItem } from './presenter';
 import { getOrSet, getOrSetValidated } from './cache';
 import { getTmdbIndiaFlatrateIds, getTmdbHeroMoviePool, getTmdbHeroSeriesPool } from './adapters/tmdb';
 import { selectHeroLineup, heroDailyBucket, isHeroLineupCacheable, type HeroCandidate, type HeroDiagnostics, type HeroLineupResult } from './hero-select';
-import type { CollectionFilters, CollectionSort, ContentType, ContentList, NormalizedMediaItem } from './types';
+import type { ContentType, ContentList, NormalizedMediaItem } from './types';
 import type { MediaItem } from '$data/content';
 
 type RailResult = { items: MediaItem[]; error?: string };
@@ -19,30 +19,6 @@ async function loadRail(type: ContentType, kind: RailKind): Promise<RailResult> 
   } catch {
     return { items: [], error: `${type === 'anime' ? 'Anime' : type === 'movie' ? 'Movie' : 'Series'} catalog is temporarily unavailable.` };
   }
-}
-
-async function loadCollectionRail(type: ContentType, filters: CollectionFilters): Promise<RailResult> {
-  try {
-    const result = await collection(type, 1, filters);
-    if (result.source.provider === 'fixtures') {
-      return { items: [] };
-    }
-    return { items: result.items.map(toMediaItem) };
-  } catch {
-    return { items: [] };
-  }
-}
-
-async function loadTopRated(type: ContentType): Promise<RailResult> {
-  return loadCollectionRail(type, { sort: 'Top rated' });
-}
-
-async function loadNewest(type: ContentType): Promise<RailResult> {
-  return loadCollectionRail(type, { sort: 'Newest' });
-}
-
-async function loadGenreCollection(type: ContentType, genre: string): Promise<RailResult> {
-  return loadCollectionRail(type, { genre });
 }
 
 // Indian-language trending movies (movie only, TMDB original-language filter).
@@ -66,64 +42,14 @@ async function loadTrendingMoviesByLanguages(languages: string[]): Promise<RailR
   }
 }
 
-const validCollectionSorts: CollectionSort[] = ['For you', 'Top rated', 'Newest'];
-
-// The collection routes serve pages 1..20 — deeper pages are clamped back
-// to 1 by parseCollectionPage. This constant is the single source of truth
-// for that contract, so the pagination UI can disable "Next" exactly where
-// the server stops serving pages (instead of wrapping page 21 → page 1).
-export const MAX_COLLECTION_PAGE = 20;
-
-function parseCollectionPage(value: string | null) {
-  const page = Number(value);
-  return Number.isInteger(page) && page >= 1 && page <= MAX_COLLECTION_PAGE ? page : 1;
-}
-
-/**
- * Safe "Page X of Y" total: only reported when the upstream contract
- * actually provides one (TMDB discover returns total_pages; the anime
- * merged path does not), clamped to the server's 1..MAX_COLLECTION_PAGE
- * serving window and never below the current page.
- */
-function clampTotalPages(value: unknown, page: number): number | undefined {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined;
-  const total = Math.trunc(value);
-  if (total < 1) return undefined;
-  return Math.min(Math.max(total, page), MAX_COLLECTION_PAGE);
-}
-
-function parseCollectionFilters(url: URL): CollectionFilters {
-  const genre = url.searchParams.get('genre')?.trim() || undefined;
-  const yearValue = url.searchParams.get('year')?.trim() || undefined;
-  const year = yearValue && /^\d{4}$/.test(yearValue) ? yearValue : undefined;
-  const sortValue = url.searchParams.get('sort')?.trim();
-  const sort = validCollectionSorts.includes(sortValue as CollectionSort) ? sortValue as CollectionSort : undefined;
-  return { genre, year, sort };
-}
-
-export async function loadCollectionData(type: ContentType, url: URL) {
-  const page = parseCollectionPage(url.searchParams.get('page'));
-  const filters = parseCollectionFilters(url);
-  try {
-    const result = await collection(type, page, filters);
-    if (result.source.provider === 'fixtures') {
-      return { items: [], type, page: result.page, hasNextPage: false, totalPages: undefined as number | undefined, filters, errorMessage: `${type === 'anime' ? 'Anime' : type === 'movie' ? 'Movie' : 'Series'} catalog is temporarily unavailable.` };
-    }
-    return {
-      items: result.items.map(toMediaItem),
-      type,
-      page: result.page,
-      hasNextPage: result.hasNextPage,
-      totalPages: clampTotalPages(result.totalPages, result.page ?? page),
-      filters,
-      errorMessage: undefined
-    };
-  } catch {
-    return { items: [], type, page, hasNextPage: false, totalPages: undefined as number | undefined, filters, errorMessage: `${type === 'anime' ? 'Anime' : type === 'movie' ? 'Movie' : 'Series'} catalog is temporarily unavailable.` };
-  }
-}
-
-type GenreCollection = { title: string; items: MediaItem[]; href: string };
+// Explorer redesign note: the former paginated collection loader
+// (loadCollectionData + MAX_COLLECTION_PAGE) and the Phase 4 destination
+// loader (loadDestinationData + its rail helpers) were REMOVED — the
+// Explorer pages now load through loadExplorerData/explorerFeed in
+// explorer-load.ts, which composes the SAME collection()/discover()/
+// popular() service calls with the closed genre/language taxonomies.
+// Everything above (loadRail, loadTrendingMoviesByLanguages) still
+// serves the Discover page exactly as before.
 
 // ============================================================
 // Discover Hero daily lineup.
@@ -353,84 +279,4 @@ export async function loadDiscoverData() {
     heroItems,
     errorMessage: errors.length ? `${[...new Set(errors)].join(' ')} Check the server catalog configuration and try again.` : undefined
   };
-}
-
-// ============================================================
-// Navigation & Settings Redesign, Phase 4 — rich destination pages.
-//
-// loadDestinationData(type, url) powers the first-class /movies,
-// /tv-shows and /anime pages. It composes ONLY existing, cached
-// helpers (loadRail / loadTopRated / loadNewest / loadGenreCollection
-// / loadCollectionData) — zero new backend fetching, zero duplicate
-// implementations, existing TTL/LRU caching reused.
-//
-// Contract:
-//   hero     — the best trending/popular item WITH a backdrop becomes
-//              the featured cinematic hero. Empty on failure → the
-//              page renders its fallback heading block (no fake hero).
-//   rails    — destination-scoped rails; empty rails are OMITTED from
-//              the array entirely (the page never renders an empty
-//              section — same honesty contract as Discover).
-//   collection — the existing paginated/filtered collection data
-//              (the "browse the full collection" section below the
-//              cinematic content; URL contract unchanged).
-//
-// "Where supported" per the plan:
-//   - movie/series: Trending + Popular + Top rated + New & recent +
-//     two curated genre rails (genre + Newest sorts are supported by
-//     the TMDB discover path).
-//   - anime: Trending + Popular + Top rated only — the merged anime
-//     path ignores genre/ Newest sorts (they would silently duplicate
-//     Popular), so those rails are intentionally not requested.
-// ============================================================
-export type DestinationRail = { key: string; title: string; items: MediaItem[] };
-
-const DESTINATION_GENRE_RAILS: Partial<Record<ContentType, { genre: string; title: string }[]>> = {
-  movie: [
-    { genre: 'Action', title: 'Action & adrenaline' },
-    { genre: 'Comedy', title: 'Comedy picks' },
-    { genre: 'Sci-Fi', title: 'Sci-Fi worlds' }
-  ],
-  series: [
-    { genre: 'Drama', title: 'Drama deep cuts' },
-    { genre: 'Crime', title: 'Crime & mystery' },
-    { genre: 'Comedy', title: 'Comedy picks' }
-  ]
-};
-
-export async function loadDestinationData(type: ContentType, url: URL) {
-  const genreRailDefs = DESTINATION_GENRE_RAILS[type] ?? [];
-  const [collectionData, trending, popular, topRated, newest, ...genreRails] = await Promise.all([
-    loadCollectionData(type, url),
-    loadRail(type, 'trending'),
-    loadRail(type, 'popular'),
-    loadTopRated(type),
-    type === 'anime' ? Promise.resolve({ items: [] as MediaItem[] } as RailResult) : loadNewest(type),
-    ...genreRailDefs.map((def) => loadGenreCollection(type, def.genre))
-  ]);
-
-  // Featured hero — first trending/popular item that actually has a
-  // backdrop to fill the cinematic layout. No synthetic fallback.
-  const heroItem =
-    [...trending.items, ...popular.items].find((item) => item.backdrop?.trim() && item.title?.trim()) ?? undefined;
-
-  const railDefs: { key: string; title: string; result: RailResult }[] = [
-    { key: 'trending', title: 'Trending now', result: trending },
-    { key: 'popular', title: `Popular ${type === 'anime' ? 'anime' : type === 'movie' ? 'movies' : 'TV shows'}`, result: popular },
-    { key: 'top-rated', title: 'Top rated', result: topRated }
-  ];
-  if (type !== 'anime') {
-    railDefs.push({ key: 'newest', title: 'New & recent', result: newest });
-  }
-  genreRailDefs.forEach((def, index) => {
-    railDefs.push({ key: `genre-${def.genre.toLowerCase()}`, title: def.title, result: genreRails[index] });
-  });
-
-  // Omit empty rails entirely — a failed/empty rail is simply hidden
-  // (same honesty contract as the Discover batch rails; no fixtures).
-  const rails: DestinationRail[] = railDefs
-    .filter((def) => def.result.items.length > 0)
-    .map((def) => ({ key: def.key, title: def.title, items: def.result.items }));
-
-  return { ...collectionData, heroItem, rails };
 }

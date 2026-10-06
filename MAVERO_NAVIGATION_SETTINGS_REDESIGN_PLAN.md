@@ -432,3 +432,67 @@ Before every phase:
 `Phase 1 → Route & Navigation → Phase 2 → Global Shell → Phase 3 → Account/Settings → Phase 4 → Rich Content Pages → Phase 5 → Polish/Accessibility → Phase 6 → Regression/Final`
 
 Intentionally limited to **6 phases**.
+
+------------------------------------------------------------------------
+
+# Follow-up Task — Explorer + Navigation + Search + Detail UX
+
+**Status:** APPROVED / IMPLEMENTED\
+**Scope:** six user-approved changes on top of the completed
+six-phase redesign. Same rules apply: audit first, preserve the
+existing architecture, no database changes, no unrelated edits.
+
+## Change 1 — Movies / TV Shows / Anime Explorer redesign
+
+Replace the Phase 4 destination pages (hero + rails + embedded
+collection grid) with ONE coherent Explorer per type:
+
+-   **Spotlight Carousel** — 6 slides, auto-rotate every 4s, ~90% of
+    the available viewport width, deterministic daily rotation over
+    recent (~30-day) popular candidates, sensible fallback fill,
+    honest fallback block, reduced-motion + full carousel a11y.
+-   **Genre chips** + **Language chips** — two horizontal rows below
+    the spotlight, from ONE shared closed taxonomy of REAL TMDB ids
+    per media type; "All" default; sticky while browsing results.
+-   **Filtered results** — replace the normal sections when a filter
+    is active; SSR seed + RESPONSIVE first batch (columns × visible
+    rows, bounded 8..30 — never a universal hardcoded 20) +
+    progressive/infinite loading via `/api/explorer/feed`.
+-   **Unfiltered sections** — Popular + Top Rated per type, rendered
+    with the existing ContentRail, cross-section deduplicated.
+-   **Old UI cleanup** — DestinationPage, CollectionPage, FilterBar,
+    filter-types and the destination/collection loaders are removed
+    (genuinely obsolete; the legacy /discover/* redirects remain).
+-   Discover remains a distinct architecture; the OTT selector stays
+    Discover-only (no OTT filter existed on these routes — "where
+    applicable" is N/A, documented).
+
+## Change 2 — My List + Settings Back buttons
+
+Both pages gain an explicit, accessible Back control → `/discover`
+(replace-state navigation so browser-back afterwards cannot loop
+back into the account surface).
+
+## Change 3 — phone-back history fix
+
+The Account sheet navigates My List/Settings with replace-state when
+already on an account surface, so
+Discover → Account → My List → Account → Settings → Back = Discover.
+No global history manipulation.
+
+## Change 4 — Search Recent Searches row
+
+ONLY a recent-searches row is added below the search controls:
+localStorage-backed (bounded 8, deduped), hidden when empty,
+re-runnable, individually removable, horizontally scrollable. Every
+other search contract is unchanged.
+
+## Change 5 — Detail top spacing
+
+Mobile poster top spacing reduced by ~18px (150px → 132px) so the
+action buttons are visible sooner. Surgical; all other breakpoints
+and behavior untouched.
+
+## Change 6 — "Streaming on" → "Available on"
+
+Copy-only rename of the provider section heading.

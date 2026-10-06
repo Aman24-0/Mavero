@@ -608,7 +608,10 @@ function section_regression(): void {
     'src/lib/shared/download-link-types.ts',
     'src/lib/shared/downloader-filters.ts',
     'src/lib/components/DownloaderFilterSheet.svelte',
-    'src/lib/components/DetailPage.svelte',
+    // DetailPage.svelte left the byte-frozen list in the approved
+    // Explorer redesign (mobile hero spacing −18px + "Streaming on" →
+    // "Available on" label copy). Its downloader action model stays
+    // pinned by §F1c below.
     'src/routes/api/downloader/config/+server.ts',
     'src/lib/server/downloader/admin-service.ts',
     'src/lib/server/downloader/validation.ts',
@@ -617,6 +620,25 @@ function section_regression(): void {
     const current = read(frozen);
     const pristine = pristineFile(frozen);
     ok(pristine === null || pristine === current, `§F1: ${frozen} is byte-identical to the pre-CS-5 commit`);
+  }
+
+  // §F1c (Explorer redesign): DetailPage.svelte evolved in the approved
+  // task (mobile top spacing 150→132px + "Streaming on" → "Available on"
+  // label copy). The DOWNLOADER action model it hosts is unchanged —
+  // pinned here line-for-line.
+  const detailPageSrc = read('src/lib/components/DetailPage.svelte');
+  for (const pinned of [
+    'function openDownloadSheet(',
+    'aria-haspopup="dialog" aria-expanded={downloadSheetOpen}',
+    'showDownloadButton',
+    'showDownloadFailure',
+    'class="download-btn download-unavailable"',
+    'retryDownloadProviders',
+    'downloadProvidersLoading',
+    '<Download size={16} />',
+    '<DownloadSheet'
+  ]) {
+    ok(detailPageSrc.includes(pinned), `§F1c: DetailPage keeps the downloader action model line: ${pinned}`);
   }
 
   // §F1b (Permanent Adapter Plan Phase 1): the two Downloader 2 UI surfaces
