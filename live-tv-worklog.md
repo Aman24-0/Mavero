@@ -1554,7 +1554,7 @@ browser QA.
 
 ``` text
 base:        a56c017ba064e3a1c68f2b2f45be4dbb27470787 (LT-3 head, clean)
-LT-4 commit: 8747321 (full: recorded after push)
+LT-4 commit: 874732146be80354be01e0dc5a39a15debbb55f7
              "feat(live-tv): add live tv page and epg"
 ```
 
