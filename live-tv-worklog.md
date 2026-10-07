@@ -2,7 +2,7 @@
 
 **Feature:** LiveGT TV V1\
 **Plan:** `live-tv-plan.md`\
-**Status:** APPROVED --- IMPLEMENTATION IN PROGRESS (LT-0, LT-1, LT-2, LT-3 COMPLETE)\
+**Status:** APPROVED --- IMPLEMENTATION IN PROGRESS (LT-0 through LT-4 COMPLETE)\
 **Date:** 2026-10-07
 
 ## Purpose
@@ -124,7 +124,7 @@ NO LIVE TV SUPABASE MIGRATION FOR V1
   LT-1 Navigation IA            COMPLETE
   LT-2 LiveGT Client Layer      COMPLETE
   LT-3 DASH / ClearKey Player   COMPLETE
-  LT-4 Live TV UI               NOT STARTED
+  LT-4 Live TV UI               COMPLETE
   LT-5 Analytics & Hardening    NOT STARTED
   LT-6 Final Regression         NOT STARTED
 
@@ -1170,7 +1170,7 @@ states — using the Adaptive Cinematic Glass design.
 
 ### Status
 
-`NOT STARTED`
+`COMPLETE` (2026-10-07)
 
 ### Required
 
@@ -1186,29 +1186,382 @@ states — using the Adaptive Cinematic Glass design.
 -   loading/empty/error states
 -   responsive mobile/desktop
 
+### Objective
+
+Build the production `/live-tv` page consuming the LT-2 client and the LT-3
+engine, with channel discovery (catalogue + local search + data-derived
+categories), Mavero-native playback controls over the page-owned
+`<video>` element, honest live/DVR UI, an independent per-channel guide
+(Now Playing / Up Next / schedule), every loading/empty/error state, and
+full responsive behavior --- inside the existing Adaptive Cinematic Glass
+design system. No bypassing of LT-2/LT-3, no new cache, no proxy, no
+persistence of signed playback material, no VOD changes.
+
 ### Files changed
 
 ``` text
-To be filled by GLM.
+src/routes/live-tv/+page.svelte              (new)
+    - The production page: STATE ORCHESTRATION ONLY.
+    - Catalogue: getLiveTvChannels() on mount (signal-wired), skeleton
+      while loading, shared ErrorState surface + retry on failure, honest
+      empty-catalogue state with reload.
+    - Search + categories: 100% LOCAL filtering through the LT-2 pure
+      utilities (filterLiveTvChannelsByQuery / ByCategory /
+      extractLiveTvCategories) --- no per-keystroke network, no remote
+      category requests, no second search implementation.
+    - Catalogue rendering: bounded batches (60) behind an IntersectionObserver
+      sentinel (the Upcoming-page convention; NOT a virtualization framework)
+      so 1000+ channels never render at once.
+    - Session orchestration (the critical path, plan §9 order):
+      select(B) -> abort A's controller (kills A's in-flight resolve AND
+      A's in-flight engine.load via the LT-2/LT-3 signal contracts) ->
+      DESTROY A's engine -> adopt B -> resolve B fresh -> NEW engine loads
+      onto the SAME page-owned <video> element. Every continuation is
+      guarded by the selection sequence + AbortController state; aborts
+      are silent; a late A result can never touch B's UI (identity guard
+      on the engine reference too).
+    - The resolution object exists ONLY inside the async select flow:
+      handed straight from LT-2 to engine.load(), never in reactive state,
+      never in URLs/storage/logs (test §15).
+    - Error surfaces: ONLY fixed LT-2/LT-3 safe-table text
+      (playbackSafeMessage/guideSafeMessage); unknown errors get a static
+      fallback --- nothing is ever interpolated.
+    - Guide: per selected channel, own controller + sequence, NEVER awaited
+      by playback; failures render a compact retryable note and never touch
+      the session (test §11).
+    - Info line + current programme: epg.determineCurrentProgramme over
+      absolute Unix seconds (no timezone assumption); nowSeconds ticker
+      refreshes every 30 s.
+    - Retry: playback retry re-runs the WHOLE flow (fresh resolve, fresh
+      engine --- never a reused resolution); guide retry re-requests the
+      guide only; catalogue retry re-requests the catalogue.
+    - SSR-safe: zero data fetching and zero browser access during server
+      render; everything data-related starts in onMount (existing page
+      pattern). onDestroy aborts every controller, destroys the engine and
+      clears the ticker.
+
+src/lib/components/live-tv/LiveTvPlayer.svelte  (new)
+    - Presentation + engine wiring: renders the page's single <video>
+      (playsinline, bindable `video` prop), subscribes to the LT-3 engine's
+      normalized events, resets cleanly on engine change, unsubscribes on
+      teardown.
+    - Autoplay: attempted after each 'loaded' event; a 'autoplay_blocked'
+      rejection becomes a tap-to-play CTA --- NOT a stream failure, no
+      auto-mute bypass (tested).
+    - Honest live UI: DVR seek control ONLY when the engine reports a valid
+      seek range (never a fake VOD timeline); Go Live only when measurably
+      behind the live edge; LIVE badge reflects actual position
+      (describeLivePosition); behind-live labels from formatBehindLive.
+    - Controls: play/pause, mute + volume slider, live-seek slider,
+      Go Live, fullscreen (standard container API, feature-detected) ---
+      all semantic buttons/inputs with aria labels; error/resolving/
+      loading/buffering/autoplay/empty overlays with proper roles.
+    - Never imports Shaka, never calls LiveGT, never reads source/DRM
+      fields (test §8/§15).
+
+src/lib/components/live-tv/LiveTvCategoryBar.svelte (new)
+    - "All" + one chip per data-derived category; aria-pressed selection
+      state; horizontally self-scrolling (never page overflow).
+
+src/lib/components/live-tv/LiveTvChannelCard.svelte  (new)
+    - Semantic <button> channel card: logo (lazy, no-referrer) with an
+      initials fallback (epg.channelInitials) on missing logo OR load
+      failure; category only when present; nothing invented; aria-pressed
+      selected state; keyboard accessible.
+
+src/lib/components/live-tv/LiveTvNowPlaying.svelte   (new)
+    - Now Playing / Up Next from ACTUAL guide fields only; loading
+      skeleton; compact retryable failure note; quiet valid-empty state.
+
+src/lib/components/live-tv/LiveTvGuide.svelte        (new)
+    - V1 schedule list (no TV-grid over-engineering): finished programmes
+      omitted, sorted by start; the current programme marked ONLY when its
+      real [start, stop) window contains now (programmeStatusAt); viewer-
+      locale wall-clock times from absolute instants; loading skeleton,
+      retryable failure, valid-empty states.
+
+src/lib/client/live-tv/epg.ts              (new)
+    - Pure display helpers (no network/engine/browser access):
+      determineCurrentProgramme (provider nowPlaying first, unambiguous
+      [start,stop) window scan fallback, null otherwise --- never
+      fabricated), programmeStatusAt, formatGuideClock/DateTime,
+      programmeIsToday, describeLivePosition, formatBehindLive,
+      channelInitials, formatGuideGeneratedAt (only when a finite value
+      exists --- generatedAt is unreliable, LT-2 finding).
+
+scripts/live_tv_page_test.ts             (new)
+    - LT-4 regression suite: behavioral (real epg.ts + LT-2 utilities
+      under Node --- also proves SSR safety) + source-contract (the
+      phase5_player_ui convention) across the page and all components.
+
+live-tv-worklog.md                         (this record)
+```
+
+Nothing else changed. media-compat.ts (VOD DASH still UNSUPPORTED),
+hls-engine.ts, PlayerViewport/PlayerShell/PlaybackManager, provider
+adapters, AppShell, AccountSheet, /upcoming, Supabase, analytics: all
+untouched (verified by git status --- zero tracked-file modifications;
+the change set is exactly the 8 new files above plus this worklog).
+
+### Architecture decisions
+
+1.  **Page owns orchestration; components are presentational.** The page
+    is the only place that calls LT-2 and creates/destroys the LT-3
+    engine; LiveTvPlayer only renders the page-owned `<video>` (exposed
+    through a `$bindable` prop) and drives the engine contract for
+    controls. UI never sees Shaka, LiveGT URLs, sources or DRM fields.
+2.  **Engine-per-session** (page-level): each selection destroys the
+    previous engine BEFORE resolving the new channel (plan §9 order:
+    stop previous FIRST), then a fresh engine loads the fresh resolution.
+    Exactly one engine is alive at any moment (identity-guarded teardown);
+    the Shaka module itself stays memoized by LT-3's loader, so this costs
+    nothing after first load.
+3.  **Cancellation, not a second generation system.** The page coordinates
+    switching purely through AbortControllers (the LT-2/LT-3 signal
+    contracts) plus a minimal selection sequence for resolve races ---
+    LT-3's internal generation guards own the playback session (as the
+    brief requires: no duplicate protection system in the UI).
+4.  **Local-only search/categories.** The catalogue (1176 channels) is
+    filtered in-memory through the LT-2 pure utilities; no per-keystroke
+    requests, no debounce needed, no remote category calls, no new cache.
+5.  **Honest live UI.** No seek control without a real seek range; no
+    fabricated current programme; no invented metadata; "Go Live" only
+    when measurably behind the edge; LIVE badge driven by
+    describeLivePosition math.
+6.  **Batched catalogue rendering** (60 + IntersectionObserver sentinel
+    growth): bounds DOM size for 1000+ channels without a virtualization
+    framework (the existing Upcoming-page convention).
+
+### Search/category behavior
+
+``` text
+Categories: derived from catalogue data via extractLiveTvCategories
+            (never hardcoded; 28 observed live --- drift-proof). "All"
+            ('') + one chip per category, aria-pressed selection state.
+Search:     local case-insensitive name matching via
+            filterLiveTvChannelsByQuery over the category-filtered list;
+            clear button; honest no-match empty state with Clear action.
+Network:    zero requests per keystroke or category change --- local
+            data is sufficient (plan §8 preference honored).
+```
+
+### Player integration
+
+``` text
+select channel -> abort previous controller (resolve + load)
+               -> destroy previous engine
+               -> resolveLiveTvPlayback(id)      [LT-2, fresh, signal]
+               -> new LiveTvPlaybackEngine      [LT-3]
+               -> engine.load(videoEl, resolution, {signal})
+               -> 'loaded' -> player component attempts autoplay
+               -> autoplay blocked => tap-to-play CTA (not a failure)
+Mid-session engine errors: surfaced by the player component from the
+engine's normalized 'error' event (fixed LT-3 safe table); retry re-runs
+the full flow with a FRESH resolution (expired MPD recovery path).
+Volume/mute/seek/go-live/fullscreen: through the engine contract and the
+standard fullscreen API on the player surface; the <video> element belongs
+to the page across ALL sessions (never re-created on switch).
+```
+
+### EPG/guide behavior
+
+``` text
+Per selected channel via getLiveTvGuide (30 s LT-2 cache honored).
+Independent of playback: never awaited by the session flow; failures
+render a compact retryable note and never kill or touch the stream.
+nowPlaying/upNext/schedule rendered from ACTUAL fields only; the current
+programme is marked only when the real [start, stop) window contains
+nowSeconds (absolute Unix seconds --- no timezone assumption; provider
+display strings are never parsed for logic). generatedAt is never relied
+on (unreliable --- LT-2 finding). Empty guide = quiet valid state.
+```
+
+### Error/recovery behavior
+
+| Case | Surface | Recovery |
+| --- | --- | --- |
+| Catalogue failure | shared ErrorState block, safe LT-2 text | retry re-requests catalogue |
+| Empty catalogue | honest empty state | reload action |
+| Empty search | honest empty state | clear search |
+| Resolve failure (LT-2) | player error overlay (role=alert) | retry = full fresh flow |
+| Engine failure (LT-3) | player error overlay (role=alert) | retry = full fresh flow |
+| Autoplay blocked | tap-to-play CTA | user tap starts playback |
+| Guide failure | compact note + Retry | guide-only retry |
+| Empty guide | quiet valid state | none needed |
+
+No automatic playback retries exist; no resolution is ever reused
+(a fresh resolveLiveTvPlayback call is the ONLY recovery for expired
+signed MPD URLs).
+
+### Responsive behavior
+
+Desktop/tablet/mobile all served by one column (player priority at top,
+per the plan §7 structure); 16:9 player surface; contained horizontal
+scroll for category bar, search row and control row (never page-level
+overflow); single-column channel grid at <=640px; 110px bottom clearance
+for the mobile nav pill; touch-sized controls; reduced-motion respected.
+
+### Security checks
+
+``` text
+- Zero console calls, zero storage APIs (localStorage/sessionStorage/
+  IndexedDB), zero cookie access, zero analytics calls in every new file
+  (test §15 scans all sources).
+- No LiveGT URL is ever built outside LT-2 (no 'livetgtv' string anywhere
+  in the UI; no raw fetch in the page).
+- Playback resolution: lives ONLY inside the async select flow, handed
+  straight to engine.load(); never in reactive state, never in URL params
+  (the page writes no URL params at all), never logged, never persisted.
+- Error surfaces use ONLY the fixed LT-2/LT-3 safe tables; unknown errors
+  get a static fallback --- nothing is interpolated (test §10).
+- UI never reads sources/DRM fields (test §15); the player never touches
+  Shaka (test §8).
+- No proxy: the browser still fetches the signed MPD/segments directly
+  from the LiveGT CDN (decision D3, unchanged).
 ```
 
 ### Tests
 
 ``` text
-To be filled by GLM.
+Focused: scripts/live_tv_page_test.ts  PASS — 22/22 checks, exit 0
+  §1  route/page contract (heading, player mount, bind:video,
+      no stray <video> — comment-stripped element counting)
+  §2  catalogue loading (LT-2 wiring, signal, skeleton)
+  §3  catalogue error + empty states (retry actions)
+  §4  categories (behavioral extractor/filter + All chip + aria-pressed
+      + local-only filtering)
+  §5  search (local case-insensitive, labelled, clearable, empty state)
+  §6  selection + resolution (fresh resolve -> engine.load, resolution
+      never in reactive state, select flow never touches sources/drm)
+  §7  switching + stale protection (ORDER: abort -> destroy -> resolve ->
+      new engine -> load; seq guards on every continuation; silent aborts;
+      engine identity guard)
+  §8  player lifecycle (subscriptions, reset, unsubscribe, no Shaka, no
+      LiveGT)
+  §9  live UI honesty + autoplay (seek only with valid range; Go Live
+      gated; labelled controls; autoplay_blocked = CTA, no auto-mute)
+  §10 playback error UI + retry (safe-table text only; retry = full
+      fresh flow; no interpolation)
+  §11 guide independence (own controller/sequence; never awaited; own
+      retry; component states)
+  §12 current programme (behavioral: provider-first, [start,stop)
+      windows, never fabricated; ticker wiring)
+  §13 missing logo + optional metadata (initials fallback, onerror,
+      nothing invented)
+  §14 responsive invariants (16:9, contained scroll, single-column
+      mobile, batched rendering)
+  §15 security (zero console/storage/cookie/LiveGT/DRM surfaces; no URL
+      params; no source/DRM field reads)
+  §16 onDestroy cleanup (all controllers aborted, engine destroyed,
+      ticker cleared, sequences invalidated)
+  §17 no duplicate player (single engine construction site, single
+      rendered <video>, identity-guarded teardown)
+  §18 epg helpers (live-edge math, behind-live labels, time rendering,
+      generatedAt handling)
+
+LT-2 regression: scripts/live_tv_client_test.ts   PASS — 61/61 checks
+LT-3 regression: scripts/live_tv_player_test.ts   PASS — 65/65 checks
+
+pnpm check   PASS — svelte-check: 0 errors, 0 warnings
+pnpm test    PASS — exit 0; full &&-chained suite (~230 scripts);
+             5381-baseline parity maintained; the 8 "Error:" strings in
+             the log are the pre-existing expected error-path fixtures
+             documented in LT-0 (verified: ProviderHealth/4K/Manifest/
+             camera/JsonDownloader fixtures --- none from Live TV).
+pnpm build   PASS — exit 0; vite build + Netlify adapter + executor
+             function. /live-tv server entry emitted (13.85 kB); Shaka
+             confirmed as a SEPARATE lazy chunk (~820 kB) reached only
+             through the engine's dynamic import — the /live-tv page
+             node is 45 kB and holds only the import reference.
+
+LT-4 suite status: standalone (not chained into `pnpm test`), same
+pre-existing convention as the LT-1/2/3 suites; chaining all four Live
+TV suites remains an LT-6 decision with approval.
 ```
 
-### Commit
+### Browser QA (live)
 
 ``` text
-To be filled by GLM.
+ENVIRONMENT LIMITATION (documented honestly — not pretended around):
+
+1. The repo's PRE-EXISTING devtool-deterrence layer (disable-devtool
+   integration, installed long before Live TV; explicitly outside LT-4's
+   allowed changes) structurally blocks automated-browser sessions in
+   this environment: its detectors false-positive under CDP automation.
+   Verified with: agent-browser (blocked ~4 s after a clean first paint),
+   Playwright headless (blocked), Playwright without console
+   instrumentation (blocked), headed Chromium under Xvfb (blocked).
+   The block page ("Page unavailable") is the app's own protection, not
+   a Live TV defect. Modifying it to enable QA would violate LT-4's
+   scope-protection rules, so it was left untouched.
+
+2. LiveGT streams are India-geo-restricted (plan §3); this environment
+   is not India-based, so real MPD/ClearKey playback could not be
+   verified here regardless (LT-3 finding 4 already anticipated this).
+
+WHAT WAS VERIFIED FOR REAL:
+
+- SSR: GET /live-tv returns 200 and server-renders the complete page
+  markup (heading, labelled search, single <video>, "Select a channel to
+  start watching." empty state, catalogue skeleton, Playback controls
+  region, active Live TV nav with aria-current="page", correct title).
+- The first headless paint (before the pre-existing protection layer
+  engaged) showed the correct page structure: hero, search field, player
+  region with the empty-state overlay, disabled controls, Channels
+  section; zero console errors up to that point.
+- The LiveGT metadata API is reachable from this environment
+  (channels 200 / guide 200 probed again during this phase), and the
+  client-side catalogue path is exercised by the deterministic suites.
+- Production bundling verified: Shaka stays a lazy chunk, never loaded
+  until a channel is actually selected.
+
+Real end-to-end playback (MPD fetch + ClearKey decrypt + video start +
+channel switching in a real browser) REMAINS VERIFICATION-PENDING on an
+India-based browser, exactly as LT-3 documented; it belongs to LT-5
+browser QA.
 ```
 
 ### Findings
 
+1.  `$state<T>()` (generic form) is the repo convention for typed state;
+    the `let x: T = $state(v)` annotation form produced svelte-check
+    narrowing errors in Svelte 5 runes components --- recorded for future
+    UI authors (fixed before commit; check is 0/0).
+2.  A type named identically to a component (LiveTvGuide type vs
+    LiveTvGuide component) collides in svelte-check --- aliased the type
+    import (`LiveTvGuide as LiveTvGuideModel`). Future naming note.
+3.  svelte-check warns on `-webkit-line-clamp` without the standard
+    `line-clamp` property --- both are now declared (repo-wide convention
+    going forward).
+4.  Scoped styles cannot reach child-component markup (`.ltv-hero
+    .ltv-category-bar` was flagged unused CSS) --- child surfaces are
+    wrapped in page-owned wrapper elements instead of :global selectors.
+5.  The local dev server requires PUBLIC_SUPABASE_* env (fail-closed
+    hooks). A gitignored `.env` (dummy publishable key, real project URL)
+    enables guest-page development; it touches no Supabase data and is
+    not committed (.gitignore covers `.env`).
+6.  Vite dev mode pre-bundles `shaka-player` when the /live-tv module
+    graph first loads (dev-only dependency optimization + reload); the
+    PRODUCTION build keeps Shaka in a lazy chunk (verified in the build
+    output) --- no change of behavior, recorded so future dev-mode
+    sessions don't misread it.
+7.  No scope violations: no VOD/player/navigation/Supabase/analytics/
+    media-compat changes (git diff empty on all tracked files); no
+    LiveGT V2; no proxy; no new cache; no UI persistence of playback
+    material; /upcoming untouched.
+
+### Commit
+
 ``` text
-To be filled by GLM.
+base:        a56c017ba064e3a1c68f2b2f45be4dbb27470787 (LT-3 head, clean)
+LT-4 commit: <filled by follow-up worklog commit>
 ```
+
+### Next phase
+
+LT-5 --- Analytics & Hardening (per plan §19): analytics events for Live
+TV, security/accessibility/performance verification, and the India-based
+browser verification that LT-3/LT-4 documented as pending.
 
 ------------------------------------------------------------------------
 
@@ -1477,11 +1830,15 @@ COMPLETE / BLOCKED
 
 ## Handoff
 
-Planning is approved. LT-0 (baseline & contract) and LT-1 (Navigation
-IA) are COMPLETE: all three baseline commands pass, the LiveGT V1 API
-contract is verified live, Live TV is primary nav #5, and Upcoming now
-lives in the Account sheet above My List with no Live TV functionality
-implemented yet.
+Planning is approved. LT-0 through LT-4 are COMPLETE: baselines pass,
+the LiveGT V1 API contract is verified live, Live TV is primary nav #5,
+Upcoming lives in the Account sheet above My List, the LT-2 client layer
+and LT-3 Shaka DASH/ClearKey engine are landed with deterministic suites,
+and the production `/live-tv` page is live (catalogue + local
+search/categories + player integration + Now Playing/Up Next/guide, all
+loading/empty/error states, responsive, SSR-safe, security-clean).
 
-Next phase is **LT-2 --- LiveGT Client Layer**. GLM must re-read both
-files and re-verify the repository state before starting LT-2.
+Next phase is **LT-5 --- Analytics & Hardening**. GLM must re-read both
+files and re-verify the repository state before starting LT-5. The
+India-based browser playback verification that LT-3/LT-4 documented as
+pending belongs to LT-5.
