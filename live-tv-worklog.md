@@ -178,8 +178,8 @@ to document.
 ### Commit
 
 ``` text
-69583cce677596ef236379b341dcffdb1fd2fc53  (LT-0 audit HEAD, worktree
-clean; the LT-0 worklog commit itself is recorded below)
+audit HEAD:   69583cce677596ef236379b341dcffdb1fd2fc53 (clean worktree)
+LT-0 commit:  f451adfcf736690bc0045de213a3d2d4bc800175 (worklog only)
 ```
 
 ### Findings
