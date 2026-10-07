@@ -503,8 +503,9 @@ Focused (run directly, all PASS):
 ### Commit
 
 ``` text
-base:    05a1e10546086bf8fdd817634d7f224eee248896 (LT-0 head, clean)
-LT-1 commit recorded below after validation.
+base:       05a1e10546086bf8fdd817634d7f224eee248896 (LT-0 head, clean)
+LT-1 commit: 9d6d183f9ed802b386a8850015ffb07560072b04
+             "feat(navigation): add live tv and relocate upcoming"
 ```
 
 ### Findings
