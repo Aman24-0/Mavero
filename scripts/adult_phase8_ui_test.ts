@@ -218,9 +218,11 @@ const POLICY_OFF = { allowLoggedIn: false, allowGuest: false };
 // ============================================================================
 {
   const ids = getAdultNetworkIds().sort((a, b) => a - b);
-  assert.deepEqual(ids, [2902, 4573, 7355], 'production registry is exactly Ullu/Kooku/Atrangii');
+  // 2026-10: the live-verified set grew to include ALTT 2112, HotHit 5094,
+  // The CinemaDosti 4623 and NOTTY 7905 (production leak fix).
+  assert.deepEqual(ids, [2112, 2902, 4573, 4623, 5094, 7355, 7905], 'production registry is exactly the live-verified set');
   const inclusion = withAdultNetworksParams();
-  assert.equal(inclusion.with_networks, '2902|4573|7355', 'the TV source query is exactly the verified set');
+  assert.equal(inclusion.with_networks, '2112|2902|4573|4623|5094|7355|7905', 'the TV source query is exactly the verified set');
   const probe: AdultNetwork[] = [...getVerifiedAdultNetworks(), { key: 'fake', name: 'Fake', tmdbNetworkId: 999, verification: 'verified' }];
   __setAdultNetworkRegistryForTest(probe);
   try {
@@ -229,7 +231,7 @@ const POLICY_OFF = { allowLoggedIn: false, allowGuest: false };
     __resetAdultNetworkRegistryForTest();
   }
   assert.deepEqual(withAdultNetworksParams(999), {}, 'unverified id cannot join the source');
-  assert.deepEqual(withoutAdultNetworksParams(), { without_networks: '2902|4573|7355' }, 'the normal-rail exclusion uses the same registry');
+  assert.deepEqual(withoutAdultNetworksParams(), { without_networks: '2112|2902|4573|4623|5094|7355|7905' }, 'the normal-rail exclusion uses the same registry');
   ok('9. Adult Discover source = verified registry only (registry-driven, no second list)');
 }
 

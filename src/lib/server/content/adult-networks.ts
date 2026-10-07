@@ -37,6 +37,28 @@
 //   Kooku    -> 4573  (https://www.themoviedb.org/network/4573-kooku)
 //   Atrangii -> 7355  (https://www.themoviedb.org/network/7355-atrangii)
 //
+// Follow-up production bug-fix task (2026-10-07, same redirect-slug
+// verification method + show-page evidence): the user's production
+// screenshots surfaced adult titles on Indian adult OTT networks that were
+// NOT in the verified set, which is why `without_networks` and the central
+// classifier could not see them. Four additional services are now
+// live-verified (network/{id} -> {id}-{slug}; negative control re-run:
+// network/999999999 -> 404):
+//   ALTT           -> 2112  (https://www.themoviedb.org/network/2112-altbalaji;
+//                            evidence: /tv/79273 "Gandii Baat" — the flagship
+//                            ALTBalaji original — lists network 2112)
+//   HotHit         -> 5094  (https://www.themoviedb.org/network/5094-hothit;
+//                            evidence: /tv/119721 "Sweety Bhabhi" (production
+//                            screenshot title) lists network 5094)
+//   CinemaDosti    -> 4623  (https://www.themoviedb.org/network/4623-the-cinemadosti;
+//                            evidence: /tv/122905 "Mohini Bhabhi" (production
+//                            screenshot title) lists network 4623; the network
+//                            page also lists /tv/120300 "Sunday" and
+//                            /tv/120305 "Raat Baaki Baat Baaki")
+//   NOTTY          -> 7905  (https://www.themoviedb.org/network/7905-notty;
+//                            evidence: /tv/277729 "Bhabhi Ki Pathshala"
+//                            (production screenshot title) lists network 7905)
+//
 // RULES FOR FUTURE CHANGES
 // ========================
 // - Never add an ID that has not been confirmed against live TMDB data.
@@ -113,10 +135,49 @@ const ADULT_NETWORK_REGISTRY: AdultNetwork[] = [
     tmdbLogoPath: '/qi6eRXHYSozqypShWsYpyWCWRJT.png',
     verification: 'verified'
   },
+  // --- Verified against live TMDB (2026-10-07 production bug-fix task;
+  // redirect-slug method + show-page evidence, see header note). The
+  // production screenshots proved these services leak into the normal TV
+  // catalog when their networks are outside the verified set. ---
+  {
+    key: 'altt',
+    name: 'ALTT',
+    aliases: ['ALTBalaji'],
+    // live TMDB: /network/2112 -> "2112-altbalaji" (evidence: /tv/79273
+    // "Gandii Baat", the flagship ALTBalaji original, lists network 2112)
+    tmdbNetworkId: 2112,
+    verification: 'verified'
+  },
+  {
+    key: 'hothit',
+    name: 'HotHit',
+    // live TMDB: /network/5094 -> "5094-hothit" (evidence: /tv/119721
+    // "Sweety Bhabhi" — production screenshot title — lists network 5094)
+    tmdbNetworkId: 5094,
+    verification: 'verified'
+  },
+  {
+    key: 'cinemadosti',
+    name: 'The CinemaDosti',
+    aliases: ['CinemaDosti', 'Cinema Dosti'],
+    // live TMDB: /network/4623 -> "4623-the-cinemadosti" (evidence:
+    // /tv/122905 "Mohini Bhabhi" — production screenshot title — lists
+    // network 4623; network page also lists "Sunday" and "Raat Baaki
+    // Baat Baaki")
+    tmdbNetworkId: 4623,
+    verification: 'verified'
+  },
+  {
+    key: 'notty',
+    name: 'NOTTY',
+    // live TMDB: /network/7905 -> "7905-notty" (evidence: /tv/277729
+    // "Bhabhi Ki Pathshala" — production screenshot title — lists network 7905)
+    tmdbNetworkId: 7905,
+    verification: 'verified'
+  },
   // --- Candidates: known adult services, network IDs NOT yet confirmed ---
   // (names carried over from the legacy provider registry; IDs must be
   // live-confirmed before they may be set here — see header rules)
-  { key: 'altt', name: 'ALTT', aliases: ['ALTBalaji'], tmdbNetworkId: 0, verification: 'unverified' },
   { key: 'rabbit-movies', name: 'Rabbit Movies', aliases: ['Rabbit'], tmdbNetworkId: 0, verification: 'unverified' },
   { key: 'nuefliks', name: 'Nuefliks', aliases: ['Flizmovies'], tmdbNetworkId: 0, verification: 'unverified' },
   { key: 'primeplay', name: 'PrimePlay', aliases: ['Prime Play'], tmdbNetworkId: 0, verification: 'unverified' },

@@ -175,7 +175,9 @@ const POLICY_OFF = { allowLoggedIn: false, allowGuest: false };
 {
   assert.deepEqual(withAdultNetworksParams(424242), {}, 'claimed unverified id produces NO filter');
   assert.deepEqual(withAdultNetworksParams(999999999), {}, 'arbitrary unknown id produces NO filter');
-  assert.equal(getVerifiedAdultNetworkIdForKeySafe('altt'), undefined, 'unverified service key resolves to nothing');
+  // 2026-10: ALTT is now live-verified (2112); a genuinely unverified key
+  // (PrimePlay — still tmdbNetworkId 0) must still resolve to nothing.
+  assert.equal(getVerifiedAdultNetworkIdForKeySafe('primeplay'), undefined, 'unverified service key resolves to nothing');
   // The filter surface is closed: type/language/sort/page only — no
   // network/provider field exists on the contract (runtime shape proof).
   const filters = { type: 'series', language: 'all', sort: 'popularity', page: 1 } as Record<string, unknown>;

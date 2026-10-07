@@ -122,21 +122,24 @@ const POLICY_OFF = { allowLoggedIn: false, allowGuest: false };
 
 // ============================================================================
 // 2 — network registry: the verified set is exactly the live-confirmed
-// (Phase 9 diagnostic) triple; accessors expose verified entries only.
+// networks (Phase 9 diagnostic triple + the 2026-10 production bug-fix
+// additions verified by the same redirect-slug method: ALTT 2112,
+// HotHit 5094, The CinemaDosti 4623, NOTTY 7905); accessors expose
+// verified entries only.
 // ============================================================================
 {
   const verified = getVerifiedAdultNetworks();
   assert.deepEqual(
     verified.map((entry) => [entry.tmdbNetworkId, entry.verification]).sort((a, b) => (a[0] as number) - (b[0] as number)),
-    [[2902, 'verified'], [4573, 'verified'], [7355, 'verified']],
-    'verified set == live-confirmed Ullu/Kooku/Atrangii'
+    [[2112, 'verified'], [2902, 'verified'], [4573, 'verified'], [4623, 'verified'], [5094, 'verified'], [7355, 'verified'], [7905, 'verified']],
+    'verified set == live-confirmed Ullu/Kooku/Atrangii + ALTT/HotHit/CinemaDosti/NOTTY'
   );
-  assert.deepEqual([...getAdultNetworkIds()].sort((a, b) => a - b), [2902, 4573, 7355], 'production filter accessor returns the verified triple');
+  assert.deepEqual([...getAdultNetworkIds()].sort((a, b) => a - b), [2112, 2902, 4573, 4623, 5094, 7355, 7905], 'production filter accessor returns the live-verified set');
   const unverified = getAdultNetworks().filter((entry) => entry.verification !== 'verified');
-  assert.equal(unverified.length, 12, 'candidate services remain registered-but-unverified');
+  assert.equal(unverified.length, 11, 'candidate services remain registered-but-unverified');
   assert.ok(unverified.every((entry) => entry.tmdbNetworkId === 0), 'no unverified entry carries a trusted ID');
-  assert.equal(adultNetworkExclusionValue(), '2902|4573|7355', 'production exclusion value is the verified triple');
-  ok('2. network registry == live-verified set {Ullu 2902, Kooku 4573, Atrangii 7355}; verified-only accessors');
+  assert.equal(adultNetworkExclusionValue(), '2112|2902|4573|4623|5094|7355|7905', 'production exclusion value is the live-verified set');
+  ok('2. network registry == live-verified set {Ullu 2902, Kooku 4573, Atrangii 7355, ALTT 2112, HotHit 5094, CinemaDosti 4623, NOTTY 7905}; verified-only accessors');
 }
 
 // ============================================================================
@@ -274,13 +277,13 @@ const POLICY_OFF = { allowLoggedIn: false, allowGuest: false };
 // ============================================================================
 {
   clearCache();
-  const adultKey = buildAdultDiscoverCacheKey({ type: 'series', language: 'all', sort: 'popularity', page: 1, networkInclusion: '2902|4573|7355' });
+  const adultKey = buildAdultDiscoverCacheKey({ type: 'series', language: 'all', sort: 'popularity', page: 1, networkInclusion: '2112|2902|4573|4623|5094|7355|7905' });
   const normalKeys = [
     'tmdb:discover:series:1',
-    'tmdb:popular-v2:series:all:1:2902|4573|7355:10764|10766|10767:daily-soap-gt100',
+    'tmdb:popular-v2:series:all:1:2112|2902|4573|4623|5094|7355|7905:10764|10766|10767:daily-soap-gt100',
     'tmdb:collection:series:1:::no-adult',
     'tmdb:search:series:foo:1:::adult-excluded',
-    'tmdb:adult-shows:all:1:2902|4573|7355',
+    'tmdb:adult-shows:all:1:2112|2902|4573|4623|5094|7355|7905',
     'tmdb:detail:series:42',
     'tmdb:season:42:1'
   ];

@@ -21,9 +21,16 @@ import type { DiscoverLanguage } from '$lib/server/content/types';
 // LANGUAGES reuse the EXISTING DiscoverLanguage union and labels —
 // the app's supported original-language codes. Anime is detected
 // as genre 16 + original_language 'ja' by the ONE central anime
-// classifier, so the anime catalog is entirely Japanese: the anime
-// language row honestly offers All + Japanese only (any other code
-// would either return nothing or break the classifier contract).
+// classifier, so the anime catalog is entirely Japanese by
+// construction: the Anime Explorer deliberately offers NO language
+// filter row at all (production bug-fix task, 2026-10) — a language
+// dimension would be redundant (everything is 'ja' by the anime
+// invariant) and the closed-union validation below therefore accepts
+// NO language value for anime. Old URLs carrying ?language=ja
+// (or any other value) degrade to "no filter" through the same
+// validate-then-drop rule every invalid value follows — semantically
+// identical, because the anime query is 'ja' by construction either
+// way. Movies/TV keep their language chips unchanged.
 //
 // Follow-up task 2 (§7): 'all' is NOT a language — it is the
 // no-filter state, rendered by the row's dedicated synthetic "All"
@@ -73,10 +80,21 @@ export const EXPLORER_GENRES: Record<ContentType, readonly ExplorerGenre[]> = {
     { name: 'Family', seriesId: 10751 },
     { name: 'Kids', seriesId: 10762 },
     { name: 'Mystery', seriesId: 9648 },
-    { name: 'Romance', seriesId: 10749 },
     { name: 'Sci-Fi & Fantasy', seriesId: 10765 },
     { name: 'Western', seriesId: 37 }
   ],
+  // Production bug-fix task (2026-10): 'Romance' (10749) is REMOVED from
+  // the SERIES list — it is a MOVIE-genre id, not part of TMDB's official
+  // TV genre taxonomy (10759/16/35/80/99/18/10751/10762/9648/10763/10764/
+  // 10765/10766/10767/10768/37). Empirically verified against TMDB's own
+  // discover engine: /discover/tv?with_genres=10749 matches only ~2-3
+  // legacy rows (The Tudors, On the Wings of Love, Inugami-san — none
+  // Hindi), so the TV "Romance" chip could ONLY ever render "Nothing
+  // found" (Romance + Hindi returns zero). Removing the chip aligns the
+  // taxonomy with its own design rule — real TMDB genre ids per media
+  // type — without fabricating content or altering query semantics.
+  // Movies keep Romance (real movie genre, real Hindi results). The
+  // anime Romance entry keeps its MOVIE side only for the same reason.
   anime: [
     { name: 'Action', movieId: 28, seriesId: 10759 },
     { name: 'Adventure', movieId: 12, seriesId: 10759 },
@@ -86,13 +104,21 @@ export const EXPLORER_GENRES: Record<ContentType, readonly ExplorerGenre[]> = {
     { name: 'Family', movieId: 10751, seriesId: 10751 },
     { name: 'Horror', movieId: 27 },
     { name: 'Mystery', movieId: 9648, seriesId: 9648 },
-    { name: 'Romance', movieId: 10749, seriesId: 10749 },
+    // Romance: MOVIE side only — 10749 is not in TMDB's TV genre taxonomy
+    // (see the series-list note); the TV side is skipped by the merged
+    // query's missing-side rule (never queried with an invented id).
+    { name: 'Romance', movieId: 10749 },
     { name: 'Sci-Fi & Fantasy', movieId: 878, seriesId: 10765 }
   ]
 };
 
 // Follow-up task 2 (§7): EXACTLY the choosable languages — 'all' is
 // the row's synthetic no-filter chip, never a list entry (one All).
+// Production bug-fix task (2026-10): the ANIME list is EMPTY — the
+// Anime Explorer offers no language filter at all (Japanese-only by
+// the catalog contract; see the header note). The UI renders the
+// language row only when a type has choosable languages, so this is
+// a real filter-contract removal, not a CSS hide.
 const MOVIE_SERIES_LANGUAGES: readonly ExplorerLanguageOption[] = [
   { value: 'en', label: 'English' },
   { value: 'hi', label: 'Hindi' },
@@ -101,10 +127,6 @@ const MOVIE_SERIES_LANGUAGES: readonly ExplorerLanguageOption[] = [
   { value: 'ml', label: 'Malayalam' },
   { value: 'kn', label: 'Kannada' },
   { value: 'other', label: 'Other languages' }
-];
-
-const ANIME_LANGUAGES: readonly ExplorerLanguageOption[] = [
-  { value: 'ja', label: 'Japanese' }
 ];
 
 // ============================================================
@@ -136,7 +158,7 @@ export function isExplorerSort(value: string | null | undefined): value is Explo
 export const EXPLORER_LANGUAGES: Record<ContentType, readonly ExplorerLanguageOption[]> = {
   movie: MOVIE_SERIES_LANGUAGES,
   series: MOVIE_SERIES_LANGUAGES,
-  anime: ANIME_LANGUAGES
+  anime: []
 };
 
 /** Closed-union genre validation (URL/API values must match a chip exactly). */
@@ -144,7 +166,9 @@ export function isExplorerGenre(type: ContentType, value: string | null | undefi
   return typeof value === 'string' && value.length > 0 && EXPLORER_GENRES[type].some((genre) => genre.name === value);
 }
 
-/** Closed-union language validation per type (anime only allows ja). */
+/** Closed-union language validation per type. Anime accepts NO language
+ * value (empty list — the anime invariant is 'ja' by construction; old
+ * ?language= URLs degrade to no-filter through this same check). */
 export function isExplorerLanguage(type: ContentType, value: string | null | undefined): value is DiscoverLanguage {
   if (typeof value !== 'string' || value.length === 0) return false;
   return EXPLORER_LANGUAGES[type].some((option) => option.value === value);

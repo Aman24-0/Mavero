@@ -354,7 +354,14 @@
        full accessible label below (screen readers keep the context).
        Follow-up task 2 (§7): the Language row renders EXACTLY ONE
        "All" chip (the synthetic no-filter chip; the option lists no
-       longer carry a duplicate 'all' entry). -->
+       longer carry a duplicate 'all' entry).
+       Production bug-fix task (2026-10): the Language row is REMOVED
+       for types with no choosable languages — Anime (Japanese-only by
+       the catalog contract). This is a conditional-render removal of
+       the filter contract (no language row, no chips, no language
+       state), NOT a CSS hide; the taxonomy's empty anime list is the
+       single source of truth for both the chips and server-side
+       validation. Movies/TV keep their full language row unchanged. -->
   <div class="explorer-filters" data-active={filtersActive || null}>
     <div class="filters-inner">
       <div class="chip-row" role="group" aria-label={`Filter ${labels.prose} by genre`}>
@@ -378,27 +385,29 @@
           {/each}
         </div>
       </div>
-      <div class="chip-row" role="group" aria-label={`Filter ${labels.prose} by language`}>
-        <div class="chip-scroll" data-chip-row="language">
-          <button
-            class="filter-chip"
-            class:active={!selectedLanguage}
-            type="button"
-            aria-pressed={!selectedLanguage}
-            aria-label="All languages"
-            onclick={() => updateFilters({ genre: selectedGenre || 'All', language: 'all', sort: selectedSort })}
-          >All</button>
-          {#each languageOptions as option (option.value)}
+      {#if languageOptions.length > 0}
+        <div class="chip-row" role="group" aria-label={`Filter ${labels.prose} by language`}>
+          <div class="chip-scroll" data-chip-row="language">
             <button
               class="filter-chip"
-              class:active={selectedLanguage === option.value}
+              class:active={!selectedLanguage}
               type="button"
-              aria-pressed={selectedLanguage === option.value}
-              onclick={() => toggleLanguage(option.value)}
-            >{option.label}{#if selectedLanguage === option.value}<Check size={12} aria-hidden="true" />{/if}</button>
-          {/each}
+              aria-pressed={!selectedLanguage}
+              aria-label="All languages"
+              onclick={() => updateFilters({ genre: selectedGenre || 'All', language: 'all', sort: selectedSort })}
+            >All</button>
+            {#each languageOptions as option (option.value)}
+              <button
+                class="filter-chip"
+                class:active={selectedLanguage === option.value}
+                type="button"
+                aria-pressed={selectedLanguage === option.value}
+                onclick={() => toggleLanguage(option.value)}
+              >{option.label}{#if selectedLanguage === option.value}<Check size={12} aria-hidden="true" />{/if}</button>
+            {/each}
+          </div>
         </div>
-      </div>
+      {/if}
     </div>
   </div>
 

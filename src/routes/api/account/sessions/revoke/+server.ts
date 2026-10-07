@@ -32,6 +32,21 @@ type RevokeRequest = {
  * The `sessionId` in the request body is the `id` field (UUID) from
  * the session list — NOT the supabase_session_id. This is an opaque
  * revocation token, not a credential.
+ *
+ * Production bug-fix task (2026-10) — session-lifecycle note: this
+ * endpoint performs the MAVERO registry revocation (Layer 1: the
+ * immediate application-level gate — the server hook rejects every
+ * request whose JWT session_id matches the revoked row, and the
+ * already-issued access JWT expires within its normal lifetime).
+ * Supabase-side per-session termination of ANOTHER device's session is
+ * NOT available: the official `signOut` scopes are global / local /
+ * others relative to the CALLING session, and `admin.signOut(jwt)`
+ * requires the TARGET session's own JWT, which Mavero never stores.
+ * App-layer enforcement is therefore the mechanism for single-device
+ * revocation (equal Mavero-visible strength to "sign out all other
+ * devices"); users who need full Supabase-side termination of every
+ * other session have the revoke-all endpoint, which uses
+ * `signOut({ scope: 'others' })`.
  */
 export const POST: RequestHandler = async ({ locals, request }) => {
   const user = locals.user;

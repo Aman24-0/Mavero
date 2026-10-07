@@ -113,13 +113,23 @@ for (const [name, id] of [['Action', 28], ['Adventure', 12], ['Animation', 16], 
 for (const [name, id] of [['Action & Adventure', 10759], ['Sci-Fi & Fantasy', 10765], ['Documentary', 99], ['Kids', 10762], ['Western', 37]] as const) {
   assert.ok(taxonomy.includes(`{ name: '${name}', seriesId: ${id} }`), `TV genre ${name} maps to the real TMDB id ${id}`);
 }
+// Production bug-fix task (2026-10): TV "Romance" (a movie-genre id that
+// TMDB's TV taxonomy does not carry — empirically ~2-3 legacy rows,
+// Romance+Hindi = zero) is REMOVED from the series list; the anime Romance
+// entry keeps ONLY its movie side for the same reason.
+assert.doesNotMatch(taxonomy, /\{ name: 'Romance', seriesId: 10749 \}/, 'series Romance removed — 10749 is not a TMDB TV-genre id (zero-result chip)');
+assert.ok(taxonomy.includes("{ name: 'Romance', movieId: 10749 }"), 'movie Romance keeps the real movie-genre id');
 // Anime maps per-side ids (movie vs TV taxonomy).
 assert.ok(taxonomy.includes(`{ name: 'Action', movieId: 28, seriesId: 10759 }`), 'anime Action maps BOTH the movie and TV genre ids');
 assert.ok(taxonomy.includes(`{ name: 'Horror', movieId: 27 }`), 'anime Horror skips the TV side (TMDB TV has no Horror genre — never an invented id)');
 // Languages reuse the existing DiscoverLanguage union.
 assert.match(taxonomy, /value: 'hi', label: 'Hindi'/, 'language chips reuse the existing Hindi code');
-assert.match(taxonomy, /value: 'ja', label: 'Japanese'/, 'the anime language row offers Japanese honestly');
-assert.ok(taxonomy.includes('const ANIME_LANGUAGES'), 'anime has its own truthful language list');
+// Production bug-fix task (2026-10): the Anime Explorer exposes NO language
+// filter (Japanese-only by the catalog contract) — the anime language list
+// is EMPTY and the UI row is conditionally rendered (not CSS-hidden).
+assert.match(taxonomy, /anime: \[\]/, 'anime has NO language options (Japanese-only contract — empty list)');
+assert.doesNotMatch(taxonomy, /value: 'ja', label: 'Japanese'/, 'no anime Japanese chip remains (no language filter for anime)');
+assert.doesNotMatch(taxonomy, /const ANIME_LANGUAGES/, 'the separate anime language list is REMOVED (single source: EXPLORER_LANGUAGES)');
 // ~10-12 genres per type.
 const movieGenreBlock = taxonomy.slice(taxonomy.indexOf('export const EXPLORER_GENRES'), taxonomy.indexOf('series: [', taxonomy.indexOf('export const EXPLORER_GENRES')));
 const movieGenreCount = (movieGenreBlock.match(/movieId: \d+/g) ?? []).length;
@@ -130,14 +140,16 @@ const animeGenreCount = (animeGenreBlock.match(/name: '/g) ?? []).length;
 assert.ok(animeGenreCount >= 8 && animeGenreCount <= 14, `anime genre options stay in the ~10-12 band (found ${animeGenreCount})`);
 const seriesGenreBlock = taxonomy.slice(taxonomy.indexOf('series: [', genresIndex), taxonomy.indexOf('anime: [', genresIndex));
 const seriesGenreCount = (seriesGenreBlock.match(/seriesId: \d+/g) ?? []).length;
-assert.ok(seriesGenreCount >= 10 && seriesGenreCount <= 14, `TV genre options stay in the ~10-12 band (found ${seriesGenreCount})`);
+assert.ok(seriesGenreCount >= 9 && seriesGenreCount <= 14, `TV genre options stay in the ~10-12 band after the Romance removal (found ${seriesGenreCount})`);
 ok('3. taxonomy: closed per-type genre/language lists built from real TMDB ids + the existing language union');
 
 // ============================================================
-// 4. CHIPS — both rows, sticky, accessible, URL-driven
+// 4. CHIPS — genre + language rows, sticky, accessible, URL-driven
+//    (language row REMOVED for anime — 2026-10 production bug fix)
 // ============================================================
 assert.match(explorerPage, /EXPLORER_GENRES\[type\]/, 'the genre chips render from the shared taxonomy');
 assert.match(explorerPage, /EXPLORER_LANGUAGES\[type\]/, 'the language chips render from the shared taxonomy');
+assert.match(explorerPage, /\{#if languageOptions\.length > 0\}/, 'the language row renders ONLY for types with choosable languages (anime: none — removed, not hidden)');
 assert.match(explorerPage, /data-chip-row="genre"[\s\S]*?data-chip-row="language"/, 'the Genre row renders ABOVE the Language row');
 assert.match(explorerPage, /aria-label=\{`Filter \$\{labels\.prose\} by genre`\}/, 'the genre row is labeled');
 assert.match(explorerPage, /aria-label=\{`Filter \$\{labels\.prose\} by language`\}/, 'the language row is labeled');

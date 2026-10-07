@@ -74,7 +74,14 @@ ok('1. daily-soap rule: boundaries + live-measured evidence (soaps out, prestige
   // The series half applies the isolated policy via the cached detail path.
   assert.match(body, /if \(isSeries\) \{[\s\S]*?isDailySoapEpisodeCount/, 'soap policy applied in the series half');
   assert.match(body, /getTmdbDetail\('series', String\(item\.id\)\)/, 'episode count comes from the shared cached detail path');
-  assert.match(body, /catch \{\s*return false;\s*\}/, 'a failed detail lookup keeps the candidate (curation fail-open)');
+  // Production bug-fix task (2026-10): the SAME cached detail lookup now
+  // also feeds the adult classification verdict (defense-in-depth), and
+  // a failed lookup drops the candidate — classification-uncertain must
+  // fail CLOSED on a normal surface (the list-classify contract). The
+  // merged check supersedes the old soap-only fail-open note.
+  assert.match(body, /if \(detailVerdict\(detail\.tags\) === 'adult'\) return false;/, 'the cached detail verdict drops adult candidates (defense-in-depth)');
+  assert.match(body, /return !isDailySoapEpisodeCount\(detail\.episodes\);/, 'the soap verdict keeps the candidate when not a daily soap');
+  assert.match(body, /catch \{[\s\S]*?return false; \/\/ classification-uncertain -> fail CLOSED[\s\S]*?\}/, 'a failed detail lookup drops the candidate (classification-uncertain fails CLOSED — 2026-10 contract)');
   assert.match(body, /INDIAN_POPULAR_TV_SOAP_CHECK_CONCURRENCY/, 'lookups are concurrency-bounded');
   // Deterministic survivor walk for specific languages; 'all' keeps its
   // single-page behavior (existing discover_v2 contract).
@@ -84,7 +91,10 @@ ok('1. daily-soap rule: boundaries + live-measured evidence (soaps out, prestige
   // inside the `if (isSeries)` guard (asserted above) and the movie key
   // dimension is the explicit no-policy constant.
   assert.match(body, /soapPolicyKey = type === 'series' \? INDIAN_POPULAR_TV_SOAP_POLICY_KEY : INDIAN_POPULAR_TV_NO_SOAP_POLICY_KEY/, 'movie half carries the no-soap-policy key dimension');
-  ok('2. policy scope: Popular TV series half only, cached-detail based, fail-open, deterministic walk, movie half untouched');
+  // 2026-10: the movie half ALSO gets the cheap flag-verdict defense-in-depth
+  // pass (never a detail fetch — movies have no network signal).
+  assert.match(body, /filterAdultFromRawPage\(filtered, 'movie'\)/, 'movie half gets the cheap flag-verdict adult pass');
+  ok('2. policy scope: Popular TV series half only, cached-detail based, fail-closed (adult contract), deterministic walk, movie half flag-guarded');
 }
 
 // ============================================================

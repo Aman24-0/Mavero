@@ -376,8 +376,10 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 {
   const service = read('src/lib/server/auth/device-sessions.ts');
 
-  // The fn signature returns { count, revokedSessionIds }.
-  ok(service.includes('Promise<{ count: number; revokedSessionIds: string[] }>'), 'service: revokeAllOtherSessions returns { count, revokedSessionIds }');
+  // The fn signature returns { ok, count, revokedSessionIds } — the 2026-10
+  // bug fix added the distinguished failure flag so the endpoint can report
+  // an honest retry state instead of a false success.
+  ok(service.includes('Promise<{ ok: boolean; count: number; revokedSessionIds: string[] }>'), 'service: revokeAllOtherSessions returns { ok, count, revokedSessionIds } (distinguished failure)');
 
   // Looks up other sessions BEFORE the UPDATE so we can invalidate caches.
   ok(service.includes('select(\'supabase_session_id\')'), 'service: revokeAllOtherSessions selects other session IDs before update');
@@ -461,6 +463,57 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   ok(hooks.includes('503'), 'hooks: still returns 503 for env-missing');
 
   ok('12. regression: existing auth behavior preserved (safeGetSession, registration, DEFAULT-DENY)');
+}
+
+// ============================================================
+// 13. TWO-LAYER REVOKE-ALL (2026-10 production bug fix) — the Supabase
+//     Auth session lifecycle is terminated in ADDITION to the registry
+//     revocation, so a signed-out device cannot become authenticated
+//     again later via a still-valid refresh token.
+// ============================================================
+{
+  const api = read('src/routes/api/account/sessions/revoke-all/+server.ts');
+  const service = read('src/lib/server/auth/device-sessions.ts');
+
+  // Layer 2 — the official Supabase mechanism, scope 'others' (keeps the
+  // current session), through the request-context SSR client.
+  ok(api.includes("locals.supabase.auth.signOut({ scope: 'others' })"), 'revoke-all: terminates Supabase Auth sessions of OTHER devices via scope others (the official mechanism)');
+  ok(api.includes('locals.supabase.auth.signOut'), 'revoke-all: uses the request-context SSR client (never a client-supplied identity)');
+  ok(!api.includes('scope: \'global\''), 'revoke-all: NEVER uses global scope (would kill the current session too)');
+
+  // Ordering: registry FIRST (immediate app-layer gate), Supabase SECOND.
+  const registryCall = api.indexOf('revokeAllOtherSessions(admin');
+  const signOutCall = api.indexOf("locals.supabase.auth.signOut({ scope: 'others' })");
+  ok(registryCall > -1 && signOutCall > registryCall, 'revoke-all: registry revocation runs BEFORE the Supabase signOut (app-layer gate first)');
+
+  // Distinguished failure — no false success.
+  ok(service.includes('Promise<{ ok: boolean; count: number; revokedSessionIds: string[] }>'), 'revoke-all service: returns the distinguished failure flag');
+  ok(api.includes('if (!registryOk)'), 'revoke-all API: a registry failure is an honest 503 retry state (not a false success)');
+  ok(api.includes('signOutError'), 'revoke-all API: a Supabase-layer failure is surfaced (no silent full success)');
+  ok(api.includes('revokedCount: count'), 'revoke-all API: the partial-failure response carries the honest revokedCount');
+
+  // Cache invalidation still happens between the layers (match the CALL,
+  // not the import at the top of the file).
+  const invalidateCall = api.indexOf('invalidateRevocationCache(sid)');
+  ok(invalidateCall > registryCall && invalidateCall < signOutCall, 'revoke-all: cache invalidation sits between the registry update and the Supabase call');
+
+  // The retry is idempotent AND still attempts the Supabase layer after a
+  // partial failure (the registry select then finds 0 — the signOut must
+  // still run; a count>0-only gate would break the retry).
+  ok(!api.includes('if (count > 0) {'), 'revoke-all: the Supabase signOut is NOT gated on count>0 (retries after partial failure still terminate)');
+
+  // History preserved — no row deletion anywhere in the endpoint/service.
+  ok(!api.includes('.delete('), 'revoke-all: no device_sessions row deletion in the endpoint');
+  ok(!service.match(/\.delete\(\)/), 'revoke-all service: no row deletion (history preserved, revoked_at is the marker)');
+
+  // Single revoke keeps the app-layer semantics with the documented
+  // Supabase API limitation (no per-session termination of ANOTHER
+  // session is possible without its JWT — Mavero never stores tokens).
+  const single = read('src/routes/api/account/sessions/revoke/+server.ts');
+  ok(single.includes('revokeSession'), 'single revoke: keeps the registry revocation (immediate app-layer gate)');
+  ok(single.includes('signOut({ scope'), 'single revoke: documents the signOut scope limitation (comment contract)');
+
+  ok('13. two-layer revoke-all: registry first + Supabase signOut(others) second, honest failures, idempotent retry, history preserved');
 }
 
 console.log(`\nPhase 3 individual revoke + sign out all tests passed (${passed} check groups).`);

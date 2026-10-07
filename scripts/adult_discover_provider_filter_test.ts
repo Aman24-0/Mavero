@@ -49,7 +49,14 @@ assert.equal(isAdultDiscoverProvider(undefined), false, 'absent value is NOT sil
 assert.equal(isAdultDiscoverProvider('ullu'), true, 'verified key ullu accepted');
 assert.equal(isAdultDiscoverProvider('kooku'), true, 'verified key kooku accepted');
 assert.equal(isAdultDiscoverProvider('atrangii'), true, 'verified key atrangii accepted');
-assert.equal(isAdultDiscoverProvider('altt'), false, 'UNVERIFIED candidate rejected (registry candidate, no verified id)');
+// 2026-10 production bug-fix: these four keys now carry live-verified
+// network ids (ALTT 2112, HotHit 5094, CinemaDosti 4623, NOTTY 7905) —
+// they are legitimately choosable provider filters now.
+assert.equal(isAdultDiscoverProvider('altt'), true, 'verified key altt accepted (2112, live-confirmed 2026-10)');
+assert.equal(isAdultDiscoverProvider('hothit'), true, 'verified key hothit accepted (5094)');
+assert.equal(isAdultDiscoverProvider('cinemadosti'), true, 'verified key cinemadosti accepted (4623)');
+assert.equal(isAdultDiscoverProvider('notty'), true, 'verified key notty accepted (7905)');
+assert.equal(isAdultDiscoverProvider('primeplay'), false, 'UNVERIFIED candidate rejected (registry candidate, no verified id)');
 assert.equal(isAdultDiscoverProvider('2902'), false, 'raw TMDB network id rejected');
 assert.equal(isAdultDiscoverProvider('999999'), false, 'arbitrary numeric id rejected');
 assert.equal(isAdultDiscoverProvider('netflix'), false, 'known NON-adult network rejected');

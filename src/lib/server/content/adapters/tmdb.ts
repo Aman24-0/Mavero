@@ -335,6 +335,43 @@ async function filterAdultFromListPage(rows: RailCandidateRow<NormalizedMediaIte
   return result.items;
 }
 
+/**
+ * DEFENSE-IN-DEPTH (production bug-fix task, 2026-10): classify one page
+ * of RAW TmdbMedia list rows through the ONE central classifier.
+ *
+ * The /discover/{movie,tv} catalog queries already exclude verified adult
+ * networks / providers at the query level (`without_networks` /
+ * `without_watch_providers`), but the normal-catalog candidate set must NOT
+ * rely solely on that static query exclusion: a candidate whose adult
+ * identity lives on a network the query-level filter missed (registry
+ * coverage gaps, list-endpoint metadata quirks) must still be caught here
+ * before it reaches a normal surface. Contract (list-classify.ts):
+ *   - movie rows: cheap flag verdict (movieRowVerdict → isAdultContent,
+ *     anime exemption included) — never fetches anything;
+ *   - TV rows: the authoritative network signal requires the detail
+ *     response, so the cached, in-flight-deduplicated detail path
+ *     (`tmdb:detail:series:{id}`) supplies the central classification
+ *     verdict. Failures are 'uncertain' and fail CLOSED — a normal
+ *     surface never serves an unclassifiable TV row.
+ * Bounded concurrency (RAIL_CLASSIFY_CONCURRENCY) — never unbounded
+ * Promise.all. Used by the TV/movie halves of the collection, top-rated,
+ * popular-by-language and new-on-ott catalog queries.
+ */
+async function filterAdultFromRawPage(rows: TmdbMedia[], type: 'movie' | 'series'): Promise<TmdbMedia[]> {
+  const candidates: RailCandidateRow<TmdbMedia>[] = rows.map((item) => ({
+    item,
+    mediaType: type,
+    rawAdult: (item as TmdbMovie).adult
+  }));
+  const result = await filterSafeRailItems(candidates, {
+    concurrency: RAIL_CLASSIFY_CONCURRENCY,
+    loadDetailVerdict: railDetailVerdictLoader,
+    tmdbIdOf: (item) => String(item.id),
+    identityOf: (item) => `${type}-${item.id}`
+  });
+  return result.items;
+}
+
 // BUG 3 fix (Phase 3 architecture): generic catalog functions exclude adult
 // content at the TMDB query level. TV queries exclude VERIFIED adult TV
 // NETWORKS (`without_networks`, values from the central registry via
@@ -434,7 +471,16 @@ export async function getTmdbCollection(type: Exclude<ContentType, 'anime'>, pag
       lastTotalPages = result.total_pages;
       const raw = (result.results ?? []).filter((item) => hasRequiredListMetadata(item, type));
       const filtered = language ? applyLanguageFilter(raw, language) : raw;
-      for (const item of filtered) {
+      // DEFENSE-IN-DEPTH (2026-10 bug fix): the query-level exclusion
+      // (without_networks / without_watch_providers) must not be the ONLY
+      // adult boundary on the normal catalog. Each page's candidates are
+      // classified through the ONE central classifier (movies: cheap flag
+      // verdict; TV: cached detail verdict) and adult/uncertain candidates
+      // are dropped BEFORE they occupy collected/slice slots — so feed
+      // pages stay full of clean survivors. Bounded concurrency; the
+      // detail path is cached + in-flight-deduplicated (no N+1 blowup).
+      const safe = await filterAdultFromRawPage(filtered, type);
+      for (const item of safe) {
         if (!collected.some((existing) => existing.id === item.id)) collected.push(item);
       }
       upstreamHasNext = (result.page ?? upstreamPage) < (result.total_pages ?? upstreamPage);
@@ -906,6 +952,15 @@ export async function getTmdbNewOnOtt(providerKey: string | undefined, language:
       movieItems = movieRaw.filter((item) => !OTHER_LANGUAGE_EXCLUSIONS.has(item.original_language ?? '')).map((item) => mapTmdb(item, 'movie', 'New on OTT'));
       tvItems = tvRaw.filter((item) => !OTHER_LANGUAGE_EXCLUSIONS.has(item.original_language ?? '')).map((item) => mapTmdb(item, 'series', 'New on OTT'));
     }
+    // DEFENSE-IN-DEPTH (2026-10 bug fix): the normal New-on-OTT catalog must
+    // not rely solely on the query-level network/provider exclusion. Movie
+    // rows: cheap flag verdict (free). TV rows: the cached detail verdict
+    // through the ONE central classifier (bounded concurrency, fail-closed).
+    // Same helper + contract as trending/theatre/genre rails.
+    [movieItems, tvItems] = await Promise.all([
+      filterAdultFromListPage(movieItems.map((item) => ({ item, mediaType: 'movie' as const, rawAdult: undefined }))),
+      filterAdultFromListPage(tvItems.map((item) => ({ item, mediaType: 'series' as const, rawAdult: undefined })))
+    ]);
     // Merge by popularity desc as a secondary sort — TMDB already sorted
     // each list by release date; we interleave movie + TV by popularity
     // so the rail shows a genuine mixed catalog.
@@ -1044,26 +1099,35 @@ export async function getTmdbPopularByLanguage(type: Exclude<ContentType, 'anime
       });
       const raw = (result.results ?? []).filter((item) => hasRequiredListMetadata(item, type));
       const filtered = applyLanguageFilter(raw, language);
-      // DAILY-SOAP STRUCTURAL EXCLUSION (Popular TV rail only — see the
-      // function header and popular-tv-policy.ts). Each surviving candidate
-      // is checked against its CACHED detail's released-episode count with
-      // bounded concurrency. A failed detail lookup keeps the candidate
-      // (curation fail-open); the adult exclusion above is unaffected.
+      // DAILY-SOAP STRUCTURAL EXCLUSION + ADULT DEFENSE-IN-DEPTH (Popular
+      // TV rail only — see the function header and popular-tv-policy.ts).
+      // One CACHED detail lookup per candidate feeds BOTH verdicts (no
+      // extra network cost over the pre-existing soap check):
+      //   - adult (2026-10 bug fix): the central classifier's detail
+      //     verdict — the query-level without_networks exclusion must not
+      //     be the only adult boundary on this normal surface. Fail
+      //     CLOSED: a failed detail lookup drops the candidate (the
+      //     classification-uncertain contract of list-classify.ts; this
+      //     supersedes the old soap-only fail-open note).
+      //   - soap: the Phase 8 episode-count policy (unchanged verdict).
       let pageCandidates = filtered;
       if (isSeries) {
-        const soapVerdicts = await mapWithConcurrency(filtered, async (item): Promise<boolean> => {
+        const keepVerdicts = await mapWithConcurrency(filtered, async (item): Promise<boolean> => {
           try {
             // NOTE: `filtered` is TmdbMedia[] (raw TMDB rows), so item.id
             // is the raw numeric TMDB ID (e.g. 1399) — NOT the prefixed
-            // "series-1399" from mapTmdb. The original String(item.id)
-            // was correct here. No fix needed for this path.
+            // "series-1399" from mapTmdb. String(item.id) is correct here.
             const detail = await getTmdbDetail('series', String(item.id));
-            return isDailySoapEpisodeCount(detail.episodes);
+            if (detailVerdict(detail.tags) === 'adult') return false;
+            return !isDailySoapEpisodeCount(detail.episodes);
           } catch {
-            return false;
+            return false; // classification-uncertain -> fail CLOSED
           }
         }, INDIAN_POPULAR_TV_SOAP_CHECK_CONCURRENCY);
-        pageCandidates = filtered.filter((_, index) => !soapVerdicts[index]);
+        pageCandidates = filtered.filter((_, index) => keepVerdicts[index]);
+      } else {
+        // Movie half: cheap flag verdict (anime exemption included) — free.
+        pageCandidates = await filterAdultFromRawPage(filtered, 'movie');
       }
       for (const item of pageCandidates) {
         if (!collected.some((existing) => existing.id === item.id)) collected.push(item);
@@ -1117,7 +1181,11 @@ export async function getTmdbTopRated(type: Exclude<ContentType, 'anime'>, langu
       });
       const raw = (result.results ?? []).filter((item) => hasRequiredListMetadata(item, type));
       const filtered = applyLanguageFilter(raw, language);
-      for (const item of filtered) {
+      // DEFENSE-IN-DEPTH (2026-10 bug fix): see getTmdbCollection — the
+      // normal Top Rated catalog must not rely solely on the query-level
+      // network/provider exclusion. Central classification, fail-closed.
+      const safe = await filterAdultFromRawPage(filtered, type);
+      for (const item of safe) {
         if (!collected.some((existing) => existing.id === item.id)) collected.push(item);
       }
       upstreamHasNext = (result.page ?? upstreamPage) < (result.total_pages ?? upstreamPage);

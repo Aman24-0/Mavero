@@ -241,14 +241,22 @@ export async function revokeSession(
  * `.neq('supabase_session_id', currentSessionId)` filter guarantees
  * this even under concurrent calls.
  *
- * The operation is idempotent: if there are no other active sessions,
- * the count is 0 and the endpoint still returns success.
+ * Production bug-fix task (2026-10): the result now DISTINGUISHES a
+ * registry failure from "nothing to revoke" (`ok: false` + count 0
+ * vs. `ok: true` + count 0). The caller (revoke-all endpoint) uses the
+ * flag to report an honest retry state instead of a false success, and
+ * only performs the Supabase-side sign-out when the registry layer
+ * actually succeeded.
+ *
+ * The operation remains idempotent: if there are no other active
+ * sessions, the count is 0 (ok: true) and the endpoint still returns
+ * success.
  */
 export async function revokeAllOtherSessions(
   admin: SupabaseAdminClient,
   userId: string,
   currentSessionId: string
-): Promise<{ count: number; revokedSessionIds: string[] }> {
+): Promise<{ ok: boolean; count: number; revokedSessionIds: string[] }> {
   try {
     // First, look up the other active sessions so we can return the
     // count and invalidate the revocation cache for each one.
@@ -260,11 +268,11 @@ export async function revokeAllOtherSessions(
       .is('revoked_at', null);
     if (selectError) {
       console.error('[DeviceSessions] RevokeAllOthers select error', { name: selectError.name, code: selectError.code });
-      return { count: 0, revokedSessionIds: [] };
+      return { ok: false, count: 0, revokedSessionIds: [] };
     }
     if (!others || others.length === 0) {
       // Idempotent: nothing to revoke.
-      return { count: 0, revokedSessionIds: [] };
+      return { ok: true, count: 0, revokedSessionIds: [] };
     }
 
     // Atomically revoke all matching rows. The WHERE clause is the
@@ -279,14 +287,14 @@ export async function revokeAllOtherSessions(
       .is('revoked_at', null);
     if (updateError) {
       console.error('[DeviceSessions] RevokeAllOthers update error', { name: updateError.name, code: updateError.code });
-      return { count: 0, revokedSessionIds: [] };
+      return { ok: false, count: 0, revokedSessionIds: [] };
     }
 
     const revokedSessionIds = others.map((r) => r.supabase_session_id);
-    return { count: revokedSessionIds.length, revokedSessionIds };
+    return { ok: true, count: revokedSessionIds.length, revokedSessionIds };
   } catch (err) {
     console.error('[DeviceSessions] RevokeAllOthers exception', { name: (err as Error)?.name ?? 'unknown' });
-    return { count: 0, revokedSessionIds: [] };
+    return { ok: false, count: 0, revokedSessionIds: [] };
   }
 }
 

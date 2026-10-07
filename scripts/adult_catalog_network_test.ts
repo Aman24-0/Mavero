@@ -148,22 +148,31 @@ try {
   // ---------------------------------------------------------------------------
   console.log('# Real registry block: shipped configuration');
   {
-    assert.equal(adultNetworkExclusionValue(), '2902|4573|7355', 'real registry value is exactly the verified Ullu/Kooku/Atrangii set');
-    assert.deepEqual(withoutAdultNetworksParams(), { without_networks: '2902|4573|7355' }, 'real normal-TV exclusion params');
-    assert.deepEqual(withAdultNetworksParams(), { with_networks: '2902|4573|7355' }, 'real adult-rail inclusion params');
+    // Production bug-fix task (2026-10): the live-verified set now also
+    // includes ALTT 2112, HotHit 5094, The CinemaDosti 4623 and NOTTY 7905
+    // (all confirmed by the same redirect-slug live-TMDB method; evidence
+    // notes in adult-networks.ts). Sorted + deduped, pipe-joined.
+    const VERIFIED = '2112|2902|4573|4623|5094|7355|7905';
+    assert.equal(adultNetworkExclusionValue(), VERIFIED, 'real registry value is exactly the live-verified set');
+    assert.deepEqual(withoutAdultNetworksParams(), { without_networks: VERIFIED }, 'real normal-TV exclusion params');
+    assert.deepEqual(withAdultNetworksParams(), { with_networks: VERIFIED }, 'real adult-rail inclusion params');
     assert.equal(getVerifiedAdultNetworkIdForKey('ullu'), 2902, 'ullu key -> verified network 2902');
     assert.equal(getVerifiedAdultNetworkIdForKey('kooku'), 4573, 'kooku key -> verified network 4573');
     assert.equal(getVerifiedAdultNetworkIdForKey('atrangii'), 7355, 'atrangii key -> verified network 7355');
-    assert.equal(getVerifiedAdultNetworkIdForKey('altt'), undefined, 'altt (unverified network) resolves to nothing');
+    assert.equal(getVerifiedAdultNetworkIdForKey('altt'), 2112, 'altt key -> verified network 2112 (2026-10 live confirmation)');
+    assert.equal(getVerifiedAdultNetworkIdForKey('hothit'), 5094, 'hothit key -> verified network 5094');
+    assert.equal(getVerifiedAdultNetworkIdForKey('cinemadosti'), 4623, 'cinemadosti key -> verified network 4623');
+    assert.equal(getVerifiedAdultNetworkIdForKey('notty'), 7905, 'notty key -> verified network 7905');
+    assert.equal(getVerifiedAdultNetworkIdForKey('primeplay'), undefined, 'primeplay (unverified) resolves to nothing');
     passed++;
-    console.log(`  ok ${passed} - real registry values (2902|4573|7355; verified key lookup; ALTT inert)`);
+    console.log(`  ok ${passed} - real registry values (${VERIFIED}; verified key lookup incl. 2026-10 additions)`);
 
     // No literal network ids outside the registry module (single source of
     // truth): the bridge module and the adapter must not hardcode them.
     const bridge = await readFile(path.join(repoRoot, 'src/lib/server/content/adult-catalog.ts'), 'utf8');
-    assert.doesNotMatch(bridge, /\b(2902|4573|7355)\b/, 'adult-catalog.ts contains no hardcoded network ids');
+    assert.doesNotMatch(bridge, /\b(2112|2902|4573|4623|5094|7355|7905)\b/, 'adult-catalog.ts contains no hardcoded network ids');
     const adapter = await readFile(path.join(repoRoot, 'src/lib/server/content/adapters/tmdb.ts'), 'utf8');
-    assert.doesNotMatch(adapter, /\b(2902|4573|7355)\b/, 'tmdb.ts contains no hardcoded network ids');
+    assert.doesNotMatch(adapter, /\b(2112|2902|4573|4623|5094|7355|7905)\b/, 'tmdb.ts contains no hardcoded network ids');
     passed++;
     console.log(`  ok ${passed} - no hardcoded network ids outside the registry module`);
   }
