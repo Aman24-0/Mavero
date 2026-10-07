@@ -1153,7 +1153,7 @@ LT-6 decision with approval.
 
 ``` text
 base:        e2d9ceeef1b0a6d9ff0782df4bf341b8be6efde7 (LT-2 head, clean)
-LT-3 commit: (recorded in the follow-up worklog commit after push)
+LT-3 commit: 7d14b7d6b031a3e614d5b4ce84384bd4c89dd699
              "feat(live-tv): add shaka dash playback engine"
 ```
 
