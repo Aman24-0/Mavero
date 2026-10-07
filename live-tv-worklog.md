@@ -2,7 +2,7 @@
 
 **Feature:** LiveGT TV V1\
 **Plan:** `live-tv-plan.md`\
-**Status:** APPROVED --- IMPLEMENTATION IN PROGRESS (LT-0, LT-1 COMPLETE)\
+**Status:** APPROVED --- IMPLEMENTATION IN PROGRESS (LT-0, LT-1, LT-2 COMPLETE)\
 **Date:** 2026-10-07
 
 ## Purpose
@@ -122,7 +122,7 @@ NO LIVE TV SUPABASE MIGRATION FOR V1
   ----------------------------- --------------
   LT-0 Baseline & Contract      COMPLETE
   LT-1 Navigation IA            COMPLETE
-  LT-2 LiveGT Client Layer      NOT STARTED
+  LT-2 LiveGT Client Layer      COMPLETE
   LT-3 DASH / ClearKey Player   NOT STARTED
   LT-4 Live TV UI               NOT STARTED
   LT-5 Analytics & Hardening    NOT STARTED
@@ -546,7 +546,7 @@ URLs/ClearKey). No Shaka yet (that is LT-3).
 
 ### Status
 
-`NOT STARTED`
+`COMPLETE` (2026-10-07)
 
 ### Required
 
@@ -566,26 +566,246 @@ URLs/ClearKey). No Shaka yet (that is LT-3).
 ### Files changed
 
 ``` text
-To be filled by GLM.
+src/lib/client/live-tv/types.ts   (new)
+    - Normalized models: LiveTvChannel, LiveTvGuide,
+      LiveTvGuideProgramme, LiveTvPlaybackSource, LiveTvDrm,
+      LiveTvPlaybackResolution. Wire shapes (*Response, *Wire) type
+      the UNTRUSTED raw JSON with `unknown` fields — nothing from
+      the network is trusted until api.ts validates it, and raw
+      LiveGT objects are never spread into the UI (plan §8).
+    - Timestamps stay Unix SECONDS, made explicit in field names
+      (startSeconds/stopSeconds); provider display strings carried
+      as optional startDisplay/stopDisplay. generatedAt arrives as a
+      display STRING live → only a finite number ever populates
+      generatedAtSeconds (documented as unreliable).
+    - Isolation: Live TV types live apart from VOD/provider types
+      (src/lib/shared/player.ts PlayerSource etc.); nothing in the
+      VOD path imports this module (verified by repo-wide grep —
+      only the test and the plan/worklog docs reference the path).
+
+src/lib/client/live-tv/errors.ts  (new)
+    - Single LiveTvError class with machine-readable `kind`:
+      network | timeout | aborted | bad_request | not_found |
+      rate_limited | server | invalid_response | no_playback_source
+      | unsupported_drm. Context carries ONLY non-sensitive data
+      (status / channelId / endpoint).
+    - Fixed safe-message table — messages never interpolate response
+      bodies, signed URLs, key/keyId values or backend stacks.
+    - HTTP mapping verified against live behavior: 404 → not_found
+      (observed for unknown AND malformed ids — the LT-0 docs/actual
+      discrepancy is preserved, never remapped to 400); 400 and
+      unmapped 4xx → bad_request; 429 → rate_limited; 5xx → server
+      (incl. the documented 502 upstream-unavailable).
+
+src/lib/client/live-tv/api.ts     (new)
+    - The single integration point with LiveGT V1; LIVEGT_V1_BASE_URL
+      is the ONE base-URL constant (hostname appears nowhere else —
+      enforced by test §9e). Direct browser fetch (CORS *), no
+      Mavero/Netlify proxy (decision D3). Only V1 paths; no V2
+      endpoint strings anywhere (test §9d).
+    - Public functions (Mavero verb conventions):
+      getLiveTvChannels({signal, category, forceRefetch})
+      searchLiveTvChannels(query, {signal, forceRefetch})
+      resolveLiveTvPlayback(channelId, {signal}) → {channel,
+        sources, drm}
+      getLiveTvGuide(channelId, {signal, forceRefetch})
+      + local pure utilities: extractLiveTvCategories,
+        filterLiveTvChannelsByCategory, filterLiveTvChannelsByQuery
+        (the future UI picks local vs remote; debounce stays
+        UI-side).
+    - Resolution contract: `sources` is an ARRAY (no sources[0]
+      assumption); entries must be absolute http(s) URLs or they are
+      dropped; zero usable sources → no_playback_source; NO fallback
+      to embed/watch URLs ever (plan §3). DRM: absent → null;
+      type≠clearkey → unsupported_drm (never silently ClearKey);
+      clearkey missing key/keyId → invalid_response. Identity is
+      caller-owned: channel.id = the requested id.
+    - FRESH RESOLUTION (decision D6): resolveLiveTvPlayback performs
+      a network request on EVERY call — never cached, never
+      persisted. Catalogue/guide paths never touch DRM or signed
+      material.
+    - Timeout + abort: every function accepts an optional
+      AbortSignal (stale-response protection for fast channel
+      switching); a conservative 10 s internal timeout covers all
+      three endpoints (Live TV only — no app-wide timeout system);
+      caller abort always wins over the internal timeout; no retries
+      here (bounded recovery is LT-3's job).
+    - Security: channel ids encodeURIComponent-escaped into paths;
+      query params via URLSearchParams; zero console calls in the
+      module (nothing sensitive can ever be logged from here).
+
+src/lib/client/live-tv/cache.ts   (new)
+    - Tiny module-level in-memory cache modeled on the Discover
+      rail-cache convention: value + createdAt + ttl, sweep-on-access
+      (no stale entry survives indefinitely), bounded LRU,
+      copy-on-write, dies with the tab. NOT a persistence layer and
+      NOT a generic caching framework.
+    - Policy: catalogue ≤ 5 min (LRU 16, keyed by query string);
+      guide ≤ 30 s (LRU 64, keyed by channel id). PLAYBACK
+      RESOLUTION AND DRM ARE NEVER CACHED — structurally: the module
+      has no API for them.
+
+scripts/live_tv_client_test.ts    (new)
+    - Deterministic behavioral suite (61 checks, §1-§10) driving the
+      REAL modules against an in-process mocked global fetch; fully
+      offline. Importing the modules under Node also proves SSR
+      safety (same argument as devtool_protection_test).
+
+live-tv-worklog.md                (this record)
+```
+
+Nothing else changed. media-compat.ts, hls-engine.ts, the VOD
+resolver, AppShell, AccountSheet, Supabase migrations and analytics
+are untouched (verified via git status / git diff).
+
+### API contract implemented
+
+``` text
+GET /api/public/channels          → LiveTvChannel[]   (cache ≤ 5 min)
+    ?q=      (name search)        → LiveTvChannel[]   (own cache key)
+    ?category= (category filter)  → LiveTvChannel[]   (own cache key)
+GET /api/public/channels/{id}     → {channel, sources, drm}  NEVER cached
+GET /api/public/guide/{id}        → LiveTvGuide       (cache ≤ 30 s)
+
+Normalized catalogue channel: {id, name, category?, logo?} — only
+fields verified in LT-0; embed/watch documented on the wire type
+but NEVER read. Categories are DERIVED from data (plan §8) — no
+counts, names or category lists are hardcoded anywhere.
 ```
 
 ### Tests
 
 ``` text
-To be filled by GLM.
+Focused: scripts/live_tv_client_test.ts  PASS — 61/61 checks, exit 0
+  §1  errors contract (status mapping, safe messages, guard)
+  §2  catalogue (valid/empty/malformed, duplicates, optional fields,
+      wire count ignored, exact request URL, cache hit)
+  §3  categories (extraction, local + remote filters, per-key cache)
+  §4  search (remote ?q=, empty query → full catalogue, local
+      case-insensitive filter)
+  §5  resolution (no-DRM/ClearKey/multi/empty/malformed sources,
+      404 NOT remapped, 400/429/5xx, network, malformed JSON, local
+      id gate, URL encoding, never cached, no embed/watch fallback)
+  §6  DRM (missing key/keyId, unknown type, non-object, explicit
+      null, no secret material in any error string)
+  §7  guide (valid/empty/absent fields, timestamp passthrough,
+      malformed shapes, dropped entries, nowPlaying degradation,
+      short cache + forceRefetch)
+  §8  cache (TTL constants, expiry, copy-on-write, LRU bound,
+      clear, expired-data refresh at the api level)
+  §9  security source-contract (no storage APIs, no console, no
+      Supabase, no V2 paths, single base-URL constant)
+  §10 abort/timeout (pre-aborted, in-flight abort, channel-switch
+      race, timeout classification, caller-abort precedence, signal
+      wiring into fetch)
+
+pnpm check   PASS — svelte-check: 0 errors, 0 warnings
+pnpm test    PASS — exit 0; full &&-chained suite, 5381 "ok"
+             assertion groups (exact baseline parity — LT-2 changes
+             break nothing)
+pnpm build   PASS — exit 0; vite build + Netlify adapter + executor
+             function.
+
+LT-2 suite status: standalone (NOT chained into `pnpm test`), per
+the pre-existing convention documented in LT-1 finding 1 —
+recommend chaining during LT-6 final regression, with approval.
 ```
 
-### Commit
+### Live verification (2026-10-07, safe facts only)
 
 ``` text
-To be filled by GLM.
+GET /api/public/channels
+  200; count 1176 = array length 1176; id is string;
+  28 distinct non-empty categories (LT-0 saw 27 — drift confirms
+  categories MUST be data-derived); 5 channels missing logo;
+  cache-control public, max-age=300; CORS access-control-allow-
+  origin: *
+
+GET /api/public/channels/143
+  200; sources: 1 entry, absolute https, .mpd (DASH); drm present:
+  type clearkey, keyId/key non-empty strings; cache-control
+  max-age=60; signed URL / key / keyId values NOT recorded anywhere.
+
+GET /api/public/guide/144 and /guide/146
+  200; fields {generatedAt, guide, id, nowPlaying, upNext, upcoming};
+  nowPlaying/upNext objects; upcoming 33/24; guide 60/60; programme
+  fields {category, desc, image, start, startTime, stop, stopTime,
+  title}; start/stop numeric (unix seconds) confirmed; generatedAt
+  is a display STRING live (types treat it as unreliable).
+
+GET /api/public/guide/{143,145,200,1}
+  502 — transient upstream failures observed during the probe
+  window. Confirms the documented 502 path and the need for the
+  'server' error kind (the LT-4 guide UI must handle it gracefully).
+
+GET /api/public/channels/not-a-number
+  404 (docs claim 400 — actual behavior preserved; see errors.ts).
+```
+
+### Security review
+
+``` text
+- No keys/secrets/service roles anywhere in the module.
+- No Mavero/Netlify proxy; no user-controlled upstream URL is ever
+  fetched — the only upstream URLs are built from the constant base
+  + fixed V1 paths.
+- Channel ids URL-encoded into paths (no path traversal / param
+  injection); query params via URLSearchParams.
+- Signed MPD URLs / ClearKey key/keyId exist in runtime memory only:
+  never cached, never written to Supabase / localStorage /
+  sessionStorage / IndexedDB (enforced by test §9a), never logged
+  (zero console calls, test §9b), never present in error messages
+  (fixed safe-message table, test §6f).
+- No HTML injection surface (no innerHTML/dangerous HTML anywhere).
+- embed/watch wire fields are documented but never read for
+  playback.
 ```
 
 ### Findings
 
+1.  Guide endpoint is flaky upstream: 4 of 7 guide probes returned
+    502 within the verification window (143/145/200/1 failed;
+    144/146 succeeded). The client classifies this correctly as kind
+    'server' with status preserved; LT-4's guide UI needs a graceful
+    error/retry presentation, and LT-3's player must not depend on
+    guide availability for playback start.
+2.  `generatedAt` arrives as a display STRING live — undocumented
+    and unreliable; the normalized model only carries it when a
+    finite number appears (generatedAtSeconds). LT-4 must not rely
+    on it.
+3.  Catalogue category drift (27 → 28 distinct categories between
+    the LT-0 and LT-2 probes) validates the data-derived category
+    design; nothing is hardcoded.
+4.  5 catalogue channels have no logo — LT-4 channel cards need a
+    logo fallback (initials/placeholder).
+5.  Upstream caches /channels/{id} for 60 s (cache-control). This
+    does NOT relax the fresh-resolution rule (decision D6): Mavero
+    never caches resolutions itself and every playback start
+    re-resolves; at worst the upstream serves a ≤60 s old
+    signature.
+6.  The LT-2 suite is standalone (not in the `pnpm test` chain),
+    matching the documented pre-existing convention (LT-1 finding
+    1); chaining remains an LT-6 decision with approval.
+7.  No scope violations: no Shaka/DASH/player/UI/Supabase/analytics
+    work was done (all LT-3/LT-4/LT-5 territory); media-compat.ts,
+    hls-engine.ts and the VOD resolver are untouched.
+
+### Commit
+
 ``` text
-To be filled by GLM.
+base:        ea69f10c1ff7c40c64a4e348fb5ffeac7d061f88 (LT-1 head, clean)
+LT-2 commit: (recorded in the follow-up worklog commit after push)
+             "feat(live-tv): add LiveGT V1 client layer"
 ```
+
+### Next phase
+
+LT-3 --- DASH / ClearKey Player (per plan §19): add shaka-player
+(browser-only load, mirroring the hls-engine.ts SSR-safe pattern),
+build the Live TV playback engine consuming resolveLiveTvPlayback(),
+Shaka ClearKey config from LiveTvDrm, single-owner media element,
+channel switching with stale-request protection, bounded refresh.
+NO UI yet (that is LT-4).
 
 ------------------------------------------------------------------------
 
