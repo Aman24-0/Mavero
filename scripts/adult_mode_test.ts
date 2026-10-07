@@ -369,8 +369,9 @@ const accountPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pag
   // getTmdbDetail must append_to_response watch/providers so it can
   // classify adult content without a separate N+1 API call.
   assert.match(tmdb, /append_to_response: 'videos,external_ids,recommendations,credits,watch\/providers'/, 'detail fetches watch/providers via append_to_response');
-  // isAdultContent is called in getTmdbDetail.
-  assert.match(tmdb, /getTmdbDetail[\s\S]*?isAdultContent\(item\.tags, providerIds, tmdbAdult, item\.isAnime, networks\)/, 'detail calls isAdultContent');
+  // isAdultContent is called in getTmdbDetail (2026-10-07: with the
+  // attribution evidence argument — the orphan/homepage/overview signals).
+  assert.match(tmdb, /getTmdbDetail[\s\S]*?isAdultContent\(item\.tags, providerIds, tmdbAdult, item\.isAnime, networks, attribution\)/, 'detail calls isAdultContent');
   // If adult, the 'Adult' tag is added to the item.
   assert.match(tmdb, /if \(isAdultContent[\s\S]*?item\.tags = \[\.\.\.\(item\.tags \?\? \[\]\), 'Adult'\]/, 'detail adds Adult tag when classified');
   // The SSR routes check tags?.includes('Adult').
@@ -468,10 +469,13 @@ const accountPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pag
   assert.match(adultNetworks, /tmdbNetworkId: 7355/, 'Atrangii network ID 7355 registered');
   // Unverified entries must keep tmdbNetworkId 0 (no guessed IDs). Checked
   // per entry line (comments excluded) so the check cannot span boundaries.
+  // (2026-10-07 second-round leak hardening: rabbit-movies, nuefliks,
+  // hotmasti and big-movie-zoo moved from unverified to VERIFIED with
+  // live-confirmed ids — 7 unverified candidates remain.)
   const unverifiedLines = adultNetworks
     .split('\n')
     .filter((line) => line.includes("verification: 'unverified'") && !line.trim().startsWith('//') && !line.trim().startsWith('*'));
-  assert.ok(unverifiedLines.length >= 10, `unverified entries present in registry (${unverifiedLines.length})`);
+  assert.ok(unverifiedLines.length >= 5, `unverified entries present in registry (${unverifiedLines.length})`);
   for (const line of unverifiedLines) {
     assert.match(line, /tmdbNetworkId: 0/, `unverified entry pairs label with id 0: ${line.trim()}`);
     assert.doesNotMatch(line, /tmdbNetworkId: [1-9]/, `unverified entry carries no nonzero id: ${line.trim()}`);
@@ -479,7 +483,10 @@ const accountPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pag
   // Verified-only gating: the verified accessor filters by verification label.
   assert.match(adultNetworks, /entry\.verification === 'verified'/, 'verified accessor checks verification label');
   // Classifier imports the network registry (single central classifier).
-  assert.match(adultProviders, /import \{ isKnownAdultNetwork \} from '\.\/adult-networks'/, 'classifier imports network registry');
+  // 2026-10-07: the import grew (getVerifiedAdultNetworks for the overview
+  // provider-context signal + getVerifiedAdultProviderDomains for the
+  // homepage-domain signal) — the single-registry-import invariant holds.
+  assert.match(adultProviders, /import \{ isKnownAdultNetwork[^}]*\} from '\.\/adult-networks'/, 'classifier imports network registry');
   assert.match(adultProviders, /isKnownAdultNetwork\(network\)/, 'classifier consults isKnownAdultNetwork');
   assert.match(adultProviders, /networks\?: Array<\{ id\?: number \| null; name\?: string \| null \}> \| undefined/, 'isAdultContent accepts TV networks');
   // TMDB adapter carries TV networks through the detail path.
@@ -716,7 +723,9 @@ const accountPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pag
   assert.match(adultDiscoverModule, /export const ADULT_DISCOVER_PAGE_SIZE = 10/, 'the visible page size matches the Discover convention');
   // Single classifier: the module reuses the Phase 4 verdict helpers and
   // imports NO authorization layer and NO env (pure, tsx-testable).
-  assert.match(adultDiscoverModule, /import \{ movieRowVerdict, type CandidateVerdict, type UpstreamSearchPage \} from '\.\/search-classify'/, 'the contract reuses the ONE central classifier verdict helpers');
+  // (2026-10-07 movie-half removal: the movieRowVerdict import is gone —
+  // TV rows always classify through the detail verdict loader.)
+  assert.match(adultDiscoverModule, /import \{ type CandidateVerdict, type UpstreamSearchPage \} from '\.\/search-classify'/, 'the contract reuses the ONE central classifier verdict helpers');
   assert.doesNotMatch(adultDiscoverModule, /from '\.\/adult-policy'|from '\.\/adult-authz'/, 'the Adult Discover contract imports NO authorization layer (the decision is injected per request)');
   assert.doesNotMatch(adultDiscoverModule, /\$env|process\.env/, 'the Adult Discover contract is env-free');
   assert.doesNotMatch(adultDiscoverModule, /\b(2902|4573|7355)\b/, 'the Adult Discover contract contains no hardcoded network ids');
@@ -763,21 +772,29 @@ const accountPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pag
   // registry — 'all' (or absent) keeps the full verified set; an optional
   // closed-union provider key narrows to that single verified id via
   // withAdultNetworksParams(selectedNetworkId) (verified-only builder).
+  // 2026-10-07 movie-half removal: the movie source branch (resolved
+  // transitional provider set) was REMOVED with the dead selector — the
+  // catalog is TV-only and its ONLY source is the verified network set
+  // (+ the attributed orphan supplement, injected as candidates).
   assert.match(adultDiscoverAdapter![0], /withAdultNetworksParams\(selectedNetworkId\)/, 'the TV source is the VERIFIED adult network registry (optionally narrowed to a verified provider id)');
   assert.match(adultDiscoverAdapter![0], /getVerifiedAdultNetworkIdForKey\(selectedProviderKey\)/, 'the provider key resolves through the verified registry (never a client id)');
-  assert.match(adultDiscoverAdapter![0], /getAdultProviderIds\(\)/, 'the movie source is the resolved transitional provider set');
+  assert.doesNotMatch(adultDiscoverAdapter![0], /getAdultProviderIds\(\)/, 'the movie-source provider resolution is gone with the movie half');
+  assert.doesNotMatch(adultDiscoverAdapter![0], /watch_region|with_watch_monetization_types|with_watch_providers/, 'no JustWatch prerequisites remain anywhere in the Adult Discover adapter');
   assert.match(adultDiscoverAdapter![0], /include_adult: true/, 'the Adult surface queries with include_adult: true');
   assert.match(adultDiscoverAdapter![0], /buildAdultDiscoverCacheKey/, 'responses cache under the isolated adult-discover namespace');
   assert.match(adultDiscoverAdapter![0], /collectConfirmedAdultPage/, 'candidates pass the fail-closed classification defense');
   assert.match(adultDiscoverAdapter![0], /emptyAdultDiscoverResult/, 'a missing verified source yields the empty result (no fabricated ids)');
+  // 2026-10-07 orphan supplement: attributed orphans join the first upstream
+  // page's candidate rows (same classifier, same dedup, same page bound).
+  assert.match(adultDiscoverAdapter![0], /buildOrphanCandidateRows\(selectedProviderKey\)/, 'the attributed orphan titles are injected as supplemental candidates');
+  assert.match(tmdb, /function buildOrphanCandidateRows[\s\S]*?getAdultOrphanIdsForProvider/, 'orphan candidates come from the attribution registry');
   // Classification flows through the shared cached detail path (content facts only).
   assert.match(tmdb, /const adultDiscoverDetailVerdictLoader: AdultDiscoverDetailVerdictLoader = async \(mediaType, tmdbId\) => \{[\s\S]*?await getTmdbDetail\(mediaType, tmdbId\)/, 'the verdict loader reads the central classification from the cached detail path');
   assert.match(adultDiscoverAdapter![0], /adultDiscoverDetailVerdictLoader/, 'Adult Discover candidates classify through the cached-detail verdict loader');
-  // The TV half must carry NO JustWatch prerequisites (region/flatrate/providers):
-  // the movie branch is the region-scoped transitional provider query, and the
-  // TV branch spreads ONLY the network inclusion.
-  assert.match(adultDiscoverAdapter![0], /\? \{ watch_region: 'IN', with_watch_monetization_types: 'flatrate', with_watch_providers: providerInclusion \}/, 'the movie source is the transitional provider query (region-scoped)');
-  assert.match(adultDiscoverAdapter![0], /: \{ \.\.\.networkInclusion \}/, 'the TV params spread ONLY the network inclusion (no JustWatch prerequisites)');
+  // The TV params spread ONLY the network inclusion (no JustWatch
+  // prerequisites — the movie branch that carried region/flatrate/providers
+  // was removed 2026-10-07).
+  assert.match(adultDiscoverAdapter![0], /\.\.\.networkInclusion/, 'the TV params spread ONLY the network inclusion (no JustWatch prerequisites)');
 
   // ---- Normal Discover isolation: the shared rail path is untouched ----
   assert.match(railEndpoint, /sectionParam === 'adult-shows'/, 'the normal rail endpoint still gates its adult-shows section separately');
@@ -824,6 +841,10 @@ const accountPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pag
   }
   assert.match(adultSection, /fetch\('\/api\/discover\/adult-providers'\)/, 'provider options come from the policy-gated verified-registry endpoint');
   assert.doesNotMatch(adultSection, /with_networks|watch_providers|include_adult/, 'the Adult rail sends no source/authorization parameters');
+  // 2026-10-07 selector removal: NO media-type (Movies/TV) selector is
+  // rendered and no `type` parameter is sent — the catalog is TV-only.
+  assert.doesNotMatch(adultSection, /TYPE_OPTIONS|changeType|label="TV Shows"/, 'the Adult rail has NO media-type selector (TV-only catalog)');
+  assert.doesNotMatch(adultSection, /type,/, 'the Adult rail request omits the media-type parameter (server default: TV series)');
   assert.match(adultSection, /import MediaCard from '\$components\/MediaCard\.svelte'/, 'the Adult rail reuses the existing card component (no duplication)');
   assert.match(adultSection, /status === 404/, 'the Adult rail treats the non-disclosing 404 as section-hidden (never as data)');
 

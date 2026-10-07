@@ -128,13 +128,16 @@ function restoreFetch() {
 }
 
 // ============================================================
-// 1 — Registry: the four newly live-verified networks
+// 1 — Registry: the live-verified network set (both 2026-10 rounds)
 // ============================================================
 {
   const ids = getAdultNetworkIds().sort((a, b) => a - b);
-  assert.deepEqual(ids, [2112, 2902, 4573, 4623, 5094, 7355, 7905], 'verified registry = 7 live-confirmed networks');
-  assert.equal(adultNetworkExclusionValue(), '2112|2902|4573|4623|5094|7355|7905', 'query-level exclusion covers all 7');
-  ok('1. registry: ALTT 2112 / HotHit 5094 / CinemaDosti 4623 / NOTTY 7905 are live-verified + covered');
+  // 2026-10-07 second-round leak hardening: + Hulchul 8209, Nuefliks 8211,
+  // Rabbit Movies 4575, HotMasti 5093, Big Movie Zoo 4920 (same
+  // redirect-slug live-TMDB verification method as the first round).
+  assert.deepEqual(ids, [2112, 2902, 4573, 4575, 4623, 4920, 5093, 5094, 7355, 7905, 8209, 8211], 'verified registry = 12 live-confirmed networks');
+  assert.equal(adultNetworkExclusionValue(), '2112|2902|4573|4575|4623|4920|5093|5094|7355|7905|8209|8211', 'query-level exclusion covers all 12');
+  ok('1. registry: ALTT/HotHit/CinemaDosti/NOTTY + Hulchul/Nuefliks/Rabbit/HotMasti/BigMovieZoo are live-verified + covered');
 }
 
 // ============================================================

@@ -99,7 +99,7 @@ function ok(label: string): void {
 // classification; failures propagate as uncertainty).
 // ---------------------------------------------------------------------------
 
-type Row = { id: string; title: string; type: 'movie' | 'series'; isAnime?: boolean };
+type Row = { id: string; title: string; type: 'series'; isAnime?: boolean };
 
 function candidate(row: Row, rawAdult?: boolean): AdultDiscoverCandidateRow<Row> {
   return { item: row, mediaType: row.type, rawAdult, isAnime: row.isAnime };
@@ -108,7 +108,7 @@ function candidate(row: Row, rawAdult?: boolean): AdultDiscoverCandidateRow<Row>
 type DetailTable = Record<string, CandidateVerdict>;
 
 function makeLoader(table: DetailTable, count?: { calls: number }) {
-  return async (mediaType: 'movie' | 'series', tmdbId: string): Promise<CandidateVerdict> => {
+  return async (mediaType: 'series', tmdbId: string): Promise<CandidateVerdict> => {
     if (count) count.calls += 1;
     const verdict = table[tmdbId];
     if (verdict === undefined) throw new Error('detail lookup failed');
@@ -441,13 +441,16 @@ function makeRailLoader(table: Record<string, CandidateVerdict>) {
 {
   // Real central classifier: the flag signal is exempt for anime.
   assert.equal(isAdultContent(undefined, undefined, true, true, undefined), false, 'anime adult=true alone is NOT Adult (classifier)');
-  assert.equal(movieRowVerdict({ adult: true, isAnime: true }), 'safe', 'cheap movie path cannot confirm anime via the flag');
-  // A recognized anime with adult=true and no network/provider signal
+  assert.equal(movieRowVerdict({ adult: true, isAnime: true }), 'safe', 'cheap flag verdict cannot confirm anime via the flag');
+  // A recognized anime series with adult=true and no network/provider signal
   // classifies 'safe' in the cached detail -> dropped from Adult Discover.
+  // (2026-10-07: the row is series-shaped — the Adult catalog is TV-only
+  // after the movie-half removal; the anime exemption is signal-4 and
+  // applies to any media type.)
   const outcome = await collectConfirmedAdultPage({
     ...collectorOpts(),
     fetchUpstreamPage: async (page) => ({
-      items: [candidate({ id: '9500', title: 'Mature Anime', type: 'movie', isAnime: true }, true)],
+      items: [candidate({ id: '9500', title: 'Mature Anime', type: 'series', isAnime: true }, true)],
       totalPages: page
     }),
     classifyCandidate: (row) => classifyAdultDiscoverRow(row, makeLoader({ '9500': detailVerdictFor(row) }), (item) => item.id),
@@ -528,7 +531,10 @@ function makeRailLoader(table: Record<string, CandidateVerdict>) {
 // ============================================================================
 {
   assert.equal(isAdultDiscoverType('series'), true, "type 'series' valid");
-  assert.equal(isAdultDiscoverType('movie'), true, "type 'movie' valid");
+  // 2026-10-07 movie-half removal: 'movie' is no longer a valid Adult
+  // Discover type — a stale type=movie URL answers 400 and can never
+  // reactivate the removed Movies/TV selector.
+  assert.equal(isAdultDiscoverType('movie'), false, "type 'movie' REJECTED (movie half removed; stale param -> 400)");
   assert.equal(isAdultDiscoverType('anime'), false, "type 'anime' rejected (no anime Adult surface)");
   assert.equal(isAdultDiscoverType('trending'), false, 'arbitrary type rejected');
   assert.equal(isAdultDiscoverType(undefined), false, 'missing type invalid (endpoint defaults before guarding)');

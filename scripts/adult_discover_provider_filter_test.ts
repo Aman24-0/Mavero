@@ -17,11 +17,12 @@ import { readFileSync } from 'node:fs';
 //   - Verified-provider options: registry-sourced (display-only logos)
 //   - API route wiring: policy FIRST (non-disclosing 404), then strict
 //     closed-union validation incl. the provider guard
-//   - Adapter wiring: key -> verified network id (TV) / resolved provider
-//     narrowing (movies, fail-closed); cache key carries the provider
-//     dimension; classifier defense unchanged
+//   - Adapter wiring: key -> verified network id (TV-only since the
+//     2026-10-07 movie-half removal); cache key carries the provider
+//     dimension; classifier defense unchanged + orphan supplement
 //   - UI wiring: provider dropdown from the policy-gated endpoint,
-//     language dropdown REMOVED, single-row header
+//     language dropdown REMOVED, media-type (Movies/TV) selector REMOVED
+//     (TV-only catalog)
 
 let passed = 0;
 function ok(message: string) {
@@ -56,6 +57,12 @@ assert.equal(isAdultDiscoverProvider('altt'), true, 'verified key altt accepted 
 assert.equal(isAdultDiscoverProvider('hothit'), true, 'verified key hothit accepted (5094)');
 assert.equal(isAdultDiscoverProvider('cinemadosti'), true, 'verified key cinemadosti accepted (4623)');
 assert.equal(isAdultDiscoverProvider('notty'), true, 'verified key notty accepted (7905)');
+// 2026-10-07 second-round leak hardening: five more live-verified keys.
+assert.equal(isAdultDiscoverProvider('hulchul'), true, 'verified key hulchul accepted (8209, live-confirmed 2026-10-07)');
+assert.equal(isAdultDiscoverProvider('nuefliks'), true, 'verified key nuefliks accepted (8211)');
+assert.equal(isAdultDiscoverProvider('rabbit-movies'), true, 'verified key rabbit-movies accepted (4575)');
+assert.equal(isAdultDiscoverProvider('hotmasti'), true, 'verified key hotmasti accepted (5093)');
+assert.equal(isAdultDiscoverProvider('big-movie-zoo'), true, 'verified key big-movie-zoo accepted (4920)');
 assert.equal(isAdultDiscoverProvider('primeplay'), false, 'UNVERIFIED candidate rejected (registry candidate, no verified id)');
 assert.equal(isAdultDiscoverProvider('2902'), false, 'raw TMDB network id rejected');
 assert.equal(isAdultDiscoverProvider('999999'), false, 'arbitrary numeric id rejected');
@@ -130,7 +137,8 @@ assert.doesNotMatch(endpointCode, /\b2902\b|\b4573\b|\b7355\b/, 'no literal netw
 ok('4. route: policy gate -> closed-union provider validation -> service');
 
 // ============================================================
-// 5. Adapter — key mapped to verified ids server-side; fail-closed movie half
+// 5. Adapter — key mapped to verified ids server-side; TV-only catalog
+//    (movie half removed 2026-10-07)
 // ============================================================
 {
   const fn = adapter.match(/export async function getTmdbAdultDiscover[\s\S]*?^}/m);
@@ -138,14 +146,19 @@ ok('4. route: policy gate -> closed-union provider validation -> service');
   const body = fn![0];
   assert.match(body, /getVerifiedAdultNetworkIdForKey\(selectedProviderKey\)/, 'provider key -> VERIFIED network id via the central registry');
   assert.match(body, /withAdultNetworksParams\(selectedNetworkId\)/, 'TV query narrows through the verified-only inclusion builder');
-  assert.match(body, /providerInclusion = match \? String\(match\.tmdbProviderId\) : undefined/, 'movie half narrows to the RESOLVED provider id only');
+  // 2026-10-07: the movie-half provider resolution branch is GONE with the
+  // movie half — the only source is the verified network set (+ orphans).
+  assert.doesNotMatch(body, /providerInclusion = match \? String\(match\.tmdbProviderId\) : undefined/, 'movie-half provider resolution removed with the movie half');
+  assert.doesNotMatch(body, /with_watch_providers|watch_region/, 'no JustWatch provider query remains in the Adult Discover adapter');
   assert.match(body, /if \(!hasSource\) \{[\s\S]*?return emptyAdultDiscoverResult\(page\)/, 'no verified source -> EMPTY result (fail-closed, never widened to all)');
   assert.match(body, /provider: filters\.provider \?\? ADULT_DISCOVER_PROVIDER_ALL/, 'cache key carries the provider dimension');
   assert.doesNotMatch(body, /fixturesFor|catch\s*(\(|\{)/, 'no fixture fallback, no swallowed errors (unchanged)');
   // The classifier defense is intact: every candidate still flows through
   // collectConfirmedAdultPage.
   assert.match(body, /collectConfirmedAdultPage/, 'bounded classifier defense retained');
-  ok('5. adapter: server-side key->id mapping, Adult AND provider, fail-closed empty over fallback');
+  // The attributed orphan supplement joins the provider-filtered catalog.
+  assert.match(body, /buildOrphanCandidateRows\(selectedProviderKey\)/, 'attributed orphan titles injected for the selected provider');
+  ok('5. adapter: server-side key->id mapping, TV-only source, orphan supplement, fail-closed empty over fallback');
 }
 
 // ============================================================
@@ -159,18 +172,21 @@ assert.doesNotMatch(providersEndpoint, /\b2902\b|\b4573\b|\b7355\b/, 'no literal
 ok('6. provider list endpoint: verified registry + logos via the controlled TMDB CDN convention');
 
 // ============================================================
-// 7. UI — provider dropdown from the endpoint; language dropdown REMOVED
+// 7. UI — provider dropdown from the endpoint; language + Movies/TV
+//    selectors REMOVED (TV-only catalog since 2026-10-07)
 // ============================================================
 assert.match(section, /fetch\('\/api\/discover\/adult-providers'\)/, 'provider options fetched from the policy-gated endpoint');
 assert.match(section, /\{ value: 'all', label: 'All' \}/, "'All' option present");
 assert.doesNotMatch(section, /LANGUAGE_OPTIONS/, 'language dropdown options REMOVED from the Adult surface');
 assert.doesNotMatch(section, /changeLanguage|language = \$state/, 'no language filter state remains');
+assert.doesNotMatch(section, /TYPE_OPTIONS|changeType/, 'Movies/TV media-type selector REMOVED (TV-only catalog)');
+assert.doesNotMatch(section, /type,/s, 'request builder sends no media-type parameter (server defaults to TV series)');
 assert.match(section, /changeProvider/, 'provider filter switches reload page 1');
 assert.match(section, /loadProviderOptions/, 'options are loaded dynamically from the registry endpoint');
 assert.doesNotMatch(section, /'ullu'|'kooku'|'atrangii'/, 'no hardcoded brand keys in the component');
 assert.doesNotMatch(section, /2902|4573|7355/, 'no hardcoded network ids in the component');
 assert.doesNotMatch(section, /localStorage|sessionStorage/, 'no persistent browser storage for filter state');
-ok('7. UI: dynamic verified-provider dropdown, language filter removed, no persistence');
+ok('7. UI: dynamic verified-provider dropdown; language + media-type selectors removed; no persistence');
 
 // ============================================================
 // 8. Contract header still documents the mandatory Adult constraint

@@ -55,8 +55,13 @@ export const GET: RequestHandler = async ({ url, locals, cookies }) => {
   }
 
   // ---- 3. Strict closed-union validation + clamped pagination. ----
-  // type defaults to 'series' (TV-first: the verified Adult networks are TV
-  // networks; the movie side is the documented transitional source).
+  // TV-first and TV-ONLY (2026-10-07 movie-half removal): the verified Adult
+  // networks are TV networks and the Indian adult OTT ecosystem is a
+  // web-series ecosystem — the movie catalog never had a verifiable source
+  // (JustWatch watch-provider resolution for these services is empty). A
+  // stale `type=movie` query parameter fails the guard below and answers
+  // 400 INVALID_TYPE, so the REMOVED Movies/TV selector can never be
+  // reactivated through an old URL.
   const typeParam = url.searchParams.get('type') ?? 'series';
   if (!isAdultDiscoverType(typeParam)) {
     return json({ ok: false, error: { code: 'INVALID_TYPE', message: 'Unsupported catalog type.' } }, { status: 400 });

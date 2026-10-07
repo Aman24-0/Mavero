@@ -59,6 +59,54 @@
 //                            evidence: /tv/277729 "Bhabhi Ki Pathshala"
 //                            (production screenshot title) lists network 7905)
 //
+// Follow-up adult-leak hardening task (2026-10-07, second round): the
+// production leak audit proved the ecosystem is wider than the 7-network
+// verified set. Five additional services are live-verified with the same
+// redirect-slug method (+ show-page evidence; negative control re-run:
+// network/999999999 -> 404):
+//   Hulchul        -> 8209  (https://www.themoviedb.org/network/8209-hulchul;
+//                            evidence: /tv/289516 "Gharwali Baharwali" lists
+//                            network 8209; the leaked title "Bhabhi Ji Suniya
+//                            Na" (/tv/290352, no network field on TMDB) is a
+//                            Hulchul original — TMDB's own overview field
+//                            says "New Hulchul WebSeries")
+//   Nuefliks        -> 8211  (https://www.themoviedb.org/network/8211-nuefliks;
+//                            evidence: /tv/119643 "Kotha" lists network 8211;
+//                            the orphan title "Sarla Bhabhi" (/tv/129152) is
+//                            externally documented as a Nuefliks/Flizmovies
+//                            release — alias kept)
+//   Rabbit Movies  -> 4575  (https://www.themoviedb.org/network/4575-rabbit;
+//                            evidence: /tv/120642 "Mask Man" — a Rabbit
+//                            Movies original — lists network 4575)
+//   HotMasti       -> 5093  (https://www.themoviedb.org/network/5093-hot-masti;
+//                            evidence: /tv/128528 "Deadly Lover" and
+//                            /tv/128972 "Call Girl" list network 5093)
+//   Big Movie Zoo  -> 4920  (https://www.themoviedb.org/network/4920-big-movie-zoo;
+//                            evidence: /tv/125695 "Khoon Bhari Maang",
+//                            /tv/125696, /tv/125699, /tv/128943 list network
+//                            4920 — 4 networked titles total)
+//
+// Candidates AUDITED and REJECTED this round (no TMDB network identity or
+// not verifiably an adult network — see the worklog for the full evidence):
+//   PrimePlay, Hunters, Voovi, Primeshots, Boomex, TV Valentine,
+//   Cinemadhamaka, Fuego  (no TMDB network entity exists to verify),
+//   Bull  (TMDB search only finds Red Bull TV — unrelated),
+//   Wow Entertainment  (no exact-name network on TMDB; the "wow" search
+//   returns WOWOW Prime / Hot Entertainment / Bol Entertainment — all
+//   unrelated),
+//   Mohan Studios  (TMDB search resolves Mojang Studios — Minecraft, not
+//   an adult service),
+//   Vivamax (4569)  (Filipino mixed-content streaming service, not the
+//   Indian erotic OTT ecosystem, and not uniformly adult — registering it
+//   would over-block legitimate Filipino drama/thriller titles).
+//
+// ORPHAN TITLES: some Indian adult web-series entries on TMDB carry NO
+// networks[] field at all (auto-scraped records). Those cannot be classified
+// by ANY network registry. They are covered by the attribution registry in
+// adult-orphans.ts (TMDB-recorded homepage/overview evidence + verified
+// provider-catalog attribution) and by the classifier's homepage-domain /
+// overview provider-context signals. Do NOT try to solve them here.
+//
 // RULES FOR FUTURE CHANGES
 // ========================
 // - Never add an ID that has not been confirmed against live TMDB data.
@@ -96,6 +144,24 @@ export type AdultNetwork = {
    */
   tmdbLogoPath?: string | null;
   /**
+   * Official provider web domains (registrable-domain strings, lowercase,
+   * no scheme — e.g. 'ullu.app'). Used ONLY by the classifier's homepage
+   * signal: when a TMDB detail record's own `homepage` field points at one
+   * of these domains, the title is provider-attributed adult content (the
+   * attribution lives inside TMDB's own structured metadata — not a title
+   * heuristic). Entries without a TMDB-recorded domain stay undefined —
+   * domains are never guessed.
+   * Verified domains (TMDB records carry them on network titles):
+   *   ullu.app        — /tv/97072 "Charmsukh" homepage https://ullu.app/#/home
+   *                     and /tv/219035 "Charmsukh Jane Anjane Mein"
+   *                     homepage https://ullu.app/
+   *   altbalaji.com   — /tv/79273 "Gandii Baat" homepage
+   *                     https://www.altbalaji.com/show/307
+   * Classification and catalog filters never read this field; it is a
+   * detail-classification signal only.
+   */
+  providerDomains?: string[];
+  /**
    * 'verified' requires BOTH a live-confirmed tmdbNetworkId > 0 and the
    * evidence note in the entry comment. Accessors in this module never
    * treat 'unverified' entries as active classification signals.
@@ -119,6 +185,9 @@ const ADULT_NETWORK_REGISTRY: AdultNetwork[] = [
     name: 'Ullu',
     tmdbNetworkId: 2902, // live TMDB: /network/2902 -> "2902-ullu"
     tmdbLogoPath: '/v5YSGiZxWsQTRQaijkEcUSSBFeQ.png',
+    // TMDB-recorded homepages: /tv/97072 "https://ullu.app/#/home",
+    // /tv/219035 "https://ullu.app/" (2026-10-07 live check)
+    providerDomains: ['ullu.app'],
     verification: 'verified'
   },
   {
@@ -146,6 +215,11 @@ const ADULT_NETWORK_REGISTRY: AdultNetwork[] = [
     // live TMDB: /network/2112 -> "2112-altbalaji" (evidence: /tv/79273
     // "Gandii Baat", the flagship ALTBalaji original, lists network 2112)
     tmdbNetworkId: 2112,
+    // live TMDB network logo (2026-10-07; same live page that verified the id)
+    tmdbLogoPath: '/zZ8gquIrrBvDGyMMcsSgArRuzyh.png',
+    // TMDB-recorded homepage: /tv/79273 "Gandii Baat" homepage
+    // https://www.altbalaji.com/show/307 (2026-10-07 live check)
+    providerDomains: ['altbalaji.com'],
     verification: 'verified'
   },
   {
@@ -154,6 +228,8 @@ const ADULT_NETWORK_REGISTRY: AdultNetwork[] = [
     // live TMDB: /network/5094 -> "5094-hothit" (evidence: /tv/119721
     // "Sweety Bhabhi" — production screenshot title — lists network 5094)
     tmdbNetworkId: 5094,
+    // live TMDB network logo (2026-10-07; same live page that verified the id)
+    tmdbLogoPath: '/okM9V94bLu2BDyCkizxQN8ALRdy.png',
     verification: 'verified'
   },
   {
@@ -165,6 +241,9 @@ const ADULT_NETWORK_REGISTRY: AdultNetwork[] = [
     // network 4623; network page also lists "Sunday" and "Raat Baaki
     // Baat Baaki")
     tmdbNetworkId: 4623,
+    // no logo on the live TMDB network page (checked 2026-10-07 — the page's
+    // logo template renders ${data.logo_path} with an empty value) — the UI
+    // renders the existing label-only fallback, never a fabricated logo
     verification: 'verified'
   },
   {
@@ -173,20 +252,77 @@ const ADULT_NETWORK_REGISTRY: AdultNetwork[] = [
     // live TMDB: /network/7905 -> "7905-notty" (evidence: /tv/277729
     // "Bhabhi Ki Pathshala" — production screenshot title — lists network 7905)
     tmdbNetworkId: 7905,
+    // live TMDB network logo (2026-10-07; same live page that verified the id)
+    tmdbLogoPath: '/rUT38Fm9TqUwxu4c1CVfC8VjFJ9.png',
+    verification: 'verified'
+  },
+  // --- Verified against live TMDB (2026-10-07 second-round leak hardening;
+  // redirect-slug method + show-page evidence, see header note). These five
+  // close the remaining network coverage gaps behind the production leaks. ---
+  {
+    key: 'hulchul',
+    name: 'Hulchul',
+    // live TMDB: /network/8209 -> "8209-hulchul" (evidence: /tv/289516
+    // "Gharwali Baharwali" lists network 8209; "Bhabhi Ji Suniya Na" — the
+    // leaked screenshot title — is a Hulchul original whose TMDB overview
+    // reads "New Hulchul WebSeries")
+    tmdbNetworkId: 8209,
+    // no logo on the live TMDB network page (checked 2026-10-07) — the UI
+    // renders the existing label-only fallback, never a fabricated logo
+    verification: 'verified'
+  },
+  {
+    key: 'nuefliks',
+    name: 'Nuefliks',
+    aliases: ['Flizmovies'],
+    // live TMDB: /network/8211 -> "8211-nuefliks" (evidence: /tv/119643
+    // "Kotha" lists network 8211; orphan title "Sarla Bhabhi" /tv/129152 is
+    // externally documented as a Nuefliks/Flizmovies release)
+    tmdbNetworkId: 8211,
+    // live TMDB network logo (2026-10-07; same live page that verified the id)
+    tmdbLogoPath: '/zy10hodjaUiGp3BK4iJ6omo83qv.png',
+    verification: 'verified'
+  },
+  {
+    key: 'rabbit-movies',
+    name: 'Rabbit Movies',
+    aliases: ['Rabbit'],
+    // live TMDB: /network/4575 -> "4575-rabbit" (evidence: /tv/120642
+    // "Mask Man" — a Rabbit Movies original — lists network 4575)
+    tmdbNetworkId: 4575,
+    // live TMDB network logo (2026-10-07; same live page that verified the id)
+    tmdbLogoPath: '/AdbQ6aK8kN0Q5Anj1EfB8jwCT5Y.png',
+    verification: 'verified'
+  },
+  {
+    key: 'hotmasti',
+    name: 'HotMasti',
+    // live TMDB: /network/5093 -> "5093-hot-masti" (evidence: /tv/128528
+    // "Deadly Lover" and /tv/128972 "Call Girl" list network 5093)
+    tmdbNetworkId: 5093,
+    // live TMDB network logo (2026-10-07; same live page that verified the id)
+    tmdbLogoPath: '/hgrQ2bj575Jis9Ri0N28d8T3Yiy.png',
+    verification: 'verified'
+  },
+  {
+    key: 'big-movie-zoo',
+    name: 'Big Movie Zoo',
+    // live TMDB: /network/4920 -> "4920-big-movie-zoo" (evidence:
+    // /tv/125695 "Khoon Bhari Maang", /tv/125696, /tv/125699 and /tv/128943
+    // list network 4920 — four networked titles)
+    tmdbNetworkId: 4920,
+    // live TMDB network logo (2026-10-07; same live page that verified the id)
+    tmdbLogoPath: '/zIJoMv9FsH5rzqv479nSV2Ed45F.png',
     verification: 'verified'
   },
   // --- Candidates: known adult services, network IDs NOT yet confirmed ---
   // (names carried over from the legacy provider registry; IDs must be
   // live-confirmed before they may be set here — see header rules)
-  { key: 'rabbit-movies', name: 'Rabbit Movies', aliases: ['Rabbit'], tmdbNetworkId: 0, verification: 'unverified' },
-  { key: 'nuefliks', name: 'Nuefliks', aliases: ['Flizmovies'], tmdbNetworkId: 0, verification: 'unverified' },
   { key: 'primeplay', name: 'PrimePlay', aliases: ['Prime Play'], tmdbNetworkId: 0, verification: 'unverified' },
   { key: 'hunters', name: 'Hunters', tmdbNetworkId: 0, verification: 'unverified' },
   { key: 'voovi', name: 'Voovi', tmdbNetworkId: 0, verification: 'unverified' },
-  { key: 'big-movie-zoo', name: 'Big Movie Zoo', tmdbNetworkId: 0, verification: 'unverified' },
   { key: 'cinemadhamaka', name: 'Cinemadhamaka', tmdbNetworkId: 0, verification: 'unverified' },
   { key: 'tv-valentine', name: 'TV Valentine', tmdbNetworkId: 0, verification: 'unverified' },
-  { key: 'hotmasti', name: 'HotMasti', tmdbNetworkId: 0, verification: 'unverified' },
   { key: 'mohan-studios', name: 'Mohan Studios', tmdbNetworkId: 0, verification: 'unverified' },
   { key: 'fuego', name: 'Fuego', tmdbNetworkId: 0, verification: 'unverified' }
 ];
@@ -268,6 +404,18 @@ export function getAdultNetworkById(id: number): AdultNetwork | undefined {
  */
 export function getVerifiedAdultNetworkOptions(): Array<{ key: string; name: string; logoPath: string | null }> {
   return getVerifiedAdultNetworks().map((entry) => ({ key: entry.key, name: entry.name, logoPath: entry.tmdbLogoPath ?? null }));
+}
+
+/**
+ * The subset of provider domains that may influence the classifier's
+ * homepage signal: registrable domains of VERIFIED registry entries only
+ * (unverified entries never carry domains; entries without TMDB-recorded
+ * domain evidence carry none). Matched against the hostname of a TMDB
+ * detail record's own `homepage` field — a structured TMDB field, never
+ * free-text guessing.
+ */
+export function getVerifiedAdultProviderDomains(): string[] {
+  return getVerifiedAdultNetworks().flatMap((entry) => entry.providerDomains ?? []);
 }
 
 /**

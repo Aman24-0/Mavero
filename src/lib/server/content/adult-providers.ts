@@ -35,7 +35,8 @@
 // catalog paths no longer call into it, and the network registry +
 // adult-catalog.ts are the only sources of TV adult filtering.
 
-import { isKnownAdultNetwork } from './adult-networks';
+import { isKnownAdultNetwork, getVerifiedAdultNetworks, getVerifiedAdultProviderDomains } from './adult-networks';
+import { getAdultOrphanAttribution } from './adult-orphans';
 
 export type AdultOttProvider = {
   /** URL-safe key. */
@@ -209,6 +210,23 @@ export function invalidateAdultProviderCache(): void {
 //      carry no networks). Retained until the Phase 7 movie-side
 //      redesign; see the module header.
 //   4. TMDB's `adult` boolean is true AND it's not anime.
+//   5. ORPHAN ATTRIBUTION (2026-10-07 leak hardening): its canonical TMDB
+//      identity (media type + numeric id) is registered in the evidence-
+//      recorded adult-orphans.ts data-completion registry — the layer for
+//      ecosystem titles whose TMDB records carry NO networks[] field at
+//      all (see that module's header for the audit that established it).
+//   6. HOMEPAGE DOMAIN (2026-10-07): the TMDB detail record's own
+//      `homepage` field points at a VERIFIED adult provider domain
+//      (adult-networks.ts providerDomains — e.g. ullu.app on /tv/219035
+//      "Charmsukh Jane Anjane Mein"). Structured TMDB metadata, never
+//      free-text guessing.
+//   7. OVERVIEW PROVIDER CONTEXT (2026-10-07): the TMDB overview names a
+//      VERIFIED adult provider AND carries a web-series context token
+//      (e.g. "New Hulchul WebSeries" on /tv/290352 "Bhabhi Ji Suniya Na").
+//      The provider-name + context co-occurrence keeps precision high —
+//      a legitimate title merely containing a common word that happens to
+//      match a provider name ("ullu" = owl in Hindi, the 2004 movie
+//      "Hulchul") does NOT match without the web-series context.
 //
 // This function does NOT classify:
 //   - anime (genre 16 + ja) as adult MERELY BECAUSE of TMDB's adult flag
@@ -234,6 +252,88 @@ export function invalidateAdultProviderCache(): void {
 // ============================================================
 
 /**
+ * Attribution evidence for the 2026-10-07 orphan/homepage/overview signals
+ * (Signals 5-7). Everything here comes from the TMDB DETAIL record or the
+ * caller's canonical identity — list rows pass nothing and simply skip
+ * these signals (the cheap row paths are unchanged).
+ */
+export type AdultAttributionInput = {
+  /** Canonical TMDB media type of the record being classified. */
+  mediaType?: 'movie' | 'series';
+  /** Canonical numeric TMDB id of the record being classified. */
+  tmdbId?: number;
+  /** The TMDB detail record's own homepage field (structured provider signal). */
+  homepage?: string | null;
+  /** The TMDB overview text (provider + web-series-context co-occurrence signal). */
+  overview?: string | null;
+};
+
+/** Subdomains stripped before comparing a hostname to a provider domain. */
+const COMMON_SUBDOMAINS = new Set(['www', 'm', 'web', 'app', 'www2']);
+
+/**
+ * Registrable-domain extraction for the homepage signal: hostname with
+ * common subdomains stripped, lowercased. Returns null for empty/unparseable
+ * input — never throws (a malformed homepage is simply no signal).
+ */
+function registrableDomainOf(url: string | null | undefined): string | null {
+  if (typeof url !== 'string' || url.trim().length === 0) return null;
+  try {
+    const withScheme = /^https?:\/\//i.test(url) ? url : `https://${url}`;
+    const hostname = new URL(withScheme).hostname.toLowerCase();
+    if (!hostname) return null;
+    const parts = hostname.split('.');
+    // Strip a single leading common subdomain (www.altbalaji.com -> altbalaji.com).
+    if (parts.length > 2 && COMMON_SUBDOMAINS.has(parts[0])) parts.shift();
+    const domain = parts.join('.');
+    return domain.length > 0 ? domain : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Homepage-domain signal: TRUE when the TMDB homepage's registrable domain
+ * matches a VERIFIED adult provider domain (adult-networks.ts). Pure string
+ * equality against the registry — no suffix tricks, so "ullu.app.evil.com"
+ * can never match "ullu.app".
+ */
+export function isAdultProviderHomepage(homepage: string | null | undefined): boolean {
+  const domain = registrableDomainOf(homepage);
+  if (!domain) return false;
+  const verifiedDomains = getVerifiedAdultProviderDomains();
+  if (verifiedDomains.length === 0) return false;
+  return verifiedDomains.includes(domain);
+}
+
+/** Web-series context tokens required to co-occur with a provider name. */
+const OVERVIEW_SERIES_CONTEXT = /web\s*series|webseries|originals\b/i;
+
+/**
+ * Overview provider-context signal: TRUE when the text mentions a VERIFIED
+ * adult provider name (word-boundary match, case-insensitive — aliases
+ * included) AND a web-series context token. The co-occurrence requirement
+ * is the precision guard: provider names that are also common words
+ * ("ullu" = owl, "hulchul" = commotion) only classify when the SAME text
+ * carries web-series framing, which legit movie/show overviews do not.
+ */
+export function isAdultProviderOverview(overview: string | null | undefined): boolean {
+  if (typeof overview !== 'string' || overview.trim().length === 0) return false;
+  if (!OVERVIEW_SERIES_CONTEXT.test(overview)) return false;
+  const verified = getVerifiedAdultNetworks();
+  for (const entry of verified) {
+    const names = [entry.name, ...(entry.aliases ?? [])];
+    for (const name of names) {
+      const escaped = name.trim().toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      if (escaped.length < 4) continue; // very short names are too risky as words
+      const pattern = new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`, 'i');
+      if (pattern.test(overview)) return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Classify whether a content item is adult.
  *
  * @param tags - The item's tags array (from NormalizedMediaItem.tags).
@@ -248,6 +348,12 @@ export function invalidateAdultProviderCache(): void {
  *   (NormalizedMediaItem.networks, from the TV detail response). A network
  *   matching a VERIFIED adult network classifies the title as adult even
  *   when tmdbAdult is false. Absent for movies and list-shaped results.
+ * @param attribution - Optional (2026-10-07 leak hardening): the detail
+ *   record's canonical identity + homepage + overview. Enables Signals
+ *   5-7 (orphan registry, provider homepage domain, overview
+ *   provider-context). List-shaped callers pass nothing — those signals
+ *   are detail-path-only by design (the fail-closed classification
+ *   contract for sparse list rows is unchanged).
  * @returns true if the item is classified as adult.
  */
 export function isAdultContent(
@@ -255,7 +361,8 @@ export function isAdultContent(
   providerIds: number[] | undefined,
   tmdbAdult: boolean | undefined,
   isAnime: boolean | undefined,
-  networks?: Array<{ id?: number | null; name?: string | null }> | undefined
+  networks?: Array<{ id?: number | null; name?: string | null }> | undefined,
+  attribution?: AdultAttributionInput | undefined
 ): boolean {
   // Signal 1: explicit Adult tag (set by the adult section query and the
   // detail classification path).
@@ -286,6 +393,22 @@ export function isAdultContent(
   // as adult merely because of that flag (it may be mature anime
   // like Attack on Titan, which is not adult-provider content).
   if (tmdbAdult === true && isAnime !== true) return true;
+
+  // Signal 5 (2026-10-07): orphan attribution — the canonical identity is
+  // registered in the evidence-recorded data-completion registry for
+  // ecosystem titles whose TMDB records lack the networks[] field.
+  if (attribution) {
+    if (getAdultOrphanAttribution(attribution.mediaType, attribution.tmdbId)) return true;
+
+    // Signal 6: the TMDB detail record's own homepage points at a verified
+    // adult provider domain (structured TMDB metadata — e.g. /tv/219035's
+    // homepage is https://ullu.app/).
+    if (isAdultProviderHomepage(attribution.homepage)) return true;
+
+    // Signal 7: the TMDB overview names a verified adult provider together
+    // with web-series context (e.g. /tv/290352's "New Hulchul WebSeries").
+    if (isAdultProviderOverview(attribution.overview)) return true;
+  }
 
   return false;
 }

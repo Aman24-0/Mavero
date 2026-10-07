@@ -2,11 +2,21 @@
   // Phase 8 — the authorized Adult Discover rail (the "Indian Adult Shows"
   // surface), migrated to the Phase 7 dedicated Adult Discover backend.
   //
+  // 2026-10-07 MOVIE/TV SELECTOR REMOVAL: the Adult catalog is TV-ONLY. The
+  // production audit proved the movie half had no verifiable source (the
+  // Indian adult OTT services are TMDB TV networks, not JustWatch India
+  // watch providers — the movie query resolved an always-empty catalog and
+  // the selector's "Movies" option showed "No titles available" forever).
+  // Per the follow-up decision rule the dead selector is REMOVED: no
+  // media-type dropdown is rendered, the API request always omits the type
+  // parameter (server default: TV series), and a stale `type=movie` URL is
+  // rejected server-side with 400 — it can never re-activate a movie view.
+  //
   // WHY A DEDICATED COMPONENT (not a DiscoverSection prop):
   //   The old rail fetched /api/discover/rail?section=adult-shows — the
   //   legacy merged movie+TV rail without the Phase 7 catalog features
   //   (per-type catalogs, classifier defense). The Adult surface now has
-  //   its OWN endpoint with a different contract (type/provider/page), so
+  //   its OWN endpoint with a different contract (provider/page), so
   //   its data loading is intentionally isolated from the normal rail
   //   machinery. The VISUAL language is shared: the same MediaCard,
   //   DiscoverDropdown, loading / error / empty states and Show-more
@@ -33,8 +43,6 @@
   //     dimension for compatibility, defaulting to 'all').
   //   - Adult catalog data is never persisted browser-side; component state
   //     dies with the section.
-  type AdultDiscoverType = 'movie' | 'series';
-
   import { onMount } from 'svelte';
   import { LoaderCircle, Plus, RotateCw } from 'lucide-svelte';
   import type { MediaItem } from '$data/content';
@@ -44,13 +52,7 @@
 
   let { title = 'Indian Adult Shows' }: { title?: string } = $props();
 
-  type TypeOption = { value: AdultDiscoverType; label: string };
   type ProviderOption = { value: string; label: string; logoUrl?: string };
-
-  const TYPE_OPTIONS: TypeOption[] = [
-    { value: 'series', label: 'TV Shows' },
-    { value: 'movie', label: 'Movies' }
-  ];
 
   // 'all' plus the VERIFIED Adult networks served by the policy-gated
   // endpoint (same registry the classifier uses). Never a hardcoded brand
@@ -69,21 +71,20 @@
   let showMoreError = $state('');
   let currentPage = $state(1);
   let hasNextPage = $state(false);
-  let type = $state<AdultDiscoverType>('series');
   let provider = $state<string>('all');
   let providerOptions = $state<ProviderOption[]>([ALL_PROVIDER_OPTION]);
   let hidden = $state(false);
   let requestSequence = 0;
   let requestController: AbortController | undefined;
 
-  // The Phase 7 API contract — ONLY the supported parameters (type,
-  // provider, page). No language (filter removed from this surface), no
-  // source/TMDB passthrough parameters, no adult flag: the server owns the
-  // source boundary, the provider->network-id mapping and the
-  // authorization.
+  // The Phase 7 API contract — ONLY the supported parameters (provider,
+  // page). No `type` is sent at all: the catalog is TV-only and the server
+  // defaults to TV series (2026-10-07 movie-half removal). No language
+  // (filter removed from this surface), no source/TMDB passthrough
+  // parameters, no adult flag: the server owns the source boundary, the
+  // provider->network-id mapping and the authorization.
   function discoverUrl(targetPage: number) {
     const params = new URLSearchParams({
-      type,
       provider,
       page: String(targetPage)
     });
@@ -193,13 +194,6 @@
     }
   }
 
-  function changeType(next: string) {
-    const nextType = next as AdultDiscoverType;
-    if (nextType === type) return;
-    type = nextType;
-    void loadFirst();
-  }
-
   function changeProvider(next: string) {
     if (next === provider) return;
     provider = next;
@@ -223,20 +217,11 @@
         <h2 id="adult-discover-title" class="section-title"><span class="adult-badge" aria-hidden="true">18+</span>{title}</h2>
       </div>
       <div class="section-head-right">
-        <DiscoverDropdown
-          label="TV Shows"
-          ariaLabel={`Filter ${title} by catalog type`}
-          options={TYPE_OPTIONS}
-          value={type}
-          onChange={changeType}
-        />
         <!-- Provider filter: full (labelled) instance and compact (icon-only)
              instance share the same options/value/handler. Exactly one is
-             visible at any width, so the filter NEVER wraps to a second row:
-             wide viewports show both labelled pills; very narrow viewports
-             keep the content-type pill and collapse the provider filter to
-             an icon-only control (same tap target, same dropdown panel,
-             same aria-label). -->
+             visible at any width. The Movies/TV media-type selector was
+             REMOVED (2026-10-07): the Adult catalog is TV-only — see the
+             script header note. -->
         <span class="provider-full">
           <DiscoverDropdown
             label="All"

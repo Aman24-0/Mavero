@@ -1,4 +1,5 @@
-// Adult Discover catalog contract (Adult Mode architecture rebuild, Phase 7).
+// Adult Discover catalog contract (Adult Mode architecture rebuild, Phase 7;
+// movie half REMOVED 2026-10-07 — see the MOVIE REMOVAL note below).
 //
 // WHY THIS EXISTS
 // ===============
@@ -16,18 +17,35 @@
 //   ADULT DISCOVER:   Adult included ONLY when authorized (per request).
 //
 // SOURCE BOUNDARY (server-controlled; no client input can alter it):
-//   - TV:  /discover/tv with `with_networks=<verified adult network ids>`
+//   TV:  /discover/tv with `with_networks=<verified adult network ids>`
 //     (adult-catalog.ts -> adult-networks.ts — the ONLY place network IDs
 //     exist). No JustWatch/watch-provider prerequisites: a verified adult
 //     network title is adult catalog content even when TMDB adult=false and
-//     even when it has no India watch-provider entry.
-//   - Movie: /discover/movie has NO network filter in TMDB. The movie side
-//     keeps the documented TRANSITIONAL watch-provider inclusion (resolved
-//     adult provider names, watch_region=IN) — the same movie-side
-//     architecture the central classifier already considers valid
-//     (isAdultContent Signal 3). No title blacklists, no romance/drama/
-//     mature/horror heuristics, no invented IDs. If nothing is verified,
-//     the catalog is EMPTY (TV-first under-fill is the safe behavior).
+//     even when it has no India watch-provider entry. The attributed
+//     ORPHAN titles (adult-orphans.ts — ecosystem entries whose TMDB
+//     records lack the networks[] field) are injected as supplemental
+//     candidates of the selected provider by the adapter, and pass the
+//     SAME central classification as every other candidate.
+//
+// MOVIE REMOVAL (2026-10-07 audit decision)
+// ==========================================
+// The movie half previously kept the TRANSITIONAL watch-provider source
+// (`with_watch_providers=<resolved adult provider ids> + watch_region=IN +
+// flatrate`). The production audit root-caused the "Movies -> No titles
+// available" selector state: Indian adult OTT services are TV NETWORKS on
+// TMDB and are NOT JustWatch India watch providers (documented since the
+// Phase 1 audit — "the rail can resolve zero providers and return an empty
+// catalog"), so the movie catalog resolved either an empty provider set or
+// a set with no movie titles — an always-empty catalog behind a selectable
+// UI option. Per the follow-up decision rule ("Do not show a selector whose
+// alternative always produces empty results"), the movie half is REMOVED:
+//   - the media type union is now 'series' ONLY;
+//   - the API route REJECTS `type=movie` with 400 (a stale movie query
+//     parameter can never reactivate the removed selector);
+//   - the UI no longer renders a Movies/TV selector (TV Shows is the only
+//     media type, by construction).
+// The TV-only contract keeps the language/sort/page/provider dimensions
+// unchanged.
 //
 // CLASSIFICATION DEFENSE-IN-DEPTH (asymmetric, fail-closed):
 //   The query boundary is strong but not trusted blindly — upstream data
@@ -72,7 +90,7 @@
 //   no recursion, no N+1 storms (detail lookups are cached + deduped).
 
 import { mapWithConcurrency } from './concurrency';
-import { movieRowVerdict, type CandidateVerdict, type UpstreamSearchPage } from './search-classify';
+import { type CandidateVerdict, type UpstreamSearchPage } from './search-classify';
 import { isDiscoverLanguageValue } from './types';
 import { getVerifiedAdultNetworks } from './adult-networks';
 import type { ContentList, DiscoverLanguage } from './types';
@@ -85,7 +103,7 @@ import type { ContentList, DiscoverLanguage } from './types';
 // itself remains server-controlled.
 // ============================================================
 
-export type AdultDiscoverType = 'movie' | 'series';
+export type AdultDiscoverType = 'series';
 export type AdultDiscoverSort = 'popularity' | 'newest' | 'top-rated';
 
 /**
@@ -139,9 +157,14 @@ export const ADULT_DISCOVER_CACHE_NAMESPACE = 'tmdb:adult-discover';
 // through).
 // ============================================================
 
-/** Strict catalog type guard: only 'movie' | 'series' are valid. */
+/**
+ * Strict catalog type guard. TV series is the ONLY media type of the Adult
+ * catalog (movie half removed 2026-10-07 — see the header MOVIE REMOVAL
+ * note): a stale `type=movie` query parameter fails this guard and the
+ * route answers 400, so the removed selector can never be reactivated.
+ */
 export function isAdultDiscoverType(value: string | null | undefined): value is AdultDiscoverType {
-  return value === 'movie' || value === 'series';
+  return value === 'series';
 }
 
 /** Strict sort guard: only the closed sort union is valid. */
@@ -194,11 +217,12 @@ export function parseAdultDiscoverPage(value: string | null | undefined): number
 
 /**
  * TMDB sort_by for an Adult Discover query (pure; the date/vote-floor
- * refinements for 'newest'/'top-rated' are adapter concerns).
+ * refinements for 'newest'/'top-rated' are adapter concerns). TV-only
+ * (movie half removed 2026-10-07).
  */
 export function adultDiscoverSortBy(sort: AdultDiscoverSort, type: AdultDiscoverType): string {
   if (sort === 'top-rated') return 'vote_average.desc';
-  if (sort === 'newest') return type === 'movie' ? 'primary_release_date.desc' : 'first_air_date.desc';
+  if (sort === 'newest') return 'first_air_date.desc';
   return 'popularity.desc';
 }
 
@@ -225,14 +249,15 @@ export function buildAdultDiscoverCacheKey(input: {
   sort: AdultDiscoverSort;
   page: number;
   networkInclusion?: string;
-  providerInclusion?: string;
   provider?: string;
 }): string {
   // The provider dimension is embedded as the validated closed-union key
   // (never a client-supplied id) so per-provider responses occupy separate
   // cache entries and an unverified value can never collide with one.
+  // (The movie-half providerInclusion dimension was removed with the movie
+  // half, 2026-10-07 — the TV catalog's source is network inclusion only.)
   const providerDimension = isAdultDiscoverProvider(input.provider) ? input.provider : ADULT_DISCOVER_PROVIDER_ALL;
-  return `${ADULT_DISCOVER_CACHE_NAMESPACE}:${input.type}:${input.language}:${input.sort}:${input.page}:${input.networkInclusion ?? 'no-networks'}:${input.providerInclusion ?? 'no-providers'}:${providerDimension}`;
+  return `${ADULT_DISCOVER_CACHE_NAMESPACE}:${input.type}:${input.language}:${input.sort}:${input.page}:${input.networkInclusion ?? 'no-networks'}:${providerDimension}`;
 }
 
 /**
@@ -283,27 +308,17 @@ export type AdultDiscoverDetailVerdictLoader = (
  *   'uncertain' -> any classification failure -> fail closed.
  * MUST NOT throw.
  *
- * Movie rows use the cheap confirm-first path (Phase 4 movie contract):
- * the TMDB adult flag can CONFIRM adult (Signal 4, anime exemption
- * included via the central classifier) without any detail request — but it
- * can never DENY here, because the transitional provider signal (Signal 3)
- * lives in the detail. A non-confirming movie row therefore escalates to
- * the detail path. TV rows always classify through the detail path (list
- * rows carry no networks[] and adult=false proves nothing).
+ * TV rows always classify through the detail path (list rows carry no
+ * networks[] and adult=false proves nothing; the detail path also feeds
+ * the orphan-attribution/homepage/overview signals for injected orphan
+ * candidates). The cheap movie-row path was removed with the movie half
+ * (2026-10-07).
  */
 export async function classifyAdultDiscoverRow<T>(
   row: AdultDiscoverCandidateRow<T>,
   loadDetailVerdict: AdultDiscoverDetailVerdictLoader,
   tmdbIdOf: (item: T) => string
 ): Promise<CandidateVerdict> {
-  if (row.mediaType === 'movie') {
-    // Cheap path through the ONE central classifier (movieRowVerdict ->
-    // isAdultContent): can only CONFIRM ('adult'); a 'safe' cheap verdict
-    // is not a denial in this context — escalate to the detail path.
-    if (movieRowVerdict({ adult: row.rawAdult, isAnime: row.isAnime }) === 'adult') {
-      return 'adult';
-    }
-  }
   try {
     return await loadDetailVerdict(row.mediaType, tmdbIdOf(row.item));
   } catch {

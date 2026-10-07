@@ -183,9 +183,11 @@ try {
     }
     // Live-verified set: Ullu 2902, Kooku 4573, Atrangii 7355 (2026-09-07)
     // + the 2026-10 production bug-fix additions (ALTT 2112, HotHit 5094,
-    // The CinemaDosti 4623, NOTTY 7905 — same redirect-slug verification).
+    // The CinemaDosti 4623, NOTTY 7905 — same redirect-slug verification)
+    // + the 2026-10 second-round leak hardening (Hulchul 8209, Nuefliks 8211,
+    // Rabbit Movies 4575, HotMasti 5093, Big Movie Zoo 4920 — same method).
     const verifiedIds = getAdultNetworkIds().sort((a, b) => a - b);
-    assert.deepEqual(verifiedIds, [2112, 2902, 4573, 4623, 5094, 7355, 7905], 'verified network ids are exactly the live-confirmed set');
+    assert.deepEqual(verifiedIds, [2112, 2902, 4573, 4575, 4623, 4920, 5093, 5094, 7355, 7905, 8209, 8211], 'verified network ids are exactly the live-confirmed set');
     assert.equal(getAdultNetworkById(2902)?.name, 'Ullu', 'id 2902 resolves to Ullu');
     assert.equal(getAdultNetworkById(4573)?.name, 'Kooku', 'id 4573 resolves to Kooku');
     assert.equal(getAdultNetworkById(7355)?.name, 'Atrangii', 'id 7355 resolves to Atrangii');
@@ -193,10 +195,15 @@ try {
     assert.equal(getAdultNetworkById(5094)?.name, 'HotHit', 'id 5094 resolves to HotHit');
     assert.equal(getAdultNetworkById(4623)?.name, 'The CinemaDosti', 'id 4623 resolves to The CinemaDosti');
     assert.equal(getAdultNetworkById(7905)?.name, 'NOTTY', 'id 7905 resolves to NOTTY');
+    assert.equal(getAdultNetworkById(8209)?.name, 'Hulchul', 'id 8209 resolves to Hulchul (2026-10 second round)');
+    assert.equal(getAdultNetworkById(8211)?.name, 'Nuefliks', 'id 8211 resolves to Nuefliks (2026-10 second round)');
+    assert.equal(getAdultNetworkById(4575)?.name, 'Rabbit Movies', 'id 4575 resolves to Rabbit Movies (2026-10 second round)');
+    assert.equal(getAdultNetworkById(5093)?.name, 'HotMasti', 'id 5093 resolves to HotMasti (2026-10 second round)');
+    assert.equal(getAdultNetworkById(4920)?.name, 'Big Movie Zoo', 'id 4920 resolves to Big Movie Zoo (2026-10 second round)');
     assert.equal(getAdultNetworkById(0), undefined, 'id 0 resolves to nothing');
     assert.equal(getAdultNetworkById(-5), undefined, 'negative id resolves to nothing');
     passed++;
-    console.log(`  ok ${passed} - real registry invariants (verified ids 2112/2902/4573/4623/5094/7355/7905, unverified carry id 0)`);
+    console.log(`  ok ${passed} - real registry invariants (verified ids 2112/2902/4573/4575/4623/4920/5093/5094/7355/7905/8209/8211, unverified carry id 0)`);
 
     // End-to-end with the REAL registry: a TMDB TV detail shaped payload for
     // an Ullu original with adult=false must classify Adult.
@@ -205,9 +212,9 @@ try {
       true,
       'real registry: Ullu-network title (adult=false) classifies Adult'
     );
-    // Unverified real entries (e.g. PrimePlay, id 0) must not match by name.
-    // (ALTT moved to the verified set 2026-10 — PrimePlay is the unverified probe.)
-    assert.equal(isKnownAdultNetwork({ name: 'PrimePlay' }), false, 'real unverified entry (PrimePlay) must not match by name');
+    // Unverified real entries (e.g. Hunters, id 0) must not match by name.
+    // (ALTT moved to the verified set 2026-10 — Hunters is the unverified probe.)
+    assert.equal(isKnownAdultNetwork({ name: 'Hunters' }), false, 'real unverified entry (Hunters) must not match by name');
     assert.equal(isAdultContent(undefined, undefined, false, false, [{ name: 'PrimePlay' }]), false, 'real unverified entry must not classify Adult by name');
     assert.equal(isKnownAdultNetwork({ name: 'ALTT' }), true, 'verified entry (ALTT 2112, 2026-10) matches by exact name');
     passed++;

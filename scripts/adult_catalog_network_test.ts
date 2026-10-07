@@ -151,8 +151,11 @@ try {
     // Production bug-fix task (2026-10): the live-verified set now also
     // includes ALTT 2112, HotHit 5094, The CinemaDosti 4623 and NOTTY 7905
     // (all confirmed by the same redirect-slug live-TMDB method; evidence
-    // notes in adult-networks.ts). Sorted + deduped, pipe-joined.
-    const VERIFIED = '2112|2902|4573|4623|5094|7355|7905';
+    // notes in adult-networks.ts).
+    // Second-round leak hardening (2026-10-07): + Hulchul 8209, Nuefliks 8211,
+    // Rabbit Movies 4575, HotMasti 5093, Big Movie Zoo 4920 (same method).
+    // Sorted + deduped, pipe-joined.
+    const VERIFIED = '2112|2902|4573|4575|4623|4920|5093|5094|7355|7905|8209|8211';
     assert.equal(adultNetworkExclusionValue(), VERIFIED, 'real registry value is exactly the live-verified set');
     assert.deepEqual(withoutAdultNetworksParams(), { without_networks: VERIFIED }, 'real normal-TV exclusion params');
     assert.deepEqual(withAdultNetworksParams(), { with_networks: VERIFIED }, 'real adult-rail inclusion params');
@@ -163,16 +166,21 @@ try {
     assert.equal(getVerifiedAdultNetworkIdForKey('hothit'), 5094, 'hothit key -> verified network 5094');
     assert.equal(getVerifiedAdultNetworkIdForKey('cinemadosti'), 4623, 'cinemadosti key -> verified network 4623');
     assert.equal(getVerifiedAdultNetworkIdForKey('notty'), 7905, 'notty key -> verified network 7905');
-    assert.equal(getVerifiedAdultNetworkIdForKey('primeplay'), undefined, 'primeplay (unverified) resolves to nothing');
+    assert.equal(getVerifiedAdultNetworkIdForKey('hulchul'), 8209, 'hulchul key -> verified network 8209 (2026-10 second round)');
+    assert.equal(getVerifiedAdultNetworkIdForKey('nuefliks'), 8211, 'nuefliks key -> verified network 8211 (2026-10 second round)');
+    assert.equal(getVerifiedAdultNetworkIdForKey('rabbit-movies'), 4575, 'rabbit-movies key -> verified network 4575 (2026-10 second round)');
+    assert.equal(getVerifiedAdultNetworkIdForKey('hotmasti'), 5093, 'hotmasti key -> verified network 5093 (2026-10 second round)');
+    assert.equal(getVerifiedAdultNetworkIdForKey('big-movie-zoo'), 4920, 'big-movie-zoo key -> verified network 4920 (2026-10 second round)');
+    assert.equal(getVerifiedAdultNetworkIdForKey('hunters'), undefined, 'hunters (unverified) resolves to nothing');
     passed++;
-    console.log(`  ok ${passed} - real registry values (${VERIFIED}; verified key lookup incl. 2026-10 additions)`);
+    console.log(`  ok ${passed} - real registry values (${VERIFIED}; verified key lookup incl. both 2026-10 rounds)`);
 
     // No literal network ids outside the registry module (single source of
     // truth): the bridge module and the adapter must not hardcode them.
     const bridge = await readFile(path.join(repoRoot, 'src/lib/server/content/adult-catalog.ts'), 'utf8');
-    assert.doesNotMatch(bridge, /\b(2112|2902|4573|4623|5094|7355|7905)\b/, 'adult-catalog.ts contains no hardcoded network ids');
+    assert.doesNotMatch(bridge, /\b(2112|2902|4573|4575|4623|4920|5093|5094|7355|7905|8209|8211)\b/, 'adult-catalog.ts contains no hardcoded network ids');
     const adapter = await readFile(path.join(repoRoot, 'src/lib/server/content/adapters/tmdb.ts'), 'utf8');
-    assert.doesNotMatch(adapter, /\b(2112|2902|4573|4623|5094|7355|7905)\b/, 'tmdb.ts contains no hardcoded network ids');
+    assert.doesNotMatch(adapter, /\b(2112|2902|4573|4575|4623|4920|5093|5094|7355|7905|8209|8211)\b/, 'tmdb.ts contains no hardcoded network ids');
     passed++;
     console.log(`  ok ${passed} - no hardcoded network ids outside the registry module`);
   }

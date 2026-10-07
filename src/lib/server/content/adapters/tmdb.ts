@@ -3,7 +3,8 @@ import { getOrSet } from '../cache';
 import { asNumber, asString, asStringArray, fetchJson } from '../http';
 import { ContentServiceError, type CollectionFilters, type ContentList, type ContentSource, type ContentType, type Episode, type ContentDetail, type NormalizedMediaItem, type Season, type SearchFilters, type CastMember, type DiscoverLanguage, type DiscoverProvider, POPULAR_TV_WITHOUT_GENRES } from '../types';
 import { ottProviders } from '$lib/shared/ott';
-import { getAdultProviderIds, resolveAdultProviders, getCachedAdultProviders, isAdultContent, ensureAdultProvidersResolved } from '../adult-providers';
+import { getAdultProviderIds, resolveAdultProviders, getCachedAdultProviders, isAdultContent, ensureAdultProvidersResolved, type AdultAttributionInput } from '../adult-providers';
+import { getAdultOrphanIdsForProvider } from '../adult-orphans';
 import { adultNetworkExclusionValue, withAdultNetworksParams, getVerifiedAdultNetworkIdForKey } from '../adult-catalog';
 import {
   ADULT_DISCOVER_PAGE_SIZE,
@@ -16,6 +17,7 @@ import {
   classifyAdultDiscoverRow,
   collectConfirmedAdultPage,
   isAdultDiscoverProvider,
+  type AdultDiscoverType,
   type AdultDiscoverFilters,
   type AdultDiscoverCandidateRow,
   type AdultDiscoverDetailVerdictLoader
@@ -32,6 +34,7 @@ type TmdbMovie = {
   original_title?: string;
   original_language?: string;
   overview?: string;
+  homepage?: string | null;
   poster_path?: string | null;
   backdrop_path?: string | null;
   release_date?: string;
@@ -54,6 +57,7 @@ type TmdbTv = {
   original_name?: string;
   original_language?: string;
   overview?: string;
+  homepage?: string | null;
   poster_path?: string | null;
   backdrop_path?: string | null;
   first_air_date?: string;
@@ -740,7 +744,22 @@ export async function getTmdbDetail(type: Exclude<ContentType, 'anime'>, externa
     // watch-provider signal so a verified adult network classifies the title
     // as Adult even when TMDB's generic adult flag is false.
     const networks = type === 'series' ? extractTvNetworks(raw as TmdbTv) : undefined;
-    if (isAdultContent(item.tags, providerIds, tmdbAdult, item.isAnime, networks)) {
+    // 2026-10-07 leak hardening — attribution evidence (Signals 5-7 of the
+    // central classifier): canonical identity for the orphan registry, the
+    // record's OWN homepage field for the provider-domain signal (e.g.
+    // /tv/219035 "Charmsukh Jane Anjane Mein" homepage = https://ullu.app/),
+    // and the overview text for the provider + web-series-context signal
+    // (e.g. /tv/290352 "Bhabhi Ji Suniya Na" overview = "New Hulchul
+    // WebSeries"). Structured TMDB detail metadata only — this is what lets
+    // the networkless auto-scraped ecosystem entries be classified without
+    // ANY title-string heuristics.
+    const attribution: AdultAttributionInput | undefined = {
+      mediaType: type,
+      tmdbId: numericId,
+      homepage: (raw as TmdbMovie).homepage ?? null,
+      overview: asString(raw.overview) || null
+    };
+    if (isAdultContent(item.tags, providerIds, tmdbAdult, item.isAnime, networks, attribution)) {
       item.tags = [...(item.tags ?? []), 'Adult'];
     }
     const recommendations = (raw.recommendations?.results ?? []).filter((candidate) => hasRequiredListMetadata(candidate, type)).slice(0, 6).map((candidate) => mapTmdb(candidate, type, 'Recommended'));
@@ -1759,9 +1778,10 @@ export async function getVerifiedAdultProviders() {
 // ============================================================
 // Phase 7 — dedicated Adult Discover catalog (TMDB adapter).
 //
-// The backend source of the authorized Adult Discover surface. Per-type
-// catalogs (series | movie) with language + sort + bounded pagination —
-// NOT a merged rail. The source boundary is SERVER-CONTROLLED:
+// The backend source of the authorized Adult Discover surface. A TV-only
+// catalog (movie half REMOVED 2026-10-07 — see adult-discover.ts header)
+// with language + sort + bounded pagination + closed-union provider
+// filtering. The source boundary is SERVER-CONTROLLED:
 //
 //   TV:    /discover/tv  + with_networks=<verified adult network ids>
 //          (adult-catalog.ts -> adult-networks.ts; the client can neither
@@ -1771,19 +1791,23 @@ export async function getVerifiedAdultProviders() {
 //          in the Adult catalog even when TMDB adult=false and even when
 //          JustWatch has no India entry for it.
 //
-//   Movie: /discover/movie has NO network filter in TMDB. The movie side
-//          keeps the documented TRANSITIONAL watch-provider inclusion
-//          (with_watch_providers=<resolved adult provider ids> +
-//          watch_region=IN + flatrate) — the same movie-side architecture
-//          the central classifier already considers valid (Signal 3).
-//          Nothing is invented: an empty resolved provider set means the
-//          movie catalog is EMPTY (safe TV-first under-fill).
+//   ORPHAN SUPPLEMENT (2026-10-07): the attributed orphan titles of the
+//          selected provider (adult-orphans.ts — ecosystem entries whose
+//          TMDB records lack the networks[] field, so no with_networks
+//          query can ever return them) are injected as supplemental
+//          candidates of the requested page's first upstream page. They
+//          pass the SAME central classification (the detail verdict
+//          confirms the attribution), the same dedup, and the same page
+//          size bound — a bounded registry, never an extra TMDB crawl.
+//          When TMDB later grows the network field for one of these
+//          entries, both streams produce the same canonical identity and
+//          dedup keeps it once.
 //
-// CLASSIFIER DEFENSE-IN-DEPTH: every candidate from either half is
-// classified through the ONE central classifier (cached detail path,
-// bounded concurrency) and ONLY confirmed-adult candidates are returned —
-// 'safe' anomalies and 'uncertain' classifications fail CLOSED (see
-// adult-discover.ts).
+// CLASSIFIER DEFENSE-IN-DEPTH: every candidate — TMDB-sourced or orphan-
+// injected — is classified through the ONE central classifier (cached
+// detail path, bounded concurrency) and ONLY confirmed-adult candidates
+// are returned; 'safe' anomalies and 'uncertain' classifications fail
+// CLOSED (see adult-discover.ts).
 //
 // CACHE ISOLATION: responses live in the dedicated `tmdb:adult-discover:*`
 // namespace (buildAdultDiscoverCacheKey), structurally disjoint from every
@@ -1792,8 +1816,8 @@ export async function getVerifiedAdultProviders() {
 // (the endpoint 404s and the service returns empty BEFORE any cache
 // access), so there is no second cache context to isolate against — the
 // same precedent as `tmdb:adult-shows:` (worklog section AA). The applied
-// network/provider inclusion values ARE part of the key, so a registry
-// change re-keys instead of serving stale-era entries.
+// network inclusion value IS part of the key, so a registry change re-keys
+// instead of serving stale-era entries.
 //
 // FALLBACK SAFETY: upstream failures PROPAGATE — no fixture data, no
 // normal-catalog fallback, no silent empty-on-error swallowing here (the
@@ -1802,56 +1826,71 @@ export async function getVerifiedAdultProviders() {
 // ============================================================
 
 /**
- * Cached-detail verdict loader for Adult Discover candidates (both media
- * types): reads the central classification from the shared, in-flight-
- * deduplicated detail path. Throws on failure — classifyAdultDiscoverRow
- * maps any failure to 'uncertain' (fail-closed).
+ * Cached-detail verdict loader for Adult Discover candidates: reads the
+ * central classification from the shared, in-flight-deduplicated detail
+ * path (which also carries the orphan-attribution / homepage / overview
+ * signals for injected orphan candidates). Throws on failure —
+ * classifyAdultDiscoverRow maps any failure to 'uncertain' (fail-closed).
  */
 const adultDiscoverDetailVerdictLoader: AdultDiscoverDetailVerdictLoader = async (mediaType, tmdbId) => {
   const detail = await getTmdbDetail(mediaType, tmdbId);
   return detailVerdict(detail.tags);
 };
 
+/**
+ * Build the supplemental ORPHAN candidate rows for the selected provider
+ * (2026-10-07): the attributed orphan identities (adult-orphans.ts) mapped
+ * through the cached detail path so they enter the SAME classification,
+ * dedup and page-size bounds as the TMDB-sourced candidates. A failed
+ * detail lookup drops the row (fail-closed — it would classify 'uncertain'
+ * anyway); the registry is bounded so this is a bounded number of cached
+ * detail reads, never an N+1 crawl. Rows whose identity is unusable are
+ * skipped. The returned rows carry mediaType 'series' (the only Adult
+ * Discover media type).
+ */
+async function buildOrphanCandidateRows(providerKey: string | undefined): Promise<AdultDiscoverCandidateRow<NormalizedMediaItem>[]> {
+  const identities = getAdultOrphanIdsForProvider(providerKey);
+  if (identities.length === 0) return [];
+  const rows: AdultDiscoverCandidateRow<NormalizedMediaItem>[] = [];
+  for (const identity of identities) {
+    if (identity.mediaType !== 'series') continue; // TV-only catalog (movie half removed)
+    try {
+      const detail = await getTmdbDetail('series', String(identity.tmdbId));
+      if (!detail?.id || !detail?.externalIds?.tmdb) continue;
+      rows.push({
+        item: detail as unknown as NormalizedMediaItem,
+        mediaType: 'series',
+        rawAdult: undefined,
+        isAnime: detail.isAnime
+      });
+    } catch {
+      // Fail-closed: a failed orphan detail read simply does not enter the
+      // candidate set (the classifier would drop it as 'uncertain').
+    }
+  }
+  return rows;
+}
+
 export async function getTmdbAdultDiscover(filters: AdultDiscoverFilters): Promise<ContentList> {
-  const { type, language, sort, page } = filters;
+  const { language, sort, page } = filters;
+  // The Adult catalog is TV-only (movie half removed 2026-10-07): the
+  // contract type is 'series' by construction.
+  const type: AdultDiscoverType = filters.type;
   // ---- Closed-union provider filter (post-release fix). ----
   // `provider` arrives route-validated (isAdultDiscoverProvider) and is
   // mapped HERE to the verified registry id — the client never supplies
   // one. 'all'/absent keeps the full verified set; a verified key narrows
-  // BOTH halves to that ONE service (Adult AND provider, never OR):
+  // the catalog to that ONE service (Adult AND provider, never OR):
   //   TV:    with_networks=<that verified network id>
-  //   Movie: with_watch_providers=<that service's resolved watch-provider
-  //          id> — when the service has no resolved India watch-provider
-  //          entry the movie half has NO verified source and stays EMPTY
-  //          (fail-closed; never falls back to all providers).
+  //   + the service's attributed ORPHAN candidates (adult-orphans.ts).
   const selectedProviderKey = isAdultDiscoverProvider(filters.provider) && filters.provider !== ADULT_DISCOVER_PROVIDER_ALL ? filters.provider : undefined;
   const selectedNetworkId = selectedProviderKey ? getVerifiedAdultNetworkIdForKey(selectedProviderKey) : undefined;
   // ---- Server-controlled source boundary (no client input involved). ----
-  const networkInclusion = type === 'series' ? withAdultNetworksParams(selectedNetworkId) : {};
-  let providerInclusion: string | undefined;
-  if (type === 'movie') {
-    // Resolve the transitional movie-side source against the live TMDB
-    // India provider list (5-min cache). An empty resolved set -> empty
-    // catalog (never a fabricated or widened query).
-    await getTmdbIndiaProviders();
-    const resolvedAdultProviders = getCachedAdultProviders() ?? [];
-    if (selectedProviderKey) {
-      // Narrowed: only this service's resolved watch-provider id — or
-      // nothing (a verified NETWORK without a JustWatch movie presence
-      // yields an empty movie catalog, the documented safe under-fill).
-      const match = resolvedAdultProviders.find((p) => p.key === selectedProviderKey && p.tmdbProviderId > 0);
-      providerInclusion = match ? String(match.tmdbProviderId) : undefined;
-    } else {
-      const adultIds = getAdultProviderIds();
-      providerInclusion = adultIds.length > 0 ? adultIds.join('|') : undefined;
-    }
-  }
-  const hasSource = type === 'series' ? 'with_networks' in networkInclusion : Boolean(providerInclusion);
+  const networkInclusion = withAdultNetworksParams(selectedNetworkId);
+  const hasSource = 'with_networks' in networkInclusion;
   if (!hasSource) {
-    // Nothing verified to query in the relevant ID space — return the
-    // empty non-disclosing result rather than fabricating filters. This
-    // includes a provider selection with no verified id in the relevant
-    // ID space (fail-closed: the selection never widens to 'all').
+    // Nothing verified to query — return the empty non-disclosing result
+    // rather than fabricating filters.
     return emptyAdultDiscoverResult(page);
   }
   const key = buildAdultDiscoverCacheKey({
@@ -1860,14 +1899,19 @@ export async function getTmdbAdultDiscover(filters: AdultDiscoverFilters): Promi
     sort,
     page,
     networkInclusion: networkInclusion.with_networks,
-    providerInclusion,
     provider: filters.provider ?? ADULT_DISCOVER_PROVIDER_ALL
   });
   const { value, stale } = await getOrSet(key, listPolicy, async () => {
     const sortBy = adultDiscoverSortBy(sort, type);
     const langParam = language !== 'all' && language !== 'other' ? DISCOVER_LANGUAGE_PARAM[language] : undefined;
+    // ORPHAN SUPPLEMENT (2026-10-07): the selected provider's attributed
+    // orphan identities, mapped once per cached response build through the
+    // cached detail path. They join the FIRST upstream page's candidate
+    // rows, so the collector's classification + dedup + page-size bounds
+    // treat them exactly like TMDB-sourced candidates.
+    const orphanRows = await buildOrphanCandidateRows(selectedProviderKey);
     const fetchUpstreamPage = async (upstreamPage: number): Promise<UpstreamSearchPage<AdultDiscoverCandidateRow<NormalizedMediaItem>>> => {
-      const path = type === 'movie' ? '/discover/movie' : '/discover/tv';
+      const path = '/discover/tv';
       const params: Record<string, string | number | boolean | undefined> = {
         page: upstreamPage,
         // This IS the authorized Adult surface, so include_adult is true —
@@ -1875,18 +1919,12 @@ export async function getTmdbAdultDiscover(filters: AdultDiscoverFilters): Promi
         include_adult: true,
         sort_by: sortBy,
         // Mandatory Adult source constraint (server-controlled):
-        ...(type === 'movie'
-          ? { watch_region: 'IN', with_watch_monetization_types: 'flatrate', with_watch_providers: providerInclusion }
-          : { ...networkInclusion }),
+        ...networkInclusion,
         // Language narrows the Adult catalog (Adult AND language — the
         // Adult constraint is never removed or OR-ed away).
         ...(langParam ? { with_original_language: langParam } : {}),
         // Sort refinements (matching the repo's rail conventions).
-        ...(sort === 'newest'
-          ? type === 'movie'
-            ? { 'release_date.lte': new Date().toISOString().slice(0, 10) }
-            : { 'first_air_date.lte': new Date().toISOString().slice(0, 10) }
-          : {}),
+        ...(sort === 'newest' ? { 'first_air_date.lte': new Date().toISOString().slice(0, 10) } : {}),
         ...(sort === 'top-rated' ? { 'vote_count.gte': 5 } : {})
       };
       const result = await tmdbRequest<TmdbList<TmdbMedia>>(path, params);
@@ -1903,7 +1941,11 @@ export async function getTmdbAdultDiscover(filters: AdultDiscoverFilters): Promi
           isAnime: mapped.isAnime
         };
       });
-      return { items: rows, totalPages: result.total_pages ?? upstreamPage };
+      // Orphan injection: only on the requested page's FIRST upstream page
+      // (deterministic placement — later pages and repeats are handled by
+      // the collector's canonical-identity dedup).
+      const withOrphans = upstreamPage === page ? [...orphanRows, ...rows] : rows;
+      return { items: withOrphans, totalPages: result.total_pages ?? upstreamPage };
     };
 
     // Bounded page continuation + fail-closed classification defense

@@ -220,9 +220,11 @@ const POLICY_OFF = { allowLoggedIn: false, allowGuest: false };
   const ids = getAdultNetworkIds().sort((a, b) => a - b);
   // 2026-10: the live-verified set grew to include ALTT 2112, HotHit 5094,
   // The CinemaDosti 4623 and NOTTY 7905 (production leak fix).
-  assert.deepEqual(ids, [2112, 2902, 4573, 4623, 5094, 7355, 7905], 'production registry is exactly the live-verified set');
+  // 2026-10-07 second-round leak hardening: + Hulchul 8209, Nuefliks 8211,
+  // Rabbit Movies 4575, HotMasti 5093, Big Movie Zoo 4920.
+  assert.deepEqual(ids, [2112, 2902, 4573, 4575, 4623, 4920, 5093, 5094, 7355, 7905, 8209, 8211], 'production registry is exactly the live-verified set');
   const inclusion = withAdultNetworksParams();
-  assert.equal(inclusion.with_networks, '2112|2902|4573|4623|5094|7355|7905', 'the TV source query is exactly the verified set');
+  assert.equal(inclusion.with_networks, '2112|2902|4573|4575|4623|4920|5093|5094|7355|7905|8209|8211', 'the TV source query is exactly the verified set');
   const probe: AdultNetwork[] = [...getVerifiedAdultNetworks(), { key: 'fake', name: 'Fake', tmdbNetworkId: 999, verification: 'verified' }];
   __setAdultNetworkRegistryForTest(probe);
   try {
@@ -231,7 +233,7 @@ const POLICY_OFF = { allowLoggedIn: false, allowGuest: false };
     __resetAdultNetworkRegistryForTest();
   }
   assert.deepEqual(withAdultNetworksParams(999), {}, 'unverified id cannot join the source');
-  assert.deepEqual(withoutAdultNetworksParams(), { without_networks: '2112|2902|4573|4623|5094|7355|7905' }, 'the normal-rail exclusion uses the same registry');
+  assert.deepEqual(withoutAdultNetworksParams(), { without_networks: '2112|2902|4573|4575|4623|4920|5093|5094|7355|7905|8209|8211' }, 'the normal-rail exclusion uses the same registry');
   ok('9. Adult Discover source = verified registry only (registry-driven, no second list)');
 }
 
@@ -250,17 +252,19 @@ const POLICY_OFF = { allowLoggedIn: false, allowGuest: false };
   for (const call of fetchMatches) {
     assert.match(call[1], /discoverUrl\(/, 'every CATALOG fetch routes through discoverUrl (the dedicated endpoint builder)');
   }
-  // The URL builder carries EXACTLY the supported parameters — type,
-  // provider (closed union), page — and nothing else: no language (the
-  // language filter was removed from this surface), no network/TMDB ids,
-  // no authorization flag.
+  // The URL builder carries EXACTLY the supported parameters — provider
+  // (closed union), page — and nothing else: no language (the language
+  // filter was removed from this surface), no type (the Movies/TV selector
+  // was REMOVED 2026-10-07 — the catalog is TV-only and the server
+  // defaults to TV series), no network/TMDB ids, no authorization flag.
   const urlFn = section.match(/function discoverUrl[\s\S]*?^  }/m);
   assert.ok(urlFn, 'discoverUrl found');
   const paramsObj = urlFn![0].match(/new URLSearchParams\(\{([\s\S]*?)\}\)/);
   assert.ok(paramsObj, 'the query is built from a fixed object literal');
   const keys = [...paramsObj![1].matchAll(/^\s*(\w+)[,:]/gm)].map((m) => m[1]);
-  assert.deepEqual(keys.sort(), ['page', 'provider', 'type'], 'exactly type/provider/page are ever sent');
+  assert.deepEqual(keys.sort(), ['page', 'provider'], 'exactly provider/page are ever sent (no type — TV-only catalog, server default)');
   assert.ok(!/language/i.test(paramsObj![1]), 'no language parameter is sent (filter removed from the Adult surface)');
+  assert.ok(!/\btype\b/.test(paramsObj![1]), 'no media-type parameter is sent (Movies/TV selector removed 2026-10-07)');
   assert.doesNotMatch(paramsObj![1], /\badult\b|\bnetwork\b|\bwatch\b|\binclude_adult\b/i, 'no source-id/authorization parameter is ever appended (provider is a closed-union key)');
   assert.doesNotMatch(section, /tmdb\.org|api\.themoviedb/, 'no direct TMDB calls from the client');
   // The provider options come from the policy-gated verified-registry
@@ -455,9 +459,11 @@ const POLICY_OFF = { allowLoggedIn: false, allowGuest: false };
   assert.equal(parseAdultDiscoverPage('-5'), 1, 'negative page clamps to 1');
   assert.equal(parseAdultDiscoverPage('999999999'), ADULT_DISCOVER_PAGE_CLAMP_MAX, 'huge page clamps to the API bound');
   assert.equal(parseAdultDiscoverPage('999999999'), 20, 'the clamp bound is the repo convention (20)');
-  // Closed unions the UI dropdowns map onto.
+  // Closed unions the UI maps onto. 2026-10-07: the Adult catalog is
+  // TV-only (movie half removed) — 'movie' is REJECTED so a stale movie
+  // parameter can never reactivate the removed selector.
   assert.equal(isAdultDiscoverType('series'), true, 'type guard accepts series');
-  assert.equal(isAdultDiscoverType('movie'), true, 'type guard accepts movie');
+  assert.equal(isAdultDiscoverType('movie'), false, 'type guard REJECTS movie (movie half removed 2026-10-07)');
   assert.equal(isAdultDiscoverType('tv'), false, 'type guard rejects non-union values');
   assert.equal(isAdultDiscoverSort('popularity'), true, 'sort guard accepts the default');
   assert.equal(isAdultDiscoverLanguage('hi'), true, 'language guard accepts Hindi');

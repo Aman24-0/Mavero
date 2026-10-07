@@ -69,7 +69,7 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 const tmdb = read('src/lib/server/content/adapters/tmdb.ts');
 ok(/const key = `tmdb:detail:\$\{type\}:\$\{numericId\}`;/.test(tmdb), '1a. detail cache key is tmdb:detail:{type}:{numericId}');
 ok(/const \{ value, stale \} = await getOrSet\(key, detailPolicy, async \(\) => \{/.test(tmdb), '1b. detail fetch goes through getOrSet (cached)');
-ok(/if \(isAdultContent\(item\.tags, providerIds, tmdbAdult, item\.isAnime, networks\)\)/.test(tmdb), '1c. adult classification computed inside the cache-loader (computed ONCE per cache miss)');
+ok(/if \(isAdultContent\(item\.tags, providerIds, tmdbAdult, item\.isAnime, networks, attribution\)\)/.test(tmdb), '1c. adult classification computed inside the cache-loader (computed ONCE per cache miss; 2026-10-07: with the orphan/homepage/overview attribution evidence)');
 ok(/item\.tags = \[\.\.\.\(item\.tags \?\? \[\]\), 'Adult'\];/.test(tmdb), '1d. verdict stored in the detail tags array (cached with the detail)');
 
 // ============================================================
