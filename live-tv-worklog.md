@@ -1974,50 +1974,220 @@ user help) the India-based manual browser QA procedure above.
 
 ### Status
 
-`NOT STARTED`
+`COMPLETE` (2026-10-07)
 
-### Required commands
+### Preflight
 
-``` bash
-pnpm check
-pnpm test
-pnpm build
-```
+HEAD verified at `ce14d9b` (LT-5 final record; worktree clean, origin/main
+up to date). Plan + worklog re-read in full; every LT-2/LT-3/LT-4/LT-5
+source file re-read independently (api/cache/errors/types/player/
+player-errors/epg/analytics + page + all 5 components + all 4 focused
+suites); every LT-5 finding and resolution reviewed; package.json,
+migrations and test state inspected. The repository matched the expected
+starting point exactly (no unexpected user changes).
 
-Also run all focused Live TV tests and existing regression suites.
+### Final audit (A-Q, independent re-verification of the LT-5 claims)
 
-### Final checklist
+| Area | Verdict | Evidence re-verified in LT-6 |
+| --- | --- | --- |
+| Architecture | PASS | LiveGT V1 → LT-2 client → LT-3 engine → LT-4 page → LT-5 hardening intact; no V2, no proxy (zero LiveGT refs in server code), no duplicate Shaka/ LiveGT / cache / analytics implementations, no VOD DASH retrofit (media-compat `dash → UNSUPPORTED` line re-checked), no unnecessary Supabase tables |
+| LiveGT V1 contract | PASS | Only the 3 V1 endpoints; endpoint strings owned solely by api.ts; categories data-derived (extractLiveTvCategories, never hardcoded); malformed ids → encodeURIComponent + observed-404 behavior preserved; guide 502 → `server` kind + isolated retry |
+| DASH/Shaka playback | PASS | Dynamic `import('shaka-player')` only inside the browser-guarded loader (built node inspected: `import("../chunks/oGHHR2xE.js")` dynamic-only); zero shaka references in the server build; VOD/HLS untouched |
+| ClearKey handling | PASS | Browser-side, memory-only, handed only to `configure({drm:{clearKeys}})`; never logged/persisted/ in analytics/ in URLs/ in UI; no Widevine/PlayReady/FairPlay/license-server code exists; incompatible-DRM streams fail safely (drm_playback_failed) |
+| Channel catalogue | PASS | Normalized types only; raw wire objects never spread; duplicates dropped; optional fields honored; 5-min TTL cache bounded LRU |
+| Search/category | PASS | 100% local filtering via LT-2 pure utilities; zero per-keystroke network; clear + empty states |
+| EPG | PASS | Independent controller, never awaited by playback; absolute Unix-second logic (no timezone assumption); provider-first nowPlaying with [start,stop) fallback; cross-day rendering; empty guide valid; generatedAt never relied on |
+| Channel switching | PASS | select(B): abort A → destroy A engine → resolve B → new engine → same `<video>`; seq + identity guards on every continuation; repeated A→B→C→D→A leaves exactly one live engine; no duplicate Shaka instance; no leaked listeners (teardown verified) |
+| Error/recovery | PASS | Fixed safe tables only; retry = full fresh re-resolution; NO auto-retry anywhere (no infinite loops possible); stale-state corruption impossible (generation tokens + seq guards); all 9 error classes covered by suites + LT-5 browser verification |
+| Analytics | PASS | 7-event taxonomy; taxonomy↔SQL parity re-asserted; payload whitelist structural (channel id + reason/category/error_kind/action ONLY); fire-and-forget (never awaited, never blocks playback); no high-frequency events |
+| Security/privacy | PASS | Full 14-file rescan: zero console/storage/cookie/@html/innerHTML; the only `localStorage`/`URLSearchParams` string hits are documentation comments; SSR HTML from the production build scanned live (zero .mpd/clearKeys/keyId/CDN-host/livetgtv/shaka occurrences); XSS safe by framework |
+| SSR | PASS | Production build served via vite preview: /live-tv 200 with complete markup (heading, labelled search, exactly ONE video, honest empty state, active nav); zero sensitive playback data; server entry zero shaka refs |
+| Accessibility | PASS | Semantic buttons, aria-pressed states, labelled search + controls, role=alert/status surfaces, `<ol>` guide, focus-visible outlines, 28px slider hit areas (LT-5 fix regression-asserted), reduced-motion blocks — re-verified in source + LT-4/LT-5 suite assertions |
+| Performance | PASS | /live-tv node 46.3 kB; Shaka ~820 kB SEPARATE lazy chunk (dynamic import only); batched catalogue (60 + IO sentinel); local search; guide never blocks playback; switching destroys old engine; onDestroy clears ticker/controllers |
+| Responsive UI | PASS | Single-column priority layout; contained horizontal scrolls (never page overflow); single-column grid ≤640px; 110px mobile-nav clearance; touch-sized controls |
+| Regression safety | PASS | All 4 Live TV suites re-run green at baseline BEFORE any change (61/65/22/13); full chain parity 5381 verified after chaining |
+| Deployment readiness | PASS | Netlify adapter + executor function build clean; /live-tv passes the default route pipeline (no policy block); no new build warnings |
 
--   [ ] Live TV #5
--   [ ] Upcoming moved into Account sheet
--   [ ] `/live-tv` works
--   [ ] V1 catalogue/search/categories work
--   [ ] fresh playback resolution works
--   [ ] DASH works
--   [ ] ClearKey works where supported
--   [ ] channel switching works
--   [ ] bounded refresh works
--   [ ] guide/Now Playing/Up Next works
--   [ ] empty guide works
--   [ ] no iframe
--   [ ] no external player
--   [ ] no media proxy
--   [ ] no signed URL persistence
--   [ ] no ClearKey persistence
--   [ ] no unnecessary Supabase migration
--   [ ] mobile verified
--   [ ] desktop verified
--   [ ] security verified
--   [ ] accessibility verified
--   [ ] performance verified
--   [ ] check/test/build pass
--   [ ] existing Mavero functionality unaffected
+### Release-blocker assessment
 
-### Final commit
+**ZERO P0 and ZERO P1 defects found.** No code fixes were necessary. The
+only changes made in LT-6 are the two the brief itself authorizes:
+
+1.  Test-chain integration (brief §16) — see below.
+2.  A new focused LT-6 release-audit suite (brief §19 "LT-6-specific
+    final audit tests") — see below.
+
+P2/P3 observations (NOT fixed, per brief §20/§21 — none release-blocking):
+
+-   `searchLiveTvChannels` (remote `?q=`) remains an unused-but-tested
+    LT-2 API surface (the page uses local filtering per plan §8
+    preference). Retained intentionally.
+-   `navigation_primary_test.ts` (LT-1) remains standalone: the brief's
+    §16 enumerates exactly the four LT-2..LT-5 suites, and that script
+    predates Live TV (never chained by its original author). It passes
+    12/12 when run directly (re-verified this phase); chaining it was
+    consciously left to the repository owner.
+
+### Test-suite chaining decision (brief §16)
+
+**DECISION: INTEGRATED.** The four Live TV suites (LT-2/LT-3/LT-4/LT-5)
+plus the new LT-6 release-audit suite are now part of `pnpm test`.
+
+Integration criteria (all verified before chaining):
+
+-   Deterministic — fixed fixtures, module-boundary fakes, mocked
+  fetch; zero flakiness across LT-2..LT-6 runs
+-   No network — every LiveGT byte is an in-process fixture
+-   No browser automation — no CDP/Playwright/Chromium anywhere
+-   Stable execution — 0.5-0.7 s per suite (~2.7 s total added)
+-   Repository conventions — same `pnpm exec tsx --tsconfig
+  ./jsconfig.json` invocation as every chained script
+
+Change: the five suites are appended to the end of the `pnpm test`
+&&-chain in package.json (phase order LT-2 → LT-3 → LT-4 → LT-5 → LT-6).
+The network QA probes (`lt5_census.ts`, `lt5_151_variance.ts`) are
+deliberately NOT chained (real-network scripts — brief §16 forbids
+them in the chain; asserted by the LT-6 suite).
+
+### New file
 
 ``` text
-To be filled by GLM.
+scripts/live_tv_release_audit_test.ts    (new, LT-6)
+    6-check release-invariant suite, chained into pnpm test:
+    §1 chain integration locked (5 suites in, network probes out)
+    §2 VOD boundary locked (media-compat still refuses VOD DASH)
+    §3 Shaka isolation locked (zero shaka refs outside Live TV paths)
+    §4 LiveGT isolation locked (hostname only in api.ts)
+    §5 migration invariants (7 events, CHECK-widening only, no tables)
+    §6 dynamic-only Shaka loading (the SSR-safe loader is load-bearing)
 ```
+
+### Migration / database final audit
+
+The LT-5 migration `20261103000000_live_tv_analytics_events.sql` is the
+ONLY Live TV-related migration: correct filename ordering (after
+20261102000000), pure CHECK-constraint widening (7 live_tv events, pure
+superset, zero data migration), zero CREATE TABLE/INDEX, no Live TV
+tables, no unrelated migrations touched. Migration inventory tests
+(CloudStream pins + phase1 §1c parity) re-verified green in the full
+chain run. No new migration needed.
+
+### Tests
+
+``` text
+pnpm check   PASS — svelte-check: 0 errors, 0 warnings
+pnpm test    PASS — exit 0; the chain now includes the 5 Live TV
+             suites; 5548 "ok" assertion lines total =
+             5381 (pre-existing, exact baseline parity)
+             + 161 (LT-2 61 + LT-3 65 + LT-4 22 + LT-5 13)
+             + 6 (LT-6 release audit); the 8 "Error:" strings remain
+             the pre-existing expected error-path fixtures (LT-0)
+pnpm build   PASS — exit 0; vite build 30.4s + Netlify adapter +
+             executor function; /live-tv node 46.3 kB; Shaka separate
+             ~820 kB lazy chunk (dynamic import ONLY — built node
+             inspected); server build has ZERO shaka references;
+             production SSR HTML scanned live: complete markup, zero
+             secrets
+
+LT-2 suite: 61/61    LT-3 suite: 65/65
+LT-4 suite: 22/22    LT-5 suite: 13/13
+LT-6 suite (new): 6/6
+LT-1 navigation suite (standalone, unchanged): 12/12 re-verified
+```
+
+### Real browser status
+
+Code audit complete; real India ClearKey playback requires user-side
+verification. This environment (non-India egress) cannot reach any
+playable channel (LT-5 census: Jio CDNs 451 geo-blocked; reachable
+Akamai host serves Widevine/PlayReady MPDs with resolver drm=none —
+upstream/provider behavior, not an app defect). The LT-5 non-CDP
+keyboard-driven browser session already verified everything reachable
+from here. Remaining verification is deliberately external: the
+"USER PRODUCTION QA --- AFTER DEPLOY" procedure below.
+
+### Known limitations (final, exact)
+
+1.  Real video rendering + ClearKey EME decryption are NOT verified in
+    a real India browser by any automated phase (environment-blocked;
+    user manual QA pending after deploy).
+2.  Safari/macOS DASH+ClearKey may fail with the safe
+    drm_playback_failed message (no ClearKey CDM on most Safari
+    platforms) — by design; compare against Chrome on the same network
+    before classifying as an app defect.
+3.  Android Chrome / Android PWA / Edge / Firefox not tested in this
+    environment (same Chromium engine for Edge; manual QA pending).
+4.  LiveGT upstream variance (preserved from LT-5, unchanged): some
+    CDN hosts are India-restricted; some reachable MPDs advertise
+    Widevine/PlayReady while the resolver reports drm=none (channels
+    151/877/1401) — unplayable in Mavero everywhere (no license
+    server exists); upstream behavior, correctly surfaced as a safe
+    error.
+5.  LiveGT guide 502 flakiness (upstream) — handled gracefully
+    (isolated retry, playback unaffected).
+6.  `navigation_primary_test.ts` remains standalone (owner's
+    pre-existing script; passes when run directly).
+7.  No DVR recording/favorites/history/notifications features exist
+    (out of scope by plan §2 — not a limitation to fix).
+
+### Commit
+
+``` text
+base:        ce14d9bd6dcb615ebe882e211944e8d1da358a2e (LT-5 head, clean)
+LT-6 commit: 180c1874422a9e8cb10f4458092b077d4c2548c3
+             "chore(live-tv): final release audit and regression chaining"
+```
+
+### Final release status
+
+**RELEASE READY** — with the explicit caveat that real India-based
+ClearKey playback verification is user-side (see the QA section below).
+
+------------------------------------------------------------------------
+
+## USER PRODUCTION QA --- AFTER DEPLOY
+
+"Manual production QA --- user verification required."
+
+Code audit complete; real India ClearKey playback requires user-side
+verification.
+
+A.  **Chrome desktop (India network)** --- open `/live-tv`; catalogue
+    loads (1176 channels), search filters locally, category chips
+    filter.
+B.  **Android Chrome (India)** --- repeat on mobile: nav pill shows
+    Live TV #5, single-column grid, touch targets, tap-to-play CTA if
+    autoplay is blocked.
+C.  **Known ClearKey channel** --- select a known Jio-hosted channel
+    (e.g. a Sports or News channel); the stream must actually play
+    (this exercises the ClearKey path no automated phase could reach).
+D.  **Playback** --- video plays; LIVE badge shows; controls enabled;
+    play/pause, mute/unmute, volume slider, fullscreen enter/exit all
+    work.
+E.  **Channel switch** --- switch A → B, then B → A, then rapidly
+    A→B→C→D→A: only the last channel plays; no stale audio/video; no
+    stacked error overlays.
+F.  **Guide** --- Now Playing / Up Next / schedule appear for the
+    selected channel; if a guide request fails, playback must keep
+    running and the guide shows its own Retry.
+G.  **DVR (only if a channel exposes a seek window)** --- the seek
+    slider appears only then; dragging it seeks; "Go live" returns to
+    the edge. Non-DVR channels must show NO fake timeline.
+H.  **Reload** --- reload mid-playback: no channel may auto-resume; the
+    player shows "Select a channel to start watching."
+I.  **Error/retry** --- pick a known failing channel (e.g. an
+    Akamai/Widevine one such as a "Movies Now"-type channel): the
+    fixed safe message shows + "Try again" re-resolves fresh; retry
+    after network off/on never loops.
+J.  **Optional Safari (macOS)** --- repeat C/D on Safari; if playback
+    fails with "This channel uses protection this browser cannot
+    play.", record it and compare with Chrome on the same network
+    before reporting a defect (expected ClearKey-CDM absence).
+
+Expected non-defects (upstream): some channels may fail with the safe
+"protection" message (Widevine/PlayReady MPDs with drm=none upstream);
+some may be geo/unavailable at a given moment; the guide endpoint
+occasionally 502s (its own Retry appears).
 
 ------------------------------------------------------------------------
 
@@ -2025,7 +2195,7 @@ To be filled by GLM.
 
   Environment      Result                        Notes
   ---------------- ----------------------------- -------
-  Android Chrome   NOT TESTED                    no Android device in this environment; manual India QA pending
+  Android Chrome   NOT TESTED                    no Android device in this environment; manual India QA pending (USER PRODUCTION QA item B)
   Android PWA      NOT TESTED                    same
   Desktop Chrome   PARTIALLY VERIFIED (LT-5)     non-CDP Chromium 153 under Xvfb (keyboard-driven):
                                                  catalogue/search/filter/selection/resolution/Shaka
@@ -2033,15 +2203,18 @@ To be filled by GLM.
                                                  all verified live; VIDEO PLAYBACK + ClearKey
                                                  ENVIRONMENT BLOCKED (see LT-5 census: Jio CDN
                                                  451 geo-block; Akamai channels Widevine/PlayReady
-                                                 with drm=none) — India manual QA pending
+                                                 with drm=none) — India manual QA pending;
+                                                 LT-6 re-verified SSR + structure against the
+                                                 production build (vite preview, HTML scanned)
   Edge             NOT TESTED                    same Chromium engine; blocked items identical
   Firefox          NOT TESTED                    not present in this environment
   Safari           NOT TESTED                    explicit risk (ClearKey CDM availability);
                                                  manual India QA must compare Safari vs Chrome
                                                  on the same network before classifying failures
+                                                 (USER PRODUCTION QA item J)
 
 Safari is an explicit compatibility risk for DASH/ClearKey and must be
-tested during the manual India QA (LT-5 procedure step 11).
+tested during the manual India QA (USER PRODUCTION QA item J).
 
 ------------------------------------------------------------------------
 
@@ -2171,19 +2344,169 @@ COMPLETE / BLOCKED
 
 ## Handoff
 
-Planning is approved. LT-0 through LT-5 are COMPLETE: baselines pass,
-the LiveGT V1 API contract is verified live, Live TV is primary nav #5,
-Upcoming lives in the Account sheet above My List, the LT-2 client layer
-and LT-3 Shaka DASH/ClearKey engine are landed with deterministic suites,
-the production `/live-tv` page is live, and LT-5 hardening has landed
-(analytics integrated into the Phase-1 event system with a
-migration-backed taxonomy extension; security/a11y/performance audits
-done with one real a11y fix; a real non-CDP browser session verified the
-full interaction surface with honest environment-blocked markings for
-video playback + ClearKey).
+**LT-0 through LT-6 are COMPLETE. The Live TV V1 release is READY.**
 
-Next phase is **LT-6 --- Final Regression**. GLM must re-read both
-files and re-verify the repository state before starting LT-6. The
-remaining verification debt is deliberately external: the India-based
-manual browser QA procedure (recorded in the LT-5 section above) and
-the Live TV suite-chaining decision.
+All phases landed: baselines + contract (LT-0), navigation IA with Live
+TV as primary #5 and Upcoming relocated into the Account sheet (LT-1),
+the LiveGT V1 client layer (LT-2), the isolated Shaka DASH/ClearKey
+engine (LT-3), the production `/live-tv` page with catalogue/search/
+categories/player/guide (LT-4), analytics + hardening with the taxonomy
+migration and the real non-CDP browser verification session (LT-5), and
+the final release audit with regression chaining and a clean production
+build (LT-6).
+
+The ONLY remaining verification debt is deliberately external and
+user-side: the "USER PRODUCTION QA --- AFTER DEPLOY" procedure above
+(real India-network playback, ClearKey decryption, Android/Safari).
+Everything verifiable from this environment has been verified and is
+regression-locked in `pnpm test`.
+
+No further Live TV phases are planned. LT-6 is the final phase per the
+approved plan.
+
+## FINAL IMPLEMENTATION REPORT
+
+### Final status
+
+COMPLETE — **RELEASE READY** (real India ClearKey playback verification
+is user-side, per USER PRODUCTION QA).
+
+### Final commit
+
+LT-6: recorded in the LT-6 section above (base ce14d9b).
+
+### Files changed
+
+``` text
+LT-2: src/lib/client/live-tv/{types,errors,api,cache}.ts
+      scripts/live_tv_client_test.ts
+LT-3: src/lib/client/live-tv/{player,player-errors}.ts
+      scripts/live_tv_player_test.ts (+ shaka-player 5.2.12 dependency)
+LT-4: src/routes/live-tv/+page.svelte
+      src/lib/components/live-tv/{LiveTvPlayer,LiveTvChannelCard,
+      LiveTvCategoryBar,LiveTvNowPlaying,LiveTvGuide}.svelte
+      src/lib/client/live-tv/epg.ts
+      scripts/live_tv_page_test.ts
+LT-5: src/lib/client/live-tv/analytics.ts
+      src/lib/shared/analytics-taxonomy.ts (7-event extension)
+      src/lib/components/live-tv/LiveTvPlayer.svelte (a11y fix + reporting)
+      src/routes/live-tv/+page.svelte (analytics wiring)
+      supabase/migrations/20261103000000_live_tv_analytics_events.sql
+      scripts/{live_tv_hardening_test,lt5_census,lt5_151_variance}.ts
+      scripts/{phase1_analytics_foundation,cloudstream_registry_integration,
+      cloudstream_phase4_integration_manager}_test.ts (sanctioned pins)
+LT-6: package.json (5 Live TV suites chained into pnpm test)
+      scripts/live_tv_release_audit_test.ts (new)
+      live-tv-worklog.md (this record)
+```
+
+### Migrations
+
+Exactly one: `20261103000000_live_tv_analytics_events.sql` — pure
+CHECK-constraint widening of `analytics_events.event_name` with the 7
+live_tv events. No tables, no columns, no data migration. No Live TV
+Supabase tables exist (plan §13 decision D4 upheld).
+
+### LiveGT V1
+
+Contract verified live across phases: catalogue (1176 channels, 28
+data-derived categories, CORS *, max-age 300), resolution (fresh signed
+.mpd + optional clearkey per call, max-age 60 upstream, never cached by
+Mavero), guide (full shape, unix-second timestamps, flaky-502 handled).
+Only V1 endpoints; no V2 anywhere; observed 404-for-malformed-id
+behavior preserved.
+
+### DASH
+
+Shaka 5.2.12 loads through the browser-guarded dynamic import only
+(820 kB separate lazy chunk; /live-tv node 46.3 kB; zero server-side
+shaka references). MPD chain + manifest parsing exercised live in the
+LT-5 browser session; explicit `application/dash+xml` MIME; source
+selection deterministic (.mpd preference, no fabrication).
+
+### ClearKey
+
+Browser-side, memory-only, configured before load, never logged/
+persisted/sent anywhere. Incompatible-DRM streams (upstream
+Widevine/PlayReady MPDs) fail safely with the fixed message — verified
+live in the LT-5 browser session. Real India ClearKey decryption:
+USER VERIFICATION REQUIRED (environment-blocked here).
+
+### Guide
+
+Independent of playback (own controller/sequence/retry; a guide failure
+never touches the stream — browser-verified). Now/Next/schedule from
+actual data only; current programme via provider-first + [start,stop)
+window scan over absolute Unix seconds; cross-day rendering; empty
+guide is a valid quiet state.
+
+### Navigation
+
+Live TV is exactly #5 (desktop sidebar + mobile pill, single source);
+Search #6; Upcoming relocated into the Account sheet immediately above
+My List with account-surface history semantics. /upcoming route
+unchanged.
+
+### Security
+
+Zero console/storage/cookie/@html across all 14 Live TV files; safe
+fixed error tables everywhere (nothing interpolated); signed URLs +
+ClearKey exist only in runtime memory (structural: cache has no API for
+them; analytics adapter whitelist; Shaka error message/data never
+read); SSR HTML scanned clean against the production build; no proxy
+(browser fetches the CDN directly); channel ids escaped; the only
+upstream URLs are built from the single constant base + fixed V1 paths.
+
+### Performance
+
+Catalogue-only page load (no per-channel resolution); batched rendering
+(60 + IntersectionObserver sentinel) for 1000+ channels; local search/
+categories (zero per-keystroke network); guide 30 s cache, never
+blocking playback; switching destroys the old engine (no accumulation);
+timers/listeners cleaned on destroy; Shaka lazy.
+
+### Accessibility
+
+Keyboard-navigable (browser-verified with visible focus rings on every
+control); semantic buttons with aria-pressed selection states; labelled
+search/controls; role=alert/status for errors/loading/empty; `<ol>`
+guide semantics; 28 px slider hit areas (WCAG 2.5.8 fix, regression-
+asserted); reduced-motion respected in every component.
+
+### Tests
+
+``` text
+pnpm check   0 errors, 0 warnings
+pnpm test    exit 0 — 5548 ok-lines (5381 baseline parity + 161 Live TV
+             focused + 6 LT-6 release audit); 8 pre-existing expected
+             "Error:" fixtures unchanged
+pnpm build   exit 0 — Netlify adapter + executor function
+LT-2 61/61 · LT-3 65/65 · LT-4 22/22 · LT-5 13/13 · LT-6 6/6
+LT-1 navigation (standalone) 12/12 re-verified
+```
+
+### Browser verification
+
+Desktop Chromium (non-CDP, keyboard-driven, LT-5): everything reachable
+verified live; video playback + ClearKey ENVIRONMENT BLOCKED (non-India
+egress; upstream geo-fencing + DRM variance). Android/PWA/Edge/Firefox/
+Safari: NOT TESTED here — covered by USER PRODUCTION QA. Real browser
+status: **USER VERIFICATION REQUIRED**.
+
+### Existing regression
+
+Full `pnpm test` chain: exact baseline parity maintained at every phase
+(5381 pre-existing ok-lines; now 5548 with the chained Live TV suites).
+No VOD/HLS/provider/hosting/downloader/Stremio/CloudStream regression
+introduced (git-verified change sets at every phase).
+
+### Known limitations
+
+See "LT-6 --- Known limitations (final, exact)" above (7 items).
+
+### Follow-up items
+
+1.  Execute USER PRODUCTION QA after deploy (items A-J).
+2.  Optional (owner decision): chain `navigation_primary_test.ts`.
+3.  Post-release, if LiveGT V2 is ever approved, it is a NEW plan —
+    nothing in V1 assumes it.
