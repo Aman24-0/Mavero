@@ -2867,3 +2867,8 @@ live-tv-worklog.md                      (this record; includes LT-7 section)
 
 `fix(live-tv): match documented shaka integration contract` (sha
 recorded below after commit).
+
+### Commit (record)
+
+LT-8 fix commit: `391bfd90844fb8d355b346506ae932c3517b8124` (fix(live-tv): match documented shaka
+integration contract).
