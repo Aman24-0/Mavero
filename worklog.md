@@ -3991,3 +3991,4 @@ Stage Summary:
 - Environment limitations (documented): no TMDB API credentials in this environment — live data facts were verified against TMDB's public website (the established evidence method; recorded inline in the registries); the authorized Adult Discover rendering could not be exercised against live data (the configured Supabase's admin policy denies guests — the server correctly forces the preference OFF, which is itself the verified security contract); local .env QA secret added+removed during browser QA only (never committed).
 
 **No migration** (registries are code; no schema change required). **No production data modified** (read-only TMDB/Supabase evidence gathering).
+Commit: `7b936b0` pushed to `origin/main` (second-round leak hardening: registry +5 networks, orphan attribution signals, TV-only Adult Discover, provider logos, 221-test chain green).
