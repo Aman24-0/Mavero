@@ -794,7 +794,7 @@ GET /api/public/channels/not-a-number
 
 ``` text
 base:        ea69f10c1ff7c40c64a4e348fb5ffeac7d061f88 (LT-1 head, clean)
-LT-2 commit: (recorded in the follow-up worklog commit after push)
+LT-2 commit: 90417604c387e8f93afeaafc829c4625f24a47a3
              "feat(live-tv): add LiveGT V1 client layer"
 ```
 
