@@ -2,7 +2,7 @@
 
 **Feature:** LiveGT TV V1\
 **Plan:** `live-tv-plan.md`\
-**Status:** APPROVED --- IMPLEMENTATION IN PROGRESS (LT-0 COMPLETE)\
+**Status:** APPROVED --- IMPLEMENTATION IN PROGRESS (LT-0, LT-1 COMPLETE)\
 **Date:** 2026-10-07
 
 ## Purpose
@@ -121,7 +121,7 @@ NO LIVE TV SUPABASE MIGRATION FOR V1
   Phase                         Status
   ----------------------------- --------------
   LT-0 Baseline & Contract      COMPLETE
-  LT-1 Navigation IA            NOT STARTED
+  LT-1 Navigation IA            COMPLETE
   LT-2 LiveGT Client Layer      NOT STARTED
   LT-3 DASH / ClearKey Player   NOT STARTED
   LT-4 Live TV UI               NOT STARTED
@@ -385,7 +385,7 @@ LT-1 --- Navigation IA (recommended surgical scope):
 
 ### Status
 
-`NOT STARTED`
+`COMPLETE` (2026-10-07)
 
 ### Required
 
@@ -398,26 +398,146 @@ LT-1 --- Navigation IA (recommended surgical scope):
 ### Files changed
 
 ``` text
-To be filled by GLM.
+src/lib/components/AppShell.svelte
+    - primaryLinks slot #5: Upcoming (/upcoming, CalendarClock) →
+      Live TV (/live-tv, Radio). Single source of truth — BOTH the
+      desktop sidebar and the mobile pill render from it; no other nav
+      logic touched.
+    - lucide import: CalendarClock out, Radio in (verified present in
+      installed lucide-svelte 0.468.0).
+    - navigation comments updated (IA note; sheet mount comment).
+
+src/lib/components/AccountSheet.svelte
+    - New Upcoming menu-row FIRST in sheet-menu (above My List):
+      CalendarClock icon, href="/upcoming", routed through the existing
+      menuNavigate() convention (haptic + close + push/replace).
+    - ACCOUNT_SURFACES: ['/my-list','/settings'] →
+      ['/upcoming','/my-list','/settings'] — Upcoming joins the
+      replace-state history family so account surfaces never co-stack
+      (Discover → Account → Upcoming → Account → My List → Back =
+      Discover).
+    - identity/My List/Settings rows, dialog semantics, focus trap,
+      scroll lock, Escape/Tab handling: UNCHANGED.
+
+scripts/navigation_primary_test.ts
+    - §2 order/hrefs/keys: Live TV #5, Search #6, Upcoming absent
+      (added explicit #5/#6/no-Upcoming assertions).
+    - §3 icons: Radio wired, CalendarClock import assertion replaced.
+    - NEW §12: Account sheet contract — exact Upcoming/My List/Settings
+      order, /upcoming href, CalendarClock in sheet, ACCOUNT_SURFACES
+      extended.
+
+scripts/account_route_migration_test.ts
+    - §7 labels deepEqual + comments → Live TV order.
+    - §7b: Upcoming presence + order assertions added; forbidden-words
+      regex message updated (assertion unchanged).
+    - §6 comments/messages updated (Upcoming = sheet destination now).
+
+scripts/admin_nav_test.ts
+    - AppShell order pattern + header comment → Live TV.
+
+scripts/discover_subpage_ux_test.ts
+    - AppShell order pattern → Live TV.
+
+scripts/explorer_navigation_test.ts
+    - ACCOUNT_SURFACES regex updated to the three-surface contract.
+
+scripts/account_page_test.ts
+    - §12 assertion message updated (assertion itself unchanged — the
+      Settings page still carries no /upcoming link).
 ```
+
+### Decisions
+
+1.  **Icon = `Radio`** (lucide-svelte 0.468.0). Chosen over
+    `TvMinimalPlay` because the existing `Tv` icon already represents
+    TV Shows — Radio is visually distinct at mobile-pill sizes and is
+    the classic live-broadcast metaphor.
+2.  **`/upcoming` joins ACCOUNT_SURFACES** (LT-0 recommendation
+    applied). Same replace-state semantics as My List/Settings: sibling
+    sheet destinations never co-stack in history.
+3.  **NO `/live-tv` route stub created.** SvelteKit does not require
+    the target route to exist for a nav link — svelte-check and the
+    production build both pass without it. Clicking Live TV renders
+    the standard error page until LT-4 lands, exactly as the phase
+    brief allows ("The route may not exist yet"). No Live TV
+    functionality was implemented.
+4.  **Account-button active state untouched.** `isAccountSurface` in
+    AppShell still highlights only on /settings — same treatment My
+    List already receives; extending it was not required by the brief.
+
+### Navigation changes
+
+``` text
+Primary nav BEFORE:  Discover, Movies, TV Shows, Anime, Upcoming, Search
+Primary nav AFTER:   Discover, Movies, TV Shows, Anime, Live TV, Search
+Account sheet BEFORE: My List, Settings
+Account sheet AFTER:  Upcoming, My List, Settings
+```
+
+Desktop sidebar + mobile bottom pill both derive from primaryLinks
+(single source of truth) so both compositions updated atomically.
+Mobile pill keeps six equal columns (repeat(6, 1fr)) — item count is
+still six. `/upcoming` route, page, loader and functionality: fully
+unchanged.
 
 ### Tests
 
 ``` text
-To be filled by GLM.
+pnpm check   PASS — svelte-check: 0 errors, 0 warnings
+pnpm test    PASS — exit 0; full &&-chained suite (~230 scripts);
+             5381 "ok" check groups (baseline parity — the chain does
+             not include navigation_primary_test.ts; see findings).
+pnpm build   PASS — exit 0; vite build + Netlify adapter + executor
+             function.
+
+Focused (run directly, all PASS):
+  scripts/navigation_primary_test.ts      12 groups (incl. new §12)
+  scripts/account_route_migration_test.ts 13 groups (incl. §7b order)
+  scripts/explorer_navigation_test.ts      5 groups
+  scripts/admin_nav_test.ts                4 groups
+  scripts/discover_subpage_ux_test.ts     12 groups
+  scripts/account_page_test.ts            16 groups
 ```
 
 ### Commit
 
 ``` text
-To be filled by GLM.
+base:    05a1e10546086bf8fdd817634d7f224eee248896 (LT-0 head, clean)
+LT-1 commit recorded below after validation.
 ```
 
 ### Findings
 
-``` text
-To be filled by GLM.
-```
+1.  `scripts/navigation_primary_test.ts` is a STANDALONE script — it
+    is NOT part of the `pnpm test` chain in package.json (pre-existing
+    condition, verified by grep; it has never been chained). It was
+    run manually here and passes. Documented, not fixed (package.json
+    chain changes are outside LT-1's surgical scope). Recommend
+    chaining it (and the future Live TV focused tests) during LT-6
+    final regression, with approval.
+2.  hooks.server.ts route-policy verified: unknown routes (including
+    the not-yet-existing /live-tv) resolve through the normal
+    pipeline — no allowlist blocks navigation to /live-tv; no
+    route-policy change was needed for the nav entry.
+3.  +layout.svelte mobile-nav opt-out is only for /settings — no
+    change needed for the new IA.
+4.  The AccountSheet forbidden-words regression regex
+    (/Devices|Sessions|password|delete|Delete/) was checked against
+    the new Upcoming row copy ("Movies, shows and anime releasing
+    soon") — no collision; the assertion is unchanged.
+5.  No LT-2+ functionality was implemented: no LiveGT calls, no
+    Shaka, no DASH/ClearKey, no EPG, no channel catalogue, no Live TV
+    components, no Supabase changes, no analytics taxonomy changes,
+    no /live-tv route. Verified via the diff (8 files, all listed
+    above).
+
+### Next phase
+
+LT-2 --- LiveGT Client Layer (per plan §19): V1 API client
+(normalized types, categories/search, guide, short metadata cache,
+fresh playback resolution, bounded errors, no persistence of signed
+URLs/ClearKey). No Shaka yet (that is LT-3).
 
 ------------------------------------------------------------------------
 
@@ -835,11 +955,11 @@ COMPLETE / BLOCKED
 
 ## Handoff
 
-Planning is approved. LT-0 (baseline & contract) is COMPLETE: all
-three baseline commands pass at HEAD `69583cc`, the LiveGT V1 API
-contract is verified live and matches the approved plan, and no source
-files were changed.
+Planning is approved. LT-0 (baseline & contract) and LT-1 (Navigation
+IA) are COMPLETE: all three baseline commands pass, the LiveGT V1 API
+contract is verified live, Live TV is primary nav #5, and Upcoming now
+lives in the Account sheet above My List with no Live TV functionality
+implemented yet.
 
-Next phase is **LT-1 --- Navigation IA** (scope recommendation recorded
-in the LT-0 section). GLM must re-read both files and re-verify the
-repository state before starting LT-1.
+Next phase is **LT-2 --- LiveGT Client Layer**. GLM must re-read both
+files and re-verify the repository state before starting LT-2.

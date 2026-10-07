@@ -6,8 +6,8 @@ import { join } from 'node:path';
 //
 // The root layout wrapped EVERY page (except watch/detail/auth) in
 // AppShell, which renders the consumer side rail + the mobile bottom nav
-// (Navigation & Settings Redesign, Phase 1: Discover / Movies / TV Shows /
-// Anime / Upcoming / Search + header account control). Admin pages therefore showed
+// (Navigation & Settings Redesign, Phase 1 + LT-1: Discover / Movies / TV
+// Shows / Anime / Live TV / Search + header account control). Admin pages therefore showed
 // the normal consumer navigation — inappropriate for an administrative
 // surface. The fix renders /admin/* BARE (exactly like /watch/*): the
 // consumer AppShell is never mounted there — not hidden, not covered —
@@ -101,7 +101,7 @@ ok('2. overview uses AdminAppShell; legacy registry pages are Phase 1 redirect s
 // ============================================================
 // 3. AppShell carries the six consumer destinations (Phase 1)
 // ============================================================
-assert.match(appShell, /Discover[\s\S]*Movies[\s\S]*TV Shows[\s\S]*Anime[\s\S]*Upcoming[\s\S]*Search/, 'consumer primary links: Discover/Movies/TV Shows/Anime/Upcoming/Search (Navigation & Settings Redesign, Phase 1)');
+assert.match(appShell, /Discover[\s\S]*Movies[\s\S]*TV Shows[\s\S]*Anime[\s\S]*Live TV[\s\S]*Search/, 'consumer primary links: Discover/Movies/TV Shows/Anime/Live TV/Search (LT-1)');
 assert.match(appShell, /class="mobile-nav"/, 'mobile bottom nav unchanged for consumer pages');
 assert.doesNotMatch(appShell, /\/admin/, 'AppShell has no admin special case (the exclusion lives in the layout branch)');
 ok('3. consumer navigation intact (six destinations; mobile + desktop consumers unaffected)');

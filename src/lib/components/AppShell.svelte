@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, type Snippet } from 'svelte';
-  import { CalendarClock, Compass, Search, UserRound, Clapperboard, Film, PanelLeftClose, PanelLeft, Sparkles, Tv } from 'lucide-svelte';
+  import { Compass, Search, UserRound, Clapperboard, Film, PanelLeftClose, PanelLeft, Sparkles, Tv, Radio } from 'lucide-svelte';
   import AccountSheet from '$components/AccountSheet.svelte';
   import { haptic } from '$lib/client/haptics';
 
@@ -12,6 +12,10 @@
   // bottom nav (no duplicated hardcoded nav logic anywhere). My List is
   // reachable from the Account page today and from the Account sheet in
   // Phase 3.
+  //
+  // Live TV IA (LiveGT V1, LT-1): Live TV takes slot #5 — Upcoming left
+  // the primary nav and now lives in the Account sheet (above My List);
+  // the /upcoming route itself is unchanged.
   //
   // Phase 2 — responsive compositions:
   //   MOBILE + TABLET (≤1024px): floating pill bottom nav (touch
@@ -25,7 +29,7 @@
     { label: 'Movies', href: '/movies', key: '/movies', icon: Film },
     { label: 'TV Shows', href: '/tv-shows', key: '/tv-shows', icon: Tv },
     { label: 'Anime', href: '/anime', key: '/anime', icon: Sparkles },
-    { label: 'Upcoming', href: '/upcoming', key: '/upcoming', icon: CalendarClock },
+    { label: 'Live TV', href: '/live-tv', key: '/live-tv', icon: Radio },
     { label: 'Search', href: '/search', key: '/search', icon: Search }
   ];
 
@@ -153,7 +157,8 @@
     <UserRound size={20} strokeWidth={isAccountSurface ? 2.3 : 1.8} />
   </button>
 
-  <!-- Compact Account sheet (Phase 3): identity + My List + Settings -->
+  <!-- Compact Account sheet (Phase 3 + LT-1): identity + Upcoming + My
+       List + Settings -->
   <AccountSheet open={accountSheetOpen} onClose={closeAccountSheet} {user} {isAuthenticated} />
 
   <!-- Mobile + tablet bottom nav (touch composition, ≤1024px) -->

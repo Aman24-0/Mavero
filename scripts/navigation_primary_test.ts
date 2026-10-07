@@ -10,10 +10,12 @@ import { readFileSync } from 'node:fs';
 //   SOURCE     — one primaryLinks array in AppShell feeds BOTH the desktop
 //                side rail and the mobile floating pill. No duplicate
 //                navigation definitions anywhere.
-//   ORDER      — Discover, Movies, TV Shows, Anime, Upcoming, Search
-//                (exact). Movies / TV Shows / Anime are independent
+//   ORDER      — Discover, Movies, TV Shows, Anime, Live TV, Search
+//                (exact). Live TV takes slot #5 (LiveGT V1, LT-1);
+//                Upcoming left the primary nav and lives in the Account
+//                sheet. Movies / TV Shows / Anime are independent
 //                first-class destinations (formerly /discover sub-pages).
-//   ICONS      — Compass, Film, Tv, Sparkles, CalendarClock, Search
+//   ICONS      — Compass, Film, Tv, Sparkles, Radio, Search
 //                (lucide-svelte only).
 //   REMOVALS   — My List and Account are NOT primary destinations anymore.
 //                My List is reachable from the Account page today and from
@@ -73,39 +75,46 @@ ok('1. one primaryLinks source; desktop rail and mobile pill both render from it
 // ============================================================
 assert.deepEqual(
   entries.map((e) => e.label),
-  ['Discover', 'Movies', 'TV Shows', 'Anime', 'Upcoming', 'Search'],
-  'labels: Discover, Movies, TV Shows, Anime, Upcoming, Search — exact order'
+  ['Discover', 'Movies', 'TV Shows', 'Anime', 'Live TV', 'Search'],
+  'labels: Discover, Movies, TV Shows, Anime, Live TV, Search — exact order'
 );
 assert.deepEqual(
   entries.map((e) => e.href),
-  ['/discover', '/movies', '/tv-shows', '/anime', '/upcoming', '/search'],
-  'hrefs: /discover, /movies, /tv-shows, /anime, /upcoming, /search — exact order'
+  ['/discover', '/movies', '/tv-shows', '/anime', '/live-tv', '/search'],
+  'hrefs: /discover, /movies, /tv-shows, /anime, /live-tv, /search — exact order'
 );
 assert.deepEqual(
   entries.map((e) => e.key),
-  ['/discover', '/movies', '/tv-shows', '/anime', '/upcoming', '/search'],
+  ['/discover', '/movies', '/tv-shows', '/anime', '/live-tv', '/search'],
   'active-state keys mirror hrefs — exact order'
 );
 assert.equal(entries.length, 6, 'exactly six primary destinations');
 assert.equal(entries[1].label, 'Movies', 'Movies is second');
 assert.equal(entries[2].label, 'TV Shows', 'TV Shows is third');
 assert.equal(entries[3].label, 'Anime', 'Anime is fourth');
-ok('2. exact six entries, exact order, exact hrefs (Movies 2nd, TV Shows 3rd, Anime 4th)');
+// LT-1 — Live TV is EXACTLY #5, Search stays #6, Upcoming is gone.
+assert.equal(entries[4].label, 'Live TV', 'Live TV is exactly #5');
+assert.equal(entries[4].href, '/live-tv', 'Live TV targets /live-tv');
+assert.equal(entries[5].label, 'Search', 'Search remains #6');
+assert.equal(entries[5].href, '/search', 'Search keeps /search');
+assert.ok(!entries.some((e) => e.label === 'Upcoming'), 'Upcoming is NOT a primary navigation destination');
+assert.ok(!entries.some((e) => e.href === '/upcoming'), 'no primary entry points at /upcoming');
+ok('2. exact six entries, exact order, exact hrefs (Live TV #5, Search #6, Upcoming removed)');
 
 // ============================================================
 // 3. ICONS — lucide-svelte only, correct icon per destination
 // ============================================================
 assert.deepEqual(
   entries.map((e) => e.icon),
-  ['Compass', 'Film', 'Tv', 'Sparkles', 'CalendarClock', 'Search'],
-  'icons: Compass, Film, Tv, Sparkles, CalendarClock, Search'
+  ['Compass', 'Film', 'Tv', 'Sparkles', 'Radio', 'Search'],
+  'icons: Compass, Film, Tv, Sparkles, Radio, Search'
 );
 assert.match(appShell, /import \{[^}]*Film[^}]*\} from 'lucide-svelte'/, 'Film imported from lucide-svelte');
 assert.match(appShell, /import \{[^}]*\bTv\b[^}]*\} from 'lucide-svelte'/, 'Tv imported from lucide-svelte');
 assert.match(appShell, /import \{[^}]*Sparkles[^}]*\} from 'lucide-svelte'/, 'Sparkles imported from lucide-svelte');
-assert.match(appShell, /import \{[^}]*CalendarClock[^}]*\} from 'lucide-svelte'/, 'CalendarClock imported from lucide-svelte');
+assert.match(appShell, /import \{[^}]*\bRadio\b[^}]*\} from 'lucide-svelte'/, 'Radio imported from lucide-svelte (Live TV icon)');
 assert.doesNotMatch(appShell, /Bookmark/, 'Bookmark icon no longer referenced by AppShell (My List left the primary nav)');
-ok('3. lucide icons wired: Discover=Compass, Movies=Film, TV Shows=Tv, Anime=Sparkles, Upcoming=CalendarClock, Search=Search');
+ok('3. lucide icons wired: Discover=Compass, Movies=Film, TV Shows=Tv, Anime=Sparkles, Live TV=Radio, Search=Search');
 
 // ============================================================
 // 4. REMOVALS — My List / Account are not primary nav destinations
@@ -215,5 +224,26 @@ assert.doesNotMatch(discoverPage, /quick-chips/, 'quick-chips markup and styles 
 assert.doesNotMatch(discoverPage, /href: '\/discover\/(movies|series|anime)'/, 'Discover links no longer point at the old child pages');
 assert.match(discoverPage, /viewAllHref: '\/anime'/, 'anime rail View-all links target the first-class /anime route');
 ok('11. Discover no longer routes to the old child pages; anime View-all targets /anime');
+
+// ============================================================
+// 12. ACCOUNT SHEET (LT-1) — Upcoming relocated above My List
+// ============================================================
+// Upcoming left the primary nav and now lives in the compact Account
+// sheet, immediately ABOVE My List. My List + Settings stay unchanged.
+const accountSheet = read('../src/lib/components/AccountSheet.svelte');
+const sheetMenu = accountSheet.match(/<nav class="sheet-menu"[\s\S]*?<\/nav>/);
+assert.ok(sheetMenu, 'the Account sheet defines its menu block');
+const sheetRows = [...sheetMenu![0].matchAll(/href="(\/[^"]+)"/g)].map((m) => m[1]);
+assert.deepEqual(sheetRows, ['/upcoming', '/my-list', '/settings'], 'Account sheet entries: Upcoming, My List, Settings — exact order');
+assert.match(accountSheet, /<strong>Upcoming<\/strong>/, 'the Upcoming entry renders its label');
+const upcomingRow = sheetMenu![0].match(/[\s\S]*?<\/a>/)![0];
+assert.match(upcomingRow, /href="\/upcoming"/, 'the first sheet row is the Upcoming entry (/upcoming)');
+assert.match(accountSheet, /<strong>My List<\/strong>/, 'My List remains present in the sheet');
+assert.match(accountSheet, /<strong>Settings<\/strong>/, 'Settings remains present in the sheet');
+assert.match(accountSheet, /CalendarClock size=\{17\}/, 'Upcoming keeps the CalendarClock icon inside the sheet');
+// Upcoming joins the account-surface family so it never co-stacks in
+// history with My List/Settings (same replace-state contract).
+assert.match(accountSheet, /const ACCOUNT_SURFACES = \['\/upcoming', '\/my-list', '\/settings'\]/, 'Upcoming joins ACCOUNT_SURFACES (replace-state history semantics)');
+ok('12. Account sheet (LT-1): Upcoming above My List; My List + Settings unchanged; account-surface history semantics extended');
 
 console.log(`\nPrimary navigation architecture tests passed (${passed} check groups).`);

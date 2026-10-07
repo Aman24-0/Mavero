@@ -86,7 +86,7 @@ ok('1. /movies, /tv-shows, /anime render inside the consumer AppShell (no bare r
 // ============================================================
 // 2. NAV — AppShell carries the six destinations; no Discover dependency
 // ============================================================
-assert.match(appShell, /Discover[\s\S]*Movies[\s\S]*TV Shows[\s\S]*Anime[\s\S]*Upcoming[\s\S]*Search/, 'consumer primary links: Discover/Movies/TV Shows/Anime/Upcoming/Search');
+assert.match(appShell, /Discover[\s\S]*Movies[\s\S]*TV Shows[\s\S]*Anime[\s\S]*Live TV[\s\S]*Search/, 'consumer primary links: Discover/Movies/TV Shows/Anime/Live TV/Search (LT-1)');
 assert.match(appShell, /class="mobile-nav"/, 'mobile bottom nav still defined for consumer pages');
 assert.doesNotMatch(appShell, /\/admin|\/discover\/movies/, 'AppShell gains no route special cases (new destinations are normal AppShell pages)');
 // The back link to Discover is gone — these are not child pages anymore,

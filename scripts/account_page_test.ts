@@ -201,7 +201,7 @@ ok('11. Phase 3 structure: library/About/Session removed; QR login renamed + res
 // ============================================================
 // 12. COMPACT — no quick-action duplication, no giant hero
 // ============================================================
-assert.doesNotMatch(accountPage, /href="\/upcoming"/, 'no Upcoming quick action (primary nav owns it now)');
+assert.doesNotMatch(accountPage, /href="\/upcoming"/, 'no Upcoming quick action on the Settings page (the Account sheet owns it since LT-1)');
 assert.doesNotMatch(accountPage, /Quick actions/, 'no quick-actions section');
 assert.doesNotMatch(accountPage, /1200px/, 'no giant hero/container widths');
 assert.match(accountPage, /min\(800px/, 'desktop content capped at a compact 800px column');

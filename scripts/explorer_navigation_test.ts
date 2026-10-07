@@ -61,7 +61,7 @@ ok('1. Change 2: My List + Settings back controls — contextual header composit
 // ============================================================
 // 2. CHANGE 3 — history fix via replace-state on account surfaces
 // ============================================================
-assert.match(accountSheet, /const ACCOUNT_SURFACES = \['\/my-list', '\/settings'\]/, 'the account sheet knows the two account surfaces');
+assert.match(accountSheet, /const ACCOUNT_SURFACES = \['\/upcoming', '\/my-list', '\/settings'\]/, 'the account sheet knows the three account surfaces (Upcoming joins via LT-1)');
 assert.match(accountSheet, /ACCOUNT_SURFACES\.includes\(page\.url\.pathname\)/, 'the sheet checks the CURRENT route before choosing push vs replace');
 assert.match(accountSheet, /event\.preventDefault\(\);\s*\n?\s*void goto\(href, \{ replaceState: true \}\)/, 'sheet navigation from an account surface REPLACES the history entry');
 // Discover → Account → My List → Back = Discover is satisfied by the

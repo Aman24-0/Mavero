@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Bookmark, Settings, X } from 'lucide-svelte';
+  import { Bookmark, CalendarClock, Settings, X } from 'lucide-svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { getSyncStatus, type SyncStatus } from '$lib/client/progress/cloud';
@@ -8,10 +8,12 @@
   // Navigation & Settings Redesign, Phase 3 — the compact Account sheet.
   //
   // A WhatsApp-overflow-style sheet opened from the header account
-  // control. Per the plan it contains ONLY:
+  // control. Per the plan (Phase 3, extended by the Live TV IA change)
+  // it contains ONLY:
   //   1. A compact identity block (display name, email, cloud sync status)
-  //   2. My List
-  //   3. Settings
+  //   2. Upcoming (moved here from the primary nav — LT-1)
+  //   3. My List
+  //   4. Settings
   //
   // Contracts:
   //   COMPACT     — much smaller than the Settings page; no sections,
@@ -29,12 +31,12 @@
   //   MOTION      — one subtle entry animation, disabled entirely under
   //                 prefers-reduced-motion.
   //
-  // HISTORY CONTRACT (Explorer redesign, Change 3): My List and Settings
-  // are independent destinations — Back from either must land on
-  // /discover, never on the other account surface. Opening the sheet
-  // while ALREADY on /my-list or /settings and choosing the other entry
-  // therefore navigates with replaceState (the current account-surface
-  // entry is replaced, not stacked) — so
+  // HISTORY CONTRACT (Explorer redesign, Change 3): Upcoming, My List and
+  // Settings are independent destinations — Back from any must land on
+  // whatever preceded the account surfaces, never on another one. Opening
+  // the sheet while ALREADY on /upcoming, /my-list or /settings and
+  // choosing another entry therefore navigates with replaceState (the
+  // current account-surface entry is replaced, not stacked) — so
   //   Discover → Account → My List → Account → Settings → Back = Discover.
   // From any non-account surface the entries keep normal push navigation
   // — Discover → Account → My List → Back = Discover. The sheet itself
@@ -124,16 +126,17 @@
     }
   }
 
-  const ACCOUNT_SURFACES = ['/my-list', '/settings'];
+  const ACCOUNT_SURFACES = ['/upcoming', '/my-list', '/settings'];
 
   function menuNavigate(event: MouseEvent, href: string) {
     haptic('light');
     close();
-    // Change 3 history fix: when the sheet is opened while already on
-    // My List/Settings, choosing the other entry REPLACES the current
-    // history entry instead of stacking — Back from the destination then
-    // returns to whatever preceded the account surfaces (Discover), and
-    // My List/Settings never coexist in the history stack.
+    // Change 3 history fix (LT-1): when the sheet is opened while already
+    // on an account surface (Upcoming/My List/Settings), choosing another
+    // entry REPLACES the current history entry instead of stacking — Back
+    // from the destination then returns to whatever preceded the account
+    // surfaces (Discover), and two account surfaces never coexist in the
+    // history stack.
     if (ACCOUNT_SURFACES.includes(page.url.pathname)) {
       event.preventDefault();
       void goto(href, { replaceState: true });
@@ -177,8 +180,16 @@
       </div>
     </div>
 
-    <!-- The ONLY two entries per the plan: My List + Settings -->
+    <!-- The ONLY entries per the plan (LT-1 order): Upcoming + My List +
+         Settings -->
     <nav class="sheet-menu" aria-label="Account menu">
+      <a class="menu-row" href="/upcoming" onclick={(event) => menuNavigate(event, '/upcoming')}>
+        <span class="menu-icon"><CalendarClock size={17} /></span>
+        <span class="menu-copy">
+          <strong>Upcoming</strong>
+          <small>Movies, shows and anime releasing soon</small>
+        </span>
+      </a>
       <a class="menu-row" href="/my-list" onclick={(event) => menuNavigate(event, '/my-list')}>
         <span class="menu-icon"><Bookmark size={17} /></span>
         <span class="menu-copy">
@@ -278,7 +289,7 @@
   .identity-signin:hover { border-bottom-color: currentColor; }
   .identity-signin:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 
-  /* ── Menu rows: the only two entries ── */
+  /* ── Menu rows: the only three entries ── */
   .sheet-menu { display: grid; padding: 6px 8px 4px; }
   .menu-row {
     display: flex; align-items: center; gap: 12px;

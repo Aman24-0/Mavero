@@ -19,10 +19,12 @@ import { existsSync, readFileSync } from 'node:fs';
 //                                legacy routes (load or client goto).
 //   5.  CANONICAL              — the Settings page owns the merged
 //                                experience; no /account page component.
-//   6.  UPCOMING               — legacy back-pill REMOVED (Phase F.3: main
-//                                navigation page); no /profile legacy link.
+//   6.  UPCOMING               — legacy back-pill REMOVED (Phase F.3);
+//                                since LT-1 Upcoming lives in the Account
+//                                sheet (primary nav slot #5 is Live TV); no
+//                                /profile legacy link.
 //   7.  PRIMARY NAV            — Discover, Movies, TV Shows, Anime,
-//                                Upcoming, Search (Redesign Phase 1/2).
+//                                Live TV, Search (LT-1 — LiveGT V1).
 //   8.  NO DEAD LINKS          — no intentional internal navigation to
 //                                /profile or /account anywhere in src/
 //                                (API paths like /api/account/* and
@@ -100,10 +102,11 @@ ok('5. /settings is the canonical, fully-featured account-management destination
 // ============================================================
 // 6. UPCOMING — legacy back link REMOVED (Phase F.3)
 // ============================================================
-// Upcoming is now a MAIN NAVIGATION page: the "Account" back-pill was
-// removed together with its icon import and CSS. No legacy /profile link
-// exists, and all Upcoming functionality is untouched.
-assert.doesNotMatch(upcomingPage, /back-pill/, 'Upcoming back-pill is REMOVED (main navigation page)');
+// Upcoming left the primary nav (LT-1) and lives in the Account sheet;
+// the "Account" back-pill was removed long before, together with its
+// icon import and CSS. No legacy /profile link exists, and all Upcoming
+// functionality is untouched.
+assert.doesNotMatch(upcomingPage, /back-pill/, 'Upcoming back-pill is REMOVED (Account sheet destination since LT-1)');
 assert.doesNotMatch(upcomingPage, /<span>Account<\/span>/, 'Upcoming Account back-pill label is removed');
 assert.doesNotMatch(upcomingPage, /href="\/profile"/, 'Upcoming has no legacy back link to /profile');
 // Upcoming functionality untouched — filters, grouping, pagination markers.
@@ -111,25 +114,26 @@ assert.doesNotMatch(upcomingPage, /href="\/profile"/, 'Upcoming has no legacy ba
 assert.match(upcomingPage, /selectedStartDate/, 'date (startDate) filter intact (F7-B: replaced month+year)');
 assert.match(upcomingPage, /selectedType/, 'type filter intact');
 assert.match(upcomingPage, /dayGroups/, 'release day grouping intact');
-ok('6. Upcoming back-pill removed (main navigation page); Upcoming functionality untouched');
+ok('6. Upcoming back-pill removed (Account sheet destination since LT-1); Upcoming functionality untouched');
 
 // ============================================================
 // 7. PRIMARY NAV — the six-destination contract holds
-//    (Navigation & Settings Redesign, Phase 1+2: Discover, Movies,
-//    TV Shows, Anime, Upcoming, Search. My List + Account left the
-//    primary nav; Account opens the compact header sheet.)
+//    (LT-1 — LiveGT V1: Discover, Movies, TV Shows, Anime, Live TV,
+//    Search. My List + Account left the primary nav; Upcoming moved
+//    into the compact Account sheet; Account opens the sheet.)
 // ============================================================
 const linksBlock = appShell.match(/const primaryLinks = \[([\s\S]*?)\];/);
 assert.ok(linksBlock, 'AppShell still defines primaryLinks');
 const labels = [...linksBlock![1].matchAll(/label: '([^']+)'/g)].map((m) => m[1]);
-assert.deepEqual(labels, ['Discover', 'Movies', 'TV Shows', 'Anime', 'Upcoming', 'Search'], 'primary nav: Discover, Movies, TV Shows, Anime, Upcoming, Search');
+assert.deepEqual(labels, ['Discover', 'Movies', 'TV Shows', 'Anime', 'Live TV', 'Search'], 'primary nav: Discover, Movies, TV Shows, Anime, Live TV, Search');
 assert.match(appShell, /class="topbar-account"/, 'the mobile/tablet account control exists');
 assert.match(appShell, /class="header-account"/, 'the desktop header account control exists');
 assert.match(appShell, /aria-haspopup="dialog"/, 'the account controls open the Account sheet (dialog)');
-ok('7. primary navigation: Discover, Movies, TV Shows, Anime, Upcoming, Search + header account sheet control');
+ok('7. primary navigation: Discover, Movies, TV Shows, Anime, Live TV, Search + header account sheet control');
 
 // ============================================================
 // 7b. ACCOUNT SHEET — the compact Phase 3 sheet contract
+//     (LT-1: Upcoming relocated here, immediately above My List)
 // ============================================================
 assert.match(appShell, /import AccountSheet from/, 'AppShell mounts the AccountSheet component');
 assert.match(accountSheet, /role="dialog"/, 'the sheet is a dialog');
@@ -138,11 +142,13 @@ assert.match(accountSheet, /event\.key === 'Escape'/, 'Escape closes the sheet')
 assert.match(accountSheet, /event\.key !== 'Tab'/, 'Tab is trapped inside the sheet');
 assert.match(accountSheet, /previouslyFocused\?\.isConnected\) previouslyFocused\.focus\(\)/, 'focus is restored to the trigger on close');
 assert.match(accountSheet, /data-account-sheet-open/, 'the sheet toggles the scroll lock');
+assert.match(accountSheet, /href="\/upcoming"/, 'Upcoming entry present (LT-1 relocation)');
+assert.match(accountSheet, /<strong>Upcoming<\/strong>[\s\S]*?<strong>My List<\/strong>[\s\S]*?<strong>Settings<\/strong>/, 'sheet order: Upcoming immediately above My List, then Settings');
 assert.match(accountSheet, /href="\/my-list"/, 'My List entry present');
 assert.match(accountSheet, /href="\/settings"/, 'Settings entry present');
 assert.match(accountSheet, /getSyncStatus\(\)/, 'compact cloud sync status present');
-assert.doesNotMatch(accountSheet, /Devices|Sessions|password|delete|Delete/, 'the sheet contains ONLY identity + My List + Settings (no sections/forms)');
-ok('7b. Account sheet: compact dialog with identity/sync + My List + Settings only');
+assert.doesNotMatch(accountSheet, /Devices|Sessions|password|delete|Delete/, 'the sheet contains ONLY identity + Upcoming + My List + Settings (no sections/forms)');
+ok('7b. Account sheet: compact dialog with identity/sync + Upcoming + My List + Settings only');
 
 // ============================================================
 // 8. NO DEAD LINKS — no internal navigation to legacy routes
