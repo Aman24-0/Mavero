@@ -36,7 +36,7 @@ import path from 'node:path';
 import {
         LiveTvPlaybackEngine,
         normalizeShakaError,
-        selectLiveTvDashSource,
+        selectLiveTvPlaybackSource,
         loadShakaModule,
         resetShakaModuleCache,
         defaultShakaModuleLoader,
@@ -122,6 +122,8 @@ class FakeShakaPlayer {
         attachCalls: unknown[] = [];
         loadCalls: Array<{ uri: string; startTime: unknown; mimeType: unknown }> = [];
         configureCalls: Array<Record<string, unknown>> = [];
+        /** Cross-method call order ('attach' | 'configure' | 'load' | 'destroy'). */
+        callLog: string[] = [];
         configureResult = true;
         private errorListeners = new Set<(event: ShakaErrorEventLike) => void>();
         /** null models "no usable range" — the fake then reports NaN (invalid). */
@@ -130,16 +132,19 @@ class FakeShakaPlayer {
 
         async attach(mediaElement: unknown): Promise<unknown> {
                 this.attachCalls.push(mediaElement);
+                this.callLog.push('attach');
                 if (FakeShakaPlayer.attachHook) await FakeShakaPlayer.attachHook();
                 return undefined;
         }
         async load(assetUri: string, startTime?: unknown, mimeType?: unknown): Promise<unknown> {
                 this.loadCalls.push({ uri: assetUri, startTime, mimeType });
+                this.callLog.push('load');
                 if (FakeShakaPlayer.loadHook) await FakeShakaPlayer.loadHook();
                 return undefined;
         }
         configure(config: Record<string, unknown>): boolean {
                 this.configureCalls.push(config);
+                this.callLog.push('configure');
                 return this.configureResult;
         }
         seekRange(): { start: number; end: number } {
@@ -234,6 +239,7 @@ function installBrowserRuntime(options: { eme?: boolean } = {}): () => void {
 const SIGNED_URL_A = 'https://cdn.example.com/live/aaa/index.mpd?__hdnea__=FAKE-ST~EX~SIGN-A';
 const SIGNED_URL_B = 'https://cdn.example.com/live/bbb/index.mpd?__hdnea__=FAKE-ST~EX~SIGN-B';
 const SIGNED_URL_NOEXT = 'https://cdn.example.com/live/ccc/manifest?__hdnea__=FAKE-ST~EX~SIGN-C';
+const SIGNED_URL_M3U8 = 'https://cdn.example.com/live/ddd/HLSPartner/index.m3u8?__hdnea__=FAKE-ST~EX~SIGN-D';
 const FIXTURE_KEY_ID = '11112222333344445555666677778888';
 const FIXTURE_KEY = '9999aaaabbbbccccddddeeeeffff0000';
 
@@ -356,33 +362,38 @@ async function expectPlaybackError(
 }
 
 // ============================================================
-// §3 — source selection
+// §3 — source selection (documented sources[0] contract)
 // ============================================================
 {
-        assert.equal(selectLiveTvDashSource([{ url: SIGNED_URL_A }]), SIGNED_URL_A, 'single valid .mpd source');
-        ok('3a. single valid DASH source');
+        assert.equal(selectLiveTvPlaybackSource([{ url: SIGNED_URL_A }]), SIGNED_URL_A, 'single valid source returned verbatim');
+        assert.equal(selectLiveTvPlaybackSource([{ url: SIGNED_URL_M3U8 }]), SIGNED_URL_M3U8, 'single valid .m3u8 (HLS) source returned verbatim');
+        ok('3a. single valid source (DASH and HLS shapes)');
 
         assert.equal(
-                selectLiveTvDashSource([{ url: SIGNED_URL_NOEXT }, { url: SIGNED_URL_A }]),
-                SIGNED_URL_A,
-                '.mpd source preferred over an earlier extensionless valid URL (deterministic)'
+                selectLiveTvPlaybackSource([{ url: SIGNED_URL_NOEXT }, { url: SIGNED_URL_A }]),
+                SIGNED_URL_NOEXT,
+                'FIRST valid source wins even when a later source is .mpd (documented ch.sources[0] contract)'
         );
         assert.equal(
-                selectLiveTvDashSource([{ url: SIGNED_URL_B }, { url: SIGNED_URL_A }]),
+                selectLiveTvPlaybackSource([{ url: SIGNED_URL_M3U8 }, { url: SIGNED_URL_A }]),
+                SIGNED_URL_M3U8,
+                'FIRST valid source wins even when a later source is .mpd (HLS-first, documented contract)'
+        );
+        assert.equal(
+                selectLiveTvPlaybackSource([{ url: SIGNED_URL_B }, { url: SIGNED_URL_A }]),
                 SIGNED_URL_B,
-                'first .mpd in array order wins among multiple .mpd sources'
+                'first source in array order wins among multiple .mpd sources'
         );
-        ok('3b. deterministic preference: first .mpd in array order');
+        ok('3b. documented sources[0] semantics: first valid source in array order');
 
-        assert.equal(selectLiveTvDashSource([{ url: SIGNED_URL_NOEXT }]), SIGNED_URL_NOEXT, 'no .mpd anywhere → first valid http(s) URL');
         assert.equal(
-                selectLiveTvDashSource([{ url: 'http://plain.example/live/manifest' }]),
+                selectLiveTvPlaybackSource([{ url: 'http://plain.example/live/manifest' }]),
                 'http://plain.example/live/manifest',
                 'plain http accepted'
         );
-        ok('3c. extensionless fallback = first valid absolute http(s) URL');
+        ok('3c. extensionless/http(s) sources accepted (no extension preference)');
 
-        await expectPlaybackError('invalid_source', async () => selectLiveTvDashSource([]));
+        await expectPlaybackError('invalid_source', async () => selectLiveTvPlaybackSource([]));
         ok('3d. empty sources → invalid_source');
 
         const malformed: unknown[] = [
@@ -398,25 +409,25 @@ async function expectPlaybackError(
         ];
         for (const sources of [malformed, [], [{ url: 'javascript:alert(1)' }]]) {
                 await expectPlaybackError('invalid_source', async () =>
-                        selectLiveTvDashSource(sources as { url: string }[])
+                        selectLiveTvPlaybackSource(sources as { url: string }[])
                 );
         }
         assert.equal(
-                selectLiveTvDashSource([{ url: 'javascript:alert(1)' }, { url: SIGNED_URL_A }, 42]),
+                selectLiveTvPlaybackSource([{ url: 'javascript:alert(1)' }, { url: SIGNED_URL_A }, 42]),
                 SIGNED_URL_A,
                 'malformed entries skipped, valid one used'
         );
         ok('3e. malformed entries skipped; all-invalid → invalid_source');
 
-        await expectPlaybackError('invalid_source', async () => selectLiveTvDashSource(undefined));
-        await expectPlaybackError('invalid_source', async () => selectLiveTvDashSource('nope' as unknown as { url: string }[]));
+        await expectPlaybackError('invalid_source', async () => selectLiveTvPlaybackSource(undefined));
+        await expectPlaybackError('invalid_source', async () => selectLiveTvPlaybackSource('nope' as unknown as { url: string }[]));
         ok('3f. non-array sources → invalid_source');
 
-        const pool = [{ url: SIGNED_URL_A }, { url: SIGNED_URL_B }, { url: SIGNED_URL_NOEXT }];
+        const pool = [{ url: SIGNED_URL_A }, { url: SIGNED_URL_B }, { url: SIGNED_URL_NOEXT }, { url: SIGNED_URL_M3U8 }];
         for (let i = 0; i < 5; i++) {
-                const selected = selectLiveTvDashSource(pool);
+                const selected = selectLiveTvPlaybackSource(pool);
                 assert.ok(
-                        selected === SIGNED_URL_A || selected === SIGNED_URL_B || selected === SIGNED_URL_NOEXT,
+                        selected === SIGNED_URL_A || selected === SIGNED_URL_B || selected === SIGNED_URL_NOEXT || selected === SIGNED_URL_M3U8,
                         'selection is always one of the INPUT sources'
                 );
         }
@@ -595,8 +606,13 @@ async function expectPlaybackError(
                 assert.equal(player.attachCalls[0], video, 'attached to the CALLER-OWNED element');
                 assert.deepEqual(
                         player.loadCalls[0],
-                        { uri: SIGNED_URL_A, startTime: null, mimeType: 'application/dash+xml' },
-                        'loads the selected source with the explicit DASH MIME type'
+                        { uri: SIGNED_URL_A, startTime: undefined, mimeType: undefined },
+                        'loads the first source BARE (documented load(ch.sources[0]) — no startTime, no MIME)'
+                );
+                assert.deepEqual(
+                        player.callLog,
+                        ['attach', 'load'],
+                        'non-DRM documented order: attach → load (no configure call)'
                 );
                 assert.equal(player.configureCalls.length, 0, 'no DRM → no configure call');
                 assert.equal(player.destroyed, false);
@@ -638,7 +654,17 @@ async function expectPlaybackError(
                         'configure payload contains no manifest URL'
                 );
                 assert.ok(player.loadCalls.length === 1, 'load happens after DRM configuration');
-                ok('5b. valid ClearKey → exact Shaka ClearKey configuration, DRM configured BEFORE load');
+                assert.deepEqual(
+                        player.callLog,
+                        ['attach', 'configure', 'load'],
+                        'documented Shaka call order: attach → configure → load'
+                );
+                assert.deepEqual(
+                        player.loadCalls[0],
+                        { uri: SIGNED_URL_A, startTime: undefined, mimeType: undefined },
+                        'DRM session also loads BARE (no MIME)'
+                );
+                ok('5b. valid ClearKey → exact Shaka ClearKey configuration, documented attach→configure→load order');
                 engine.destroy();
         } finally {
                 restore();
@@ -1295,6 +1321,148 @@ async function expectPlaybackError(
         } finally {
                 restore();
         }
+}
+
+// ============================================================
+// §13 — documented LiveGT own-player contract regression (2026-10-08 audit)
+//
+// Locks the EXACT documented integration sequence against regressions:
+//   new shaka.Player() → await attach(video) → if (drm) configure(clearKeys)
+//   → await load(sources[0])   [bare load — NO explicit MIME type]
+//
+// The audit proved (worklog "DOCUMENTED SHAKA INTEGRATION AUDIT"):
+//   * forcing 'application/dash+xml' broke every HLS-source channel
+//     (~13% of the V1 catalogue — .m3u8 sources) with a guaranteed
+//     manifest-parse failure, while the documented bare load() lets
+//     Shaka sniff .mpd/.m3u8 itself and play both;
+//   * init order and source selection were behaviorally neutral for
+//     .mpd channels — the fixtures below pin them to the documented
+//     contract anyway (defense in depth).
+// Fixtures are SYNTHETIC stand-ins: real host/path STRUCTURE observed in
+// the audited resolver responses, FAKE token values, never fetched.
+// ============================================================
+{
+        const restore = installBrowserRuntime({ eme: true });
+        try {
+                // Structural fixture: Star Gold HD (156) — jiotvmblive, _MOB,
+                // .mpd, ClearKey present (observed shape; token is fake).
+                const STAR_GOLD_URL = 'https://jiotvmblive.cdn.jio.com/bpk-tv/Star_Gold_HD_MOB/WDVLive/index.mpd?__hdnea__=FAKE-TOKEN-156';
+                const { module, instances } = makeShakaModule();
+                const engine = new LiveTvPlaybackEngine({ shakaLoader: async () => module });
+                const video = new FakeVideoElement();
+                await engine.load(video as unknown as HTMLVideoElement, {
+                        channel: { id: '156', name: 'Star Gold HD', category: 'Movies' },
+                        sources: [{ url: STAR_GOLD_URL }],
+                        drm: { type: 'clearkey', keyId: FIXTURE_KEY_ID, key: FIXTURE_KEY }
+                });
+                const player = instances[0] as FakeShakaPlayer;
+                assert.equal(player.loadCalls[0]?.uri, STAR_GOLD_URL, '156: sources[0] passed to Shaka VERBATIM (no URL alteration)');
+                assert.equal(player.loadCalls[0]?.mimeType, undefined, '156: bare load — NO explicit MIME');
+                assert.deepEqual(player.callLog, ['attach', 'configure', 'load'], '156: documented order attach → configure → load');
+                engine.destroy();
+                ok('13a. Star Gold HD 156 path: verbatim sources[0], bare load, documented order');
+        } finally {
+                restore();
+        }
+}
+
+{
+        const restore = installBrowserRuntime();
+        try {
+                // Structural fixture: Zee Cinema HD (165) — jiotvpllive, _BTS,
+                // .mpd, drm ABSENT (observed shape; token is fake).
+                const ZEE_CINEMA_URL = 'https://jiotvpllive.cdn.jio.com/bpk-tv/ZeeCinemaHD_BTS/WDVLive/index.mpd?__hdnea__=FAKE-TOKEN-165';
+                const { module, instances } = makeShakaModule();
+                const engine = new LiveTvPlaybackEngine({ shakaLoader: async () => module });
+                const video = new FakeVideoElement();
+                await engine.load(video as unknown as HTMLVideoElement, {
+                        channel: { id: '165', name: 'Zee Cinema HD', category: 'Movies' },
+                        sources: [{ url: ZEE_CINEMA_URL }],
+                        drm: null
+                });
+                const player = instances[0] as FakeShakaPlayer;
+                assert.equal(player.loadCalls[0]?.uri, ZEE_CINEMA_URL, '165: sources[0] passed to Shaka VERBATIM');
+                assert.equal(player.loadCalls[0]?.mimeType, undefined, '165: bare load — NO explicit MIME');
+                assert.equal(player.loadCalls[0]?.startTime, undefined, '165: no startTime');
+                assert.deepEqual(player.callLog, ['attach', 'load'], '165: no DRM → attach → load, configure NEVER called');
+                engine.destroy();
+                ok('13b. Zee Cinema HD 165 path: verbatim sources[0], bare load, no configure call');
+        } finally {
+                restore();
+        }
+}
+
+{
+        const restore = installBrowserRuntime({ eme: true });
+        try {
+                // Control fixture: CNBC TV18 Prime (143) — the docs' own example
+                // channel; same jiotvmblive/_MOB/.mpd/ClearKey shape as 156.
+                const CNBC_URL = 'https://jiotvmblive.cdn.jio.com/bpk-tv/CNBCTV18Prime_MOB/WDVLive/index.mpd?__hdnea__=FAKE-TOKEN-143';
+                const { module, instances } = makeShakaModule();
+                const engine = new LiveTvPlaybackEngine({ shakaLoader: async () => module });
+                const video = new FakeVideoElement();
+                await engine.load(video as unknown as HTMLVideoElement, {
+                        channel: { id: '143', name: 'CNBC TV18 Prime', category: 'English' },
+                        sources: [{ url: CNBC_URL }],
+                        drm: { type: 'clearkey', keyId: FIXTURE_KEY_ID, key: FIXTURE_KEY }
+                });
+                const player = instances[0] as FakeShakaPlayer;
+                assert.equal(player.loadCalls[0]?.uri, CNBC_URL, '143: sources[0] verbatim');
+                assert.equal(player.loadCalls[0]?.mimeType, undefined, '143: bare load');
+                assert.deepEqual(player.callLog, ['attach', 'configure', 'load'], '143: documented order');
+                engine.destroy();
+                ok('13c. CNBC TV18 Prime 143 control path: documented contract');
+        } finally {
+                restore();
+        }
+}
+
+{
+        const restore = installBrowserRuntime();
+        try {
+                // THE DEFECT LOCK — HLS-source channels (~13% of the V1
+                // catalogue, e.g. 9X Tashan 732 / News18 Urdu 1500 shapes):
+                // sources[0] ends in .m3u8. The documented bare load lets
+                // Shaka sniff the extension and pick its HLS parser; an
+                // explicit 'application/dash+xml' (the removed defect) forced
+                // the DASH parser onto HLS content → guaranteed
+                // manifest_load_failed. This test fails if a MIME argument
+                // ever comes back.
+                const HLS_URL = 'https://jiotvmblive.cdn.jio.com/bpk-tv/9xTashan/HLSPartner/index.m3u8?__hdnea__=FAKE-TOKEN-HLS';
+                const { module, instances } = makeShakaModule();
+                const engine = new LiveTvPlaybackEngine({ shakaLoader: async () => module });
+                const video = new FakeVideoElement();
+                await engine.load(video as unknown as HTMLVideoElement, {
+                        channel: { id: '732', name: '9X Tashan' },
+                        sources: [{ url: HLS_URL }],
+                        drm: null
+                });
+                const player = instances[0] as FakeShakaPlayer;
+                assert.equal(player.loadCalls[0]?.uri, HLS_URL, 'HLS channel: sources[0] verbatim');
+                assert.equal(player.loadCalls[0]?.mimeType, undefined, 'HLS channel: load MUST be bare — an explicit dash MIME is the removed defect');
+                assert.notEqual(player.loadCalls[0]?.mimeType, 'application/dash+xml', 'HLS channel: forced dash MIME would guarantee manifest_load_failed');
+                engine.destroy();
+                ok('13d. HLS-source channels load bare (extension sniffing) — defect lock');
+        } finally {
+                restore();
+        }
+}
+
+{
+        // No-URL-alteration lock across every fixture shape: the exact
+        // resolver string (path + query) is what Shaka receives — the engine
+        // never rewrites, re-encodes, or strips signed query parameters.
+        const cases = [
+                SIGNED_URL_A,
+                SIGNED_URL_B,
+                SIGNED_URL_NOEXT,
+                SIGNED_URL_M3U8,
+                'https://jiotvmblive.cdn.jio.com/bpk-tv/Star_Gold_HD_MOB/WDVLive/index.mpd?__hdnea__=FAKE-156'
+        ];
+        for (const url of cases) {
+                assert.equal(selectLiveTvPlaybackSource([{ url }]), url, `selection returns the input string byte-for-byte: ${new URL(url).pathname}`);
+        }
+        ok('13e. no URL alteration — signed query strings survive selection byte-for-byte');
 }
 
 console.log(`\nlive_tv_player_test: ${passed} checks passed (LT-3 DASH/ClearKey playback engine contract).`);

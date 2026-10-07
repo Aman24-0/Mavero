@@ -1,5 +1,23 @@
 // LT-3 — Live TV DASH/ClearKey playback engine (Shaka-backed, Live TV only).
 //
+// DOCUMENTED INTEGRATION CONTRACT (LiveGT V1 "Play it in your own player",
+// audited 2026-10-08 against shaka-player 5.2.12 — see live-tv-worklog.md
+// "DOCUMENTED SHAKA INTEGRATION AUDIT"):
+//
+//   const player = new shaka.Player();
+//   await player.attach(video);
+//   if (ch.drm) player.configure({ drm: { clearKeys: { [ch.drm.keyId]: ch.drm.key } } });
+//   await player.load(ch.sources[0]);
+//
+// The engine reproduces this sequence EXACTLY (attach → configure → load,
+// no explicit MIME type). The MIME argument was deliberately REMOVED: it
+// forced the DASH parser on the ~13% of V1 channels whose single source is
+// an HLS .m3u8 URL (manifest parse failure), while the documented bare
+// load() lets Shaka sniff the URL extension and pick the correct parser
+// (.mpd → DASH, .m3u8 → HLS). Init order and MIME were otherwise proven
+// behaviorally neutral for .mpd channels (source-level + runtime proof in
+// the worklog).
+//
 // A SMALL, ISOLATED playback engine for LiveGT V1 live channels, modeled
 // on the existing HLS engine conventions (`src/lib/client/player/hls-engine.ts`).
 // It is NOT a retrofit into the VOD player: PlaybackManager, PlayerShell,
@@ -286,7 +304,7 @@ export function liveTvClearKeyEmeAvailable(): boolean {
 // Source selection — deterministic, no fallbacks.
 // ---------------------------------------------------------------------------
 
-/** True for an absolute http(s) URL usable as a DASH manifest source. */
+/** True for an absolute http(s) URL usable as a playback manifest source. */
 function isUsableHttpUrl(value: unknown): value is string {
         if (typeof value !== 'string' || value.length === 0) return false;
         try {
@@ -297,42 +315,26 @@ function isUsableHttpUrl(value: unknown): value is string {
         }
 }
 
-/** True when the URL PATHNAME carries an explicit MPEG-DASH signal. */
-function isDashManifestUrl(url: string): boolean {
-        try {
-                const parsed = new URL(url);
-                // Signed query strings are ignored — only the asset path counts.
-                return parsed.pathname.toLowerCase().endsWith('.mpd');
-        } catch {
-                return false;
-        }
-}
-
 /**
  * Select THE playback source from a LiveGT resolution, deterministically.
  *
- * Rule (documented contract):
- *   1. Prefer the FIRST valid absolute http(s) URL whose pathname carries
- *      an explicit `.mpd` DASH signal (array order wins — never random).
- *   2. If none does, use the FIRST valid absolute http(s) URL at all
- *      (LiveGT V1 documents every source as a DASH MPD; a signed URL whose
- *      path lost the extension still loads — Shaka receives the explicit
- *      `application/dash+xml` MIME type from the engine).
- *   3. No valid URL → `LiveTvPlaybackError('invalid_source')`.
+ * Rule (documented contract — LiveGT's own-player example loads
+ * `ch.sources[0]`): return the FIRST valid absolute http(s) URL in source
+ * order, exactly `sources[0]` for every observed V1 response (LT-8 census:
+ * 118/118 sampled channels return exactly one source). No extension
+ * preference — Shaka's own extension sniffing picks the right manifest
+ * parser for both .mpd and .m3u8 sources when no MIME is forced.
+ * No valid URL → `LiveTvPlaybackError('invalid_source')`.
  *
  * Never fabricates URLs; never reads `embed`/`watch` fields (not part of
  * `LiveTvPlaybackSource` — the type itself forbids the fallback).
  */
-export function selectLiveTvDashSource(sources: readonly LiveTvPlaybackSource[] | undefined): string {
+export function selectLiveTvPlaybackSource(sources: readonly LiveTvPlaybackSource[] | undefined): string {
         if (!Array.isArray(sources)) throw new LiveTvPlaybackError('invalid_source');
-        let firstUsable: string | null = null;
         for (const source of sources) {
                 const url = source?.url;
-                if (!isUsableHttpUrl(url)) continue;
-                if (firstUsable === null) firstUsable = url;
-                if (isDashManifestUrl(url)) return url;
+                if (isUsableHttpUrl(url)) return url;
         }
-        if (firstUsable !== null) return firstUsable;
         throw new LiveTvPlaybackError('invalid_source');
 }
 
@@ -397,9 +399,6 @@ export type LiveTvPlaybackEngineOptions = {
 
 /** Normalized live-seek window (seconds, presentation timeline). */
 export type LiveTvSeekRange = { start: number; end: number };
-
-/** Explicit MIME type for MPEG-DASH manifests (skips Shaka type guessing). */
-const DASH_MANIFEST_MIME = 'application/dash+xml';
 
 // ---------------------------------------------------------------------------
 // The engine.
@@ -627,9 +626,10 @@ export class LiveTvPlaybackEngine {
          * element (LT-2 `resolveLiveTvPlayback()` output — the engine never
          * calls LiveGT itself).
          *
-         * Sequence (LT-3 brief): the previous session is destroyed FIRST,
-         * then DRM is validated/configured, then a NEW Shaka player takes
-         * ownership of the element and loads the MPD — never two instances.
+         * Sequence (documented LiveGT own-player contract): the previous
+         * session is destroyed FIRST, then a NEW Shaka player takes
+         * ownership of the element, ClearKey is configured when present, and
+         * the first source is loaded bare — never two instances.
          *
          * Rejections carry `LiveTvPlaybackError`. Every failure EXCEPT
          * 'aborted' also sets state 'error' and emits ONE 'error' event;
@@ -665,7 +665,7 @@ export class LiveTvPlaybackEngine {
                 }
                 let sourceUrl: string;
                 try {
-                        sourceUrl = selectLiveTvDashSource(resolution.sources);
+                        sourceUrl = selectLiveTvPlaybackSource(resolution.sources);
                 } catch (err) {
                         return this.failSession(err instanceof LiveTvPlaybackError ? err : new LiveTvPlaybackError('invalid_source'), generation);
                 }
@@ -729,24 +729,10 @@ export class LiveTvPlaybackEngine {
                         this.playerErrorHandler = onPlayerError;
                         player.addEventListener('error', onPlayerError);
 
-                        // 7. Configure ClearKey BEFORE loading (plan §10).
-                        if (drm !== null) {
-                                const clearKeys: Record<string, string> = {
-                                        [(drm as { keyId: string }).keyId]: (drm as { key: string }).key
-                                };
-                                let configured = false;
-                                try {
-                                        configured = player.configure({ drm: { clearKeys } });
-                                } catch {
-                                        configured = false;
-                                }
-                                if (!configured) {
-                                        return this.failSession(new LiveTvPlaybackError('drm_config_failed'), generation);
-                                }
-                        }
-
-                        // 8. Attach to the caller's element and load the MPD
-                        //    (the explicit DASH MIME skips type guessing).
+                        // 7. Attach to the caller's element FIRST, then configure
+                        //    ClearKey, then load — the EXACT documented LiveGT
+                        //    sequence (attach → configure → load). No explicit
+                        //    MIME: Shaka sniffs .mpd/.m3u8 sources itself.
                         try {
                                 await player.attach(video);
                         } catch (err) {
@@ -766,8 +752,25 @@ export class LiveTvPlaybackEngine {
                         }
                         if (this.destroyed || generation !== this.generation) throw new LiveTvPlaybackError('aborted');
 
+                        if (drm !== null) {
+                                const clearKeys: Record<string, string> = {
+                                        [(drm as { keyId: string }).keyId]: (drm as { key: string }).key
+                                };
+                                let configured = false;
+                                try {
+                                        configured = player.configure({ drm: { clearKeys } });
+                                } catch {
+                                        configured = false;
+                                }
+                                if (!configured) {
+                                        return this.failSession(new LiveTvPlaybackError('drm_config_failed'), generation);
+                                }
+                        }
+
+                        // 8. Load the selected source exactly as documented
+                        //    (bare load — no startTime, no MIME).
                         try {
-                                await player.load(sourceUrl, /* startTime= */ null, DASH_MANIFEST_MIME);
+                                await player.load(sourceUrl);
                         } catch (err) {
                                 if (this.destroyed || generation !== this.generation) throw new LiveTvPlaybackError('aborted');
                                 const normalized = normalizeShakaError(err, 'load');

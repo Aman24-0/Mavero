@@ -2510,3 +2510,360 @@ See "LT-6 --- Known limitations (final, exact)" above (7 items).
 2.  Optional (owner decision): chain `navigation_primary_test.ts`.
 3.  Post-release, if LiveGT V2 is ever approved, it is a NEW plan —
     nothing in V1 assumes it.
+
+------------------------------------------------------------------------
+
+## POST-RELEASE AUDIT --- Star Gold HD + Zee Cinema HD playback (2026-10-08)
+
+### Status
+
+`COMPLETE --- NO MAVERO DEFECT FOUND --- NO CODE CHANGES (by instruction)`
+
+Production manual QA (India Android Chrome, deployed build) reported two
+channels failing to start video while catalogue/search/metadata/EPG/UI all
+work. This is the targeted root-cause audit. Per instruction: no code
+modified, no commit created, error handling NOT weakened, no embeds/V2/
+Widevine/proxy added, ClearKey-only architecture preserved.
+
+### Preflight
+
+-   mavero HEAD `f746dce` (LT-6 worklog record on top of LT-6 `180c187`);
+    worktree content-clean (file-mode-only changes, 0 insertions/deletions
+    on every Live TV file).
+-   Plan + full worklog re-read; all LT-2/LT-3/LT-4/LT-5 sources re-read
+    (api/types/errors/player/player-errors/page/LiveTvPlayer); all five
+    Live TV suites re-run GREEN at HEAD: 61/61, 65/65, 22/22, 13/13, 6/6.
+-   Shaka 5.2.12 verified installed; Player API signatures re-verified
+    against `dist/shaka-player.compiled.d.ts` (configure→boolean,
+    attach(el), load(uri,startTime,mimeType), clearKeys map shape).
+
+### Observed production symptoms → internal error kinds (exact)
+
+| UI message (user report) | LT-3 kind | Engine stage it can ONLY come from |
+| --- | --- | --- |
+| "The Live TV connection was interrupted." (Star Gold HD) | `network_failed` | mid-session CRITICAL NETWORK-category error EVENT after `load()` RESOLVED (page precedence proof: a load() rejection always sets sessionErrorMessage from the load-phase table — network_failed is unreachable from that path) |
+| "This channel stream could not be loaded." (Zee Cinema HD) | `manifest_load_failed` | `player.load()` rejected with NETWORK/MANIFEST category (MPD fetch or parse failed) |
+
+Therefore: Star Gold HD's manifest WAS fetched+parsed+ClearKey-configured
+and the session reached 'loaded'; failure occurred during segment
+streaming. Zee Cinema HD failed before/at manifest load.
+
+### Channel identification + resolver structure (no secrets recorded)
+
+``` text
+Star Gold HD  = channel id 156 (category Movies)
+Zee Cinema HD = channel id 165 (category Movies)
+
+156: sources=1, https, host jiotvmblive.cdn.jio.com, path pattern
+     /bpk-tv/<Name>_MOB/WDVLive/index.mpd, .mpd, signed via __hdnea__
+     query (~116 chars); drm PRESENT: type=clearkey, keyId/key are
+     32-char hex strings (values never recorded). VALID contract shape.
+165: sources=1, https, host jiotvpllive.cdn.jio.com, path pattern
+     /bpk-tv/<Name>_BTS/WDVLive/index.mpd, .mpd, signed via __hdnea__
+     (~116 chars); drm ABSENT (null).
+Both: HTTP 200, cache-control max-age=60, CORS access-control-allow-origin *
+Baseline 143 (docs reference channel): identical shape to 156 (clearkey).
+```
+
+### Live probe results (from this non-India egress; structure only)
+
+-   Catalogue: 200, count 1176 — UNCHANGED since LT-2/LT-5.
+-   Docs (livetgtv.lovable.app/docs): contract text UNCHANGED — same
+    endpoints/shapes; official recipe is still
+    attach→configure({drm:{clearKeys:{[keyId]:key}}})→load(sources[0]),
+    which is exactly what LT-3 implements.
+-   MPD fetch for 156/165/143: HTTP 451 (India geo-block) from this
+    egress, zero redirects, hosts ALIVE and responding, and both Jio
+    hosts return access-control-allow-origin: * even on 451 responses
+    → CORS is NOT the failure; hosts are not down.
+-   MPD CONTENT (ContentProtection/codecs/segments) NOT inspectable from
+    this egress — recorded as an environment limitation, not guessed.
+-   Guide /guide/156 and /guide/165: 200 with full valid shape (matches
+    the user's report that EPG loads fine).
+-   70-channel resolver census: jiotvmblive+_MOB is clearkey-dominant
+    (45/56); jiotvpllive+_BTS is drm-absent-dominant (9/10); Akamai
+    times-ott host still returns drm=none (known Widevine-MPD upstream
+    inconsistency, unchanged from LT-5). Both audit channels sit in the
+    MOST COMMON bucket for their host — not exotic shapes.
+
+### Hypothesis elimination (D1-D14)
+
+Ruled OUT with evidence: resolver-drm=none-vs-MPD-DRM and ClearKey-vs-
+incompatible-DRM (would surface drm_playback_failed, verified live in
+LT-5 on the Akamai channels — neither channel showed the "protection"
+message); unusable source selection (single valid .mpd each); CORS
+(ACAO:* verified on both hosts); ClearKey config mismatch (engine code
+== documented LiveGT recipe; configure():boolean verified against
+installed Shaka typings; test fake matches); Shaka 5.2.12 API
+incompatibility (all consumed signatures statically verified; LT-5 live
+browser session exercised the real load path); EME/ClearKey browser
+support (Chrome Android supports ClearKey; 165 has NO DRM at all);
+Android codec/DRM limitation (codec failures are MEDIA/STREAMING
+category → different safe message); abort/generation logic (aborts are
+silent — an error WAS displayed); autoplay misclassification (distinct
+kind + message); load/attach lifecycle (matches documented flow; 156's
+session PASSED load — the lifecycle worked).
+
+Remaining causes: upstream token/CDN delivery — manifest delivery for
+165, segment delivery for 156 (post-manifest network failure).
+
+### Classification (decision rule)
+
+**3. LIVEGT UPSTREAM/CDN FAILURE** for BOTH channels (Mavero is not
+defective; no contract change; no Android DRM limitation):
+
+-   Star Gold HD (156): manifest loads from India; segment-level
+    NETWORK failure during streaming (token scope or CDN segment
+    availability on jiotvmblive).
+-   Zee Cinema HD (165): manifest fetch/parse fails from India on a
+    live, CORS-open jiotvpllive host (rejected token or CDN path issue).
+
+### Required manual verification (India browser — authoritative)
+
+1.  Open https://livetgtv.lovable.app/embed/156 and /embed/165 directly
+    (LiveGT's OWN player, same resolver/tokens). If those also fail →
+    upstream definitively confirmed, independent of Mavero.
+2.  In Mavero from India, select CNBC TV18 Prime (143 — docs reference
+    clearkey channel, same host/bucket as 156). If 143 plays but 156
+    does not → channel-specific; if 143 also fails → bucket-wide.
+    Optional cross-check: Star Gold 2 HD (3096 — jiotvpllive+clearkey)
+    isolates host-vs-DRM dimensions.
+3.  If any DevTools/network inspection is possible on an exempt device:
+    record ONLY the HTTP status of the index.mpd request (403/404/5xx)
+    — never the URL or token values.
+4.  Re-run the safe probes from an India egress:
+    /home/z/my-project/scripts/lt7_stage2_resolve.mjs and
+    lt7_stage3_mpd.mjs (structure-only output; never print URLs/keys).
+
+### Outcome
+
+-   Mavero code defective: NO. Engine matches the documented LiveGT V1
+    recipe exactly; error taxonomy differentiated the two failures
+    precisely as designed; all five suites green at HEAD.
+-   Code changes necessary: NO. No commit created (per instruction).
+-   The safe error messages + retry the user saw are the DESIGNED
+    behavior for upstream delivery failures — do not hide them.
+
+
+------------------------------------------------------------------------
+
+## DOCUMENTED SHAKA INTEGRATION AUDIT + FIX — 156 / 165 / HLS channels (2026-10-08, LT-8)
+
+### Status
+
+`COMPLETE — ONE PROVEN MAVERO DEFECT FIXED (explicit MIME) — 156/165 re-classified as UPSTREAM with mechanism evidence — V1-only, no V2/embed/proxy/Widevine, VOD untouched`
+
+Fresh code-level audit of the LiveGT V1 documented own-player contract
+("Play it in your own player": fetch → attach → if(drm) configure →
+load(sources[0])) against the deployed LT-3 engine, followed by the
+smallest proven fix. New production evidence: LiveGT's OWN embed plays
+143/156/165 from the same India Android device where Mavero fails — so
+the prior "generic CDN failure" classification had to be re-proven at
+the request level.
+
+### Preflight
+
+-   mavero HEAD `f746dce` (LT-6 + worklog record); worktree had 225
+    mode-only changes, 13 deleted upload-feature files (partial-checkout
+    corruption, restored byte-identical from HEAD for validation only —
+    no content change) and the LT-7 worklog section uncommitted (+134,
+    carried forward by this commit).
+-   All five Live TV suites green at HEAD before changes: 61/61, 65/65,
+    22/22, 13/13, 6/6.
+
+### Contract comparison — documented example vs LT-3 engine (verdicts)
+
+| # | Documented | Mavero (before) | Verdict |
+| --- | --- | --- | --- |
+| 1 | `await attach(video)` BEFORE `configure` | `configure({drm:{clearKeys}})` BEFORE `attach` | **Behaviorally NEUTRAL** — Shaka 5.2.12 source: `configure()` pre-load only merges `this.config_` (applyConfig_ touches only live components; DRM engine does not exist yet); the DRM engine is created during `load()` and reads the merged config; `attach()` does no DRM work. Runtime proof: real-Shaka cases 9 vs 10 identical (both played, identical request sequence incl. ClearKey data-URI license). Aligned to documented order anyway (contract fidelity). |
+| 2 | `player.load(ch.sources[0])` | `selectLiveTvDashSource()` (first valid `.mpd`, else first valid) | **Behaviorally IDENTICAL for ALL real V1 data** — LT-8 census: 118/118 sampled channels return exactly ONE source; 143/156/165 probes ×3 rounds: single source each. No URL transformation anywhere (LT-2 passes verbatim; selection returns the input string). The `.mpd` preference was dead code for real data but deviated from documented semantics in hypothetical multi-source responses — aligned to first-valid (= `sources[0]`). |
+| 3 | `player.load(ch.sources[0])` — NO mimeType | `player.load(url, null, "application/dash+xml")` | **PROVEN REAL DEFECT for HLS-source channels; no-op for .mpd channels.** See below. |
+
+### The proven defect — explicit MIME on HLS-source channels
+
+LT-8 census (every 10th channel, 118 resolved): **15/118 (~12.7%) of V1
+channels return a single `sources[0]` that is an HLS `.m3u8` URL**
+(`/bpk-tv/<name>/HLSPartner/index.m3u8`, `/bpk-tv/<name>_NW18_MOB/output01/index.m3u8`;
+e.g. 9X Tashan 732, News18 Urdu 1500, AB Star News 1553, Adhyatma TV
+1901, The Unmute 3253 …).
+
+Shaka 5.2.12 source + runtime proof:
+
+-   `ManifestParser.getFactory(uri, mimeType)` uses a SUPPLIED MIME
+    exclusively — no sniffing, no fallback. Without a MIME,
+    `Player.guessMimeType_` → `NetworkingUtils.getMimeTypeFromUri` maps
+    the extension FIRST (`.mpd` → `application/dash+xml`, `.m3u8` →
+    `application/x-mpegurl`) with NO extra network request.
+-   Therefore forcing `application/dash+xml` made Shaka parse HLS
+    playlists as DASH → guaranteed `DASH_INVALID_XML` (4001, MANIFEST
+    category, CRITICAL) → LT-3 `manifest_load_failed` → "This channel
+    stream could not be loaded." The documented bare `load()` picks
+    Shaka's native HLS parser and PLAYS these channels.
+-   Runtime experiment (real Shaka 5.2.12, real headless Chromium,
+    local fixtures): documented flow on an `.m3u8` source → loaded +
+    playing in 0.45 s; forced dash MIME → error 4001/category 4 → the
+    exact production symptom.
+
+### Star Gold HD 156 — mechanism proven, classification UPSTREAM
+
+Production signature: manifest loads, then repeated Jio CDN video/
+segment requests return HTTP 403. Shaka 5.2.12 source:
+
+-   `shaka.util.URL.resolveUris` resolves segment templates via WHATWG
+    `new URL(relative, base)` — **the manifest URL's query string
+    (`__hdnea__`) is DROPPED for every relative segment reference**
+    (verified empirically in Node and in-Chrome).
+-   `DashParser.defaultUrlParams_` returns `""` — query params are
+    re-attached to segments ONLY when the MPD itself declares the
+    DASH-IF mechanism: `urn:mpeg:dash:urlparam:2014|2016` with
+    `<UrlQueryInfo useMPDUrlQuery="true" queryTemplate="$querypart$">`
+    (or `<RequestParam includeInRequests="segment">`).
+
+Runtime experiment (local token-enforcing CDN mock, Jio-structure MPD —
+relative SegmentTemplate, token on the manifest query):
+
+-   DOCUMENTED flow (case 1) and OLD Mavero flow (case 2): IDENTICAL —
+    manifest 200 WITH `__hdnea__`, every init/media segment requested
+    WITHOUT the query → 403 → Shaka retries → mid-session CRITICAL
+    NETWORK 1001 events → load() had resolved, playback never starts.
+    **This reproduces the exact 156 production signature with the
+    documented flow itself.**
+-   Same content + `UrlQueryInfo useMPDUrlQuery` descriptor (cases
+    3/4): every segment request carries `__hdnea__` → 200 → PLAYBACK
+    SUCCEEDS in both flows.
+
+Conclusion: for 156 the DOCUMENTED integration cannot satisfy the Jio
+CDN's segment authorization (the Jio MPD evidently lacks the DASH-IF
+urlparam declaration, and/or the token is path-scoped to the manifest
+file only). Mavero sent byte-identical requests to the documented flow
+(request-sequence comparison in the experiment). The provider's own
+embed plays because it is provider infrastructure — LiveGT's docs
+state V2 playables are server relays (`/api/public/v2/proxy?u=…`);
+the embed's internals are out of scope per instruction.
+**Classification #9: LiveGT upstream defect despite correct Mavero
+requests.** (MPD content could not be fetched from this egress —
+HTTP 451 India geo-block on both Jio hosts; recorded as an
+environment limitation, not guessed.)
+
+### Zee Cinema HD 165 — classification UPSTREAM (one observation pending)
+
+Probe ×3: single source `jiotvpllive.cdn.jio.com /bpk-tv/ZeeCinemaHD_BTS/
+WDVLive/index.mpd?__hdnea__…`, drm NULL (so the configure-order
+difference does not even exist for this channel — configure is never
+called). Mavero's manifest request is byte-identical to the documented
+flow's (URL verbatim, no headers, no filters; `.mpd` extension makes
+the MIME argument irrelevant). The load-phase failure in India is
+therefore upstream: either the public signed URL is rejected by
+jiotvpllive from India, or the `.mpd` path serves a non-MPD body (both
+flows would fail identically — runtime case 6 shows a non-MPD body
+yields exactly 4001/manifest_load_failed). **Classification #9
+(upstream), pending one India-side observation: the HTTP status +
+content-type of the index.mpd request.**
+
+### Hypothesis elimination (user list 1-11)
+
+Disproven with evidence: #1 init order (source + runtime proof),
+#2 source selection (census + code), #4/#5 missing request behavior
+(docs re-read: provider documents NO request modification; Mavero has
+none; networking identical), #6 freshness (resolution is fresh per
+call; failures were immediate, and the docs' "minutes" TTL is not in
+play), #7 DRM config (configure payload byte-identical to documented;
+165 has no DRM at all), #8 error lifecycle (taxonomy verified: the two
+production messages correctly identified the two failure stages —
+runtime cases reproduced BOTH signatures exactly; retry re-resolves
+fresh; no signed URL cached anywhere). Proven: #3 (explicit MIME —
+FIXED). Upheld with new mechanism evidence: #9 for 156 and 165.
+
+### The fix (smallest, documented-contract-exact)
+
+`src/lib/client/live-tv/player.ts`:
+
+1.  Load sequence now the EXACT documented order:
+    `new Player()` → `await attach(video)` →
+    `if (drm) configure({drm:{clearKeys:{[keyId]:key}}})` →
+    `await load(sourceUrl)`.
+2.  **MIME argument REMOVED** — bare `load()`, Shaka sniffs
+    `.mpd`/`.m3u8` itself (fixes every HLS-source channel; no-op for
+    `.mpd` channels).
+3.  `selectLiveTvDashSource` → `selectLiveTvPlaybackSource`: first
+    valid source in array order (= documented `sources[0]` over LT-2's
+    validated entries); `.mpd` preference removed (was dead code for
+    real data; could deviate from the documented contract in
+    multi-source responses). `DASH_MANIFEST_MIME` +
+    `isDashManifestUrl` removed.
+
+NOT changed: browser-only lazy Shaka import, capability gates,
+generation/race protection, fresh-resolution flow, error taxonomy and
+safe messages, no filters/proxy/headers, VOD/HLS engine, Supabase
+(the analytics migration remains taxonomy-only — **Supabase is not
+part of the playback failure path; no DB change is required**).
+
+### Regression tests added (scripts/live_tv_player_test.ts §13)
+
+-   13a Star Gold HD 156 structural fixture: verbatim `sources[0]`,
+    bare load, attach → configure → load.
+-   13b Zee Cinema HD 165 fixture: verbatim source, bare load,
+    configure NEVER called (no DRM).
+-   13c CNBC TV18 Prime 143 control fixture (docs' example channel).
+-   13d THE DEFECT LOCK: `.m3u8` source MUST be loaded bare — fails if
+    an explicit `application/dash+xml` ever returns.
+-   13e no URL alteration — signed query strings survive selection
+    byte-for-byte across all fixture shapes.
+-   §3/§5 updated to documented semantics (first-source; call-order
+    log `attach → configure → load` / `attach → load`; bare load
+    shape). FakeShakaPlayer gained a cross-method `callLog`.
+
+Sanitized fixtures only (real host/path STRUCTURE, FAKE tokens —
+never fetched, never real key material).
+
+### Validation
+
+``` text
+pnpm check   0 errors, 0 warnings
+pnpm test    exit 0 — 5553 ok-lines (5548 baseline + 5 new §13 checks);
+             14 grep "fail" hits re-verified as benign (UX/false-positives,
+             expected fixture logs); zero real failures
+pnpm build   exit 0 — Netlify adapter + executor function
+LT-2 61/61 · LT-3 70/70 (65+5) · LT-4 22/22 · LT-5 13/13 · LT-6 6/6
+Diff scope: src/lib/client/live-tv/player.ts + scripts/live_tv_player_test.ts
+             + this worklog (carries the uncommitted LT-7 section forward).
+VOD/HLS/provider paths untouched; no V2 references; Shaka remains
+browser-only/lazy (release-audit check green); no new migrations.
+```
+
+### Remaining limitation + required India verification (user-side)
+
+This egress cannot reach the Jio CDNs (451 geo-block) and the headless
+Chromium build lacks EME — the fix is proven at contract level, Shaka
+source level and runtime mock level; REAL India playback remains
+user-side (as in LT-5/LT-6):
+
+1.  **143 CNBC TV18 Prime** — control: resolve, load, video+audio,
+    reload, retry, channel switch (expected: unchanged behavior).
+2.  **156 Star Gold HD** — expected to STILL FAIL segment delivery
+    with `network_failed` (upstream token propagation; Mavero now sends
+    exactly the documented requests). Independent confirmation: run
+    LiveGT's own documented snippet in an India browser console for id
+    156 — if the provider's documented example also fails, upstream is
+    confirmed outside Mavero entirely.
+3.  **165 Zee Cinema HD** — record the HTTP status + content-type of
+    the `index.mpd` request (DevTools network tab; never copy the URL
+    itself) → settles rejected-token vs non-MPD-body.
+4.  **Any HLS-source channel** (e.g. 9X Tashan 732, News18 Urdu 1500,
+    Adhyatma TV 1901) — previously hard-broken by the MIME defect;
+    now expected to resolve + play via Shaka's native HLS support
+    (subject to the same CDN token rules as above).
+
+### Files changed (this audit)
+
+``` text
+src/lib/client/live-tv/player.ts        (documented sequence + bare load
+                                         + first-source selection)
+scripts/live_tv_player_test.ts          (§3/§5 updated + §13 regression)
+live-tv-worklog.md                      (this record; includes LT-7 section)
+```
+
+### Commit
+
+`fix(live-tv): match documented shaka integration contract` (sha
+recorded below after commit).
