@@ -1554,7 +1554,8 @@ browser QA.
 
 ``` text
 base:        a56c017ba064e3a1c68f2b2f45be4dbb27470787 (LT-3 head, clean)
-LT-4 commit: <filled by follow-up worklog commit>
+LT-4 commit: 8747321 (full: recorded after push)
+             "feat(live-tv): add live tv page and epg"
 ```
 
 ### Next phase
