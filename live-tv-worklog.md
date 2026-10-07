@@ -2,7 +2,7 @@
 
 **Feature:** LiveGT TV V1\
 **Plan:** `live-tv-plan.md`\
-**Status:** APPROVED --- IMPLEMENTATION NOT STARTED\
+**Status:** APPROVED --- IMPLEMENTATION IN PROGRESS (LT-0 COMPLETE)\
 **Date:** 2026-10-07
 
 ## Purpose
@@ -119,8 +119,8 @@ NO LIVE TV SUPABASE MIGRATION FOR V1
 ## Phase Status
 
   Phase                         Status
-  ----------------------------- -------------
-  LT-0 Baseline & Contract      NOT STARTED
+  ----------------------------- --------------
+  LT-0 Baseline & Contract      COMPLETE
   LT-1 Navigation IA            NOT STARTED
   LT-2 LiveGT Client Layer      NOT STARTED
   LT-3 DASH / ClearKey Player   NOT STARTED
@@ -134,7 +134,7 @@ NO LIVE TV SUPABASE MIGRATION FOR V1
 
 ### Status
 
-`NOT STARTED`
+`COMPLETE` (2026-10-07)
 
 ### Required
 
@@ -154,26 +154,230 @@ pnpm build
 ### Files changed
 
 ``` text
-None yet.
+live-tv-worklog.md   (this LT-0 record only)
 ```
+
+No source files were modified. Baseline runs left the worktree clean
+(build outputs are gitignored / unchanged).
 
 ### Tests
 
 ``` text
-Not run yet.
+pnpm check   PASS — svelte-check: 0 errors, 0 warnings
+pnpm test    PASS — exit 0; full &&-chained suite (~230 scripts)
+             completed; 5381 "ok" assertions.
+             "Error:" strings in the log are expected error-path
+             fixtures (tests asserting on handled failures).
+pnpm build   PASS — exit 0; vite build (26.1s) + Netlify adapter +
+             executor function written.
 ```
+
+All three baselines pass at the audited HEAD. No pre-existing failures
+to document.
 
 ### Commit
 
 ``` text
-N/A
+69583cce677596ef236379b341dcffdb1fd2fc53  (LT-0 audit HEAD, worktree
+clean; the LT-0 worklog commit itself is recorded below)
 ```
 
 ### Findings
 
+#### Repository state
+
 ``` text
-None yet.
+branch: main
+HEAD at audit: 69583cc "Add files via upload"
+worktree: clean before AND after all baseline runs
+remote: up to date with origin/main
 ```
+
+NOTE: the plan/worklog were authored against audited HEAD
+`ffc5d3dc...`; the repository has since advanced
+(`ffc5d3d` → `7b936b0` → `69583cc`). No Live TV work was in those
+commits; plan assumptions still hold at the new HEAD (verified below).
+
+#### Navigation audit (LT-1 target)
+
+``` text
+src/lib/components/AppShell.svelte (lines 23-30)
+```
+
+-   ONE `primaryLinks` array feeds BOTH desktop sidebar and mobile
+    pill (single source of truth; no duplicated nav logic).
+-   Current order: Discover, Movies, TV Shows, Anime, Upcoming,
+    Search — Upcoming is exactly #5, so LT-1 is a surgical replace of
+    item 5 (label/href/key/icon), not a reorder.
+-   `src/lib/components/AccountSheet.svelte`: identity block + My List
+    + Settings only. Upcoming must be inserted as a new menu-row ABOVE
+    My List. `ACCOUNT_SURFACES = ['/my-list', '/settings']` (line 127)
+    drives replace-state history semantics — LT-1 must DECIDE whether
+    '/upcoming' joins that list (recommendation: yes, so
+    Upcoming/My-List/Settings never co-stack in history).
+-   `/upcoming` route (`src/routes/upcoming/+page.server.ts` +
+    `+page.svelte`) exists and stays untouched.
+
+Navigation contract tests that assert the CURRENT six-item order and
+icons and WILL need updating inside LT-1:
+
+``` text
+scripts/navigation_primary_test.ts   (exact order + CalendarClock icon)
+scripts/explorer_navigation_test.ts  (AccountSheet replace-nav contract)
+scripts/admin_nav_test.ts
+scripts/discover_hero_lineup_test.ts
+scripts/discover_subpage_ux_test.ts
+```
+
+#### Player architecture audit (LT-3 target)
+
+``` text
+PlaybackManager → PlayerShell → PlayerViewport → <video>
+  → direct MP4 / native HLS → existing <video src> path
+  → non-native HLS           → hls-engine.ts (Video.js-owned hls.js)
+```
+
+-   `src/lib/shared/media-compat.ts` lines 261-262: `protocol ===
+    'dash'` → `UNSUPPORTED` / reason `dash-unsupported`. Confirms the
+    plan: the VOD direct path has NO DASH engine, so an isolated Live
+    TV Shaka path is required (decision D5).
+-   `src/lib/shared/player.ts`: `PlayerProtocol` already includes
+    `'dash'` (type-level only). `PlayerSource.mediaType` is
+    `'movie' | 'series' | 'anime'` — Live TV must NOT be forced into
+    the VOD `PlayerSource` shape.
+-   `src/lib/client/player/hls-engine.ts` documents the exact SSR-safe
+    pattern to replicate for Shaka: client-only module, no top-level
+    browser globals, engine loaded via dynamic ESM import inside a
+    loader function, generation-token race protection, bounded
+    recovery, single owner of the media element.
+-   `hls.js` 1.7.2 present (via Video.js adapter). NO Shaka dependency
+    exists yet — clean add required in LT-3 (`shaka-player`),
+    browser-only loaded.
+-   `src/lib/shared/player-capabilities.ts` shows the capability-matrix
+    convention if Live TV player controls need one.
+
+#### API/client conventions (LT-2 target)
+
+-   `src/lib/client/*` convention: plain TS client-only modules,
+    singleton services, no server imports; matches the plan's suggested
+    `src/lib/client/live-tv/` structure.
+-   Analytics is an allowlist system:
+    `src/lib/shared/analytics-taxonomy.ts` (frozen event-name const
+    array) + `src/lib/client/analytics/dispatcher.ts` (batched queue →
+    `/api/events`) + server-side validation in
+    `src/lib/server/analytics/ingest.ts`. The planned `live_tv_*`
+    events require taxonomy + server allowlist extension in LT-5.
+-   Tests live in `scripts/*_test.ts` (source-contract style, run via
+    tsx with `jsconfig.json` / `tsconfig.behavioral.json`) and are
+    `&&`-chained in `pnpm test` — Live TV focused tests follow this
+    convention and must be added to the chain.
+
+#### Supabase usage audit
+
+-   Server client: `src/lib/server/supabase/server.ts`
+    (`@supabase/ssr`, cookie-based, typed `Database`).
+-   82 migrations exist; latest
+    `20261102000000_adapter_build_lifecycle.sql`.
+-   NO Live TV / channel / EPG tables anywhere — decision D4 (no V1
+    Live TV migration) re-confirmed at current HEAD.
+-   Client persistence uses IndexedDB
+    (`src/lib/client/progress/database.ts`) — Live TV must never write
+    signed URLs or ClearKey material there (or anywhere persistent).
+
+#### LiveGT V1 contract verification (live probes, 2026-10-07)
+
+Base: `https://livetgtv.lovable.app` — docs fetched (HTTP 200) and all
+three V1 endpoints probed live. Signed tokens / key VALUES observed
+were NOT recorded anywhere (shapes and lengths only).
+
+`GET /api/public/channels`
+
+``` text
+200 { count: 1176, channels: [...] }
+channel fields: id (string), name, category, logo, embed, watch
+query params: ?category=  ?q=  (verified: q=star&category=Sports → 23)
+27 distinct categories (English 206, Unknown 178, News 148, Tamil 78,
+Telugu 64, Sports 46, …) — categories must be DERIVED from data, not
+hardcoded (plan §8). 178 channels carry category "Unknown" — category
+bar needs an All/Unknown strategy.
+HTTP: cache-control public, max-age=300; CORS access-control-allow-origin: *
+```
+
+`GET /api/public/channels/{id}` (probed id=143)
+
+``` text
+200 { id, name, category, logo, sources[], drm, embed, watch }
+sources: array of signed MPD URLs (observed 1 entry;
+  jiotvmblive.cdn.jio.com/.../index.mpd + ~115-char signed query)
+drm: { type: "clearkey", keyId: <32-hex>, key: <32-hex> }  (or absent)
+HTTP: cache-control max-age=60 (upstream caches resolution 1 min —
+  still short-lived; fresh-resolution-before-playback rule stands)
+```
+
+`GET /api/public/guide/{id}` (probed id=144)
+
+``` text
+200 { generatedAt, id, nowPlaying, upNext, upcoming[], guide[] }
+programme fields: title, desc, category, start, stop (unix seconds),
+  startTime, stopTime (provider display strings), image (guide entries
+  only — nowPlaying/upNext carry no image)
+observed: nowPlaying = object | null, upcoming = 4 entries,
+  guide = 60 entries; empty schedule is a VALID state (docs)
+```
+
+Errors / limits (observed vs docs)
+
+``` text
+observed: malformed id ("not-a-number") → 404 {"error":"Channel not found"}
+         unknown numeric id (999999) → 404 {"error":"Channel not found"}
+docs:    400 bad id, 404 unknown channel, 502 upstream down
+DISCREPANCY: malformed IDs return 404 live, not 400 as documented.
+         LT-2 error handling must treat 400/404/502 + network errors.
+V2 endpoints (/api/public/v2/*) exist and respond — OUT OF SCOPE,
+         must never be called by Mavero V1 code.
+Geo: streams geo-restricted to India by the upstream CDN.
+CORS: allow-origin * on all probed endpoints → direct browser fetch
+         from Mavero origins works; no proxy needed (decision D3).
+Docs themselves recommend Shaka with ClearKey config
+  { drm: { clearKeys: { [keyId]: key } } } — matches plan §10.
+```
+
+#### Risks
+
+1.  Navigation regression tests hardcode Upcoming #5 + CalendarClock
+    icon; LT-1 must update `navigation_primary_test.ts` (and related
+    nav-asserting tests) in the SAME change or the suite fails.
+2.  AccountSheet `ACCOUNT_SURFACES` replace-state semantics need an
+    explicit decision when Upcoming becomes a sheet entry (see
+    navigation audit recommendation).
+3.  Safari ClearKey: Shaka ClearKey relies on EME; Safari does not
+    support ClearKey CDMs on many platforms — plan §17 already flags
+    Safari as an explicit compatibility risk; graceful unsupported
+    message required.
+4.  India georestriction: end-to-end playback/DRM verification must
+    occur from an Indian network (or be documented as a verification
+    limitation in LT-5/LT-6).
+5.  `sources` is an ARRAY — LT-2/LT-3 should consume sources[0] and
+    defensively handle empty/multiple entries.
+6.  Analytics event names are a frozen allowlist — `live_tv_*` events
+    need taxonomy + server ingest extension in LT-5 (no silent
+    additions).
+7.  Signed-URL/ClearKey hygiene: resolver responses must stay in
+    runtime memory only; the existing IndexedDB progress layer must
+    never receive them.
+
+### Next phase
+
+LT-1 --- Navigation IA (recommended surgical scope):
+
+1.  AppShell `primaryLinks`: replace item #5 Upcoming → Live TV
+    (`/live-tv`, lucide icon e.g. `Radio` or `TvMinimalPlay`).
+2.  AccountSheet: add Upcoming menu-row immediately above My List;
+    decide + apply `ACCOUNT_SURFACES` inclusion for '/upcoming'.
+3.  Update `navigation_primary_test.ts` (+ any other nav-asserting
+    tests) for the new contract; add AccountSheet Upcoming assertions.
+4.  Do NOT touch `/upcoming` route or any VOD/player code.
+5.  Re-run `pnpm check`, `pnpm test`, `pnpm build`.
 
 ------------------------------------------------------------------------
 
@@ -631,7 +835,11 @@ COMPLETE / BLOCKED
 
 ## Handoff
 
-Planning is approved and implementation is not started.
+Planning is approved. LT-0 (baseline & contract) is COMPLETE: all
+three baseline commands pass at HEAD `69583cc`, the LiveGT V1 API
+contract is verified live and matches the approved plan, and no source
+files were changed.
 
-GLM must begin with **LT-0**, after reading both files and verifying the
-current repository state.
+Next phase is **LT-1 --- Navigation IA** (scope recommendation recorded
+in the LT-0 section). GLM must re-read both files and re-verify the
+repository state before starting LT-1.
