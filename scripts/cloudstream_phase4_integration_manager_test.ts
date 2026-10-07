@@ -1156,14 +1156,18 @@ function pristineFile(relative: string): string | null {
   // adapter build lifecycle migration (20261102000000 — durable job rows +
   // the current_build_job_id late-write guard + the stale sweep indexes;
   // see scripts/adapter_build_lifecycle_migration_test.ts for the DDL
-  // coverage).
+  // coverage). LT-5 ANALYTICS TAXONOMY (20261103000000, sanctioned —
+  // live-tv-plan.md §14): the Live TV analytics events migration widens
+  // the analytics_events CHECK constraint only and never touches any
+  // CloudStream/downloader/registry table.
   const addedMigrations = [...migrationFiles].filter((name) => !pristineMigrations.includes(name));
   const removedMigrations = pristineMigrations.filter((name) => !migrationFiles.includes(name));
   ok(
-    addedMigrations.length === 2
+    addedMigrations.length === 3
       && addedMigrations.includes('20261004000000_unified_downloader_global_order.sql')
-      && addedMigrations.includes('20261102000000_adapter_build_lifecycle.sql'),
-    `F3: the ONLY added migrations are the FINAL TASK unified-order + build-lifecycle migrations (${addedMigrations.join(', ') || 'none'})`,
+      && addedMigrations.includes('20261102000000_adapter_build_lifecycle.sql')
+      && addedMigrations.includes('20261103000000_live_tv_analytics_events.sql'),
+    `F3: the ONLY added migrations are the FINAL TASK unified-order + build-lifecycle + LT-5-analytics migrations (${addedMigrations.join(', ') || 'none'})`,
   );
   ok(removedMigrations.length === 0, 'F3: no migration was removed');
 

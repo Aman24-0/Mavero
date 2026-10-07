@@ -206,12 +206,17 @@ function section_registry(): void {
   // ordering table. DURABLE BUILD LIFECYCLE (20261102000000, sanctioned):
   // the adapter-build-lifecycle migration (job rows + pointer + sweep
   // indexes; NEVER touches download_providers) is also sanctioned.
+  // LT-5 ANALYTICS TAXONOMY (20261103000000, sanctioned): the Live TV
+  // analytics events migration (widens the analytics_events CHECK
+  // constraint only — NEVER touches download_providers or any registry
+  // table) is sanctioned per live-tv-plan.md §14.
   const migrations = execFileSync('ls', [path.join(REPO_ROOT, 'supabase/migrations')], { encoding: 'utf8' }).split('\n').filter(Boolean);
   const pristineMigrations = pristineMigrationNames();
   const phase2Migration = '20261101000002_extension_phase2_unified_adapters.sql';
   const phase3Migration = '20261101000003_extension_phase3_builder.sql';
   const unifiedMigration = '20261004000000_unified_downloader_global_order.sql';
   const lifecycleMigration = '20261102000000_adapter_build_lifecycle.sql';
+  const liveTvAnalyticsMigration = '20261103000000_live_tv_analytics_events.sql';
   const added = migrations.filter((name) => !pristineMigrations.includes(name));
   const phase2Sql = read(`supabase/migrations/${phase2Migration}`);
   const phase2SqlNoComments = phase2Sql.replace(/--[^\n]*/g, '');
@@ -220,13 +225,20 @@ function section_registry(): void {
   const unifiedSql = read(`supabase/migrations/${unifiedMigration}`);
   const unifiedSqlNoComments = unifiedSql.replace(/--[^\n]*/g, '');
   ok(
-    added.length === 5
+    added.length === 6
       && added.includes(migrationName)
       && added.includes(phase2Migration)
       && added.includes(phase3Migration)
       && added.includes(unifiedMigration)
-      && added.includes(lifecycleMigration),
-    `§A10: exactly the CS-5 + Phase 2 + Phase 3 + FINAL TASK + build-lifecycle migrations were added (${added.join(', ') || 'none'})`,
+      && added.includes(lifecycleMigration)
+      && added.includes(liveTvAnalyticsMigration),
+    `§A10: exactly the CS-5 + Phase 2 + Phase 3 + FINAL TASK + build-lifecycle + LT-5-analytics migrations were added (${added.join(', ') || 'none'})`,
+  );
+  const liveTvAnalyticsSql = read(`supabase/migrations/${liveTvAnalyticsMigration}`);
+  const liveTvAnalyticsSqlNoComments = liveTvAnalyticsSql.replace(/--[^\n]*/g, '');
+  ok(
+    !/\b(download_providers|streaming_providers|adapter_build)\b/i.test(liveTvAnalyticsSqlNoComments),
+    '§A10: the LT-5 analytics migration never touches the provider registries or build tables',
   );
   const lifecycleSql = read(`supabase/migrations/${lifecycleMigration}`);
   const lifecycleSqlNoComments = lifecycleSql.replace(/--[^\n]*/g, '');

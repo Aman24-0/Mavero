@@ -50,6 +50,7 @@
     resolvingChannel = null,
     sessionErrorMessage = null,
     onretry = () => {},
+    onuseraction = () => {},
     video = $bindable()
   }: {
     /** The page's LT-3 engine for the active session (null between sessions). */
@@ -60,6 +61,13 @@
     sessionErrorMessage?: string | null;
     /** User asked for a fresh resolve + playback attempt. */
     onretry?: () => void;
+    /**
+     * Reports a raw USER action on the player surface (LT-5 analytics):
+     * 'pause' | 'fullscreen_enter' | 'fullscreen_exit'. The component only
+     * REPORTS the intent — the page owns what is tracked (it decides the
+     * event/payload), so no analytics knowledge lives here.
+     */
+    onuseraction?: (action: 'pause' | 'fullscreen_enter' | 'fullscreen_exit') => void;
     /** The page-owned video element rendered here (bindable, page binds it). */
     video?: HTMLVideoElement | undefined;
   } = $props();
@@ -150,6 +158,7 @@
     if (!eng) return;
     if (engineState === 'playing') {
       eng.pause();
+      onuseraction('pause'); // user-initiated pause (LT-5 analytics report)
     } else {
       void attemptAutoplay(eng);
     }
@@ -197,8 +206,10 @@
   function toggleFullscreen() {
     if (!surface || typeof document === 'undefined') return;
     if (document.fullscreenElement) {
+      onuseraction('fullscreen_exit'); // user intent (LT-5 analytics report)
       void document.exitFullscreen().catch(() => {});
     } else {
+      onuseraction('fullscreen_enter');
       void surface.requestFullscreen().catch(() => {});
     }
   }
@@ -543,22 +554,37 @@
     font-size: .68rem;
   }
 
+  /* Touch targets: the INPUT box stays 28px tall (WCAG 2.5.8 — the 4px
+     visual track lives on the runnable-track pseudo-elements, so the hit
+     area is a practical touch size instead of the track height). */
   .volume, .live-seek {
     flex: 0 1 auto;
     min-width: 0;
-    height: 4px;
+    height: 28px;
     appearance: none;
     -webkit-appearance: none;
-    border-radius: 999px;
-    background: rgba(0, 255, 156, .18);
+    background: transparent;
     cursor: pointer;
   }
   .volume { width: clamp(64px, 12vw, 110px); }
   .live-seek { flex: 1 1 140px; max-width: 420px; }
+  .volume::-webkit-slider-runnable-track,
+  .live-seek::-webkit-slider-runnable-track {
+    height: 4px;
+    border-radius: 999px;
+    background: rgba(0, 255, 156, .18);
+  }
+  .volume::-moz-range-track,
+  .live-seek::-moz-range-track {
+    height: 4px;
+    border-radius: 999px;
+    background: rgba(0, 255, 156, .18);
+  }
   .volume::-webkit-slider-thumb, .live-seek::-webkit-slider-thumb {
     appearance: none;
     -webkit-appearance: none;
     width: 14px; height: 14px;
+    margin-top: -5px; /* center the thumb on the 4px webkit track */
     border: 0;
     border-radius: 50%;
     background: var(--color-primary);

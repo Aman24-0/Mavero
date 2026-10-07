@@ -74,13 +74,34 @@ assert.equal(isAnalyticsEventName(123), false);
 assert.equal(isAnalyticsEventName(undefined), false);
 ok(true, '1b. isAnalyticsEventName accepts known names, rejects unknowns and non-strings');
 
-// 1c. The DB CHECK constraint in the migration contains EVERY event in
-// the taxonomy (no drift between code and DB).
+// 1c. The DB CHECK constraint mirrors the taxonomy (no drift between code
+// and DB). Since LT-5 the taxonomy is extended by FOLLOW-UP migrations
+// (the documented convention in this file's header and in the foundation
+// migration itself: "Adding a new event requires a migration that extends
+// the CHECK constraint"). The effective DB constraint is therefore the
+// UNION of the foundation migration and every taxonomy-extension
+// migration — the parity check must consider them all.
 const migration = read('supabase/migrations/20261008000000_analytics_foundation.sql');
+const taxonomyExtensionMigrations = [
+  // LT-5 — Live TV events (live-tv-plan.md §14)
+  'supabase/migrations/20261103000000_live_tv_analytics_events.sql'
+].map(read);
+const migrationUnion = [migration, ...taxonomyExtensionMigrations].join('\n');
 for (const name of ANALYTICS_EVENT_NAMES) {
-  assert.ok(migration.includes(`'${name}'`), `migration CHECK constraint must include '${name}'`);
+  assert.ok(migrationUnion.includes(`'${name}'`), `migration CHECK constraint must include '${name}'`);
 }
-ok(true, '1c. DB CHECK constraint in migration mirrors ANALYTICS_EVENT_NAMES (no drift)');
+// Every extension migration must only WIDEN the constraint (its events are
+// a subset of the taxonomy — nothing invented outside the closed set).
+for (const ext of taxonomyExtensionMigrations) {
+  const body = ext.slice(ext.indexOf('check (event_name in ('));
+  for (const m of body.matchAll(/'([a-z_]+)'/g)) {
+    assert.ok(
+      (ANALYTICS_EVENT_NAMES as readonly string[]).includes(m[1]),
+      `extension migration event '${m[1]}' exists in the taxonomy`
+    );
+  }
+}
+ok(true, '1c. DB CHECK constraints (foundation + extensions) mirror ANALYTICS_EVENT_NAMES (no drift)');
 
 // 1d. The migration also creates both tables with the expected identity
 // columns and the idempotency primary key.

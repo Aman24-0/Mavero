@@ -51,6 +51,16 @@ export const ANALYTICS_EVENT_NAMES = [
   'continue_watching_open',
   'download_started',
   'download_completed',
+  // Live TV (LT-5 — live-tv-plan.md §14; payload contract in
+  // src/lib/client/live-tv/analytics.ts: channel id + category +
+  // normalized error kind ONLY, never signed URLs or ClearKey material)
+  'live_tv_open',
+  'live_tv_channel_select',
+  'live_tv_channel_switch',
+  'live_tv_play',
+  'live_tv_pause',
+  'live_tv_error',
+  'live_tv_fullscreen',
 ] as const;
 
 export type AnalyticsEventName = (typeof ANALYTICS_EVENT_NAMES)[number];
@@ -91,6 +101,12 @@ export const MEANINGFUL_ACTIVITY_EVENTS: ReadonlySet<string> = new Set([
   'download_completed',
   'signup_completed',
   'login',
+  // Live TV engagement counts toward "active user" (LT-5): selecting a
+  // channel and actually reaching playback are the Live TV equivalents
+  // of detail_open / watch_start. Pure page loads (live_tv_open) stay
+  // excluded so refreshes cannot inflate the metric.
+  'live_tv_channel_select',
+  'live_tv_play',
 ]);
 
 /** Returns true if the event counts toward "active user". */

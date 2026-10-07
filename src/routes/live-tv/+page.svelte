@@ -58,6 +58,14 @@
   import { isLiveTvPlaybackError } from '$lib/client/live-tv/player-errors';
   import { LiveTvPlaybackEngine } from '$lib/client/live-tv/player';
   import { determineCurrentProgramme } from '$lib/client/live-tv/epg';
+  import {
+    trackLiveTvOpen,
+    trackLiveTvChannelAction,
+    trackLiveTvPlay,
+    trackLiveTvPause,
+    trackLiveTvError,
+    trackLiveTvFullscreen
+  } from '$lib/client/live-tv/analytics';
   import type { LiveTvChannel, LiveTvGuide as LiveTvGuideModel } from '$lib/client/live-tv/types';
 
   // ---------------------------------------------------------------------
@@ -193,6 +201,17 @@
     const controller = new AbortController();
     sessionController = controller;
 
+    // Analytics (LT-5): the selection intent — first selection, a retry of
+    // the same channel, or a switch away from an active one. Payloads are
+    // built inside the adapter from catalogue metadata only (channel id +
+    // category + reason — never playback material). Fire-and-forget: an
+    // analytics failure can never affect this flow.
+    const previousChannel = selectedChannel;
+    const selectReason = previousChannel
+      ? previousChannel.id === channel.id ? 'retry' : 'switch'
+      : 'initial';
+    trackLiveTvChannelAction(channel, selectReason);
+
     // Plan §9 order: stop/destroy the previous playback FIRST.
     destroyEngineSafely(engine);
 
@@ -223,6 +242,27 @@
       //    was destroyed above; LT-3 load also tears down defensively).
       const eng = new LiveTvPlaybackEngine();
       engine = eng;
+
+      // Analytics (LT-5): the engine's normalized events are the single
+      // source of playback truth — 'statechange' → 'playing' marks the
+      // FIRST actual playback of this session (once per session; resumes
+      // after a pause are deliberately not re-tracked), and 'error' carries
+      // the normalized failure exactly once per surfaced session failure
+      // (load failures AND mid-session failures both arrive here — the
+      // catches below therefore never track errors twice). The
+      // subscriptions die with the engine on destroy/switch (LT-3 clears
+      // its listener map), so no explicit unsubscribe is needed.
+      let playTracked = false;
+      eng.on('statechange', ({ state }) => {
+        if (state === 'playing' && !playTracked) {
+          playTracked = true;
+          trackLiveTvPlay(channel.id);
+        }
+      });
+      eng.on('error', (error) => {
+        trackLiveTvError(channel.id, error);
+      });
+
       try {
         await eng.load(videoEl, resolution, { signal: controller.signal });
         if (seq !== sessionSeq || controller.signal.aborted) {
@@ -245,6 +285,10 @@
       if (seq !== sessionSeq || controller.signal.aborted || isSilentAbort(err)) return;
       resolving = false;
       sessionErrorMessage = playbackSafeMessage(err);
+      // Analytics: resolution failures never reach an engine, so this is
+      // the one place they are tracked (normalized kind only). Engine-side
+      // failures are tracked via the engine 'error' subscription above.
+      trackLiveTvError(channel.id, err);
     }
   }
 
@@ -285,6 +329,18 @@
     if (selectedChannel) void loadGuide(selectedChannel);
   }
 
+  // Player-surface user actions (LT-5 analytics): the component REPORTS the
+  // raw action; the page owns what (if anything) is tracked. Only real user
+  // intents arrive here — pause via the control, fullscreen toggles.
+  function handlePlayerUserAction(action: 'pause' | 'fullscreen_enter' | 'fullscreen_exit'): void {
+    if (action === 'pause') {
+      const id = selectedChannel?.id;
+      if (id) trackLiveTvPause(id);
+      return;
+    }
+    trackLiveTvFullscreen(selectedChannel?.id ?? null, action === 'fullscreen_enter' ? 'enter' : 'exit');
+  }
+
   // Current programme for the info line — actual guide data only (the
   // provider's nowPlaying, or an unambiguous schedule time-window match).
   // Absolute Unix seconds on both sides: no timezone assumption (§14).
@@ -297,6 +353,9 @@
 
   onMount(() => {
     void loadCatalogue();
+    // Analytics (LT-5): page open — a pure page-load event that does NOT
+    // count toward the active-user metric (refresh-safe, per plan §11).
+    trackLiveTvOpen();
     nowTicker = setInterval(() => {
       nowSeconds = Math.floor(Date.now() / 1000);
     }, 30_000);
@@ -376,6 +435,7 @@
         {resolvingChannel}
         {sessionErrorMessage}
         onretry={retryPlayback}
+        onuseraction={handlePlayerUserAction}
       />
 
       {#if selectedChannel}
