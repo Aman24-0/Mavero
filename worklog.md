@@ -3948,3 +3948,5 @@ Stage Summary:
 - Protected-area diff review: EMPTY over supabase/migrations, hosting, cloudstream, downloader, resolver, streaming, analytics, admin routes, watch routes, extensions — no protected-area regression. `git diff --check` clean. §23 security greps clean (no client-supplied adult boolean, no localStorage adult auth, no keyword heuristics, no guessed network ids, no unbounded classification Promise.all, no credentials; the only new production console.* is a safe-field error log in revoke-all).
 
 **No migration** (registry is code; no schema change required). **No production data modified** (read-only TMDB evidence gathering only).
+
+**Commit:** `e9aeb3c` pushed to `origin/main` (implementation + tests + this worklog record; SHA record for the follow-up task = e9aeb3c).
