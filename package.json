@@ -51,6 +51,7 @@
     "jsqr": "^1.4.0",
     "lucide-svelte": "^0.468.0",
     "qrcode": "^1.5.4",
+    "shaka-player": "5.2.12",
     "undici": "^8.10.2"
   },
   "pnpm": {

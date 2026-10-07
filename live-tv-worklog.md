@@ -2,7 +2,7 @@
 
 **Feature:** LiveGT TV V1\
 **Plan:** `live-tv-plan.md`\
-**Status:** APPROVED --- IMPLEMENTATION IN PROGRESS (LT-0, LT-1, LT-2 COMPLETE)\
+**Status:** APPROVED --- IMPLEMENTATION IN PROGRESS (LT-0, LT-1, LT-2, LT-3 COMPLETE)\
 **Date:** 2026-10-07
 
 ## Purpose
@@ -123,7 +123,7 @@ NO LIVE TV SUPABASE MIGRATION FOR V1
   LT-0 Baseline & Contract      COMPLETE
   LT-1 Navigation IA            COMPLETE
   LT-2 LiveGT Client Layer      COMPLETE
-  LT-3 DASH / ClearKey Player   NOT STARTED
+  LT-3 DASH / ClearKey Player   COMPLETE
   LT-4 Live TV UI               NOT STARTED
   LT-5 Analytics & Hardening    NOT STARTED
   LT-6 Final Regression         NOT STARTED
@@ -813,7 +813,7 @@ NO UI yet (that is LT-4).
 
 ### Status
 
-`NOT STARTED`
+`COMPLETE` (2026-10-07)
 
 ### Required
 
@@ -827,41 +827,342 @@ NO UI yet (that is LT-4).
 -   stale request protection
 -   bounded stream refresh
 
-### Test cases
+### Shaka version selected
 
--   [ ] non-DRM DASH
--   [ ] ClearKey DASH
--   [ ] channel switching
--   [ ] stale resolver response
--   [ ] teardown
--   [ ] bounded refresh
--   [ ] malformed DRM
--   [ ] unsupported browser
--   [ ] fatal playback error
+``` text
+shaka-player 5.2.12 (2026-09-25 release)
+```
+
+Why 5.2.12:
+
+1.  Current stable major line (5.x), actively maintained — weekly
+    patch cadence (5.2.10→5.2.12 within September 2026); 4.16.x is
+    the legacy line.
+2.  Verified against THIS repository's stack before adoption:
+    installed and probed under Node 24 (module default export,
+    Player API surface, polyfill.installAll, util.Error enums).
+3.  TypeScript declarations ship in-package
+    (dist/shaka-player.compiled.d.ts); the engine consumes ONLY
+    Mavero-owned structural types, so no shaka type leaks.
+4.  Modern browser target matches SvelteKit 2/Vite 7 output.
+5.  ZERO runtime dependencies — the lockfile diff is shaka-player
+    ONLY (+9 lines), no transitive churn, no unrelated upgrades
+    (engines node >=18, compatible with the project's >=22).
+
+Verified API facts (extracted from the installed package, recorded
+because they shape the engine):
+
+``` text
+new shaka.Player() → attach(video) → configure({drm:{clearKeys}})
+  → load(uri, startTime, mimeType) — the exact documented flow used
+seekRange() → {start,end}; isLive(); getMediaElement(); destroy()
+shaka.Player.isBrowserSupported(); shaka.polyfill.installAll()
+shaka.util.Error enums are STABLE PUBLIC NUMBERS:
+  Category NETWORK=1 TEXT=2 MEDIA=3 MANIFEST=4 STREAMING=5 DRM=6
+  PLAYER=7; Severity RECOVERABLE=1 CRITICAL=2; plus the specific
+  codes the engine maps (1001/1002/1003/3014/4008/4032/6000/6001/
+  6010/6012/7000/7001)
+Compiled build exposes the namespace as the module DEFAULT export
+  (no named exports)
+CRITICAL SSR FACT: the compiled bundle touches browser globals at
+  EVALUATION time — `import('shaka-player')` under Node throws
+  "self is not defined". Therefore the engine loads Shaka ONLY
+  through a browser-guarded dynamic import inside a loader function
+  (hls-engine pattern + explicit window/document runtime check).
+Compiled build has NO log namespace — Shaka itself cannot
+  console.log signed URLs or keys (verified by probing the module).
+```
 
 ### Files changed
 
 ``` text
-To be filled by GLM.
+package.json / pnpm-lock.yaml
+    + "shaka-player": "5.2.12" (the ONLY dependency change)
+
+src/lib/client/live-tv/player-errors.ts   (new)
+    - Engine-neutral playback error model: LiveTvPlaybackError with
+      10 kinds (invalid_source, init_failed, manifest_load_failed,
+      drm_config_failed, drm_playback_failed, network_failed,
+      unsupported_browser, autoplay_blocked, aborted,
+      playback_failed). Fixed safe-message table (nothing ever
+      interpolated); optional numeric `code` (stable Shaka enum
+      value) is the ONLY contextual data. Guard isLiveTvPlaybackError.
+
+src/lib/client/live-tv/player.ts          (new)
+    - LiveTvPlaybackEngine — the isolated Live TV playback engine:
+        load(video, resolution, {signal}) / play / pause / seek /
+        getCurrentTime / getDuration / setVolume / setMuted /
+        getVolume / isMuted / isLive / getLiveSeekRange / getState /
+        getVideoElement / getChannelId / destroy (idempotent).
+    - Engine-neutral event model: on/off with normalized events
+      (statechange, loaded, play, pause, buffering, playing, ended,
+      error, timeupdate, durationchange, seeking, seeked) — Shaka
+      event names never leave the module.
+    - Structural Shaka types (ShakaPlayerLike / ShakaModuleLike /
+      ShakaErrorLike) — Mavero-owned shapes; the loader casts the
+      real module, tests inject fakes; zero shaka.* type imports.
+    - normalizeShakaError: RECOVERABLE → null (Shaka retries
+      internally); DRM category/system codes → drm_playback_failed;
+      CONTENT_UNSUPPORTED_BY_BROWSER → unsupported_browser;
+      NETWORK→manifest_load_failed (load phase) / network_failed
+      (playback phase); MANIFEST → manifest_load_failed;
+      LOAD_INTERRUPTED/OPERATION_ABORTED → aborted; else
+      playback_failed. Reads ONLY numeric severity/category/code —
+      Shaka's error message/data fields are never read (they may
+      embed URIs; enforced by test §11d).
+    - Source selection (selectLiveTvDashSource): deterministic —
+      first valid absolute http(s) URL with an .mpd pathname wins;
+      else the first valid URL; none → invalid_source. Never
+      fabricates; embed/watch cannot even exist in
+      LiveTvPlaybackSource.
+    - Capability gates: window/document runtime, MediaSource,
+      Player.isBrowserSupported(), and EME
+      (navigator.requestMediaKeySystemAccess) ONLY when DRM is
+      present. Failures → controlled unsupported_browser (under SSR
+      the engine refuses BEFORE Shaka is even requested).
+    - ClearKey: configured through the documented
+      {drm:{clearKeys:{[keyId]:key}}} BEFORE load; configure
+      rejection or malformed/unknown-type DRM → drm_config_failed
+      (never silent, never treated as unencrypted).
+    - Load sequence per plan/brief: teardown old session → wire
+      events → validate resolution → capability gates → create NEW
+      player → configure DRM → attach → load(url, null,
+      'application/dash+xml') → 'loaded'. Never two Shaka instances
+      on one element (every load destroys the previous session
+      first).
+    - Stale-session protection: generation token bumped on every
+      load/destroy/abort; every async continuation re-checks it plus
+      player identity — late completions/errors from channel A can
+      never touch channel B's session (tested: A-hangs→B, late-A
+      completion, stale-A error).
+    - AbortSignal: pre-aborted → immediate silent rejection; abort
+      mid-load → clean abandonment (session destroyed, state 'idle',
+      NO error event). destroy() during load → 'aborted' rejection,
+      zero events.
+    - NO auto-retry: one engine session = one resolved playback;
+      fatal failures surface once (state 'error' + ONE error event +
+      load() rejection); the CALLER (LT-4) re-resolves fresh via
+      LT-2 (plan §11). Autoplay rejection → controlled
+      autoplay_blocked WITHOUT error state/event (not a stream
+      failure); the engine never auto-mutes to bypass policy.
+    - Live semantics: getDuration() → null for Infinity/NaN (never
+      fabricated); getLiveSeekRange() → normalized {start,end} or
+      null (invalid/absent windows never invented — Go-Live is
+      LT-4); seek clamps to the live window, else [0,duration], else
+      documented no-op.
+    - Destroy: removes ALL video listeners + the Shaka error
+      listener, destroys the player, clears references, suppresses
+      every event, idempotent (double destroy tested).
+    - SECURITY: zero console calls, zero storage APIs, zero
+      Supabase, zero LiveGT calls (engine never builds LiveGT URLs —
+      LT-2 owns them), no proxying (browser fetches the signed MPD
+      directly from the CDN), ClearKey values exist only in runtime
+      memory handed to configure().
+
+scripts/live_tv_player_test.ts            (new)
+    - Deterministic behavioral suite (65 checks, §1-§12) with
+      module-boundary fakes: FakeVideoElement, FakeShakaPlayer
+      (static attach/load hooks), fake Shaka module factory, and
+      scoped browser-runtime shims (defineProperty-based — Node 24's
+      navigator is getter-only). NO real Shaka/DRM/CDN/browser.
+
+live-tv-worklog.md                        (this record)
 ```
+
+Nothing else changed. media-compat.ts, hls-engine.ts,
+PlayerViewport.svelte, PlaybackManager, provider adapters, Supabase
+and analytics are untouched (verified via git status / git diff —
+no existing source file was modified).
+
+### Test cases
+
+-   [x] non-DRM DASH (§5a)
+-   [x] ClearKey DASH (§5b — exact clearKeys config shape, DRM
+      configured BEFORE load)
+-   [x] channel switching (§8a/§8c — old instance destroyed,
+      exactly one active instance)
+-   [x] stale resolver response (§8a late completion, §8b stale
+    error — both ignored)
+-   [x] teardown (§9a-§9e — listeners removed, references cleared,
+    idempotent, inert after destroy)
+-   [x] bounded refresh — engine performs ZERO automatic
+      re-resolution (by design; the caller re-resolves via LT-2 —
+      no infinite retry loops can exist, §11b zero LiveGT calls)
+-   [x] malformed DRM (§5c/§5d — configure rejection, missing
+    key/keyId, unknown type)
+-   [x] unsupported browser (§4e-§4i — no runtime, no MediaSource,
+    no EME, loader null, isBrowserSupported false)
+-   [x] fatal playback error (§5e/§5f/§11f — attach, manifest,
+    network, DRM failures; exactly ONE error event + rejection)
+-   [x] abort (§9f/§9g — mid-load abort → idle, pre-aborted →
+      immediate, previous session intact)
+-   [x] autoplay rejection (§6c — not a stream failure)
+-   [x] live behavior (§6d/§7a-§7d — seek clamping, duration null,
+      seek-range normalization, currentTime normalization)
+-   [x] security (§11a-§11f — no logging/persistence/LiveGT calls,
+      Shaka only via guarded dynamic import, error message/data
+      never read, no secrets in any error string)
+-   [x] SSR safety (§4a-§4c — loader browser guard, memoization,
+      engine constructs under Node)
 
 ### Tests
 
 ``` text
-To be filled by GLM.
+Focused: scripts/live_tv_player_test.ts  PASS — 65/65 checks, exit 0
+  §1  error model (10 kinds, distinct safe messages, code passthrough)
+  §2  normalizeShakaError (severity/category/code/phase mapping,
+      upstream message isolation)
+  §3  source selection (deterministic .mpd preference, malformed
+      skipped, empty/all-invalid → invalid_source, no fabrication)
+  §4  loader + SSR + capability gates (browser guard, memoization,
+      MediaSource, EME-for-DRM-only, isBrowserSupported)
+  §5  load lifecycle + DRM (states, single instance, attach/load
+      contract with explicit DASH MIME, ClearKey config, configure
+      rejection, invalid DRM before any Shaka work, attach →
+      init_failed, manifest → manifest_load_failed)
+  §6  controls (play/pause/seek/volume/mute, autoplay blocked,
+      clamping, no-op seek)
+  §7  live behavior (isLive, null duration, seek-range validity,
+      time normalization)
+  §8  switching (A→B, late-A ignored, stale-A error ignored, one
+      active instance, same-engine reload)
+  §9  destroy/abort (idempotent, inert, all listeners removed,
+      mid-load abort → idle, pre-aborted intact)
+  §10 events (normalized forwarding + payloads, buffering
+      round-trip, ended settles to paused, statechange dedupe)
+  §11 security (source scan + behavioral secret hygiene)
+  §12 LT-2 contract compatibility (exact resolution shape consumed)
+
+LT-2 regression (run directly — not in the pnpm test chain):
+  scripts/live_tv_client_test.ts            PASS — 61/61 checks
+
+pnpm check   PASS — svelte-check: 0 errors, 0 warnings
+pnpm test    PASS — exit 0; full &&-chained suite, 5381 "ok"
+             assertion groups (exact baseline parity — VOD/HLS/MP4/
+             provider/Stremio/CloudStream playback and every player
+             test unchanged and green)
+pnpm build   PASS — exit 0; vite build + Netlify adapter + executor
+             function. (No route imports the engine yet — Shaka is
+             not in any bundle until LT-4 wires the player; the
+             dynamic import guarantees a lazy chunk from day one.)
+
+LT-3 suite status: standalone (not chained into `pnpm test`), same
+pre-existing convention as LT-1/LT-2 suites; chaining remains an
+LT-6 decision with approval.
 ```
+
+### Architecture decisions
+
+1.  **Isolated engine, not a VOD retrofit** (plan decision D5): the
+    engine lives at src/lib/client/live-tv/player.ts and imports
+    only LT-2 types + the error model. media-compat.ts still maps
+    VOD DASH → UNSUPPORTED (verified untouched); the VOD player
+    never learns about Shaka. LT-4 will consume the engine directly
+    for /live-tv.
+2.  **Structural types, not shaka imports** (hls-engine
+    convention): every Shaka surface the engine touches is a
+    Mavero-owned structural type; the single cast lives inside the
+    browser-guarded loader. UI components (LT-4) can never depend
+    on shaka.Player / shaka.util / Shaka events.
+3.  **Explicit DASH MIME**: load(url, null, 'application/dash+xml')
+    — signed/extensionless manifests never hit Shaka's manifest
+    type guessing (same lesson as the HLS engine's Phase 11 GOAL A).
+4.  **Single-owner sessions**: load() ALWAYS destroys the previous
+    session before creating the new player — two Shaka instances
+    can never control one video element (tested by instance
+    counting).
+5.  **failSession vs surfaceSessionFailure**: load()-path failures
+    reject the promise AND emit exactly one error event; Shaka
+    error-event failures apply the same side effects WITHOUT
+    throwing (event handlers must never throw — found by the test
+    suite and fixed before commit).
+
+### Security decisions
+
+``` text
+- ClearKey key/keyId and signed MPD URLs exist ONLY in runtime
+  memory: handed to shaka.configure() and never written, logged,
+  cached, persisted or included in any error message (test §11f
+  proves fixture secrets never appear in error strings).
+- Shaka's own error message/data fields are NEVER read (they may
+  embed URIs/tokens) — normalization reads numeric enums only,
+  enforced by source scan (§11d).
+- The compiled Shaka build ships no log namespace (verified), and
+  the engine has zero console calls — nothing sensitive can ever
+  be logged from this path.
+- No proxying: the browser fetches the signed MPD/segments directly
+  from the LiveGT CDN (decision D3). No request filters, no custom
+  networking, no license servers — ClearKey config only.
+- The engine performs ZERO LiveGT calls (§11b) — LT-2 owns every
+  LiveGT URL; the engine cannot leak or misuse endpoints it never
+  builds.
+- No user-controlled upstream URLs: the only URL the engine loads
+  comes from the validated LT-2 resolution source selection.
+```
+
+### Browser/runtime limitations (documented for LT-4/LT-5)
+
+1.  Safari: ClearKey requires an EME ClearKey CDM; Safari does not
+  ship one on most platforms. The engine surfaces a controlled
+  drm_playback_failed ('This channel uses protection this browser
+  cannot play.') — LT-0 risk 3 remains open for browser QA (LT-5).
+2.  EME presence is checked as API AVAILABILITY only; actual CDM
+  support is only knowable at load time (Shaka's
+  REQUESTED_KEY_SYSTEM_CONFIG_UNAVAILABLE → drm_playback_failed).
+3.  Autoplay: the engine never auto-mutes to bypass policy;
+  autoplay_blocked rejections must be handled by LT-4's UI
+  (tap-to-play affordance).
+4.  Live end-to-end verification (real MPD + real ClearKey in a
+  browser, from an Indian network) is NOT possible from this
+  environment — deferred to LT-5 browser QA exactly as the plan's
+  geo-restriction risk anticipates. The deterministic suite
+  covers the engine contract; the LiveGT data layer was live-
+  verified in LT-2.
+
+### Findings
+
+1.  shaka-player 5.2.12 compiled build touches `self` at module
+   EVALUATION time — a bare top-level import would crash SSR. The
+   browser-guarded dynamic loader (window/document check before
+   import) is therefore LOAD-BEARING, not just convention. Verified
+   by direct Node probe and by test §4a.
+2.  Node 24's `navigator` global is getter-only — the test shim
+   installs browser globals via Object.defineProperty (recorded
+   for future test authors).
+3.  JS class FIELDS shadow prototype patches — the fake Shaka
+   player uses static hooks instead of prototype method patching
+   (recorded for future test authors).
+4.  The engine's error-event handler originally threw from
+   failSession inside the Shaka event dispatch — surfaced by test
+   §11f(c) and fixed via the non-throwing surfaceSessionFailure
+   split before commit.
+5.  No Shaka API exists for 'ended' STATE on the engine side —
+    video 'ended' settles the engine to 'paused' (the lifecycle
+    has no 'ended' state; the normalized 'ended' EVENT still
+    fires for LT-4).
+6.  The pnpm test chain is unchanged (LT-3 suite standalone, per
+    the documented pre-existing convention); chaining all three
+    Live TV suites (navigation_primary, live_tv_client,
+    live_tv_player) is an LT-6 decision with approval.
+7.  No scope violations: no /live-tv page, no channel cards, no
+    category/search/guide/EPG UI, no navigation/AccountSheet
+    changes, no Supabase, no analytics, no VOD player changes, no
+    media-compat.ts changes, no LiveGT V2.
 
 ### Commit
 
 ``` text
-To be filled by GLM.
+base:        e2d9ceeef1b0a6d9ff0782df4bf341b8be6efde7 (LT-2 head, clean)
+LT-3 commit: (recorded in the follow-up worklog commit after push)
+             "feat(live-tv): add shaka dash playback engine"
 ```
 
-### Findings
+### Next phase
 
-``` text
-To be filled by GLM.
-```
+LT-4 --- Live TV UI (per plan §19): /live-tv route, category bar,
+search, channel grid/cards, player integration (LiveTvPlaybackEngine
++ the LT-2 client), Now Playing, Up Next, guide/EPG, responsive
+states — using the Adaptive Cinematic Glass design.
 
 ------------------------------------------------------------------------
 
