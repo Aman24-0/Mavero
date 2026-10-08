@@ -143,3 +143,20 @@ export function trackLiveTvFullscreen(channelId: string | null, action: 'enter' 
     ...metadata({ action })
   });
 }
+
+/**
+ * LT-15 — The automatic embed fallback ACTIVATED for a channel: the native
+ * Shaka engine genuinely failed and the documented LiveGT embed iframe took
+ * over the player surface.
+ *
+ * Payload: the channel id + the NORMALIZED kind of the native failure that
+ * triggered the fallback (a fixed LT-3 table value — e.g.
+ * 'drm_playback_failed', 'manifest_load_failed'). Exactly like
+ * `trackLiveTvError`, never a raw Shaka payload, URL, token or key.
+ */
+export function trackLiveTvFallbackEmbed(channelId: string, err: unknown): void {
+  track('live_tv_fallback_embed', {
+    content_id: channelId,
+    ...metadata({ error_kind: liveTvErrorKindForAnalytics(err) })
+  });
+}

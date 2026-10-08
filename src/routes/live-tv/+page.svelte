@@ -24,6 +24,22 @@
   //   never overwrite B's UI. Exactly ONE engine instance is alive at any
   //   moment (the old one is destroyed before the new one is created).
   //
+  // AUTOMATIC EMBED FALLBACK (LT-15 — this session's addition):
+  //   The native engine is ALWAYS attempted first. When — and only when —
+  //   the CURRENT engine reports a GENUINE native playback failure (see
+  //   shouldFallbackToEmbed: every fatal playback kind except autoplay
+  //   blocks and aborts; data-layer/catalogue/guide errors never qualify),
+  //   the page destroys the Shaka engine, suppresses the native error
+  //   message and hands the player component the channel id, which renders
+  //   LiveGT's OWN documented embed player page in an iframe (URL built
+  //   exclusively by the LT-2 client from its base-URL constant + a
+  //   strictly validated numeric id — never from API wire data). One
+  //   mechanism is active at a time: a new selection always tears the
+  //   fallback down and starts a fresh native attempt; "Try again" while
+  //   the fallback is active recreates the iframe instead of retrying
+  //   Shaka. The activation point is the engine 'error' subscription,
+  //   identity-guarded so a stale engine can never mount a fallback.
+  //
   // SEARCH/CATEGORIES: 100% local filtering of the loaded catalogue through
   // the LT-2 pure utilities — no per-keystroke network, no second search
   // implementation, no new cache (LT-4 brief §6/§7/§20).
@@ -55,7 +71,7 @@
     filterLiveTvChannelsByQuery
   } from '$lib/client/live-tv/api';
   import { isLiveTvError } from '$lib/client/live-tv/errors';
-  import { isLiveTvPlaybackError } from '$lib/client/live-tv/player-errors';
+  import { isLiveTvPlaybackError, shouldFallbackToEmbed } from '$lib/client/live-tv/player-errors';
   import { LiveTvPlaybackEngine } from '$lib/client/live-tv/player';
   import { determineCurrentProgramme } from '$lib/client/live-tv/epg';
   import {
@@ -64,7 +80,8 @@
     trackLiveTvPlay,
     trackLiveTvPause,
     trackLiveTvError,
-    trackLiveTvFullscreen
+    trackLiveTvFullscreen,
+    trackLiveTvFallbackEmbed
   } from '$lib/client/live-tv/analytics';
   import type { LiveTvChannel, LiveTvGuide as LiveTvGuideModel } from '$lib/client/live-tv/types';
 
@@ -182,6 +199,17 @@
   let sessionController: AbortController | undefined;
   let sessionSeq = 0;
 
+  // LT-15 — automatic embed fallback state. `embedFallbackChannelId` is the
+  // ONLY fallback signal: non-null exclusively while the documented LiveGT
+  // embed player is mounted for the CURRENT channel after the native engine
+  // genuinely failed. It carries a catalogue channel id (never a URL — the
+  // player component builds the documented embed URL from the validated id
+  // at render time; nothing about the fallback is ever persisted).
+  let embedFallbackChannelId = $state<string | null>(null);
+  // Bumped to force-recreate the embed iframe (user "Try again" while the
+  // fallback is active — a fresh iframe mount, NEVER a new Shaka attempt).
+  let embedReloadToken = $state(0);
+
   const resolvingChannel = $derived(resolving ? selectedChannel : null);
 
   function destroyEngineSafely(target: LiveTvPlaybackEngine | null): void {
@@ -191,6 +219,31 @@
     if (!target) return;
     target.destroy();
     if (engine === target) engine = null;
+  }
+
+  // ---------------------------------------------------------------------
+  // LT-15 — automatic embed fallback activation.
+  //
+  // Invoked from EXACTLY ONE place: the current engine's 'error' event
+  // subscription (which is the single point where BOTH load-phase and
+  // mid-session native failures surface — the load() rejection that
+  // follows a load-phase failure therefore never re-activates it).
+  // Set-once per session: a second failure while the fallback is already
+  // active is ignored (no double activation, no double analytics).
+  // ---------------------------------------------------------------------
+  function activateEmbedFallback(channel: LiveTvChannel, err: unknown): void {
+    if (embedFallbackChannelId !== null) return; // already active — never twice
+    // Abort/destroy the native session completely: the Shaka engine is
+    // destroyed (single-owner rule) and the page stops resolving. Only the
+    // embed iframe remains as the active playback mechanism.
+    destroyEngineSafely(engine);
+    resolving = false;
+    // Suppress the native failure message — the fallback UI replaces it.
+    sessionErrorMessage = null;
+    embedFallbackChannelId = channel.id;
+    embedReloadToken += 1; // fresh iframe mount
+    // Analytics (LT-5/LT-15): channel id + normalized failure kind ONLY.
+    trackLiveTvFallbackEmbed(channel.id, err);
   }
 
   async function selectChannel(channel: LiveTvChannel): Promise<void> {
@@ -214,6 +267,11 @@
 
     // Plan §9 order: stop/destroy the previous playback FIRST.
     destroyEngineSafely(engine);
+
+    // LT-15: every new selection starts from a FRESH native attempt — any
+    // previous embed fallback is torn down with it (the iframe unmounts,
+    // so no old embed player can keep playing in the background).
+    embedFallbackChannelId = null;
 
     // Adopt the selection (non-sensitive catalogue metadata only).
     selectedChannel = channel;
@@ -260,7 +318,15 @@
         }
       });
       eng.on('error', (error) => {
+        // LT-15: a stale engine's failure can NEVER mount a fallback for a
+        // newer session — the identity guard drops everything that arrives
+        // after this engine stopped being the page's current engine.
+        if (engine !== eng) return;
         trackLiveTvError(channel.id, error);
+        // Automatic embed fallback: activate ONLY for genuine native
+        // playback failures (shouldFallbackToEmbed excludes autoplay
+        // blocks, aborts and every data-layer error by construction).
+        if (shouldFallbackToEmbed(error)) activateEmbedFallback(channel, error);
       });
 
       try {
@@ -276,6 +342,12 @@
           destroyEngineSafely(eng);
           return;
         }
+        // LT-15: for fallback-eligible failures the engine 'error' event
+        // (the single activation point, above) has ALREADY moved this
+        // session to the embed fallback — the engine is destroyed and the
+        // native error message is deliberately suppressed. Never surface
+        // it here as well.
+        if (embedFallbackChannelId === channel.id) return;
         destroyEngineSafely(eng); // failed session: surface via safe message
         resolving = false;
         sessionErrorMessage = playbackSafeMessage(err);
@@ -293,6 +365,15 @@
   }
 
   function retryPlayback(): void {
+    // LT-15: while the embed fallback is active for the selected channel,
+    // "Try again" recreates the embed iframe ONCE (a fresh mount of the
+    // documented embed URL) — it must NOT repeatedly instantiate Shaka.
+    // Selecting any channel card remains the clean way to start a fully
+    // fresh native session.
+    if (selectedChannel && embedFallbackChannelId === selectedChannel.id) {
+      embedReloadToken += 1;
+      return;
+    }
     if (selectedChannel) void selectChannel(selectedChannel);
   }
 
@@ -372,6 +453,9 @@
     catalogueController?.abort();
     catalogueController = undefined;
     destroyEngineSafely(engine);
+    // LT-15: the embed fallback dies with the page (the iframe unmounts
+    // with the player component — nothing outlives the route).
+    embedFallbackChannelId = null;
     if (nowTicker) clearInterval(nowTicker);
     nowTicker = undefined;
   });
@@ -434,6 +518,8 @@
         {engine}
         {resolvingChannel}
         {sessionErrorMessage}
+        embedChannelId={embedFallbackChannelId}
+        {embedReloadToken}
         onretry={retryPlayback}
         onuseraction={handlePlayerUserAction}
       />

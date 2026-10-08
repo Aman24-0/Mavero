@@ -272,10 +272,19 @@ const NOW = 1_700_000_000; // fixed absolute instant for determinism
 // §10 Playback error UI & retry (fresh resolve only)
 // ============================================================
 {
-        assert.match(player, /const displayError = \$derived\(sessionErrorMessage \?\? engineError\?\.message \?\? null\);/, 'error text comes ONLY from the safe tables');
+        // LT-15 evolution: while the embed fallback is active the native
+        // error text is SUPPRESSED (the fallback UI replaces the error UI);
+        // the derivation still reads ONLY the safe tables and can only
+        // remove text, never introduce new text.
+        assert.match(player, /const displayError = \$derived\(embedActive \? null : sessionErrorMessage \?\? engineError\?\.message \?\? null\);/, 'error text comes ONLY from the safe tables (suppressed in embed fallback mode)');
+        assert.match(player, /\{#if !embedActive && displayError\}/, 'the error overlay never renders while the embed fallback is active');
         assert.match(player, /role="alert"/, 'error overlay is an alert');
         assert.match(player, /onclick=\{onretry\}/, 'error overlay offers retry');
-        assert.match(page, /function retryPlayback\(\): void \{\s*if \(selectedChannel\) void selectChannel\(selectedChannel\);\s*\}/, 'retry re-runs the FULL flow (fresh resolve, never a reused resolution)');
+        // LT-15 evolution: retry while the embed fallback is active
+        // recreates the iframe ONCE instead of re-running the native flow;
+        // the native branch is unchanged.
+        assert.match(page, /function retryPlayback\(\): void \{[\s\S]*?if \(selectedChannel && embedFallbackChannelId === selectedChannel\.id\) \{\s*embedReloadToken \+= 1;\s*return;\s*\}/, 'retry in embed mode recreates the iframe (never re-instantiates Shaka)');
+        assert.match(page, /if \(selectedChannel\) void selectChannel\(selectedChannel\);/, 'retry outside embed mode re-runs the FULL flow (fresh resolve, never a reused resolution)');
         const safeMessageBody = sliceOf(page, 'function playbackSafeMessage', 'function guideSafeMessage');
         assert.match(safeMessageBody, /return FALLBACK_MESSAGE;/, 'unknown errors fall back to a fixed string');
         assert.doesNotMatch(safeMessageBody, /\$\{/, 'no interpolation anywhere in the safe-message mapping');

@@ -55,6 +55,11 @@ const player = read('../src/lib/components/live-tv/LiveTvPlayer.svelte');
 const adapterSource = read('../src/lib/client/live-tv/analytics.ts');
 const taxonomySource = read('../src/lib/shared/analytics-taxonomy.ts');
 const migrationSql = read('../supabase/migrations/20261103000000_live_tv_analytics_events.sql');
+// LT-15: the taxonomy now has a second extension migration. The effective
+// DB constraint is the UNION of every taxonomy-extension migration (the
+// same convention as phase1_analytics_foundation_test.ts 1c) — parity is
+// still asserted EXACTLY against the taxonomy below.
+const fallbackMigrationSql = read('../supabase/migrations/20261104000000_live_tv_fallback_embed_event.sql');
 
 // ============================================================
 // §1 Analytics adapter payload safety (behavioral)
@@ -229,12 +234,17 @@ const migrationSql = read('../supabase/migrations/20261103000000_live_tv_analyti
   for (const name of expected) {
     assert.ok((ANALYTICS_EVENT_NAMES as readonly string[]).includes(name), `${name} in taxonomy`);
   }
-  // Extract the event list from the migration CHECK constraint.
-  const start = migrationSql.indexOf('check (event_name in (');
-  assert.ok(start !== -1, 'migration CHECK constraint found');
-  const end = migrationSql.indexOf('))', start);
-  const constraintBody = migrationSql.slice(start, end);
-  const sqlEvents = [...constraintBody.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+  // Extract the event list from EVERY taxonomy migration's CHECK
+  // constraint and union them (append-only migration history — the
+  // effective DB constraint is the union of all extensions).
+  const checkEvents = (sql: string): string[] => {
+    const start = sql.indexOf('check (event_name in (');
+    assert.ok(start !== -1, 'migration CHECK constraint found');
+    const end = sql.indexOf('))', start);
+    const body = sql.slice(start, end);
+    return [...body.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+  };
+  const sqlEvents = [...new Set([...checkEvents(migrationSql), ...checkEvents(fallbackMigrationSql)])];
   assert.deepEqual(
     new Set(sqlEvents),
     new Set(ANALYTICS_EVENT_NAMES),
@@ -290,7 +300,20 @@ const migrationSql = read('../supabase/migrations/20261103000000_live_tv_analyti
 
   // Single error source: engine 'error' subscription + the resolve catch;
   // the engine-load catch must NOT track (the engine already emitted).
-  assert.match(page, /eng\.on\('error', \(error\) => \{\s*trackLiveTvError\(channel\.id, error\);\s*\}\);/, 'engine error subscription present');
+  // LT-15 evolution: the subscription is identity-guarded (a stale engine
+  // can never mount an embed fallback) and MAY activate the documented
+  // embed fallback for genuine native failures — the tracking call is
+  // unchanged and still exactly one.
+  {
+    const subStart = page.indexOf("eng.on('error', (error) => {");
+    assert.ok(subStart !== -1, 'engine error subscription present');
+    const subBody = page.slice(subStart, page.indexOf('});', subStart));
+    const iGuard = subBody.indexOf('if (engine !== eng) return;');
+    const iTrack = subBody.indexOf('trackLiveTvError(channel.id, error);');
+    const iFallback = subBody.indexOf('if (shouldFallbackToEmbed(error)) activateEmbedFallback(channel, error);');
+    assert.ok(iGuard !== -1 && iTrack !== -1 && iFallback !== -1, 'subscription: identity guard + single tracking call + fallback activation');
+    assert.ok(iGuard < iTrack && iTrack < iFallback, 'identity guard first; tracking unchanged; fallback activation last');
+  }
   const selectFlowStart = page.indexOf('async function selectChannel');
   const selectFlowEnd = page.indexOf('function retryPlayback');
   const selectFlow = page.slice(selectFlowStart, selectFlowEnd);

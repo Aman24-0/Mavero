@@ -42,6 +42,7 @@
     type LiveTvSeekRange
   } from '$lib/client/live-tv/player';
   import { isLiveTvPlaybackError, type LiveTvPlaybackError } from '$lib/client/live-tv/player-errors';
+  import { buildLiveTvEmbedUrl } from '$lib/client/live-tv/api';
   import { describeLivePosition, formatBehindLive } from '$lib/client/live-tv/epg';
   import type { LiveTvChannel } from '$lib/client/live-tv/types';
 
@@ -51,6 +52,8 @@
     sessionErrorMessage = null,
     onretry = () => {},
     onuseraction = () => {},
+    embedChannelId = null,
+    embedReloadToken = 0,
     video = $bindable()
   }: {
     /** The page's LT-3 engine for the active session (null between sessions). */
@@ -68,6 +71,20 @@
      * event/payload), so no analytics knowledge lives here.
      */
     onuseraction?: (action: 'pause' | 'fullscreen_enter' | 'fullscreen_exit') => void;
+    /**
+     * LT-15 — embed fallback: the channel id whose documented LiveGT embed
+     * player is currently mounted (null = native playback only). The URL is
+     * built HERE from the LT-2 client's constant + validated id — never a
+     * URL handed in from outside, so no arbitrary iframe src can ever be
+     * injected through this prop.
+     */
+    embedChannelId?: string | null;
+    /**
+     * LT-15 — bumped by the page to force ONE fresh iframe mount ("Try
+     * again" while the fallback is active recreates the embed player, it
+     * never re-instantiates Shaka).
+     */
+    embedReloadToken?: number;
     /** The page-owned video element rendered here (bindable, page binds it). */
     video?: HTMLVideoElement | undefined;
   } = $props();
@@ -89,6 +106,23 @@
   // Fullscreen (standard container API only — no custom PiP).
   let canFullscreen = $state(false);
   let isFullscreen = $state(false);
+
+  // ---- LT-15 — embed fallback (documented LiveGT embed player) ----------
+  // The iframe src is built EXCLUSIVELY from the LT-2 client's base-URL
+  // constant + the strictly validated numeric channel id (the builder
+  // returns null for anything else → no iframe is ever mounted). The URL
+  // is never taken from API wire data and never persisted anywhere.
+  const embedSrc = $derived(embedChannelId !== null ? buildLiveTvEmbedUrl(embedChannelId) : null);
+  const embedActive = $derived(embedSrc !== null);
+  // Subtle "Switching…" state: shown from the moment the fallback mounts
+  // until the embed page's own load event fires (a fresh mount resets it).
+  let embedLoaded = $state(false);
+  $effect(() => {
+    // Re-run on every fresh mount (channel change or reload token bump).
+    void embedChannelId;
+    void embedReloadToken;
+    embedLoaded = false;
+  });
 
   // ---- Engine subscription: re-run on engine change (new session) --------
   // A page channel switch destroys the old engine and passes a fresh one;
@@ -229,7 +263,11 @@
   });
 
   // ---- Derived display state ---------------------------------------------
-  const displayError = $derived(sessionErrorMessage ?? engineError?.message ?? null);
+  // LT-15: while the embed fallback is active the native failure message
+  // is deliberately suppressed — the fallback UI replaces the error UI.
+  // The derivation still reads ONLY the safe tables and can only remove
+  // text, never introduce new text.
+  const displayError = $derived(embedActive ? null : sessionErrorMessage ?? engineError?.message ?? null);
   const sessionEngaged = $derived(
     Boolean(engine) && engineState !== 'idle' && engineState !== 'destroyed'
   );
@@ -243,6 +281,7 @@
     controlsEnabled && livePosition.behindSeconds !== null && seekRange !== null
   );
   const activeChannelName = $derived(resolvingChannel?.name ?? '');
+  const showNativeControls = $derived(!embedActive);
 </script>
 
 <section class="ltv-player" aria-label="Live TV player">
@@ -251,9 +290,37 @@
       bind:this={videoRef}
       playsinline
       aria-label="Live TV stream"
+      class:embed-hidden={embedActive}
     ></video>
 
-    {#if displayError}
+    {#if embedSrc}
+      <!-- LT-15 — documented LiveGT embed fallback (mounted ONLY after the
+           native engine genuinely failed; exactly one iframe at a time;
+           src from the LT-2 builder + validated id only). The wrapper +
+           iframe follow the official documented responsive pattern. -->
+      <div class="embed-frame">
+        {#key embedReloadToken}
+          <iframe
+            src={embedSrc}
+            title="Live TV alternate player"
+            style="position:absolute;inset:0;width:100%;height:100%;border:0"
+            allowfullscreen
+            allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
+            onload={() => {
+              embedLoaded = true;
+            }}
+          ></iframe>
+        {/key}
+        {#if !embedLoaded}
+          <div class="embed-pending player-overlay subtle" role="status">
+            <span class="overlay-spinner" aria-hidden="true"><LoaderCircle size={22} /></span>
+            <p class="overlay-message">Switching to alternate player…</p>
+          </div>
+        {/if}
+      </div>
+    {/if}
+
+    {#if !embedActive && displayError}
       <div class="player-overlay" role="alert">
         <span class="overlay-mark" aria-hidden="true"><AlertCircle size={22} /></span>
         <p class="overlay-message">{displayError}</p>
@@ -291,6 +358,21 @@
   </div>
 
   <div class="player-controls" aria-label="Playback controls">
+    {#if embedActive}
+      <!-- LT-15 — embed fallback controls: recreate the embed player (the
+           page's retry decides: a fresh iframe mount, never a new Shaka
+           attempt); fullscreen still works on the shared surface. -->
+      <button
+        class="ctl go-live"
+        type="button"
+        onclick={onretry}
+        aria-label="Reload the alternate player"
+        title="Reload the alternate player"
+      >
+        <RefreshCw size={16} /> Reload player
+      </button>
+      <span class="ctl-spacer" aria-hidden="true"></span>
+    {:else if showNativeControls}
     <button
       class="ctl"
       type="button"
@@ -359,6 +441,7 @@
         aria-label="Seek within the live window"
       />
     {/if}
+    {/if}
 
     {#if canFullscreen}
       <button
@@ -404,6 +487,41 @@
     height: 100%;
     object-fit: contain;
     background: #020405;
+  }
+  /* LT-15 — embed fallback: the native video is hidden (never removed —
+     the page owns the element and re-attaches the engine to it for the
+     next fresh native session). */
+  .player-surface video.embed-hidden {
+    display: none;
+  }
+
+  /* LT-15 — the documented LiveGT embed fallback frame. The wrapper fills
+     the player surface (which already enforces the 16:9 ratio); the iframe
+     itself uses the official documented responsive pattern
+     (absolute; inset:0; 100%; border:0) so it occupies the complete
+     player area with the same dimensions as the native video. */
+  .embed-frame {
+    position: absolute;
+    inset: 0;
+    background: #020405;
+  }
+  .embed-frame iframe {
+    display: block;
+    width: 100%;
+    height: 100%;
+    border: 0;
+  }
+  .embed-pending {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    display: grid;
+    place-content: center;
+    justify-items: center;
+    gap: 12px;
+    padding: 20px;
+    background: rgba(2, 4, 5, .72);
+    text-align: center;
   }
 
   .player-overlay {

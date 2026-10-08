@@ -3866,3 +3866,160 @@ V2/proxy/TGFLIX probes. scripts/lt14_phase2_probe.mjs (+output) — Server 2
 E2E segment proof, V2 302 shape. scripts/lt14_phase3_probe.mjs (+output) —
 V2 channels list, TGFLIX keys. scripts/lt14_phase3b_probe.mjs (+output) —
 V2 key/CORS/player. No tokens/keys/cookies persisted anywhere.
+
+## LT-15 — Automatic embed fallback (documented LiveGT /embed/{id})
+
+Date: 2026-10-08. Directive: for every Live TV channel, ALWAYS attempt
+Mavero's native Shaka V1 engine first; when native playback GENUINELY fails,
+automatically fall back to the official documented LiveGT V1 embed iframe
+(livetgtv.lovable.app/embed/{channelId}) — following the documented responsive
+markup. No V2, no premiumplugx/jjtvxweb/third-party fallbacks, no proxying,
+no V1 API/catalogue/EPG changes, VOD untouched. Smallest production-safe
+change; docs read completely first (including the V2 section — noted, NOT
+implemented; the V1 host also serves /api/public/v2/* 24/7 HLS channels,
+explicitly out of scope).
+
+### Phase 0 — Baseline
+HEAD 83af093 (LT-14 docs commit). Worktree: mode-only noise + the recurring
+13 partial-checkout deletions in the hosting upload feature (environment
+artifact, restored from HEAD as in LT-13 — unrelated to Live TV). LiveGT docs
+fetched and read COMPLETELY: the embed contract (responsive 16:9 pattern,
+allow="autoplay; fullscreen; encrypted-media" + picture-in-picture variant),
+V1 endpoints unchanged, V2 section documented. No code touched before the
+design was fixed.
+
+### Phase 1 — Existing architecture read in full
+player.ts (966), player-errors.ts, +page.svelte (845), LiveTvPlayer.svelte,
+analytics.ts, analytics-taxonomy.ts, the LT-5 migration, all five Live TV
+suites + the two migration-inventory suites. Key pre-existing invariants
+that shaped the design: (a) release-audit §4 — the LiveGT hostname may
+exist ONLY in api.ts; (b) player-test §11 — player-errors.ts may never
+contain the hostname or .message reads; (c) page/player/adapter sources are
+scanned for livetgtv/console/storage (comments included); (d) the analytics
+taxonomy is CLOSED (validated at ingest + DB CHECK; adding an event requires
+a pure-superset migration — the documented auditable path); (e) §7 ordering
+abort→destroy→resolve→engine→load is pinned by tests.
+
+### Phase 2 — Design (smallest safe change)
+- URL construction: `buildLiveTvEmbedUrl(channelId)` in api.ts (the single
+  sanctioned LiveGT-URL home) — LIVEGT_V1_BASE_URL + '/embed/' + a strictly
+  validated 1–8-digit numeric id; ANYTHING else → null → no iframe. Never
+  reads API `embed`/`watch` wire fields; never persisted.
+- Classification: `shouldFallbackToEmbed(err)` in player-errors.ts — true
+  ONLY for LiveTvPlaybackError with a fatal playback kind (invalid_source,
+  init_failed, manifest_load_failed, drm_config_failed, drm_playback_failed,
+  network_failed, unsupported_browser, playback_failed); FALSE for
+  autoplay_blocked (existing tap-to-play CTA stays authoritative), aborted,
+  every LiveTvError (data layer: catalogue/resolution/guide/search) and
+  unknown shapes. Conservative by construction.
+- Activation: EXACTLY ONE point — the page's engine 'error' subscription,
+  identity-guarded (`if (engine !== eng) return;`) so a stale engine can
+  never mount a fallback for a newer session. Set-once per session.
+  activateEmbedFallback: destroy Shaka (destroyEngineSafely) FIRST →
+  clear resolving → suppress sessionErrorMessage → set
+  embedFallbackChannelId (catalogue channel id, never a URL) → bump
+  embedReloadToken → track. The load()-rejection catch defers to it
+  (checks embedFallbackChannelId === channel.id → return, no double
+  surface) — load-phase AND mid-session failures both arrive through the
+  one subscription.
+- Component: LiveTvPlayer receives embedChannelId + embedReloadToken, builds
+  the src ITSELF via the builder (no URL can be injected through props),
+  renders exactly ONE iframe inside {#key embedReloadToken} following the
+  documented pattern (absolute/inset/100%/border:0 + allowfullscreen +
+  allow list + a11y title), hides (never removes) the <video>, suppresses
+  the native error overlay, shows a subtle "Switching to alternate
+  player…" state until the iframe load event, and swaps the controls row
+  for [Reload player] + fullscreen (fullscreen still targets the shared
+  surface).
+- Lifecycle: selectChannel resets embedFallbackChannelId=null after
+  destroy-engine and BEFORE resolve (iframe unmounts; every selection
+  starts fresh native); onDestroy clears it; retryPlayback while fallback
+  active bumps the token ONCE (recreate the iframe — never a new Shaka
+  attempt); selecting any channel card remains the fresh-session path.
+- Analytics: live_tv_fallback_embed (content_id + normalized error_kind
+  ONLY) — taxonomy entry + pure-superset migration
+  20261104000000_live_tv_fallback_embed_event.sql (no tables/columns; the
+  documented extension path; the directive's ANALYTICS section explicitly
+  authorized the event, which the closed taxonomy requires to be migrated).
+  Not added to MEANINGFUL_ACTIVITY_EVENTS (activation is not engagement).
+
+### Phase 3 — Implementation
+api.ts +29 (builder), player-errors.ts +25 (classifier + docs),
+analytics.ts +17 (tracker), analytics-taxonomy.ts +5 (event),
+LiveTvPlayer.svelte +120/−2 (iframe/controls/hidden video/pending state),
++page.svelte +88/−2 (state, activation, guards, retry, teardown, header
+doc). Zero changes to player.ts, media-auth.ts, cache.ts, epg.ts, types.ts,
+errors.ts, VOD, navigation, V1 semantics.
+
+### Phase 4 — Focused tests (new suite, chained into pnpm test)
+scripts/live_tv_embed_fallback_test.ts — 15 checks covering all 12
+directive-mandated cases: builder exactness + 30-value injection battery;
+classifier truth table (8 fatal kinds yes; autoplay/abort/all LiveTvError
+kinds/unknown no); analytics payload field-by-field (no URLs/tokens/keys);
+single activation point + identity-guard ordering; one iframe, builder-only
+src, documented markup; set-once + destroy-before-takeover; catalogue/guide/
+resolution/local-filter flows structurally fallback-free; autoplay CTA
+uncoupled; switch ordering (abort→destroy→reset→resolve); teardown clears
+fallback; retry = one iframe recreation; no loop (passive onload, one
+engine construction site); no {@html}/no wire-field reads; SSR-safe
+imports under Node; native path ordering unchanged.
+Legitimate marker updates in existing suites (behavior evolved
+intentionally; invariants preserved): live_tv_page_test §10 (displayError
+suppression + retry branches), live_tv_hardening_test §3 (taxonomy↔SQL
+parity now unions BOTH taxonomy migrations — the foundation-test 1c
+convention) + §5 (identity-guarded subscription shape),
+phase1_analytics_foundation_test 1c (extension list += the new migration),
+cloudstream_registry_integration_test §A10 + phase4 F3 (sanctioned-migration
+inventories += the new migration, both verified to never touch provider
+registries).
+
+### Phase 5 — Gates (all green at the LT-15 change)
+- pnpm check: 0 errors, 0 warnings.
+- pnpm test: EXIT 0 — the FULL chain, incl. live_tv_client 62,
+  live_tv_player 91, live_tv_page 22, hardening 13/13, release audit 6/6,
+  live_tv_embed_fallback 15/15, analytics foundation, cloudstream
+  registry/phase4 inventories, and every other suite.
+- pnpm build: EXIT 0.
+Environment note: pnpm vanished from PATH again (LT-13 container issue);
+restored via corepack (packageManager pin pnpm@10.30.3 respected).
+
+### Phase 6 — Browser QA (real Chromium vs the local dev server)
+scripts/lt15_browser_qa.mjs (dev-only, never committed): 12/12 PASS/OK —
+A1 catalogue loads; B1 native attempt FIRST (1 main-frame manifest request,
+0 iframes before failure); B2 EXACTLY ONE iframe with src EXACTLY
+"https://livetgtv.lovable.app/embed/154"; B3 native video hidden (display
+none) + native error overlay suppressed; B4 "Switching to alternate
+player…" appears and clears on iframe load; B5 embed page requested; B6
+live_tv_fallback_embed fired once with a safe payload (no URL/token/key in
+the serialized body); C1 "Reload player" recreates the iframe ONCE with
+ZERO new main-frame manifest attempts (the embed's own child-frame player
+traffic is its business); D1 switching channels removes the iframe
+immediately (0 iframes) and starts a FRESH native attempt for the new
+channel (1 main-frame manifest); D2 the new channel gets its own single
+fallback; E1 no __hdnea__/MPD/ClearKey material in DOM/URL, zero
+pageerrors. QA-harness note: the app's devtool-deterrence layer
+false-positives under Playwright's CDP session, so the QA run stubs the
+'disable-devtool' module request IN THE TEST BROWSER ONLY (route
+interception — no application code touched, equivalent to the admin
+exemption). HONEST LIMIT: this egress geo-fails every Jio CDN manifest
+(451), so "native SUCCESS → no iframe" is proven structurally (B1: no
+iframe exists while the native engine runs; the suites pin the wiring) and
+needs an India spot-check on 143/156/173. Whether the embed iframe actually
+PLAYS a given channel is LiveGT's own page logic (its servers/iframe chain)
+— India-observable only.
+
+### Intentionally NOT changed
+V2 (docs read, out of scope), premiumplugx/jjtvxweb/allinonereborn2
+(third-party, forbidden), V1 API semantics/catalogue/guide flow, player.ts
+engine + media-auth + cache + epg + types/errors, VOD player, navigation,
+Supabase tables/columns (only the documented CHECK-widening taxonomy
+migration), source-selection, Shaka config, the no-auto-retry engine
+invariant. The embed URL is never taken from API wire data and never
+persisted; no tokens/keys/signed URLs logged anywhere (worklog included).
+
+### Deployment note
+The Supabase migration 20261104000000 must be applied (pure-superset CHECK
+widening — analytics insertions of live_tv_fallback_embed are REJECTED by
+the DB until it is; the event is fire-and-forget so playback is unaffected
+either way, only the analytics row would be lost).
+

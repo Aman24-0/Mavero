@@ -57,22 +57,22 @@
 
 import { LiveTvError, liveTvErrorKindForStatus } from './errors';
 import {
-	getCachedLiveTvChannels,
-	getCachedLiveTvGuide,
-	setCachedLiveTvChannels,
-	setCachedLiveTvGuide
+        getCachedLiveTvChannels,
+        getCachedLiveTvGuide,
+        setCachedLiveTvChannels,
+        setCachedLiveTvGuide
 } from './cache';
 import type {
-	LiveTvChannel,
-	LiveTvChannelsOptions,
-	LiveTvDrm,
-	LiveTvGuide,
-	LiveTvGuideOptions,
-	LiveTvGuideProgramme,
-	LiveTvPlaybackOptions,
-	LiveTvPlaybackResolution,
-	LiveTvPlaybackSource,
-	LiveTvSearchOptions
+        LiveTvChannel,
+        LiveTvChannelsOptions,
+        LiveTvDrm,
+        LiveTvGuide,
+        LiveTvGuideOptions,
+        LiveTvGuideProgramme,
+        LiveTvPlaybackOptions,
+        LiveTvPlaybackResolution,
+        LiveTvPlaybackSource,
+        LiveTvSearchOptions
 } from './types';
 
 /** The single LiveGT V1 base URL (public API — see header note). */
@@ -93,22 +93,22 @@ type LiveTvEndpoint = 'channels' | 'channel' | 'guide';
 // ---------------------------------------------------------------------------
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === 'object' && value !== null && !Array.isArray(value);
+        return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function isNonEmptyString(value: unknown): value is string {
-	return typeof value === 'string' && value.trim().length > 0;
+        return typeof value === 'string' && value.trim().length > 0;
 }
 
 /** Only absolute http(s) URLs are usable playback sources. */
 function isUsableUrl(value: unknown): value is string {
-	if (typeof value !== 'string' || value.length === 0) return false;
-	try {
-		const parsed = new URL(value);
-		return parsed.protocol === 'https:' || parsed.protocol === 'http:';
-	} catch {
-		return false;
-	}
+        if (typeof value !== 'string' || value.length === 0) return false;
+        try {
+                const parsed = new URL(value);
+                return parsed.protocol === 'https:' || parsed.protocol === 'http:';
+        } catch {
+                return false;
+        }
 }
 
 /**
@@ -118,9 +118,9 @@ function isUsableUrl(value: unknown): value is string {
  * behavior preserved, LT-0 finding).
  */
 function assertValidChannelId(channelId: string, endpoint: LiveTvEndpoint): void {
-	if (typeof channelId !== 'string' || channelId.trim().length === 0) {
-		throw new LiveTvError('bad_request', { endpoint });
-	}
+        if (typeof channelId !== 'string' || channelId.trim().length === 0) {
+                throw new LiveTvError('bad_request', { endpoint });
+        }
 }
 
 // ---------------------------------------------------------------------------
@@ -134,57 +134,57 @@ function assertValidChannelId(channelId: string, endpoint: LiveTvEndpoint): void
  * HTTP error bodies are intentionally never read or propagated.
  */
 async function liveTvFetch(
-	url: URL,
-	endpoint: LiveTvEndpoint,
-	options: { channelId?: string; signal?: AbortSignal } = {}
+        url: URL,
+        endpoint: LiveTvEndpoint,
+        options: { channelId?: string; signal?: AbortSignal } = {}
 ): Promise<unknown> {
-	const { channelId, signal } = options;
-	if (signal?.aborted) {
-		throw new LiveTvError('aborted', { endpoint, channelId });
-	}
-	const controller = new AbortController();
-	let timedOut = false;
-	const timer = setTimeout(() => {
-		timedOut = true;
-		controller.abort();
-	}, requestTimeoutMs);
-	const onExternalAbort = () => controller.abort();
-	if (signal) signal.addEventListener('abort', onExternalAbort);
-	try {
-		const response = await fetch(url, {
-			method: 'GET',
-			signal: controller.signal,
-			headers: { accept: 'application/json' },
-			// LT-11 cache-safety: PLAYBACK RESOLUTION must be always-fresh
-			// (plan §11, decision D6 — signed URLs and ClearKey material are
-			// never cached or persisted). The upstream serves `cache-control:
-			// public, max-age=60`, which the browser HTTP cache would
-			// otherwise replay for up to 60s (LT-10 finding) — a contract
-			// violation and a stale-token window at the 6h token rotation
-			// boundary. Catalogue/guide keep DEFAULT (bounded) caching: the
-			// in-memory cache already bounds them and their data is not
-			// credential material.
-			cache: endpoint === 'channel' ? 'no-store' : 'default'
-		});
-		const statusKind = liveTvErrorKindForStatus(response.status);
-		if (statusKind) {
-			throw new LiveTvError(statusKind, { endpoint, channelId, status: response.status });
-		}
-		try {
-			return await response.json();
-		} catch {
-			throw new LiveTvError('invalid_response', { endpoint, channelId });
-		}
-	} catch (err) {
-		if (err instanceof LiveTvError) throw err;
-		// Caller abort wins over every other classification.
-		if (signal?.aborted) throw new LiveTvError('aborted', { endpoint, channelId });
-		if (timedOut) throw new LiveTvError('timeout', { endpoint, channelId });
-		throw new LiveTvError('network', { endpoint, channelId });
-	} finally {
-		clearTimeout(timer);
-		if (signal) signal.removeEventListener('abort', onExternalAbort);
-	}
+        const { channelId, signal } = options;
+        if (signal?.aborted) {
+                throw new LiveTvError('aborted', { endpoint, channelId });
+        }
+        const controller = new AbortController();
+        let timedOut = false;
+        const timer = setTimeout(() => {
+                timedOut = true;
+                controller.abort();
+        }, requestTimeoutMs);
+        const onExternalAbort = () => controller.abort();
+        if (signal) signal.addEventListener('abort', onExternalAbort);
+        try {
+                const response = await fetch(url, {
+                        method: 'GET',
+                        signal: controller.signal,
+                        headers: { accept: 'application/json' },
+                        // LT-11 cache-safety: PLAYBACK RESOLUTION must be always-fresh
+                        // (plan §11, decision D6 — signed URLs and ClearKey material are
+                        // never cached or persisted). The upstream serves `cache-control:
+                        // public, max-age=60`, which the browser HTTP cache would
+                        // otherwise replay for up to 60s (LT-10 finding) — a contract
+                        // violation and a stale-token window at the 6h token rotation
+                        // boundary. Catalogue/guide keep DEFAULT (bounded) caching: the
+                        // in-memory cache already bounds them and their data is not
+                        // credential material.
+                        cache: endpoint === 'channel' ? 'no-store' : 'default'
+                });
+                const statusKind = liveTvErrorKindForStatus(response.status);
+                if (statusKind) {
+                        throw new LiveTvError(statusKind, { endpoint, channelId, status: response.status });
+                }
+                try {
+                        return await response.json();
+                } catch {
+                        throw new LiveTvError('invalid_response', { endpoint, channelId });
+                }
+        } catch (err) {
+                if (err instanceof LiveTvError) throw err;
+                // Caller abort wins over every other classification.
+                if (signal?.aborted) throw new LiveTvError('aborted', { endpoint, channelId });
+                if (timedOut) throw new LiveTvError('timeout', { endpoint, channelId });
+                throw new LiveTvError('network', { endpoint, channelId });
+        } finally {
+                clearTimeout(timer);
+                if (signal) signal.removeEventListener('abort', onExternalAbort);
+        }
 }
 
 // ---------------------------------------------------------------------------
@@ -197,12 +197,12 @@ async function liveTvFetch(
  * `embed`/`watch` wire fields are intentionally never read.
  */
 function normalizeChannelEntry(raw: unknown): LiveTvChannel | null {
-	if (!isRecord(raw)) return null;
-	if (!isNonEmptyString(raw.id) || !isNonEmptyString(raw.name)) return null;
-	const channel: LiveTvChannel = { id: raw.id, name: raw.name };
-	if (isNonEmptyString(raw.category)) channel.category = raw.category;
-	if (isNonEmptyString(raw.logo)) channel.logo = raw.logo;
-	return channel;
+        if (!isRecord(raw)) return null;
+        if (!isNonEmptyString(raw.id) || !isNonEmptyString(raw.name)) return null;
+        const channel: LiveTvChannel = { id: raw.id, name: raw.name };
+        if (isNonEmptyString(raw.category)) channel.category = raw.category;
+        if (isNonEmptyString(raw.logo)) channel.logo = raw.logo;
+        return channel;
 }
 
 /**
@@ -211,18 +211,18 @@ function normalizeChannelEntry(raw: unknown): LiveTvChannel | null {
  * The wire `count` field is ignored — the array is the source of truth.
  */
 function normalizeChannelList(body: unknown): LiveTvChannel[] {
-	if (!isRecord(body) || !Array.isArray(body.channels)) {
-		throw new LiveTvError('invalid_response', { endpoint: 'channels' });
-	}
-	const seen = new Set<string>();
-	const channels: LiveTvChannel[] = [];
-	for (const raw of body.channels) {
-		const channel = normalizeChannelEntry(raw);
-		if (!channel || seen.has(channel.id)) continue;
-		seen.add(channel.id);
-		channels.push(channel);
-	}
-	return channels;
+        if (!isRecord(body) || !Array.isArray(body.channels)) {
+                throw new LiveTvError('invalid_response', { endpoint: 'channels' });
+        }
+        const seen = new Set<string>();
+        const channels: LiveTvChannel[] = [];
+        for (const raw of body.channels) {
+                const channel = normalizeChannelEntry(raw);
+                if (!channel || seen.has(channel.id)) continue;
+                seen.add(channel.id);
+                channels.push(channel);
+        }
+        return channels;
 }
 
 /**
@@ -232,14 +232,14 @@ function normalizeChannelList(body: unknown): LiveTvChannel[] {
  * An empty result is the caller's signal to raise `no_playback_source`.
  */
 function normalizeSources(raw: unknown, channelId: string): LiveTvPlaybackSource[] {
-	if (!Array.isArray(raw)) {
-		throw new LiveTvError('invalid_response', { endpoint: 'channel', channelId });
-	}
-	const sources: LiveTvPlaybackSource[] = [];
-	for (const entry of raw) {
-		if (isUsableUrl(entry)) sources.push({ url: entry });
-	}
-	return sources;
+        if (!Array.isArray(raw)) {
+                throw new LiveTvError('invalid_response', { endpoint: 'channel', channelId });
+        }
+        const sources: LiveTvPlaybackSource[] = [];
+        for (const entry of raw) {
+                if (isUsableUrl(entry)) sources.push({ url: entry });
+        }
+        return sources;
 }
 
 /**
@@ -249,56 +249,56 @@ function normalizeSources(raw: unknown, channelId: string): LiveTvPlaybackSource
  * Values are transported as-is — never logged, never persisted.
  */
 function normalizeDrm(raw: unknown, channelId: string): LiveTvDrm | null {
-	if (raw === undefined || raw === null) return null;
-	if (!isRecord(raw)) {
-		throw new LiveTvError('invalid_response', { endpoint: 'channel', channelId });
-	}
-	if (typeof raw.type === 'string' && raw.type !== 'clearkey') {
-		throw new LiveTvError('unsupported_drm', { endpoint: 'channel', channelId });
-	}
-	if (raw.type !== 'clearkey' || !isNonEmptyString(raw.keyId) || !isNonEmptyString(raw.key)) {
-		throw new LiveTvError('invalid_response', { endpoint: 'channel', channelId });
-	}
-	return { type: 'clearkey', keyId: raw.keyId, key: raw.key };
+        if (raw === undefined || raw === null) return null;
+        if (!isRecord(raw)) {
+                throw new LiveTvError('invalid_response', { endpoint: 'channel', channelId });
+        }
+        if (typeof raw.type === 'string' && raw.type !== 'clearkey') {
+                throw new LiveTvError('unsupported_drm', { endpoint: 'channel', channelId });
+        }
+        if (raw.type !== 'clearkey' || !isNonEmptyString(raw.keyId) || !isNonEmptyString(raw.key)) {
+                throw new LiveTvError('invalid_response', { endpoint: 'channel', channelId });
+        }
+        return { type: 'clearkey', keyId: raw.keyId, key: raw.key };
 }
 
 /** Normalize one programme object; null when it fails validation (dropped). */
 function normalizeProgramme(raw: unknown): LiveTvGuideProgramme | null {
-	if (!isRecord(raw)) return null;
-	if (!isNonEmptyString(raw.title)) return null;
-	if (typeof raw.start !== 'number' || !Number.isFinite(raw.start)) return null;
-	if (typeof raw.stop !== 'number' || !Number.isFinite(raw.stop)) return null;
-	const programme: LiveTvGuideProgramme = {
-		title: raw.title,
-		startSeconds: raw.start,
-		stopSeconds: raw.stop
-	};
-	if (isNonEmptyString(raw.desc)) programme.description = raw.desc;
-	if (isNonEmptyString(raw.category)) programme.category = raw.category;
-	if (isNonEmptyString(raw.image)) programme.image = raw.image;
-	if (isNonEmptyString(raw.startTime)) programme.startDisplay = raw.startTime;
-	if (isNonEmptyString(raw.stopTime)) programme.stopDisplay = raw.stopTime;
-	return programme;
+        if (!isRecord(raw)) return null;
+        if (!isNonEmptyString(raw.title)) return null;
+        if (typeof raw.start !== 'number' || !Number.isFinite(raw.start)) return null;
+        if (typeof raw.stop !== 'number' || !Number.isFinite(raw.stop)) return null;
+        const programme: LiveTvGuideProgramme = {
+                title: raw.title,
+                startSeconds: raw.start,
+                stopSeconds: raw.stop
+        };
+        if (isNonEmptyString(raw.desc)) programme.description = raw.desc;
+        if (isNonEmptyString(raw.category)) programme.category = raw.category;
+        if (isNonEmptyString(raw.image)) programme.image = raw.image;
+        if (isNonEmptyString(raw.startTime)) programme.startDisplay = raw.startTime;
+        if (isNonEmptyString(raw.stopTime)) programme.stopDisplay = raw.stopTime;
+        return programme;
 }
 
 /** nowPlaying/upNext slots: absent/null → null; malformed → null (documented degradation). */
 function normalizeProgrammeSlot(raw: unknown): LiveTvGuideProgramme | null {
-	if (raw === undefined || raw === null) return null;
-	return normalizeProgramme(raw);
+        if (raw === undefined || raw === null) return null;
+        return normalizeProgramme(raw);
 }
 
 /** upcoming/guide arrays: absent → []; wrong type → invalid_response; malformed entries dropped. */
 function normalizeProgrammeArray(raw: unknown, channelId: string): LiveTvGuideProgramme[] {
-	if (raw === undefined || raw === null) return [];
-	if (!Array.isArray(raw)) {
-		throw new LiveTvError('invalid_response', { endpoint: 'guide', channelId });
-	}
-	const programmes: LiveTvGuideProgramme[] = [];
-	for (const entry of raw) {
-		const programme = normalizeProgramme(entry);
-		if (programme) programmes.push(programme);
-	}
-	return programmes;
+        if (raw === undefined || raw === null) return [];
+        if (!Array.isArray(raw)) {
+                throw new LiveTvError('invalid_response', { endpoint: 'guide', channelId });
+        }
+        const programmes: LiveTvGuideProgramme[] = [];
+        for (const entry of raw) {
+                const programme = normalizeProgramme(entry);
+                if (programme) programmes.push(programme);
+        }
+        return programmes;
 }
 
 /**
@@ -306,20 +306,20 @@ function normalizeProgrammeArray(raw: unknown, channelId: string): LiveTvGuidePr
  * empty arrays) are VALID and normalize to an empty guide — never an error.
  */
 function normalizeGuide(body: unknown, channelId: string): LiveTvGuide {
-	if (!isRecord(body)) {
-		throw new LiveTvError('invalid_response', { endpoint: 'guide', channelId });
-	}
-	const guide: LiveTvGuide = {
-		channelId,
-		nowPlaying: normalizeProgrammeSlot(body.nowPlaying),
-		upNext: normalizeProgrammeSlot(body.upNext),
-		upcoming: normalizeProgrammeArray(body.upcoming, channelId),
-		schedule: normalizeProgrammeArray(body.guide, channelId)
-	};
-	if (typeof body.generatedAt === 'number' && Number.isFinite(body.generatedAt)) {
-		guide.generatedAtSeconds = body.generatedAt;
-	}
-	return guide;
+        if (!isRecord(body)) {
+                throw new LiveTvError('invalid_response', { endpoint: 'guide', channelId });
+        }
+        const guide: LiveTvGuide = {
+                channelId,
+                nowPlaying: normalizeProgrammeSlot(body.nowPlaying),
+                upNext: normalizeProgrammeSlot(body.upNext),
+                upcoming: normalizeProgrammeArray(body.upcoming, channelId),
+                schedule: normalizeProgrammeArray(body.guide, channelId)
+        };
+        if (typeof body.generatedAt === 'number' && Number.isFinite(body.generatedAt)) {
+                guide.generatedAtSeconds = body.generatedAt;
+        }
+        return guide;
 }
 
 // ---------------------------------------------------------------------------
@@ -335,21 +335,21 @@ function normalizeGuide(body: unknown, channelId: string): LiveTvGuide {
  * (possibly empty — an empty catalogue is a valid state).
  */
 export async function getLiveTvChannels(options: LiveTvChannelsOptions = {}): Promise<LiveTvChannel[]> {
-	if (options.signal?.aborted) {
-		throw new LiveTvError('aborted', { endpoint: 'channels' });
-	}
-	const url = new URL(CHANNELS_PATH, LIVEGT_V1_BASE_URL);
-	const category = options.category?.trim();
-	if (category) url.searchParams.set('category', category);
-	const cacheKey = url.searchParams.toString();
-	if (!options.forceRefetch) {
-		const cached = getCachedLiveTvChannels(cacheKey);
-		if (cached) return cached;
-	}
-	const body = await liveTvFetch(url, 'channels', { signal: options.signal });
-	const channels = normalizeChannelList(body);
-	setCachedLiveTvChannels(cacheKey, channels);
-	return channels;
+        if (options.signal?.aborted) {
+                throw new LiveTvError('aborted', { endpoint: 'channels' });
+        }
+        const url = new URL(CHANNELS_PATH, LIVEGT_V1_BASE_URL);
+        const category = options.category?.trim();
+        if (category) url.searchParams.set('category', category);
+        const cacheKey = url.searchParams.toString();
+        if (!options.forceRefetch) {
+                const cached = getCachedLiveTvChannels(cacheKey);
+                if (cached) return cached;
+        }
+        const body = await liveTvFetch(url, 'channels', { signal: options.signal });
+        const channels = normalizeChannelList(body);
+        setCachedLiveTvChannels(cacheKey, channels);
+        return channels;
 }
 
 /**
@@ -363,27 +363,27 @@ export async function getLiveTvChannels(options: LiveTvChannelsOptions = {}): Pr
  * short-lived catalogue where practical (plan §8); debounce in the UI.
  */
 export async function searchLiveTvChannels(
-	query: string,
-	options: LiveTvSearchOptions = {}
+        query: string,
+        options: LiveTvSearchOptions = {}
 ): Promise<LiveTvChannel[]> {
-	const trimmed = query.trim();
-	if (!trimmed) {
-		return getLiveTvChannels({ signal: options.signal, forceRefetch: options.forceRefetch });
-	}
-	if (options.signal?.aborted) {
-		throw new LiveTvError('aborted', { endpoint: 'channels' });
-	}
-	const url = new URL(CHANNELS_PATH, LIVEGT_V1_BASE_URL);
-	url.searchParams.set('q', trimmed);
-	const cacheKey = url.searchParams.toString();
-	if (!options.forceRefetch) {
-		const cached = getCachedLiveTvChannels(cacheKey);
-		if (cached) return cached;
-	}
-	const body = await liveTvFetch(url, 'channels', { signal: options.signal });
-	const channels = normalizeChannelList(body);
-	setCachedLiveTvChannels(cacheKey, channels);
-	return channels;
+        const trimmed = query.trim();
+        if (!trimmed) {
+                return getLiveTvChannels({ signal: options.signal, forceRefetch: options.forceRefetch });
+        }
+        if (options.signal?.aborted) {
+                throw new LiveTvError('aborted', { endpoint: 'channels' });
+        }
+        const url = new URL(CHANNELS_PATH, LIVEGT_V1_BASE_URL);
+        url.searchParams.set('q', trimmed);
+        const cacheKey = url.searchParams.toString();
+        if (!options.forceRefetch) {
+                const cached = getCachedLiveTvChannels(cacheKey);
+                if (cached) return cached;
+        }
+        const body = await liveTvFetch(url, 'channels', { signal: options.signal });
+        const channels = normalizeChannelList(body);
+        setCachedLiveTvChannels(cacheKey, channels);
+        return channels;
 }
 
 /**
@@ -406,28 +406,28 @@ export async function searchLiveTvChannels(
  * Validation order: sources first (structural), then DRM (policy).
  */
 export async function resolveLiveTvPlayback(
-	channelId: string,
-	options: LiveTvPlaybackOptions = {}
+        channelId: string,
+        options: LiveTvPlaybackOptions = {}
 ): Promise<LiveTvPlaybackResolution> {
-	assertValidChannelId(channelId, 'channel');
-	const url = new URL(`${CHANNEL_PATH_PREFIX}${encodeURIComponent(channelId)}`, LIVEGT_V1_BASE_URL);
-	const body = await liveTvFetch(url, 'channel', { channelId, signal: options.signal });
-	if (!isRecord(body)) {
-		throw new LiveTvError('invalid_response', { endpoint: 'channel', channelId });
-	}
-	if (!isNonEmptyString(body.name)) {
-		throw new LiveTvError('invalid_response', { endpoint: 'channel', channelId });
-	}
-	// Identity is caller-owned: the requested id is canonical.
-	const channel: LiveTvChannel = { id: channelId, name: body.name };
-	if (isNonEmptyString(body.category)) channel.category = body.category;
-	if (isNonEmptyString(body.logo)) channel.logo = body.logo;
-	const sources = normalizeSources(body.sources, channelId);
-	if (sources.length === 0) {
-		throw new LiveTvError('no_playback_source', { endpoint: 'channel', channelId });
-	}
-	const drm = normalizeDrm(body.drm, channelId);
-	return { channel, sources, drm };
+        assertValidChannelId(channelId, 'channel');
+        const url = new URL(`${CHANNEL_PATH_PREFIX}${encodeURIComponent(channelId)}`, LIVEGT_V1_BASE_URL);
+        const body = await liveTvFetch(url, 'channel', { channelId, signal: options.signal });
+        if (!isRecord(body)) {
+                throw new LiveTvError('invalid_response', { endpoint: 'channel', channelId });
+        }
+        if (!isNonEmptyString(body.name)) {
+                throw new LiveTvError('invalid_response', { endpoint: 'channel', channelId });
+        }
+        // Identity is caller-owned: the requested id is canonical.
+        const channel: LiveTvChannel = { id: channelId, name: body.name };
+        if (isNonEmptyString(body.category)) channel.category = body.category;
+        if (isNonEmptyString(body.logo)) channel.logo = body.logo;
+        const sources = normalizeSources(body.sources, channelId);
+        if (sources.length === 0) {
+                throw new LiveTvError('no_playback_source', { endpoint: 'channel', channelId });
+        }
+        const drm = normalizeDrm(body.drm, channelId);
+        return { channel, sources, drm };
 }
 
 /**
@@ -437,19 +437,48 @@ export async function resolveLiveTvPlayback(
  * (`startSeconds`/`stopSeconds` — see `types.ts`).
  */
 export async function getLiveTvGuide(channelId: string, options: LiveTvGuideOptions = {}): Promise<LiveTvGuide> {
-	assertValidChannelId(channelId, 'guide');
-	if (options.signal?.aborted) {
-		throw new LiveTvError('aborted', { endpoint: 'guide', channelId });
-	}
-	if (!options.forceRefetch) {
-		const cached = getCachedLiveTvGuide(channelId);
-		if (cached) return cached;
-	}
-	const url = new URL(`${GUIDE_PATH_PREFIX}${encodeURIComponent(channelId)}`, LIVEGT_V1_BASE_URL);
-	const body = await liveTvFetch(url, 'guide', { channelId, signal: options.signal });
-	const guide = normalizeGuide(body, channelId);
-	setCachedLiveTvGuide(channelId, guide);
-	return guide;
+        assertValidChannelId(channelId, 'guide');
+        if (options.signal?.aborted) {
+                throw new LiveTvError('aborted', { endpoint: 'guide', channelId });
+        }
+        if (!options.forceRefetch) {
+                const cached = getCachedLiveTvGuide(channelId);
+                if (cached) return cached;
+        }
+        const url = new URL(`${GUIDE_PATH_PREFIX}${encodeURIComponent(channelId)}`, LIVEGT_V1_BASE_URL);
+        const body = await liveTvFetch(url, 'guide', { channelId, signal: options.signal });
+        const guide = normalizeGuide(body, channelId);
+        setCachedLiveTvGuide(channelId, guide);
+        return guide;
+}
+
+// ---------------------------------------------------------------------------
+// Documented embed URL (LT-15 — pure, no network, no cache).
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the OFFICIAL documented LiveGT V1 embed player URL for one channel
+ * (the "Embed a channel" section of the LiveGT docs: `{base}/embed/{id}`).
+ *
+ * This is the ONLY place outside the API endpoints where a LiveGT URL is
+ * constructed, and it exists for exactly one consumer: the LT-15 automatic
+ * embed fallback, which mounts LiveGT's own documented embed page in an
+ * iframe AFTER the native Shaka engine genuinely failed. The URL is built
+ * EXCLUSIVELY from the `LIVEGT_V1_BASE_URL` constant + a strictly validated
+ * NUMERIC channel id — never from any API `embed`/`watch` wire field, never
+ * from user input, never persisted.
+ *
+ * Validation: LiveGT channel ids are decimal digit strings (docs example
+ * "143"; the whole catalogue follows this). Anything that is not 1–8 plain
+ * digits returns `null` — the caller then simply does not mount an iframe
+ * (no fallback rather than an unsafe one). A pure-digit string cannot alter
+ * the URL's host, path, query or fragment, so no escaping is required; the
+ * length bound is defense in depth against absurd values.
+ */
+export function buildLiveTvEmbedUrl(channelId: string | null | undefined): string | null {
+        if (typeof channelId !== 'string') return null;
+        if (!/^\d{1,8}$/.test(channelId)) return null;
+        return `${LIVEGT_V1_BASE_URL}/embed/${channelId}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -463,15 +492,15 @@ export async function getLiveTvGuide(channelId: string, options: LiveTvGuideOpti
  * catalogue; the UI may re-sort alphabetically if it prefers).
  */
 export function extractLiveTvCategories(channels: readonly LiveTvChannel[]): string[] {
-	const seen = new Set<string>();
-	const categories: string[] = [];
-	for (const channel of channels) {
-		const category = channel.category?.trim();
-		if (!category || seen.has(category)) continue;
-		seen.add(category);
-		categories.push(category);
-	}
-	return categories;
+        const seen = new Set<string>();
+        const categories: string[] = [];
+        for (const channel of channels) {
+                const category = channel.category?.trim();
+                if (!category || seen.has(category)) continue;
+                seen.add(category);
+                categories.push(category);
+        }
+        return categories;
 }
 
 /**
@@ -479,12 +508,12 @@ export function extractLiveTvCategories(channels: readonly LiveTvChannel[]): str
  * An empty/whitespace category is a no-op and returns every channel.
  */
 export function filterLiveTvChannelsByCategory(
-	channels: readonly LiveTvChannel[],
-	category: string
+        channels: readonly LiveTvChannel[],
+        category: string
 ): LiveTvChannel[] {
-	const wanted = category.trim().toLowerCase();
-	if (!wanted) return [...channels];
-	return channels.filter((channel) => (channel.category ?? '').trim().toLowerCase() === wanted);
+        const wanted = category.trim().toLowerCase();
+        if (!wanted) return [...channels];
+        return channels.filter((channel) => (channel.category ?? '').trim().toLowerCase() === wanted);
 }
 
 /**
@@ -492,24 +521,24 @@ export function filterLiveTvChannelsByCategory(
  * remote `?q=` semantics. An empty/whitespace query returns every channel.
  */
 export function filterLiveTvChannelsByQuery(
-	channels: readonly LiveTvChannel[],
-	query: string
+        channels: readonly LiveTvChannel[],
+        query: string
 ): LiveTvChannel[] {
-	const needle = query.trim().toLowerCase();
-	if (!needle) return [...channels];
-	return channels.filter((channel) => channel.name.toLowerCase().includes(needle));
+        const needle = query.trim().toLowerCase();
+        if (!needle) return [...channels];
+        return channels.filter((channel) => channel.name.toLowerCase().includes(needle));
 }
 
 // Test-only exports (rail-cache `__test` convention).
 export const __test = {
-	getRequestTimeoutMs(): number {
-		return requestTimeoutMs;
-	},
-	/** Override the request timeout for deterministic tests (>0 only). */
-	setRequestTimeoutForTests(ms: number): void {
-		if (ms > 0) requestTimeoutMs = ms;
-	},
-	resetRequestTimeout(): void {
-		requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS;
-	}
+        getRequestTimeoutMs(): number {
+                return requestTimeoutMs;
+        },
+        /** Override the request timeout for deterministic tests (>0 only). */
+        setRequestTimeoutForTests(ms: number): void {
+                if (ms > 0) requestTimeoutMs = ms;
+        },
+        resetRequestTimeout(): void {
+                requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS;
+        }
 };

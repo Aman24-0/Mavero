@@ -73,3 +73,28 @@ export class LiveTvPlaybackError extends Error {
 export function isLiveTvPlaybackError(value: unknown): value is LiveTvPlaybackError {
         return value instanceof LiveTvPlaybackError;
 }
+
+/**
+ * LT-15 — Should this failure activate the automatic embed fallback?
+ *
+ * TRUE only for a GENUINE native playback failure: an `LiveTvPlaybackError`
+ * whose kind means the native engine could not (or can no longer) present
+ * the stream — every fatal playback kind EXCEPT the two non-failures:
+ *   * `autoplay_blocked` — the stream loaded fine; the browser just needs
+ *     a tap to start (the existing product behavior is the tap-to-play
+ *     CTA, and that stays authoritative — this is NOT a stream failure);
+ *   * `aborted` — caller cancellation (switch/destroy), never surfaced.
+ *
+ * FALSE for EVERYTHING that is not a native playback failure, including:
+ *   * `LiveTvError` (LT-2 data layer) — catalogue fetches, channel
+ *     resolution/metadata, guide/EPG, search: the directive forbids
+ *     falling back for those (the embed page shares the same upstream —
+ *     a data-layer failure gives the embed nothing to play either);
+ *   * unknown/error values — conservative default: no fallback.
+ *
+ * Pure classification only; this function never touches playback material.
+ */
+export function shouldFallbackToEmbed(err: unknown): boolean {
+        if (!isLiveTvPlaybackError(err)) return false;
+        return err.kind !== 'autoplay_blocked' && err.kind !== 'aborted';
+}

@@ -84,7 +84,9 @@ ok(true, '1b. isAnalyticsEventName accepts known names, rejects unknowns and non
 const migration = read('supabase/migrations/20261008000000_analytics_foundation.sql');
 const taxonomyExtensionMigrations = [
   // LT-5 — Live TV events (live-tv-plan.md §14)
-  'supabase/migrations/20261103000000_live_tv_analytics_events.sql'
+  'supabase/migrations/20261103000000_live_tv_analytics_events.sql',
+  // LT-15 — Live TV automatic embed-fallback event
+  'supabase/migrations/20261104000000_live_tv_fallback_embed_event.sql'
 ].map(read);
 const migrationUnion = [migration, ...taxonomyExtensionMigrations].join('\n');
 for (const name of ANALYTICS_EVENT_NAMES) {

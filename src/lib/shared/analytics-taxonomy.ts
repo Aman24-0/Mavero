@@ -61,6 +61,11 @@ export const ANALYTICS_EVENT_NAMES = [
   'live_tv_pause',
   'live_tv_error',
   'live_tv_fullscreen',
+  // LT-15 — automatic embed fallback activated (the native Live TV
+  // engine genuinely failed and the documented LiveGT embed iframe took
+  // over). Payload contract: channel id + the normalized native failure
+  // kind ONLY.
+  'live_tv_fallback_embed',
 ] as const;
 
 export type AnalyticsEventName = (typeof ANALYTICS_EVENT_NAMES)[number];
