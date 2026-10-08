@@ -4023,3 +4023,163 @@ widening — analytics insertions of live_tv_fallback_embed are REJECTED by
 the DB until it is; the event is fire-and-forget so playback is unaffected
 either way, only the analytics row would be lost).
 
+
+## LT-16 — Mobile fullscreen orientation lock (targeted UX fix)
+
+Date: 2026-10-08. Directive: on phones/tablets, BOTH Live TV playback modes
+(native Shaka AND the LT-15 embed iframe) must request landscape when the
+player enters fullscreen and release the lock on exit; desktop fullscreen
+behavior unchanged (no orientation-lock calls at all); non-fullscreen
+playback stays portrait; no CSS-rotation/viewport/fake-fullscreen hacks; no
+changes to playback architecture, source resolution, Shaka flow, embed
+fallback, V1 API, analytics, VOD player, navigation; capability-based mobile
+detection (no UA sniffing); full race safety (rapid enter/exit, late lock
+resolutions, channel switch, fallback/retry mid-fullscreen, destruction
+while pending — zero unhandled rejections, never a stale lock).
+
+### Phase 0 — Baseline
+HEAD 65dd9b0 (LT-15, pushed). Worktree: the usual mode-bit noise only.
+Gates at baseline all green (LT-15 record). pnpm available (no corepack
+restore needed this time).
+
+### Phase 1 — Audit (root cause)
+- LiveTvPlayer.svelte: fullscreen = the standard API on the shared
+  `.player-surface` element — `toggleFullscreen()` calls
+  surface.requestFullscreen()/document.exitFullscreen() (both
+  .catch-swallowed), `onFullscreenChange()` (the ONLY fullscreenchange
+  handler, registered on document in onMount with cleanup) set
+  isFullscreen = (document.fullscreenElement === surface) and did NOTHING
+  ELSE. ROOT CAUSE: zero orientation logic existed anywhere in the Live TV
+  path — fullscreen never requested landscape, so phones stayed portrait.
+- Both modes share the ONE surface: the native <video> AND the LT-15 embed
+  iframe live inside .player-surface, so one wiring point covers both. The
+  native path never fullscreens the video element itself (no native
+  controls; only the surface is promoted).
+- Cross-origin subtlety: when LiveGT's INTERNAL player (inside the iframe)
+  goes fullscreen, the browser promotes the IFRAME ELEMENT in Mavero's
+  document — document.fullscreenElement === <iframe>, not the surface — and
+  fullscreenchange still fires in the top document. The orientation logic
+  must therefore treat "fullscreen element IS the surface OR is CONTAINED
+  by the surface" as our fullscreen. The iframe itself is never reached
+  into (contentDocument/contentWindow untouched; allowfullscreen + the
+  documented allow-list preserved verbatim).
+- Precedent: the VOD PlayerShell.svelte already locks landscape on
+  fullscreen (Phase 6) with try/catch swallows — consistent API usage
+  confirmed; the VOD player itself untouched per the directive.
+- Test harness conventions read: LT-15 embed suite (behavioral + source
+  contract styles), release-audit walk rules (no 'shaka'/LiveGT-host
+  strings outside sanctioned files), hardening onuseraction marker set,
+  page-test fullscreen markers (aria-label + canFullscreen).
+
+### Phase 2 — Design (smallest safe change)
+- New pure module src/lib/client/live-tv/fullscreen-orientation.ts:
+  `createLiveTvFullscreenOrientationCoordinator(env?)` with
+  noteFullscreenGained/noteFullscreenLost/dispose. All browser access via
+  an injectable LiveTvOrientationEnv (default is SSR-guarded: no window =>
+  empty env => inert; constructing it under Node is exactly the SSR path).
+- Capability gate `canAttemptLandscapeLock(env)` (pure, never throws):
+  screen.orientation.lock exists AND matchMedia('(pointer: coarse)')
+  matches AND navigator.maxTouchPoints > 0. Phones/tablets => attempt;
+  desktops and touch-screen laptops (fine PRIMARY pointer) => NEVER
+  attempt (zero orientation traffic — desktop behavior bit-identical);
+  iOS/iPadOS Safari (no lock API) => silent no-op. No user-agent sniffing.
+- Race safety: a generation counter invalidates in-flight lock promises —
+  a lock resolving after exit/destruction is answered with a defensive
+  unlock() (a late resolve can re-apply a released lock); a late resolve
+  from an OLD session never disturbs a NEW session's lock; gained is
+  idempotent; lock()/unlock() sync-throws and promise rejections are all
+  swallowed (orientation is an enhancement, NEVER a playback error, never
+  blocks fullscreen); dispose() is idempotent and releases everything.
+- Component wiring (LiveTvPlayer.svelte, ~35 lines): one coordinator
+  instance; onFullscreenChange now additionally computes
+  surfaceFullscreen = element===surface || surface.contains(element) and
+  drives gained/lost; isFullscreen keeps its EXACT former meaning (button
+  icon + analytics intents untouched); onDestroy disposes. No new
+  listeners, no change to requestFullscreen/exitFullscreen mechanics, no
+  analytics changes, no CSS changes.
+
+### Phase 3 — Implementation
+fullscreen-orientation.ts +216 (new), LiveTvPlayer.svelte +35/-3 (import,
+coordinator, containment in the existing handler, dispose in onDestroy).
+package.json +1 line (test chain). Zero changes to player.ts, media-auth,
+api.ts, cache/epg/types/errors, analytics (module + taxonomy + migrations),
++page.svelte, VOD player, navigation, Supabase schema.
+
+### Phase 4 — Focused tests (new suite, chained into pnpm test)
+scripts/live_tv_fullscreen_orientation_test.ts — 13 checks covering all 10
+directive-mandated cases: A0 SSR-safe import + capability truth table
+(6 env shapes incl. touch-laptop and no-lock-API) + module hygiene; A1
+mobile gained => lock('landscape') exactly once, duplicate gains no-op;
+A2 desktop (fine pointer, with AND without touch points) => zero
+lock/unlock traffic through the full lifecycle; A3 missing orientation API
+/ missing lock() => silent no-op, no throw; A4 auto-reject + sync-throw
+lock => zero unhandled rejections (real process-level detector across a
+settle window), exit/dispose still release, lifecycle intact; A5 held lock
++ exit => exactly one unlock, no double-unlock churn; A6 destruction while
+pending (late resolve => defensive unlock) and while held; post-dispose
+events are no-ops; A7 rapid enter/exit (late resolve after exit =>
+defensive unlock; enter-exit-enter: the OLD session's late resolve must
+NOT unlock the NEW session — verified session B holds and releases its own
+lock); A8 channel switch (surface persists fullscreen => lock holds, no
+re-lock churn, released by the next exit); B1 wiring (module import, ONE
+instance, isFullscreen semantics marker, containment check, gained/lost
+routing, iframe permissions preserved, no contentDocument/contentWindow);
+B2 onDestroy disposes; B3 single call-site ownership (one gained/lost/
+dispose each — switch/retry/fallback flows can never touch orientation),
+component never touches screen.orientation/.lock(/.unlock( itself, page
+has zero orientation wiring; B4 LT-15 + existing invariants intact (one
+iframe, no {@html}, builder-only src, allowfullscreen + allow-list,
+embed-hidden, reload-token key, a11y title, requestFullscreen/
+exitFullscreen call sites byte-identical, onuseraction set identical, no
+rotate(90/viewport/wakeLock, classifier intact).
+Fix during development: a source comment originally spelled the iframe
+element with angle brackets ("<iframe") which would have broken the LT-15
+suite's iframe-count marker — reworded before running the chain.
+
+### Phase 5 — Gates (all green at the LT-16 change)
+- pnpm check: 0 errors, 0 warnings.
+- pnpm test: EXIT 0 — the FULL chain including live_tv_client 62,
+  live_tv_player 91, live_tv_page 22, live_tv_hardening 13/13,
+  live_tv_release_audit 6/6, live_tv_embed_fallback 15/15 (LT-15
+  architecture regression-proof), live_tv_fullscreen_orientation 13/13,
+  and every other suite.
+- pnpm build: EXIT 0.
+
+### Phase 6 — Browser QA (real Chromium vs the local dev server)
+scripts/lt16_browser_qa.mjs (dev-only, never committed): 9/9 PASS —
+D1 desktop capability gate (pointer:coarse=false, 0 locks); D2 desktop
+fullscreen enter/exit with ZERO orientation traffic (locks=0, unlocks=0 —
+desktop behavior bit-identical); M1 mobile-emulated (Pixel 7) capability
+gate (coarse + touch + lock fn); M2 mobile fullscreen on the EMBED surface
+=> lock('landscape') exactly once, promise RESOLVED, held while fullscreen;
+M3 exit => exactly one unlock; M4 rapid enter/exit => 2 locks / 2 unlocks,
+no stale lock, no loop; M5 switch cycle => old iframe removed at switch
+(0), fresh session re-locks (3rd), exit re-releases (3rd); M6 exactly one
+iframe after the switch (LT-15 invariant); M7 zero pageerrors. Harness
+notes: same devtool-deterrence route-stub as LT-15 (test browser only);
+fullscreen exits driven via programmatic document.exitFullscreen() because
+the controls row sits under the fullscreen top layer (the REAL exit paths
+are Esc/back-gesture — same fullscreenchange event); channel cards are
+likewise unclickable under the top layer, which is correct product
+behavior (the realistic exit->switch->re-enter cycle is what M5 drives).
+HONEST LIMITS: headless Chromium accepts the lock call but does not
+physically rotate (orientation.type stayed portrait-primary), so the
+visual landscape fill needs a real Android phone; the embed's INTERNAL
+fullscreen button (cross-origin iframe) cannot be driven by the harness —
+Mavero's own button on the same shared surface exercises the identical
+lock path, and the containment branch is unit-pinned (§B1); native-success
+playback still needs India egress (451 here). Real-device checklist for
+India: Star Gold HD native tap-fullscreen => landscape + fill + exit =>
+portrait; Sony SAB SD / Zee Cinema HD embed fallback tap-fullscreen =>
+landscape; desktop regression; non-fullscreen portrait unchanged.
+
+### Intentionally NOT changed
+Desktop fullscreen behavior (zero orientation traffic — QA-proven), the
+fullscreen request/exit mechanics (call sites byte-identical), isFullscreen
+semantics + the three onuseraction analytics intents, the LT-15 fallback
+architecture (classifier, single-iframe invariant, reload-token retry,
+activation ordering), V2/third-party mechanisms, V1 API/catalogue/EPG,
+player.ts engine + media-auth + cache/epg/types/errors, analytics module +
+taxonomy + migrations (no new events — orientation is a UI enhancement),
+VOD player (its own landscape implementation untouched), navigation,
+viewport/meta, any CSS (no rotation/transform hacks), Supabase schema.

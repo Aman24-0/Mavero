@@ -43,6 +43,7 @@
   } from '$lib/client/live-tv/player';
   import { isLiveTvPlaybackError, type LiveTvPlaybackError } from '$lib/client/live-tv/player-errors';
   import { buildLiveTvEmbedUrl } from '$lib/client/live-tv/api';
+  import { createLiveTvFullscreenOrientationCoordinator } from '$lib/client/live-tv/fullscreen-orientation';
   import { describeLivePosition, formatBehindLive } from '$lib/client/live-tv/epg';
   import type { LiveTvChannel } from '$lib/client/live-tv/types';
 
@@ -233,8 +234,34 @@
   }
 
   // ---- Fullscreen (standard API on the player surface) -------------------
+  // LT-16 — mobile fullscreen orientation enhancement. While OUR surface is
+  // fullscreen on a touch-primary device (phone/tablet), the coordinator
+  // requests a landscape lock through the Screen Orientation API and
+  // releases it when fullscreen ends or the component is destroyed. It is a
+  // pure enhancement: desktop never attempts a lock (capability-gated inside
+  // the module), and unsupported/declined locks never affect playback or the
+  // fullscreen itself. Created once per component; SSR-safe (the default
+  // environment is empty on the server, making it a no-op there).
+  const fullscreenOrientation = createLiveTvFullscreenOrientationCoordinator();
+
   function onFullscreenChange() {
-    isFullscreen = typeof document !== 'undefined' && document.fullscreenElement === surface;
+    const fullscreenElement =
+      typeof document !== 'undefined' ? document.fullscreenElement : null;
+    // `isFullscreen` keeps its EXACT former meaning (button icon + analytics
+    // intent): the surface ITSELF is the fullscreen element (our button).
+    isFullscreen = fullscreenElement === surface;
+    // Orientation-relevant fullscreen is wider: when the cross-origin embed's
+    // INTERNAL player goes fullscreen, the browser promotes the iframe
+    // ELEMENT in THIS document (never its internals — the iframe is never
+    // reached into). The iframe lives inside the surface, so containment
+    // covers BOTH playback modes (native video + embed fallback) through the
+    // one shared surface, with zero changes to how fullscreen is requested.
+    const surfaceFullscreen =
+      surface !== undefined &&
+      fullscreenElement !== null &&
+      (fullscreenElement === surface || surface.contains(fullscreenElement));
+    if (surfaceFullscreen) fullscreenOrientation.noteFullscreenGained();
+    else fullscreenOrientation.noteFullscreenLost();
   }
 
   function toggleFullscreen() {
@@ -259,6 +286,9 @@
   onDestroy(() => {
     // The PAGE owns the engine lifecycle (destroy on unmount/switch); this
     // component only drops its element references on teardown.
+    // LT-16: never leave an orientation lock behind after unmount (safe
+    // no-op when none is held; also invalidates any pending lock promise).
+    fullscreenOrientation.dispose();
     video = undefined;
   });
 
