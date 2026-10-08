@@ -36,7 +36,11 @@
 // CACHING (via `cache.ts`):
 //   * Catalogue: up to 5 minutes, keyed by the deterministic query string.
 //   * Guide: up to 30 seconds, keyed by channel id.
-//   * Playback resolution + DRM: never cached (see above).
+//   * Playback resolution + DRM: never cached (see above). LT-11 addition:
+//     the playback-resolution fetch also sets `cache: 'no-store'` so the
+//     BROWSER HTTP cache cannot replay the upstream's 60s-cached response
+//     (signed URLs must be re-resolved on every call, never persisted —
+//     not even transiently on disk).
 //
 // BASE URL:
 //   `LIVEGT_V1_BASE_URL` is the single constant. LiveGT V1 is a public,
@@ -150,7 +154,17 @@ async function liveTvFetch(
 		const response = await fetch(url, {
 			method: 'GET',
 			signal: controller.signal,
-			headers: { accept: 'application/json' }
+			headers: { accept: 'application/json' },
+			// LT-11 cache-safety: PLAYBACK RESOLUTION must be always-fresh
+			// (plan §11, decision D6 — signed URLs and ClearKey material are
+			// never cached or persisted). The upstream serves `cache-control:
+			// public, max-age=60`, which the browser HTTP cache would
+			// otherwise replay for up to 60s (LT-10 finding) — a contract
+			// violation and a stale-token window at the 6h token rotation
+			// boundary. Catalogue/guide keep DEFAULT (bounded) caching: the
+			// in-memory cache already bounds them and their data is not
+			// credential material.
+			cache: endpoint === 'channel' ? 'no-store' : 'default'
 		});
 		const statusKind = liveTvErrorKindForStatus(response.status);
 		if (statusKind) {

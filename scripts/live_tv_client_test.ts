@@ -75,7 +75,7 @@ function ok(label: string): void {
 // ============================================================
 
 const originalFetch = globalThis.fetch;
-type MockCall = { url: string; signal: AbortSignal | undefined };
+type MockCall = { url: string; signal: AbortSignal | undefined; cache: string | undefined };
 let calls: MockCall[] = [];
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -92,7 +92,7 @@ function installMock(handler: MockHandler): void {
         globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
                 const url = new URL(String(input));
                 const signal = (init?.signal as AbortSignal | undefined) ?? undefined;
-                calls.push({ url: url.toString(), signal });
+                calls.push({ url: url.toString(), signal, cache: init?.cache as string | undefined });
                 return handler(url, init);
         }) as typeof fetch;
 }
@@ -456,7 +456,7 @@ function makeHandler(routes: {
 // ============================================================
 {
         clearLiveTvCache();
-        installMock(makeHandler({ channelById: { '143': resolutionBody() } }));
+        installMock(makeHandler({ channelById: { '143': resolutionBody() }, guideById: { '143': guideBody } }));
         try {
                 const resolution = await resolveLiveTvPlayback('143');
                 assert.equal(resolution.channel.id, '143', 'channel identity is the requested id');
@@ -476,6 +476,25 @@ function makeHandler(routes: {
                 assert.equal(stats.catalogueEntries, 0, 'resolution touches no catalogue cache');
                 assert.equal(stats.guideEntries, 0, 'resolution touches no guide cache');
                 ok('5b. playback resolution is never cached (fresh on every call; no persistent state)');
+
+                // LT-11 cache-safety: the playback-resolution fetch must
+                // bypass the BROWSER HTTP cache too (the upstream serves
+                // `cache-control: public, max-age=60`; signed URLs must be
+                // re-resolved on every call — never replayed, never persisted).
+                assert.equal(
+                        calls[1]?.cache,
+                        'no-store',
+                        '5c: playback-resolution fetch sets cache: no-store (browser HTTP cache bypassed)'
+                );
+                // Catalogue and guide keep DEFAULT bounded caching (their
+                // data is not credential material and the in-memory cache
+                // already bounds them).
+                clearLiveTvCache();
+                await getLiveTvChannels();
+                assert.equal(calls[2]?.cache, 'default', '5c: catalogue fetch keeps default cache mode');
+                await getLiveTvGuide('143');
+                assert.equal(calls[3]?.cache, 'default', '5c: guide fetch keeps default cache mode');
+                ok('5c. LT-11 cache contract: resolution=always-fresh (no-store); catalogue/guide=bounded default');
         } finally {
                 restoreFetch();
         }
