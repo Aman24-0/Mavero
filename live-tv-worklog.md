@@ -3069,3 +3069,314 @@ recorded below after commit).
 
 LT-9 fix commit: `910b51e00eed052308b16f26ebd78042c5b4d682` (fix(live-tv): propagate signed dash auth for media
 requests).
+
+---
+
+## LT-10 — Channel-by-channel production diagnosis (DIAGNOSIS ONLY, no code changes)
+
+Date: 2026-10-08. Task: explain why only some channels work in India
+production after LT-9; classify every failure; find Mavero-side defects
+(if any). Explicitly NOT: an architecture audit, an LT-9 modification,
+or a Widevine/PlayReady addition.
+
+### India production input (user-reported, authoritative)
+
+WORKING: Star Gold HD (156), Aaj Tak (173), Sony SAB HD (471),
+News18 Urdu (1500). FAILING: Zee Cinema HD (165), B4U Music (183),
+And TV HD (472), Sony SAB SD (154). Zee Cinema DevTools: the MPD request
+itself (`index.mpd?...__hdnea__=...`) returns 403 with
+`X-ErrType: auth-failure`, `Server: Varnish` — manifest-level auth
+rejection WITH the signed query present (NOT the Star Gold segment-level
+bug LT-9 fixed).
+
+### Method (egress: Hong Kong — NOT India; Jio CDNs answer 451 here)
+
+Five read-only probe scripts (`/home/z/my-project/scripts/lt10_stage{1a,1b,2,3,4,5}*.mjs`),
+all under a hard redaction contract: no raw source URLs, no query
+VALUES, no DRM key material persisted or printed; tokens parsed in
+memory — only st/exp ISO timestamps, TTL, acl glob, hmac-present and
+equality booleans emitted; sha256 prefixes computed in memory and never
+printed. LiveGT metadata API fully reachable; stream CDNs geo-fenced
+(451, Varnish) — same as LT-8/LT-9 probes.
+
+### Evidence
+
+1. STRUCTURE (all 8 targets resolved; `lt10_stage1b_output.txt`):
+
+   | Channel | ID | Protocol | Host | Flavor | DRM |
+   |---|---|---|---|---|---|
+   | Star Gold HD (works) | 156 | DASH | jiotvmblive.cdn.jio.com | WDVLive `_MOB` | ClearKey |
+   | Aaj Tak (works) | 173 | DASH | jiotvmblive.cdn.jio.com | WDVLive `_MOB` | ClearKey |
+   | Sony SAB HD (works) | 471 | DASH | jiotvmblive.cdn.jio.com | WDVLive `SonySAB_MOB` | ClearKey |
+   | News18 Urdu (works) | 1500 | HLS | nw18live.cdn.jio.com | `output01` | none |
+   | Zee Cinema HD (fails) | 165 | DASH | jiotvpllive.cdn.jio.com | WDVLive `_BTS` | none |
+   | B4U Music (fails) | 183 | HLS | jiotvmblive.cdn.jio.com | `HLSPartner` | none |
+   | And TV HD (fails) | 472 | DASH | jiotvpllive.cdn.jio.com | WDVLive `_BTS` | none |
+   | Sony SAB SD (fails) | 154 | DASH | jiotvmblive.cdn.jio.com | WDVLive `Sony_SAB_MOB` | none |
+
+2. TOKEN FORENSICS (`lt10_stage1b/5_output.txt`): every channel carries
+   ONE byte-identical GLOBAL `__hdnea__` token (verified across 11
+   channels incl. Akamai + extra jiotvpllive): `st~exp~acl=/*~hmac`,
+   st=01:00:03Z, exp=07:00:03Z (TTL 6h), 91+ min validity left at probe,
+   acl `/*` covers every manifest path, hmac present, stable across
+   100s-apart resolutions. Therefore the Zee Cinema 403 is NOT expiry,
+   NOT acl, NOT a missing/short token — the same token bytes succeed on
+   jiotvmblive (Star Gold MPD 200, India) and are rejected by
+   jiotvpllive (Zee MPD 403, India). The only variable is the CDN host.
+
+3. CENSUS (118 sampled, `lt10_stage2_output.txt`):
+   jiotvmblive|WDVLive|DASH|clearkey = 89 (75% — all working targets);
+   jiotvmblive|HLSPartner|HLS|none = 12 (B4U class); jiotvmblive|
+   WDVLive|DASH|none = 7 (Sony SAB SD class); jiotvpllive|WDVLive = 5
+   (all Zee-family or Star Sports premium channels: Zee TV 1351, Zee 24
+   Kalakar 929, Zee Thirai HD 3051, Star Sports 2 1141, Star Sports 2
+   Tamil HD 3273); nw18live|HLS = 3 (News18 class);
+   times-ott-live.akamaized.net|DASH = 2 (Akamai class).
+
+4. SHAKA 5.2.12 MECHANICS (installed source, read-only):
+   `lib/util/url.js` `resolveUris` uses `new URL(relative, base)` —
+   RFC 3986 drops the base query for relative path refs; BOTH the DASH
+   and HLS parsers resolve through it (`hls/hls_utils.js:103`). Standard
+   HLS query propagation exists ONLY via playlist-declared
+   `#EXT-X-DEFINE:QUERYPARAM` (`hls/hls_parser.js:1463-1470`) — the HLS
+   analog of DASH-IF UrlQueryInfo. LT-9 covers DASH SEGMENT requests
+   only, by documented design ("HLS is out of scope until independently
+   proven necessary").
+
+5. AKAMAI LIVE CONTROL (`lt10_stage4_output.txt`, fetchable from this
+   egress — no geo-fence): Movies Now HD (151) MPD 200; relative
+   templates with an embedded `?m=` (non-auth) param; init AND media
+   segments return 200 fully BARE → the Akamai class enforces no
+   per-segment auth. Confirms per-request segment auth is a Jio-CDN
+   policy, proven only for jiotvmblive WDVLive (LT-9 India evidence).
+
+6. API CACHE OBSERVATION: `/api/public/channels/{id}` responds
+   `cache-control: public, max-age=60` while `resolveLiveTvPlayback()`
+   fetches with default cache mode — the browser MAY replay a
+   resolution for up to 60s, deviating from the documented "ALWAYS
+   fresh" contract. Harmless today (6h global token, identical bytes),
+   NOT a cause of any observed failure. Recorded as a hardening note
+   only — no code change made (out of LT-10 scope).
+
+### Classification (final table)
+
+| Channel | ID | Protocol | Host | DRM | Manifest (India) | Segments | Failure stage | Root cause | Mavero fix? |
+|---|---|---|---|---|---|---|---|---|---|
+| Zee Cinema HD | 165 | DASH | jiotvpllive | none | 403 auth-failure (token present) | n/a | manifest auth | jiotvpllive (premium/Zee-Star tier) rejects the global token accepted by other Jio hosts — upstream | NO |
+| And TV HD | 472 | DASH | jiotvpllive | none | likely 403 (same class; needs 1 DevTools capture) | n/a | manifest auth (probable) | same jiotvpllive policy — upstream | NO |
+| B4U Music | 183 | HLS | jiotvmblive | none | unknown | unknown | unknown (2 candidates) | (a) HLS variant/segment 403 "No sub Token" — query dropped by RFC 3986, LT-9 DASH-only by design = Mavero-fixable CLASS if proven; (b) manifest-level rejection = upstream | PENDING India evidence |
+| Sony SAB SD | 154 | DASH | jiotvmblive | NONE (HD sibling has ClearKey) | unknown | unknown | unknown | likely upstream: no-DRM metadata for an encrypted feed (cannot invent keys) OR dead packager | PENDING India evidence |
+| Aaj Tak | 173 | DASH | jiotvmblive | ClearKey | 200 | 200 (LT-9) | — working | — | — |
+| Sony SAB HD | 471 | DASH | jiotvmblive | ClearKey | 200 | 200 (LT-9) | — working | — | — |
+| Star Gold HD | 156 | DASH | jiotvmblive | ClearKey | 200 | 200 WITH `__hdnea__` (LT-9-proven) | — working | — | — |
+| News18 Urdu | 1500 | HLS | nw18live | none | 200 | 200 | — working | — | — |
+
+### Conclusions
+
+1. NO Mavero-side defect is PROVEN by current evidence. LT-9 is working
+   exactly as designed on its target class (156 continuous playback,
+   segments carry `__hdnea__`, 200s in India).
+2. Zee Cinema HD (165): manifest-level auth rejection with a proven
+   valid global token on a distinct premium CDN tier → LiveGT/upstream
+   failure; Mavero transmits the signed URL byte-exact (bare load; LT-9
+   never touches manifest requests; DevTools confirms query present).
+   Not fixable in Mavero (cannot mint a different token; UA spoofing is
+   a forbidden-header non-starter and would be a workaround, not a fix).
+3. And TV HD (472): same host/tier/token as 165 → same class; one
+   DevTools capture in India will confirm.
+4. B4U Music (183): the ONLY potentially Mavero-fixable class — HLS on
+   the one host PROVEN to enforce per-request tokens (DASH evidence),
+   where LT-9 deliberately does not operate. DO NOT extend LT-9 to HLS
+   until India DevTools proves the exact failing request (master m3u8
+   status; variant playlist status + whether it carries `__hdnea__`;
+   segment status + error headers). If it instead 403s at the master
+   playlist, it is upstream and untouchable.
+5. Sony SAB SD (154): most probable upstream metadata gap (encrypted
+   feed shipped with no ClearKey — Mavero cannot invent keys) or dead
+   upstream packager. India DevTools capture needed: MPD status, segment
+   statuses, any `encrypted` event / Shaka error code. Quick extra
+   control: test 1-2 siblings of its census class (IBC24 503, TV9
+   Maharashtra 617, News 9 656) — if the whole no-DRM DASH class is
+   dead, it is conclusively upstream.
+6. Unsupported-DRM bucket: EMPTY — none of the 8 targets declares
+   Widevine/PlayReady (all DASH targets are ClearKey or none).
+7. Working bucket: 156, 173, 471 (jiotvmblive DASH+ClearKey, 75% of
+   catalogue) + 1500 (nw18live HLS).
+
+### Primary question, answered
+
+"Why do only some channels work?" — because "working" == the dominant
+delivery classes whose auth the global token + LT-9 satisfy: jiotvmblive
+WDVLive DASH+ClearKey (75% of catalogue) and nw18live HLS. Every failing
+channel sits in a MINORITY class with a different auth/metadata story:
+jiotvpllive premium tier (manifest-level token rejection — upstream),
+HLSPartner-on-jiotvmblive (possible HLS propagation gap — unproven),
+no-DRM DASH (possible upstream metadata gap — unproven).
+
+### Files changed
+
+NONE (diagnosis only). Probe scripts live outside the repo
+(`/home/z/my-project/scripts/lt10_*.mjs`); their outputs contain only
+redacted structure (no token values, no key material).
+
+---
+
+## LT-11 — Final channel-class fix & production hardening
+
+Date: 2026-10-08. Directive: diagnose every failing India-production
+channel CLASS, fix only what is genuinely Mavero-fixable, keep it
+channel-agnostic, preserve the documented V1 contract, no V2/embed/
+proxy/Widevine. Read-only audit FIRST, code only after root causes
+proven.
+
+### New India evidence (input)
+
+WORKING: 156 (Star Gold HD, primary control), 173, 471, 1500. FAILING:
+165 Zee Cinema HD, 1108 Star Sports 1 Hindi HD, 1984 Star Sports 2
+Hindi HD, 472 And TV HD (all jiotvpllive 403 X-ErrType: auth-failure,
+`__hdnea__` present on the MPD request), 889 Jio Sports HD
+(jiotvmblive 404), 183 B4U Music (HLS), 154 Sony SAB SD (no-DRM DASH).
+
+### Investigation (read-only; egress HK — Jio CDNs 451, LiveGT API + app reachable)
+
+1. RAW FIELD AUDIT (all 9 failing + 4 controls): every channel returns
+   exactly {id,name,category,logo,sources[1],drm,embed,watch}. No
+   hidden per-channel metadata, no headers hints, no multi-source.
+   The 4 Star Sports jiotvpllive URLs carry a DOUBLE-SLASH path defect
+   (`jiotvpllive.cdn.jio.com//bpk-tv/...`) — LiveGT URL-generation bug
+   (upstream; Mavero must not mutate signed URLs).
+
+2. LIVEGT'S OWN PLAYER DECODED (the decisive evidence): fetched and
+   analyzed their production bundles (embed page → TgPlayer → servers
+   RPC). Their own player's RPC config for EVERY channel (working AND
+   failing) is:
+     - Server 1: the SAME bare CDN URL + the SAME global `__hdnea__`
+       cookie (115 chars, acl=/*, 6h TTL — byte-identical to the public
+       API token; verified in-page with session) + the same ClearKey
+       keyId/key. NO stronger direct credential exists for any class.
+     - Server 2: `premiumplugx.top/Geo/<channel>.mpd` — a THIRD-PARTY
+       PROXY (verified live: proxies Jio segments, 200 even from HK).
+     - Server 3: `tglivev2.lovable.app/api/public/stream/<id>` — the
+       V2 API (out of scope by directive).
+   Their request filter REPLACES the query on MANIFEST+SEGMENT requests
+   with the cookie — i.e. query propagation to child requests is part
+   of the upstream reference design (for both DASH and HLS). Their
+   Shaka path is currently dormant in the field (observed live: the
+   embed page auto-advanced Server 1 → proxy after the direct URL
+   451'd from this egress).
+   => Classes A (jiotvpllive 403) and B (Jio Sports 404) are
+   CONCLUSIVELY upstream: LiveGT's own direct path holds the same
+   token/URL and fails the same way; their answer is the proxy/V2,
+   which Mavero must not use.
+
+3. SHAKA 5.2.12 MECHANICS (installed source): HLS master AND variant
+   playlists are fetched as RequestType.MANIFEST (hls_parser.js
+   requestManifest_); segments as RequestType.SEGMENT; both resolve
+   through resolveUris → new URL(relative, base) → master query DROPPED
+   for relative children; only standard HLS propagation is
+   playlist-declared #EXT-X-DEFINE:QUERYPARAM (absent upstream).
+
+4. CENSUS (LT-10 118-channel sample + targeted): jiotvmblive|WDVLive|
+   DASH|clearkey = 75% (all working controls); HLSPartner HLS on
+   jiotvmblive = ~10% (B4U/732 class — the ONLY potentially
+   Mavero-fixable failing class); no-DRM DASH on jiotvmblive = ~6%
+   (154 class); jiotvpllive = ~4% (all Zee/Star Sports premium);
+   nw18live HLS = News18 class (working); akamaized DASH = Times class
+   (segments load BARE — no per-segment auth; LT-9 propagation
+   harmless there, proven 200-with-token in LT-10 stage 4).
+
+### Root-cause matrix (final)
+
+| Class | Examples | Protocol | CDN | Failure | Root cause | Mavero fix |
+|---|---|---|---|---|---|---|
+| Premium Jio | 165, 472, 1108, 1984 (+929,1351,3051,1106,1109…) | DASH | jiotvpllive | manifest 403 auth-failure (token present) | CDN tier rejects the global token LiveGT itself provides; LiveGT's own player punts to proxy/V2; // path defect on 4 Star Sports URLs | NONE (upstream) |
+| Jio Sports | 889 | DASH | jiotvmblive | manifest 404 | dead upstream packager path; single source; same-shaped URL as working channels | NONE (upstream) |
+| HLS-on-jiotvmblive | 183 (B4U), 732 (9X Tashan)… | HLS | jiotvmblive | variant/segment requests lack `__hdnea__` (Shaka query drop; host enforces per-request tokens per LT-9 DASH evidence) | mechanism gap — same class of defect LT-9 fixed for DASH | FIXED (generic HLS propagation) |
+| No-DRM DASH | 154 (+503,617,656,1329…) | DASH | jiotvmblive | unknown (India capture pending) | both public API AND LiveGT's RPC say no DRM; reference player's own primary would also fail if the feed is actually encrypted (keys only on their proxy tier) => upstream metadata/packaging gap; Mavero already plays genuinely-clear DASH | NONE pending India evidence (no key invention) |
+| Working | 156,173,471 (DASH+CK), 1500 (HLS nw18) | DASH/HLS | jiotvmblive/nw18live | — | — | preserved |
+
+### Fixes implemented (generic, channel-agnostic, evidence-backed)
+
+1. HLS query propagation (media-auth.ts — renamed from dash-auth.ts;
+   LT-9 DASH behavior preserved byte-for-byte):
+   - response filter additionally identifies HLS playlist bodies
+     (#EXTM3U; master or media) and anchors on the FIRST playlist
+     response (later media-playlist responses never move the anchor);
+   - request filter now propagates the allowlisted `__hdnea__`
+     (byte-exact from the resolved source URL) to same-origin SEGMENT
+     requests for BOTH protocols, and to same-origin MANIFEST-type
+     requests for HLS sessions only (variant playlists; the signed
+     master itself is a no-op via the already-present guard);
+   - unchanged safety envelope: `__hdnea__`-only allowlist, no
+     duplication/overwrite (EXT-X-DEFINE/UrlQueryInfo/embedded child
+     queries win), exact-origin lock, DRM/LICENSE/KEY/timing untouched,
+     zero logging/persistence/fetching, session dies with the player.
+2. Playback-resolution cache safety (api.ts): the /channels/{id} fetch
+   now sets `cache: 'no-store'` — the upstream serves
+   `cache-control: public, max-age=60`, which the browser HTTP cache
+   could replay for up to 60s, violating the documented always-fresh
+   contract for signed URLs/DRM (and a stale-token window at the 6h
+   token rotation boundary). Catalogue/guide keep default bounded
+   caching (not credential material; in-memory cache bounds them).
+
+### Intentionally NOT changed
+
+V2, embed player, proxy/relay (premiumplugx), token minting/HMAC/ACL
+guessing, UA spoofing, Widevine/PlayReady (no failing channel declares
+them — unsupported-DRM bucket EMPTY), source fallback (sources[] is
+exactly 1 for every observed channel — the reference's own multi-url
+loop is fed by its private RPC tiers, not the public API; nothing to
+fall back TO), VOD, Supabase, analytics, error model (existing
+classification already distinguishes load/playback phase + preserves
+numeric Shaka codes without reading message/data; finer 403/404/451
+detail would require reading Shaka error.data — forbidden by the
+established security contract).
+
+### Regression coverage
+
+- live_tv_player_test §14 (LT-9) fully preserved under renames; 14e
+  rewritten for the evolved semantics (protocol-precise detection);
+  14f clarified (DASH sessions: MANIFEST untouched).
+- NEW §15 (LT-11): 15a B4U-class variant+segment propagation; 15b
+  signed master never rewritten + param preservation; 15c no
+  duplication (standard mechanisms win); 15d cross-origin lock;
+  15e request-type scope (HLS: MANIFEST+SEGMENT only; DASH: never
+  MANIFEST); 15f unsigned + media-playlist-direct channels; 15g anchor
+  stability; 15h engine integration (documented contract unchanged,
+  HLS wiring end-to-end); 15i LT-9 DASH behavior preserved.
+- live_tv_client_test §5c: resolution fetch cache='no-store';
+  catalogue/guide 'default'.
+
+### Verification
+
+- pnpm check: 0 errors, 0 warnings.
+- pnpm test: EXIT 0 — all suites (Live TV: client 62, player 91,
+  page 22, hardening 13, release audit 6).
+- pnpm build: EXIT 0.
+
+### India production verification (after deploy)
+
+1. Controls MUST keep working: 156 (segments still carry __hdnea__),
+   173, 471, 1500 (HLS nw18live — its variant/segment requests will
+   now GAIN the token; nw18live accepts the token at the manifest
+   level today, and the same token+param was proven harmless on the
+   other CDNs — if 1500 were to regress, capture the exact failing
+   request).
+2. B4U Music 183: expect master m3u8 200 → variant playlist requests
+   WITH __hdnea__ → 200 → segments WITH __hdnea__ → 200 → continuous
+   playback. If the MASTER itself 403s, B4U is upstream (propagation
+   is a no-op there) — capture the master request/status.
+3. Premium class (165/1108/1984/472) and 889: expected UNCHANGED
+   (403/404 upstream). Confirm one: DevTools should show the MPD
+   request WITH __hdnea__ → 403 auth-failure (as before).
+4. 154: capture MPD status; if 200, check console for Shaka error code
+   (6001/6010 family ⇒ encrypted-without-keys ⇒ upstream; no DRM
+   error but playback fails ⇒ capture segment statuses). Siblings
+   503/617/656 as class controls.
+
+### Commits (record)
+
+LT-11 HLS propagation commit: `83dd7b37888503cf6d588e018631f5d235ff5912` (fix(live-tv): propagate signed
+auth query to hls child requests).
+LT-11 cache-safety commit: `47770ca5132e7ae8228d68e1e8bf2695bb853586` (fix(live-tv): keep playback
+resolution always fresh in the browser cache).
