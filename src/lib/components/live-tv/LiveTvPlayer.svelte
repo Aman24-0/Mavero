@@ -20,6 +20,22 @@
   //   * "Go Live" appears only when the playhead is measurably behind the
   //     live edge; the LIVE badge reflects the actual engine position.
   //
+  // LT-17 (player UI/controls + video fit):
+  //   * Overlay state is derived through the player-overlay module: while
+  //     the official embed fallback is mounted, NO native overlay (empty/
+  //     loading/error/…) may render — the iframe is the sole visible
+  //     playback surface by state logic, not by stacking order.
+  //   * The native controls exist in TWO surfaces rendered from shared
+  //     snippets: the bar below the video (non-fullscreen) and an
+  //     in-surface overlay while fullscreen (auto-hide while playing,
+  //     pointer wake, 44px touch targets). The embed fallback keeps its
+  //     own controls only — the two control systems stay mutually
+  //     exclusive.
+  //   * Video display mode (FIT default / FILL user opt-in) is a pure
+  //     presentation setting on the video element's object-fit; it never
+  //     touches resolution, loading or the engine, and never stretches
+  //     broadcast video (FILL crops, preserving the aspect ratio).
+  //
   // SECURITY: no console calls, no storage, no URL params. Error text shown
   // here comes EXCLUSIVELY from the LT-2/LT-3 fixed safe tables (either the
   // page-passed message or the engine error's safe message).
@@ -34,7 +50,9 @@
     LoaderCircle,
     AlertCircle,
     Radio,
-    RefreshCw
+    RefreshCw,
+    Scan,
+    Scaling
   } from 'lucide-svelte';
   import {
     LiveTvPlaybackEngine,
@@ -44,6 +62,7 @@
   import { isLiveTvPlaybackError, type LiveTvPlaybackError } from '$lib/client/live-tv/player-errors';
   import { buildLiveTvEmbedUrl } from '$lib/client/live-tv/api';
   import { createLiveTvFullscreenOrientationCoordinator } from '$lib/client/live-tv/fullscreen-orientation';
+  import { isLiveTvOverlayShown } from '$lib/client/live-tv/player-overlay';
   import { describeLivePosition, formatBehindLive } from '$lib/client/live-tv/epg';
   import type { LiveTvChannel } from '$lib/client/live-tv/types';
 
@@ -107,6 +126,78 @@
   // Fullscreen (standard container API only — no custom PiP).
   let canFullscreen = $state(false);
   let isFullscreen = $state(false);
+
+  // ---- LT-17 — video display mode (pure presentation, never playback) --
+  // FIT (default): the whole picture inside the player area (letterbox
+  // bars may remain when aspect ratios differ). FILL: cover the complete
+  // player area, PRESERVING the aspect ratio and cropping the overflow
+  // (never a distorted stretch of broadcast video). The mode only swaps
+  // the video element's object-fit; it never touches resolution, loading
+  // or the engine, and it resets with the component (never persisted).
+  type LiveTvFitMode = 'fit' | 'fill';
+  let fitMode = $state<LiveTvFitMode>('fit');
+
+  function toggleFitMode(): void {
+    fitMode = fitMode === 'fit' ? 'fill' : 'fit';
+  }
+
+  // ---- LT-17 — on-screen controls while fullscreen (native only) ------
+  // The control bar below the video lives OUTSIDE the fullscreen surface,
+  // so fullscreen used to show no controls at all. These overlay controls
+  // render INSIDE the surface, only while the surface itself is fullscreen
+  // (embed mode excluded — the official embed brings its own controls).
+  // They auto-hide after a short idle window while PLAYING and come back
+  // on any pointer activity; paused/buffering/loading keep them visible.
+  let fsControlsVisible = $state(true);
+  let fsHideTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function clearFsHideTimer(): void {
+    if (fsHideTimer !== undefined) {
+      clearTimeout(fsHideTimer);
+      fsHideTimer = undefined;
+    }
+  }
+
+  function scheduleFsHide(): void {
+    clearFsHideTimer();
+    if (isFullscreen && !embedActive && engineState === 'playing') {
+      fsHideTimer = setTimeout(() => {
+        fsControlsVisible = false;
+      }, 3200);
+    } else {
+      fsControlsVisible = true;
+    }
+  }
+
+  function wakeFsControls(): void {
+    if (!isFullscreen || embedActive) return;
+    fsControlsVisible = true;
+    scheduleFsHide();
+  }
+
+  // Pointer wake-up (an action: passive listeners + cleanup, no a11y
+  // static-element warnings; a no-op whenever the surface is not
+  // fullscreen).
+  function wakeSurfaceOnPointer(node: HTMLElement): { destroy(): void } {
+    const wake = () => wakeFsControls();
+    node.addEventListener('pointermove', wake, { passive: true });
+    node.addEventListener('pointerdown', wake, { passive: true });
+    return {
+      destroy() {
+        node.removeEventListener('pointermove', wake);
+        node.removeEventListener('pointerdown', wake);
+      }
+    };
+  }
+
+  $effect(() => {
+    // Re-evaluates on fullscreen changes and playback-state changes.
+    if (isFullscreen && !embedActive) scheduleFsHide();
+    else {
+      clearFsHideTimer();
+      fsControlsVisible = true;
+    }
+  });
 
   // ---- LT-15 — embed fallback (documented LiveGT embed player) ----------
   // The iframe src is built EXCLUSIVELY from the LT-2 client's base-URL
@@ -289,6 +380,8 @@
     // LT-16: never leave an orientation lock behind after unmount (safe
     // no-op when none is held; also invalidates any pending lock promise).
     fullscreenOrientation.dispose();
+    // LT-17: never leave a controls-auto-hide timer behind either.
+    clearFsHideTimer();
     video = undefined;
   });
 
@@ -301,6 +394,26 @@
   const sessionEngaged = $derived(
     Boolean(engine) && engineState !== 'idle' && engineState !== 'destroyed'
   );
+  // LT-17 (Issue 1) — every native overlay kind is derived through the
+  // player-overlay module, which returns false for ALL kinds while the
+  // official embed fallback is mounted: the iframe is the sole visible
+  // playback surface, so the native empty/loading/error overlays can
+  // never render over it (state logic, not stacking order). The chain
+  // below keeps its ordered priority: error → connecting → loading →
+  // tap-to-play → buffering → empty.
+  const overlayState = $derived({
+    embedActive,
+    sessionError: displayError,
+    resolving: resolvingChannel !== null,
+    enginePresent: engine !== null,
+    engineState,
+    autoplayBlocked
+  });
+  const showConnecting = $derived(isLiveTvOverlayShown('connecting', overlayState));
+  const showLoading = $derived(isLiveTvOverlayShown('loading', overlayState));
+  const showTapPlay = $derived(isLiveTvOverlayShown('tap-to-play', overlayState));
+  const showBuffering = $derived(isLiveTvOverlayShown('buffering', overlayState));
+  const showEmptyState = $derived(isLiveTvOverlayShown('empty', overlayState));
   const controlsEnabled = $derived(sessionEngaged && engineState !== 'error' && !displayError);
   const livePosition = $derived(describeLivePosition(seekRange, currentTime));
   const behindLabel = $derived(formatBehindLive(livePosition.behindSeconds));
@@ -315,94 +428,12 @@
 </script>
 
 <section class="ltv-player" aria-label="Live TV player">
-  <div class="player-surface" bind:this={surface}>
-    <video
-      bind:this={videoRef}
-      playsinline
-      aria-label="Live TV stream"
-      class:embed-hidden={embedActive}
-    ></video>
-
-    {#if embedSrc}
-      <!-- LT-15 — documented LiveGT embed fallback (mounted ONLY after the
-           native engine genuinely failed; exactly one iframe at a time;
-           src from the LT-2 builder + validated id only). The wrapper +
-           iframe follow the official documented responsive pattern. -->
-      <div class="embed-frame">
-        {#key embedReloadToken}
-          <iframe
-            src={embedSrc}
-            title="Live TV alternate player"
-            style="position:absolute;inset:0;width:100%;height:100%;border:0"
-            allowfullscreen
-            allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
-            onload={() => {
-              embedLoaded = true;
-            }}
-          ></iframe>
-        {/key}
-        {#if !embedLoaded}
-          <div class="embed-pending player-overlay subtle" role="status">
-            <span class="overlay-spinner" aria-hidden="true"><LoaderCircle size={22} /></span>
-            <p class="overlay-message">Switching to alternate player…</p>
-          </div>
-        {/if}
-      </div>
-    {/if}
-
-    {#if !embedActive && displayError}
-      <div class="player-overlay" role="alert">
-        <span class="overlay-mark" aria-hidden="true"><AlertCircle size={22} /></span>
-        <p class="overlay-message">{displayError}</p>
-        <button class="btn btn-secondary overlay-action" type="button" onclick={onretry}>
-          <RefreshCw size={14} /> Try again
-        </button>
-      </div>
-    {:else if resolvingChannel}
-      <div class="player-overlay" role="status">
-        <span class="overlay-spinner" aria-hidden="true"><LoaderCircle size={26} /></span>
-        <p class="overlay-message">Connecting to {activeChannelName}…</p>
-      </div>
-    {:else if engineState === 'loading'}
-      <div class="player-overlay" role="status">
-        <span class="overlay-spinner" aria-hidden="true"><LoaderCircle size={26} /></span>
-        <p class="overlay-message">Loading stream…</p>
-      </div>
-    {:else if autoplayBlocked}
-      <div class="player-overlay" role="status">
-        <button class="tap-play" type="button" onclick={togglePlay} aria-label="Start playback">
-          <Play size={30} strokeWidth={2.2} />
-        </button>
-        <p class="overlay-message">Tap to play</p>
-      </div>
-    {:else if engineState === 'buffering'}
-      <div class="player-overlay subtle" role="status">
-        <span class="overlay-spinner" aria-hidden="true"><LoaderCircle size={22} /></span>
-      </div>
-    {:else if !sessionEngaged}
-      <div class="player-overlay" role="status">
-        <span class="overlay-mark" aria-hidden="true"><Radio size={22} /></span>
-        <p class="overlay-message">Select a channel to start watching.</p>
-      </div>
-    {/if}
-  </div>
-
-  <div class="player-controls" aria-label="Playback controls">
-    {#if embedActive}
-      <!-- LT-15 — embed fallback controls: recreate the embed player (the
-           page's retry decides: a fresh iframe mount, never a new Shaka
-           attempt); fullscreen still works on the shared surface. -->
-      <button
-        class="ctl go-live"
-        type="button"
-        onclick={onretry}
-        aria-label="Reload the alternate player"
-        title="Reload the alternate player"
-      >
-        <RefreshCw size={16} /> Reload player
-      </button>
-      <span class="ctl-spacer" aria-hidden="true"></span>
-    {:else if showNativeControls}
+  <!-- LT-17 — shared native-control snippets. Each snippet is the SINGLE
+       markup source for a control; it is rendered BOTH in the control bar
+       below the video AND in the in-surface fullscreen overlay, so the two
+       can never drift apart. They are rendered only through the
+       showNativeControls branch — never in embed mode. -->
+  {#snippet nativeControlCluster()}
     <button
       class="ctl"
       type="button"
@@ -456,9 +487,9 @@
         <button class="ctl go-live" type="button" onclick={goLive}>Go live</button>
       {/if}
     {/if}
+  {/snippet}
 
-    <span class="ctl-spacer" aria-hidden="true"></span>
-
+  {#snippet liveSeekControl()}
     {#if showSeek && seekRange}
       <input
         class="live-seek"
@@ -471,8 +502,31 @@
         aria-label="Seek within the live window"
       />
     {/if}
-    {/if}
+  {/snippet}
 
+  {#snippet fitModeButton()}
+    {#if controlsEnabled}
+      <button
+        class="ctl fit-toggle"
+        class:active={fitMode === 'fill'}
+        type="button"
+        onclick={toggleFitMode}
+        aria-label={fitMode === 'fit'
+          ? 'Switch video display mode to fill (crop the picture edges)'
+          : 'Switch video display mode to fit (show the whole picture)'}
+        title={fitMode === 'fit' ? 'Display: Fit — switch to Fill' : 'Display: Fill — switch to Fit'}
+      >
+        {#if fitMode === 'fill'}
+          <Scaling size={15} />
+        {:else}
+          <Scan size={15} />
+        {/if}
+        <span class="fit-label">{fitMode === 'fill' ? 'Fill' : 'Fit'}</span>
+      </button>
+    {/if}
+  {/snippet}
+
+  {#snippet fullscreenButton()}
     {#if canFullscreen}
       <button
         class="ctl"
@@ -487,6 +541,131 @@
         {/if}
       </button>
     {/if}
+  {/snippet}
+
+  <div
+    class="player-surface"
+    class:fs-idle={isFullscreen && !fsControlsVisible}
+    bind:this={surface}
+    use:wakeSurfaceOnPointer
+  >
+    <video
+      bind:this={videoRef}
+      playsinline
+      aria-label="Live TV stream"
+      class:embed-hidden={embedActive}
+      class:video-fill={fitMode === 'fill'}
+    ></video>
+
+    {#if embedSrc}
+      <!-- LT-15 — documented LiveGT embed fallback (mounted ONLY after the
+           native engine genuinely failed; exactly one iframe at a time;
+           src from the LT-2 builder + validated id only). The wrapper +
+           iframe follow the official documented responsive pattern. -->
+      <div class="embed-frame">
+        {#key embedReloadToken}
+          <iframe
+            src={embedSrc}
+            title="Live TV alternate player"
+            style="position:absolute;inset:0;width:100%;height:100%;border:0"
+            allowfullscreen
+            allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
+            onload={() => {
+              embedLoaded = true;
+            }}
+          ></iframe>
+        {/key}
+        {#if !embedLoaded}
+          <div class="embed-pending player-overlay subtle" role="status">
+            <span class="overlay-spinner" aria-hidden="true"><LoaderCircle size={22} /></span>
+            <p class="overlay-message">Switching to alternate player…</p>
+          </div>
+        {/if}
+      </div>
+    {/if}
+
+    {#if !embedActive && displayError}
+      <div class="player-overlay" role="alert">
+        <span class="overlay-mark" aria-hidden="true"><AlertCircle size={22} /></span>
+        <p class="overlay-message">{displayError}</p>
+        <button class="btn btn-secondary overlay-action" type="button" onclick={onretry}>
+          <RefreshCw size={14} /> Try again
+        </button>
+      </div>
+    {:else if showConnecting}
+      <div class="player-overlay" role="status">
+        <span class="overlay-spinner" aria-hidden="true"><LoaderCircle size={26} /></span>
+        <p class="overlay-message">Connecting to {activeChannelName}…</p>
+      </div>
+    {:else if showLoading}
+      <div class="player-overlay" role="status">
+        <span class="overlay-spinner" aria-hidden="true"><LoaderCircle size={26} /></span>
+        <p class="overlay-message">Loading stream…</p>
+      </div>
+    {:else if showTapPlay}
+      <div class="player-overlay" role="status">
+        <button class="tap-play" type="button" onclick={togglePlay} aria-label="Start playback">
+          <Play size={30} strokeWidth={2.2} />
+        </button>
+        <p class="overlay-message">Tap to play</p>
+      </div>
+    {:else if showBuffering}
+      <div class="player-overlay subtle" role="status">
+        <span class="overlay-spinner" aria-hidden="true"><LoaderCircle size={22} /></span>
+      </div>
+    {:else if showEmptyState}
+      <div class="player-overlay" role="status">
+        <span class="overlay-mark" aria-hidden="true"><Radio size={22} /></span>
+        <p class="overlay-message">Select a channel to start watching.</p>
+      </div>
+    {/if}
+
+    {#if isFullscreen && !embedActive}
+      <!-- LT-17 — native on-screen controls for fullscreen. Rendered ONLY
+           while the surface itself is fullscreen and NEVER in embed mode
+           (the official embed's own controls stay untouched — the two
+           control systems are mutually exclusive). -->
+      <div class="fs-controls" class:visible={fsControlsVisible}>
+        <div class="fs-seek-row">
+          {@render liveSeekControl()}
+        </div>
+        <div class="fs-row">
+          {@render nativeControlCluster()}
+          <span class="ctl-spacer" aria-hidden="true"></span>
+          {@render fitModeButton()}
+          {@render fullscreenButton()}
+        </div>
+      </div>
+    {/if}
+  </div>
+
+  <!-- LT-17 — the bar below the video stays the NON-fullscreen control
+       surface. While the surface is fullscreen it is outside the rendered
+       screen area, so it is made inert (no stray focus stops) and the
+       in-surface .fs-controls take over. -->
+  <div class="player-controls" aria-label="Playback controls" inert={isFullscreen}>
+    {#if embedActive}
+      <!-- LT-15 — embed fallback controls: recreate the embed player (the
+           page's retry decides: a fresh iframe mount, never a new Shaka
+           attempt); fullscreen still works on the shared surface. -->
+      <button
+        class="ctl go-live"
+        type="button"
+        onclick={onretry}
+        aria-label="Reload the alternate player"
+        title="Reload the alternate player"
+      >
+        <RefreshCw size={16} /> Reload player
+      </button>
+      <span class="ctl-spacer" aria-hidden="true"></span>
+    {:else if showNativeControls}
+      {@render nativeControlCluster()}
+      <span class="ctl-spacer" aria-hidden="true"></span>
+      {@render liveSeekControl()}
+      {@render fitModeButton()}
+    {/if}
+
+    {@render fullscreenButton()}
   </div>
 </section>
 
@@ -510,6 +689,15 @@
   .player-surface:fullscreen {
     border-radius: 0;
     border: 0;
+    /* The fullscreen element covers the complete screen explicitly (the
+       aspect-ratio constraint is void once BOTH dimensions are set). */
+    width: 100%;
+    height: 100%;
+  }
+  /* LT-17 — controls hidden after idle while playing fullscreen: hide the
+     cursor with them (no cursor floating over the picture). */
+  .player-surface:fullscreen.fs-idle {
+    cursor: none;
   }
   .player-surface video {
     display: block;
@@ -517,6 +705,14 @@
     height: 100%;
     object-fit: contain;
     background: #020405;
+  }
+  /* LT-17 — video display mode FILL (user opt-in): cover the complete
+     player area, PRESERVING the aspect ratio and cropping the overflow
+     (object-fit: cover crops, it never stretches — a distorted stretch
+     of broadcast video is deliberately not offered). FIT stays the
+     default through the rule above. */
+  .player-surface video.video-fill {
+    object-fit: cover;
   }
   /* LT-15 — embed fallback: the native video is hidden (never removed —
      the page owns the element and re-attaches the engine to it for the
@@ -553,6 +749,51 @@
     background: rgba(2, 4, 5, .72);
     text-align: center;
   }
+
+  /* LT-17 — native on-screen controls for fullscreen. They live INSIDE
+     the fullscreen surface (the bar below the video is not part of the
+     fullscreen rendering), stack above everything else, auto-hide after
+     an idle window while playing (visibility keeps hidden buttons out of
+     the tab order) and stay clear of notched screens through the
+     safe-area padding. */
+  .fs-controls {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 4;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 30px 16px calc(10px + env(safe-area-inset-bottom, 0px));
+    background: linear-gradient(180deg, rgba(2, 4, 5, 0) 0%, rgba(2, 4, 5, .86) 42%);
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity var(--motion-fast) var(--ease-out), visibility 0s linear var(--motion-fast);
+  }
+  .fs-controls.visible {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transition: opacity var(--motion-fast) var(--ease-out);
+  }
+  .fs-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+  .fs-seek-row {
+    display: flex;
+    min-width: 0;
+  }
+  /* Touch-friendly fullscreen targets (44px). */
+  .fs-controls .ctl { width: 44px; height: 44px; }
+  .fs-controls .ctl.fit-toggle { width: auto; height: 44px; }
+  .fs-controls .volume { width: clamp(70px, 14vw, 120px); }
+  .fs-controls .live-seek { flex: 1 1 auto; width: 100%; max-width: none; }
+  .fs-controls .live-badge { padding: 6px 14px; font-size: .72rem; }
 
   .player-overlay {
     position: absolute;
@@ -667,6 +908,37 @@
     white-space: nowrap;
   }
 
+  /* LT-17 — video display-mode toggle (FIT/FILL pill). Shows the CURRENT
+     mode; highlighted while the non-default FILL mode is active. */
+  .ctl.fit-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    width: auto;
+    min-height: 40px;
+    padding: 0 12px;
+    border: 1px solid var(--color-border-strong);
+    border-radius: 999px;
+    color: var(--color-text-muted);
+    background: transparent;
+    font-size: .68rem;
+    font-weight: 800;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  .ctl.fit-toggle .fit-label { line-height: 1; }
+  .ctl.fit-toggle.active {
+    border-color: var(--color-primary-border);
+    color: var(--color-primary);
+    background: var(--color-primary-soft);
+  }
+  .ctl.fit-toggle:hover:not(:disabled) {
+    color: var(--color-primary);
+    background: var(--color-primary-soft);
+  }
+
   .live-badge {
     display: inline-flex;
     align-items: center;
@@ -756,11 +1028,16 @@
     .player-controls { padding: 8px 10px; gap: 6px; }
     .volume { width: 64px; }
     .live-badge { padding: 4px 10px; }
+    .fs-controls { gap: 2px; padding: 26px 10px calc(8px + env(safe-area-inset-bottom, 0px)); }
+    .fs-row { gap: 4px; }
+    .fs-controls .volume { width: 64px; }
+    .ctl.fit-toggle { min-height: 40px; padding: 0 10px; }
   }
 
   @media (prefers-reduced-motion: reduce) {
     .overlay-spinner { animation: none; }
     .live-badge .live-dot { animation: none; }
+    .fs-controls, .fs-controls.visible { transition: none; }
     .tap-play:hover { transform: none; }
   }
 </style>

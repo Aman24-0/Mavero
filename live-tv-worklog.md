@@ -4183,3 +4183,152 @@ player.ts engine + media-auth + cache/epg/types/errors, analytics module +
 taxonomy + migrations (no new events — orientation is a UI enhancement),
 VOD player (its own landscape implementation untouched), navigation,
 viewport/meta, any CSS (no rotation/transform hacks), Supabase schema.
+
+## LT-17 — Player UI/controls + video fit (presentation-layer fix)
+
+Date: 2026-10-08. Directive: three targeted issues, UI/presentation layer
+ONLY. (1) The fallback empty-state message ("Select a channel to start
+watching.") must NEVER be visible while any player session is active —
+not over native playback, not over the official embed fallback; the fix
+must be conditional-rendering/state logic, not a covering layer. (2) A
+complete, deliberate native control set (play/pause, mute/unmute, volume,
+LIVE, DVR seek only with a real range, fullscreen, fit mode), touch
+friendly; the embed keeps its own controls (mutually exclusive). (3) A
+video display mode FIT (default) / FILL (crop, aspect preserved — never a
+distorting stretch) with no orientation/DRM/stream changes. LT-16
+orientation behavior explicitly protected.
+
+### Phase 0 — Baseline
+HEAD f46678f (LT-16, pushed; production confirms BOTH modes fullscreen ->
+landscape). Worktree anomaly at session start: 13 tracked upload-feature
+files DELETED in the working tree (not by this task; broke pnpm check) —
+restored via git restore before any gate run; afterwards the worktree held
+only the usual mode-bit noise + this task's files. pnpm needed the
+corepack shim restore again (user-local ~/.local/bin/pnpm, 10.30.3).
+Baseline gates after restore: green (LT-16 record).
+
+### Phase 1 — Audit (root causes)
+- ISSUE 1 ROOT CAUSE: LiveTvPlayer.svelte's overlay chain ended in
+  `{:else if !sessionEngaged}` -> "Select a channel to start watching."
+  sessionEngaged = Boolean(engine) && state not idle/destroyed. LT-15
+  fallback activation (activateEmbedFallback) DESTROYS the engine
+  (engine = null) before mounting the iframe — exactly the state the
+  empty branch keys on. No branch except the error head was embed-gated,
+  and .player-overlay (z-index 2) renders ABOVE the embed iframe — so the
+  message rendered over a live embed session. Not a stacking bug: a
+  conditional-logic bug.
+- ISSUE 2: the control bar lives BELOW .player-surface — OUTSIDE the
+  element that goes fullscreen — so native fullscreen showed NO controls
+  at all (pre-existing since LT-4). Controls 1-6 existed in the bar; the
+  fit control (#7) did not exist anywhere.
+- ISSUE 3: video CSS is fixed object-fit: contain — no user-controllable
+  display mode; fullscreen on an aspect-mismatched screen letterboxes
+  with no fill option.
+
+### Phase 2 — Implementation (minimal, contract-preserving)
+- NEW src/lib/client/live-tv/player-overlay.ts (pure, SSR-safe): exports
+  isLiveTvOverlayShown(kind, state). embedActive is checked FIRST and
+  suppresses EVERY native overlay kind (the iframe is the sole visible
+  surface BY STATE, not by z-order). 'empty' additionally requires
+  !resolving && sessionError === null (a resolving channel IS a session
+  starting; a failed session belongs to the error UI).
+- LiveTvPlayer.svelte overlay chain: head `{#if !embedActive &&
+  displayError}` preserved BYTE-IDENTICAL (it is the LT-15 suite's slice
+  marker); every subsequent branch now reads a module-derived state
+  (showConnecting/showLoading/showTapPlay/showBuffering/showEmptyState) —
+  five isLiveTvOverlayShown call sites, nothing else.
+- CONTROLS: four shared Svelte 5 snippets (nativeControlCluster,
+  liveSeekControl, fitModeButton, fullscreenButton) are the SINGLE markup
+  sources, rendered in BOTH surfaces: the bar below the video (non-
+  fullscreen) and a NEW in-surface .fs-controls overlay (only while the
+  surface itself is fullscreen AND not embed). Fullscreen overlay: 44px
+  touch targets, safe-area padding, gradient backdrop, auto-hide after
+  3.2s idle WHILE PLAYING (visibility:hidden keeps it out of the tab
+  order), pointer wake via a passive addEventListener action on the
+  surface, timer cleared on exit + onDestroy. The bar is inert while its
+  surface is fullscreen (no invisible tab stops). Fullscreen surface CSS
+  now explicitly width/height 100%.
+- FIT/FILL: fitMode $state<'fit'|'fill'> defaulting to 'fit'
+  (presentation-only, never persisted); class:video-fill on the video
+  element -> object-fit: cover (crop, aspect preserved). object-fit: fill
+  (stretch) deliberately NOT offered. Toggle body writes ONLY fitMode
+  (source-pinned: no engine/seek/volume/fullscreen references).
+- Mutually exclusive control systems: the bar's embed branch still shows
+  ONLY "Reload player" + spacer (+ the shared fullscreen button); the
+  fs-controls guard is `{#if isFullscreen && !embedActive}`; native video
+  still hidden via class:embed-hidden in embed mode.
+
+### Phase 3 — Tests
+- NEW scripts/live_tv_player_ui_test.ts (15 checks) chained into pnpm
+  test: §A behavioral (real player-overlay module under Node) for the six
+  directive empty-state cases; §B source contracts for the wiring
+  (embed-gated chain, snippet sharing, fullscreen mechanics byte-
+  identical, LT-16 wiring intact, DVR gating, fit/fill semantics, embed
+  mutual exclusion, regression scans); §C module purity/SSR.
+- Existing suites re-run green: LT-15 embed fallback 15/15, LT-16
+  orientation 13, LT-4 page 22, LT-5 hardening 13/13, LT-6 audit 6/6,
+  client 62, player 91.
+
+### Phase 4 — Gates
+pnpm check: 0 errors / 0 warnings. pnpm test: EXIT 0 (full chain incl.
+the new suite). pnpm build: EXIT 0.
+
+### Phase 5 — Browser QA (production build via vite preview, Playwright
+Chromium; devtool-deterrence untouched — the QA user-agent carries
+chrome-lighthouse, which the disable-devtool library itself exempts)
+55/55 checks PASS, zero pageerrors, zero unhandled rejections, console
+errors = only the expected jiotvmblive 451s (the genuine native failures
+that drive the LT-15 fallback — by design).
+- NATIVE (Star Gold HD 156, resolve route-mocked to the DASH-IF live
+  simulator — clear DASH with a REAL DVR window; the sandbox cannot reach
+  the real Jio CDN): playback active; all seven controls present and
+  functional (pause/play, mute/unmute, volume -> element state, seek back
+  in the DVR window, Go live -> live edge, fit toggle, fullscreen);
+  default FIT (contain), FILL -> cover, back -> contain; fullscreen:
+  surface is the fullscreen element, in-surface overlay controls with the
+  full cluster, auto-hide after idle, pointer wake, bar inert, exit
+  restores; desktop NEVER touches the orientation API.
+- EMBED (REAL end-to-end, Sony SAB SD 154 + Zee Cinema HD 165: native
+  451 -> automatic fallback): iframe mounted as the SOLE visible surface;
+  NO "Select a channel..." message (Issue 1 fixed, DOM + visual); ZERO
+  native overlays over the embed; native video hidden; bar = Reload
+  player + fullscreen only; retry remounts cleanly; embed fullscreen has
+  NO native fs-controls; switch chains (embed -> embed -> native) leave
+  no stale overlays and tear the iframe down.
+- MOBILE (390x844 touch emulation): empty state visible with no channel;
+  native playback in portrait non-fullscreen with NO orientation lock;
+  fullscreen -> lock('landscape') requested (LT-16 native path) ->
+  in-surface controls -> FIT letterboxes in portrait fullscreen, FILL
+  fills edge-to-edge with a CLEAN CROP (VLM-verified pair comparison) ->
+  exit -> unlock; embed fallback on mobile: no empty overlay, fullscreen
+  locks landscape (LT-16 embed path), no native fs-controls, clean exit.
+- VISUAL VERIFICATION (VLM on the rendered screenshots): empty state
+  shows the message on a black surface; native playing shows the full
+  7-control bar + LIVE; fullscreen overlay shows pause/volume/LIVE/seek/
+  FIT/exit over a gradient; the embed screenshot shows NO message, NO
+  native controls; mobile portrait shows the player + bar unrotated;
+  fit-vs-fill portrait-fullscreen pair shows letterbox vs edge-to-edge
+  crop, no distortion.
+- HONEST LIMITS: the embed's INTERNAL playback stays black from this
+  egress (its own stream fetch hits the same 451 — production playback is
+  user-confirmed working; what is verified here is everything Mavero-side:
+  mount, sole-surface, no overlays, no native controls, retry, teardown);
+  physical rotation still needs a real Android device (headless accepts
+  the lock call); real Star Gold HD native playback still needs India
+  egress (451 here — mocked ONLY in the QA browser via route
+  interception, never in app code); Escape in embed-fullscreen can be
+  swallowed by the cross-origin player (QA exits programmatically; the
+  realistic exit paths are the Android back gesture / the embed's own
+  controls, same fullscreenchange event either way).
+
+### Intentionally NOT changed
+LT-15 fallback architecture (classifier, single-iframe invariant,
+reload-token retry, activation ordering, analytics event), LT-16
+coordinator module + its wiring lines (byte-identical; single call sites
+each), V1 API/catalogue/EPG clients, player.ts engine + media-auth +
+cache/epg/types/errors, V2/premiumplugx/proxy/server relay, VOD player,
+navigation, analytics taxonomy/migrations (no new events — fit mode is a
+presentation preference, not a tracked action), Shaka/DRM handling, the
+documented embed URL builder + iframe markup (byte-identical), Supabase
+schema. QA harness artifacts live OUTSIDE the repo (qa-lt17/, not
+committed).
