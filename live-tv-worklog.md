@@ -3064,3 +3064,8 @@ live-tv-worklog.md                      (this record)
 
 `fix(live-tv): propagate signed dash auth for media requests` (sha
 recorded below after commit).
+
+### Commit (record)
+
+LT-9 fix commit: `910b51e00eed052308b16f26ebd78042c5b4d682` (fix(live-tv): propagate signed dash auth for media
+requests).
