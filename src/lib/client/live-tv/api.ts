@@ -195,12 +195,20 @@ async function liveTvFetch(
  * Normalize one catalogue/resolution channel object. Returns null for entries
  * without a usable id + name (dropped — never faked into valid channels).
  * `embed`/`watch` wire fields are intentionally never read.
+ *
+ * LT-18: `language` is derived ONLY when the upstream `category` value is a
+ * recognized language name (see LIVE_TV_LANGUAGE_CATEGORIES) — the truthful
+ * upstream representation of language. Genre categories get NO language.
  */
 function normalizeChannelEntry(raw: unknown): LiveTvChannel | null {
         if (!isRecord(raw)) return null;
         if (!isNonEmptyString(raw.id) || !isNonEmptyString(raw.name)) return null;
         const channel: LiveTvChannel = { id: raw.id, name: raw.name };
-        if (isNonEmptyString(raw.category)) channel.category = raw.category;
+        if (isNonEmptyString(raw.category)) {
+                channel.category = raw.category;
+                const language = liveTvLanguageFromCategory(raw.category);
+                if (language !== undefined) channel.language = language;
+        }
         if (isNonEmptyString(raw.logo)) channel.logo = raw.logo;
         return channel;
 }
@@ -420,7 +428,11 @@ export async function resolveLiveTvPlayback(
         }
         // Identity is caller-owned: the requested id is canonical.
         const channel: LiveTvChannel = { id: channelId, name: body.name };
-        if (isNonEmptyString(body.category)) channel.category = body.category;
+        if (isNonEmptyString(body.category)) {
+                channel.category = body.category;
+                const language = liveTvLanguageFromCategory(body.category);
+                if (language !== undefined) channel.language = language;
+        }
         if (isNonEmptyString(body.logo)) channel.logo = body.logo;
         const sources = normalizeSources(body.sources, channelId);
         if (sources.length === 0) {
@@ -482,6 +494,61 @@ export function buildLiveTvEmbedUrl(channelId: string | null | undefined): strin
 }
 
 // ---------------------------------------------------------------------------
+// Language classification (LT-18) — TRUTHFUL data only.
+// ---------------------------------------------------------------------------
+
+/**
+ * The language names LiveGT V1 actually uses as `category` values, mapped to
+ * their display spellings. Grounded in the LIVE wire census of 2026-10-09
+ * (all 1176 catalogue channels inspected; field set = id/name/category/logo/
+ * embed/watch — there is NO dedicated language field upstream):
+ *
+ *   English 206 · Tamil 78 · Telugu 64 · Malayalam 44 · Bengali 44 ·
+ *   Punjabi 42 · Gujarati 41 · Kannada 38 · Marathi 29 · Assamese 18 ·
+ *   Odia 14 · Urdu 11 · Bhojpuri 10 · Nepali 1 · French 1
+ *   (+ the upstream typo "Malyalam", 1 channel, aliased to Malayalam).
+ *
+ * Everything else LiveGT puts in `category` is a GENRE (News, Unknown,
+ * Sports, Devotional, Entertainment, Movies, Music, Kids, Infotainment,
+ * Lifestyle, Business News, Educational) — those channels honestly carry NO
+ * language. Notably there is NO "Hindi" value upstream (Hindi channels are
+ * genre-classified), so no Hindi filter is ever fabricated. A future upstream
+ * language value not in this map simply stays category-only until the map is
+ * re-audited — an honest limitation, never a guess.
+ */
+const LIVE_TV_LANGUAGE_CATEGORIES: Readonly<Record<string, string>> = Object.freeze({
+        english: 'English',
+        tamil: 'Tamil',
+        telugu: 'Telugu',
+        malayalam: 'Malayalam',
+        malyalam: 'Malayalam', // upstream spelling defect, aliased (1 channel)
+        bengali: 'Bengali',
+        punjabi: 'Punjabi',
+        gujarati: 'Gujarati',
+        kannada: 'Kannada',
+        marathi: 'Marathi',
+        assamese: 'Assamese',
+        odia: 'Odia',
+        urdu: 'Urdu',
+        bhojpuri: 'Bhojpuri',
+        nepali: 'Nepali',
+        french: 'French'
+});
+
+/**
+ * The channel's language when — and ONLY when — the upstream `category`
+ * value is a recognized language name (case-insensitive, trimmed). Undefined
+ * for every genre category: nothing is guessed, classified by name heuristics
+ * or duplicated from any other field.
+ */
+export function liveTvLanguageFromCategory(category: unknown): string | undefined {
+        if (typeof category !== 'string') return undefined;
+        const key = category.trim().toLowerCase();
+        if (!key) return undefined;
+        return LIVE_TV_LANGUAGE_CATEGORIES[key];
+}
+
+// ---------------------------------------------------------------------------
 // Local catalogue utilities (pure — no network, no cache).
 // ---------------------------------------------------------------------------
 
@@ -514,6 +581,36 @@ export function filterLiveTvChannelsByCategory(
         const wanted = category.trim().toLowerCase();
         if (!wanted) return [...channels];
         return channels.filter((channel) => (channel.category ?? '').trim().toLowerCase() === wanted);
+}
+
+/**
+ * LT-18 — the DISTINCT languages present in the loaded catalogue, sorted
+ * alphabetically (data-derived exactly like the category list; never
+ * hardcoded). Channels without a truthful language never contribute.
+ */
+export function extractLiveTvLanguages(channels: readonly LiveTvChannel[]): string[] {
+        const seen = new Set<string>();
+        for (const channel of channels) {
+                const language = channel.language?.trim();
+                if (!language) continue;
+                seen.add(language);
+        }
+        return [...seen].sort((a, b) => a.localeCompare(b));
+}
+
+/**
+ * LT-18 — local language filter (case-insensitive exact match on the
+ * normalized language). An empty/whitespace language is a no-op and returns
+ * every channel (the "All" semantics — genre-classified channels are never
+ * excluded by an empty filter).
+ */
+export function filterLiveTvChannelsByLanguage(
+        channels: readonly LiveTvChannel[],
+        language: string
+): LiveTvChannel[] {
+        const wanted = language.trim().toLowerCase();
+        if (!wanted) return [...channels];
+        return channels.filter((channel) => (channel.language ?? '').trim().toLowerCase() === wanted);
 }
 
 /**

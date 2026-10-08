@@ -4,46 +4,44 @@
   import type { MediaItem } from '$data/content';
   import { haptic } from '$lib/client/haptics';
 
-  // MAVERO — Explorer Spotlight Carousel (Movies / TV Shows / Anime
-  // Explorer redesign, Change 1A; visual redesign + autoplay lifecycle
-  // hardening per Follow-up task 2 §3/§4/§12).
+  // MAVERO — Explorer Spotlight Carousel (Movies / TV Shows / Anime).
   //
-  // Cinematic hero composition — deliberate layout LAYERS, not
-  // absolutely-positioned miscellany:
-  //     1. media layer      (the scroll-snap slide track + artwork)
-  //     2. scrim layer      (readability gradients)
-  //     3. content layer    (title / meta / description / CTAs)
-  //     4. edge nav layer   (prev arrow at the LEFT edge, next arrow at
-  //                         the RIGHT edge — both vertically centered
-  //                         against the media, glass/dark, same control
-  //                         language as the ContentRail arrows but
-  //                         slightly larger — the hero is the primary
-  //                         control surface)
-  //     5. pagination layer (dots at the BOTTOM CENTER, compact, clearly
-  //                         separated from the CTA row — never touching
-  //                         "More details")
-  // The old bottom-right navigation capsule and the "MAVERO /
-  // Spotlight" eyebrow are gone.
+  // LT-18 — cinematic full-bleed hero redesign. The old presentation was a
+  // centered 90%-width closed card (border + radius + shadow + hard-edge
+  // scrim), which read as a boxed dashboard widget next to Discover's hero.
+  // The carousel now speaks Discover's VISUAL DESIGN LANGUAGE (DiscoverPage
+  // is the reference implementation and stays untouched):
+  //
+  //     * full-width backdrop bleeding to the viewport edges (no border,
+  //       no radius, no shadow, no max-width box);
+  //     * viewport-height slides (min(78vh, 680px) desktop, 66vh mobile)
+  //       instead of card heights;
+  //     * the bottom scrim DISSOLVES into the page background — no visible
+  //       bottom edge;
+  //     * content anchored bottom-left: kicker (Movie/Series/Anime),
+  //       prominent title, rating/year/genre metadata line, 2-line
+  //       description, Play + More details;
+  //     * cinematic pagination cluster at the BOTTOM RIGHT (prev · dots ·
+  //       next; mobile keeps centered dots only);
+  //     * active-slide treatment (copy fade-up + a gentle Ken Burns scale)
+  //       instead of the old infinite drift;
+  //     * 100vw-sized lazy artwork for non-active slides.
+  //
+  // UNCHANGED (the LT-18 §5 preserve list): the public props and data
+  // contract (items/ariaLabel), the 6-slide lineup window, the 4s autoplay
+  // lifecycle, keyboard controls, reduced-motion support, accessibility,
+  // the /watch/{type}/{id} + /{type}/{id} route links, and the server
+  // loader/filters architecture below the hero.
   //
   // AUTOPLAY LIFECYCLE (Follow-up task 2 §4 — the exact 4s contract):
-  //   - ONE deterministic timer. On fire: advance, then RE-QUEUE (the
-  //     old implementation advanced once and never re-queued — rotation
-  //     silently stopped after the first tick).
+  //   - ONE deterministic timer. On fire: advance, then RE-QUEUE.
   //   - Manual navigation (arrows, dots, keyboard) shows the slide
-  //     immediately and RESETS the countdown — the next automatic
-  //     transition is a full 4s later (never the old 8-12s release
-  //     window).
+  //     immediately and RESETS the countdown to a full 4s.
   //   - Pointer over the carousel / keyboard focus inside it pauses;
   //     leaving resumes with a fresh 4s countdown. Visibility hidden
   //     clears the timer; returning re-queues. Reduced motion disables
-  //     automatic movement entirely. No duplicate timers by
-  //     construction (queueRotation always clears before setting).
-  //
-  // Responsive height is per-breakpoint (viewport width + height
-  // aware): compact-but-cinematic on phones so the first rail begins
-  // naturally, substantially more spacious on desktop/TV. Play /
-  // More-details keep the existing route patterns (/watch/{type}/{id}
-  // and /{type}/{id}) — playback preserved.
+  //     automatic movement entirely. No duplicate timers by construction
+  //     (queueRotation always clears before setting).
 
   let {
     items = [],
@@ -68,14 +66,11 @@
   let destroyed = false;
 
   let activeSlide = $derived(slides[activeIndex]);
-  let activeImage = $derived(activeSlide?.backdrop?.trim() || activeSlide?.poster?.trim() || '');
 
-  function metaLine(item: MediaItem): string {
-    return [
-      item.year ? String(item.year) : '',
-      item.rating ? `★ ${item.rating.toFixed(1)}` : '',
-      ...(item.genres ?? []).slice(0, 2)
-    ].filter(Boolean).join('  ·  ');
+  // The kicker label — the same truthful type-derived category Discover's
+  // hero shows (Movie / Series / Anime from the item's own type field).
+  function kickerFor(item: MediaItem): string {
+    return item.type === 'movie' ? 'Movie' : item.type === 'series' ? 'Series' : 'Anime';
   }
 
   function clearTimers() {
@@ -95,9 +90,7 @@
       if (paused || reducedMotion || destroyed || document.hidden) return;
       scrollToSlide((activeIndex + 1) % slides.length, true);
       // THE lifecycle fix: re-queue after every automatic advance so
-      // the normal cadence is exactly 4s forever (the old code stopped
-      // after the first tick). While hidden, the visibilitychange
-      // handler re-queues on return.
+      // the normal cadence is exactly 4s forever.
       queueRotation();
     }, SPOTLIGHT_ROTATION_MS);
   }
@@ -123,7 +116,7 @@
   // Manual navigation: the slide shows IMMEDIATELY and the countdown
   // RESETS to a full 4s (a no-op while the user is actively hovering /
   // focused — leaving the interaction area resumes with a fresh
-  // countdown). The old 8s "interaction release" window is gone.
+  // countdown).
   function manualNav(index: number) {
     scrollToSlide(index, true);
     queueRotation();
@@ -210,21 +203,25 @@
     onfocusout={resume}
     onkeydown={handleKeydown}
   >
-    <!-- 1 + 2. media + scrim layers (the scroll-snap track) -->
+    <!-- media + scrim layers (the scroll-snap track) -->
     <div class="spotlight-track" bind:this={track} onscroll={handleScroll}>
       {#each slides as slide, index (slide.type + ':' + slide.id)}
         <div class="spotlight-slide" class:active={index === activeIndex}>
           <div class="slide-media" aria-hidden="true">
             {#if slide.backdrop?.trim() || slide.poster?.trim()}
               <picture>
+                <!-- Responsive hero artwork (Discover's contract): smaller
+                     backdrop on standard-DPI phones, sharper on retina and
+                     desktop; 100vw-sized, eager only for the first slide. -->
+                <source media="(max-width: 640px) and (-webkit-min-device-pixel-ratio: 2), (max-width: 640px) and (min-resolution: 192dpi)" srcset={slide.backdrop || slide.backdropSmall || slide.poster} />
                 <source media="(max-width: 640px)" srcset={slide.backdropSmall || slide.backdrop || slide.poster} />
-                <source media="(min-width: 641px)" srcset={slide.backdrop || slide.backdropSmall || slide.poster} />
+                <source media="(min-width: 641px)" srcset={slide.backdropHero || slide.backdrop || slide.backdropSmall || slide.poster} />
                 <img
                   src={slide.backdrop || slide.poster}
                   alt=""
                   width="1280"
                   height="720"
-                  sizes="(max-width: 640px) 90vw, 1280px"
+                  sizes="100vw"
                   loading={index === 0 ? 'eager' : 'lazy'}
                   fetchpriority={index === 0 ? 'high' : 'auto'}
                   decoding="async"
@@ -233,11 +230,16 @@
             {/if}
           </div>
           <div class="slide-scrim" aria-hidden="true"></div>
-          <!-- 3. content layer -->
+          <!-- content layer — anchored bottom-left -->
           <div class="slide-content">
             <div class="slide-copy" aria-live={index === activeIndex ? 'polite' : 'off'}>
+              <div class="slide-kicker">{kickerFor(slide)}</div>
               <h2 class="slide-title">{slide.title}</h2>
-              {#if metaLine(slide)}<p class="slide-meta">{metaLine(slide)}</p>{/if}
+              <div class="slide-meta">
+                {#if slide.rating > 0}<span class="rating">★ {slide.rating.toFixed(1)}</span>{/if}
+                {#if slide.year > 0}<span>{slide.year}</span>{/if}
+                {#if slide.genres?.length}<span class="dot"></span><span>{slide.genres.slice(0, 2).join(' · ')}</span>{/if}
+              </div>
               {#if slide.description?.trim()}
                 <p class="slide-desc">{slide.description.trim()}</p>
               {/if}
@@ -256,59 +258,44 @@
     </div>
 
     {#if slides.length > 1}
-      <!-- 4. edge navigation layer — LEFT edge, vertically centered -->
-      <button
-        class="spotlight-arrow spotlight-arrow-prev"
-        type="button"
-        aria-label="Previous spotlight title"
-        onclick={() => manualNav((activeIndex - 1 + slides.length) % slides.length)}
-      >
-        <ArrowLeft size={18} />
-      </button>
-      <!-- 4. edge navigation layer — RIGHT edge, vertically centered -->
-      <button
-        class="spotlight-arrow spotlight-arrow-next"
-        type="button"
-        aria-label="Next spotlight title"
-        onclick={() => manualNav((activeIndex + 1) % slides.length)}
-      >
-        <ArrowRight size={18} />
-      </button>
-
-      <!-- 5. pagination layer — bottom center, independent of the CTA
-           row, with deliberate separation (the content layer reserves
-           the space via its bottom padding). -->
-      <div class="spotlight-dots" role="tablist" aria-label="Choose spotlight title">
-        {#each slides as slide, index (slide.type + ':' + slide.id)}
-          <button
-            class:active={index === activeIndex}
-            class="spotlight-dot"
-            type="button"
-            role="tab"
-            aria-selected={index === activeIndex}
-            aria-label={`Show ${slide.title}`}
-            onclick={() => manualNav(index)}
-          ></button>
-        {/each}
+      <!-- cinematic pagination cluster — bottom right (Discover's hero-nav
+           language): prev · dots · next in one row; mobile keeps the dots
+           centered and drops the arrows (native swipe stays primary). -->
+      <div class="spotlight-nav">
+        <button class="spotlight-nav-btn" type="button" aria-label="Previous spotlight title" onclick={() => manualNav((activeIndex - 1 + slides.length) % slides.length)}>
+          <ArrowLeft size={13} />
+        </button>
+        <div class="spotlight-dots" role="tablist" aria-label="Choose spotlight title">
+          {#each slides as slide, index (slide.type + ':' + slide.id)}
+            <button
+              class:active={index === activeIndex}
+              class="spotlight-dot"
+              type="button"
+              role="tab"
+              aria-selected={index === activeIndex}
+              aria-label={`Show ${slide.title}`}
+              onclick={() => manualNav(index)}
+            ></button>
+          {/each}
+        </div>
+        <button class="spotlight-nav-btn" type="button" aria-label="Next spotlight title" onclick={() => manualNav((activeIndex + 1) % slides.length)}>
+          <ArrowRight size={13} />
+        </button>
       </div>
     {/if}
   </section>
 {/if}
 
 <style>
-  /* ~90% of the available viewport width, centered — the spec's
-     cinematic presentation target. The max cap keeps line lengths and
-     artwork quality sane on TV-sized/4K viewports. */
+  /* ── Cinematic full-bleed hero (LT-18): the backdrop bleeds to the
+     viewport edges — no border, no radius, no shadow, no width cap, no
+     closed-card framing. The bottom scrim dissolves into the page
+     background so the hero merges with the Explorer below. ── */
   .spotlight {
     position: relative;
-    width: 90%;
-    max-width: 1480px;
-    margin-inline: auto;
-    border-radius: clamp(12px, 1.6vw, 20px);
+    width: 100%;
     overflow: hidden;
-    background: var(--color-surface);
-    border: 1px solid var(--color-border);
-    box-shadow: 0 24px 64px rgba(0, 0, 0, .45);
+    background: var(--color-bg);
     isolation: isolate;
   }
 
@@ -326,67 +313,99 @@
     position: relative;
     flex: 0 0 100%;
     scroll-snap-align: start;
-    /* Responsive cinematic height (Follow-up task 2 §3): one
-       per-breakpoint model instead of a single fixed height —
-       desktop/TV feel substantially more spacious; mobile stays
-       compact enough that the first content rail begins naturally. */
-    min-height: clamp(420px, 56dvh, 620px);
+    scroll-snap-stop: always;
+    /* Viewport-height hero (Discover's model): dominant on desktop/TV,
+       shorter on tablets/phones so the first content rail still begins
+       naturally. */
+    min-height: min(78vh, 680px);
+    overflow: hidden;
     display: flex;
     align-items: flex-end;
-    overflow: hidden;
   }
-  .slide-media { position: absolute; inset: 0; z-index: -2; }
+  .slide-media { position: absolute; inset: 0; z-index: -2; overflow: hidden; }
   .slide-media img {
+    position: absolute;
+    inset: 0;
     width: 100%; height: 100%;
     object-fit: cover;
-    object-position: center 20%;
-    transform: scale(1.02);
-    animation: slide-drift 18s ease-in-out infinite alternate;
+    object-position: center 18%;
+    transform: scale(1);
+    transition: transform var(--motion-slow, 600ms) var(--ease-out, ease-out);
   }
-  @keyframes slide-drift {
-    from { transform: scale(1.02) translateX(0); }
-    to { transform: scale(1.06) translateX(-1.25%); }
-  }
+  /* Active-slide treatment: a gentle Ken Burns scale on the artwork (the
+     old infinite drift animation is gone — reduced-motion disables this). */
+  .spotlight-slide.active .slide-media img { transform: scale(1.03); }
+
+  /* The scrim fades into the page background — no hard bottom edge, the
+     same gradient contract as Discover's hero. */
   .slide-scrim {
     position: absolute; inset: 0; z-index: -1;
-    background:
-      linear-gradient(to top, rgba(4, 6, 8, .96) 10%, rgba(4, 6, 8, .5) 46%, rgba(4, 6, 8, .16) 78%, rgba(4, 6, 8, .3) 100%),
-      linear-gradient(to right, rgba(4, 6, 8, .7), transparent 62%);
+    background: linear-gradient(to bottom, transparent 35%, rgba(5, 7, 8, .35) 60%, var(--color-bg) 100%);
   }
+
   .slide-content {
-    display: grid;
-    width: min(620px, 100%);
-    /* Bottom padding reserves the pagination layer's space — the CTA
-       row and the dots never touch (Follow-up task 2 §3). */
-    padding: clamp(28px, 4.5vh, 52px) clamp(20px, 4vw, 48px) 92px;
+    position: relative;
+    z-index: 2;
+    display: flex;
+    align-items: flex-end;
+    width: 100%;
+    /* Bottom padding reserves the pagination cluster's space. */
+    padding: 90px clamp(16px, 5vw, 56px) 72px;
+  }
+  .slide-copy {
+    max-width: 560px;
+    opacity: .4;
+    transform: translateY(8px);
+    transition: opacity var(--motion-slow, 600ms) var(--ease-out, ease-out), transform var(--motion-slow, 600ms) var(--ease-out, ease-out);
+  }
+  .spotlight-slide.active .slide-copy { opacity: 1; transform: translateY(0); }
+
+  .slide-kicker {
+    color: var(--color-primary);
+    font-size: .62rem;
+    font-weight: 800;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    text-shadow: 0 0 12px rgba(0, 255, 156, .3);
   }
   .slide-title {
-    margin: 0;
-    color: #f5f5f5;
-    font-size: clamp(1.6rem, 4.2vw, 3rem);
-    font-weight: 880; line-height: 1.04; letter-spacing: -.025em;
+    margin: 8px 0 0;
+    color: var(--color-text);
+    font-size: clamp(2rem, 5.5vw, 3.8rem);
+    font-weight: 900;
+    letter-spacing: -.03em;
+    line-height: .95;
     text-wrap: balance;
-    text-shadow: 0 2px 24px rgba(0, 0, 0, .6);
+    text-shadow: 0 2px 16px rgba(0, 0, 0, .5);
   }
   .slide-meta {
-    margin: 0;
-    color: #c7c7cd;
-    font-size: .76rem; font-weight: 700; letter-spacing: .02em;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 7px;
+    margin-top: 10px;
+    color: var(--color-text-muted);
+    font-size: .74rem;
+    font-weight: 500;
   }
+  .slide-meta .rating { color: #ffc94d; font-weight: 700; }
+  .slide-meta .dot { width: 2px; height: 2px; border-radius: 50%; background: currentColor; opacity: .5; }
   .slide-desc {
-    margin: 0;
     display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical;
     overflow: hidden;
-    color: #9a9aa2;
-    font-size: .8rem; line-height: 1.6;
-    max-width: 520px;
+    max-width: 460px;
+    margin: 8px 0 0;
+    color: var(--color-text-muted);
+    font-size: .8rem;
+    line-height: 1.5;
   }
-  .slide-actions { display: flex; align-items: center; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+
+  .slide-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
   .slide-play, .slide-more {
     display: inline-flex; align-items: center; gap: 7px;
-    min-height: 44px; padding: 0 20px;
+    min-height: 44px; padding: 10px 24px;
     border-radius: 999px;
-    font-size: .78rem; font-weight: 800; letter-spacing: .01em;
+    font-size: .82rem; font-weight: 800; letter-spacing: .01em;
     text-decoration: none;
     transition: transform var(--motion-fast) var(--ease-out), filter var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out);
   }
@@ -394,12 +413,12 @@
     color: #050708;
     background: var(--color-primary);
     border: 1px solid var(--color-primary);
-    box-shadow: var(--glow-primary);
+    box-shadow: 0 4px 20px rgba(0, 255, 156, .22), var(--glow-primary);
   }
   .slide-play:hover { transform: translateY(-1px); filter: brightness(1.06); }
   .slide-play:active { transform: scale(.98); }
   .slide-more {
-    color: #e7e7ea;
+    color: var(--color-text);
     background: rgba(8, 11, 13, .55);
     border: 1px solid rgba(255, 255, 255, .14);
     backdrop-filter: blur(10px);
@@ -407,86 +426,110 @@
   }
   .slide-more:hover { border-color: rgba(255, 255, 255, .3); background: rgba(8, 11, 13, .75); }
   .slide-play:focus-visible, .slide-more:focus-visible, .spotlight:focus-visible {
-    outline: 2px solid var(--color-focus); outline-offset: 2px;
+    outline: 2px solid var(--color-focus); outline-offset: 3px;
   }
 
-  /* ── 4. Edge navigation layer (§12) — the same glass/dark control
-     language as the ContentRail arrows, slightly LARGER because the
-     Spotlight is the primary hero control. Vertically centered against
-     the media, clear of the copy block (the copy is width-capped at
-     min(620px, 100%), so on ≥641px viewports the arrows never overlap
-     the text). The carousel loops, so both arrows stay enabled. ── */
-  .spotlight-arrow {
-    position: absolute; top: 50%; transform: translateY(-50%);
-    z-index: 5;
-    display: grid; place-items: center;
-    width: 46px; height: 46px;
-    border: 1px solid var(--color-border-strong); border-radius: 14px;
-    background: rgba(8, 11, 13, .72);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    color: var(--color-text);
-    cursor: pointer;
-    transition: background var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out), box-shadow var(--motion-fast) var(--ease-out);
+  /* ── Cinematic pagination cluster — bottom RIGHT (Discover's hero-nav):
+     prev · dots · next in one row; compact glass buttons. ── */
+  .spotlight-nav {
+    position: absolute;
+    right: clamp(16px, 4vw, 48px);
+    bottom: 14px;
+    z-index: 3;
+    display: flex;
+    align-items: center;
+    gap: 6px;
   }
-  .spotlight-arrow:hover {
-    color: var(--color-primary);
-    background: rgba(0, 255, 156, .12);
-    border-color: var(--color-primary-border);
+  .spotlight-nav-btn {
+    display: grid; place-items: center;
+    width: 32px; height: 32px;
+    border: 1px solid var(--color-border-strong);
+    border-radius: 50%;
+    color: var(--color-text-muted);
+    background: rgba(5, 7, 8, .55);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    cursor: pointer;
+    transition: background var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
+  }
+  .spotlight-nav-btn:hover { border-color: var(--color-primary-border); color: var(--color-text); background: rgba(5, 7, 8, .75); }
+  .spotlight-nav-btn:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+  .spotlight-dots { display: flex; align-items: center; gap: 4px; }
+  .spotlight-dot {
+    width: 18px; height: 18px; padding: 0;
+    border: 0; border-radius: 50%;
+    background: transparent;
+    cursor: pointer;
+  }
+  .spotlight-dot::after {
+    content: '';
+    display: block;
+    width: 5px; height: 5px;
+    margin-inline: auto;
+    border-radius: 50%;
+    background: rgba(242, 255, 248, .25);
+    transition: all var(--motion-fast) var(--ease-out);
+  }
+  .spotlight-dot:hover::after { background: rgba(242, 255, 248, .5); }
+  .spotlight-dot:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px; border-radius: 50%; }
+  .spotlight-dot.active::after {
+    width: 16px;
+    border-radius: 3px;
+    background: var(--color-primary);
     box-shadow: var(--glow-primary);
   }
-  .spotlight-arrow:active { transform: translateY(-50%) scale(.96); }
-  .spotlight-arrow:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
-  .spotlight-arrow-prev { left: clamp(12px, 2vw, 24px); }
-  .spotlight-arrow-next { right: clamp(12px, 2vw, 24px); }
 
-  /* ── 5. Pagination layer — bottom CENTER, compact, independent of
-     the CTA row. No capsule/pill container (§3: no giant pill unless
-     the design benefits — it doesn't here). ── */
-  .spotlight-dots {
-    position: absolute; bottom: 22px; left: 50%; transform: translateX(-50%);
-    z-index: 5;
-    display: flex; align-items: center; gap: 7px;
-  }
-  .spotlight-dot {
-    width: 8px; height: 8px; padding: 0;
-    border: none; border-radius: 999px;
-    background: rgba(255, 255, 255, .32);
-    cursor: pointer;
-    transition: background var(--motion-fast), width var(--motion-fast), box-shadow var(--motion-fast);
-  }
-  .spotlight-dot:hover { background: rgba(255, 255, 255, .6); }
-  .spotlight-dot.active {
-    width: 20px;
-    background: var(--color-primary);
-    box-shadow: 0 0 10px rgba(0, 255, 156, .5);
-  }
-  .spotlight-dot:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
-
-  /* ── Tablet 641–1024px: roomier than phones, tighter than desktop. ── */
-  @media (min-width: 641px) and (max-width: 1024px) {
-    .spotlight-slide { min-height: clamp(360px, 48dvh, 480px); }
-    .slide-content { padding: clamp(24px, 4vh, 40px) clamp(18px, 3.5vw, 36px) 84px; }
+  /* ── Tablet — slightly shorter than desktop (Discover's breakpoint). ── */
+  @media (max-width: 900px) {
+    .spotlight-slide { min-height: min(68vh, 540px); }
+    .slide-content { padding: 70px clamp(16px, 5vw, 48px) 56px; }
   }
 
-  /* ── Mobile ≤640px: cinematic but compact — the first content rail
-     still begins naturally. Native swipe stays the primary navigation
-     (the edge arrows stay desktop/tablet-only, matching the
-     ContentRail contract); the dots remain for direct selection. ── */
+  /* ── Mobile — shorter hero, larger scrim share for readability, Play
+     grows, arrows drop (native swipe stays primary), dots center. ── */
   @media (max-width: 640px) {
-    .spotlight { width: 90%; border-radius: 14px; }
-    .spotlight-slide { min-height: clamp(300px, 44dvh, 400px); }
-    .slide-content { padding: 18px 18px 64px; }
-    .slide-desc { -webkit-line-clamp: 2; line-clamp: 2; font-size: .76rem; }
-    .slide-play, .slide-more { flex: 0 1 auto; padding: 0 16px; }
-    .slide-actions { margin-top: 10px; }
-    .spotlight-arrow { display: none; }
-    .spotlight-dots { bottom: 16px; gap: 6px; }
+    .spotlight-slide { min-height: 66vh; }
+    .slide-media img { object-position: center 12%; }
+    .slide-scrim { background: linear-gradient(to bottom, transparent 25%, rgba(5, 7, 8, .4) 55%, var(--color-bg) 100%); }
+    .slide-content { padding: 56px var(--d-gutter, clamp(16px, 5vw, 48px)) 50px; }
+    .slide-copy { max-width: none; }
+    .slide-title { font-size: clamp(1.6rem, 7vw, 2.4rem); font-weight: 880; }
+    .slide-desc { font-size: .76rem; -webkit-line-clamp: 2; line-clamp: 2; }
+    .slide-actions { gap: 6px; }
+    .slide-play { flex: 1; justify-content: center; padding: 10px 18px; }
+    .spotlight-nav-btn { display: none; }
+    .spotlight-nav { right: 50%; transform: translateX(50%); bottom: 10px; }
+  }
+
+  /* ── Landscape mobile — compact so title + Play stay above the fold. ── */
+  @media (max-width: 900px) and (orientation: landscape) and (max-height: 500px) {
+    .spotlight-slide { min-height: auto; }
+    .slide-content { padding: 48px clamp(16px, 5vw, 48px) 22px; align-items: flex-end; }
+    .slide-title { font-size: clamp(1.3rem, 3.4vw, 1.8rem); }
+    .slide-desc { -webkit-line-clamp: 1; line-clamp: 1; }
+    .slide-actions { gap: 6px; margin-top: 10px; }
+    .slide-play { flex: 1; justify-content: center; padding: 8px 18px; }
+    .spotlight-nav { bottom: 6px; }
+  }
+
+  /* ── Large desktop / TV — the hero stays bounded so 4K doesn't look
+     like an enlarged 1080p layout (Discover's ≥1900px contract). ── */
+  @media (min-width: 1900px) {
+    .spotlight-slide { min-height: min(82vh, 760px); }
+    .slide-content { padding: 120px clamp(48px, 6vw, 96px) 90px; }
+    .slide-copy { max-width: 680px; }
+    .slide-title { font-size: clamp(3rem, 4.4vw, 4.4rem); }
+    .slide-desc { max-width: 540px; font-size: .88rem; }
+    .spotlight-nav { right: clamp(40px, 4vw, 80px); bottom: 24px; }
+    .spotlight-nav-btn { width: 38px; height: 38px; }
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .slide-media img { animation: none; }
     .spotlight-track { scroll-behavior: auto; }
-    .slide-play, .slide-more, .spotlight-dot, .spotlight-arrow { transition: none; }
+    .slide-play, .slide-more, .spotlight-dot::after, .spotlight-nav-btn { transition: none; }
+    /* No active-slide animation: the slides still change, but nothing
+       moves on its own. */
+    .slide-media img, .spotlight-slide.active .slide-media img { transform: none; transition: none; }
+    .slide-copy, .spotlight-slide.active .slide-copy { opacity: 1; transform: none; transition: none; }
   }
 </style>

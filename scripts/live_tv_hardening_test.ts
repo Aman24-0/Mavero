@@ -327,7 +327,7 @@ const fallbackMigrationSql = read('../supabase/migrations/20261104000000_live_tv
 
   // Catalogue/guide failures are deliberately NOT tracked (playback-only
   // taxonomy; those surfaces have their own retry UIs).
-  const catalogueFlow = page.slice(page.indexOf('async function loadCatalogue'), page.indexOf('// Search + categories'));
+  const catalogueFlow = page.slice(page.indexOf('async function loadCatalogue'), page.indexOf('// Search + filters'));
   assert.ok(!catalogueFlow.includes('trackLiveTv'), 'catalogue flow never tracks');
   const guideFlow = page.slice(page.indexOf('async function loadGuide'), page.indexOf('function retryGuide'));
   assert.ok(!guideFlow.includes('trackLiveTv'), 'guide flow never tracks');

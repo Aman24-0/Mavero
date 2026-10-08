@@ -7,23 +7,36 @@
   // semantic button with aria-pressed so keyboard and screen-reader users get
   // the same affordance as pointer users. The row scrolls horizontally inside
   // its own surface (never page-level overflow).
+  //
+  // LT-18 — the permanent chip row is gone from the /live-tv page (filters
+  // moved into the Filter sheet); this component is reused INSIDE that sheet,
+  // where `wrap` swaps the single scrolling row for a wrapped multi-line
+  // layout (better for the ~28-category catalogue inside a sheet).
   import { LayoutGrid } from 'lucide-svelte';
 
   let {
     categories = [],
     selected = '',
+    wrap = false,
     onselect = (category: string) => {}
   }: {
     /** Data-derived category list (page-owned, LT-2 extractLiveTvCategories). */
     categories?: string[];
     /** The active category; '' means "All" (no category filter). */
     selected?: string;
+    /** LT-18 — wrap chips to multiple lines (filter-sheet layout) instead of
+     *  a single horizontally scrolling row (the original page layout). */
+    wrap?: boolean;
     /** Fired on chip activation with the category to apply ('' = All). */
     onselect?: (category: string) => void;
   } = $props();
 </script>
 
-<div class="ltv-category-bar" role="group" aria-label="Filter channels by category">
+<div
+  class="ltv-category-bar"
+  class:wrap
+  role="group" aria-label="Filter channels by category"
+>
   <button
     type="button"
     class="ltv-chip"
@@ -59,6 +72,12 @@
     -webkit-overflow-scrolling: touch;
   }
   .ltv-category-bar::-webkit-scrollbar { display: none; }
+  /* LT-18 — wrapped layout for the filter sheet: no horizontal scrolling,
+     chips flow onto as many lines as they need. */
+  .ltv-category-bar.wrap {
+    overflow-x: visible;
+    flex-wrap: wrap;
+  }
 
   .ltv-chip {
     display: inline-flex;

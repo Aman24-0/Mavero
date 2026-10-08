@@ -11,8 +11,8 @@
   // select flow: they are handed straight from LT-2 to engine.load() and are
   // NEVER stored in reactive state, URL params, storage or logs (plan §11).
   // Reactive state carries only non-sensitive data: catalogue metadata
-  // (id/name/category/logo), engine states and SAFE messages from the fixed
-  // LT-2/LT-3 tables.
+  // (id/name/category/logo/language), engine states and SAFE messages from
+  // the fixed LT-2/LT-3 tables.
   //
   // CHANNEL SWITCHING (LT-4 brief §9, plan §9 — the critical path):
   //   select(B) → abort A's controller (kills A's in-flight resolve/load
@@ -24,7 +24,7 @@
   //   never overwrite B's UI. Exactly ONE engine instance is alive at any
   //   moment (the old one is destroyed before the new one is created).
   //
-  // AUTOMATIC EMBED FALLBACK (LT-15 — this session's addition):
+  // AUTOMATIC EMBED FALLBACK (LT-15):
   //   The native engine is ALWAYS attempted first. When — and only when —
   //   the CURRENT engine reports a GENUINE native playback failure (see
   //   shouldFallbackToEmbed: every fatal playback kind except autoplay
@@ -40,34 +40,49 @@
   //   Shaka. The activation point is the engine 'error' subscription,
   //   identity-guarded so a stale engine can never mount a fallback.
   //
-  // SEARCH/CATEGORIES: 100% local filtering of the loaded catalogue through
-  // the LT-2 pure utilities — no per-keystroke network, no second search
-  // implementation, no new cache (LT-4 brief §6/§7/§20).
+  // PAGE LAYOUT (LT-18 §4 — compact, mobile-first):
+  //     MAVERO / Live TV (title)
+  //     PLAYER (controls INSIDE the player surface — LiveTvPlayer)
+  //     TOOLBAR [Search channels…] [Filter] [Guide]
+  //     CHANNELS (search + category + language filtered list)
+  //   The permanent category chip row is GONE (the Filter sheet owns
+  //   category + the TRUTHFUL data-derived language dimension), and the
+  //   guide experience lives in the Guide sheet (NOW PLAYING + UP NEXT +
+  //   FULL GUIDE in one place) instead of permanent page sections. Both
+  //   sheets render as overlays, never as page structure.
+  //
+  // SEARCH/FILTERS: 100% local filtering of the loaded catalogue through
+  // the LT-2 pure utilities — no per-keystroke network, no URL params, no
+  // second search implementation, no new cache (LT-4 brief §6/§7/§20,
+  // LT-18 §4D).
   //
   // GUIDE: loaded per selected channel, INDEPENDENT of playback — a guide
-  // failure never touches the playback session (LT-4 brief §13). Guide
-  // timestamps are absolute Unix seconds; the current programme is derived
-  // from actual data only (epg.determineCurrentProgramme) — never fabricated.
+  //   failure never touches the playback session (LT-4 brief §13). Guide
+  //   timestamps are absolute Unix seconds; the current programme is derived
+  //   from actual data only (epg.determineCurrentProgramme) — never
+  //   fabricated. Opening the Guide sheet NEVER refetches: it renders the
+  //   page's existing guide state.
   //
   // SSR: no data fetching and no browser access during server render — the
   // server paints the hero, player shell and catalogue skeleton; everything
-  // data-related starts in onMount (existing Mavero page pattern).
+  //   data-related starts in onMount (existing Mavero page pattern).
   import { onDestroy, onMount } from 'svelte';
   import { page as appPage } from '$app/state';
-  import { Search, X, Radio, RefreshCw, LoaderCircle } from 'lucide-svelte';
+  import { Search, X, Radio, RefreshCw, LoaderCircle, SlidersHorizontal, BookOpen } from 'lucide-svelte';
   import ScrollToTop from '$components/ScrollToTop.svelte';
   import ErrorState from '$components/ErrorState.svelte';
   import LiveTvPlayer from '$components/live-tv/LiveTvPlayer.svelte';
-  import LiveTvCategoryBar from '$components/live-tv/LiveTvCategoryBar.svelte';
   import LiveTvChannelCard from '$components/live-tv/LiveTvChannelCard.svelte';
-  import LiveTvNowPlaying from '$components/live-tv/LiveTvNowPlaying.svelte';
-  import LiveTvGuide from '$components/live-tv/LiveTvGuide.svelte';
+  import LiveTvFilterSheet from '$components/live-tv/LiveTvFilterSheet.svelte';
+  import LiveTvGuideSheet from '$components/live-tv/LiveTvGuideSheet.svelte';
   import {
     getLiveTvChannels,
     getLiveTvGuide,
     resolveLiveTvPlayback,
     extractLiveTvCategories,
+    extractLiveTvLanguages,
     filterLiveTvChannelsByCategory,
+    filterLiveTvChannelsByLanguage,
     filterLiveTvChannelsByQuery
   } from '$lib/client/live-tv/api';
   import { isLiveTvError } from '$lib/client/live-tv/errors';
@@ -137,19 +152,32 @@
   }
 
   // ---------------------------------------------------------------------
-  // Search + categories (LOCAL filtering only — LT-2 pure utilities).
+  // Search + filters (LOCAL filtering only — LT-2 pure utilities).
+  // LT-18: category + language live in the Filter sheet; both apply
+  // immediately and compose with the toolbar search.
   // ---------------------------------------------------------------------
   let query = $state('');
   let category = $state(''); // '' = All
+  let language = $state(''); // '' = All
   let searchInputEl: HTMLInputElement | undefined = $state();
 
+  // LT-18 sheet open state (page-owned; overlays, never page sections).
+  let filterSheetOpen = $state(false);
+  let guideSheetOpen = $state(false);
+
   const categories = $derived(extractLiveTvCategories(channels));
+  // Languages are TRUTHFUL data only: the distinct normalized languages of
+  // the loaded catalogue (channels whose upstream category is a language).
+  const languages = $derived(extractLiveTvLanguages(channels));
   const visibleChannels = $derived.by(() => {
     let list = filterLiveTvChannelsByCategory(channels, category);
+    list = filterLiveTvChannelsByLanguage(list, language);
     const trimmed = query.trim();
     if (trimmed) list = filterLiveTvChannelsByQuery(list, trimmed);
     return list;
   });
+  const filtersActive = $derived(Boolean(category || language));
+  const activeFilterCount = $derived((category ? 1 : 0) + (language ? 1 : 0));
 
   // Incremental rendering: the catalogue can exceed 1000 channels; the grid
   // renders in bounded batches behind an IntersectionObserver sentinel (the
@@ -164,6 +192,17 @@
 
   function applyCategory(next: string): void {
     category = next;
+    resetVisibleLimit();
+  }
+
+  function applyLanguage(next: string): void {
+    language = next;
+    resetVisibleLimit();
+  }
+
+  function resetFilters(): void {
+    category = '';
+    language = '';
     resetVisibleLimit();
   }
 
@@ -379,6 +418,8 @@
 
   // ---------------------------------------------------------------------
   // Guide state (per selected channel; failures never touch playback).
+  // LT-18: the SAME state renders inside the Guide sheet — opening the
+  // sheet never refetches; only a channel selection (or its Retry) does.
   // ---------------------------------------------------------------------
   let guide = $state<LiveTvGuideModel | null>(null);
   let guideLoading = $state(false);
@@ -472,7 +513,8 @@
 </svelte:head>
 
 <div class="live-tv-page">
-  <!-- Hero: heading + local channel search + data-derived categories -->
+  <!-- LT-18 — the compact hero: heading only (search moved to the toolbar,
+       categories into the Filter sheet). -->
   <section class="ltv-hero" aria-label="Live TV">
     <div class="ltv-hero-inner">
       <h1 class="ltv-heading">
@@ -481,37 +523,12 @@
         <span class="heading-sep" aria-hidden="true">/</span>
         <span class="heading-page">Live TV</span>
       </h1>
-
-      <div class="ltv-search" role="search">
-        <span class="search-leading" aria-hidden="true"><Search size={17} /></span>
-        <label class="sr-only" for="live-tv-channel-search">Search channels</label>
-        <input
-          id="live-tv-channel-search"
-          bind:this={searchInputEl}
-          bind:value={query}
-          oninput={resetVisibleLimit}
-          aria-label="Search channels"
-          placeholder="Search channels"
-          autocomplete="off"
-          spellcheck="false"
-        />
-        {#if query}
-          <button class="clear-btn" type="button" aria-label="Clear channel search" onclick={clearSearch}>
-            <X size={16} />
-          </button>
-        {/if}
-      </div>
-
-      {#if catalogueState === 'ready'}
-        <div class="ltv-categories">
-          <LiveTvCategoryBar {categories} selected={category} onselect={applyCategory} />
-        </div>
-      {/if}
     </div>
   </section>
 
   <div class="ltv-body">
-    <!-- Player + channel information (player receives visual priority) -->
+    <!-- Player + channel information (player receives visual priority;
+         native controls live INSIDE the player surface — LT-18). -->
     <section class="ltv-player-column" aria-label="Live TV player and channel information">
       <LiveTvPlayer
         bind:video={videoEl}
@@ -538,16 +555,62 @@
       {/if}
     </section>
 
-    {#if selectedChannel}
-      <LiveTvNowPlaying
-        {guide}
-        loading={guideLoading}
-        errorMessage={guideErrorMessage}
-        onretry={retryGuide}
-      />
-    {/if}
+    <!-- LT-18 — the ONE compact toolbar row directly below the player:
+         search (majority width) + Filter (active-state aware) + Guide
+         (needs a selected channel). No category chips on the page. -->
+    <section class="ltv-toolbar" aria-label="Channel tools">
+      <div class="ltv-search" role="search">
+        <span class="search-leading" aria-hidden="true"><Search size={17} /></span>
+        <label class="sr-only" for="live-tv-channel-search">Search channels</label>
+        <input
+          id="live-tv-channel-search"
+          bind:this={searchInputEl}
+          bind:value={query}
+          oninput={resetVisibleLimit}
+          aria-label="Search channels"
+          placeholder="Search channels"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        {#if query}
+          <button class="clear-btn" type="button" aria-label="Clear channel search" onclick={clearSearch}>
+            <X size={16} />
+          </button>
+        {/if}
+      </div>
 
-    <!-- Channel catalogue -->
+      <button
+        class="tool-btn"
+        class:active={filtersActive}
+        type="button"
+        onclick={() => (filterSheetOpen = true)}
+        aria-label="Filter channels"
+        aria-haspopup="dialog"
+        aria-expanded={filterSheetOpen}
+      >
+        <SlidersHorizontal size={15} />
+        <span>Filter</span>
+        {#if activeFilterCount > 0}
+          <span class="tool-count" aria-label="{activeFilterCount} filters active">{activeFilterCount}</span>
+        {/if}
+      </button>
+
+      <button
+        class="tool-btn"
+        type="button"
+        onclick={() => (guideSheetOpen = true)}
+        disabled={!selectedChannel}
+        aria-label="Channel guide"
+        aria-haspopup="dialog"
+        aria-expanded={guideSheetOpen}
+        title={selectedChannel ? 'Now playing and full guide' : 'Select a channel first'}
+      >
+        <BookOpen size={15} />
+        <span>Guide</span>
+      </button>
+    </section>
+
+    <!-- Channel catalogue (respects search + category + language filters) -->
     <section class="ltv-channels" aria-label="Channels">
       <div class="channels-head">
         <h2 class="ltv-section-title">Channels</h2>
@@ -608,18 +671,31 @@
         {/if}
       {/if}
     </section>
-
-    {#if selectedChannel}
-      <LiveTvGuide
-        {guide}
-        {nowSeconds}
-        loading={guideLoading}
-        errorMessage={guideErrorMessage}
-        onretry={retryGuide}
-      />
-    {/if}
   </div>
 </div>
+
+<!-- LT-18 — the filter + guide sheets: overlays, never page sections. -->
+<LiveTvFilterSheet
+  open={filterSheetOpen}
+  {categories}
+  {languages}
+  selectedCategory={category}
+  selectedLanguage={language}
+  onclose={() => (filterSheetOpen = false)}
+  onselectcategory={applyCategory}
+  onselectlanguage={applyLanguage}
+  onreset={resetFilters}
+/>
+<LiveTvGuideSheet
+  open={guideSheetOpen}
+  channel={selectedChannel}
+  {guide}
+  {nowSeconds}
+  loading={guideLoading}
+  errorMessage={guideErrorMessage}
+  onclose={() => (guideSheetOpen = false)}
+  onretry={retryGuide}
+/>
 
 <ScrollToTop />
 
@@ -644,7 +720,7 @@
     display: inline-flex;
     align-items: center;
     gap: 8px;
-    margin: 0 0 16px;
+    margin: 0;
     color: var(--color-text);
     font-size: clamp(1.4rem, 4.6vw, 2rem);
     font-weight: 900;
@@ -655,54 +731,6 @@
   .heading-brand { color: var(--color-text); }
   .heading-sep { color: var(--color-text-deep); font-weight: 700; }
   .heading-page { color: var(--color-primary); }
-
-  .ltv-search {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    height: 52px;
-    padding: 0 10px 0 16px;
-    border: 1px solid var(--color-border-strong);
-    border-radius: var(--radius-md);
-    background: var(--color-surface);
-    transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), box-shadow var(--motion-fast) var(--ease-out);
-  }
-  .ltv-search:focus-within {
-    border-color: var(--color-primary);
-    background: var(--color-surface-elevated);
-    box-shadow: var(--glow-primary);
-  }
-  .search-leading { display: grid; place-items: center; width: 26px; height: 26px; color: var(--color-text-muted); flex: 0 0 auto; }
-  .ltv-search input {
-    flex: 1;
-    min-width: 0;
-    border: 0;
-    outline: 0;
-    color: var(--color-text);
-    background: transparent;
-    font: inherit;
-    font-size: .92rem;
-    font-weight: 500;
-  }
-  .ltv-search input::placeholder { color: var(--color-text-deep); font-weight: 400; }
-  .clear-btn {
-    display: grid;
-    place-items: center;
-    width: 32px;
-    height: 32px;
-    border: 0;
-    border-radius: 50%;
-    color: var(--color-text-muted);
-    background: rgba(242, 255, 248, .04);
-    cursor: pointer;
-    flex: 0 0 auto;
-    transition: background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
-  }
-  .clear-btn:hover { background: var(--color-primary-soft); color: var(--color-primary); }
-  .clear-btn:active { transform: scale(.94); }
-  .clear-btn:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
-
-  .ltv-categories { margin-top: 14px; min-width: 0; }
 
   .sr-only {
     position: absolute;
@@ -717,8 +745,8 @@
     width: min(1040px, calc(100% - clamp(20px, 6vw, 96px)));
     margin-inline: auto;
     display: grid;
-    gap: 34px;
-    padding-top: 26px;
+    gap: 22px;
+    padding-top: 18px;
   }
 
   .ltv-player-column { display: grid; gap: 12px; min-width: 0; }
@@ -776,6 +804,107 @@
     font-weight: 600;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  /* ---- LT-18 toolbar: one row, search-first ---- */
+  .ltv-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+  .ltv-search {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 48px;
+    padding: 0 10px 0 16px;
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+    transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), box-shadow var(--motion-fast) var(--ease-out);
+  }
+  .ltv-search:focus-within {
+    border-color: var(--color-primary);
+    background: var(--color-surface-elevated);
+    box-shadow: var(--glow-primary);
+  }
+  .search-leading { display: grid; place-items: center; width: 26px; height: 26px; color: var(--color-text-muted); flex: 0 0 auto; }
+  .ltv-search input {
+    flex: 1;
+    min-width: 0;
+    border: 0;
+    outline: 0;
+    color: var(--color-text);
+    background: transparent;
+    font: inherit;
+    font-size: .92rem;
+    font-weight: 500;
+  }
+  .ltv-search input::placeholder { color: var(--color-text-deep); font-weight: 400; }
+  .clear-btn {
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    border: 0;
+    border-radius: 50%;
+    color: var(--color-text-muted);
+    background: rgba(242, 255, 248, .04);
+    cursor: pointer;
+    flex: 0 0 auto;
+    transition: background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
+  }
+  .clear-btn:hover { background: var(--color-primary-soft); color: var(--color-primary); }
+  .clear-btn:active { transform: scale(.94); }
+  .clear-btn:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+
+  .tool-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    flex: 0 0 auto;
+    min-height: 48px;
+    padding: 0 15px;
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-md);
+    color: var(--color-text-muted);
+    background: var(--color-surface);
+    font: inherit;
+    font-size: .8rem;
+    font-weight: 800;
+    letter-spacing: .01em;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: color var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), box-shadow var(--motion-fast) var(--ease-out);
+  }
+  .tool-btn:hover:not(:disabled) {
+    color: var(--color-text);
+    border-color: var(--color-text-muted);
+  }
+  .tool-btn:active:not(:disabled) { transform: scale(.97); }
+  .tool-btn:disabled { opacity: .4; cursor: default; }
+  .tool-btn:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+  .tool-btn.active {
+    color: var(--color-primary);
+    border-color: var(--color-primary-border);
+    background: var(--color-primary-soft);
+    box-shadow: var(--glow-primary);
+  }
+  .tool-count {
+    display: grid;
+    place-items: center;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 6px;
+    border-radius: 999px;
+    color: #050708;
+    background: var(--color-primary);
+    font-size: .66rem;
+    font-weight: 800;
   }
 
   .ltv-section-title {
@@ -877,9 +1006,14 @@
   .channels-empty p { margin: 0 0 10px; max-width: 420px; color: var(--color-text-muted); font-size: .78rem; line-height: 1.6; }
 
   @media (max-width: 640px) {
-    .ltv-body { width: min(100% - 28px, 1040px); gap: 26px; padding-top: 18px; }
+    .ltv-body { width: min(100% - 28px, 1040px); gap: 18px; padding-top: 14px; }
     .channel-grid { grid-template-columns: 1fr; }
-    .ltv-hero { padding: 18px var(--ltv-gutter) 14px; }
+    .ltv-hero { padding: 16px var(--ltv-gutter) 12px; }
+    .ltv-toolbar { gap: 8px; }
+    .ltv-search { height: 44px; gap: 8px; padding-left: 12px; }
+    .tool-btn { min-height: 44px; padding: 0 12px; font-size: .76rem; }
+    .tool-btn span { display: none; }
+    .tool-btn .tool-count { display: grid; }
   }
 
   @media (prefers-reduced-motion: reduce) {

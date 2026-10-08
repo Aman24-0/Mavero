@@ -90,6 +90,12 @@
 import type { LiveTvPlaybackResolution, LiveTvPlaybackSource } from './types';
 import { LiveTvPlaybackError } from './player-errors';
 import { installMediaAuthFilters, type ShakaNetworkingEngineLike } from './media-auth';
+import {
+        deriveLiveTvQualityOptions,
+        activeLiveTvTrackId,
+        emptyLiveTvQualitySnapshot,
+        type LiveTvQualitySnapshot
+} from './quality';
 
 // ---------------------------------------------------------------------------
 // Structural Shaka types — Mavero-owned shapes, never shaka.* imports.
@@ -137,6 +143,16 @@ export type ShakaPlayerLike = {
         getNetworkingEngine(): ShakaNetworkingEngineLike | null;
         addEventListener(type: 'error', listener: (event: ShakaErrorEventLike) => void): void;
         removeEventListener(type: 'error', listener: (event: ShakaErrorEventLike) => void): void;
+        // ---- LT-18 — optional variant-track surface (quality selection) ----
+        // Present on the real shaka-player 5.2.12; deliberately OPTIONAL in
+        // the structural type so existing test fakes stay assignable — the
+        // engine guards every call and quality features simply stay off
+        // when a player does not expose them. Signatures verified against
+        // the installed typings: getVariantTracks() → TrackList (empty when
+        // nothing is loaded) and selectVariantTrack(track, clearBuffer?,
+        // safeMargin?) → void (synchronous, no reload).
+        getVariantTracks?(): unknown[];
+        selectVariantTrack?(track: unknown, clearBuffer?: boolean, safeMargin?: number): void;
 };
 
 /** Structural shape of the `shaka` module the engine consumes. */
@@ -394,6 +410,8 @@ export type LiveTvEngineEventMap = {
         durationchange: { duration: number | null };
         seeking: void;
         seeked: void;
+        /** LT-18 — the normalized quality snapshot changed (options/active/ABR). */
+        qualitychange: LiveTvQualitySnapshot;
 };
 
 export type LiveTvEngineEventName = keyof LiveTvEngineEventMap;
@@ -436,6 +454,8 @@ export class LiveTvPlaybackEngine {
         private listeners = new Map<LiveTvEngineEventName, Set<(payload: unknown) => void>>();
         /** Video listeners of the CURRENT session (for exact removal). */
         private videoBindings: Array<{ video: HTMLVideoElement; name: string; handler: () => void }> = [];
+        /** LT-18 — normalized quality state of the CURRENT session. */
+        private quality: LiveTvQualitySnapshot = emptyLiveTvQualitySnapshot();
 
         constructor(options: LiveTvPlaybackEngineOptions = {}) {
                 this.loader = options.shakaLoader ?? loadShakaModule;
@@ -543,6 +563,108 @@ export class LiveTvPlaybackEngine {
                 } catch {
                         return null;
                 }
+        }
+
+        // ----- Quality selection (LT-18) ---------------------------------------
+
+        /**
+         * The normalized quality snapshot of the CURRENT session:
+         * deduplicated options (highest first), the active representative
+         * track id, and whether Shaka ABR owns the selection ("Auto").
+         * Contains ONLY validated numbers + labels — never a raw Shaka
+         * track, URI, codec string, ClearKey value or signed URL.
+         */
+        getQualitySnapshot(): LiveTvQualitySnapshot {
+                return this.quality;
+        }
+
+        /**
+         * Read the session player's raw variant tracks (null when the
+         * player exposes none or the call fails — never throws).
+         */
+        private readVariantTracks(player: ShakaPlayerLike): unknown[] | null {
+                if (typeof player.getVariantTracks !== 'function') return null;
+                try {
+                        const tracks = player.getVariantTracks();
+                        return Array.isArray(tracks) ? tracks : null;
+                } catch {
+                        return null;
+                }
+        }
+
+        /** Refresh the quality snapshot from the player's variant tracks. */
+        private refreshQualityState(): void {
+                const player = this.player;
+                if (this.destroyed || !player) return;
+                const tracks = this.readVariantTracks(player);
+                if (tracks === null) return; // no variant surface — keep prior state
+                this.quality = {
+                        options: deriveLiveTvQualityOptions(tracks),
+                        activeId: activeLiveTvTrackId(tracks),
+                        auto: this.quality.auto
+                };
+                this.emit('qualitychange', this.quality);
+        }
+
+        /**
+         * Select a quality tier for the CURRENT session — no reload.
+         *
+         *   id === null → "Auto": re-enable Shaka ABR (the documented
+         *                 `abr.enabled` config) and report the active tier.
+         *   id  (number) → disable ABR and select the representative variant
+         *                 through `selectVariantTrack(track, true)` (a buffer
+         *                 switch — the stream keeps playing; the manifest is
+         *                 NEVER re-fetched or re-resolved, no new engine, no
+         *                 URL/DRM mutation, nothing persisted).
+         *
+         * Safe by construction: unknown ids, missing variant surfaces,
+         * destroyed/stale engines and Shaka rejections are silent no-ops —
+         * a failed selection can never break playback.
+         */
+        selectLiveTvQuality(id: number | null): void {
+                if (this.destroyed) return;
+                const player = this.player;
+                if (!player) return;
+                if (id === null) {
+                        let configured = false;
+                        try {
+                                configured = player.configure({ abr: { enabled: true } });
+                        } catch {
+                                configured = false;
+                        }
+                        if (!configured) return;
+                        const tracks = this.readVariantTracks(player);
+                        this.quality = {
+                                options: tracks === null ? this.quality.options : deriveLiveTvQualityOptions(tracks),
+                                activeId: tracks === null ? this.quality.activeId : activeLiveTvTrackId(tracks),
+                                auto: true
+                        };
+                        this.emit('qualitychange', this.quality);
+                        return;
+                }
+                const option = this.quality.options.find((entry) => entry.id === id);
+                if (!option) return; // unknown quality id — never invented
+                if (typeof player.selectVariantTrack !== 'function') return;
+                const tracks = this.readVariantTracks(player);
+                if (tracks === null) return;
+                let target: unknown = null;
+                for (const raw of tracks) {
+                        if (!raw || typeof raw !== 'object') continue;
+                        const candidate = raw as Record<string, unknown>;
+                        if (candidate.id === id) {
+                                target = raw;
+                                break;
+                        }
+                }
+                if (target === null) return; // track vanished — no-op
+                try {
+                        if (!player.configure({ abr: { enabled: false } })) return;
+                        player.selectVariantTrack(target, true);
+                } catch {
+                        return; // selection failures never break playback
+                }
+                this.quality = { ...this.quality, auto: false, activeId: id };
+                this.emit('qualitychange', this.quality);
         }
 
         // ----- Controls --------------------------------------------------------
@@ -812,6 +934,12 @@ export class LiveTvPlaybackEngine {
 
                         // 9. Ready.
                         this.setState('loaded');
+                        // LT-18: derive the normalized quality options from
+                        // the loaded manifest's variant tracks BEFORE the
+                        // 'loaded' event so early subscribers see fresh data.
+                        // A manifest with a single usable quality yields one
+                        // option — the UI then shows no quality control.
+                        this.refreshQualityState();
                         this.emit('loaded', undefined);
                 } catch (err) {
                         if (err instanceof LiveTvPlaybackError) {
@@ -855,6 +983,10 @@ export class LiveTvPlaybackEngine {
                 const player = this.player;
                 this.player = null;
                 this.sessionChannelId = null;
+                // LT-18: quality state dies with the session (the next fresh
+                // load re-derives it; nothing is persisted). Silent — the
+                // component resets its own quality UI on engine change.
+                this.quality = emptyLiveTvQualitySnapshot();
                 const errorHandler = this.playerErrorHandler;
                 this.playerErrorHandler = null;
                 if (player) {

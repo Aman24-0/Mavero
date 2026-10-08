@@ -500,7 +500,10 @@
 <style>
   .explorer-page {
     --c-gutter: clamp(16px, 5vw, 48px);
-    padding-top: 14px;
+    /* LT-18: no top padding — the cinematic full-bleed spotlight hero now
+       starts at the very top edge of the scroll container (the fallback
+       block and the filter rows carry their own top margins). */
+    padding-top: 0;
     /* Follow-up task 2 (§14): the floating touch pill is fixed across
        the ENTIRE ≤1024px range; the shared token (nav occupancy +
        comfortable gap + safe-area) replaces the old flat 40px so the
@@ -517,7 +520,7 @@
   .explorer-hero-fallback {
     width: 90%;
     max-width: 1480px;
-    margin: 0 auto;
+    margin: 14px auto 0;
     padding: clamp(20px, 4vw, 40px);
     border-radius: clamp(12px, 1.6vw, 20px);
     background:
@@ -698,7 +701,7 @@
   .catalog-warning {
     width: 90%;
     max-width: 1480px;
-    margin: 0 auto 16px;
+    margin: 14px auto 16px;
     padding: 12px 16px;
     border: 1px solid rgba(255, 177, 80, .3);
     border-radius: 12px;
@@ -708,7 +711,7 @@
 
   /* ── Mobile ── */
   @media (max-width: 640px) {
-    .explorer-page { padding-top: 10px; }
+    .explorer-page { padding-top: 0; }
     .explorer-filters { top: var(--topbar-h-safe); margin-top: 10px; }
     .filters-inner { width: calc(100% - 24px); gap: 5px; }
     /* Comfortable touch targets while keeping both rows compact. */

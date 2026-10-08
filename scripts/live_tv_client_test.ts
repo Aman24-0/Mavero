@@ -265,13 +265,19 @@ function makeHandler(routes: {
                 assert.equal(first.logo, 'https://img.example.com/cnbc.png');
                 assert.deepEqual(
                         Object.keys(first).sort(),
-                        ['category', 'id', 'logo', 'name'],
-                        'normalized channels carry ONLY the four mapped fields (no embed/watch)'
+                        ['category', 'id', 'language', 'logo', 'name'],
+                        'normalized channels carry ONLY the five mapped fields (no embed/watch)'
                 );
+                // LT-18: `language` is the truthful derivation from a language
+                // CATEGORY value (never a fabricated dimension).
+                assert.equal(first.language, 'English', 'English category → English language');
+                const telugu = channels.find((c) => c.id === '144');
+                assert.equal(telugu?.language, 'Telugu', 'Telugu category → Telugu language');
                 const noLogo = channels.find((c) => c.id === '200');
                 assert.ok(noLogo, 'channel without logo is present');
                 assert.equal(noLogo?.logo, undefined, 'missing logo → undefined');
-                ok('2a. valid catalogue normalizes id/name/category/logo; embed/watch never leak');
+                assert.equal(noLogo?.language, undefined, 'genre category (Sports) → NO language (never invented)');
+                ok('2a. valid catalogue normalizes id/name/category/logo/language; embed/watch never leak');
 
                 assert.equal(calls.length, 1, 'one fetch for the first call');
                 assert.equal(calls[0]?.url, 'https://livetgtv.lovable.app/api/public/channels', 'exact full-catalogue URL (no params)');

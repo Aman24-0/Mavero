@@ -4332,3 +4332,184 @@ presentation preference, not a tracked action), Shaka/DRM handling, the
 documented embed URL builder + iframe markup (byte-identical), Supabase
 schema. QA harness artifacts live OUTSIDE the repo (qa-lt17/, not
 committed).
+
+---
+
+## LT-18 — Live TV Player + Page UI Redesign + Explorer Hero Redesign (2026-10-09)
+
+HEAD before: 8e436ad (LT-17, user-verified native + embed playback and
+fullscreen landscape). Everything below is presentation/filtering layer
+only — playback data flow, LT-15 fallback architecture, LT-16 coordinator
+wiring, Shaka/DRM handling and the V1 API contract are untouched.
+
+### 0. Audit (before any code)
+- Read every listed Live TV source + the LT-15/16/17 suites + Explorer
+  files; confirmed HEAD = origin/main = 8e436ad, worktree = 220 mode-bit
+  noise files (0 insertions/deletions — never committed).
+- LANGUAGE FIELD AUDIT (live wire census, 2026-10-09, all 1176 channels):
+  V1 fields are exactly id/name/category/logo/embed/watch — there is NO
+  language field anywhere (list AND resolution endpoints). The upstream
+  `category` is a single-valued MIXED taxonomy: language names (English
+  206, Tamil 78, Telugu 64, Malayalam 44 + 1 upstream typo "Malyalam",
+  Bengali 44, Punjabi 42, Gujarati 41, Kannada 38, Marathi 29, Assamese
+  18, Odia 14, Urdu 11, Bhojpuri 10, Nepali 1, French 1) OR genres (News,
+  Unknown, Sports, Devotional, Entertainment, Movies, Music, Kids,
+  Infotainment, Lifestyle, Business News, Educational). NO Hindi value
+  exists upstream (Hindi channels are genre-classified) — so no Hindi
+  filter is fabricated, ever.
+- Spotlight vs Discover hero delta: the old spotlight was a centered
+  90%-width bordered/rounded/shadowed card with a hard-edge scrim; Discover
+  is a full-bleed viewport-height hero whose scrim dissolves into the page
+  background with a bottom-right pagination cluster — that boxed framing
+  was exactly the "closed carousel" look.
+
+### 1. Native Shaka control redesign (ONE responsive system)
+The external .player-controls bar (and its separate .fs-controls
+fullscreen twin) is REMOVED. ONE control system (.surface-controls) now
+renders INSIDE .player-surface in BOTH the normal portrait player and
+fullscreen, from the same shared snippets (nativeControlCluster,
+liveSeekControl, liveStatusControl, qualityControl, fitModeButton,
+fullscreenButton — each rendered exactly once). Layout: seek row
+([live seek…] [LIVE / behind / Go live at the RIGHT end]) above the main
+row ([Play] [Mute] [Volume] … [Quality] [FIT/FILL — fullscreen only]
+[Fullscreen]). FIT/FILL is hidden in the normal player and appears only
+while fullscreen. 44px touch targets, safe-area insets, a readability
+scrim, no horizontal overflow (width-bounded rows + flexing sliders).
+Auto-hide (3.2s while playing) + pointer wake now apply in BOTH modes;
+an OPEN quality menu blocks auto-hide (QA-caught fix). LT-16 coordinator
+wiring, analytics intents, play/pause/mute/volume/DVR/Go-live/fit
+semantics all preserved byte-identically.
+
+### 2. Shaka quality selection (normalized model)
+New pure module src/lib/client/live-tv/quality.ts: LiveTvQualityOption
+{id,label,width?,height?,bandwidth?} + LiveTvQualitySnapshot
+{options,activeId,auto}. deriveLiveTvQualityOptions() validates every
+numeric field (malformed entries dropped, never repaired), dedupes
+equivalent resolutions (deterministic representative: active > highest
+bandwidth > lowest id), sorts highest→lowest, labels as `${height}p`
+with a `${Math.round(bandwidth/1000)} kbps` fallback. Engine
+(ShakaPlayerLike) gains OPTIONAL structural members getVariantTracks()/
+selectVariantTrack() (verified against shaka-player 5.2.12 typings —
+optional so existing test fakes stay assignable; every call guarded).
+After a successful load the engine refreshes the snapshot and emits a new
+normalized 'qualitychange' event; selectLiveTvQuality(null) re-enables
+ABR (abr.enabled=true), selectLiveTvQuality(id) disables ABR and selects
+the representative via selectVariantTrack(track, true) — NO reload, NO
+re-resolve, NO URL/DRM mutation, nothing persisted; teardown resets.
+The UI shows the quality control ONLY for 2+ tiers (single-quality
+manifests hide it) and the menu offers Auto + the tiers; the component
+consumes the snapshot only — raw Shaka tracks never reach it.
+
+### 3. Embed mode is embed-only (LT-18 §3)
+While the official embed fallback is mounted there is NO Mavero control
+of any kind: the old bar's embed "Reload player" button and the embed
+fullscreen button are gone entirely; the single control system is
+branch-gated on showControlSystem (!embedActive && sessionEngaged &&
+!displayError). The iframe (allowfullscreen + the documented allow-list,
+src from the builder only, keyed by the reload token) is the ONLY player
+UI; the LT-15 page retry logic survives unchanged for the native error
+overlay path. Switching away from embed unmounts the iframe and the
+native control system returns with the fresh session.
+
+### 4. Live TV page redesign (compact, mobile-first)
+New order: MAVERO / Live TV title → PLAYER (+ channel info line) →
+TOOLBAR [Search channels…][Filter][Guide] → CHANNELS. The permanent
+category chip row is removed from the page; Now Playing and the Guide
+sections are gone as page blocks (they live in the Guide sheet now).
+- Toolbar: search takes the majority width (flex 1 1 auto, min-width 0),
+  Filter carries an active-state highlight + active-count badge, Guide is
+  disabled without a selected channel; icon-only buttons keep
+  aria-labels on mobile; one row at every width.
+- LiveTvFilterSheet (new): bottom sheet ≤640px / centered dialog above;
+  Category chips via the existing LiveTvCategoryBar (new `wrap` layout
+  prop) + Language chips from extractLiveTvLanguages (TRUTHFUL data
+  only — liveTvLanguageFromCategory classifies the upstream category
+  against the audited language map incl. the "Malyalam"→"Malayalam"
+  alias; genre categories carry NO language; the section is omitted when
+  the catalogue exposes none). Filters apply IMMEDIATELY (page-local
+  reactive state; no network, no URL params); Apply closes; Reset clears
+  both. ARIA dialog pattern: focus moves into the sheet on open, Escape
+  (window-level listener — QA-caught fix: the old div-level handler never
+  fired because focus stayed on the toolbar button) and the backdrop
+  close it.
+- LiveTvGuideSheet (new): ONE sheet with NOW PLAYING / UP NEXT (the
+  existing LiveTvNowPlaying) + the FULL GUIDE (the existing LiveTvGuide)
+  — both reuse the page's existing guide state/loading/error/retry
+  verbatim; opening the sheet NEVER refetches; closing never touches
+  playback; no fake data (Guide disabled without a channel).
+- Channel list: incremental 60-channel batches + IntersectionObserver
+  sentinel + 1176-channel scalability + selected state + logos +
+  error/empty states all preserved; the count reflects the FILTERED
+  result ("N of 1176").
+
+### 5. Explorer hero redesign (Discover's design language)
+SpotlightCarousel is now a cinematic full-bleed hero: 100% width with NO
+border/radius/shadow/width-cap (the boxed card framing is gone),
+viewport-height slides (min(78vh,680px) desktop, 66vh mobile, ≥1900px
+bounded larger), the bottom scrim dissolves into var(--color-bg), a
+truthful type-derived kicker (Movie/Series/Anime), Discover-weight title,
+rating/year/genre meta line with dot separators, 2-line clamped
+description, Play + More details (44px), a bottom-right prev·dots·next
+pagination cluster (mobile: dots centered, arrows hidden), active-slide
+treatment (copy fade-up + gentle Ken Burns; the infinite drift animation
+is gone), 100vw-sized lazy artwork for non-active slides. PRESERVED: the
+public props/data contract, the 6-slide window, the 4s autoplay
+lifecycle (re-queue, manual reset, pointer/focus/visibility pause),
+keyboard controls, reduced-motion support, carousel semantics, both route
+link patterns, and the server loader/filters/results architecture below
+the hero. ExplorerPage drops its top padding so the hero bleeds from the
+top edge. DiscoverPage itself is untouched (the reference).
+
+### 6. Tests
+New suites (chained into pnpm test): live_tv_quality_test.ts (10 checks —
+single/multi/dedup/Auto/manual/stale/missing-surface/reset + source
+contracts), live_tv_page_redesign_test.ts (9 check groups — control
+system in-surface both modes, landscape ordering, portrait-hides-FIT,
+embed-only, filter sheet truthfulness/compose/reset/active, guide sheet
+contents/no-refetch/no-channel, page ordering + overlay sheets, security
+scans), explorer_hero_redesign_test.ts (10 check groups — routes mount,
+full-bleed, content stack, pagination, autoplay, reduced motion, route
+links, lazy images, Explorer architecture below, Discover untouched).
+Updated where LT-18 supersedes design details, every invariant kept:
+live_tv_player_ui_test.ts (15 checks — single-system counts, embed-only
+assertions strengthened), live_tv_page_test.ts (22 — new components
+added to the security/video scans; responsive assertions track the
+in-surface system), live_tv_client_test.ts (62 — the normalized channel
+now truthfully carries language for language categories),
+live_tv_hardening_test.ts (13 — comment marker), explorer_page_test.ts,
+explorer_ui_hardening_test.ts, discover_subpage_ux_test.ts (full-bleed
+design assertions replace the boxed-card ones). LT-15 (15/15), LT-16
+(13), LT-17 (15) all stay green.
+
+### 7. Gates + browser QA
+pnpm check 0/0 · pnpm test EXIT 0 (full 232-suite chain) · pnpm build
+EXIT 0. Real-Chromium QA against the production build (qa-lt18/, NOT
+committed): 88/88 PASS across desktop (63), mobile (11) and explorer
+(14) — native playback mocked to DASH-IF live (single variant → NO
+quality button) + Akamai BBB (8 variants → Auto/2160p…180p menu, manual
+720p without stream reload, Auto restore), real 451-driven embed
+fallback for Sony SAB SD (iframe-only UI, no empty overlay, no Mavero
+controls), filter sheet (immediate category+language apply, compose,
+reset, active count), guide sheet (contents, Escape close, playback
+untouched), 1176-channel incremental growth, mobile portrait
+unrotated + fullscreen landscape lock (LT-16) + FIT/FILL visibility,
+Explorer full-bleed hero with dot navigation + 4s autoplay + mobile
+centered dots, real routes render their honest TMDB-less fallbacks (no
+TMDB credentials in this sandbox), Discover intact. Desktop zero
+orientation traffic; console errors only the expected jiotvmblive 451s.
+VLM visual verification: page structure, in-surface fullscreen control
+layout, filter sheet, embed-only player all confirmed; the quality
+menu's geometry + full item list verified programmatically after a VLM
+misread (menu fully rendered inside the surface, all 9 items visible).
+
+### Intentionally NOT changed
+LT-15 fallback architecture (classifier, single-iframe invariant,
+reload-token retry, activation ordering, analytics), LT-16 coordinator
+module + wiring (byte-identical, single call sites), V1 API endpoints/
+catalogue/EPG clients (the channel model gains ONLY the truthful
+language derivation), Shaka DRM/ClearKey handling, media-auth filters,
+V2/premiumplugx/TGFLIX/jjtvxweb/proxy (none added), VOD player controls,
+Supabase schema/migrations, the documented embed URL builder + iframe
+markup, analytics taxonomy (no new events; fit mode + quality are
+presentation preferences). QA harness artifacts live OUTSIDE the repo
+(qa-lt18/, not committed).

@@ -168,14 +168,15 @@ assert.match(explorerPage, /\.explorer-grid :global\(\.mc-title\) \{[\s\S]*min-h
 assert.match(explorerPage, /@media \(max-width: 640px\)[\s\S]*?\.explorer-grid \{ grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/, 'mobile grid stays 2 columns (never forced to 3)');
 assert.match(explorerPage, /grid-template-columns: repeat\(auto-fill, minmax\(150px, 182px\)\)/, 'desktop grid keeps the responsive auto-fill');
 assert.match(mediaCard, /\.mc-title \{ margin: 0/, 'MediaCard itself untouched (clamp is results-grid-scoped)');
-// Spotlight occupies ~90% of the viewport width at every breakpoint.
-assert.match(spotlightCarousel, /\.spotlight \{[\s\S]*?width: 90%;/, 'the spotlight spans ~90% of the viewport width');
-assert.match(spotlightCarousel, /@media \(max-width: 640px\)[\s\S]*?\.spotlight \{ width: 90%;/, 'the ~90% width holds on mobile');
+// LT-18: the spotlight is a cinematic FULL-BLEED hero (Discover's design
+// language) — it spans the complete viewport width at every breakpoint.
+assert.match(spotlightCarousel, /\.spotlight \{[\s\S]*?width: 100%;/, 'the spotlight spans the full viewport width');
+assert.match(spotlightCarousel, /@media \(max-width: 640px\)[\s\S]*?min-height: 66vh;/, 'mobile keeps a cinematic viewport-height hero');
 // Sticky chips respect the shell (topbar offsets per breakpoint).
 assert.match(explorerPage, /@media \(max-width: 640px\)[\s\S]*?\.explorer-filters \{ top: var\(--topbar-h-safe\)/, 'mobile: sticky chips sit below the fixed topbar (safe-area aware)');
 assert.match(explorerPage, /@media \(min-width: 641px\) and \(max-width: 1024px\)[\s\S]*?\.explorer-filters \{ top: 72px; \}/, 'tablet: sticky chips sit below the sticky topbar');
 assert.match(explorerPage, /@media \(min-width: 1025px\)[\s\S]*?\.explorer-filters \{ top: 0; \}/, 'desktop: sticky chips stick at the scroll container top (no sidebar collision)');
-ok('7. responsive: scrollable chip rows, 2-col grid, 2-line titles, sticky offsets per breakpoint, ~90% spotlight');
+ok('7. responsive: scrollable chip rows, 2-col grid, 2-line titles, sticky offsets per breakpoint, full-bleed spotlight');
 
 // ============================================================
 // 8. EMPTY STATE — clear-filters action, error distinction kept

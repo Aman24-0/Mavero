@@ -90,7 +90,10 @@ assert.match(heroSelect, /fallback\.slice\(0, SPOTLIGHT_SIZE - spotlight\.length
 assert.match(loader, /slice\(0, SPOTLIGHT_SIZE\)/, 'the loader caps the lineup at 6 slides');
 assert.match(spotlight, /const SPOTLIGHT_ROTATION_MS = 4000/, 'auto rotation is 4 seconds');
 assert.match(spotlight, /MAX_SLIDES = 6/, 'the carousel rendering window is exactly 6 slides');
-assert.match(spotlight, /width: 90%;/, 'the carousel occupies ~90% of the viewport width');
+// LT-18: the carousel is now a cinematic FULL-BLEED hero (Discover's
+// design language) — the old ~90% boxed card framing is gone.
+assert.match(spotlight, /\.spotlight \{[\s\S]*?width: 100%;/, 'the carousel is a full-width cinematic hero');
+assert.doesNotMatch(spotlight, /width: 90%;/, 'the old ~90% boxed width is gone');
 assert.match(spotlight, /prefers-reduced-motion: reduce/, 'the carousel honors reduced motion');
 assert.match(spotlight, /\/watch\/\$\{slide\.type\}\/\$\{slide\.id\}/, 'Play preserves the existing watch route pattern');
 assert.match(spotlight, /href=\{\`\/\$\{slide\.type\}\/\$\{slide\.id\}\`/, 'More details preserves the existing detail route pattern');

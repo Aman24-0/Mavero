@@ -51,31 +51,38 @@ const appCss = read('../src/app.css');
 const searchPage = read('../src/routes/search/+page.svelte');
 
 // ============================================================
-// A. SPOTLIGHT LAYOUT (§3/§12)
+// A. SPOTLIGHT LAYOUT (§3/§12) — LT-18 cinematic full-bleed redesign.
+// The boxed card (90% width, border/radius/shadow, edge arrows,
+// bottom-center dots) was replaced by Discover's design language: a
+// full-bleed hero with a bottom-right prev·dots·next pagination cluster.
 // ============================================================
-// Edge arrows: left/right edges, vertically centered.
-assert.match(spotlight, /\.spotlight-arrow \{\s*position: absolute; top: 50%; transform: translateY\(-50%\);/, 'spotlight arrows are vertically centered edge controls');
-assert.match(spotlight, /\.spotlight-arrow-prev \{ left: clamp\(12px, 2vw, 24px\); \}/, 'prev arrow sits at the LEFT edge of the spotlight');
-assert.match(spotlight, /\.spotlight-arrow-next \{ right: clamp\(12px, 2vw, 24px\); \}/, 'next arrow sits at the RIGHT edge of the spotlight');
+// Full-bleed hero: no closed-card framing.
+assert.match(spotlight, /\.spotlight \{[\s\S]*?width: 100%;/, 'the spotlight is a full-width cinematic hero');
+assert.doesNotMatch(spotlight, /width: 90%;/, 'the old ~90% boxed width is gone');
+// Pagination cluster: bottom-right, prev · dots · next (Discover hero-nav).
+assert.match(spotlight, /\.spotlight-nav \{[\s\S]*?right: clamp\(16px, 4vw, 48px\);[\s\S]*?bottom: 14px;/, 'the pagination cluster anchors to the bottom-right');
 assert.match(spotlight, /aria-label="Previous spotlight title"[\s\S]*?aria-label="Next spotlight title"/, 'arrows keep their accessible names');
-assert.match(spotlight, /width: 46px; height: 46px;/, 'spotlight arrows are slightly larger than rail arrows (primary hero control)');
 assert.match(spotlight, /aria-label="Previous spotlight title"/, 'arrow control is a semantic labeled button');
-// Dots: bottom center, independent of the CTA row.
-assert.match(spotlight, /\.spotlight-dots \{\s*position: absolute; bottom: 22px; left: 50%; transform: translateX\(-50%\);/, 'dots are positioned at the BOTTOM CENTER of the spotlight');
-assert.match(spotlight, /padding: clamp\(28px, 4\.5vh, 52px\) clamp\(20px, 4vw, 48px\) 92px;/, 'the content layer reserves bottom space so the CTA row and dots never collide');
+assert.match(spotlight, /\.spotlight-nav-btn \{[\s\S]*?width: 32px; height: 32px;/, 'nav buttons are compact glass circles (Discover language)');
 assert.match(spotlight, /role="tablist" aria-label="Choose spotlight title"/, 'dots remain a labeled tablist');
-// Removals: no eyebrow, no bottom-right dock.
+// Mobile: arrows drop, dots center (Discover mobile contract).
+assert.match(spotlight, /\.spotlight-nav-btn \{ display: none; \}/, 'mobile hides the arrows (swipe-first)');
+assert.match(spotlight, /\.spotlight-nav \{ right: 50%; transform: translateX\(50%\); bottom: 10px; \}/, 'mobile centers the dots');
+// The scrim dissolves into the page background (no hard card edge).
+assert.match(spotlight, /\.slide-scrim \{[\s\S]*?var\(--color-bg\) 100%\);/, 'the bottom scrim fades into the page background');
+// Content reserves the pagination cluster's space.
+assert.match(spotlight, /padding: 90px clamp\(16px, 5vw, 56px\) 72px;/, 'the content layer reserves bottom space so the CTA row and pagination never collide');
+// Removals: no eyebrow, no old edge arrows.
 assert.doesNotMatch(spotlight, /MAVERO \/ Spotlight/, 'no "MAVERO / Spotlight" eyebrow on populated slides');
-assert.doesNotMatch(spotlight, /spotlight-nav/, 'the old bottom-right navigation dock is GONE');
-assert.doesNotMatch(spotlight, /\.spotlight-nav \{ position: absolute; bottom: 12px; right:/, 'no combined prev+dots+next capsule');
-// Responsive heights: one per breakpoint, viewport-height aware.
-assert.match(spotlight, /min-height: clamp\(420px, 56dvh, 620px\);/, 'desktop/TV spotlight height is spacious and viewport-height aware');
-assert.match(spotlight, /@media \(min-width: 641px\) and \(max-width: 1024px\)\s*\{[\s\S]*?min-height: clamp\(360px, 48dvh, 480px\);/, 'tablet spotlight height is its own breakpoint model');
-assert.match(spotlight, /@media \(max-width: 640px\)\s*\{[\s\S]*?min-height: clamp\(300px, 44dvh, 400px\);/, 'mobile stays cinematic but compact (first rail still begins naturally)');
+assert.doesNotMatch(spotlight, /spotlight-arrow/, 'the old vertically-centered edge arrows are gone');
+// Responsive heights: Discover's viewport-height model, one per breakpoint.
+assert.match(spotlight, /min-height: min\(78vh, 680px\);/, 'desktop/TV spotlight height is spacious and viewport-height aware');
+assert.match(spotlight, /@media \(max-width: 900px\)\s*\{[\s\S]*?min-height: min\(68vh, 540px\);/, 'tablet spotlight height is its own breakpoint model');
+assert.match(spotlight, /@media \(max-width: 640px\)\s*\{[\s\S]*?min-height: 66vh;/, 'mobile stays cinematic but compact (first rail still begins naturally)');
 // Play/More-details grouping + routes preserved.
 assert.match(spotlight, /class="slide-actions"/, 'Play and More details stay grouped in one CTA row');
 assert.match(spotlight, /\/watch\/\$\{slide\.type\}\/\$\{slide\.id\}/, 'Play keeps the existing watch route');
-ok('A. spotlight layout: edge arrows, bottom-center dots, no eyebrow, no dock, responsive per-breakpoint heights');
+ok('A. spotlight layout: cinematic full-bleed, bottom-right pagination cluster, bg-fading scrim, per-breakpoint heights');
 
 // ============================================================
 // B. SPOTLIGHT + DISCOVER AUTOPLAY (§4/§5) — the exact 4s contract
@@ -202,7 +209,8 @@ assert.doesNotMatch(searchPage, /EXPLORER_GENRES|EXPLORER_LANGUAGES|api\/explore
 assert.match(spotlight, /event\.key === 'ArrowRight'/, 'keyboard arrow navigation still works on the spotlight');
 assert.match(spotlight, /aria-roledescription="carousel"/, 'the spotlight stays a real carousel landmark');
 // Reduced motion on the new surfaces.
-assert.match(spotlight, /@media \(prefers-reduced-motion: reduce\)\s*\{[\s\S]*?\.spotlight-arrow \{ transition: none; \}/, 'new spotlight controls honor reduced motion');
+assert.match(spotlight, /@media \(prefers-reduced-motion: reduce\)\s*\{[\s\S]*?\.spotlight-nav-btn \{ transition: none; \}/, 'new spotlight controls honor reduced motion');
+assert.match(spotlight, /\.slide-media img, \.spotlight-slide\.active \.slide-media img \{ transform: none; transition: none; \}/, 'the Ken Burns scale is disabled under reduced motion');
 ok('H. scope: search frozen (recent searches intact), keyboard + carousel semantics + reduced motion preserved');
 
 console.log(`\nExplorer UI hardening tests passed (${passed} check groups).`);

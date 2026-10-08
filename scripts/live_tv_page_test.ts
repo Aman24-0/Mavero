@@ -45,6 +45,8 @@ const page = read('../src/routes/live-tv/+page.svelte');
 const player = read('../src/lib/components/live-tv/LiveTvPlayer.svelte');
 const card = read('../src/lib/components/live-tv/LiveTvChannelCard.svelte');
 const categoryBar = read('../src/lib/components/live-tv/LiveTvCategoryBar.svelte');
+const filterSheet = read('../src/lib/components/live-tv/LiveTvFilterSheet.svelte');
+const guideSheet = read('../src/lib/components/live-tv/LiveTvGuideSheet.svelte');
 const nowPlaying = read('../src/lib/components/live-tv/LiveTvNowPlaying.svelte');
 const guideList = read('../src/lib/components/live-tv/LiveTvGuide.svelte');
 const epgSource = read('../src/lib/client/live-tv/epg.ts');
@@ -385,12 +387,16 @@ const NOW = 1_700_000_000; // fixed absolute instant for determinism
 // ============================================================
 {
         assert.match(player, /aspect-ratio: 16 \/ 9/, 'player keeps a 16:9 surface');
-        assert.match(player, /overflow-x: auto/, 'control row scrolls within itself');
+        // LT-18: the in-surface control rows NEVER overflow horizontally
+        // (width-bounded rows + flexing sliders replace the old scrollable bar).
+        assert.match(player, /\.ctl-seek-row \{[\s\S]*?min-width: 0;/, 'the seek row is width-bounded');
+        assert.match(player, /\.ctl-main-row \{[\s\S]*?min-width: 0;/, 'the main control row is width-bounded');
+        assert.match(player, /\.surface-controls \.live-seek \{ flex: 1 1 auto; width: 100%; max-width: none; \}/, 'the live seek slider flexes to the available width');
         assert.match(categoryBar, /overflow-x: auto/, 'category row scrolls within itself');
         assert.match(page, /\.channel-grid \{[\s\S]*?repeat\(auto-fill, minmax\(250px, 1fr\)\)/, 'channel grid is fluid');
         assert.match(page, /@media \(max-width: 640px\)[\s\S]*?\.channel-grid \{ grid-template-columns: 1fr; \}/, 'mobile grid is single-column (no horizontal overflow)');
         assert.match(page, /padding-bottom: 110px;/, 'page clears the mobile bottom nav');
-        assert.match(player, /min-height: 34px|width: 40px; height: 40px;/, 'touch-sized controls');
+        assert.match(player, /width: 44px; height: 44px;/, 'touch-sized controls (44px targets)');
         assert.match(page, /CHANNEL_BATCH = 60/, 'catalogue renders in bounded batches');
         assert.match(page, /IntersectionObserver/, 'batch growth is observer-driven');
         assert.match(page, /visibleChannels\.slice\(0, visibleLimit\)/, 'rendering is limit-bounded');
@@ -401,7 +407,7 @@ const NOW = 1_700_000_000; // fixed absolute instant for determinism
 // §15 Security — no secrets to persisted state / logs / errors / URLs
 // ============================================================
 {
-        const uiSources = [page, player, card, categoryBar, nowPlaying, guideList, epgSource];
+        const uiSources = [page, player, card, categoryBar, filterSheet, guideSheet, nowPlaying, guideList, epgSource];
         for (const source of uiSources) {
                 assert.doesNotMatch(source, /console\./, 'no console calls');
                 assert.doesNotMatch(source, /localStorage|sessionStorage|indexedDB/i, 'no storage APIs');
@@ -439,7 +445,7 @@ const NOW = 1_700_000_000; // fixed absolute instant for determinism
         const engineCreations = page.match(/new LiveTvPlaybackEngine\(\)/g) ?? [];
         assert.equal(engineCreations.length, 1, 'exactly one engine construction site in the page');
         assert.doesNotMatch(player, /new LiveTvPlaybackEngine/, 'components never construct engines');
-        const videoTags = [page, player, card, categoryBar, nowPlaying, guideList]
+        const videoTags = [page, player, card, categoryBar, filterSheet, guideSheet, nowPlaying, guideList]
                 .map((s) => stripComments(s).match(/<video[\s>]/g) ?? []).reduce((a, b) => a + b.length, 0);
         assert.equal(videoTags, 1, 'exactly one rendered <video> element across the Live TV UI');
         // The previous engine is destroyed before a new one is constructed —

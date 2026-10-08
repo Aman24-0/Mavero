@@ -1,12 +1,21 @@
 // MAVERO — LT-17 Player UI/Controls + Video Fit: focused regression suite.
 //
-// Covers the three LT-17 fixes in the repo's two UI-phase styles:
+// LT-18 UPDATE: the external .player-controls bar and the separate
+// .fs-controls fullscreen overlay were REPLACED by ONE in-surface control
+// system (.surface-controls, rendered in BOTH the normal portrait player
+// and fullscreen). Every LT-17 INVARIANT is retained and re-asserted here
+// against the new architecture; the structural assertions (render counts,
+// containers) track the single-system wiring. New LT-18 guarantees
+// (embed-only embed mode — no reload/fullscreen/native controls — and the
+// quality control) are asserted in the LT-18 suites.
+//
+// Covers the LT-17 fixes in the repo's two UI-phase styles:
 //   * BEHAVIORAL sections drive the REAL player-overlay module under Node
 //     (which also proves SSR safety — importing it under Node is exactly
 //     what the SSR server does).
 //   * SOURCE-CONTRACT sections assert the LiveTvPlayer.svelte wiring:
 //     the embed-gated overlay chain, the shared native-control snippets
-//     (bar + fullscreen overlay), the fit/fill presentation switch, and
+//     (the ONE in-surface system), the fit/fill presentation switch, and
 //     the untouched LT-15/LT-16 architecture.
 //
 // Directive case map:
@@ -195,7 +204,8 @@ const ALL_KINDS: LiveTvOverlayKind[] = [
   assert.ok(player.includes('{#if !embedActive && displayError}'), 'chain head unchanged and embed-gated');
   // Every subsequent branch is one of the derived states (never a raw
   // engine/resolving/autoplay read that could bypass the embed gating).
-  const chain = sliceOf(player, '{#if !embedActive && displayError}', '{/if}\n  </div>');
+  // The chain keeps its ordered priority; the control system block follows.
+  const chain = sliceOf(player, '{#if !embedActive && displayError}', '\n\n    {#if showControlSystem}');
   for (const branch of ['showConnecting', 'showLoading', 'showTapPlay', 'showBuffering', 'showEmptyState']) {
     assert.ok(chain.includes(`{:else if ${branch}}`), `chain branch {:else if ${branch}} present`);
   }
@@ -223,15 +233,17 @@ const ALL_KINDS: LiveTvOverlayKind[] = [
 // §B2 — Controls: play/pause, mute/unmute, volume (shared snippets)
 // ============================================================
 {
-  // One markup source per control (the snippet), rendered in BOTH the bar
-  // and the fullscreen overlay.
+  // One markup source per control (the snippet), rendered by the ONE
+  // in-surface control system in BOTH the normal player and fullscreen.
   assert.ok(player.includes('{#snippet nativeControlCluster()}'), 'native cluster snippet declared');
   assert.ok(player.includes('{#snippet liveSeekControl()}'), 'seek snippet declared');
+  assert.ok(player.includes('{#snippet liveStatusControl()}'), 'live-status snippet declared');
+  assert.ok(player.includes('{#snippet qualityControl()}'), 'quality snippet declared');
   assert.ok(player.includes('{#snippet fitModeButton()}'), 'fit button snippet declared');
   assert.ok(player.includes('{#snippet fullscreenButton()}'), 'fullscreen button snippet declared');
   // Handlers exist exactly twice for play (cluster + the tap-to-play CTA
   // overlay) and exactly once for every other control — all inside the
-  // snippets/overlays, never duplicated per render surface.
+  // snippets, never duplicated per render surface.
   assert.equal((player.match(/onclick=\{togglePlay\}/g) ?? []).length, 2, 'play handler: cluster + tap-to-play CTA only');
   const ctaPlay = sliceOf(player, '<button class="tap-play" type="button" onclick={togglePlay}', '>');
   assert.ok(ctaPlay.length > 0, 'the second play handler is the tap-to-play CTA');
@@ -240,45 +252,55 @@ const ALL_KINDS: LiveTvOverlayKind[] = [
   assert.equal((player.match(/onclick=\{toggleFullscreen\}/g) ?? []).length, 1, 'one fullscreen handler');
   assert.equal((player.match(/onclick=\{toggleFitMode\}/g) ?? []).length, 1, 'one fit handler');
   assert.equal((player.match(/onclick=\{goLive\}/g) ?? []).length, 1, 'one go-live handler');
-  // The cluster renders in both native surfaces.
-  assert.equal((player.match(/\{@render nativeControlCluster\(\)\}/g) ?? []).length, 2, 'cluster rendered twice (bar + fullscreen overlay)');
-  assert.equal((player.match(/\{@render fitModeButton\(\)\}/g) ?? []).length, 2, 'fit button rendered twice');
-  assert.equal((player.match(/\{@render fullscreenButton\(\)\}/g) ?? []).length, 2, 'fullscreen button rendered twice');
-  assert.equal((player.match(/\{@render liveSeekControl\(\)\}/g) ?? []).length, 2, 'seek rendered twice');
+  // The ONE control system renders each snippet exactly once (both modes
+  // share it — the LT-18 single-system contract).
+  assert.equal((player.match(/\{@render nativeControlCluster\(\)\}/g) ?? []).length, 1, 'cluster rendered exactly once (the single system)');
+  assert.equal((player.match(/\{@render liveSeekControl\(\)\}/g) ?? []).length, 1, 'seek rendered exactly once');
+  assert.equal((player.match(/\{@render liveStatusControl\(\)\}/g) ?? []).length, 1, 'live status rendered exactly once');
+  assert.equal((player.match(/\{@render qualityControl\(\)\}/g) ?? []).length, 1, 'quality rendered exactly once');
+  assert.equal((player.match(/\{@render fitModeButton\(\)\}/g) ?? []).length, 1, 'fit button rendered exactly once');
+  assert.equal((player.match(/\{@render fullscreenButton\(\)\}/g) ?? []).length, 1, 'fullscreen button rendered exactly once');
   // Play/pause + mute labels still reflect state.
   assert.ok(player.includes("aria-label={engineState === 'playing' ? 'Pause' : 'Play'}"), 'play/pause labelled');
   assert.ok(player.includes("aria-label={muted ? 'Unmute' : 'Mute'}"), 'mute/unmute labelled');
   assert.ok(player.includes('aria-label="Volume"'), 'volume labelled');
-  ok('B2. controls: play/pause, mute/unmute, volume — single handlers, two render surfaces');
+  ok('B2. controls: play/pause, mute/unmute, volume — single handlers, ONE shared system');
 }
 
 // ============================================================
-// §B3 — Fullscreen still works (mechanics + bar/overlay handover)
+// §B3 — Fullscreen still works (mechanics + the shared in-surface system)
 // ============================================================
 {
   // The LT-16 fullscreen entry/exit calls are byte-identical.
   assert.equal((player.match(/void surface\.requestFullscreen\(\)\.catch\(\(\) => \{\}\);/g) ?? []).length, 1, 'fullscreen entry call unchanged');
   assert.equal((player.match(/void document\.exitFullscreen\(\)\.catch\(\(\) => \{\}\);/g) ?? []).length, 1, 'fullscreen exit call unchanged');
-  // The fullscreen overlay renders ONLY while the surface itself is
-  // fullscreen AND the embed is not active.
-  assert.ok(player.includes('{#if isFullscreen && !embedActive}'), 'fullscreen overlay guarded by isFullscreen && !embedActive');
-  const fsBlock = sliceOf(player, '{#if isFullscreen && !embedActive}', '{/if}');
-  assert.ok(fsBlock.includes('class="fs-controls"'), 'overlay container present');
-  assert.ok(fsBlock.includes('{@render nativeControlCluster()}'), 'overlay renders the shared cluster');
-  assert.ok(fsBlock.includes('{@render fitModeButton()}'), 'overlay renders the fit toggle');
-  assert.ok(fsBlock.includes('{@render fullscreenButton()}'), 'overlay renders the exit-fullscreen button');
-  // Auto-hide: only while playing; wake on pointer activity; timer cleaned up.
-  assert.ok(player.includes('engineState === \'playing\''), 'auto-hide only while playing');
-  assert.ok(player.includes('function wakeFsControls(): void'), 'pointer wake function exists');
+  // The ONE control system renders ONLY through the showControlSystem
+  // branch (native mode: !embedActive && sessionEngaged && !displayError)
+  // — never in embed mode, never over the empty/error overlays.
+  assert.ok(player.includes('{#if showControlSystem}'), 'the control system has ONE render branch (showControlSystem)');
+  const systemBlock = sliceOf(player, '{#if showControlSystem}', '{/if}');
+  assert.ok(systemBlock.includes('class="surface-controls"'), 'the in-surface control container present');
+  assert.ok(systemBlock.includes('{@render nativeControlCluster()}'), 'the system renders the shared cluster');
+  assert.ok(systemBlock.includes('{@render fitModeButton()}'), 'the system renders the fit toggle');
+  assert.ok(systemBlock.includes('{@render fullscreenButton()}'), 'the system renders the exit-fullscreen button');
+  // Auto-hide: only while playing (in BOTH modes); wake on pointer
+  // activity; timer cleaned up.
+  assert.ok(player.includes("engineState === 'playing'"), 'auto-hide only while playing');
+  assert.ok(player.includes('function wakeControls(): void'), 'pointer wake function exists');
   assert.ok(player.includes('use:wakeSurfaceOnPointer'), 'surface uses the pointer wake action');
   const destroyBody = sliceOf(player, 'onDestroy(() => {', 'video = undefined;');
-  assert.ok(destroyBody.includes('clearFsHideTimer();'), 'the auto-hide timer is cleared on destroy');
-  // The bar below the video is inert while its surface is fullscreen.
-  assert.ok(player.includes('inert={isFullscreen}'), 'bar is inert while fullscreen (no stray tab stops)');
+  assert.ok(destroyBody.includes('clearControlsHideTimer();'), 'the auto-hide timer is cleared on destroy');
+  // LT-18: NO control exists outside the player surface — the external
+  // bar is gone entirely, so nothing can render outside the fullscreened
+  // element and no inert handover is needed anymore.
+  assert.ok(!player.includes('class="player-controls"'), 'the external control bar is fully removed');
+  assert.ok(!player.includes('inert={isFullscreen}'), 'no inert handover remains (nothing lives outside the surface)');
   // The fullscreen surface covers the complete screen.
   const fsCss = sliceOf(player, '.player-surface:fullscreen {', '}');
   assert.ok(fsCss.includes('width: 100%;') && fsCss.includes('height: 100%;'), 'fullscreen surface explicitly covers the screen');
-  ok('B3. fullscreen: mechanics unchanged; overlay controls inside the surface; bar inert');
+  // The SAME system expands in fullscreen via CSS (not a second markup).
+  assert.ok(player.includes('.player-surface:fullscreen .surface-controls'), 'fullscreen extends the same control system through CSS');
+  ok('B3. fullscreen: mechanics unchanged; ONE in-surface system serves both modes');
 }
 
 // ============================================================
@@ -339,27 +361,27 @@ const ALL_KINDS: LiveTvOverlayKind[] = [
 }
 
 // ============================================================
-// §B7 — Embed mode: native controls absent, embed controls untouched
+// §B7 — Embed mode: the iframe is the ONLY player UI (LT-18 §3)
 // ============================================================
 {
-  // The bar's embed branch contains ONLY the reload control + spacer.
-  const bar = sliceOf(
-    player,
-    '<div class="player-controls" aria-label="Playback controls" inert={isFullscreen}>',
-    '</section>'
+  // LT-18: in embed mode NO Mavero control may render — the old bar (with
+  // its embed Reload + fullscreen buttons) is gone entirely, and the ONE
+  // control system is branch-gated to native sessions only.
+  const showControlLine = player.match(/const showControlSystem = \$derived\((.*)\);/)?.[1] ?? '';
+  assert.ok(
+    showControlLine.includes('!embedActive'),
+    'the single control system excludes embed mode by construction'
   );
-  const embedBranch = sliceOf(bar, '{#if embedActive}', '{:else if showNativeControls}');
-  const nativeBranchFrom = bar.indexOf('{:else if showNativeControls}');
-  const nativeBranch = bar.slice(nativeBranchFrom, bar.indexOf('{/if}', nativeBranchFrom));
-  assert.ok(embedBranch.includes('Reload player'), 'embed branch keeps the reload control');
-  assert.ok(!embedBranch.includes('togglePlay'), 'no play control in embed branch');
-  assert.ok(!embedBranch.includes('toggleMute'), 'no mute control in embed branch');
-  assert.ok(!embedBranch.includes('toggleFitMode'), 'no fit control in embed branch');
-  assert.ok(!embedBranch.includes('nativeControlCluster'), 'no native cluster in embed branch');
-  assert.ok(!embedBranch.includes('live-seek'), 'no seek control in embed branch');
-  // The native cluster renders only inside the showNativeControls branch.
-  assert.ok(nativeBranch.includes('{@render nativeControlCluster()}'), 'native cluster in the native branch');
-  assert.ok(nativeBranch.includes('{@render fitModeButton()}'), 'fit toggle in the native branch');
+  assert.ok(!player.includes('Reload player'), 'NO Mavero reload button exists anywhere');
+  assert.ok(!player.includes('Reload the alternate player'), 'no embed reload control exists either');
+  assert.equal((player.match(/onclick=\{onretry\}/g) ?? []).length, 1, 'onretry is wired ONLY to the native error overlay');
+  const errorOverlay = sliceOf(player, '{#if !embedActive && displayError}', '\n\n    {#if showControlSystem}');
+  assert.ok(errorOverlay.includes('onclick={onretry}'), 'the retry control belongs to the native error overlay');
+  // The embed block itself carries no Mavero controls.
+  const embedBlock = sliceOf(player, '{#if embedSrc}', '\n\n    {#if !embedActive && displayError}');
+  for (const banned of ['togglePlay', 'toggleMute', 'toggleFitMode', 'toggleFullscreen', 'nativeControlCluster', 'live-seek', 'quality']) {
+    assert.ok(!embedBlock.includes(banned), `the embed block contains no ${banned} control`);
+  }
   // The embed iframe markup is untouched (LT-15 contracts).
   assert.equal((player.match(/<iframe/g) ?? []).length, 1, 'still exactly one iframe');
   assert.ok(player.includes('allowfullscreen'), 'allowfullscreen preserved');
@@ -367,12 +389,7 @@ const ALL_KINDS: LiveTvOverlayKind[] = [
   assert.ok(player.includes('src={embedSrc}'), 'iframe src still comes from the builder only');
   assert.ok(player.includes('{#key embedReloadToken}'), 'iframe still keyed by the reload token');
   assert.ok(player.includes('class:embed-hidden={embedActive}'), 'native video still hidden in fallback mode');
-  // The fullscreen overlay can never appear in embed mode (guarded by
-  // !embedActive in §B3) — re-assert the guard is on the SAME line as the
-  // isFullscreen condition, not an outer if that embed state could bypass.
-  const guard = player.match(/\{#if isFullscreen && !embedActive\}/);
-  assert.ok(guard !== null && guard.length === 1, 'exactly one fullscreen-overlay guard, embed-excluded');
-  ok('B7. embed mode: its own controls only; native controls/overlays structurally absent');
+  ok('B7. embed mode: the iframe is the ONLY player UI — zero Mavero controls (LT-18)');
 }
 
 // ============================================================
