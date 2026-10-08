@@ -3380,3 +3380,147 @@ LT-11 HLS propagation commit: `83dd7b37888503cf6d588e018631f5d235ff5912` (fix(li
 auth query to hls child requests).
 LT-11 cache-safety commit: `47770ca5132e7ae8228d68e1e8bf2695bb853586` (fix(live-tv): keep playback
 resolution always fresh in the browser cache).
+
+## LT-12 — Final universal playback investigation (official-site comparison)
+
+Date: 2026-10-08. Directive: determine EXACTLY why the official LiveGT site
+plays channels Mavero cannot (165/1108/1984 + premium/Jio class), without
+iframe/embed/V2/proxy, and fix only legitimate Mavero-side gaps. Read-only
+audit first; production evidence changed: B4U 183 WORKS after LT-11
+(HLS propagation proven in production), premium channels still fail, user
+reports the official site plays them in India.
+
+### Baseline
+HEAD f589ec5 (LT-11 docs commit; code commits 83dd7b3 + 47770ca present).
+Worktree: 220 files, ALL mode-only, no content changes (verified). All Live
+TV sources + tests re-read. No unrelated work touched.
+
+### Phase 1 — matrix (public V1 API, fresh)
+11 channels probed. All: HTTP 200, sources=1 (always), `__hdnea__` present.
+The 1108/1984 `//` double-slash path defect persists upstream. From this
+egress (HK) every Jio CDN URL 451s (geo), as always.
+
+### Phase 2 — official-site black-box (browser runtime + RPC + bundles)
+Bundles re-fetched and verified byte-identical to LT-11's copies
+(servers-DLVujIBr.js, TgPlayer-D8S6rIus.js, embed chunk). Architecture:
+
+  /watch/{id} = RPC `/_serverFn/211ba18c…` config → server list
+  [primary, backup0, backup1] → own TgPlayer (Shaka) with auto-advance →
+  after ALL servers fail → iframe `jjtvxweb.pages.dev/pind?id={id}`
+  (TGFLIX player, own jstr4web.json catalogue).
+
+FIXED TSS DECODE (LT-11 stage2c missed the t:9 array case — that is why it
+printed `urls (0)`/`backups: 0`): the real per-channel RPC config is
+  - primary urls[0] = BARE CDN URL, host+path IDENTICAL to the public V1
+    source (incl. the `//` defect), NO query;
+  - primary cookie = `__hdnea__=<token>` byte-identical to the PUBLIC V1
+    token (hash-proven for all 7 probed channels; LT-11's "1108 differs
+    (len 156)" was a decode artifact — it is 115 and equal);
+  - primary keyId/key only where the public API has DRM, values equal;
+  - backups[0] = `premiumplugx.top/Geo/<name>.mpd` (THIRD-PARTY PROXY, own
+    CloudFront upstream d1g8wgjurz8via.cloudfront.net + own token family);
+  - backups[1] = `tglivev2.lovable.app/api/public/stream/<id>` (V2 API).
+
+TgPlayer request filter = `uris[0].split('?')[0] + '?' + cookie` on
+MANIFEST+SEGMENT ⇒ its Server-1 requests are BYTE-IDENTICAL to Mavero's.
+
+RUNTIME OBSERVED (browser): /watch/165 → RPC 200 → Server 1
+`jiotvpllive…/ZeeCinemaHD_BTS/WDVLive/index.mpd?__hdnea__=<global token>`
+451 (HK geo; 403 auth-failure in India — same bytes as Mavero's failing
+request) → auto-advance → premiumplugx.top/Geo/zeecinemahd.mpd 200 →
+segments via premiumplugx.top/Geo/playlist.php?route=seg&c=…&u=<CloudFront
+URL with the PROXY'S OWN token> 200 → video decoding (readyState 4).
+/watch/1108 → Server 1 (global token) 451 → proxy MPD 200 but stream
+failed → V2 `tglivev2…/stream/1108` → 302 →
+`jiotvpllive…//…/index.mpd?__hdnea__=…~acl=/bpk-tv/Star_Sports_HD1_Hindi_BTS/WDVLive/*~hmac=…`
+(PATH-SCOPED PER-CHANNEL TOKEN — the credential the premium tier actually
+accepts) → 451 (HK) → all servers exhausted → iframe fallback.
+/watch/889 → V1 direct 451 → proxy failed → V2 → 302 → the SAME dead
+jiotvmblive path with the SAME global token (hmac identical to 156's) →
+451 → iframe. V2 cannot fix 889 either (same dead upstream path).
+
+V2 endpoint structure (direct probes): 1108/1984 → 302 + path-scoped
+per-channel tokens; 165 → 200 full RELAY MPD (BaseURL
+tglivev2…/api/public/seg/165/dash/, segments relayed, ContentProtection
+present); 889/156 → 302 + the global token (standard-tier re-issue).
+
+### Phases 3–5 — causal comparison and classification
+Field-by-field: Mavero's failing request ≡ official Server-1 failing
+request (host, path, query, token — all identical; only Origin/Referer
+differ, and LT-10 proved the same Mavero origin is ACCEPTED on
+jiotvmblive while rejected on jiotvpllive ⇒ the differentiator is the CDN
+tier's token policy, not request attributes or origin).
+The official site's SUCCESS on failing channels comes ONLY from:
+  a) premiumplugx.top — third-party proxy (forbidden, directive #13/#14);
+  b) tglivev2.lovable.app V2 API (per-channel path-scoped 302s / relay
+     MPDs) — first-party but OUT OF SCOPE (directive #15; plan §3/§13);
+  c) jjtvxweb.pages.dev iframe (forbidden, directive #2/#3).
+Determination for 165/1108/1984/472: (E) CONFIRMED — the official site
+does NOT use the V1 direct source for successful playback; its own V1
+attempt fails identically to Mavero's. (C)/(D) it obtains different
+credentials/sources — path-scoped tokens and relays behind the V2 API,
+plus the third-party proxy. (A-refined) the V1 global token (acl=/*) is
+valid but NOT ENTITLED to the premium jiotvpllive tier; that tier
+requires per-channel path-scoped tokens LiveGT mints only for V2.
+
+### Phase 6 — public V1 contract re-check (docs re-fetched, current)
+Documented V1 = channels / channels/{id} / guide/{id}; "Play it in your
+own player" example is EXACTLY Mavero's sequence; no per-channel
+credentials, no backups, no session/bootstrap endpoint, no documented
+headers, no server selection. `embed`/`watch` = LiveGT's own pages
+(iframe/redirect — forbidden). No /api/public/stream on the V1 host (404).
+The docs separately describe a V2 relay system — out of scope. NOTHING
+documented is missing from Mavero.
+
+### Phase 7 — official player vs Mavero (earliest divergence)
+Their query-REPLACE filter vs Mavero's append: byte-identical results for
+these URLs; Mavero's is strictly safer. Their
+`streaming:{lowLatencyMode,rebufferingGoal:4}`: cosmetic, no auth effect.
+Their fallback chain is fed by private tiers (proxy/V2), not the public
+API. The earliest point of divergence: the official player NEVER plays
+the premium tier with the global token — it advances to proxy/V2/iframe.
+Mavero has no legitimate equivalent to advance to.
+
+### Phase 8 — decision: NO code change
+1. Mavero's V1-direct requests are byte-identical to the official site's
+   FAILING Server-1 requests (proven end-to-end, token hash-equality).
+2. Every observed official success on failing channels uses mechanisms
+   forbidden to Mavero (proxy #13/#14, V2 #15, iframe #2).
+3. The public V1 contract contains nothing Mavero is missing.
+Per the directive's own fallback ("document that precisely"), LT-12 makes
+NO code changes. The `//` path defect is NOT the failure cause (the
+official site's V2 redirects carry the same `//` and play in India).
+
+### Gates (re-run at HEAD, zero LT-12 code changes)
+- pnpm check: 0 errors, 0 warnings.
+- pnpm test: EXIT 0 — live_tv_client 62, live_tv_player 91, live_tv_page
+  22, hardening 13/13, release audit 6/6 (all other suites green).
+- pnpm build: EXIT 0.
+
+### Intentionally NOT changed / NOT integrated
+premiumplugx.top (third-party proxy), tglivev2.lovable.app (V2 — per
+directive #15 and the standing plan), jjtvxweb.pages.dev (iframe/embed),
+the private `/_serverFn` RPC, per-channel token minting (no invention),
+source URL mutation (incl. the upstream `//` defect), Shaka config
+(lowLatencyMode cosmetic), VOD, Supabase, analytics, error model.
+
+### Final production status (India)
+- WORKING (controls, keep verifying): 156, 173, 471 (jiotvmblive DASH+CK);
+  1500 (nw18 HLS); Times (akamaized DASH).
+- WORKING (LT-11 fix, production-proven): 183 B4U Music + the
+  jiotvmblive HLSPartner class (e.g. 732).
+- NOT PLAYABLE BY DESIGN OF THE UPSTREAM (documented, not fixable within
+  constraints): 165, 472, 1108, 1984 + all jiotvpllive premium channels
+  (V1 global token not entitled; official site uses proxy/V2/iframe);
+  889 Jio Sports (dead upstream path 404 — even V2 redirects to it).
+- NEEDS INDIA VERIFICATION (unchanged from LT-11): 154 Sony SAB SD class
+  (no-DRM DASH) — capture MPD status + Shaka numeric code; genuinely-clear
+  members of the class play, encrypted-without-keys members are upstream
+  (the official site's own V1 tier also carries no keys for them; its
+  proxy/V2 backups do).
+
+### Recommendation for the future (product decision, NOT LT-12 scope)
+The failing classes are playable through LiveGT's DOCUMENTED V2 relay
+system (same docs page; CORS-open, keyless, first-party). If the project
+ever wants those channels, adopting V2 would be a deliberate product
+decision requiring a new directive — not a silent fallback.
