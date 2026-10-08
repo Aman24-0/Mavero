@@ -2872,3 +2872,195 @@ recorded below after commit).
 
 LT-8 fix commit: `391bfd90844fb8d355b346506ae932c3517b8124` (fix(live-tv): match documented shaka
 integration contract).
+
+## SIGNED DASH QUERY-AUTH PROPAGATION — Jio CDN "No sub Token" fix (2026-10-08, LT-9)
+
+### India production evidence (user-captured, Android Chrome DevTools Network)
+
+Star Gold HD (156) played directly from India:
+
+* Channel metadata loads; playback begins; after ~3-4 seconds playback
+  fails and Mavero reports "The Live TV connection was interrupted."
+* The failing media-segment request (Jio DASH layout,
+  `.../Star_Gold_HD_MOB/.../dash/Star_Gold_HD_MOB-audio_....dash`)
+  returned **HTTP 403** with response headers
+  `X-Error-Details: No sub Token`, `X-ErrType: auth-failure`,
+  `Server: Varnish`.
+* The failing request did **NOT** carry the signed authentication query.
+* News18 Urdu played continuously in the same Mavero player on the same
+  device — the generic Shaka integration is functional.
+
+### Investigation (LT-9 probe, structure only — no token values recorded)
+
+* Resolver: 156 = `jiotvmblive.cdn.jio.com/bpk-tv/Star_Gold_HD_MOB/WDVLive/index.mpd`,
+  `.mpd`, query `["__hdnea__"]`, drm clearkey present. 165 (Zee Cinema HD)
+  = `jiotvpllive.cdn.jio.com/.../ZeeCinemaHD_BTS/WDVLive/index.mpd`, no
+  drm. 143 = same shape as 156. **News18 Urdu = channel 1500 =
+  `nw18live.cdn.jio.com/bpk-tv/News18_Urdu_NW18_MOB/output01/index.m3u8`
+  — an HLS channel on a different CDN host**: it never touches the
+  token-enforced DASH segment path. That is why it works.
+* Query-param census (every 40th channel, 30 resolved): **30/30 source
+  URLs carry exactly `["__hdnea__"]`** — no other query parameter exists
+  on any V1 source. The propagation allowlist is therefore exactly
+  `__hdnea__`.
+* MPD fetch from this egress: still HTTP 451 (geo) for both 156 and 1500
+  — the real MPD body cannot be inspected here; the Jio-structure mock
+  (relative SegmentTemplate, no UrlQueryInfo — built in LT-8 from the
+  URL structure and matching the DevTools failing-request shape) is the
+  structural basis, and the runtime experiment below reproduces the
+  production signature exactly.
+
+### Exact root cause
+
+The LiveGT V1 resolver returns a manifest URL whose short-lived signed
+query (`__hdnea__`) authorizes the request. The Jio DASH MPD references
+its media segments with RELATIVE template URLs and does NOT declare the
+DASH-IF `UrlQueryInfo` propagation mechanism
+(`urn:mpeg:dash:urlparam:2014/2016`). Shaka resolves relative segment
+references per WHATWG against the manifest URL, which DROPS the query
+string — so every media-segment request leaves the browser WITHOUT the
+token, and the CDN rejects it with 403 "No sub Token" once the initial
+buffer is exhausted (~3-4 s of playback). LT-8 proved the mechanism with
+a token-enforcing mock (the documented flow itself fails identically);
+the India DevTools evidence now confirms it in production. Playback
+begins because the first segments/init data are served before
+enforcement kills the stream; the mid-session failure maps to the
+engine's `network_failed` kind ("connection interrupted"), exactly as
+observed.
+
+### Implementation mechanism (smallest correct fix, V1-only)
+
+New module `src/lib/client/live-tv/dash-auth.ts` (pure, no imports from
+Shaka or LiveGT) + one wiring call in `player.ts` (step 6b, before
+`load()`):
+
+* A **response filter** (RequestType.MANIFEST only) sniffs the first
+  bytes of the manifest body: DASH (`<MPD`) arms the session and records
+  the FINAL manifest URI (`response.uri`, post-redirect — the exact base
+  Shaka resolves relative segment refs against). HLS playlists
+  (`#EXTM3U`) are rejected → the fallback can never apply to HLS.
+* A **request filter** (RequestType.SEGMENT only) appends the allowlisted
+  auth parameter(s) — byte-exact raw query parts taken from the
+  ALREADY-RESOLVED source URL — to segment request URIs that (a) share
+  the manifest's EXACT origin, (b) do not already carry the parameter
+  (standard DASH-IF UrlQueryInfo handling always wins — no duplication,
+  no overwrite), and (c) parse as absolute http(s) URLs.
+* Registration is best-effort and totally defensive: a player without a
+  networking engine (or any throw) installs nothing and playback behaves
+  exactly as documented. Filters die with the player instance on
+  teardown/switch; session state lives in runtime memory only.
+* The documented contract is unchanged: attach → configure ClearKey →
+  bare `load(sources[0])`. No MIME, no HLS changes, no VOD changes, no
+  proxy, no V2, no Widevine/PlayReady, no Supabase, no schema changes.
+
+### Security constraints (all locked by tests)
+
+Allowlist is exactly `__hdnea__` (census-proven); never propagated to
+another origin/hostname/port; never on LICENSE/KEY/manifest/timing
+requests; never duplicated or overwritten; existing query params
+preserved; no fetch/transmit (never acquires new tokens); zero console,
+zero storage APIs, no analytics surface; token never appears in any
+engine error payload (behavioral + source-scan tests); never logged;
+never persisted; browser URL untouched (request URIs only).
+
+### Regression coverage (live_tv_player_test.ts §14, 12 new checks → 82/82)
+
+14a Jio-style relative segment gains the query byte-exact (+ post-
+   redirect manifest URI as the same-origin anchor)
+14b existing segment query params preserved (incl. bare-`?` joiner)
+14c no duplication/overwrite — UrlQueryInfo wins
+14d no propagation to any other origin/hostname/port/scheme
+14e HLS never affected; DASH manifest detection precise (MPD/HLS/
+   binary/empty/view inputs)
+14f only SEGMENT modified (LICENSE/KEY/MANIFEST/TIMING/unknown
+   untouched; per-uri independent judgment)
+14g successful channels unaffected (unsigned sources; non-auth params
+   never copied; non-manifest responses never arm)
+14h engine integration: documented order + bare load + ClearKey config
+   intact; exactly one request+response filter; 156 segment carries the
+   token through the real wiring; license untouched
+14i session isolation: fresh filters per load; old session cannot arm
+   the new one; each session propagates only its own token
+14j token never in any engine error payload (with propagation active)
+14k dash-auth.ts source hygiene (no console/storage/fetch/LiveGT/
+   Supabase/shaka imports; allowlist exactly `__hdnea__`)
+14l defensive installation (null/throwing/malformed engine → nothing
+   installed; documented playback unaffected without the fallback)
+
+§11 source scan now includes dash-auth.ts (same hygiene rules).
+
+### Runtime experiment (scripts/lt9_*.mjs — real Shaka 5.2.12 + REAL
+engine bundle (esbuild of player.ts + player-errors.ts + dash-auth.ts)
+in real headless Chromium against a local Jio-mock CDN; 20s/2s-segment
+DASH fixtures; all cases FAKE tokens)
+
+* C1 control — DOCUMENTED bare flow, no fallback: playback begins, then
+  media segments 403 "No sub Token" (4×403, 0 tokens), playback frozen
+  at ~1.9s, Shaka CRITICAL 1001 (network) — the exact production
+  signature reproduced.
+* C2 REAL engine + ClearKey (156 shape): **20/20 media segments carry
+  `__hdnea__`, ZERO 403s, continuous playback past 12s of the 20s
+  presentation (beyond the 3-4s failure window), engine state
+  `playing`, zero error events.**
+* C3 UrlQueryInfo route (standard mechanism): plays; exactly ONE
+  `__hdnea__` per segment request (no duplication by the fallback).
+* C4 HLS route (News18 Urdu 1500 shape): plays; HLS sub-playlist and
+  segment requests carry NO token (fallback never touches HLS).
+* C5 cross-origin `<BaseURL>` route: segments served from a second
+  origin; the token is NEVER attached to the foreign origin (0/20
+  tokened); playback fine.
+* C6 no-DRM DASH (165 shape): plays through; 20/20 segments tokened;
+  zero 403s.
+
+Report: `scripts/lt9_experiment_report.json`. Fixtures:
+`scripts/lt9_fixtures/` (builder `lt9_build_fixtures.mjs`, server
+`lt9_server.mjs` :5198/:5199, harness `docroot/harness.html`, driver
+`lt9_driver.mjs`). Probe: `lt9_probe.mjs` / `lt9_probe_output.txt`.
+
+### Validation
+
+* `pnpm check` — 0 errors, 0 warnings (2 pre-existing errors were the
+  uncommitted worktree upload-file deletions, restored byte-identical
+  from HEAD for validation only, per LT-8 protocol).
+* `pnpm test` — exit 0, **5565 ok-lines = 5553 (LT-8 baseline) + 12**
+  (§14). Suites: LT-2 61/61, LT-3 82/82, LT-4 22/22, LT-5 13/13,
+  LT-6 6/6.
+* `pnpm build` — exit 0 (Netlify adapter + executor). Bundle verified:
+  Shaka still a separate ~804 kB lazy chunk loaded ONLY via dynamic
+  import from the /live-tv client node; ZERO shaka/filter references in
+  the server output (SSR boundary intact).
+* Scope audit (git): only `src/lib/client/live-tv/{dash-auth.ts (new),
+  player.ts}` + `scripts/live_tv_player_test.ts` changed. No VOD, no
+  media-compat, no HLS VOD logic, no navigation, no Supabase, no
+  analytics schema, no embed, no downloader, no hosting, no CloudStream,
+  no V2.
+
+### Production verification (India, user-side — after deploy)
+
+1. News18 Urdu (1500) — must continue playing (HLS path untouched).
+2. Star Gold HD (156) — DevTools Network must show: MPD 200 → Jio media
+   requests WITH `__hdnea__` → HTTP 200 (no 403) → continuous playback
+   well past the previous 3-4s failure point. NOT done at "first few
+   seconds play".
+3. Zee Cinema HD (165) — same expectation (no-DRM DASH shape, C6).
+4. 143 (ClearKey control) — same expectation (C2 shape).
+5. At least one HLS channel (732 / 1500) — must play; its segment
+   requests must NOT gain the token.
+6. If 156 still fails with tokens present: capture the NEW exact failing
+   request/status (e.g. a genuinely different segment host — the
+   fallback deliberately refuses cross-origin propagation) and treat it
+   as a separate upstream restriction. Do not invent another workaround.
+
+### Files changed (this fix)
+
+``` text
+src/lib/client/live-tv/dash-auth.ts     (NEW — pure propagation module)
+src/lib/client/live-tv/player.ts        (type surface + one wiring call)
+scripts/live_tv_player_test.ts          (fake networking engine + §14)
+live-tv-worklog.md                      (this record)
+```
+
+### Commit
+
+`fix(live-tv): propagate signed dash auth for media requests` (sha
+recorded below after commit).

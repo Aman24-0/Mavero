@@ -51,6 +51,16 @@ import {
         type ShakaModuleLike
 } from '$lib/client/live-tv/player';
 import {
+        applyDashAuthManifestResponse,
+        applyDashAuthSegmentRequest,
+        createDashAuthSession,
+        installDashAuthFilters,
+        looksLikeDashManifest,
+        propagateDashSegmentAuth,
+        SHAKA_REQUEST_TYPE,
+        type DashAuthSession
+} from '$lib/client/live-tv/dash-auth';
+import {
         LiveTvPlaybackError,
         isLiveTvPlaybackError,
         type LiveTvPlaybackErrorKind
@@ -112,6 +122,24 @@ class FakeVideoElement {
         }
 }
 
+/** Fake shaka.net.NetworkingEngine — captures the LT-9 filters. */
+class FakeNetworkingEngine {
+        requestFilters: Array<(type: number, request: { uris: string[] }) => void> = [];
+        responseFilters: Array<(type: number, response: unknown) => void> = [];
+        registerRequestFilter(filter: (type: number, request: { uris: string[] }) => void): void {
+                this.requestFilters.push(filter);
+        }
+        registerResponseFilter(filter: (type: number, response: unknown) => void): void {
+                this.responseFilters.push(filter);
+        }
+        emitRequest(type: number, request: { uris: string[] }): void {
+                for (const filter of [...this.requestFilters]) filter(type, request);
+        }
+        emitResponse(type: number, response: unknown): void {
+                for (const filter of [...this.responseFilters]) filter(type, response);
+        }
+}
+
 /** The structural shaka.Player stand-in (module-boundary mock). */
 class FakeShakaPlayer {
         /** Cross-instance test hooks (class fields would shadow prototype patches). */
@@ -125,6 +153,8 @@ class FakeShakaPlayer {
         /** Cross-method call order ('attach' | 'configure' | 'load' | 'destroy'). */
         callLog: string[] = [];
         configureResult = true;
+        /** LT-9: the fake networking engine (null models "player without one"). */
+        networking: FakeNetworkingEngine | null = new FakeNetworkingEngine();
         private errorListeners = new Set<(event: ShakaErrorEventLike) => void>();
         /** null models "no usable range" — the fake then reports NaN (invalid). */
         seekRangeValue: { start: number; end: number } | null = null;
@@ -156,6 +186,9 @@ class FakeShakaPlayer {
         getMediaElement(): unknown {
                 return this.attachCalls[0] ?? null;
         }
+        getNetworkingEngine(): FakeNetworkingEngine | null {
+                return this.networking;
+        }
         addEventListener(_type: 'error', listener: (event: ShakaErrorEventLike) => void): void {
                 this.errorListeners.add(listener);
         }
@@ -175,12 +208,15 @@ class FakeShakaPlayer {
 }
 
 /** Fake module factory: fresh class + per-module instance tracking. */
-function makeShakaModule(options: { supported?: boolean; configureResult?: boolean } = {}) {
+function makeShakaModule(
+        options: { supported?: boolean; configureResult?: boolean; noNetworkingEngine?: boolean } = {}
+) {
         const instances: FakeShakaPlayer[] = [];
         class PlayerCtor extends FakeShakaPlayer {
                 constructor() {
                         super();
                         this.configureResult = options.configureResult !== false;
+                        if (options.noNetworkingEngine) this.networking = null;
                         instances.push(this);
                 }
                 static isBrowserSupported(): boolean {
@@ -1181,7 +1217,8 @@ async function expectPlaybackError(
         const moduleDir = path.resolve(here, '../src/lib/client/live-tv');
         const sources: Record<string, string> = {
                 player: readFileSync(path.join(moduleDir, 'player.ts'), 'utf8'),
-                playerErrors: readFileSync(path.join(moduleDir, 'player-errors.ts'), 'utf8')
+                playerErrors: readFileSync(path.join(moduleDir, 'player-errors.ts'), 'utf8'),
+                dashAuth: readFileSync(path.join(moduleDir, 'dash-auth.ts'), 'utf8')
         };
         const all = Object.values(sources).join('\n');
 
@@ -1463,6 +1500,413 @@ async function expectPlaybackError(
                 assert.equal(selectLiveTvPlaybackSource([{ url }]), url, `selection returns the input string byte-for-byte: ${new URL(url).pathname}`);
         }
         ok('13e. no URL alteration — signed query strings survive selection byte-for-byte');
+}
+
+// ============================================================
+// §14 — LT-9 signed DASH query-auth propagation regression
+//
+// India production evidence (2026-10-08): Star Gold HD (156) manifest
+// loads (signed `__hdnea__` query), playback begins, then Jio CDN
+// media-segment requests WITHOUT the query fail 403 "No sub Token"
+// (X-ErrType: auth-failure) ~3-4s in; HLS channels (News18 Urdu 1500,
+// nw18live, .m3u8) play continuously — the failure is DASH-segment
+// specific. Root cause (LT-8 mechanism, now production-confirmed):
+// DASH relative SegmentTemplate refs resolve per WHATWG and DROP the
+// manifest query; without DASH-IF UrlQueryInfo in the MPD, plain Shaka
+// (including the documented example) cannot satisfy the CDN.
+//
+// The fix (dash-auth.ts): response filter learns "is DASH" + final
+// manifest URI; request filter appends ONLY `__hdnea__` (allowlist —
+// census 30/30 source URLs carry exactly that param), byte-exact from
+// the already-resolved source URL, to SAME-ORIGIN SEGMENT requests
+// that lack it. Everything else untouched.
+//
+// Fixtures are SYNTHETIC: real observed host/path STRUCTURE, FAKE
+// token values, never fetched. Token-bearing fixture values must
+// never appear in any engine output (14j/14k).
+// ============================================================
+{
+        // 14a — requirement 2: Star Gold/Jio-style relative DASH segment
+        // requests receive the required auth query (byte-exact token).
+        const STAR_GOLD_URL = 'https://jiotvmblive.cdn.jio.com/bpk-tv/Star_Gold_HD_MOB/WDVLive/index.mpd?__hdnea__=FAKE-TOKEN-156';
+        const STAR_GOLD_SEGMENT = 'https://jiotvmblive.cdn.jio.com/bpk-tv/Star_Gold_HD_MOB/WDVLive/dash/Star_Gold_HD_MOB-audio_1000.dash';
+        const session = createDashAuthSession(STAR_GOLD_URL);
+        applyDashAuthManifestResponse(SHAKA_REQUEST_TYPE.MANIFEST, {
+                data: new TextEncoder().encode('<?xml version="1.0" encoding="utf-8"?>\n<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static">').buffer,
+                uri: STAR_GOLD_URL
+        }, session);
+        assert.equal(session.isDash, true, '14a setup: MPD body identified as DASH');
+        assert.equal(session.manifestUri, STAR_GOLD_URL, '14a setup: final manifest URI recorded');
+        const propagated = propagateDashSegmentAuth(STAR_GOLD_SEGMENT, session);
+        assert.equal(propagated, `${STAR_GOLD_SEGMENT}?__hdnea__=FAKE-TOKEN-156`, '14a: same-origin relative DASH segment gains the signed query byte-exact');
+        // The same-origin base is the POST-REDIRECT manifest URI (Shaka's
+        // resolution base), which may differ from the source URL's origin.
+        const redirected = createDashAuthSession(STAR_GOLD_URL);
+        applyDashAuthManifestResponse(SHAKA_REQUEST_TYPE.MANIFEST, {
+                data: new TextEncoder().encode('<?xml version="1.0"?><MPD profiles="urn:mpeg:dash:profile:isoff-live:2011">').buffer,
+                uri: 'https://jiotvmblive.cdn.jio.com/bpk-tv/Star_Gold_HD_MOB/WDVLive/redirected.mpd'
+        }, redirected);
+        assert.equal(
+                propagateDashSegmentAuth('https://jiotvmblive.cdn.jio.com/bpk-tv/Star_Gold_HD_MOB/WDVLive/dash/seg_1.dash', redirected),
+                'https://jiotvmblive.cdn.jio.com/bpk-tv/Star_Gold_HD_MOB/WDVLive/dash/seg_1.dash?__hdnea__=FAKE-TOKEN-156',
+                '14a: post-redirect manifest URI is the same-origin anchor'
+        );
+        ok('14a. Jio-style relative DASH segment requests receive the required auth query');
+}
+
+{
+        // 14b — requirement 3: existing query parameters on the segment
+        // request are preserved (appended, never replaced).
+        const session = createDashAuthSession('https://cdn.example.com/live/index.mpd?__hdnea__=FAKE-TOKEN');
+        applyDashAuthManifestResponse(SHAKA_REQUEST_TYPE.MANIFEST, {
+                data: new TextEncoder().encode('<?xml version="1.0"?><MPD>').buffer,
+                uri: 'https://cdn.example.com/live/index.mpd'
+        }, session);
+        const out = propagateDashSegmentAuth('https://cdn.example.com/live/seg.dash?foo=1&bar=2', session);
+        assert.equal(out, 'https://cdn.example.com/live/seg.dash?foo=1&bar=2&__hdnea__=FAKE-TOKEN', '14b: existing params kept, auth appended');
+        // Empty-query edge: URL ending in bare '?'.
+        assert.equal(
+                propagateDashSegmentAuth('https://cdn.example.com/live/seg.dash?', session),
+                'https://cdn.example.com/live/seg.dash?__hdnea__=FAKE-TOKEN',
+                '14b: bare-? joiner handled'
+        );
+        ok('14b. existing segment query parameters preserved');
+}
+
+{
+        // 14c — requirement 4 + standards-first: a segment URL that already
+        // carries the auth parameter (standard DASH-IF UrlQueryInfo handling)
+        // is NEVER duplicated or overwritten — the standard mechanism wins.
+        const session = createDashAuthSession('https://cdn.example.com/live/index.mpd?__hdnea__=FAKE-A');
+        applyDashAuthManifestResponse(SHAKA_REQUEST_TYPE.MANIFEST, {
+                data: new TextEncoder().encode('<?xml version="1.0"?><MPD>').buffer,
+                uri: 'https://cdn.example.com/live/index.mpd'
+        }, session);
+        assert.equal(
+                propagateDashSegmentAuth('https://cdn.example.com/live/seg.m4s?__hdnea__=STANDARD-HANDLED', session),
+                'https://cdn.example.com/live/seg.m4s?__hdnea__=STANDARD-HANDLED',
+                '14c: already-present auth param respected (UrlQueryInfo wins)'
+        );
+        assert.equal(
+                propagateDashSegmentAuth('https://cdn.example.com/live/seg.m4s?x=1&__hdnea__=Y', session),
+                'https://cdn.example.com/live/seg.m4s?x=1&__hdnea__=Y',
+                '14c: no duplicate appended when present mid-query'
+        );
+        ok('14c. no duplication/overwrite — standard UrlQueryInfo handling wins');
+}
+
+{
+        // 14d — requirement 5: the token is NEVER propagated to another
+        // origin/hostname (cross-origin leak lock).
+        const session = createDashAuthSession('https://jiotvmblive.cdn.jio.com/bpk-tv/x/index.mpd?__hdnea__=FAKE-TOKEN');
+        applyDashAuthManifestResponse(SHAKA_REQUEST_TYPE.MANIFEST, {
+                data: new TextEncoder().encode('<?xml version="1.0"?><MPD>').buffer,
+                uri: 'https://jiotvmblive.cdn.jio.com/bpk-tv/x/index.mpd'
+        }, session);
+        const foreign = [
+                'https://jiotvmlive.cdn.jio.com/bpk-tv/x/dash/seg.dash', // different HOST
+                'https://example.com/seg.dash', // unrelated origin
+                'https://jiotvmblive.cdn.jio.com:8443/seg.dash', // different PORT
+                'http://jiotvmblive.cdn.jio.com/seg.dash', // different SCHEME
+                '/relative/seg.dash', // unparseable as absolute — never touched
+                ''
+        ];
+        for (const url of foreign) {
+                assert.equal(propagateDashSegmentAuth(url, session), url, `14d: foreign/unparseable URL untouched (${url.slice(0, 48) || '(empty)'})`);
+        }
+        ok('14d. no token propagation to any other origin/hostname/port');
+}
+
+{
+        // 14e — requirement 8: HLS is NEVER affected. The fallback only
+        // activates after a MANIFEST response body was identified as a DASH
+        // MPD; HLS playlists ('#EXTM3U') are rejected. (Production: HLS
+        // channels like News18 Urdu 1500 play — HLS needs no propagation.)
+        const HLS_URL = 'https://nw18live.cdn.jio.com/bpk-tv/News18_Urdu_NW18_MOB/output01/index.m3u8?__hdnea__=FAKE-TOKEN-1500';
+        const session = createDashAuthSession(HLS_URL);
+        applyDashAuthManifestResponse(SHAKA_REQUEST_TYPE.MANIFEST, {
+                data: new TextEncoder().encode('#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-STREAM-INF:BANDWIDTH=216000\nmedia_video.m3u8').buffer,
+                uri: HLS_URL
+        }, session);
+        assert.equal(session.isDash, false, '14e: HLS playlist body NOT identified as DASH');
+        assert.equal(session.manifestUri, null, '14e: no manifest URI recorded for HLS');
+        const req = { uris: ['https://nw18live.cdn.jio.com/bpk-tv/News18_Urdu_NW18_MOB/output01/media_video.m3u8'] };
+        applyDashAuthSegmentRequest(SHAKA_REQUEST_TYPE.SEGMENT, req, session);
+        assert.equal(req.uris[0], 'https://nw18live.cdn.jio.com/bpk-tv/News18_Urdu_NW18_MOB/output01/media_video.m3u8', '14e: HLS media request untouched');
+        // Manifest-detection unit checks (incl. binary/empty/garbage).
+        assert.equal(looksLikeDashManifest(new TextEncoder().encode('<?xml version="1.0" encoding="utf-8"?>\n<MPD xmlns="urn:mpeg:dash:schema:mpd:2011">').buffer), true, '14e: MPD prolog detected');
+        assert.equal(looksLikeDashManifest(new TextEncoder().encode('<MPD type="dynamic">').buffer), true, '14e: MPD without prolog detected');
+        assert.equal(looksLikeDashManifest(new TextEncoder().encode('#EXTM3U').buffer), false, '14e: HLS rejected');
+        assert.equal(looksLikeDashManifest(new TextEncoder().encode('').buffer), false, '14e: empty rejected');
+        assert.equal(looksLikeDashManifest(new Uint8Array([0, 1, 2, 3]).buffer), false, '14e: binary rejected');
+        assert.equal(looksLikeDashManifest(new Uint8Array([0x3c, 0x4d, 0x50, 0x44, 0x20])), true, '14e: MPD via view (not ArrayBuffer)');
+        assert.equal(looksLikeDashManifest(null), false, '14e: null rejected');
+        ok('14e. HLS requests never affected; manifest detection is DASH-precise');
+}
+
+{
+        // 14f — requirement 6 + scope: ONLY RequestType.SEGMENT is modified.
+        // DRM/LICENSE, KEY, manifest, timing and unknown types are untouched
+        // (ClearKey license material never receives CDN tokens).
+        const session = createDashAuthSession('https://cdn.example.com/live/index.mpd?__hdnea__=FAKE-TOKEN');
+        applyDashAuthManifestResponse(SHAKA_REQUEST_TYPE.MANIFEST, {
+                data: new TextEncoder().encode('<?xml version="1.0"?><MPD>').buffer,
+                uri: 'https://cdn.example.com/live/index.mpd'
+        }, session);
+        const types: Array<[number, string]> = [
+                [SHAKA_REQUEST_TYPE.MANIFEST, 'MANIFEST'],
+                [SHAKA_REQUEST_TYPE.LICENSE, 'LICENSE'],
+                [6, 'KEY'],
+                [4, 'TIMING'],
+                [99, 'UNKNOWN']
+        ];
+        for (const [type, label] of types) {
+                const req = { uris: ['https://cdn.example.com/live/whatever'] };
+                applyDashAuthSegmentRequest(type, req, session);
+                assert.equal(req.uris[0], 'https://cdn.example.com/live/whatever', `14f: ${label} request untouched`);
+        }
+        const seg = { uris: ['https://cdn.example.com/live/seg.m4s'] };
+        applyDashAuthSegmentRequest(SHAKA_REQUEST_TYPE.SEGMENT, seg, session);
+        assert.equal(seg.uris[0], 'https://cdn.example.com/live/seg.m4s?__hdnea__=FAKE-TOKEN', '14f: SEGMENT request is the only modified type');
+        // Multiple candidate uris (Shaka fallback list) — each judged independently.
+        const multi = {
+                uris: ['https://cdn.example.com/live/a.m4s', 'https://other.example.com/b.m4s', 'https://cdn.example.com/live/c.m4s?__hdnea__=K']
+        };
+        applyDashAuthSegmentRequest(SHAKA_REQUEST_TYPE.SEGMENT, multi, session);
+        assert.deepEqual(multi.uris, [
+                'https://cdn.example.com/live/a.m4s?__hdnea__=FAKE-TOKEN',
+                'https://other.example.com/b.m4s',
+                'https://cdn.example.com/live/c.m4s?__hdnea__=K'
+        ], '14f: per-uri independent judgment (same-origin + not-already-present)');
+        ok('14f. only SEGMENT requests modified; DRM/license/manifest/timing untouched');
+}
+
+{
+        // 14g — requirement 1: successful channels are unaffected.
+        // (a) Unsigned sources (no allowlisted param) — nothing to propagate.
+        const unsigned = createDashAuthSession('https://times-ott-live.akamaized.net/live/index.mpd');
+        applyDashAuthManifestResponse(SHAKA_REQUEST_TYPE.MANIFEST, {
+                data: new TextEncoder().encode('<?xml version="1.0"?><MPD>').buffer,
+                uri: 'https://times-ott-live.akamaized.net/live/index.mpd'
+        }, unsigned);
+        assert.equal(
+                propagateDashSegmentAuth('https://times-ott-live.akamaized.net/live/seg.m4s', unsigned),
+                'https://times-ott-live.akamaized.net/live/seg.m4s',
+                '14g: unsigned channel untouched'
+        );
+        // (b) Non-auth query params on the SOURCE are never copied (allowlist).
+        const extra = createDashAuthSession('https://cdn.example.com/live/index.mpd?foo=1&__hdnea__=FAKE-T&bar=2');
+        applyDashAuthManifestResponse(SHAKA_REQUEST_TYPE.MANIFEST, {
+                data: new TextEncoder().encode('<?xml version="1.0"?><MPD>').buffer,
+                uri: 'https://cdn.example.com/live/index.mpd'
+        }, extra);
+        assert.equal(
+                propagateDashSegmentAuth('https://cdn.example.com/live/seg.m4s', extra),
+                'https://cdn.example.com/live/seg.m4s?__hdnea__=FAKE-T',
+                '14g: ONLY the allowlisted auth param propagates (foo/bar never copied)'
+        );
+        // (c) Non-MANIFEST response types never arm the session.
+        const neverArmed = createDashAuthSession('https://cdn.example.com/live/index.mpd?__hdnea__=FAKE-T');
+        applyDashAuthManifestResponse(SHAKA_REQUEST_TYPE.SEGMENT, {
+                data: new TextEncoder().encode('<?xml version="1.0"?><MPD>').buffer,
+                uri: 'https://cdn.example.com/live/index.mpd'
+        }, neverArmed);
+        assert.equal(neverArmed.isDash, false, '14g: a SEGMENT response never arms the fallback');
+        ok('14g. successful channels unaffected; only proven auth param propagates');
+}
+
+{
+        // 14h — requirements 9+10+11: engine integration. The documented
+        // contract (attach → configure ClearKey → bare load) is UNCHANGED with
+        // the filters active; exactly one request + one response filter are
+        // installed per session and the full propagation path works through
+        // the real engine wiring.
+        const restore = installBrowserRuntime({ eme: true });
+        try {
+                const STAR_GOLD_URL = 'https://jiotvmblive.cdn.jio.com/bpk-tv/Star_Gold_HD_MOB/WDVLive/index.mpd?__hdnea__=FAKE-TOKEN-156';
+                const { module, instances } = makeShakaModule();
+                const engine = new LiveTvPlaybackEngine({ shakaLoader: async () => module });
+                const video = new FakeVideoElement();
+                await engine.load(video as unknown as HTMLVideoElement, {
+                        channel: { id: '156', name: 'Star Gold HD', category: 'Movies' },
+                        sources: [{ url: STAR_GOLD_URL }],
+                        drm: { type: 'clearkey', keyId: FIXTURE_KEY_ID, key: FIXTURE_KEY }
+                });
+                const player = instances[0] as FakeShakaPlayer;
+                // Documented contract intact (requirements 9/10/11 + §13 locks).
+                assert.equal(player.loadCalls[0]?.uri, STAR_GOLD_URL, '14h: sources[0] verbatim');
+                assert.equal(player.loadCalls[0]?.mimeType, undefined, '14h: bare load — no MIME (no LT-8 regression)');
+                assert.deepEqual(player.callLog, ['attach', 'configure', 'load'], '14h: documented order intact with filters installed');
+                assert.deepEqual(player.configureCalls[0], { drm: { clearKeys: { [FIXTURE_KEY_ID]: FIXTURE_KEY } } }, '14h: ClearKey configured via the documented drm.clearKeys shape');
+                // Filters: exactly one of each, installed before load.
+                assert.equal(player.networking?.requestFilters.length, 1, '14h: exactly one request filter');
+                assert.equal(player.networking?.responseFilters.length, 1, '14h: exactly one response filter');
+                assert.ok(player.callLog.indexOf('load') === player.callLog.length - 1, '14h: filters installed before load (load is last call)');
+                // Drive the real wiring: manifest response → segment + license requests.
+                player.networking?.emitResponse(SHAKA_REQUEST_TYPE.MANIFEST, {
+                        data: new TextEncoder().encode('<?xml version="1.0" encoding="utf-8"?>\n<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="dynamic">').buffer,
+                        uri: STAR_GOLD_URL
+                });
+                const seg = { uris: ['https://jiotvmblive.cdn.jio.com/bpk-tv/Star_Gold_HD_MOB/WDVLive/dash/Star_Gold_HD_MOB-video_2000.dash'] };
+                player.networking?.emitRequest(SHAKA_REQUEST_TYPE.SEGMENT, seg);
+                assert.equal(
+                        seg.uris[0],
+                        'https://jiotvmblive.cdn.jio.com/bpk-tv/Star_Gold_HD_MOB/WDVLive/dash/Star_Gold_HD_MOB-video_2000.dash?__hdnea__=FAKE-TOKEN-156',
+                        '14h: Star Gold segment request carries the signed query through the real engine wiring'
+                );
+                const license = { uris: ['https://license.example.com/clearkey?kid=abc'] };
+                player.networking?.emitRequest(SHAKA_REQUEST_TYPE.LICENSE, license);
+                assert.equal(license.uris[0], 'https://license.example.com/clearkey?kid=abc', '14h: license request untouched');
+                engine.destroy();
+        } finally {
+                restore();
+        }
+        ok('14h. engine integration: documented contract unchanged, filters wired, 156 segment carries token');
+}
+
+{
+        // 14i — session isolation: each load() gets a FRESH player + FRESH
+        // filters; the previous player (and its filters) die on teardown and
+        // can never affect the new session (channel-switch safety).
+        const restore = installBrowserRuntime();
+        try {
+                const URL_A = 'https://jiotvmblive.cdn.jio.com/bpk-tv/Star_Gold_HD_MOB/WDVLive/index.mpd?__hdnea__=FAKE-A';
+                const URL_B = 'https://jiotvpllive.cdn.jio.com/bpk-tv/ZeeCinemaHD_BTS/WDVLive/index.mpd?__hdnea__=FAKE-B';
+                const { module, instances } = makeShakaModule();
+                const engine = new LiveTvPlaybackEngine({ shakaLoader: async () => module });
+                const video = new FakeVideoElement();
+                await engine.load(video as unknown as HTMLVideoElement, { channel: { id: '156', name: 'A' }, sources: [{ url: URL_A }], drm: null });
+                await engine.load(video as unknown as HTMLVideoElement, { channel: { id: '165', name: 'B' }, sources: [{ url: URL_B }], drm: null });
+                const first = instances[0] as FakeShakaPlayer;
+                const second = instances[1] as FakeShakaPlayer;
+                assert.equal(first.destroyed, true, '14i: first player destroyed on switch');
+                assert.equal(first.networking === second.networking, false, '14i: distinct networking engines per session');
+                // Arming the OLD session's filters must not arm the new session.
+                first.networking?.emitResponse(SHAKA_REQUEST_TYPE.MANIFEST, {
+                        data: new TextEncoder().encode('<?xml version="1.0"?><MPD>').buffer,
+                        uri: URL_A
+                });
+                const req = { uris: ['https://jiotvpllive.cdn.jio.com/bpk-tv/ZeeCinemaHD_BTS/WDVLive/dash/zee-video_1.dash'] };
+                second.networking?.emitRequest(SHAKA_REQUEST_TYPE.SEGMENT, req);
+                assert.equal(
+                        req.uris[0],
+                        'https://jiotvpllive.cdn.jio.com/bpk-tv/ZeeCinemaHD_BTS/WDVLive/dash/zee-video_1.dash',
+                        '14i: new session unarmed until ITS manifest response arrives (old session cannot arm it)'
+                );
+                second.networking?.emitResponse(SHAKA_REQUEST_TYPE.MANIFEST, {
+                        data: new TextEncoder().encode('<?xml version="1.0"?><MPD>').buffer,
+                        uri: URL_B
+                });
+                const req2 = { uris: ['https://jiotvpllive.cdn.jio.com/bpk-tv/ZeeCinemaHD_BTS/WDVLive/dash/zee-video_1.dash'] };
+                second.networking?.emitRequest(SHAKA_REQUEST_TYPE.SEGMENT, req2);
+                assert.equal(req2.uris[0], 'https://jiotvpllive.cdn.jio.com/bpk-tv/ZeeCinemaHD_BTS/WDVLive/dash/zee-video_1.dash?__hdnea__=FAKE-B', '14i: new session propagates its OWN token only');
+                engine.destroy();
+        } finally {
+                restore();
+        }
+        ok('14i. session isolation: fresh filters per load, no cross-session token leakage');
+}
+
+{
+        // 14j — requirement 7: the token is never logged/exposed. Behavioral:
+        // with propagation armed, every engine failure path produces payloads
+        // free of the token (and of '__hdnea__' entirely).
+        const restore = installBrowserRuntime({ eme: true });
+        try {
+                const TOKEN = 'FAKE-TOKEN-SECRET-156';
+                const SIGNED = `https://jiotvmblive.cdn.jio.com/bpk-tv/Star_Gold_HD_MOB/WDVLive/index.mpd?__hdnea__=${TOKEN}`;
+                const { module, instances } = makeShakaModule();
+                const engine = new LiveTvPlaybackEngine({ shakaLoader: async () => module });
+                const observed: string[] = [];
+                engine.on('error', (err) => observed.push(String(err)));
+                await engine.load(new FakeVideoElement() as unknown as HTMLVideoElement, {
+                        channel: { id: '156', name: 'Star Gold HD' },
+                        sources: [{ url: SIGNED }],
+                        drm: { type: 'clearkey', keyId: FIXTURE_KEY_ID, key: FIXTURE_KEY }
+                });
+                const player = instances[0] as FakeShakaPlayer;
+                player.networking?.emitResponse(SHAKA_REQUEST_TYPE.MANIFEST, {
+                        data: new TextEncoder().encode('<?xml version="1.0"?><MPD>').buffer,
+                        uri: SIGNED
+                });
+                const seg = { uris: ['https://jiotvmblive.cdn.jio.com/bpk-tv/Star_Gold_HD_MOB/WDVLive/dash/s.dash'] };
+                player.networking?.emitRequest(SHAKA_REQUEST_TYPE.SEGMENT, seg);
+                assert.ok(seg.uris[0]?.includes(TOKEN), '14j setup: propagation active (token in the in-memory request only)');
+                // Mid-session network failure — the exact production path.
+                player.emitError({ severity: 2, category: 1, code: 1001, message: `GET ${seg.uris[0]} failed` });
+                await new Promise((resolve) => setTimeout(resolve, 5));
+                assert.equal(engine.getState(), 'error', '14j: network failure surfaced (production path)');
+                assert.ok(observed.length >= 1, '14j: error event observed');
+                for (const text of observed) {
+                        assert.ok(!text.includes(TOKEN), '14j: token never in error payloads');
+                        assert.ok(!text.includes('__hdnea__'), '14j: param name never in error payloads');
+                }
+                engine.destroy();
+        } finally {
+                restore();
+        }
+        ok('14j. token never logged or exposed through any engine failure path');
+}
+
+{
+        // 14k — requirement 7 (source level): dash-auth.ts hygiene — the
+        // module cannot log, persist, or transmit anything.
+        const here = path.dirname(fileURLToPath(import.meta.url));
+        const moduleDir = path.resolve(here, '../src/lib/client/live-tv');
+        const src = readFileSync(path.join(moduleDir, 'dash-auth.ts'), 'utf8');
+        assert.ok(!/console\./.test(src), '14k: zero console calls');
+        assert.ok(!/localStorage\.|sessionStorage\.|indexedDB\./i.test(src), '14k: no storage APIs');
+        assert.ok(!/fetch\(|XMLHttpRequest|sendBeacon/.test(src), '14k: never fetches/transmits (no new token acquisition)');
+        assert.ok(!src.includes('livetgtv.lovable.app'), '14k: no LiveGT hostname');
+        assert.ok(!/\/api\/public/.test(src), '14k: no LiveGT API paths');
+        assert.ok(!/@supabase|createClient/.test(src), '14k: no Supabase');
+        assert.ok(!/from 'shaka-player'|import\('shaka-player'\)/.test(src), '14k: no shaka imports (pure module)');
+        assert.ok(!/\.message\b/.test(src), '14k: never reads error.message');
+        // The allowlist is exactly the one proven parameter.
+        const allowlist = src.match(/DASH_AUTH_QUERY_PARAMS[^=]*=\s*\[([^\]]*)\]/)?.[1] ?? '';
+        assert.ok(allowlist.includes("'__hdnea__'") && !allowlist.includes("'hdnea'"), "14k: allowlist is exactly ['__hdnea__']");
+        ok('14k. dash-auth.ts source hygiene: no logging/persistence/fetching/leakage surface');
+}
+
+{
+        // 14l — defensive installation: anything missing/throwing leaves
+        // playback EXACTLY as documented (fallback strictly best-effort).
+        assert.equal(installDashAuthFilters(null, 'https://x/y.mpd?__hdnea__=T'), null, '14l: null player → no install');
+        assert.equal(installDashAuthFilters({}, 'https://x/y.mpd?__hdnea__=T'), null, '14l: no getNetworkingEngine → no install');
+        assert.equal(
+                installDashAuthFilters({ getNetworkingEngine: () => null }, 'https://x/y.mpd?__hdnea__=T'),
+                null,
+                '14l: null engine → no install'
+        );
+        assert.equal(
+                installDashAuthFilters(
+                        {
+                                getNetworkingEngine: () => {
+                                        throw new Error('boom');
+                                }
+                        },
+                        'https://x/y.mpd?__hdnea__=T'
+                ),
+                null,
+                '14l: throwing getter → no install (never breaks playback)'
+        );
+        assert.equal(installDashAuthFilters({ getNetworkingEngine: () => ({}) as object }, 'https://x/y.mpd?__hdnea__=T'), null, '14l: malformed engine → no install');
+        const restore = installBrowserRuntime();
+        try {
+                // A player WITHOUT a networking engine still loads exactly as
+                // documented (LT-8 contract preserved when the fallback can't arm).
+                const { module, instances } = makeShakaModule({ noNetworkingEngine: true });
+                const engine = new LiveTvPlaybackEngine({ shakaLoader: async () => module });
+                await engine.load(new FakeVideoElement() as unknown as HTMLVideoElement, resolution());
+                const player = instances[0] as FakeShakaPlayer;
+                assert.equal(player.loadCalls[0]?.mimeType, undefined, '14l: bare load preserved');
+                assert.deepEqual(player.callLog, ['attach', 'load'], '14l: documented sequence preserved');
+                assert.equal(engine.getState(), 'loaded', '14l: session loaded without filters');
+                engine.destroy();
+        } finally {
+                restore();
+        }
+        ok('14l. fallback installation is best-effort; documented playback unaffected without it');
 }
 
 console.log(`\nlive_tv_player_test: ${passed} checks passed (LT-3 DASH/ClearKey playback engine contract).`);
