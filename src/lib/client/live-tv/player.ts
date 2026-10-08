@@ -58,14 +58,17 @@
 // SECURITY (plan §10/§15):
 //   * No proxying: the browser fetches the signed MPD/segments directly
 //     from the LiveGT CDN (decision D3). The ONLY custom networking is
-//     the LT-9 narrowly-scoped signed-query fallback (dash-auth.ts):
+//     the LT-9/LT-11 narrowly-scoped signed-query fallback (media-auth.ts):
 //     two Shaka networking filters that append the PROVEN auth
 //     parameter (`__hdnea__`) — byte-exact, from the already-resolved
-//     source URL — to SAME-ORIGIN DASH SEGMENT requests that lack it
+//     source URL — to SAME-ORIGIN requests that lack it: DASH segments
+//     (LT-9, India production-proven) and HLS variant playlists +
+//     segments (LT-11; same Shaka WHATWG relative-resolution query drop,
+//     same token-enforcing Jio host, upstream reference player design).
 //     (India production evidence 2026-10-08: Jio CDN 403 "No sub Token"
 //     on segment requests whose query Shaka dropped per WHATWG relative
-//     resolution). HLS, DRM/license, cross-origin and every other
-//     request type are untouched; no license servers; ClearKey config
+//     resolution.) DRM/license, cross-origin and every other request
+//     type are untouched; no license servers; ClearKey config
 //     ONLY.
 //   * ClearKey key/keyId and signed URLs exist in runtime memory only:
 //     they are handed to Shaka's `configure()` and never written anywhere
@@ -86,7 +89,7 @@
 
 import type { LiveTvPlaybackResolution, LiveTvPlaybackSource } from './types';
 import { LiveTvPlaybackError } from './player-errors';
-import { installDashAuthFilters, type ShakaNetworkingEngineLike } from './dash-auth';
+import { installMediaAuthFilters, type ShakaNetworkingEngineLike } from './media-auth';
 
 // ---------------------------------------------------------------------------
 // Structural Shaka types — Mavero-owned shapes, never shaka.* imports.
@@ -728,12 +731,13 @@ export class LiveTvPlaybackEngine {
                         // 6. Create the player and take ownership.
                         const player = new module.Player();
                         this.player = player;
-                        // 6b. LT-9 signed-DASH query fallback (dash-auth.ts): install the
-                        //     two networking filters BEFORE load so the manifest response
-                        //     is identified. Best-effort and totally defensive — when
-                        //     nothing can be installed, playback is exactly as documented.
-                        //     The filters die with this player instance on teardown.
-                        installDashAuthFilters(player, sourceUrl);
+                        // 6b. LT-9/LT-11 signed-query fallback (media-auth.ts): install
+                        //     the two networking filters BEFORE load so the manifest
+                        //     response is identified. Best-effort and totally defensive
+                        //     — when nothing can be installed, playback is exactly as
+                        //     documented. The filters die with this player instance on
+                        //     teardown.
+                        installMediaAuthFilters(player, sourceUrl);
                         const onPlayerError = (event: ShakaErrorEventLike) => {
                                 if (this.destroyed || generation !== this.generation || this.player !== player) return;
                                 const normalized = normalizeShakaError(event?.detail, 'playback');

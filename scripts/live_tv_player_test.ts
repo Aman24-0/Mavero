@@ -51,15 +51,17 @@ import {
         type ShakaModuleLike
 } from '$lib/client/live-tv/player';
 import {
-        applyDashAuthManifestResponse,
-        applyDashAuthSegmentRequest,
-        createDashAuthSession,
-        installDashAuthFilters,
+        applyMediaAuthManifestResponse,
+        applyMediaAuthRequest,
+        createMediaAuthSession,
+        installMediaAuthFilters,
         looksLikeDashManifest,
-        propagateDashSegmentAuth,
+        looksLikeHlsPlaylist,
+        propagateHlsPlaylistAuth,
+        propagateMediaSegmentAuth,
         SHAKA_REQUEST_TYPE,
-        type DashAuthSession
-} from '$lib/client/live-tv/dash-auth';
+        type MediaAuthSession
+} from '$lib/client/live-tv/media-auth';
 import {
         LiveTvPlaybackError,
         isLiveTvPlaybackError,
@@ -1218,7 +1220,7 @@ async function expectPlaybackError(
         const sources: Record<string, string> = {
                 player: readFileSync(path.join(moduleDir, 'player.ts'), 'utf8'),
                 playerErrors: readFileSync(path.join(moduleDir, 'player-errors.ts'), 'utf8'),
-                dashAuth: readFileSync(path.join(moduleDir, 'dash-auth.ts'), 'utf8')
+                dashAuth: readFileSync(path.join(moduleDir, 'media-auth.ts'), 'utf8')
         };
         const all = Object.values(sources).join('\n');
 
@@ -1515,7 +1517,8 @@ async function expectPlaybackError(
 // manifest query; without DASH-IF UrlQueryInfo in the MPD, plain Shaka
 // (including the documented example) cannot satisfy the CDN.
 //
-// The fix (dash-auth.ts): response filter learns "is DASH" + final
+// The fix (media-auth.ts, formerly dash-auth.ts — LT-11 generalized):
+// response filter learns "is DASH" + final
 // manifest URI; request filter appends ONLY `__hdnea__` (allowlist —
 // census 30/30 source URLs carry exactly that param), byte-exact from
 // the already-resolved source URL, to SAME-ORIGIN SEGMENT requests
@@ -1530,24 +1533,24 @@ async function expectPlaybackError(
         // requests receive the required auth query (byte-exact token).
         const STAR_GOLD_URL = 'https://jiotvmblive.cdn.jio.com/bpk-tv/Star_Gold_HD_MOB/WDVLive/index.mpd?__hdnea__=FAKE-TOKEN-156';
         const STAR_GOLD_SEGMENT = 'https://jiotvmblive.cdn.jio.com/bpk-tv/Star_Gold_HD_MOB/WDVLive/dash/Star_Gold_HD_MOB-audio_1000.dash';
-        const session = createDashAuthSession(STAR_GOLD_URL);
-        applyDashAuthManifestResponse(SHAKA_REQUEST_TYPE.MANIFEST, {
+        const session = createMediaAuthSession(STAR_GOLD_URL);
+        applyMediaAuthManifestResponse(SHAKA_REQUEST_TYPE.MANIFEST, {
                 data: new TextEncoder().encode('<?xml version="1.0" encoding="utf-8"?>\n<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static">').buffer,
                 uri: STAR_GOLD_URL
         }, session);
         assert.equal(session.isDash, true, '14a setup: MPD body identified as DASH');
         assert.equal(session.manifestUri, STAR_GOLD_URL, '14a setup: final manifest URI recorded');
-        const propagated = propagateDashSegmentAuth(STAR_GOLD_SEGMENT, session);
+        const propagated = propagateMediaSegmentAuth(STAR_GOLD_SEGMENT, session);
         assert.equal(propagated, `${STAR_GOLD_SEGMENT}?__hdnea__=FAKE-TOKEN-156`, '14a: same-origin relative DASH segment gains the signed query byte-exact');
         // The same-origin base is the POST-REDIRECT manifest URI (Shaka's
         // resolution base), which may differ from the source URL's origin.
-        const redirected = createDashAuthSession(STAR_GOLD_URL);
-        applyDashAuthManifestResponse(SHAKA_REQUEST_TYPE.MANIFEST, {
+        const redirected = createMediaAuthSession(STAR_GOLD_URL);
+        applyMediaAuthManifestResponse(SHAKA_REQUEST_TYPE.MANIFEST, {
                 data: new TextEncoder().encode('<?xml version="1.0"?><MPD profiles="urn:mpeg:dash:profile:isoff-live:2011">').buffer,
                 uri: 'https://jiotvmblive.cdn.jio.com/bpk-tv/Star_Gold_HD_MOB/WDVLive/redirected.mpd'
         }, redirected);
         assert.equal(
-                propagateDashSegmentAuth('https://jiotvmblive.cdn.jio.com/bpk-tv/Star_Gold_HD_MOB/WDVLive/dash/seg_1.dash', redirected),
+                propagateMediaSegmentAuth('https://jiotvmblive.cdn.jio.com/bpk-tv/Star_Gold_HD_MOB/WDVLive/dash/seg_1.dash', redirected),
                 'https://jiotvmblive.cdn.jio.com/bpk-tv/Star_Gold_HD_MOB/WDVLive/dash/seg_1.dash?__hdnea__=FAKE-TOKEN-156',
                 '14a: post-redirect manifest URI is the same-origin anchor'
         );
@@ -1557,16 +1560,16 @@ async function expectPlaybackError(
 {
         // 14b — requirement 3: existing query parameters on the segment
         // request are preserved (appended, never replaced).
-        const session = createDashAuthSession('https://cdn.example.com/live/index.mpd?__hdnea__=FAKE-TOKEN');
-        applyDashAuthManifestResponse(SHAKA_REQUEST_TYPE.MANIFEST, {
+        const session = createMediaAuthSession('https://cdn.example.com/live/index.mpd?__hdnea__=FAKE-TOKEN');
+        applyMediaAuthManifestResponse(SHAKA_REQUEST_TYPE.MANIFEST, {
                 data: new TextEncoder().encode('<?xml version="1.0"?><MPD>').buffer,
                 uri: 'https://cdn.example.com/live/index.mpd'
         }, session);
-        const out = propagateDashSegmentAuth('https://cdn.example.com/live/seg.dash?foo=1&bar=2', session);
+        const out = propagateMediaSegmentAuth('https://cdn.example.com/live/seg.dash?foo=1&bar=2', session);
         assert.equal(out, 'https://cdn.example.com/live/seg.dash?foo=1&bar=2&__hdnea__=FAKE-TOKEN', '14b: existing params kept, auth appended');
         // Empty-query edge: URL ending in bare '?'.
         assert.equal(
-                propagateDashSegmentAuth('https://cdn.example.com/live/seg.dash?', session),
+                propagateMediaSegmentAuth('https://cdn.example.com/live/seg.dash?', session),
                 'https://cdn.example.com/live/seg.dash?__hdnea__=FAKE-TOKEN',
                 '14b: bare-? joiner handled'
         );
@@ -1577,18 +1580,18 @@ async function expectPlaybackError(
         // 14c — requirement 4 + standards-first: a segment URL that already
         // carries the auth parameter (standard DASH-IF UrlQueryInfo handling)
         // is NEVER duplicated or overwritten — the standard mechanism wins.
-        const session = createDashAuthSession('https://cdn.example.com/live/index.mpd?__hdnea__=FAKE-A');
-        applyDashAuthManifestResponse(SHAKA_REQUEST_TYPE.MANIFEST, {
+        const session = createMediaAuthSession('https://cdn.example.com/live/index.mpd?__hdnea__=FAKE-A');
+        applyMediaAuthManifestResponse(SHAKA_REQUEST_TYPE.MANIFEST, {
                 data: new TextEncoder().encode('<?xml version="1.0"?><MPD>').buffer,
                 uri: 'https://cdn.example.com/live/index.mpd'
         }, session);
         assert.equal(
-                propagateDashSegmentAuth('https://cdn.example.com/live/seg.m4s?__hdnea__=STANDARD-HANDLED', session),
+                propagateMediaSegmentAuth('https://cdn.example.com/live/seg.m4s?__hdnea__=STANDARD-HANDLED', session),
                 'https://cdn.example.com/live/seg.m4s?__hdnea__=STANDARD-HANDLED',
                 '14c: already-present auth param respected (UrlQueryInfo wins)'
         );
         assert.equal(
-                propagateDashSegmentAuth('https://cdn.example.com/live/seg.m4s?x=1&__hdnea__=Y', session),
+                propagateMediaSegmentAuth('https://cdn.example.com/live/seg.m4s?x=1&__hdnea__=Y', session),
                 'https://cdn.example.com/live/seg.m4s?x=1&__hdnea__=Y',
                 '14c: no duplicate appended when present mid-query'
         );
@@ -1598,8 +1601,8 @@ async function expectPlaybackError(
 {
         // 14d — requirement 5: the token is NEVER propagated to another
         // origin/hostname (cross-origin leak lock).
-        const session = createDashAuthSession('https://jiotvmblive.cdn.jio.com/bpk-tv/x/index.mpd?__hdnea__=FAKE-TOKEN');
-        applyDashAuthManifestResponse(SHAKA_REQUEST_TYPE.MANIFEST, {
+        const session = createMediaAuthSession('https://jiotvmblive.cdn.jio.com/bpk-tv/x/index.mpd?__hdnea__=FAKE-TOKEN');
+        applyMediaAuthManifestResponse(SHAKA_REQUEST_TYPE.MANIFEST, {
                 data: new TextEncoder().encode('<?xml version="1.0"?><MPD>').buffer,
                 uri: 'https://jiotvmblive.cdn.jio.com/bpk-tv/x/index.mpd'
         }, session);
@@ -1612,44 +1615,62 @@ async function expectPlaybackError(
                 ''
         ];
         for (const url of foreign) {
-                assert.equal(propagateDashSegmentAuth(url, session), url, `14d: foreign/unparseable URL untouched (${url.slice(0, 48) || '(empty)'})`);
+                assert.equal(propagateMediaSegmentAuth(url, session), url, `14d: foreign/unparseable URL untouched (${url.slice(0, 48) || '(empty)'})`);
         }
         ok('14d. no token propagation to any other origin/hostname/port');
 }
 
 {
-        // 14e — requirement 8: HLS is NEVER affected. The fallback only
-        // activates after a MANIFEST response body was identified as a DASH
-        // MPD; HLS playlists ('#EXTM3U') are rejected. (Production: HLS
-        // channels like News18 Urdu 1500 play — HLS needs no propagation.)
+        // 14e — requirement 8 (EVOLVED by LT-11 §15): the manifest
+        // DETECTION remains protocol-precise — an HLS playlist body is
+        // NEVER identified as DASH (and vice versa). Since LT-11, HLS
+        // sessions have their OWN deliberately-designed propagation
+        // (same-origin variant playlists + segments) — that behavior is
+        // specified and regression-locked in §15 below; this block now
+        // locks only the detection boundary.
         const HLS_URL = 'https://nw18live.cdn.jio.com/bpk-tv/News18_Urdu_NW18_MOB/output01/index.m3u8?__hdnea__=FAKE-TOKEN-1500';
-        const session = createDashAuthSession(HLS_URL);
-        applyDashAuthManifestResponse(SHAKA_REQUEST_TYPE.MANIFEST, {
+        const session = createMediaAuthSession(HLS_URL);
+        applyMediaAuthManifestResponse(SHAKA_REQUEST_TYPE.MANIFEST, {
                 data: new TextEncoder().encode('#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-STREAM-INF:BANDWIDTH=216000\nmedia_video.m3u8').buffer,
                 uri: HLS_URL
         }, session);
         assert.equal(session.isDash, false, '14e: HLS playlist body NOT identified as DASH');
-        assert.equal(session.manifestUri, null, '14e: no manifest URI recorded for HLS');
-        const req = { uris: ['https://nw18live.cdn.jio.com/bpk-tv/News18_Urdu_NW18_MOB/output01/media_video.m3u8'] };
-        applyDashAuthSegmentRequest(SHAKA_REQUEST_TYPE.SEGMENT, req, session);
-        assert.equal(req.uris[0], 'https://nw18live.cdn.jio.com/bpk-tv/News18_Urdu_NW18_MOB/output01/media_video.m3u8', '14e: HLS media request untouched');
+        assert.equal(session.isHls, true, '14e: HLS playlist body identified as HLS (LT-11)');
+        assert.equal(session.manifestUri, HLS_URL, '14e: master playlist URI recorded as the anchor (LT-11)');
+        // A DASH session is never armed by an HLS body nor vice versa.
+        const dashOnly = createMediaAuthSession('https://cdn.example.com/live/index.mpd?__hdnea__=FAKE-T');
+        applyMediaAuthManifestResponse(SHAKA_REQUEST_TYPE.MANIFEST, {
+                data: new TextEncoder().encode('<?xml version="1.0"?><MPD>').buffer,
+                uri: 'https://cdn.example.com/live/index.mpd'
+        }, dashOnly);
+        assert.equal(dashOnly.isDash, true, '14e: MPD body identified as DASH');
+        assert.equal(dashOnly.isHls, false, '14e: MPD body NOT identified as HLS');
         // Manifest-detection unit checks (incl. binary/empty/garbage).
         assert.equal(looksLikeDashManifest(new TextEncoder().encode('<?xml version="1.0" encoding="utf-8"?>\n<MPD xmlns="urn:mpeg:dash:schema:mpd:2011">').buffer), true, '14e: MPD prolog detected');
         assert.equal(looksLikeDashManifest(new TextEncoder().encode('<MPD type="dynamic">').buffer), true, '14e: MPD without prolog detected');
-        assert.equal(looksLikeDashManifest(new TextEncoder().encode('#EXTM3U').buffer), false, '14e: HLS rejected');
+        assert.equal(looksLikeDashManifest(new TextEncoder().encode('#EXTM3U').buffer), false, '14e: HLS rejected by DASH detector');
         assert.equal(looksLikeDashManifest(new TextEncoder().encode('').buffer), false, '14e: empty rejected');
         assert.equal(looksLikeDashManifest(new Uint8Array([0, 1, 2, 3]).buffer), false, '14e: binary rejected');
         assert.equal(looksLikeDashManifest(new Uint8Array([0x3c, 0x4d, 0x50, 0x44, 0x20])), true, '14e: MPD via view (not ArrayBuffer)');
         assert.equal(looksLikeDashManifest(null), false, '14e: null rejected');
-        ok('14e. HLS requests never affected; manifest detection is DASH-precise');
+        // HLS detector unit checks.
+        assert.equal(looksLikeHlsPlaylist(new TextEncoder().encode('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nv.m3u8').buffer), true, '14e: HLS master detected');
+        assert.equal(looksLikeHlsPlaylist(new TextEncoder().encode('#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:4,\nseg0.ts').buffer), true, '14e: HLS media playlist detected');
+        assert.equal(looksLikeHlsPlaylist(new TextEncoder().encode('<?xml version="1.0"?><MPD>').buffer), false, '14e: MPD rejected by HLS detector');
+        assert.equal(looksLikeHlsPlaylist(new Uint8Array([0, 1, 2]).buffer), false, '14e: binary rejected by HLS detector');
+        assert.equal(looksLikeHlsPlaylist(null), false, '14e: null rejected by HLS detector');
+        ok('14e. protocol detection is precise: DASH and HLS detectors are mutually exclusive');
 }
 
 {
-        // 14f — requirement 6 + scope: ONLY RequestType.SEGMENT is modified.
-        // DRM/LICENSE, KEY, manifest, timing and unknown types are untouched
-        // (ClearKey license material never receives CDN tokens).
-        const session = createDashAuthSession('https://cdn.example.com/live/index.mpd?__hdnea__=FAKE-TOKEN');
-        applyDashAuthManifestResponse(SHAKA_REQUEST_TYPE.MANIFEST, {
+        // 14f — requirement 6 + scope (DASH sessions): ONLY
+        // RequestType.SEGMENT is modified. DRM/LICENSE, KEY, MANIFEST,
+        // timing and unknown types are untouched (ClearKey license material
+        // never receives CDN tokens; the MPD request itself already carries
+        // the signed query and is never rewritten). HLS-session MANIFEST
+        // propagation is a deliberate LT-11 addition — covered in §15e.
+        const session = createMediaAuthSession('https://cdn.example.com/live/index.mpd?__hdnea__=FAKE-TOKEN');
+        applyMediaAuthManifestResponse(SHAKA_REQUEST_TYPE.MANIFEST, {
                 data: new TextEncoder().encode('<?xml version="1.0"?><MPD>').buffer,
                 uri: 'https://cdn.example.com/live/index.mpd'
         }, session);
@@ -1662,52 +1683,52 @@ async function expectPlaybackError(
         ];
         for (const [type, label] of types) {
                 const req = { uris: ['https://cdn.example.com/live/whatever'] };
-                applyDashAuthSegmentRequest(type, req, session);
+                applyMediaAuthRequest(type, req, session);
                 assert.equal(req.uris[0], 'https://cdn.example.com/live/whatever', `14f: ${label} request untouched`);
         }
         const seg = { uris: ['https://cdn.example.com/live/seg.m4s'] };
-        applyDashAuthSegmentRequest(SHAKA_REQUEST_TYPE.SEGMENT, seg, session);
-        assert.equal(seg.uris[0], 'https://cdn.example.com/live/seg.m4s?__hdnea__=FAKE-TOKEN', '14f: SEGMENT request is the only modified type');
+        applyMediaAuthRequest(SHAKA_REQUEST_TYPE.SEGMENT, seg, session);
+        assert.equal(seg.uris[0], 'https://cdn.example.com/live/seg.m4s?__hdnea__=FAKE-TOKEN', '14f: SEGMENT request is the only modified type (DASH)');
         // Multiple candidate uris (Shaka fallback list) — each judged independently.
         const multi = {
                 uris: ['https://cdn.example.com/live/a.m4s', 'https://other.example.com/b.m4s', 'https://cdn.example.com/live/c.m4s?__hdnea__=K']
         };
-        applyDashAuthSegmentRequest(SHAKA_REQUEST_TYPE.SEGMENT, multi, session);
+        applyMediaAuthRequest(SHAKA_REQUEST_TYPE.SEGMENT, multi, session);
         assert.deepEqual(multi.uris, [
                 'https://cdn.example.com/live/a.m4s?__hdnea__=FAKE-TOKEN',
                 'https://other.example.com/b.m4s',
                 'https://cdn.example.com/live/c.m4s?__hdnea__=K'
         ], '14f: per-uri independent judgment (same-origin + not-already-present)');
-        ok('14f. only SEGMENT requests modified; DRM/license/manifest/timing untouched');
+        ok('14f. DASH sessions: only SEGMENT requests modified; DRM/license/manifest/timing untouched');
 }
 
 {
         // 14g — requirement 1: successful channels are unaffected.
         // (a) Unsigned sources (no allowlisted param) — nothing to propagate.
-        const unsigned = createDashAuthSession('https://times-ott-live.akamaized.net/live/index.mpd');
-        applyDashAuthManifestResponse(SHAKA_REQUEST_TYPE.MANIFEST, {
+        const unsigned = createMediaAuthSession('https://times-ott-live.akamaized.net/live/index.mpd');
+        applyMediaAuthManifestResponse(SHAKA_REQUEST_TYPE.MANIFEST, {
                 data: new TextEncoder().encode('<?xml version="1.0"?><MPD>').buffer,
                 uri: 'https://times-ott-live.akamaized.net/live/index.mpd'
         }, unsigned);
         assert.equal(
-                propagateDashSegmentAuth('https://times-ott-live.akamaized.net/live/seg.m4s', unsigned),
+                propagateMediaSegmentAuth('https://times-ott-live.akamaized.net/live/seg.m4s', unsigned),
                 'https://times-ott-live.akamaized.net/live/seg.m4s',
                 '14g: unsigned channel untouched'
         );
         // (b) Non-auth query params on the SOURCE are never copied (allowlist).
-        const extra = createDashAuthSession('https://cdn.example.com/live/index.mpd?foo=1&__hdnea__=FAKE-T&bar=2');
-        applyDashAuthManifestResponse(SHAKA_REQUEST_TYPE.MANIFEST, {
+        const extra = createMediaAuthSession('https://cdn.example.com/live/index.mpd?foo=1&__hdnea__=FAKE-T&bar=2');
+        applyMediaAuthManifestResponse(SHAKA_REQUEST_TYPE.MANIFEST, {
                 data: new TextEncoder().encode('<?xml version="1.0"?><MPD>').buffer,
                 uri: 'https://cdn.example.com/live/index.mpd'
         }, extra);
         assert.equal(
-                propagateDashSegmentAuth('https://cdn.example.com/live/seg.m4s', extra),
+                propagateMediaSegmentAuth('https://cdn.example.com/live/seg.m4s', extra),
                 'https://cdn.example.com/live/seg.m4s?__hdnea__=FAKE-T',
                 '14g: ONLY the allowlisted auth param propagates (foo/bar never copied)'
         );
         // (c) Non-MANIFEST response types never arm the session.
-        const neverArmed = createDashAuthSession('https://cdn.example.com/live/index.mpd?__hdnea__=FAKE-T');
-        applyDashAuthManifestResponse(SHAKA_REQUEST_TYPE.SEGMENT, {
+        const neverArmed = createMediaAuthSession('https://cdn.example.com/live/index.mpd?__hdnea__=FAKE-T');
+        applyMediaAuthManifestResponse(SHAKA_REQUEST_TYPE.SEGMENT, {
                 data: new TextEncoder().encode('<?xml version="1.0"?><MPD>').buffer,
                 uri: 'https://cdn.example.com/live/index.mpd'
         }, neverArmed);
@@ -1849,11 +1870,11 @@ async function expectPlaybackError(
 }
 
 {
-        // 14k — requirement 7 (source level): dash-auth.ts hygiene — the
+        // 14k — requirement 7 (source level): media-auth.ts hygiene — the
         // module cannot log, persist, or transmit anything.
         const here = path.dirname(fileURLToPath(import.meta.url));
         const moduleDir = path.resolve(here, '../src/lib/client/live-tv');
-        const src = readFileSync(path.join(moduleDir, 'dash-auth.ts'), 'utf8');
+        const src = readFileSync(path.join(moduleDir, 'media-auth.ts'), 'utf8');
         assert.ok(!/console\./.test(src), '14k: zero console calls');
         assert.ok(!/localStorage\.|sessionStorage\.|indexedDB\./i.test(src), '14k: no storage APIs');
         assert.ok(!/fetch\(|XMLHttpRequest|sendBeacon/.test(src), '14k: never fetches/transmits (no new token acquisition)');
@@ -1863,23 +1884,23 @@ async function expectPlaybackError(
         assert.ok(!/from 'shaka-player'|import\('shaka-player'\)/.test(src), '14k: no shaka imports (pure module)');
         assert.ok(!/\.message\b/.test(src), '14k: never reads error.message');
         // The allowlist is exactly the one proven parameter.
-        const allowlist = src.match(/DASH_AUTH_QUERY_PARAMS[^=]*=\s*\[([^\]]*)\]/)?.[1] ?? '';
+        const allowlist = src.match(/AUTH_QUERY_PARAMS[^=]*=\s*\[([^\]]*)\]/)?.[1] ?? '';
         assert.ok(allowlist.includes("'__hdnea__'") && !allowlist.includes("'hdnea'"), "14k: allowlist is exactly ['__hdnea__']");
-        ok('14k. dash-auth.ts source hygiene: no logging/persistence/fetching/leakage surface');
+        ok('14k. media-auth.ts source hygiene: no logging/persistence/fetching/leakage surface');
 }
 
 {
         // 14l — defensive installation: anything missing/throwing leaves
         // playback EXACTLY as documented (fallback strictly best-effort).
-        assert.equal(installDashAuthFilters(null, 'https://x/y.mpd?__hdnea__=T'), null, '14l: null player → no install');
-        assert.equal(installDashAuthFilters({}, 'https://x/y.mpd?__hdnea__=T'), null, '14l: no getNetworkingEngine → no install');
+        assert.equal(installMediaAuthFilters(null, 'https://x/y.mpd?__hdnea__=T'), null, '14l: null player → no install');
+        assert.equal(installMediaAuthFilters({}, 'https://x/y.mpd?__hdnea__=T'), null, '14l: no getNetworkingEngine → no install');
         assert.equal(
-                installDashAuthFilters({ getNetworkingEngine: () => null }, 'https://x/y.mpd?__hdnea__=T'),
+                installMediaAuthFilters({ getNetworkingEngine: () => null }, 'https://x/y.mpd?__hdnea__=T'),
                 null,
                 '14l: null engine → no install'
         );
         assert.equal(
-                installDashAuthFilters(
+                installMediaAuthFilters(
                         {
                                 getNetworkingEngine: () => {
                                         throw new Error('boom');
@@ -1890,7 +1911,7 @@ async function expectPlaybackError(
                 null,
                 '14l: throwing getter → no install (never breaks playback)'
         );
-        assert.equal(installDashAuthFilters({ getNetworkingEngine: () => ({}) as object }, 'https://x/y.mpd?__hdnea__=T'), null, '14l: malformed engine → no install');
+        assert.equal(installMediaAuthFilters({ getNetworkingEngine: () => ({}) as object }, 'https://x/y.mpd?__hdnea__=T'), null, '14l: malformed engine → no install');
         const restore = installBrowserRuntime();
         try {
                 // A player WITHOUT a networking engine still loads exactly as
@@ -1909,4 +1930,308 @@ async function expectPlaybackError(
         ok('14l. fallback installation is best-effort; documented playback unaffected without it');
 }
 
-console.log(`\nlive_tv_player_test: ${passed} checks passed (LT-3 DASH/ClearKey playback engine contract).`);
+// ============================================================
+// §15 — LT-11 generic HLS query-auth propagation regression
+//
+// India production evidence (2026-10-08, LT-10/LT-11): B4U Music (183)
+// — HLS on jiotvmblive.cdn.jio.com (HLSPartner) — FAILS in India, while
+// the HLS control on a DIFFERENT host (News18 Urdu 1500, nw18live) plays
+// continuously and DASH on the SAME host needed segment tokens (LT-9,
+// production-proven). Mechanism (shaka-player 5.2.12 source, verified):
+// the HLS parser resolves variant/segment refs through the SAME
+// resolveUris → new URL(relative, base) — the master's `__hdnea__` query
+// is dropped for every relative child ref; the only standard HLS
+// propagation is a playlist-declared #EXT-X-DEFINE:QUERYPARAM (upstream's
+// choice, absent). Reference design (LiveGT's own embed player, decoded
+// from their production bundles): their Shaka request filter propagates
+// their credential to MANIFEST and SEGMENT requests for BOTH protocols.
+//
+// The LT-11 fix (media-auth.ts): HLS master-playlist response arms an
+// HLS session; the SAME-ORIGIN variant playlists (RequestType.MANIFEST)
+// and segments (RequestType.SEGMENT) gain the allowlisted auth param —
+// byte-exact from the resolved source URL, never duplicated, never
+// cross-origin. The MASTER itself already carries the query from the
+// source URL (already-present guard → no-op).
+//
+// Fixtures are SYNTHETIC: real observed host/path STRUCTURE, FAKE token
+// values, never fetched.
+// ============================================================
+{
+        // 15a — B4U-class: HLS master arms the session; same-origin variant
+        // playlist (MANIFEST type) and media segment (SEGMENT type) requests
+        // gain the auth query byte-exact.
+        const B4U_URL = 'https://jiotvmblive.cdn.jio.com/bpk-tv/b4u_music/HLSPartner/index.m3u8?__hdnea__=FAKE-TOKEN-183';
+        const session = createMediaAuthSession(B4U_URL);
+        applyMediaAuthManifestResponse(SHAKA_REQUEST_TYPE.MANIFEST, {
+                data: new TextEncoder().encode('#EXTM3U\n#EXT-X-VERSION:6\n#EXT-X-STREAM-INF:BANDWIDTH=722000,RESOLUTION=640x360\nb4u_music_360p/index.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=1456000,RESOLUTION=854x480\nb4u_music_480p/index.m3u8').buffer,
+                uri: B4U_URL
+        }, session);
+        assert.equal(session.isHls, true, '15a: HLS master body identified');
+        assert.equal(session.manifestUri, B4U_URL, '15a: master playlist is the anchor');
+        assert.equal(
+                propagateHlsPlaylistAuth('https://jiotvmblive.cdn.jio.com/bpk-tv/b4u_music/HLSPartner/b4u_music_480p/index.m3u8', session),
+                'https://jiotvmblive.cdn.jio.com/bpk-tv/b4u_music/HLSPartner/b4u_music_480p/index.m3u8?__hdnea__=FAKE-TOKEN-183',
+                '15a: same-origin variant playlist (MANIFEST type) gains the signed query'
+        );
+        assert.equal(
+                propagateMediaSegmentAuth('https://jiotvmblive.cdn.jio.com/bpk-tv/b4u_music/HLSPartner/b4u_music_480p/seg-1000.ts', session),
+                'https://jiotvmblive.cdn.jio.com/bpk-tv/b4u_music/HLSPartner/b4u_music_480p/seg-1000.ts?__hdnea__=FAKE-TOKEN-183',
+                '15a: same-origin HLS media segment (SEGMENT type) gains the signed query'
+        );
+        ok('15a. B4U-class HLS: variant playlists and segments receive the required auth query');
+}
+
+{
+        // 15b — the master's own MANIFEST request and existing query
+        // parameters are never rewritten: the master already carries the
+        // signed query from the source URL (already-present guard), and any
+        // pre-existing params on child requests are preserved.
+        const MASTER = 'https://jiotvmblive.cdn.jio.com/bpk-tv/b4u_music/HLSPartner/index.m3u8?__hdnea__=FAKE-TOKEN-183';
+        const session = createMediaAuthSession(MASTER);
+        applyMediaAuthManifestResponse(SHAKA_REQUEST_TYPE.MANIFEST, {
+                data: new TextEncoder().encode('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nv.m3u8').buffer,
+                uri: MASTER
+        }, session);
+        assert.equal(propagateHlsPlaylistAuth(MASTER, session), MASTER, '15b: master request (already signed) never rewritten/duplicated');
+        assert.equal(
+                propagateHlsPlaylistAuth('https://jiotvmblive.cdn.jio.com/bpk-tv/b4u_music/HLSPartner/v.m3u8?foo=1', session),
+                'https://jiotvmblive.cdn.jio.com/bpk-tv/b4u_music/HLSPartner/v.m3u8?foo=1&__hdnea__=FAKE-TOKEN-183',
+                '15b: existing variant params kept, auth appended'
+        );
+        assert.equal(
+                propagateMediaSegmentAuth('https://jiotvmblive.cdn.jio.com/bpk-tv/b4u_music/HLSPartner/seg.ts?', session),
+                'https://jiotvmblive.cdn.jio.com/bpk-tv/b4u_music/HLSPartner/seg.ts?__hdnea__=FAKE-TOKEN-183',
+                '15b: bare-? joiner handled for segments'
+        );
+        ok('15b. signed master never rewritten; existing child params preserved');
+}
+
+{
+        // 15c — standard mechanism wins: a child URL that already carries
+        // the auth param (absolute child URLs with their own query, or a
+        // playlist-declared #EXT-X-DEFINE:QUERYPARAM) is never duplicated.
+        const session = createMediaAuthSession('https://jiotvmblive.cdn.jio.com/bpk-tv/b4u_music/HLSPartner/index.m3u8?__hdnea__=FAKE-A');
+        applyMediaAuthManifestResponse(SHAKA_REQUEST_TYPE.MANIFEST, {
+                data: new TextEncoder().encode('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nv.m3u8').buffer,
+                uri: 'https://jiotvmblive.cdn.jio.com/bpk-tv/b4u_music/HLSPartner/index.m3u8'
+        }, session);
+        assert.equal(
+                propagateHlsPlaylistAuth('https://jiotvmblive.cdn.jio.com/bpk-tv/b4u_music/HLSPartner/v.m3u8?__hdnea__=STANDARD-HANDLED', session),
+                'https://jiotvmblive.cdn.jio.com/bpk-tv/b4u_music/HLSPartner/v.m3u8?__hdnea__=STANDARD-HANDLED',
+                '15c: already-present auth param respected (EXT-X-DEFINE/absolute child query wins)'
+        );
+        assert.equal(
+                propagateMediaSegmentAuth('https://jiotvmblive.cdn.jio.com/bpk-tv/b4u_music/HLSPartner/seg.ts?x=1&__hdnea__=Y', session),
+                'https://jiotvmblive.cdn.jio.com/bpk-tv/b4u_music/HLSPartner/seg.ts?x=1&__hdnea__=Y',
+                '15c: no duplicate appended mid-query'
+        );
+        ok('15c. no duplication/overwrite — standard HLS mechanisms always win');
+}
+
+{
+        // 15d — cross-origin lock: the token NEVER propagates to another
+        // origin/hostname/port — not to variant playlists, not to segments,
+        // and not to another CDN's URL appearing inside the playlist.
+        const session = createMediaAuthSession('https://jiotvmblive.cdn.jio.com/bpk-tv/b4u_music/HLSPartner/index.m3u8?__hdnea__=FAKE-TOKEN');
+        applyMediaAuthManifestResponse(SHAKA_REQUEST_TYPE.MANIFEST, {
+                data: new TextEncoder().encode('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nv.m3u8').buffer,
+                uri: 'https://jiotvmblive.cdn.jio.com/bpk-tv/b4u_music/HLSPartner/index.m3u8'
+        }, session);
+        const foreign = [
+                'https://jiotvmlive.cdn.jio.com/bpk-tv/x/v.m3u8',
+                'https://example.com/playlist.m3u8',
+                'https://jiotvmblive.cdn.jio.com:8443/v.m3u8',
+                'https://license.example.com/drm',
+                '/relative/seg.ts',
+                ''
+        ];
+        for (const url of foreign) {
+                assert.equal(propagateHlsPlaylistAuth(url, session), url, `15d: foreign playlist URL untouched (${url.slice(0, 48) || '(empty)'})`);
+                assert.equal(propagateMediaSegmentAuth(url, session), url, `15d: foreign segment URL untouched (${url.slice(0, 48) || '(empty)'})`);
+        }
+        ok('15d. no token propagation to any other origin/hostname/port (HLS)');
+}
+
+{
+        // 15e — request-type scope for HLS sessions: variant playlists
+        // (MANIFEST) and media segments (SEGMENT) are the ONLY modified
+        // types. DRM/LICENSE, KEY, timing, unknown — untouched. And DASH
+        // sessions NEVER gain MANIFEST-type propagation (an MPD request is
+        // never rewritten; the jiotvpllive 403 class stays an upstream
+        // concern the fallback deliberately does not touch).
+        const hls = createMediaAuthSession('https://jiotvmblive.cdn.jio.com/bpk-tv/b4u_music/HLSPartner/index.m3u8?__hdnea__=FAKE-H');
+        applyMediaAuthManifestResponse(SHAKA_REQUEST_TYPE.MANIFEST, {
+                data: new TextEncoder().encode('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nv.m3u8').buffer,
+                uri: 'https://jiotvmblive.cdn.jio.com/bpk-tv/b4u_music/HLSPartner/index.m3u8'
+        }, hls);
+        for (const [type, label] of [
+                [SHAKA_REQUEST_TYPE.LICENSE, 'LICENSE'],
+                [6, 'KEY'],
+                [4, 'TIMING'],
+                [99, 'UNKNOWN']
+        ] as Array<[number, string]>) {
+                const req = { uris: ['https://jiotvmblive.cdn.jio.com/bpk-tv/b4u_music/HLSPartner/whatever'] };
+                applyMediaAuthRequest(type, req, hls);
+                assert.equal(req.uris[0], 'https://jiotvmblive.cdn.jio.com/bpk-tv/b4u_music/HLSPartner/whatever', `15e: HLS session ${label} request untouched`);
+        }
+        const variant = { uris: ['https://jiotvmblive.cdn.jio.com/bpk-tv/b4u_music/HLSPartner/v.m3u8'] };
+        applyMediaAuthRequest(SHAKA_REQUEST_TYPE.MANIFEST, variant, hls);
+        assert.equal(variant.uris[0], 'https://jiotvmblive.cdn.jio.com/bpk-tv/b4u_music/HLSPartner/v.m3u8?__hdnea__=FAKE-H', '15e: HLS session MANIFEST (variant) request is modified');
+        const dash = createMediaAuthSession('https://jiotvmblive.cdn.jio.com/bpk-tv/Star_Gold_HD_MOB/WDVLive/index.mpd?__hdnea__=FAKE-D');
+        applyMediaAuthManifestResponse(SHAKA_REQUEST_TYPE.MANIFEST, {
+                data: new TextEncoder().encode('<?xml version="1.0"?><MPD>').buffer,
+                uri: 'https://jiotvmblive.cdn.jio.com/bpk-tv/Star_Gold_HD_MOB/WDVLive/index.mpd'
+        }, dash);
+        const mpdReq = { uris: ['https://jiotvmblive.cdn.jio.com/bpk-tv/Star_Gold_HD_MOB/WDVLive/other.mpd'] };
+        applyMediaAuthRequest(SHAKA_REQUEST_TYPE.MANIFEST, mpdReq, dash);
+        assert.equal(mpdReq.uris[0], 'https://jiotvmblive.cdn.jio.com/bpk-tv/Star_Gold_HD_MOB/WDVLive/other.mpd', '15e: DASH session MANIFEST request never modified (LT-9 boundary preserved)');
+        ok('15e. HLS sessions modify MANIFEST(variant)+SEGMENT only; DASH sessions never touch MANIFEST');
+}
+
+{
+        // 15f — unsigned HLS channels are unaffected (nothing to
+        // propagate), and a media-playlist-direct source (no master)
+        // still arms the session and propagates to its segments.
+        const unsigned = createMediaAuthSession('https://cdn.example.com/live/index.m3u8');
+        applyMediaAuthManifestResponse(SHAKA_REQUEST_TYPE.MANIFEST, {
+                data: new TextEncoder().encode('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nv.m3u8').buffer,
+                uri: 'https://cdn.example.com/live/index.m3u8'
+        }, unsigned);
+        assert.equal(
+                propagateMediaSegmentAuth('https://cdn.example.com/live/seg.ts', unsigned),
+                'https://cdn.example.com/live/seg.ts',
+                '15f: unsigned HLS channel untouched'
+        );
+        const mediaDirect = createMediaAuthSession('https://nw18live.cdn.jio.com/bpk-tv/x/output01/index.m3u8?__hdnea__=FAKE-M');
+        applyMediaAuthManifestResponse(SHAKA_REQUEST_TYPE.MANIFEST, {
+                data: new TextEncoder().encode('#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:4\n#EXTINF:4.0,\nseg_001.ts\n#EXT-X-ENDLIST').buffer,
+                uri: 'https://nw18live.cdn.jio.com/bpk-tv/x/output01/index.m3u8'
+        }, mediaDirect);
+        assert.equal(mediaDirect.isHls, true, '15f: media-playlist-direct body identified as HLS');
+        assert.equal(
+                propagateMediaSegmentAuth('https://nw18live.cdn.jio.com/bpk-tv/x/output01/seg_001.ts', mediaDirect),
+                'https://nw18live.cdn.jio.com/bpk-tv/x/output01/seg_001.ts?__hdnea__=FAKE-M',
+                '15f: media-playlist-direct session propagates to segments'
+        );
+        ok('15f. unsigned channels untouched; media-playlist-direct sessions supported');
+}
+
+{
+        // 15g — anchor stability: later media-playlist responses (fetched
+        // as MANIFEST type during live sliding-window updates) NEVER move
+        // the same-origin anchor; a non-MANIFEST response never arms;
+        // a redirect on the master is honored (first identified response).
+        const session = createMediaAuthSession('https://jiotvmblive.cdn.jio.com/bpk-tv/b4u_music/HLSPartner/index.m3u8?__hdnea__=FAKE-T');
+        applyMediaAuthManifestResponse(SHAKA_REQUEST_TYPE.MANIFEST, {
+                data: new TextEncoder().encode('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nv.m3u8').buffer,
+                uri: 'https://jiotvmblive.cdn.jio.com/bpk-tv/b4u_music/HLSPartner/index.m3u8'
+        }, session);
+        // A later media-playlist response on ANOTHER origin must not move the anchor.
+        applyMediaAuthManifestResponse(SHAKA_REQUEST_TYPE.MANIFEST, {
+                data: new TextEncoder().encode('#EXTM3U\n#EXTINF:4,\nseg.ts').buffer,
+                uri: 'https://other-origin.example.com/v.m3u8'
+        }, session);
+        assert.equal(session.manifestUri, 'https://jiotvmblive.cdn.jio.com/bpk-tv/b4u_music/HLSPartner/index.m3u8', '15g: media-playlist response never moves the anchor');
+        // Segment-type responses never arm anything.
+        const notArmed = createMediaAuthSession('https://cdn.example.com/live/index.m3u8?__hdnea__=FAKE-T');
+        applyMediaAuthManifestResponse(SHAKA_REQUEST_TYPE.SEGMENT, {
+                data: new TextEncoder().encode('#EXTM3U\n#EXTINF:4,\nseg.ts').buffer,
+                uri: 'https://cdn.example.com/live/index.m3u8'
+        }, notArmed);
+        assert.equal(notArmed.isHls, false, '15g: SEGMENT response never arms the session');
+        ok('15g. anchor stability: first identified playlist response anchors the session');
+}
+
+{
+        // 15h — engine integration (HLS): the documented contract (attach →
+        // bare load; no DRM configured when none is supplied) is unchanged
+        // with the filters active, and the full HLS propagation path works
+        // through the real engine wiring: master response → variant playlist
+        // + segment requests carry the token; license untouched.
+        const restore = installBrowserRuntime();
+        try {
+                const B4U_URL = 'https://jiotvmblive.cdn.jio.com/bpk-tv/b4u_music/HLSPartner/index.m3u8?__hdnea__=FAKE-TOKEN-183';
+                const { module, instances } = makeShakaModule();
+                const engine = new LiveTvPlaybackEngine({ shakaLoader: async () => module });
+                const video = new FakeVideoElement();
+                await engine.load(video as unknown as HTMLVideoElement, {
+                        channel: { id: '183', name: 'B4U Music', category: 'Music' },
+                        sources: [{ url: B4U_URL }],
+                        drm: null
+                });
+                const player = instances[0] as FakeShakaPlayer;
+                // Documented contract intact.
+                assert.equal(player.loadCalls[0]?.uri, B4U_URL, '15h: sources[0] verbatim');
+                assert.equal(player.loadCalls[0]?.mimeType, undefined, '15h: bare load — no MIME');
+                assert.deepEqual(player.callLog, ['attach', 'load'], '15h: documented order intact (no configure — no DRM supplied)');
+                assert.equal(player.configureCalls.length, 0, '15h: ClearKey NOT configured when drm is null');
+                // Filters: exactly one of each.
+                assert.equal(player.networking?.requestFilters.length, 1, '15h: exactly one request filter');
+                assert.equal(player.networking?.responseFilters.length, 1, '15h: exactly one response filter');
+                // Drive the wiring: master playlist response → variant + segment requests.
+                player.networking?.emitResponse(SHAKA_REQUEST_TYPE.MANIFEST, {
+                        data: new TextEncoder().encode('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1456000,RESOLUTION=854x480\nb4u_music_480p/index.m3u8').buffer,
+                        uri: B4U_URL
+                });
+                const variant = { uris: ['https://jiotvmblive.cdn.jio.com/bpk-tv/b4u_music/HLSPartner/b4u_music_480p/index.m3u8'] };
+                player.networking?.emitRequest(SHAKA_REQUEST_TYPE.MANIFEST, variant);
+                assert.equal(
+                        variant.uris[0],
+                        'https://jiotvmblive.cdn.jio.com/bpk-tv/b4u_music/HLSPartner/b4u_music_480p/index.m3u8?__hdnea__=FAKE-TOKEN-183',
+                        '15h: variant playlist request carries the signed query through the real engine wiring'
+                );
+                const seg = { uris: ['https://jiotvmblive.cdn.jio.com/bpk-tv/b4u_music/HLSPartner/b4u_music_480p/media-1000.ts'] };
+                player.networking?.emitRequest(SHAKA_REQUEST_TYPE.SEGMENT, seg);
+                assert.equal(
+                        seg.uris[0],
+                        'https://jiotvmblive.cdn.jio.com/bpk-tv/b4u_music/HLSPartner/b4u_music_480p/media-1000.ts?__hdnea__=FAKE-TOKEN-183',
+                        '15h: HLS segment request carries the signed query through the real engine wiring'
+                );
+                const license = { uris: ['https://license.example.com/clearkey'] };
+                player.networking?.emitRequest(SHAKA_REQUEST_TYPE.LICENSE, license);
+                assert.equal(license.uris[0], 'https://license.example.com/clearkey', '15h: license request untouched');
+                engine.destroy();
+        } finally {
+                restore();
+        }
+        ok('15h. engine integration: documented contract unchanged, HLS filters wired, variant+segment carry token');
+}
+
+{
+        // 15i — LT-9 DASH production behavior is preserved end-to-end after
+        // the LT-11 generalization (the Star Gold evidence case).
+        const restore = installBrowserRuntime({ eme: true });
+        try {
+                const STAR_GOLD_URL = 'https://jiotvmblive.cdn.jio.com/bpk-tv/Star_Gold_HD_MOB/WDVLive/index.mpd?__hdnea__=FAKE-TOKEN-156';
+                const { module, instances } = makeShakaModule();
+                const engine = new LiveTvPlaybackEngine({ shakaLoader: async () => module });
+                await engine.load(new FakeVideoElement() as unknown as HTMLVideoElement, {
+                        channel: { id: '156', name: 'Star Gold HD' },
+                        sources: [{ url: STAR_GOLD_URL }],
+                        drm: { type: 'clearkey', keyId: FIXTURE_KEY_ID, key: FIXTURE_KEY }
+                });
+                const player = instances[0] as FakeShakaPlayer;
+                player.networking?.emitResponse(SHAKA_REQUEST_TYPE.MANIFEST, {
+                        data: new TextEncoder().encode('<?xml version="1.0"?><MPD type="dynamic">').buffer,
+                        uri: STAR_GOLD_URL
+                });
+                const seg = { uris: ['https://jiotvmblive.cdn.jio.com/bpk-tv/Star_Gold_HD_MOB/WDVLive/dash/Star_Gold_HD_MOB-video_2000.dash'] };
+                player.networking?.emitRequest(SHAKA_REQUEST_TYPE.SEGMENT, seg);
+                assert.equal(
+                        seg.uris[0],
+                        'https://jiotvmblive.cdn.jio.com/bpk-tv/Star_Gold_HD_MOB/WDVLive/dash/Star_Gold_HD_MOB-video_2000.dash?__hdnea__=FAKE-TOKEN-156',
+                        '15i: LT-9 DASH segment propagation preserved after the LT-11 generalization'
+                );
+                // The session was armed as DASH (not HLS): a MANIFEST-type
+                // request stays untouched for it (LT-9 boundary).
+                const mpdReq = { uris: ['https://jiotvmblive.cdn.jio.com/bpk-tv/Star_Gold_HD_MOB/WDVLive/sub.mpd'] };
+                player.networking?.emitRequest(SHAKA_REQUEST_TYPE.MANIFEST, mpdReq);
+                assert.equal(mpdReq.uris[0], 'https://jiotvmblive.cdn.jio.com/bpk-tv/Star_Gold_HD_MOB/WDVLive/sub.mpd', '15i: session armed as DASH — MANIFEST requests untouched');
+                engine.destroy();
+        } finally {
+                restore();
+        }
+        ok('15i. LT-9 DASH propagation behavior preserved byte-for-byte after generalization');
+}
+
+console.log(`\nlive_tv_player_test: ${passed} checks passed (LT-3 DASH/ClearKey + LT-9 DASH auth + LT-11 HLS auth).`);
