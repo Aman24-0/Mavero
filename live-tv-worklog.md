@@ -3524,3 +3524,155 @@ The failing classes are playable through LiveGT's DOCUMENTED V2 relay
 system (same docs page; CORS-open, keyless, first-party). If the project
 ever wants those channels, adopting V2 would be a deliberate product
 decision requiring a new directive — not a silent fallback.
+
+## LT-13 — Targeted Sony SAB SD (channel 154) playback audit & fix
+
+Date: 2026-10-08. Directive: targeted audit of channel 154 ONLY. New India
+production evidence: MPD request 200 OK (application/dash+xml, Set-Cookie
+__hdnea__) but the UI shows "This channel uses protection this browser
+cannot play." across Chrome/Brave/Lemur — i.e. NOT an HTTP/token failure;
+Shaka rejects the content as protected. Fix ONLY if the V1 contract
+legitimately provides everything needed.
+
+### Baseline (Phase 0)
+HEAD 3649755 (in sync with origin; LT-12 docs commit). Worktree: 223
+mode-only diffs, ZERO content diffs (verified: `git diff --shortstat` = 0
+insertions/deletions) + 13 partial-checkout deletions in the hosting
+upload feature (NOT Live TV) — environment artifact, restored from HEAD
+(no user content existed at those paths; nothing extra to commit).
+All Live TV sources + tests re-read. No unrelated work touched.
+
+### Phase 0 — V1 record for 154 (+ working controls 156/173)
+Fresh resolutions (this egress, LiveGT API reachable):
+- 154 "Sony SAB SD": HTTP 200; sources=1,
+  jiotvmblive.cdn.jio.com/bpk-tv/Sony_SAB_MOB/WDVLive/index.mpd (.mpd,
+  query __hdnea__ only; global token len 105, ttl 21600s, acl=/*, hash
+  aa975ae6c929 — byte-identical to 156/173's token);
+  **drm: absent/null** — V1 provides NO keyId/key for 154.
+- 156 "Star Gold HD" (control, works in India): drm type=clearkey,
+  keyId 32-hex (hash 1f6c55f99396), key 32-hex.
+- 173 "Aaj Tak" (control, works in India): drm type=clearkey,
+  keyId 32-hex (hash 6ee17d0f4e6f), key 32-hex.
+No tokens/keys logged; shapes/hashes only.
+
+### Phase 1 — MPD inspection
+Direct MPD fetch from this egress: HTTP 451 for BOTH 154 and 156
+(geo-block; control proves it is egress-geo, not channel-specific).
+India evidence (user DevTools): MPD 200, application/dash+xml,
+Set-Cookie __hdnea__, then Shaka fails with the DRM-category error.
+Structural evidence via the official site's own mirrors (READ-ONLY
+classification probes; nothing integrated):
+- V2 relay /api/public/stream/154 → 302 → the SAME
+  jiotvmblive…/Sony_SAB_MOB/WDVLive/index.mpd (identical upstream).
+- Proxy mirror premiumplugx.top/Geo/sonysab.mpd → 200 MPD:
+  ContentProtection x6 — `urn:mpeg:dash:mp4protection:2011`
+  value="cenc" + Widevine `urn:uuid:EDEF8BA9-…` system id;
+  cenc:default_KID PRESENT (36-char uuid, hash 9ac7acdcdc18);
+  cenc:pssh=0; 3 AdaptationSets / 7 Representations / 0 BaseURL.
+  Proxy-tier keyId (32-hex) == mirror-MPD default_KID (uuid↔hex
+  normalized): TRUE (in-memory comparison).
+=> The upstream MPD is CENC-encrypted with a declared KID — the SAME
+protection family as the working channels (156/173/471). NOT
+Widevine-only: the official site plays this content with plain
+keyId/key (ClearKey), never license servers.
+
+### Phase 2 — API metadata vs MPD
+API says drm=none; MPD says cenc + default_KID (+ Widevine system id,
+no pssh). Exact mismatch: missing `drm` field in the public V1 response
+for 154 while the content is encrypted with the same CENC packaging as
+the channels the API DOES key. Shaka 5.2.12 source analysis
+(dist/shaka-player.ui.js): for a protected manifest + zero drm config,
+chooseKeySystem (zi) picks the Widevine CDM where available
+(Chrome/Brave Android: decodingInfo probe succeeds) → DrmEngine init
+(ei) throws 6012 NO_LICENSE_SERVER_GIVEN for com.widevine.alpha; on
+builds without a usable CDM → 6001 REQUESTED_KEY_SYSTEM_CONFIG_UNAVAILABLE
+(6020 if requestMediaKeySystemAccess is missing); mp4protection-only
+manifests → 6000. Every one of 6000/6001/6010/6012/4008 + DRM category
+maps to `drm_playback_failed` = the exact production message. The
+precise code for 154 needs an India console/MPD capture; the
+classification does not depend on it.
+DETERMINATION: **outcome C** — MPD is CENC(ClearKey-family)-encrypted
+AND the V1 API reports drm=none with no key. Upstream V1 metadata
+defect. (A ruled out: a clear MPD cannot produce a DRM-category error;
+B ruled out: V1 supplies no key to mismatch; D narrowed: Widevine
+system id is declared but the content is CENC — the official tiers
+decrypt it with raw ClearKey material, so it is not Widevine-only;
+E does not apply to the DIRECT tier — see Phase 3.)
+
+### Phase 3 — official direct path (fresh RPC decode, fixed t:9/a)
+The LT-12 TSS fix was completed this session (arrays live under `a`;
+LT-11's decode missed them). Official /watch/154 config:
+- Server 1 (primary V1 direct): bare
+  jiotvmblive…/Sony_SAB_MOB/WDVLive/index.mpd; cookie __hdnea__
+  hash-EQUAL to the public token; **keyId ABSENT, key ABSENT**.
+- Server 2 (premiumplugx.top/Geo/sonysab.mpd): keyId 32-hex hash
+  090a4a39d75a, key present, no cookie.
+- Server 3 (tglivev2.lovable.app/api/public/stream/154): same keyId
+  hash 090a4a39d75a, key present.
+156 control: Server 1 keyId hash 1f6c55f99396 == public API keyId
+(byte-equal); backups carry the same per-channel key.
+RECORDED FACT: the official site's own V1 direct tier for 154 carries
+NO keys — its request is byte-identical to Mavero's (host/path/token
+proven equal), it receives the same encrypted MPD, and its own Shaka
+must fail identically. The official site "plays" 154 only after
+falling back to its private proxy/V2 tiers, which hold the key the
+public API omits. V2 for 154 is a 302 back to the SAME upstream MPD —
+so even the official success is the SAME Jio bytes + a privately-held
+key.
+
+### Phase 4 — decision: NO code change
+1. Mavero's request, resolution and Shaka sequence are byte-exact per
+   the documented contract (re-verified; unchanged since LT-8).
+2. The public V1 contract supplies no key for 154 — there is nothing
+   legitimate to configure. Inventing/transforming keys, proxying via
+   premiumplugx, or switching to V2 are all explicitly forbidden.
+3. Mavero's controlled `drm_playback_failed` refusal is the CORRECT
+   secure behavior for protected content without keys.
+No generic Mavero-side defect exists. Zero source changes.
+
+### Phase 5 — gates (re-run at HEAD, zero LT-13 code changes)
+Environment note: this container lost `pnpm` on PATH; restored via a
+corepack wrapper (packageManager pin pnpm@10.30.3 respected).
+- pnpm check: 0 errors, 0 warnings (after restoring the 13 partial-
+  checkout deletions — hosting feature, unrelated to Live TV).
+- pnpm test: EXIT 0 — live_tv_client 62, live_tv_player 91 (LT-3 +
+  LT-9 + LT-11), live_tv_page 22, hardening 13/13, release audit 6/6;
+  all other suites green.
+- pnpm build: EXIT 0.
+Regression coverage of the discovered condition: already pinned by
+existing tests — live_tv_player_test 2c (DRM category + ALL five DRM
+system codes → drm_playback_failed) and the secret-leak test (Shaka
+message embedding a fixture key must never surface). No new tests
+needed; none added (no code change to cover).
+
+### Phase 6 — India production verification
+Nothing to verify: no fix was deployed (none exists legitimately).
+154 remains in the documented upstream-blocked class. Acceptance
+condition for any future change stays: continuous actual video
+playback in Mavero's own Shaka player — a manifest 200 is NOT success.
+The two legitimate paths that would make 154 playable:
+(a) LiveGT adds the missing `drm` metadata for this class to the
+PUBLIC V1 API (upstream fix — outside Mavero's control; zero Mavero
+change needed, the engine already keys such channels generically);
+(b) a deliberate product decision to adopt the documented V2 relay
+(LT-12 recommendation; requires a new directive — never a silent
+fallback).
+
+### Final report (LT-13)
+- Root cause: channel 154's upstream MPD is CENC-encrypted
+  (mp4protection value="cenc", cenc:default_KID present, Widevine
+  system id declared, no pssh) while the public V1 API returns
+  drm=none and no keyId/key. Shaka 5.2.12 correctly refuses protected
+  content with no usable key system → DRM-category error →
+  `drm_playback_failed` ("This channel uses protection this browser
+  cannot play.").
+- API drm metadata: absent/null (fresh, HTTP 200).
+- MPD protection metadata: as above (structural scan via the
+  official site's own mirror tiers; values never logged).
+- V1 supplies usable keys: NO — for 154 the public API carries none;
+  the key exists only in LiveGT's private proxy/V2 tiers
+  (hash 090a4a39d75a), byte-equal across both.
+- Mavero code changed: NO. Files changed: this worklog only.
+- Tests: full suite green at HEAD (numbers above).
+- Production result: 154 unchanged (upstream-blocked by design of the
+  public V1 metadata); all previously working channels unaffected.
