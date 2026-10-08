@@ -3676,3 +3676,193 @@ fallback).
 - Tests: full suite green at HEAD (numbers above).
 - Production result: 154 unchanged (upstream-blocked by design of the
   public V1 metadata); all previously working channels unaffected.
+
+## LT-14 — Live TV Server 2 / Server 3 playback flow audit (READ-ONLY)
+
+Date: 2026-10-08. Directive: reconstruct LiveGT's official Server 2 / Server 3
+playback flow for Sony SAB SD (154) from fresh India DevTools evidence
+(_serverFn 200 JSON via Cloudflare; premiumplugx playlist.php?route=seg 200
+video/mp4; Server 3 plays with a visibly different UI). Read-only until the
+classification is proven; no production code changes. All tokens/keys/cookies
+redacted throughout (shapes/hashes only).
+
+### Phase 0 — Baseline
+HEAD 2ed7d65 (LT-13 docs commit; LT-13 made no code change). Worktree: 223
+mode-only diffs, ZERO content changes (verified). LT-12/LT-13 worklogs read
+in full. No code touched in LT-14.
+
+### Phase 1 — _serverFn reconstruction (bundles re-verified, no redeploy)
+Official watch bundles fetched fresh: createClientRpc / createServerFn /
+servers chunks BYTE-IDENTICAL to the LT-11/LT-12 copies (sha256-12 + length
+match) — the saved-bundle analysis remains authoritative.
+Request construction (from createClientRpc bundle):
+- fn id `211ba18c…` is a build-time hash baked into servers-DLVujIBr.js:
+  createServerFn({method:GET}).handler(createClientRpc(id)).
+- Call args {data:{id}} → TSS serialization (seroval typed JSON tree,
+  NOT encrypted, no secrets) → JSON.stringify → GET
+  /_serverFn/{id}?payload=<urlencoded-json> with headers
+  x-tsr-serverFn:true, accept: application/x-tss-framed,
+  application/x-ndjson, application/json.
+Response (fresh, 154): HTTP 200, content-type application/json,
+x-tss-serialized:true, server:cloudflare, cf-ray present (matches user
+evidence A). Decoded config (all values redacted):
+  { urls[1]=bare jiotvmblive …/Sony_SAB_MOB/WDVLive/index.mpd,
+    cookie='__hdnea__=<V1 global token>' (len 115),
+    keyId/key ABSENT (primary tier keyless for 154 — LT-13 confirmed),
+    backups[0]{label:'Server 2', urls=[premiumplugx.top/Geo/sonysab.mpd],
+      keyId hex32(hash 090a4a39d75a), key hex32(hash 728178313b1d), cookie:''},
+    backups[1]{label:'Server 3', urls=[tglivev2…/api/public/stream/154],
+      same keyId/key hashes, cookie:''},
+    epg{guide[60],nowPlaying,upNext}, name, logo, category, id }
+Server-list UI (servers chunk): Server 1 = primary; Server 2 = backups[0];
+Server 3 = backups[1]; relabelled by index. ALL THREE play through the SAME
+TgPlayer (own Shaka copy; configure drm.clearKeys when keyId+key present;
+request filter rewrites query to `?`+cookie when cookie non-empty).
+TGFLIX iframe (jjtvxweb.pages.dev/pind?id=) renders ONLY when all servers
+fail or the RPC errors — the ONLY different-UI player on the watch page.
+
+### Phase 2 — Server 2 end-to-end (proven from sandbox, HK egress)
+Request graph: /watch/154 → _serverFn config → TgPlayer loads
+premiumplugx.top/Geo/sonysab.mpd (HTTP 200, application/dash+xml, CORS *) →
+CENC MPD (ContentProtection x6: mp4protection cenc + Widevine uuid,
+cenc:default_KID present, no pssh, 0 BaseURL, 3 AdaptationSets / 7
+Representations) → SegmentTemplate media =
+premiumplugx.top/Geo/playlist.php?route=seg&c=sonysab&u=<url-encoded ORIGINAL
+jiotvmblive segment URL + proxy-own token> → segment GET: HTTP 200
+video/mp4, 9140 bytes, valid 'styp' ISO-BMFF media segment (PROVEN).
+=> Server 2 = THIRD-PARTY PROXY relaying the original Jio CDN segments
+(u= wraps jiotvmblive URLs); ClearKey comes ONLY from the private RPC
+config. The working component = backups[0] URL + privately-distributed key.
+
+### Phase 3 — Server 3 + the V2 public API discovery
+As implemented: TgPlayer loads tglivev2…/api/public/stream/154 (CORS *) →
+302 → the SAME upstream jiotvmblive MPD + V2-OWN global-scope token
+(len 105, hash 340e9884b6fd ≠ V1 global 74dc80b57931) → CENC MPD +
+ClearKey → plays in the SAME TgPlayer UI.
+User's "Server 3 UI visibly different": bundle code proves Server 1/2/3 all
+render the same TgPlayer; the only different-UI player is the TGFLIX iframe
+(after ALL servers fail). Consistent explanation: the Server-3 (V2) attempt
+failed in that India browser → iframe fallback → TGFLIX played (shaka 4.7.11
+via cdnjs, own jstr4web.json catalogue — 1176 entries; entry 154 carries the
+SAME keyId/key hashes 090a4a39d75a/728178313b1d; plus third-party cookie
+minting on allinonereborn2.online and a troopinvariably.com script).
+Residual uncertainty: no India browser available from this sandbox; either
+way the OBSERVED different-UI player is the iframe (category I).
+DECISIVE DISCOVERY — the V2 PUBLIC API (first-party, LiveGT):
+- GET tglivev2…/api/public/channels → 200 {site,count:1209,channels[]},
+  each {id,name,group,logo,type,api,stream} — self-describing.
+- GET tglivev2…/api/public/channel/154 → 200, CORS *, keyless:
+  {id,name,group,logo,type:'dash', keyId hex32, key hex32,
+   drm:{type:'clearkey',keyId,key},
+   stream:{proxy:'…/api/public/stream/154', direct:'jiotvmblive…/index.mpd?
+   __hdnea__=<V2-own token>'}, nowPlaying, upNext, guide[96]}.
+- The published keyId/key are BYTE-IDENTICAL to the private RPC backups
+  (hashes 090a4a39d75a / 728178313b1d) and to TGFLIX's catalogue.
+- stream/154 302-redirects to EXACTLY stream.direct (same token hash) —
+  the proxy endpoint is a thin redirector to the published direct URL.
+- All V2 endpoints CORS * incl. OPTIONS preflight (204, GET/OPTIONS).
+- Premium tier: channel/165 stream.direct = d1g8wgjurz8via.cloudfront.net
+  (the SAME CloudFront upstream premiumplugx fronts) + keyId/key — V2
+  publishes the premium path too, with keys, for every probed channel
+  (154/156/165/183 all carry keys).
+- Metadata quirk: 183 (HLS .m3u8) is labeled type:'dash' — the type field
+  is unreliable; consumers must trust the URL/manifest.
+
+### Phase 4 — Mavero compatibility classification
+- Server 2 (premiumplugx): E server-side proxy/relay; F CENC content whose
+  key is distributed only via the PRIVATE RPC (no public LiveGT endpoint
+  exposes the proxy URL or its key). → Mavero CANNOT consume legitimately.
+  Blocking mechanism: third-party proxy host + private key distribution.
+- Server 3 (tglivev2 V2): C direct browser-playable DASH (302 proxy
+  endpoint or published direct URL) + ClearKey PUBLISHED by a first-party
+  public, CORS-open, keyless API. Mavero's own Shaka CAN consume it:
+  DASH + ClearKey + __hdnea__ query auth is EXACTLY the existing LT-8/LT-9
+  engine pattern; auth propagation already exists; stays 100% client-side;
+  no iframe, no external player, no Widevine/PlayReady needed.
+  Minimum change would be a small generic V2 resolution path — BUT the
+  standing plan (constraint #15: "V2 must never be called by Mavero V1
+  code") forbids it without a new directive.
+- Observed different-UI "Server 3" (TGFLIX iframe): I iframe/embed +
+  third-party player + third-party token minting — forbidden by
+  non-negotiables #2/#3.
+"Can Mavero's own player consume this stream directly?" Server 2: NO.
+Server 3's V2 mechanism: YES (client-side, own Shaka) — gated only by the
+product-scope constraint, not by technology. TGFLIX: NO (and forbidden).
+
+### Phase 5 — Security / legitimate architecture
+V2 endpoints are public, keyless, CORS-open and self-documented via the
+channels catalogue; the ClearKey is PUBLISHED by the service for browser
+playback (identical model to V1's clearkey channels 156/173/471). Consuming
+V2 would be calling a documented public API — no auth bypass, no credential
+forgery, no DRM circumvention. NOT adopted here. The private _serverFn RPC
+is internal machinery (unnecessary — V2 public API carries the same data);
+premiumplugx.top / jjtvxweb / allinonereborn2.online are third-party
+services, not LiveGT-documented endpoints — none integrated. No secrets
+logged or committed (structural shapes + sha256-12 hashes only).
+
+### Phase 6 — Decision
+- Server 2 → OUTCOME C (external proxy + private key distribution):
+  DO NOT IMPLEMENT.
+- TGFLIX iframe (the observed different-UI Server 3) → OUTCOME C
+  (iframe/embed + third-party credentials): DO NOT IMPLEMENT.
+- Server 3 mechanism (V2) → OUTCOME B: a legitimate public relay/resolver
+  that Mavero's own player can call, with the exact contract documented
+  above. Adopting it is ACCEPTABLE ONLY as a deliberate product decision —
+  the standing constraint #15 keeps V2 out of Mavero's V1 code, and LT-12 /
+  LT-13 already recorded this recommendation. Never a silent fallback.
+- Overall: NEEDS PRODUCT DECISION. No code change in LT-14.
+
+### Final report (LT-14, 10 required items)
+1. Server 2 flow: /watch/154 → GET _serverFn config (private RPC) →
+   TgPlayer(Shaka) loads premiumplugx.top/Geo/sonysab.mpd → segments via
+   premiumplugx.top/Geo/playlist.php?route=seg&c=sonysab&u=<original Jio
+   CDN segment URL, url-encoded, proxy-own token> → video/mp4 segments.
+2. Server 2 response type/structure: MPD application/dash+xml, CENC
+   (mp4protection value=cenc + Widevine uuid, default_KID, no pssh), no
+   BaseURL, SegmentTemplate = playlist.php relay; ClearKey supplied by the
+   private RPC backups[0] (keyId hash 090a4a39d75a) — NOT published by any
+   public LiveGT endpoint.
+3. Server 3 flow: TgPlayer loads tglivev2…/api/public/stream/154 (CORS *)
+   → 302 → jiotvmblive …/Sony_SAB_MOB/WDVLive/index.mpd?__hdnea__=<V2-own
+   token> → same CENC MPD + ClearKey from backups[1]. Public equivalent:
+   /api/public/channel/154 publishes {type, drm{clearkey,keyId,key},
+   stream{proxy,direct}} — identical data, no private call needed.
+   The OBSERVED different-UI success = TGFLIX iframe fallback
+   (jjtvxweb.pages.dev, own catalogue + third-party cookie minting).
+4. Manifest/media type: DASH MPD (CENC, 2 audio + 5 video representations,
+   SD ladder) in all tiers; TGFLIX loads the same bare jiotvmblive MPD.
+5. Player technology: official Server 1/2/3 = TgPlayer (own Shaka bundle,
+   clearKeys configure, query-rewrite request filter); TGFLIX iframe =
+   shaka 4.7.11 via cdnjs; V2 site = same stack family (lazy player chunk).
+6. DRM status: CENC ("cenc", default_KID present, Widevine system id
+   declared, no pssh) — decrypted with raw ClearKey by every official tier;
+   never Widevine/PlayReady license servers. The key: V1 public API omits
+   it for 154 (upstream metadata defect, LT-13); V2 public API publishes
+   it; the private RPC distributes it to backups.
+7. Mavero's Shaka can consume: Server 2 NO (private key + third-party
+   proxy); Server 3's V2 mechanism YES (DASH+ClearKey+query auth = the
+   existing engine pattern, client-side only); TGFLIX NO (iframe).
+8. Code change justified: NO — not under the standing constraints. The only
+   legitimate fix path for 154-class channels is a product decision to
+   adopt V2 (or an upstream V1 fix); both were already recorded as
+   recommendations in LT-12/LT-13.
+9. Security/legal: V2 = documented public first-party API (adopting it is a
+   scope decision, not a circumvention); premiumplugx/jjtvxweb/
+   allinonereborn2.online = third-party infrastructure (proxy/player/token
+   minting) — integration would be inappropriate and is forbidden by the
+   standing constraints; private _serverFn = internal, not adopted.
+10. Recommendation: NEEDS PRODUCT DECISION (V2 adoption via a new
+    directive). DO NOT IMPLEMENT Server 2 / TGFLIX paths.
+
+### Gates (re-run at HEAD, zero LT-14 code changes)
+- pnpm check: 0 errors, 0 warnings.
+- pnpm test: EXIT 0 (live_tv_client 62, live_tv_player 91, live_tv_page 22,
+  hardening 13/13, release audit 6/6; all other suites green).
+- pnpm build: EXIT 0.
+
+### Artifacts (this session, all redacted)
+scripts/lt14_phase1_probe.mjs (+output) — bundle identity, RPC decode,
+V2/proxy/TGFLIX probes. scripts/lt14_phase2_probe.mjs (+output) — Server 2
+E2E segment proof, V2 302 shape. scripts/lt14_phase3_probe.mjs (+output) —
+V2 channels list, TGFLIX keys. scripts/lt14_phase3b_probe.mjs (+output) —
+V2 key/CORS/player. No tokens/keys/cookies persisted anywhere.
