@@ -345,6 +345,11 @@ export class PlaybackManager {
         source: safeSource,
         videoElement: request.videoElement,
         startPosition,
+        // VidRift (documented vidrift:nextup-info): the watch route supplies
+        // Mavero's authoritative next-episode context. Adapters without a
+        // parent-driven Up Next contract ignore it. Never sent to the
+        // resolver — the POST body below picks fields explicitly.
+        nextEpisode: request.nextEpisode,
       };
 
       // Allow sync load (returns void) or async load (returns Promise).
@@ -704,6 +709,15 @@ export class PlaybackManager {
         patch.playing = false;
         patch.state = 'completed';
         break;
+      case 'next-episode':
+        // Provider next-up signal (VidRift). NO playback state change — but
+        // the event MUST reach external subscribers (the watch route
+        // navigates on it). The generic empty-patch early-return below would
+        // drop it, so notify subscribers directly and return.
+        for (const subscriber of this.eventSubscribers) {
+          try { subscriber(event); } catch { /* subscribers must never throw */ }
+        }
+        return;
       case 'error':
         patch.playing = false;
         patch.state = 'error';
@@ -766,6 +780,16 @@ export type ResolverRequest = {
    * anime resolver). Other adapters silently ignore it.
    */
   variant?: string;
+  /**
+   * VidRift (documented `vidrift:nextup-info`): Mavero's authoritative
+   * next-episode context for the CURRENT episode — `{ season, episode }`,
+   * `null` on the series finale, or `undefined` when episodes must NOT be
+   * taken over (movies, or no episode data). CLIENT-SIDE ONLY: the resolver
+   * POST body is built field-by-field and deliberately does NOT include
+   * this field (the server never needs it — the adapter consumes it in
+   * `AdapterLoadContext`).
+   */
+  nextEpisode?: { season: number; episode: number } | null;
 };
 
 export class ResolverError extends Error {

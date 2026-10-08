@@ -28,7 +28,26 @@ export type PlayerEvent =
   | { type: 'seeked'; currentTime: number }
   | { type: 'ended' }
   | { type: 'error'; message?: string; code?: string }
-  | { type: 'provider-error'; message: string; code?: string };
+  | { type: 'provider-error'; message: string; code?: string }
+  /**
+   * Provider next-up signal (VidRift `vidrift:nextup-play` /
+   * `vidrift:episode`; CineSrc's `cinesrc:nextepisode` can map to this
+   * later). The provider's Up Next action fired — the watch route
+   * navigates through its EXISTING episode navigation.
+   *
+   * Two shapes:
+   *   - WITHOUT season/episode: navigate to Mavero's own computed next
+   *     episode (the same value the route supplied via the load context's
+   *     `nextEpisode` / vidrift:nextup-info). The provider does not echo
+   *     the target, and Mavero's episode data is authoritative.
+   *   - WITH season/episode: the provider moved to that specific episode
+   *     itself (in-player episode list) — the route navigates to MATCH it
+   *     so playback context and progress never desync.
+   *
+   * This event carries no playback state change — the manager forwards it
+   * to external subscribers (the watch route) without patching state.
+   */
+  | { type: 'next-episode'; season?: number; episode?: number };
 
 export type PlayerEventHandler = (event: PlayerEvent) => void;
 
@@ -48,6 +67,21 @@ export type AdapterLoadContext = {
    * direct adapter's video element binding for direct sources.
    */
   startPosition?: number;
+  /**
+   * Authoritative next-episode context for providers whose documented
+   * contract supports a parent-driven Up Next (VidRift's
+   * `vidrift:nextup-info`). Computed by the watch route from Mavero's own
+   * episode data — never guessed from TMDB alone at the provider side.
+   *
+   *   - `undefined` — do NOT take over episodes (movies, or the episode
+   *     list is unavailable; the provider self-drives and Mavero follows
+   *     via the provider's episode message)
+   *   - `null` — series finale: take over and clear the next-up affordance
+   *     (`next: null` — no fake next episode)
+   *   - `{ season, episode }` — the next episode (possibly the next
+   *     season's first episode at a season transition)
+   */
+  nextEpisode?: { season: number; episode: number } | null;
 };
 
 /**

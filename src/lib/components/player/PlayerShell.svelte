@@ -643,6 +643,12 @@
     } else if (event.type === 'pause' || event.type === 'ended') {
       embedPlaying = false;
       releaseWakeLock();
+      // Embed completion truthfulness (VidRift integration): mirror the
+      // provider's ended signal into the shell state so (a) the completion
+      // card reflects the finished playback and (b) the close/visibility
+      // progress emission carries completed=true — a page close after the
+      // provider ended must not regress the completed progress record.
+      if (event.type === 'ended' && state !== 'completed') state = 'completed';
     }
   }
 

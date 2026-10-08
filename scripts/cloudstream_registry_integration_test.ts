@@ -215,6 +215,10 @@ function section_registry(): void {
   // analytics_events CHECK constraint with ONE event — never touches
   // download_providers or any registry table) is sanctioned per the LT-15
   // directive's analytics requirement.
+  // VIDRIFT PROVIDER (20261105000000, sanctioned): the VidRift embed
+  // provider registration migration (insert-only streaming_providers +
+  // streaming_sources rows — never touches download_providers or any
+  // registry table) is sanctioned per the VidRift integration directive.
   const migrations = execFileSync('ls', [path.join(REPO_ROOT, 'supabase/migrations')], { encoding: 'utf8' }).split('\n').filter(Boolean);
   const pristineMigrations = pristineMigrationNames();
   const phase2Migration = '20261101000002_extension_phase2_unified_adapters.sql';
@@ -223,6 +227,7 @@ function section_registry(): void {
   const lifecycleMigration = '20261102000000_adapter_build_lifecycle.sql';
   const liveTvAnalyticsMigration = '20261103000000_live_tv_analytics_events.sql';
   const liveTvFallbackMigration = '20261104000000_live_tv_fallback_embed_event.sql';
+  const vidriftProviderMigration = '20261105000000_vidrift_provider.sql';
   const added = migrations.filter((name) => !pristineMigrations.includes(name));
   const phase2Sql = read(`supabase/migrations/${phase2Migration}`);
   const phase2SqlNoComments = phase2Sql.replace(/--[^\n]*/g, '');
@@ -231,16 +236,24 @@ function section_registry(): void {
   const unifiedSql = read(`supabase/migrations/${unifiedMigration}`);
   const unifiedSqlNoComments = unifiedSql.replace(/--[^\n]*/g, '');
   ok(
-    added.length === 7
+    added.length === 8
       && added.includes(migrationName)
       && added.includes(phase2Migration)
       && added.includes(phase3Migration)
       && added.includes(unifiedMigration)
       && added.includes(lifecycleMigration)
       && added.includes(liveTvAnalyticsMigration)
-      && added.includes(liveTvFallbackMigration),
-    `§A10: exactly the CS-5 + Phase 2 + Phase 3 + FINAL TASK + build-lifecycle + LT-5-analytics + LT-15-fallback-event migrations were added (${added.join(', ') || 'none'})`,
+      && added.includes(liveTvFallbackMigration)
+      && added.includes(vidriftProviderMigration),
+    `§A10: exactly the CS-5 + Phase 2 + Phase 3 + FINAL TASK + build-lifecycle + LT-5-analytics + LT-15-fallback-event + VidRift-provider migrations were added (${added.join(', ') || 'none'})`,
   );
+  // VIDRIFT (sanctioned): insert-only registration — no destructive verbs,
+  // no download_providers / registry-table references.
+  {
+    const vidriftSqlNoComments = read(`supabase/migrations/${vidriftProviderMigration}`).replace(/--[^\n]*/g, '');
+    ok(!/\b(update|delete|alter|drop|truncate)\b/i.test(vidriftSqlNoComments), '§A10: the VidRift migration contains no UPDATE/DELETE/ALTER/DROP/TRUNCATE (insert-only)');
+    ok(!vidriftSqlNoComments.includes('download_providers'), '§A10: the VidRift migration never touches download_providers');
+  }
   const liveTvAnalyticsSql = read(`supabase/migrations/${liveTvAnalyticsMigration}`);
   const liveTvAnalyticsSqlNoComments = liveTvAnalyticsSql.replace(/--[^\n]*/g, '');
   ok(

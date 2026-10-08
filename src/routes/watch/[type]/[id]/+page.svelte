@@ -12,6 +12,7 @@
   import { recordCloudHistory, syncAuthenticatedState } from '$lib/client/progress/cloud';
   import type { PlaybackContext } from '$lib/client/progress/types';
   import { PlaybackManager, type ResolutionState } from '$lib/client/player/PlaybackManager';
+  import { nextEpisodeTarget } from '$lib/shared/player-state';
   import { isSourceBadge } from '$lib/shared/source-presentation';
   import { track as trackAnalytics } from '$lib/client/analytics/dispatcher';
 
@@ -34,6 +35,17 @@
   $: currentEpisode = season !== undefined && episode !== undefined ? data.episodes.find((candidate) => candidate.season === season && candidate.number === episode) : undefined;
   $: playbackContext = ({ contentType, contentId: item.id, season, episode, episodeTitle: currentEpisode?.title } satisfies PlaybackContext);
   $: playbackKey = [playbackContext.contentType, playbackContext.contentId, playbackContext.season ?? '-', playbackContext.episode ?? '-'].join(':');
+  // VidRift (documented vidrift:nextup-info): Mavero's AUTHORITATIVE
+  // next-episode context for the current episode — the exact next entry of
+  // the loaded season, the next season's first episode at a season finale
+  // (only when a further season exists), null on the series finale, and
+  // undefined when episodes must NOT be taken over (movies, or the current
+  // episode is not in the loaded list — the provider then self-drives and
+  // Mavero follows via the provider's own episode message). Computed from
+  // Mavero's episode data; never guessed at the provider side.
+  $: nextEpisodeForCurrent = contentType === 'movie'
+    ? undefined
+    : nextEpisodeTarget(episodes, currentEpisode ? { season: currentEpisode.season, episode: currentEpisode.number } : null, item.seasons);
   // Source options are built directly from the public streaming config. The
   // MegaPlay-style SUB/DUB variant toggle was removed alongside the Yenime
   // anime provider — all sources are now opaque options selected by name.
@@ -261,6 +273,31 @@
     if (event.type === 'play' || event.type === 'pause' || event.type === 'ended') {
       embedPlaybackSeq++;
       embedPlaybackEvent = { type: event.type, _seq: embedPlaybackSeq, sourceId: resolvedSource?.sourceId ?? selectedSourceId };
+    }
+    // VidRift (documented vidrift:nextup-play / vidrift:episode): the
+    // provider's Up Next action fired. Navigate through the EXISTING episode
+    // navigation (handleEpisodeChange) — never a parallel navigation system.
+    //   - Without a target: Mavero's own computed next episode (the same
+    //     authoritative context supplied to the provider via nextup-info).
+    //   - With a target: the provider moved itself to that episode — navigate
+    //     to MATCH it so playback context and progress never desync. The
+    //     target is validated against Mavero's own data first: same-season
+    //     targets must exist in the loaded episode list; cross-season targets
+    //     must be within the series' season count.
+    if (event.type === 'next-episode') {
+      let target: PlayerEpisodeTarget | null = null;
+      if (typeof event.season === 'number' && typeof event.episode === 'number'
+        && Number.isInteger(event.season) && Number.isInteger(event.episode) && event.season >= 1 && event.episode >= 1) {
+        if (event.season === season) {
+          const match = episodes.find((candidate) => candidate.season === event.season && candidate.number === event.episode);
+          target = match ? { season: match.season, episode: match.number } : null;
+        } else if (typeof item.seasons !== 'number' || event.season <= item.seasons) {
+          target = { season: event.season, episode: event.episode };
+        }
+      } else {
+        target = nextEpisodeForCurrent ?? null;
+      }
+      if (target) void handleEpisodeChange(target);
     }
     // Authenticated history bookkeeping (preserved from Phase 0).
     if (page.data.user) {
@@ -614,6 +651,11 @@
     const startPosition = allowFallback ? resumeTime : currentPlaybackTime;
     {
       const request: Parameters<typeof manager.loadSource>[0] = { sourceId, contentId: item.id, mediaType: contentType, season, episode };
+      // VidRift (documented vidrift:nextup-info): forward Mavero's
+      // authoritative next-episode context. Client-side only — the resolver
+      // POST body is built field-by-field and does not include it. Adapters
+      // without a parent-driven Up Next contract ignore it.
+      request.nextEpisode = nextEpisodeForCurrent;
       // P9: For SERIES/ANIME, ALWAYS forward the content-type default
       // source (e.g. VidZee) — the series default must always win.
       // For MOVIES, preserve the saved-source resume protection from BUG #3.
@@ -651,22 +693,34 @@
 
   function handlePlayerProgress(event: PlayerProgressEvent) {
     duration = event.duration || duration;
-    currentPlaybackTime = event.currentTime;
-    writer?.update(event.currentTime, duration, event.completed);
+    // Embed progress-position fix (VidRift integration): for EMBED sources
+    // the shell's currentTime is only ever its initialProgress — the
+    // provider's real position is tracked through the manager's adapter
+    // events into currentPlaybackTime. The shell's close/visibility
+    // emissions must therefore persist the AUTHORITATIVE tracked position;
+    // writing the shell's stale value would zero a real provider position
+    // on page close/hide. Direct sources keep the exact previous behavior
+    // (the video element is the source of truth there). Black-box embeds
+    // (no adapter progress events) keep currentPlaybackTime = 0 — the same
+    // stub-record behavior as before.
+    const isEmbedPlayback = resolvedSource?.type === 'embed';
+    const position = isEmbedPlayback ? currentPlaybackTime : event.currentTime;
+    if (!isEmbedPlayback) currentPlaybackTime = event.currentTime;
+    writer?.update(position, duration, event.completed);
     if (event.reason === 'pause' || event.reason === 'source-change' || event.reason === 'close' || event.reason === 'visibility') void writer?.pause();
-    if (event.reason === 'ended') void writer?.complete(event.currentTime, duration);
-    if (page.data.user && !startedHistory && event.currentTime > 0) {
+    if (event.reason === 'ended') void writer?.complete(position, duration);
+    if (page.data.user && !startedHistory && position > 0) {
       startedHistory = true;
-      void sendHistory('started', event.currentTime, duration);
+      void sendHistory('started', position, duration);
     }
-    if (page.data.user && event.currentTime - lastHistoryAt >= 60) {
-      lastHistoryAt = event.currentTime;
-      void sendHistory('progressed', event.currentTime, duration);
+    if (page.data.user && position - lastHistoryAt >= 60) {
+      lastHistoryAt = position;
+      void sendHistory('progressed', position, duration);
     }
     if (event.completed) {
       const snapshot = { title: item.title, poster: item.poster, backdrop: item.backdrop, year: item.year, runtime: item.runtime, rating: item.rating, genres: item.genres, description: item.description };
       void setFavoriteStatus(contentType, item.id, snapshot, 'completed').then(() => { if (page.data.user) void syncAuthenticatedState(); });
-      if (page.data.user) void sendHistory('completed', event.currentTime, duration);
+      if (page.data.user) void sendHistory('completed', position, duration);
     }
   }
 

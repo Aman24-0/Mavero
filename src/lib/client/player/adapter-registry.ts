@@ -12,6 +12,7 @@ import { CinemaOSPlayerAdapter } from './providers/cinemaos-adapter';
 import { VidPhantomPlayerAdapter } from './providers/vidphantom-adapter';
 import { MoviesNexusPlayerAdapter } from './providers/moviesnexus-adapter';
 import { VidStuckPlayerAdapter } from './providers/vidstuck-adapter';
+import { VidRiftPlayerAdapter } from './providers/vidrift-adapter';
 
 /**
  * Adapter registry — Phase 1 + Phase 3.
@@ -35,7 +36,11 @@ import { VidStuckPlayerAdapter } from './providers/vidstuck-adapter';
  *  11. VidStuckPlayerAdapter — handles `https://vidstuck.xyz` /
  *      `https://embed.vidstuck.xyz` (single source; internal server
  *      selection stays inside the iframe).
- *  12. EmbedPlayerAdapter — generic fallback for all other embed sources.
+ *  12. VidRiftPlayerAdapter — handles `https://embed.vidrift.net`
+ *      (movie/TV/anime embeds; progress + paused/unpaused + ended +
+ *      next-up via the documented vidrift: postMessage contract; resume
+ *      via the documented vidrift:resume message — no URL param).
+ *  13. EmbedPlayerAdapter — generic fallback for all other embed sources.
  *
  * Provider-specific adapters are registered BEFORE the generic EmbedPlayerAdapter
  * so that `pickAdapter(source)` matches the provider-specific adapter first
@@ -109,6 +114,8 @@ export function createDefaultAdapterRegistry(): PlayerAdapterRegistry {
     // Verified event-emitting adapters (2026-09-26 integration).
     new MoviesNexusPlayerAdapter(),
     new VidStuckPlayerAdapter(),
+    // Verified event-emitting adapter (2026-11-05 integration).
+    new VidRiftPlayerAdapter(),
     // Generic fallback for all other embed sources (black-box).
     new EmbedPlayerAdapter(),
   ]);

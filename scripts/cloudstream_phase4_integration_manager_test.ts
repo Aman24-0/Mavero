@@ -1160,15 +1160,20 @@ function pristineFile(relative: string): string | null {
   // live-tv-plan.md §14): the Live TV analytics events migration widens
   // the analytics_events CHECK constraint only and never touches any
   // CloudStream/downloader/registry table.
+  // VIDRIFT PROVIDER (20261105000000, sanctioned): the VidRift embed
+  // provider registration migration (insert-only streaming_providers +
+  // streaming_sources rows — never touches any CloudStream/downloader/
+  // registry table) is sanctioned per the VidRift integration directive.
   const addedMigrations = [...migrationFiles].filter((name) => !pristineMigrations.includes(name));
   const removedMigrations = pristineMigrations.filter((name) => !migrationFiles.includes(name));
   ok(
-    addedMigrations.length === 4
+    addedMigrations.length === 5
       && addedMigrations.includes('20261004000000_unified_downloader_global_order.sql')
       && addedMigrations.includes('20261102000000_adapter_build_lifecycle.sql')
       && addedMigrations.includes('20261103000000_live_tv_analytics_events.sql')
-      && addedMigrations.includes('20261104000000_live_tv_fallback_embed_event.sql'),
-    `F3: the ONLY added migrations are the FINAL TASK unified-order + build-lifecycle + LT-5-analytics + LT-15-fallback-event migrations (${addedMigrations.join(', ') || 'none'})`,
+      && addedMigrations.includes('20261104000000_live_tv_fallback_embed_event.sql')
+      && addedMigrations.includes('20261105000000_vidrift_provider.sql'),
+    `F3: the ONLY added migrations are the FINAL TASK unified-order + build-lifecycle + LT-5-analytics + LT-15-fallback-event + VidRift-provider migrations (${addedMigrations.join(', ') || 'none'})`,
   );
   ok(removedMigrations.length === 0, 'F3: no migration was removed');
 

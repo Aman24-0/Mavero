@@ -442,6 +442,65 @@ export const VIDSTUCK_CAPABILITIES: ProviderPlaybackCapabilities = {
   nextEpisode: true,
 };
 
+/**
+ * VidRift — embed.vidrift.net (https://vidrift.net/docs, official documentation).
+ *
+ * VERIFIED (official documentation):
+ *   URL:   https://embed.vidrift.net/embed/movie/{tmdbId}
+ *          https://embed.vidrift.net/embed/tv/{tmdbId}/{season}/{episode}
+ *          (anime is TV content under the hood — the TV shape with the
+ *           show's TMDB id; the legacy embed.vidrift.in host serves the
+ *           same player from its own origin — Mavero uses the canonical
+ *           .net origin exclusively)
+ *   Params (approved config): brand=MAVERO, brandLogo (dynamic, Mavero
+ *          origin favicon), brandColor (dynamic, live --color-primary
+ *          token WITHOUT '#'), watermark=1 (reuses brandLogo),
+ *          showTitle=1, hide=fullscreen (ONLY fullscreen — Mavero owns
+ *          fullscreen). poster/exit/uiScale/controlBg/font/muted/autoplay/
+ *          layout/mobileSheets are deliberately NOT set (documented
+ *          defaults preserved).
+ *   postMessage (player → parent, origin https://embed.vidrift.net; all
+ *   player messages carry tmdbId, mediaType, season, episode):
+ *     vidrift:progress {currentTime, duration} — every 5s while playing
+ *     vidrift:paused {currentTime} / vidrift:unpaused {currentTime}
+ *     vidrift:ended — playback reached the end
+ *     vidrift:nextup — once, 30s before the end (informational)
+ *     vidrift:nextup-play — Up Next countdown/click; only after the page
+ *       has sent vidrift:nextup-info
+ *     vidrift:episode {season, episode} — in-player episode pick (the
+ *       in-player list steps aside once nextup-info is sent)
+ *     vidrift:ui-visible / vidrift:ui-hidden / vidrift:exit /
+ *       vidrift:mobile-panel — acknowledged, not normalized
+ *   postMessage (parent → player):
+ *     vidrift:resume {currentTime} — seek (NOT a URL param); "safe to
+ *       send before the video is ready; it is applied once it is"
+ *     vidrift:nextup-info {next: {season, episode} | null} — take over
+ *       episodes (null on the last episode)
+ *     vidrift:quality-preference / vidrift:mobile-option — not used
+ *
+ * play/pause as COMMANDS = false (VidRift posts play/pause as EVENTS; the
+ * parent cannot command them). seek as a command = false (vidrift:resume
+ * is a one-shot resume seek at load, not a general seek command — the
+ * capability matrix models arbitrary mid-playback seeks, which VidRift
+ * does not document).
+ */
+export const VIDRIFT_CAPABILITIES: ProviderPlaybackCapabilities = {
+  progressEvents: true,
+  currentTime: true,
+  duration: true,
+  seek: false,
+  startAt: true,
+  play: false,
+  pause: false,
+  volume: false,
+  subtitles: false,
+  quality: false,
+  fullscreen: true,
+  pictureInPicture: false,
+  postMessage: true,
+  nextEpisode: true,
+};
+
 // ----- Phase 7: adapter_id → capabilities lookup -----
 //
 // The admin capability matrix uses this map to display per-adapter
@@ -477,6 +536,7 @@ export const PROVIDER_CAPABILITY_MAP: Record<string, ProviderPlaybackCapabilitie
   'vidphantom': VIDPHANTOM_CAPABILITIES,
   'moviesnexus': MOVIESNEXUS_CAPABILITIES,
   'vidstuck': VIDSTUCK_CAPABILITIES,
+  'vidrift': VIDRIFT_CAPABILITIES,
 };
 
 /**
