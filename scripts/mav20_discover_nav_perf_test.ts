@@ -458,7 +458,9 @@ function createCountingFetchRail(
   ok(/getDetailWithSafeRecommendations\(params\.type, params\.id\)/.test(recEndpoint), 'E10e. the recommendations endpoint uses the SAME rec-safe consumer path');
   ok(/canAccessAdultContent/.test(recEndpoint) && /status: 404/.test(recEndpoint), 'E10f. the recommendations endpoint keeps the identical adult gate (non-disclosing 404)');
   ok(!/recordServerEvent/.test(recEndpoint), 'E10g. the recommendations endpoint records no detail_open (rail continuation, not a detail open)');
-  ok(/\/api\/content\/recommendations\/\$\{type\}\/\$\{encodeURIComponent\(item\.id\)\}/.test(detailPage), 'E10h. DetailPage fetches the classified rail client-side');
+  // MAV-22 UPDATE: the fetch URL now carries the per-load `forId` (the
+  // title-scoped stale-guard) — the client-side rail fetch is unchanged.
+  ok(/\/api\/content\/recommendations\/\$\{type\}\/\$\{encodeURIComponent\((?:item\.id|forId)\)\}/.test(detailPage), 'E10h. DetailPage fetches the classified rail client-side');
   ok(/recommendationState === 'loading'/.test(detailPage) && /SkeletonCard/.test(detailPage), 'E10i. the rec rail renders a skeleton while loading');
   ok(!/media\.filter\(\(candidate\) => candidate\.id !== item\.id/.test(detailPage), 'E10j. the fixture fallback for the rec rail is gone (honest empty)');
   ok(/getCachedRail<MediaItem>\(url, page\.data\.user\?\.id\)/.test(detailPage), 'E10k. the rec rail reuses the per-user client cache (instant back-nav)');

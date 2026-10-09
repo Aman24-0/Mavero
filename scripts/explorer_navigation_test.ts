@@ -116,18 +116,20 @@ assert.doesNotMatch(searchPage, /EXPLORER_GENRES|EXPLORER_LANGUAGES|explorer-tax
 ok('3. Change 4: recent-searches row only — storage module, a11y, horizontal scroll, individual removal; search behavior untouched');
 
 // ============================================================
-// 4. CHANGE 5 (superseded by MAV-21 Detail 2.0) — the mobile hero is
-//    now POSTER-FREE with identity + actions bottom-anchored, so the
-//    dominant Play action and the Watching/Share/Trailer row land in
-//    the first 390×844 viewport by design (the original intent of the
-//    spacing patches — solved structurally instead of by nudges).
+// 4. CHANGE 5 (superseded by MAV-21 Detail 2.0, then MAV-22 Detail 3.0)
+//    — the approved OVERLAP composition: the poster card overlaps the
+//    cinematic backdrop on EVERY surface (mobile included) with the
+//    title + compact metadata beside it, so the dominant Play action
+//    and the Watching/Share/Trailer row still land in the first
+//    390×844 viewport by design.
 // ============================================================
-// Touch surfaces (≤1024px) render NO poster in the hero.
-assert.match(detailPage, /\.poster-wrap \{ display: none; \}/, 'the base poster-wrap is hidden (touch surfaces are poster-free)');
-assert.match(detailPage, /@media \(max-width: 640px\)[\s\S]*?\.poster-wrap \{ display: none; \}/, 'the mobile hero explicitly hides the poster-wrap');
-assert.match(detailPage, /@media \(min-width: 1025px\)[\s\S]*?\.poster-wrap \{ display: flex; justify-content: flex-start; \}/, 'the desktop composition restores the poster');
-// Identity + actions are bottom-anchored (flex align-items: flex-end).
-assert.match(detailPage, /\.hero \{[\s\S]*?display: flex;\s*align-items: flex-end;/, 'the hero bottom-anchors its composition');
+// The poster card overlaps the backdrop (negative margin, every surface).
+assert.match(detailPage, /\.hero-body \{[\s\S]*?margin-top: calc\(-1 \* clamp/,
+  'the hero body overlaps the backdrop (poster-overlap composition)');
+assert.match(detailPage, /\.hero-grid \{[\s\S]*?grid-template-columns: clamp\(100px, 27vw, 132px\) minmax\(0, 1fr\);/,
+  'mobile: poster column + identity column side by side');
+assert.match(detailPage, /\.poster-card \{[\s\S]*?grid-row: 1 \/ span 2;/,
+  'desktop: the poster spans the full hero block');
 // The action pipeline is untouched.
 assert.match(detailPage, /class="play-btn"/, 'Play/Resume action untouched');
 assert.match(detailPage, /class="download-btn"/, 'Download action untouched');
@@ -135,21 +137,21 @@ assert.match(detailPage, /openStatusSheet/, 'Watching status action untouched');
 assert.match(detailPage, /shareItem/, 'Share action untouched');
 assert.match(detailPage, /openTrailer/, 'Trailer action untouched');
 // Breakpoints + reserved hero space.
-assert.match(detailPage, /@media \(min-width: 1025px\)[\s\S]*?padding-top: clamp\(96px, 14vh, 160px\)/, 'desktop hero spacing untouched');
+assert.match(detailPage, /@media \(max-width: 1024px\) and \(orientation: landscape\) and \(max-height: 480px\) \{[\s\S]*?\.hero \{ min-height: auto; height: auto; \}/, 'landscape-short keeps title+actions visible');
 assert.match(detailPage, /min-height: clamp\(440px, 78vh, 760px\)/, 'hero min-height (backdrop composition) untouched');
 // Title clamping keeps long titles from pushing the actions away.
 assert.match(detailPage, /\.detail-title \{[\s\S]*?-webkit-line-clamp: 3/, 'the hero title is line-clamped (long titles cannot push actions out of the viewport)');
-ok('4. MAV-21 Detail 2.0: poster-free touch hero, bottom-anchored identity + actions, clamped title; action pipeline + breakpoints intact');
+ok('4. MAV-22 Detail 3.0: poster-overlap hero (every surface), side-by-side identity, clamped title; action pipeline + breakpoints intact');
 
 // ============================================================
 // 5. CHANGE 6 — "Available on" rename (copy only)
 // ============================================================
-assert.match(detailPage, /<h2 class="section-h" id="streaming-heading">Available on<\/h2>/, 'the provider section heading reads "Available on"');
+// MAV-22: provider availability became the COMPACT hero strip (genuine
+// data only); the separate provider cards are gone (pinned by
+// mav22_detail_page_3_test §12).
+assert.match(detailPage, /class="provider-strip" aria-label=\{`Available on \$\{heroProviderNames\}`\}/, 'the compact provider strip renders near the hero actions');
 assert.doesNotMatch(detailPage, />Streaming on</, 'no "Streaming on" heading remains');
-assert.match(detailPage, /aria-labelledby="streaming-heading"/, 'the provider section semantics are unchanged');
-assert.match(detailPage, /item\.streamingProviders && item\.streamingProviders\.length > 0/, 'the provider rendering condition is unchanged');
-assert.match(detailPage, /class="streaming-provider" role="listitem"/, 'the provider card structure is unchanged');
-assert.match(detailPage, /class="streaming-logo"/, 'provider logos still render');
-ok('5. Change 6: "Streaming on" → "Available on"; provider functionality unchanged');
+assert.doesNotMatch(detailPage, /streaming-heading/, 'no separate provider section remains');
+ok('5. Change 6 (superseded by MAV-22): compact provider hero strip; no duplicate provider section');
 
 console.log(`\nExplorer navigation/search/detail tests passed (${passed} check groups).`);

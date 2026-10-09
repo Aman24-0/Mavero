@@ -18,14 +18,17 @@ import { readFileSync } from 'node:fs';
 //     supplies it — no empty labels, no invented certifications, no
 //     fabricated values. Director (movies) / creators (series) ride the
 //     SAME detail request (append_to_response — zero extra roundtrips).
-//   • RESPONSIVE COMPOSITION: poster-free immersive hero on touch
-//     surfaces (≤1024px), poster joins the composition on desktop
-//     (≥1025px), bounded typography at every breakpoint, reduced-motion
-//     respected, landscape-short keeps actions above the fold.
-//   • BELOW THE FOLD: Overview (expandable synopsis + facts), Available
-//     on, Cast, SeasonEpisodes for series-like (incl. anime series),
-//     client-side recommendations (skeleton → populated → honest-empty
-//     hidden; never fixture-filled).
+//   • RESPONSIVE COMPOSITION: (SUPERSEDED by MAV-22's approved
+//     poster-overlap composition — the poster overlaps the artwork on
+//     every surface with the title beside it; this suite's §6 pins the
+//     current overlap contract) bounded typography at every breakpoint,
+//     reduced-motion respected, landscape-short keeps actions above the
+//     fold.
+//   • BELOW THE FOLD: Overview (expandable synopsis), Cast,
+//     SeasonEpisodes for series-like (incl. anime series), client-side
+//     recommendations (skeleton → populated → honest-empty hidden; never
+//     fixture-filled). (MAV-22: facts moved to the two-column More
+//     Details grid; "Available on" became the compact hero strip.)
 //
 // This suite locks the contract at the source level + executes the pure
 // derivation logic (label policy, genre clamping, facts honesty) against
@@ -113,18 +116,20 @@ ok('3. download: movie main button + exact-episode sheet for series');
 // ============================================================
 console.log('\n4. Honest facts grid');
 
-assert.match(detailPage, /if \(!isSeriesLike && item\.runtime\) rows\.push\(\{ label: 'Runtime', value: item\.runtime \}\);/,
-  'Runtime row renders only for movie-like items with a runtime');
-assert.match(detailPage, /if \(isSeriesLike && item\.seasons\) rows\.push\(\{ label: 'Seasons'[\s\S]*?if \(isSeriesLike && item\.episodes\) rows\.push\(\{ label: 'Episodes'/,
-  'Seasons/Episodes rows render only for series-like items that have them');
-assert.match(detailPage, /if \(item\.maturity\) rows\.push\(\{ label: 'Certification', value: item\.maturity \}\);/,
-  'Certification renders only when present (never invented)');
+// MAV-22 UPDATE: the hero now owns runtime / season-or-episode counts /
+// certification (compact hero metadata), and More Details owns the
+// complementary facts — the presence-gating CONTRACT below moved with
+// them (the dedup policy is pinned by mav22_detail_page_3_test §10).
+assert.match(detailPage, /\{#if !isSeriesLike && item\.runtime\}[\s\S]*?\{item\.runtime\}[\s\S]*?\{:else if isSeriesLike && item\.seasons\}/,
+  'hero meta: movie runtime / series season-or-episode count (presence-gated)');
+assert.match(detailPage, /\{#if item\.maturity\}<span class="dot"><\/span><span class="maturity">\{item\.maturity\}<\/span>\{\/if\}/,
+  'Certification renders only when present (never invented) — hero chip');
 assert.match(detailPage, /if \(!isSeriesLike && item\.director\) rows\.push\(\{ label: 'Director', value: item\.director \}\);/,
-  'Director row: movie-like only, presence-gated');
+  'Director row: movie-like only, presence-gated (More Details)');
 assert.match(detailPage, /if \(isSeriesLike && item\.creators\?\.length\) rows\.push\(\{ label: 'Creators', value: item\.creators\.join\(', '\) \}\);/,
   'Creators row: series-like only, presence-gated');
-assert.match(detailPage, /if \(item\.releaseDate\) rows\.push\(\{ label: isSeriesLike \? 'First aired' : 'Release date'[\s\S]*?else if \(item\.year > 0\)/,
-  'date row label varies by series-like, with year-only fallback');
+assert.match(detailPage, /if \(item\.releaseDate\) rows\.push\(\{ label: isSeriesLike \? 'First aired' : 'Release date', value: formatDate\(item\.releaseDate\) \}\);/,
+  'FULL release date row (MAV-22: the hero shows the concise year only)');
 assert.match(detailPage, /const language = languageName\(item\.originalLanguage\);\s*if \(language\) rows\.push/,
   'Original language row only when a code exists');
 // Functional: formatDate + languageName behavior.
@@ -154,23 +159,29 @@ assert.match(detailPage, /\.overview-text \{[\s\S]*?-webkit-line-clamp: 4; line-
   'Overview synopsis clamps at 4 lines until expanded');
 assert.match(detailPage, /\.detail-title \{[\s\S]*?-webkit-line-clamp: 3; line-clamp: 3;/,
   'title is line-clamped (long titles never push actions away)');
-assert.match(detailPage, /\.genre-line \{[\s\S]*?white-space: nowrap; overflow: hidden; text-overflow: ellipsis;/,
-  'genre strip is ONE bounded line');
-ok('5. bounded hero metadata: 4 genres + overflow, 2-line preview, clamped title');
+// MAV-22 UPDATE: the bounded genre strip became bounded genre CHIPS
+// (same 4-max + overflow-count policy, chip presentation).
+assert.match(detailPage, /class="genre-chip"/,
+  'genres render as compact chips (still bounded by MAX_HERO_GENRES)');
+assert.match(detailPage, /\.genre-chip \{[\s\S]*?white-space: nowrap;/,
+  'each chip stays on one line');
+ok('5. bounded hero metadata: 4 genre chips + overflow, 2-line preview, clamped title');
 
 // ============================================================
 // 6. Responsive composition — one DOM, CSS decides
 // ============================================================
 console.log('\n6. Responsive composition');
 
-assert.match(detailPage, /@media \(max-width: 640px\) \{[\s\S]*?\.poster-wrap \{ display: none; \}/,
-  'mobile (≤640px): poster-free immersive hero');
-assert.match(detailPage, /\.poster-wrap \{ display: none; \}/,
-  'poster hidden by default (mobile-first)');
-assert.match(detailPage, /@media \(min-width: 1025px\) \{[\s\S]*?\.poster-wrap \{ display: flex; justify-content: flex-start; \}/,
-  'desktop (≥1025px): the poster joins the composition');
-assert.match(detailPage, /@media \(min-width: 1025px\) \{[\s\S]*?grid-template-columns: minmax\(220px, 280px\) minmax\(0, 1fr\);/,
-  'desktop hero grid: poster + identity columns');
+// MAV-22 UPDATE: the approved OVERLAP composition replaced the
+// poster-free touch hero — the poster now overlaps the artwork on EVERY
+// surface (mobile included) with the title beside it (pinned by
+// mav22_detail_page_3_test §8).
+assert.match(detailPage, /\.hero-body \{[\s\S]*?margin-top: calc\(-1 \* clamp/,
+  'the poster body OVERLAPS the backdrop (negative margin, every surface)');
+assert.match(detailPage, /\.hero-grid \{[\s\S]*?grid-template-columns: clamp\(100px, 27vw, 132px\) minmax\(0, 1fr\);/,
+  'mobile hero grid: poster column + identity column side by side');
+assert.match(detailPage, /\.poster-card \{[\s\S]*?aspect-ratio: 2 \/ 3;/,
+  'the poster is a distinct 2:3 card (aspect reserved)');
 assert.match(detailPage, /@media \(max-width: 640px\) \{[\s\S]*?\.play-btn \{ flex: 1 1 100%; min-height: 52px; \}/,
   'mobile Play is full-width and stays ≥52px (thumb target)');
 assert.match(detailPage, /@media \(max-width: 1024px\) and \(orientation: landscape\) and \(max-height: 480px\) \{[\s\S]*?\.hero \{ min-height: auto; height: auto; \}/,
@@ -179,7 +190,7 @@ assert.match(detailPage, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?tr
   'reduced-motion disables all hero/button transitions');
 assert.match(detailPage, /\.back-btn \{[\s\S]*?top: calc\(1[24]px \+ env\(safe-area-inset-top\)\);/,
   'back button respects the safe-area inset');
-ok('6. responsive: poster-free touch hero, desktop poster composition, a11y hardening');
+ok('6. responsive: poster-overlap hero at every surface (MAV-22), a11y hardening');
 
 // ============================================================
 // 7. Below-the-fold sections
@@ -188,10 +199,13 @@ console.log('\n7. Below the fold');
 
 assert.match(detailPage, /<h2 class="section-h" id="overview-heading">Overview<\/h2>/,
   'Overview section present');
-assert.match(detailPage, /<h2 class="section-h" id="streaming-heading">Available on<\/h2>/,
-  'Available on section present (renamed label)');
-assert.match(detailPage, /\{#if item\.streamingProviders && item\.streamingProviders\.length > 0\}/,
-  'Available on renders only with providers (honest empty)');
+// MAV-22 UPDATE: the separate "Available on" section was replaced by
+// the COMPACT provider strip near the hero actions (same genuine data,
+// no hero-blocking cards — pinned by mav22_detail_page_3_test §12).
+assert.match(detailPage, /class="provider-strip" aria-label=\{`Available on \$\{heroProviderNames\}`\}/,
+  'provider availability renders as a compact hero strip (honest data only)');
+assert.doesNotMatch(detailPage, /streaming-heading/,
+  'no separate provider section remains (it duplicated the compact strip)');
 assert.match(detailPage, /<div class="cast-photo cast-photo-fallback" aria-hidden="true"><span>\{member\.name\.slice\(0, 1\)\.toUpperCase\(\)\}<\/span><\/div>/,
   'Cast fallback initial renders when no photo');
 assert.match(detailPage, /\{#if isSeriesLike\}[\s\S]*?<SeasonEpisodes/,

@@ -58,15 +58,20 @@ assert.match(detailSrc, /\{\#if hasTrailer\}/, 'DetailPage only renders Trailer 
 assert.match(detailSrc, /youtube\.com\/embed\/\$\{trailerKey\}/, 'DetailPage passes real trailerKey to YouTube embed URL');
 assert.doesNotMatch(detailSrc, /trailerKey\s*=\s*['"][a-zA-Z0-9_-]{5,}['"]/, 'DetailPage does NOT hardcode any trailer ID');
 
-// --- 7. DetailPage no longer has the removed metadata grid ---
-assert.doesNotMatch(detailSrc, /class="details-grid"/, 'DetailPage no longer renders the duplicate details-grid');
+// --- 7. DetailPage metadata grid (MAV-22 UPDATE: the approved design
+// reintroduced a SINGLE deduplicated "More Details" grid — the old
+// phase-4 duplicate-grid guard now asserts there is exactly ONE grid
+// and no duplicated section naming) ---
+assert.equal((detailSrc.match(/class="details-grid"/g) ?? []).length, 1, 'DetailPage renders exactly ONE details-grid (the deduplicated More Details grid)');
 assert.doesNotMatch(detailSrc, /Movie Details|Show Details/, 'DetailPage no longer has the "Movie/Show Details" duplicate section');
 
-// --- 8. DetailPage new hero composition ---
+// --- 8. DetailPage hero composition (MAV-22 UPDATE: the approved
+// poster-overlap composition renamed the blocks — poster-card beside
+// hero-info, with the actions hierarchy unchanged) ---
 assert.match(detailSrc, /class="hero"/, 'DetailPage has hero backdrop section');
-assert.match(detailSrc, /class="poster-wrap"/, 'DetailPage has centered poster-wrap');
+assert.match(detailSrc, /class="poster-card"/, 'DetailPage has the poster card (overlap composition)');
 assert.match(detailSrc, /class="poster-img"/, 'DetailPage has poster-img');
-assert.match(detailSrc, /class="identity"/, 'DetailPage has identity section with title/metadata/overview/genres');
+assert.match(detailSrc, /class="hero-info"/, 'DetailPage has the hero-info section with title/metadata beside the poster');
 assert.match(detailSrc, /class="actions"/, 'DetailPage has actions section');
 assert.match(detailSrc, /class="cast-section"/, 'DetailPage has cast-section (renders when cast exists)');
 
