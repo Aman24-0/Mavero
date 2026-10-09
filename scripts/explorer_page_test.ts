@@ -96,7 +96,10 @@ assert.match(spotlight, /\.spotlight \{[\s\S]*?width: 100%;/, 'the carousel is a
 assert.doesNotMatch(spotlight, /width: 90%;/, 'the old ~90% boxed width is gone');
 assert.match(spotlight, /prefers-reduced-motion: reduce/, 'the carousel honors reduced motion');
 assert.match(spotlight, /\/watch\/\$\{slide\.type\}\/\$\{slide\.id\}/, 'Play preserves the existing watch route pattern');
-assert.match(spotlight, /href=\{\`\/\$\{slide\.type\}\/\$\{slide\.id\}\`/, 'More details preserves the existing detail route pattern');
+// MAV-20 Phase D: the More details link still targets the detail route,
+// now wrapped in appendReturnTo so it carries the Explorer origin as `from`.
+assert.match(spotlight, /appendReturnTo\(`\/\$\{slide\.type\}\/\$\{slide\.id\}`, returnTo\)/, 'More details preserves the existing detail route pattern (with the Explorer origin)');
+assert.match(spotlight, /appendReturnTo\(`\/watch\/\$\{slide\.type\}\/\$\{slide\.id\}`, returnTo\)/, 'Play carries the Explorer origin too');
 assert.match(explorerPage, /explorer-hero-fallback/, 'honest fallback block when the catalog cannot supply a lineup');
 assert.doesNotMatch(spotlight + loader, /Math\.random/, 'no render-time randomization (SSR/hydration stability)');
 ok('2. spotlight: 6 slides, 4s rotation, deterministic daily selection, 30-day freshness, honest fallback');

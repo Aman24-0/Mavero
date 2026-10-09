@@ -5,6 +5,7 @@ import { toMediaItem } from '$lib/server/content/presenter';
 import { contentErrorResponse } from '$lib/server/content/response';
 import { canAccessAdultContent } from '$lib/server/content/adult-policy';
 import { canonicalKey, filterSeen } from '$lib/server/content/discover-dedup';
+import { isDiscoverRailType, type DiscoverRailType } from '$lib/server/content/types';
 import type { RequestHandler } from './$types';
 import type { NormalizedMediaItem } from '$lib/server/content/types';
 
@@ -37,6 +38,7 @@ export const GET: RequestHandler = async ({ url, locals, cookies }) => {
   const provider = url.searchParams.get('provider') ?? undefined;
   const page = Math.max(1, Math.min(Number(url.searchParams.get('page') ?? 1) || 1, 20));
   const excludeParam = url.searchParams.get('exclude') ?? '';
+  const typeParam = url.searchParams.get('type') ?? undefined;
 
   if (!isDiscoverSectionKey(sectionParam)) {
     return json({ ok: false, error: { code: 'INVALID_SECTION', message: 'Unknown Discover section.' } }, { status: 400 });
@@ -45,6 +47,24 @@ export const GET: RequestHandler = async ({ url, locals, cookies }) => {
     return json({ ok: false, error: { code: 'INVALID_LANGUAGE', message: 'Unknown language filter.' } }, { status: 400 });
   }
   const safeProvider = provider && provider.trim() && provider.length <= 80 ? provider.trim() : undefined;
+
+  // MAV-20 Phase B — content-type chip dimension (Movie / TV Shows /
+  // Anime). Closed union, and only the sections that genuinely support
+  // a type dimension accept it: `new-ott` and the genre-* sections
+  // (popular-* / top-rated-* sections are typed by their section KEY —
+  // popular-movie, top-rated-anime, … — so a redundant `type` there is
+  // a client contract error, not something to silently honor).
+  let safeType: DiscoverRailType | undefined;
+  if (typeParam !== undefined && typeParam !== '') {
+    if (!isDiscoverRailType(typeParam)) {
+      return json({ ok: false, error: { code: 'INVALID_TYPE', message: 'Unknown content type filter.' } }, { status: 400 });
+    }
+    const supportsType = sectionParam === 'new-ott' || /^genre-(action|adventure|comedy|crime|thriller|scifi|drama|horror|romance)$/.test(sectionParam);
+    if (!supportsType) {
+      return json({ ok: false, error: { code: 'INVALID_TYPE', message: 'This section does not support a content type filter.' } }, { status: 400 });
+    }
+    safeType = typeParam;
+  }
 
   // Parse the exclude list into a Set for O(1) lookup.
   const excludeSet = new Set(
@@ -70,7 +90,8 @@ export const GET: RequestHandler = async ({ url, locals, cookies }) => {
         section: sectionParam,
         language: languageParam,
         provider: safeProvider,
-        page
+        page,
+        type: safeType
       }, canAccessAdult);
       return json({
         ok: true,
@@ -95,7 +116,8 @@ export const GET: RequestHandler = async ({ url, locals, cookies }) => {
         section: sectionParam,
         language: languageParam,
         provider: safeProvider,
-        page: currentPage
+        page: currentPage,
+        type: safeType
       }, canAccessAdult);
 
       const filtered = filterSeen(result.items, excludeSet);

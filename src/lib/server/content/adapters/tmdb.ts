@@ -1005,6 +1005,148 @@ export async function getTmdbNewOnOtt(providerKey: string | undefined, language:
 }
 
 /**
+ * Discover rail type chips (MAV-20 Phase B) — typed New on OTT variants.
+ *
+ * The Discover "New on OTT" section now renders Movie / TV Shows / Anime
+ * chips. Each chip shows the relevant half of the EXISTING new-on-OTT
+ * query — identical source, ordering and filtering semantics, scoped to
+ * one content type. The legacy merged (movie + TV) `getTmdbNewOnOtt` is
+ * intentionally LEFT UNTOUCHED and continues to serve `section=new-ott`
+ * requests without a `type` parameter (backward-compatible endpoint
+ * contract).
+ *
+ * - type 'movie'  → the movie half of the merged query (release_date.desc,
+ *                   watch_region=IN, flatrate, provider + adult-provider
+ *                   exclusion — byte-identical params to the merged path).
+ * - type 'series' → the TV half (first_air_date.desc, watch_region=IN,
+ *                   flatrate, provider + adult-network exclusion).
+ * - type 'anime'  → BOTH /discover/movie and /discover/tv constrained to
+ *                   the established anime classification (genre 16 +
+ *                   original_language 'ja' — the ONE central classifier's
+ *                   definition) with the SAME OTT availability params,
+ *                   merged by the same popularity interleave + dedupe.
+ *
+ * Pagination mirrors the merged function: one TMDB page per Discover
+ * page, stateless, 10 items per page.
+ */
+export async function getTmdbNewOnOttTyped(
+  type: 'movie' | 'series',
+  providerKey: string | undefined,
+  language: DiscoverLanguage,
+  page = 1
+): Promise<ContentList> {
+  const providerId = providerKey ? await resolveProviderIdByKey(providerKey) : undefined;
+  const networkExclusion = adultNetworkExclusionValue();
+  const adultIds = await getResolvedAdultProviderIds();
+  const providerExclusion = adultIds.length > 0 ? adultIds.join('|') : undefined;
+  const key = `tmdb:new-ott-type:${type}:${providerKey ?? 'all'}:${language}:${page}:${networkExclusion ?? 'no-nets'}:${providerExclusion ?? 'no-providers'}`;
+  const { value, stale } = await getOrSet(key, listPolicy, async () => {
+    const langParam = language !== 'all' && language !== 'other' ? DISCOVER_LANGUAGE_PARAM[language] : undefined;
+    if (type === 'movie') {
+      const result = await tmdbRequest<TmdbList<TmdbMovie>>('/discover/movie', {
+        page,
+        include_adult: false,
+        sort_by: 'release_date.desc',
+        watch_region: 'IN',
+        with_watch_monetization_types: 'flatrate',
+        'release_date.lte': new Date().toISOString().slice(0, 10),
+        ...(providerId ? { with_watch_providers: providerId } : {}),
+        ...(langParam ? { with_original_language: langParam } : {}),
+        ...(providerExclusion ? { without_watch_providers: providerExclusion } : {})
+      });
+      let items = (result.results ?? []).filter((item) => hasRequiredListMetadata(item, 'movie'));
+      if (language === 'other') {
+        items = items.filter((item) => !OTHER_LANGUAGE_EXCLUSIONS.has(item.original_language ?? ''));
+      }
+      const mapped = await filterAdultFromListPage(items.map((item) => ({ item: mapTmdb(item, 'movie', 'New on OTT'), mediaType: 'movie' as const, rawAdult: undefined })));
+      const hasNextPage = (result.page ?? page) < (result.total_pages ?? page) || mapped.length > DISCOVER_PAGE_SIZE;
+      return { items: mapped.slice(0, DISCOVER_PAGE_SIZE), page, hasNextPage, source: tmdbSource() };
+    }
+    const result = await tmdbRequest<TmdbList<TmdbTv>>('/discover/tv', {
+      page,
+      include_adult: false,
+      sort_by: 'first_air_date.desc',
+      watch_region: 'IN',
+      with_watch_monetization_types: 'flatrate',
+      'first_air_date.lte': new Date().toISOString().slice(0, 10),
+      ...(providerId ? { with_watch_providers: providerId } : {}),
+      ...(langParam ? { with_original_language: langParam } : {}),
+      ...(networkExclusion ? { without_networks: networkExclusion } : {})
+    });
+    let items = (result.results ?? []).filter((item) => hasRequiredListMetadata(item, 'series'));
+    if (language === 'other') {
+      items = items.filter((item) => !OTHER_LANGUAGE_EXCLUSIONS.has(item.original_language ?? ''));
+    }
+    const mapped = await filterAdultFromListPage(items.map((item) => ({ item: mapTmdb(item, 'series', 'New on OTT'), mediaType: 'series' as const, rawAdult: undefined })));
+    const hasNextPage = (result.page ?? page) < (result.total_pages ?? page) || mapped.length > DISCOVER_PAGE_SIZE;
+    return { items: mapped.slice(0, DISCOVER_PAGE_SIZE), page, hasNextPage, source: tmdbSource() };
+  });
+  return { ...value, source: { ...value.source, stale } };
+}
+
+/**
+ * New on OTT — Anime chip. Both TMDB discover endpoints constrained to
+ * genre 16 + original_language 'ja' (the central anime classifier's
+ * definition), with the SAME India OTT availability params as the merged
+ * new-on-OTT query. Anime movies keep type='movie'; anime series keep
+ * type='series'. The anime language dimension is 'all' by construction
+ * (the catalog is Japanese by the anime invariant — the same reason the
+ * Anime Explorer offers no language filter).
+ */
+export async function getTmdbNewOnOttAnime(providerKey: string | undefined, page = 1): Promise<ContentList> {
+  const providerId = providerKey ? await resolveProviderIdByKey(providerKey) : undefined;
+  const networkExclusion = adultNetworkExclusionValue();
+  const adultIds = await getResolvedAdultProviderIds();
+  const providerExclusion = adultIds.length > 0 ? adultIds.join('|') : undefined;
+  const key = `tmdb:new-ott-anime:${providerKey ?? 'all'}:${page}:${networkExclusion ?? 'no-nets'}:${providerExclusion ?? 'no-providers'}`;
+  const { value, stale } = await getOrSet(key, listPolicy, async () => {
+    const [movieResult, tvResult] = await Promise.all([
+      tmdbRequest<TmdbList<TmdbMovie>>('/discover/movie', {
+        page,
+        include_adult: false,
+        sort_by: 'release_date.desc',
+        with_genres: 16,
+        with_original_language: 'ja',
+        watch_region: 'IN',
+        with_watch_monetization_types: 'flatrate',
+        'release_date.lte': new Date().toISOString().slice(0, 10),
+        ...(providerId ? { with_watch_providers: providerId } : {}),
+        ...(providerExclusion ? { without_watch_providers: providerExclusion } : {})
+      }).catch(() => ({ results: [], page, total_pages: page } as TmdbList<TmdbMovie>)),
+      tmdbRequest<TmdbList<TmdbTv>>('/discover/tv', {
+        page,
+        include_adult: false,
+        sort_by: 'first_air_date.desc',
+        with_genres: 16,
+        with_original_language: 'ja',
+        watch_region: 'IN',
+        with_watch_monetization_types: 'flatrate',
+        'first_air_date.lte': new Date().toISOString().slice(0, 10),
+        ...(providerId ? { with_watch_providers: providerId } : {}),
+        ...(networkExclusion ? { without_networks: networkExclusion } : {})
+      }).catch(() => ({ results: [], page, total_pages: page } as TmdbList<TmdbTv>))
+    ]);
+    const movieItems = (movieResult.results ?? []).filter((item) => hasRequiredListMetadata(item, 'movie')).map((item) => mapTmdb(item, 'movie', 'New on OTT'));
+    const tvItems = (tvResult.results ?? []).filter((item) => hasRequiredListMetadata(item, 'series')).map((item) => mapTmdb(item, 'series', 'New on OTT'));
+    // Same merge recipe as the mixed new-on-OTT rail: popularity
+    // interleave + canonical type+id dedupe, sliced to 10 per page.
+    let merged = [...movieItems, ...tvItems];
+    merged = merged.filter((item) => item.isAnime === true);
+    merged.sort((a, b) => (b.popularity ?? 0) - (a.popularity ?? 0));
+    const seen = new Set<string>();
+    merged = merged.filter((item) => {
+      const k = `${item.type}:${item.id}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+    const hasNextPage = (movieResult.page ?? page) < (movieResult.total_pages ?? page) || (tvResult.page ?? page) < (tvResult.total_pages ?? page) || merged.length > DISCOVER_PAGE_SIZE;
+    return { items: merged.slice(0, DISCOVER_PAGE_SIZE), page, hasNextPage, source: tmdbSource() };
+  });
+  return { ...value, source: { ...value.source, stale } };
+}
+
+/**
  * Section: popular-{movie,series} — TMDB popularity ranking with an
  * optional original_language filter. For "all" → one unfiltered query.
  *
@@ -1268,6 +1410,71 @@ export async function getTmdbGenreByLanguage(genreId: number, language: Discover
       item: mapTmdb(item, 'movie'),
       mediaType: 'movie' as const,
       rawAdult: item.adult
+    }));
+    const items = await filterAdultFromListPage(candidateRows);
+    const hasNextPage = collected.length > DISCOVER_PAGE_SIZE || upstreamHasNext;
+    return { items, page, hasNextPage, source: tmdbSource() };
+  });
+  return { ...value, source: { ...value.source, stale } };
+}
+
+/**
+ * Discover genre rails — TV Shows chip (MAV-20 Phase B).
+ *
+ * TMDB's TV genre taxonomy DIFFERS from movies (movie: 28 Action / 878
+ * Sci-Fi / 53 Thriller; TV: 10759 Action & Adventure / 10765 Sci-Fi &
+ * Fantasy — and NO Thriller, Horror or Romance TV genre exists at all).
+ * The caller (service.ts discoverRail) maps each Discover genre section
+ * to its REAL TV genre id from the shared Explorer taxonomy and NEVER
+ * calls this with an invented id; sections without a TV equivalent serve
+ * an honest empty rail instead.
+ *
+ * Query recipe = the established Popular-TV rail recipe plus the genre
+ * constraint: /discover/tv sorted by popularity, OTT-oriented
+ * (watch_region=IN + flatrate), adult-network exclusion
+ * (without_networks), generic TV category exclusion (Soap/News/Talk via
+ * without_genres — the POPULAR_TV_WITHOUT_GENRES contract), optional
+ * original_language filter, and the central-classifier defense-in-depth
+ * (cached detail verdict, fail-closed) on the final page.
+ */
+export async function getTmdbTvGenreByLanguage(tvGenreId: number, language: DiscoverLanguage, page = 1): Promise<ContentList> {
+  const networkExclusion = adultNetworkExclusionValue();
+  const key = `tmdb:tv-genre-v2:${tvGenreId}:${language}:${page}:${networkExclusion ?? 'no-adult'}`;
+  const { value, stale } = await getOrSet(key, listPolicy, async () => {
+    const langParam = language !== 'all' && language !== 'other' ? DISCOVER_LANGUAGE_PARAM[language] : undefined;
+    const collected: TmdbTv[] = [];
+    let upstreamPage = page;
+    let upstreamHasNext = true;
+    let pagesWalked = 0;
+    while (collected.length < DISCOVER_PAGE_SIZE && upstreamHasNext && pagesWalked < MAX_OTHER_LANGUAGE_PAGES) {
+      const result = await tmdbRequest<TmdbList<TmdbTv>>('/discover/tv', {
+        page: upstreamPage,
+        include_adult: false,
+        sort_by: 'popularity.desc',
+        with_genres: tvGenreId,
+        watch_region: 'IN',
+        with_watch_monetization_types: 'flatrate',
+        ...(langParam ? { with_original_language: langParam } : {}),
+        ...(networkExclusion ? { without_networks: networkExclusion } : {}),
+        without_genres: POPULAR_TV_WITHOUT_GENRES
+      });
+      const raw = (result.results ?? []).filter((item) => hasRequiredListMetadata(item, 'series'));
+      const filtered = applyLanguageFilter(raw, language);
+      for (const item of filtered) {
+        if (!collected.some((existing) => existing.id === item.id)) collected.push(item);
+      }
+      upstreamHasNext = (result.page ?? upstreamPage) < (result.total_pages ?? upstreamPage);
+      upstreamPage += 1;
+      pagesWalked += 1;
+      if (language === 'all') break;
+    }
+    // Central-classifier defense-in-depth (same contract as every other
+    // TV rail): TV rows carry no networks[] metadata, so the cached
+    // detail verdict is the authoritative adult signal. Fail-closed.
+    const candidateRows: RailCandidateRow<NormalizedMediaItem>[] = collected.slice(0, DISCOVER_PAGE_SIZE).map((item) => ({
+      item: mapTmdb(item, 'series'),
+      mediaType: 'series' as const,
+      rawAdult: undefined
     }));
     const items = await filterAdultFromListPage(candidateRows);
     const hasNextPage = collected.length > DISCOVER_PAGE_SIZE || upstreamHasNext;

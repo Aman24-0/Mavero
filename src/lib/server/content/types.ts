@@ -256,6 +256,28 @@ export type DiscoverSectionKey =
   | 'genre-romance'
   | 'adult-shows';
 
+// ============================================================
+// MAV-20 Phase B — Discover rail content-type chips.
+//
+// The Discover page renders one rail family per title (Popular, Top
+// Rated, New on OTT, and every genre rail) with Movie / TV Shows /
+// Anime chips. Popular-* and top-rated-* sections are ALREADY typed by
+// their section key (popular-movie / popular-series / popular-anime …),
+// so the chip there simply selects a different section key. The
+// new-ott and genre-* sections carry ONE canonical section key and use
+// this `type` dimension to scope their query to a content type.
+//
+// The union is CLOSED (validated server-side by isDiscoverRailType) —
+// the browser can never send an arbitrary TMDB path or type value.
+// ============================================================
+export type DiscoverRailType = 'movie' | 'series' | 'anime';
+
+export const DISCOVER_RAIL_TYPES: readonly DiscoverRailType[] = ['movie', 'series', 'anime'];
+
+export function isDiscoverRailType(value: string | null | undefined): value is DiscoverRailType {
+  return typeof value === 'string' && (DISCOVER_RAIL_TYPES as readonly string[]).includes(value);
+}
+
 export type DiscoverRailFilters = {
   section: DiscoverSectionKey;
   language: DiscoverLanguage;
@@ -263,6 +285,12 @@ export type DiscoverRailFilters = {
   // Empty string means "All OTT" (mixed across all India providers).
   provider?: string;
   page?: number;
+  // Content-type chip dimension (MAV-20 Phase B). Only meaningful for
+  // section='new-ott' and the genre-* sections; popular-* and
+  // top-rated-* sections are typed by their section key instead and
+  // theatre/adult-shows ignore it. Undefined = the section's default
+  // (untyped) dataset.
+  type?: DiscoverRailType;
 };
 
 export type DiscoverProvider = {

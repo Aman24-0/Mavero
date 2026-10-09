@@ -132,7 +132,12 @@
     filterPending = true;
     filterNavError = null;
     const token = ++requestToken;
-    void goto(`${page.url.pathname}?${params.toString()}`, { keepFocus: true, noScroll: true })
+    // MAV-20 Phase D: filter changes use replaceState — the SAME
+    // convention as the Explorer filter chips (ExplorerPage.svelte).
+    // The old pushState goto made every filter change a NEW history
+    // entry, so Back from the results stepped through each filter
+    // state one at a time instead of returning to the previous page.
+    void goto(`${page.url.pathname}?${params.toString()}`, { replaceState: true, keepFocus: true, noScroll: true })
       .catch(() => {
         // Navigation failure (offline / route load rejection) must not
         // leave a silent dead end: roll the selection back and offer an

@@ -3,6 +3,7 @@
   import { ArrowLeft, ArrowRight, Info, Play } from 'lucide-svelte';
   import type { MediaItem } from '$data/content';
   import { haptic } from '$lib/client/haptics';
+  import { appendReturnTo } from '$lib/shared/navigation';
 
   // MAVERO — Explorer Spotlight Carousel (Movies / TV Shows / Anime).
   //
@@ -45,10 +46,16 @@
 
   let {
     items = [],
-    ariaLabel = 'Spotlight'
+    ariaLabel = 'Spotlight',
+    returnTo = ''
   }: {
     items?: MediaItem[];
     ariaLabel?: string;
+    /** MAV-20 Phase D — the origin URL the hero's Play / More details
+     *  links carry as `from` (the Explorer page + its filter state), so
+     *  the detail page's back control returns to the ACTUAL page the
+     *  hero was viewed on. Empty string disables the origin (bare links). */
+    returnTo?: string;
   } = $props();
 
   const SPOTLIGHT_ROTATION_MS = 4000;
@@ -244,10 +251,14 @@
                 <p class="slide-desc">{slide.description.trim()}</p>
               {/if}
               <div class="slide-actions">
-                <a class="slide-play" href={`/watch/${slide.type}/${slide.id}`}>
+                <!-- MAV-20 Phase D: the hero links carry the Explorer origin
+                     (page + filter state) as `from`, so the detail page's back
+                     control returns to the ACTUAL Explorer the user was
+                     browsing — not the hardcoded /discover fallback. -->
+                <a class="slide-play" href={appendReturnTo(`/watch/${slide.type}/${slide.id}`, returnTo)}>
                   <Play size={15} fill="currentColor" strokeWidth={0} /> Play
                 </a>
-                <a class="slide-more" href={`/${slide.type}/${slide.id}`} aria-label={`Details for ${slide.title}`}>
+                <a class="slide-more" href={appendReturnTo(`/${slide.type}/${slide.id}`, returnTo)} aria-label={`Details for ${slide.title}`}>
                   <Info size={14} /> More details
                 </a>
               </div>

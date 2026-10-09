@@ -178,17 +178,25 @@ await assert.rejects(
   assert.doesNotMatch(detailPageSource, /if \(returnTo\?\.startsWith\('\/'\) && !returnTo\.startsWith\('\/\/'\)\)\s*\{\s*void goto\(returnTo, \{ replaceState: true, keepFocus: true \}\);\s*return;\s*\}/,
     'DetailPage.goBack must NOT use goto(returnTo, { replaceState: true }) for the valid-from case');
 
-  // history.back() must be called.
-  assert.match(detailPageSource, /window\.history\.back\(\)/,
-    'DetailPage.goBack must call window.history.back() for the valid-from case');
+  // MAV-20 Phase D: the REAL history.back() moved into the ONE shared
+  // back policy (shared/navigation.ts navigateBackOr) — DetailPage's
+  // goBack delegates to it. The policy performs the actual
+  // window.history.back() with the popstate watchdog.
+  assert.match(detailPageSource, /navigateBackOr\(\(\) => \{/,
+    'DetailPage.goBack delegates to the shared navigateBackOr policy (real history.back)');
+  assert.match(detailPageSource, /const fallbackDestination = validReturnTo \?\? '\/discover';/,
+    'DetailPage.goBack preserves the from-aware fallback destination (/discover for missing/invalid from)');
+  assert.match(detailPageSource, /void goto\(fallbackDestination, \{ replaceState: true, keepFocus: true \}\);/,
+    'DetailPage.goBack keeps the replaceState goto fallback (deep-link case)');
 
-  // The fallback for missing/invalid from must be preserved.
-  assert.match(detailPageSource, /goto\('\/discover', \{ replaceState: true, keepFocus: true \}\)/,
-    'DetailPage.goBack must preserve the /discover fallback for missing/invalid from');
-
-  // Defensive fallback for very old browsers must preserve the goto path.
-  assert.match(detailPageSource, /void goto\(returnTo, \{ replaceState: true, keepFocus: true \}\)/,
-    'DetailPage.goBack must keep a defensive goto fallback when window.history.back is unavailable');
+  // The shared policy itself must perform the real back traversal and
+  // detect the in-app history entry via SvelteKit's index.
+  const navigationPolicySource = await readFile(
+    path.join(repoRoot, 'src/lib/shared/navigation.ts'), 'utf8');
+  assert.match(navigationPolicySource, /window\.history\.back\(\)/,
+    'navigateBackOr performs the real window.history.back()');
+  assert.match(navigationPolicySource, /export function recordInAppNavigation\(/,
+    'navigateBackOr: the in-app origin is tracked via recordInAppNavigation (root layout afterNavigate)');
 }
 
 // ============================================================================
@@ -213,9 +221,21 @@ await assert.rejects(
   assert.match(layoutSource, /restore:\s*\(value[^)]*\)\s*=>\s*\{[\s\S]*?window\.scrollTo/,
     'snapshot.restore must call window.scrollTo');
 
-  // Restore must be deferred via requestAnimationFrame so the DOM has laid out.
-  assert.match(layoutSource, /restore:\s*\(value[^)]*\)\s*=>\s*\{[\s\S]*?requestAnimationFrame\(\(\) => \{[\s\S]*?window\.scrollTo/,
-    'snapshot.restore must defer the actual scrollTo to a requestAnimationFrame');
+  // Restore must be deferred via requestAnimationFrame so the DOM has laid
+  // out. MAV-20 Phase D: the deferral is now a CONTENT-DRIVEN rAF loop
+  // (waitForContent) that restores as soon as the target scroller's content
+  // covers the saved offset — never after an arbitrary fixed timeout — and
+  // restores BOTH scrollers (window + the desktop .app-main container)
+  // with behavior:'instant' (html{scroll-behavior:smooth} must not animate
+  // a restoration).
+  assert.match(layoutSource, /restore:\s*\(value[^)]*\)\s*=>\s*\{[\s\S]*?requestAnimationFrame\(waitForContent\)/,
+    'snapshot.restore must defer the actual scrollTo to the content-driven requestAnimationFrame loop');
+  assert.match(layoutSource, /const restoreNow = \(\) => \{[\s\S]*?window\.scrollTo/,
+    'the deferred restore performs the actual window scrollTo (from the rAF loop)');
+  assert.match(layoutSource, /main\.scrollTo\(\{ top:[\s\S]*?behavior: 'instant'/,
+    'snapshot.restore also restores the desktop .app-main scroller (instant)');
+  assert.match(layoutSource, /mainTop/, 'snapshot.capture/restore track the .app-main scroll position');
+  assert.match(layoutSource, /behavior: 'instant'/, 'restores bypass the smooth scroll-behavior animation');
 }
 
 // ============================================================================
@@ -229,14 +249,22 @@ await assert.rejects(
     'ScrollRestore.svelte must be deleted'
   );
 
-  // No onMount-wrapped beforeNavigate/onNavigate/afterNavigate anywhere in src.
+  // No onMount-wrapped beforeNavigate/onNavigate anywhere in src.
   // (These lifecycle hooks belong at component initialization time, not in onMount.)
   const layoutScrollRestoreAbsent =
     !/onMount\(\(\)\s*=>\s*\{[\s\S]*?beforeNavigate\(/.test(layoutSource) &&
-    !/onMount\(\(\)\s*=>\s*\{[\s\S]*?onNavigate\(/.test(layoutSource) &&
-    !/onMount\(\(\)\s*=>\s*\{[\s\S]*?afterNavigate\(/.test(layoutSource);
+    !/onMount\(\(\)\s*=>\s*\{[\s\S]*?onNavigate\(/.test(layoutSource);
   assert.ok(layoutScrollRestoreAbsent,
-    'Root layout must NOT register beforeNavigate/onNavigate/afterNavigate inside onMount');
+    'Root layout must NOT register beforeNavigate/onNavigate inside onMount');
+  // MAV-20 Phase D: the layout DOES register afterNavigate — at component
+  // initialization time (top level), never nested inside onMount.
+  assert.match(layoutSource, /^  afterNavigate\(/m,
+    'afterNavigate registered at component init (top level) for the in-app navigation tracker');
+  {
+    const onMountBody = layoutSource.match(/onMount\(\(\)\s*=>\s*\{([\s\S]*?)\n  \}\);/);
+    assert.ok(!onMountBody || !/afterNavigate\(/.test(onMountBody[1]),
+      'afterNavigate is NOT registered inside onMount');
+  }
 
   // No URL-keyed scroll Map (the failed approach used a Map<string,{x,y}>).
   // The root layout snapshot intentionally uses an object literal {x,y}, not a Map.

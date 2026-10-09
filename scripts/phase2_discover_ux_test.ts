@@ -116,7 +116,16 @@ ok(/let showMoreError = \$state\(''\)/.test(discoverSection), '8a. separate show
 ok(/showMoreError = ''; \/\/ Phase 2-L: clear any previous Show-more error/.test(discoverSection), '8b. Show-more error is cleared at the start of loadMore');
 ok(/showMoreError = error instanceof Error \? error\.message : 'Could not load more titles\.'/.test(discoverSection), '8c. Show-more failure sets showMoreError (does NOT clear items)');
 ok(/\{#if showMoreError\}/.test(discoverSection), '8d. showMoreError conditionally rendered (preserves the rail)');
-ok(/<button class="retry-btn" type="button" onclick=\{loadMore\}/.test(discoverSection), '8e. Show-more error includes a retry button that calls loadMore');
+// MAV-20 Phase C: Show More is an INLINE terminal card at the end of the
+// rail (no separate row underneath). On failure the SAME endcap button
+// becomes the Retry control (onclick=loadMore) with the error message
+// inside the endcap.
+ok(/<button[\s\S]*?class="show-more-card"[\s\S]*?onclick=\{loadMore\}/.test(discoverSection), '8e. inline Show More card calls loadMore (becomes the retry control on failure)');
+ok(/aria-label=\{showMoreError \? `Retry loading more \$\{title\}` : `Show more \$\{title\}`\}/.test(discoverSection), '8e2. the endcap communicates Show more vs Retry states');
+ok(/class:retry=\{Boolean\(showMoreError\)\}/.test(discoverSection), '8e3. failure state restyles the endcap in place');
+ok(/<p class="show-more-error" role="alert">\{showMoreError\}<\/p>/.test(discoverSection), '8e4. the error renders inside the endcap (rail never replaced)');
+ok(!/<button\s+class="show-more"/.test(discoverSection), '8e5. no separate below-rail Show More button remains');
+ok(/\{#each items as item \(item\.type \+ ':' \+ item\.id\)\}[\s\S]*?\{#if hasNextPage\}[\s\S]*?<div class="rail-endcap">/.test(discoverSection), '8e6. the endcap is INSIDE the rail grid, after the items');
 // First-load error ALSO has a retry now.
 ok(/<button class="retry-btn" type="button" onclick=\{\(\) => loadFirst\(\)\}/.test(discoverSection), '8f. first-load error includes a retry button that calls loadFirst');
 
@@ -129,6 +138,7 @@ ok(/<div class="rail skeleton-rail" aria-busy="true" aria-live="polite">/.test(a
 ok(/let showMoreError = \$state\(''\)/.test(adultSection), '9c. AdultDiscoverSection has separate showMoreError state (Phase 2-L)');
 ok(/<button class="retry-btn" type="button" onclick=\{\(\) => loadFirst\(\)\}/.test(adultSection), '9d. AdultDiscoverSection first-load error has retry button');
 ok(/\{#if showMoreError\}/.test(adultSection), '9e. AdultDiscoverSection Show-more failure preserves rail + surfaces retry');
+ok(/<div class="rail-endcap">[\s\S]*?onclick=\{loadMore\}/.test(adultSection), '9f. AdultDiscoverSection uses the same inline endcap Show More (MAV-20 Phase C)');
 
 // ============================================================
 // 10. Stale-request protection (existing) preserved.

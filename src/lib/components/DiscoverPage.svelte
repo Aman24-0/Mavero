@@ -15,8 +15,15 @@
   import AppFooter from '$components/AppFooter.svelte';
   import { haptic } from '$lib/client/haptics';
   import { toggleFavorite, isFavorite } from '$lib/client/progress/service';
-  // rail-cache import removed — clearRailCache() is no longer called
-  // (performance fix: the cache survives back-nav instead of being wiped).
+  // MAV-20 Phase E: the batch tiers are fetched through the same
+  // per-user, TTL-bounded, LRU-bounded client cache as the per-rail
+  // requests (see rail-cache.ts for the safety contract) — back-nav
+  // within the TTL renders instantly, concurrent mounts share in-flight
+  // requests, and failures are never cached. The cache is intentionally
+  // NOT cleared on batch success (back-nav must not force every rail
+  // cold).
+  import { fetchBatchWithCache } from '$lib/client/discover/rail-cache';
+  import { appendReturnTo } from '$lib/shared/navigation';
   // Phase 9 fix: import the canonical SECTION_PRIORITY + canonicalExcludeIds
   // from the SHARED module (client-safe). The server dedup loop walks the
   // SAME SECTION_PRIORITY, so Show More exclude lists honor the same
@@ -24,7 +31,7 @@
   // rendered before Crime/Thriller/Sci-Fi, but those are higher canonical
   // priority and must be excluded from Comedy's Show More).
   import { canonicalExcludeIds } from '$lib/shared/discover-batch';
-  import type { DiscoverSectionKey } from '$lib/server/content/types';
+  import type { DiscoverRailType, DiscoverSectionKey } from '$lib/server/content/types';
 
   let {
     featuredItem,
@@ -86,45 +93,137 @@
   // navigation, and Discover no longer owns them.
 
   // ============================================================
-  // Discover V2 — data-driven section list.
+  // Discover V2 — data-driven section list (MAV-20 Phase B:
+  // consolidated into chip FAMILIES).
   //
-  // Each entry maps to a `DiscoverSectionKey` that the server-side
-  // `discoverRail()` builder resolves to the right TMDB endpoint +
-  // filters. The section order is EXACTLY as specified:
-  //   theatre → new-ott → popular-{movie,series,anime} →
-  //   top-rated-{movie,series,anime} → 9 genre rails.
+  // Each family maps to one or more `DiscoverSectionKey`s that the
+  // server-side `discoverRail()` builder resolves to the right TMDB
+  // endpoint + filters. The visual order below is EXACTLY the spec
+  // order: theatre → new-ott → popular → top-rated → 9 genre rails.
   //
-  // Language-filterable sections render a language dropdown.
-  // The OTT section renders a provider dropdown (loaded from
-  // /api/discover/providers). Anime sections have NO dropdown —
-  // only a "View all →" link to /anime (the first-class route).
+  // The Popular / Top Rated / New on OTT / genre families render one
+  // rail with three compact chips (Movie / TV Shows / Anime):
+  //   - popular: the chips select the EXISTING popular-{movie,series,
+  //     anime} datasets (byte-identical queries — the same section
+  //     keys the three separate rails used before consolidation);
+  //   - top-rated: the EXISTING top-rated-{movie,series,anime} datasets;
+  //   - new-ott: the SAME OTT query scoped per content type (the
+  //     provider dropdown keeps working across all three chips);
+  //   - genre families: the movie rail keeps its current query; the
+  //     TV Shows chip queries the REAL TMDB TV genre id and the Anime
+  //     chip the established merged-anime query with the per-side
+  //     genre constraint (sections with no real TV/anime genre serve
+  //     an honest empty state — never an invented id).
+  //
+  // Language-filterable variants render a language dropdown; anime
+  // variants never do (the anime catalog is Japanese by construction —
+  // the same reason the Anime Explorer offers no language row). The
+  // OTT family renders the provider dropdown (loaded from
+  // /api/discover/providers) on every chip.
   // ============================================================
-  type SectionDef = {
-    key: DiscoverSectionKey;
+  type RailVariant = {
+    /** Rail section key sent to /api/discover/rail. */
+    section: DiscoverSectionKey;
+    /** Content-type dimension — only for the new-ott + genre families. */
+    type?: DiscoverRailType;
+  };
+
+  type SectionFamily = {
+    /** Stable family id — also the UI state key for the selected chip. */
+    key: string;
     title: string;
+    /** Render the Movie / TV Shows / Anime chips beside the title. */
+    typeChips: boolean;
+    /** Language dropdown for the movie/series variants (never anime). */
     languageFilter: boolean;
     providerFilter: boolean;
-    viewAllHref?: string;
+    variants: { movie: RailVariant; series: RailVariant; anime: RailVariant };
   };
-  const SECTIONS: SectionDef[] = [
-    { key: 'theatre', title: 'Running in theatre 🎥', languageFilter: true, providerFilter: false },
-    { key: 'new-ott', title: 'New on OTT', languageFilter: false, providerFilter: true },
-    { key: 'popular-movie', title: 'Popular movies', languageFilter: true, providerFilter: false },
-    { key: 'popular-series', title: 'Popular TV shows', languageFilter: true, providerFilter: false },
-    { key: 'popular-anime', title: 'Popular anime', languageFilter: false, providerFilter: false, viewAllHref: '/anime' },
-    { key: 'top-rated-movie', title: 'Top rated movies', languageFilter: true, providerFilter: false },
-    { key: 'top-rated-series', title: 'Top rated TV shows', languageFilter: true, providerFilter: false },
-    { key: 'top-rated-anime', title: 'Top rated anime', languageFilter: false, providerFilter: false, viewAllHref: '/anime' },
-    { key: 'genre-action', title: 'Action', languageFilter: true, providerFilter: false },
-    { key: 'genre-adventure', title: 'Adventure', languageFilter: true, providerFilter: false },
-    { key: 'genre-comedy', title: 'Comedy', languageFilter: true, providerFilter: false },
-    { key: 'genre-crime', title: 'Crime', languageFilter: true, providerFilter: false },
-    { key: 'genre-thriller', title: 'Thriller', languageFilter: true, providerFilter: false },
-    { key: 'genre-scifi', title: 'Sci-Fi', languageFilter: true, providerFilter: false },
-    { key: 'genre-drama', title: 'Drama', languageFilter: true, providerFilter: false },
-    { key: 'genre-horror', title: 'Horror', languageFilter: true, providerFilter: false },
-    { key: 'genre-romance', title: 'Romance', languageFilter: true, providerFilter: false },
+
+  function genreFamily(name: 'action' | 'adventure' | 'comedy' | 'crime' | 'thriller' | 'scifi' | 'drama' | 'horror' | 'romance', title: string): SectionFamily {
+    const section = `genre-${name}` as DiscoverSectionKey;
+    return {
+      key: section,
+      title,
+      typeChips: true,
+      languageFilter: true,
+      providerFilter: false,
+      variants: {
+        movie: { section },
+        series: { section, type: 'series' },
+        anime: { section, type: 'anime' }
+      }
+    };
+  }
+
+  const FAMILIES: SectionFamily[] = [
+    {
+      key: 'theatre',
+      title: 'Running in theatre 🎥',
+      typeChips: false,
+      languageFilter: true,
+      providerFilter: false,
+      variants: { movie: { section: 'theatre' }, series: { section: 'theatre' }, anime: { section: 'theatre' } }
+    },
+    {
+      key: 'new-ott',
+      title: 'New on OTT',
+      typeChips: true,
+      languageFilter: false,
+      providerFilter: true,
+      variants: {
+        movie: { section: 'new-ott', type: 'movie' },
+        series: { section: 'new-ott', type: 'series' },
+        anime: { section: 'new-ott', type: 'anime' }
+      }
+    },
+    {
+      key: 'popular',
+      title: 'Popular',
+      typeChips: true,
+      languageFilter: true,
+      providerFilter: false,
+      variants: {
+        movie: { section: 'popular-movie' },
+        series: { section: 'popular-series' },
+        anime: { section: 'popular-anime' }
+      }
+    },
+    {
+      key: 'top-rated',
+      title: 'Top Rated',
+      typeChips: true,
+      languageFilter: true,
+      providerFilter: false,
+      variants: {
+        movie: { section: 'top-rated-movie' },
+        series: { section: 'top-rated-series' },
+        anime: { section: 'top-rated-anime' }
+      }
+    },
+    genreFamily('action', 'Action'),
+    genreFamily('adventure', 'Adventure'),
+    genreFamily('comedy', 'Comedy'),
+    genreFamily('crime', 'Crime'),
+    genreFamily('thriller', 'Thriller'),
+    genreFamily('scifi', 'Sci-Fi'),
+    genreFamily('drama', 'Drama'),
+    genreFamily('horror', 'Horror'),
+    genreFamily('romance', 'Romance')
   ];
+
+  // The selected chip per family (parent-owned; DiscoverSection is
+  // re-keyed on change so a switch is a FRESH mount with fresh state —
+  // items, pagination cursor, loading state and error can never leak
+  // from the previous type). Default: Movie (the first chip).
+  let selectedTypes = $state<Record<string, DiscoverRailType>>({});
+  function selectedTypeFor(family: SectionFamily): DiscoverRailType {
+    return selectedTypes[family.key] ?? 'movie';
+  }
+  function selectType(familyKey: string, type: DiscoverRailType) {
+    if ((selectedTypes[familyKey] ?? 'movie') === type) return;
+    selectedTypes = { ...selectedTypes, [familyKey]: type };
+  }
 
   // Adult mode state — fetched client-side from /api/settings/adult-mode.
   // The server is the authority; the client only reflects server state.
@@ -137,7 +236,7 @@
   // which independently re-evaluates authorization on every request.
   let adultCanAccess = $state(false);
 
-  // Phase 8: cross-rail dedup state. The batch endpoint fetches all rails
+  // Phase 8: cross-rail dedup state. The batch endpoint fetches rails
   // in priority order with a global seen set. The results are distributed
   // to each DiscoverSection as initialItems, and the excludeIds (all
   // canonical IDs from higher-priority rails) are passed for Show More.
@@ -146,31 +245,94 @@
   // through to DiscoverSection so Show More resumes from the correct
   // continuation page and the hasNextPage flag is authoritative (not
   // inferred from item count).
-  let batchRails = $state<Record<string, { items: MediaItem[]; page: number; hasNextPage: boolean } | undefined>>({});
-  let batchStatus = $state<'pending' | 'success' | 'failed'>('pending');
+  //
+  // MAV-20 Phase E — the single all-or-nothing batch request is now TWO
+  // PRIORITY TIERS fired in parallel:
+  //   Tier 1 (the top of the page): theatre + new-ott + the Popular
+  //     family. Server-side this is a priority-PREFIX scope — the
+  //     request returns as soon as ITS sections are computed and never
+  //     waits for the top-rated/genre continuations that dominated the
+  //     old cold-batch latency. These rails render the moment tier 1
+  //     arrives.
+  //   Tier 2 (everything below): Top Rated + every genre rail. Fired in
+  //     parallel with tier 1; the server processes the same priority
+  //     prefix (tier-1 sections resolve from the shared in-flight-
+  //     deduplicated server caches), so the total upstream TMDB work
+  //     equals the old single batch — the tail is not slower, and the
+  //     top of the page no longer waits for it.
+  // Both tiers flow through the per-user TTL-bounded batch cache
+  // (rail-cache.ts) — back-nav within the TTL renders instantly and
+  // concurrent mounts share in-flight requests.
+  type BatchRailState = { items: MediaItem[]; page: number; hasNextPage: boolean } | undefined;
+  let batchRails = $state<Record<string, BatchRailState>>({});
+  let tier1Status = $state<'pending' | 'success' | 'failed'>('pending');
+  let tier2Status = $state<'pending' | 'success' | 'failed'>('pending');
 
-  async function loadBatchRails() {
-    try {
-      const response = await fetch('/api/discover/batch?language=all');
-      if (!response.ok) { batchStatus = 'failed'; return; }
+  const TIER1_SECTIONS = 'theatre,new-ott,popular-movie,popular-series,popular-anime';
+  const TIER2_SECTIONS = 'top-rated-movie,top-rated-series,top-rated-anime,genre-action,genre-adventure,genre-crime,genre-thriller,genre-scifi,genre-comedy,genre-drama,genre-horror,genre-romance';
+  const TIER2_KEYS = new Set(TIER2_SECTIONS.split(','));
+
+  function batchTierUrl(sections: string) {
+    return `/api/discover/batch?language=all&sections=${encodeURIComponent(sections)}`;
+  }
+
+  async function fetchBatchTier(url: string): Promise<Record<string, { items: MediaItem[]; page: number; hasNextPage: boolean }>> {
+    return fetchBatchWithCache(url, page.data.user?.id, async () => {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`Batch request failed (${response.status}).`);
       const payload = await response.json();
-      if (!payload.ok || !payload.rails) { batchStatus = 'failed'; return; }
-      batchRails = payload.rails;
-      batchStatus = 'success';
-      // Performance fix: do NOT clear the rail cache on batch success.
-      // The rail cache stores Show More continuation results keyed by
-      // (user, section, page). Clearing it on every batch fetch defeats
-      // its purpose — back-nav from a detail page forces the batch to
-      // refetch AND forces every subsequent Show More to hit the
-      // network cold. The batch results initialize each section's
-      // initialItems directly (not through the rail cache), so leaving
-      // the cache intact cannot corrupt the batch. The cache is
-      // per-user keyed, TTL-bounded (2 min), and LRU-bounded (32
-      // entries) — it cannot serve another user's rails.
-    } catch {
-      // Silent fail — sections will fall back to independent fetches.
-      batchStatus = 'failed';
+      if (!payload.ok || !payload.rails) throw new Error('Batch request failed.');
+      return payload.rails as Record<string, { items: MediaItem[]; page: number; hasNextPage: boolean }>;
+    });
+  }
+
+  function loadBatchRails() {
+    // Performance fix: do NOT clear the rail/batch caches on success.
+    // The caches store per-rail + per-tier results keyed by (user, URL).
+    // Clearing them on every fetch defeats their purpose — back-nav
+    // from a detail page would force every rail cold. They are
+    // per-user keyed, TTL-bounded (2 min), and LRU-bounded — they
+    // cannot serve another user's rails.
+    void fetchBatchTier(batchTierUrl(TIER1_SECTIONS))
+      .then((rails) => {
+        batchRails = { ...batchRails, ...rails };
+        tier1Status = 'success';
+      })
+      .catch(() => {
+        // Silent fail — tier-1 sections fall back to independent fetches.
+        tier1Status = 'failed';
+      });
+    void fetchBatchTier(batchTierUrl(TIER2_SECTIONS))
+      .then((rails) => {
+        batchRails = { ...batchRails, ...rails };
+        tier2Status = 'success';
+      })
+      .catch(() => {
+        // Silent fail — tier-2 sections fall back to independent fetches.
+        tier2Status = 'failed';
+      });
+  }
+
+  // MAV-20 Phase B/E — the batch resolution a given rail variant sees.
+  //
+  // Batch-backed variants (every variant whose rail comes from the
+  // batch payload: popular-* / top-rated-* by section key, plus the
+  // MOVIE variants of new-ott and the genre families) observe the
+  // status of the tier that owns their section key.
+  //
+  // Chip variants that are NOT part of the batch payload (the TV
+  // Shows / Anime variants of new-ott + genre families) wait until
+  // BOTH tiers resolve — their independent first load must carry the
+  // COMPLETE cross-rail exclude list (which spans both tiers) — and
+  // are then told to fetch independently ('failed' in the section
+  // state machine's vocabulary: "no batch dataset exists for this
+  // variant; an independent fetch is allowed and will include the
+  // full exclude list").
+  function batchStatusFor(variant: RailVariant): 'pending' | 'success' | 'failed' {
+    if (variant.type !== undefined) {
+      return tier1Status === 'pending' || tier2Status === 'pending' ? 'pending' : 'failed';
     }
+    return TIER2_KEYS.has(variant.section) ? tier2Status : tier1Status;
   }
 
   // ============================================================
@@ -321,6 +483,10 @@
   }
 
   let localContinue = $derived(localContinueLoaded ? localContinueItems : []);
+  // MAV-20 Phase D — the origin URL the hero's Play / See More links
+  // carry as `from`, so the detail page (and player) can return to the
+  // ACTUAL page the hero was viewed on.
+  let heroOrigin = $derived(`${page.url.pathname}${page.url.search}${page.url.hash}`);
   let hasCatalog = $derived(Boolean(featuredItem || localContinue.length || movies.length || series.length || anime.length));
   // ===========================================================================
   // Hero lineage contract (production bug fix — commit after 89bb711).
@@ -468,11 +634,34 @@
   }
 
   // Phase 9: moved loadContinue out of onMount so handleDocumentVisibility can call it.
+  //
+  // MAV-20 Phase E — local-first Continue Watching (the My List pattern).
+  //
+  // The old implementation for authenticated users awaited the FULL
+  // cloud sync (GET /api/account/sync → PUT /api/account/sync — 2
+  // sequential HTTP roundtrips plus an N+M IndexedDB write-back) before
+  // the rail rendered anything. My List paints immediately from local
+  // IndexedDB and refreshes from the identical sync fire-and-forget;
+  // Continue Watching now does the same:
+  //   1. onMount paints the LOCAL canonical progress records
+  //      (getContinueWatching — the same records My List reads) first;
+  //   2. loadContinue then converges with the cloud-authoritative
+  //      state (syncAuthenticatedState + continueWatchingRecords) and
+  //      replaces the items when it lands.
+  // The sync STILL uses the existing canonical progress records and
+  // merge semantics — no parallel progress store, no changed records.
+  // If the sync fails, the local records are kept (the old code wiped
+  // the rail to empty on a transient sync failure — strictly worse).
   async function loadContinue() {
     try {
       if (page.data.user) { const cloud = await syncAuthenticatedState(); return continueWatchingRecords(cloud.progress, cloud.favorites); }
       return getContinueWatching();
-    } catch { return []; }
+    } catch {
+      // Degrade to the local canonical records — a transient sync
+      // failure must not hide Continue Watching (same resilience as
+      // My List's local-first paint).
+      try { return await getContinueWatching(); } catch { return []; }
+    }
   }
 
   onMount(() => {
@@ -492,10 +681,27 @@
     window.addEventListener('pageshow', handlePageShow);
 
     let cancelled = false;
+    // MAV-20 Phase E — local-first paint: render the LOCAL canonical
+    // progress records immediately (IndexedDB — the same source My
+    // List reads, same merge semantics via continueWatchingRecords).
+    // For guests this IS the definitive load; for authenticated users
+    // the cloud-authoritative refresh (loadContinue below) replaces
+    // the items once the sync lands. No stale-data risk beyond the
+    // SAME accepted policy My List ships with: local-first,
+    // cloud-authoritative after sync.
+    void getContinueWatching().then((records) => {
+      if (cancelled) return;
+      localContinueItems = records.map(progressToMedia);
+      localContinueLoaded = true;
+    }).catch(() => {
+      // Keep the old failure shape: loadContinue's result decides the
+      // final state; a local read failure alone must not hide the rail
+      // if the sync path can still produce records.
+    });
     void loadContinue().then((records) => { if (cancelled) return; localContinueItems = records.map(progressToMedia); localContinueLoaded = true; });
     void loadOttProviders();
     void loadAdultModeSettings();
-    void loadBatchRails(); // Phase 8: server-authoritative cross-rail dedup
+    void loadBatchRails(); // Phase 8: server-authoritative cross-rail dedup (Phase E: two parallel priority tiers)
     queueGalleryRotation();
 
     return () => {
@@ -571,8 +777,14 @@
                   <p>No description available.</p>
                 {/if}
                 <div class="hero-actions">
-                  <a class="hero-play" href={`/watch/${slide.item.type}/${slide.item.id}`}><Play size={15} fill="currentColor" strokeWidth={0} /> Play</a>
-                  <a class="hero-btn" href={`/${slide.item.type}/${slide.item.id}`} aria-label={`Details for ${slide.item.title}`}><Info size={14} /> See More</a>
+                  <!-- MAV-20 Phase D: hero links carry the `from` origin so the
+                       detail page's back control returns to the ACTUAL page the
+                       hero was viewed on (Discover here; the Explorer heroes pass
+                       their own origin). Without it, DetailPage's goBack fell to
+                       the hardcoded /discover fallback and replaced the history
+                       entry — losing the origin page entirely. -->
+                  <a class="hero-play" href={appendReturnTo(`/watch/${slide.item.type}/${slide.item.id}`, heroOrigin)}><Play size={15} fill="currentColor" strokeWidth={0} /> Play</a>
+                  <a class="hero-btn" href={appendReturnTo(`/${slide.item.type}/${slide.item.id}`, heroOrigin)} aria-label={`Details for ${slide.item.title}`}><Info size={14} /> See More</a>
                   <button class="hero-btn icon-only" type="button" aria-label={isHeroFavorite ? `Remove ${slide.item.title} from My List` : `Add ${slide.item.title} to My List`} onclick={toggleHeroFavorite}>
                     <ListPlus size={14} />
                   </button>
@@ -611,27 +823,41 @@
       {#if localContinue.length}<ContentRail title="Continue watching" items={localContinue} href="/my-list?status=watching" compact />{/if}
 
       <!-- ============================================================
-           Discover V2 — data-driven section list.
-           Each DiscoverSection owns its own independent state (language,
-           provider, page, items, loading, error). Show more appends;
+           Discover V2 — data-driven section list (MAV-20 Phase B:
+           consolidated chip FAMILIES).
+           Each family renders ONE DiscoverSection with Movie / TV Shows /
+           Anime chips; the component is RE-KEYED on chip switch so the
+           new variant mounts with fresh state (no items/pagination/
+           loading/error leakage). Each section owns its own independent
+           filter state (language, provider, page, items, loading,
+           error). Show more appends as an inline terminal card;
            language switch replaces; sections never interfere with each
            other. No fixtures are used as successful results — a failed
            upstream query renders the section as empty/unavailable.
            ============================================================ -->
-      {#each SECTIONS as sectionDef (sectionDef.key)}
-        <DiscoverSection
-          section={sectionDef.key}
-          title={sectionDef.title}
-          languageFilter={sectionDef.languageFilter}
-          providerFilter={sectionDef.providerFilter}
-          providers={sectionDef.providerFilter ? ottProviders : []}
-          viewAllHref={sectionDef.viewAllHref ?? ''}
-          initialItems={batchRails[sectionDef.key]?.items ?? []}
-          initialHasNextPage={batchRails[sectionDef.key]?.hasNextPage ?? false}
-          initialPage={batchRails[sectionDef.key]?.page ?? 1}
-          excludeIds={excludeIdsFor(sectionDef.key)}
-          batchStatus={batchStatus}
-        />
+      {#each FAMILIES as fam (fam.key)}
+        {#key `${fam.key}:${selectedTypeFor(fam)}`}
+          {@const variantType = selectedTypeFor(fam)}
+          {@const variant = fam.variants[variantType]}
+          {@const batchEntry = variant.type === undefined ? batchRails[variant.section] : undefined}
+          <DiscoverSection
+            section={variant.section}
+            requestType={variant.type}
+            title={fam.title}
+            typeFilter={fam.typeChips}
+            activeType={variantType}
+            onTypeChange={(type) => selectType(fam.key, type)}
+            languageFilter={fam.languageFilter && variantType !== 'anime'}
+            providerFilter={fam.providerFilter}
+            providers={fam.providerFilter ? ottProviders : []}
+            viewAllHref={(fam.key === 'popular' || fam.key === 'top-rated') && variantType === 'anime' ? '/anime' : ''}
+            initialItems={batchEntry?.items ?? []}
+            initialHasNextPage={batchEntry?.hasNextPage ?? false}
+            initialPage={batchEntry?.page ?? 1}
+            excludeIds={excludeIdsFor(variant.section)}
+            batchStatus={batchStatusFor(variant)}
+          />
+        {/key}
       {/each}
       <!-- Phase 8: Indian Adult Shows — the LAST content rail before the
            footer, now backed by the Phase 7 dedicated Adult Discover API.

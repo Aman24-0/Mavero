@@ -267,34 +267,45 @@
           <span>No titles available right now.</span>
         </div>
       {:else}
+        <!-- MAV-20 Phase C — the rail itself, with the Show More control as
+             an INLINE terminal item at the end of the horizontal list (not
+             a separate row underneath) — the same endcap pattern as
+             DiscoverSection. Appending new grid columns to the right keeps
+             the user's horizontal scroll position stable. -->
         <div class="rail">
           {#each items as item (item.type + ':' + item.id)}
             <MediaCard {item} />
           {/each}
-        </div>
-        {#if hasNextPage}
-          <button
-            class="show-more"
-            type="button"
-            onclick={loadMore}
-            disabled={loadingMore}
-            aria-label={`Show more ${title}`}
-          >
-            {#if loadingMore}<LoaderCircle size={14} />{:else}<Plus size={14} />{/if}
-            <span>{loadingMore ? 'Loading…' : 'Show more'}</span>
-          </button>
-          <!-- Phase 2-L: Show-more failure preserves the existing rail AND
-               surfaces the error with a retry. The rail is NOT replaced. -->
-          {#if showMoreError}
-            <div class="show-more-error" role="alert">
-              <span>{showMoreError}</span>
-              <button class="retry-btn" type="button" onclick={loadMore} disabled={loadingMore} aria-label={`Retry loading more ${title}`}>
-                <RotateCw size={14} />
-                <span>Retry</span>
+          {#if hasNextPage}
+            <div class="rail-endcap">
+              <button
+                class="show-more-card"
+                class:retry={Boolean(showMoreError)}
+                type="button"
+                onclick={loadMore}
+                disabled={loadingMore}
+                aria-label={showMoreError ? `Retry loading more ${title}` : `Show more ${title}`}
+              >
+                {#if loadingMore}
+                  <LoaderCircle size={18} aria-hidden="true" />
+                  <span>Loading…</span>
+                {:else if showMoreError}
+                  <RotateCw size={18} aria-hidden="true" />
+                  <span>Retry</span>
+                {:else}
+                  <Plus size={18} aria-hidden="true" />
+                  <span>Show more</span>
+                {/if}
               </button>
+              <!-- Phase 2-L: Show-more failure preserves the existing rail AND
+                   surfaces the error inside the same endcap. The rail is NOT
+                   replaced. -->
+              {#if showMoreError}
+                <p class="show-more-error" role="alert">{showMoreError}</p>
+              {/if}
             </div>
           {/if}
-        {/if}
+        </div>
       {/if}
     </div>
   </section>
@@ -383,40 +394,45 @@
   .retry-btn:focus-visible { outline: 2px solid #ffb020; outline-offset: 1px; }
   .retry-btn:disabled { opacity: .5; cursor: not-allowed; }
   .retry-btn :global(svg) { animation: spin 1s linear infinite; }
-  /* Phase 2-L: Show-more error — preserved rail + inline retry below. */
+  /* Phase 2-L: Show-more error — preserved rail + inline retry inside
+     the endcap. */
   .show-more-error {
-    display: inline-flex; align-items: center; gap: 10px;
-    margin-top: 8px;
-    padding: 8px 14px;
-    border: 1px solid rgba(255,176,32,.3);
-    border-radius: 12px;
+    margin: 0;
     color: #ffb020;
-    background: rgba(255,176,32,.06);
-    font-size: .72rem;
+    font-size: .62rem; font-weight: 600; line-height: 1.35;
+    text-align: center;
   }
   /* Phase 2-H: skeleton rail uses the same grid as the populated rail so
      the section height is stable from first paint. */
   .skeleton-rail { min-height: 0; }
   @keyframes spin { to { transform: rotate(360deg); } }
 
-  .show-more {
-    display: inline-flex; align-items: center; gap: 6px;
-    min-height: 34px;
-    padding: 0 16px;
-    margin-top: 4px;
-    border: 1px solid rgba(255,255,255,.14);
-    border-radius: 999px;
-    color: #f5f5f5;
-    background: rgba(255,255,255,.04);
+  /* MAV-20 Phase C — the inline terminal Show More card (the same endcap
+     pattern as DiscoverSection: one rail column, dashed glass panel,
+     stretches to the row height, never looks like a poster). */
+  .rail-endcap {
+    display: flex; flex-direction: column; gap: 6px;
+    min-width: 0;
+  }
+  .show-more-card {
+    flex: 1;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+    padding: 12px;
+    border: 1px dashed rgba(255, 255, 255, .2);
+    border-radius: 14px;
+    color: var(--ink, #f5f5f5);
+    background: rgba(255, 255, 255, .03);
     font: inherit;
     font-size: .7rem; font-weight: 700;
     cursor: pointer;
     transition: background 180ms ease, border-color 180ms ease;
   }
-  .show-more:hover:not(:disabled) { background: rgba(255,255,255,.1); border-color: rgba(255,255,255,.28); }
-  .show-more:focus-visible { outline: 2px solid #f5f5f5; outline-offset: 1px; }
-  .show-more:disabled { opacity: .5; cursor: not-allowed; }
-  .show-more :global(svg) { animation: spin 1s linear infinite; }
+  .show-more-card:hover:not(:disabled) { background: rgba(255, 255, 255, .08); border-color: rgba(255, 255, 255, .38); }
+  .show-more-card:focus-visible { outline: 2px solid var(--color-focus, #f5f5f5); outline-offset: 2px; }
+  .show-more-card:disabled { opacity: .55; cursor: not-allowed; }
+  .show-more-card :global(svg) { animation: spin 1s linear infinite; }
+  .show-more-card.retry { border-style: solid; border-color: rgba(255, 176, 32, .45); color: #ffb020; background: rgba(255, 176, 32, .06); }
+  .show-more-card.retry:hover:not(:disabled) { background: rgba(255, 176, 32, .14); border-color: rgba(255, 176, 32, .65); }
 
   @media (max-width: 640px) {
     .adult-discover-section { margin-top: 28px; }
@@ -436,6 +452,7 @@
     .rail { grid-auto-columns: 210px; gap: 18px; }
   }
   @media (prefers-reduced-motion: reduce) {
-    .show-more :global(svg) { animation: none; }
+    .show-more-card :global(svg) { animation: none; }
+    .show-more-card { transition: none; }
   }
 </style>

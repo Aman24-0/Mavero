@@ -6,14 +6,16 @@
   import SelectionSheet from '$components/SelectionSheet.svelte';
   import DownloadSheet from '$components/DownloadSheet.svelte';
   import type { ContentType } from '$data/content';
-  import { getMedia, media, formatBadges, type MediaItem } from '$data/content';
+  import { getMedia, formatBadges, type MediaItem } from '$data/content';
   import ContentRail from '$components/ContentRail.svelte';
+  import SkeletonCard from '$components/SkeletonCard.svelte';
+  import { getCachedRail, setCachedRail } from '$lib/client/discover/rail-cache';
   import SeasonEpisodes from '$components/SeasonEpisodes.svelte';
   import { getFavoriteStatus, getLocalProgressRecords, removeFavoriteFromMyList, setFavoriteStatus } from '$lib/client/progress/service';
   import type { WatchlistStatus } from '$lib/client/progress/types';
   import { latestResumeEpisode, getLatestResumeTarget } from '$lib/client/progress/presenter';
   import { deleteCloudFavorite, syncAuthenticatedState } from '$lib/client/progress/cloud';
-  import { appendReturnTo } from '$lib/shared/navigation';
+  import { appendReturnTo, navigateBackOr } from '$lib/shared/navigation';
   import { haptic } from '$lib/client/haptics';
   import { showSuccessToast, showErrorToast } from '$lib/client/toast.svelte';
   import type { PublicDownloadProvider, DownloadMediaType } from '$lib/shared/downloader';
@@ -73,7 +75,24 @@
   // titles. Anime movie → "Anime · Movie", anime series → "Anime · Series".
   // Plain movie/series keep their single label (legacy).
   const detailBadges = $derived(formatBadges(item));
-  const recommendations = $derived(recommendationItems.length ? recommendationItems : media.filter((candidate) => candidate.id !== item.id && candidate.type === type).slice(0, 6));
+  // MAV-20 Phase D — the "You may also like" rail loads CLIENT-SIDE.
+  //
+  // The server page load now returns the parent detail only (the
+  // per-recommendation classification N+1 no longer blocks navigation —
+  // the reported ~2-3s back-from-player stall). The component fetches
+  // the classified rail from /api/content/recommendations after mount:
+  //   loading → skeleton rail;
+  //   ready   → the classified items (an EMPTY successful result hides
+  //             the section — no fixture fallback, the honest-empty
+  //             convention every other rail follows);
+  //   failed  → the section stays hidden (supplementary below-fold
+  //             content; a failed fetch must not break the page).
+  // The response is served through the same per-user TTL-bounded client
+  // cache as every other rail (rail-cache.ts) — back-nav within the TTL
+  // renders the rail instantly.
+  let recommendationState = $state<'loading' | 'ready' | 'failed'>('loading');
+  let clientRecommendations = $state<MediaItem[]>([]);
+  const recommendations = $derived(recommendationItems.length ? recommendationItems : clientRecommendations);
   const statusSheetOptions = $derived(watchlistStatus ? statusOptions : statusOptions.filter((option) => option.key !== 'remove'));
   const canonicalUrl = $derived(`${page.url.origin}/${type}/${item.id}`);
   const watchPath = $derived(type === 'movie' ? `/watch/${type}/${item.id}` : `/watch/${type}/${item.id}?season=${resumeEpisode?.season ?? 1}&episode=${resumeEpisode?.episode ?? 1}`);
@@ -92,6 +111,32 @@
     if (isNaN(d.getTime())) return String(item.year > 0 ? item.year : '');
     // Use en-GB for day-before-month format (07 Mar 2026).
     return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' });
+  }
+
+  // MAV-20 Phase D — client-side "You may also like" fetch (see the
+  // recommendations derived above). Cached per-user for 2 minutes, so
+  // back-nav to this page renders the rail instantly; the SERVER cache
+  // (30-minute detail policy) makes the classification cheap after the
+  // first request. Failures settle silently to the hidden state — the
+  // rail is supplementary and must never block or break the page.
+  async function loadRecommendations() {
+    const url = `/api/content/recommendations/${type}/${encodeURIComponent(item.id)}`;
+    const cached = getCachedRail<MediaItem>(url, page.data.user?.id);
+    if (cached) {
+      clientRecommendations = cached.items;
+      recommendationState = 'ready';
+      return;
+    }
+    try {
+      const response = await fetch(url);
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) throw new Error('unavailable');
+      clientRecommendations = (payload.recommendations ?? []) as MediaItem[];
+      recommendationState = 'ready';
+      setCachedRail(url, page.data.user?.id, clientRecommendations, clientRecommendations.length > 0);
+    } catch {
+      recommendationState = 'failed';
+    }
   }
 
   onMount(() => {
@@ -138,6 +183,9 @@
     // /api/downloader/config endpoint (HTTP cache-control + in-process
     // server cache), so subsequent DetailPage visits reuse the response.
     void loadDownloadProviders();
+    // MAV-20 Phase D — the classified recommendations load client-side
+    // (skeleton first; see loadRecommendations). Never blocks the page.
+    void loadRecommendations();
     const autoplay = page.url.searchParams.get('autoplay') === '1';
     if (autoplay && typeof window !== 'undefined') {
       const params = new URLSearchParams(page.url.searchParams);
@@ -211,92 +259,35 @@
     event.preventDefault();
     haptic('light');
     const returnTo = page.url.searchParams.get('from');
-    // When the user arrived at this detail page from an internal
-    // listing (Search / Discover / My List / Upcoming / collection),
-    // MediaCard's `appendReturnTo` injected the originating URL into
-    // the `from` query parameter. We use `history.back()` so the
-    // browser/SvelteKit performs a real popstate navigation back to
-    // the original history entry — this is what allows SvelteKit's
-    // snapshot/scroll restoration to fire and bring the user back to
-    // the exact state (query, filter, results, scroll position) they
-    // left.
+    // MAV-20 Phase D — the single coherent back policy
+    // (shared/navigation.ts navigateBackOr):
     //
-    // Using `goto(returnTo, { replaceState: true })` here would NOT
-    // trigger popstate — it would replace the current history entry
-    // with the listing URL and skip SvelteKit's snapshot/scroll
-    // restoration entirely, leaving the user at the top of an empty
-    // listing.
+    //   1. `from` present + valid  → REAL history.back() through the
+    //      watchdog. The origin listing's own history entry carries its
+    //      query/filter state and SvelteKit snapshot — popstate is what
+    //      restores the origin page's content + scroll position.
+    //   2. `from` absent           → REAL history.back() WHENEVER an
+    //      in-app previous entry exists (SvelteKit's history index > 0).
+    //      The old code fell straight to a HARDCODED /discover goto —
+    //      opening a detail page from a hero (which previously carried
+    //      no `from`) and pressing Back sent the user to Discover even
+    //      when they came from Movies / TV Shows / Anime / Search, and
+    //      the replaceState goto REPLACED the detail entry (destroying
+    //      forward history + creating duplicate-entry confusion).
+    //   3. No in-app origin at all (deep link, first entry) → the safe
+    //      fallback destination. The goto uses replaceState so the
+    //      deep-linked detail entry is replaced by the destination —
+    //      the user cannot go "back" to a page they never navigated to.
     //
-    // CRITICAL RELIABILITY FIX (history.back() silent no-op):
-    //   `window.history.back()` is fire-and-forget: it returns void,
-    //   has no callback, and SILENTLY does nothing when there is no
-    //   previous history entry (history index 0). This happens when
-    //   the user deep-links / shares / refreshes the DetailPage URL —
-    //   the DetailPage becomes the first history entry, and back()
-    //   no-ops. BOTH the DetailPage Back button AND the Android/browser
-    //   hardware Back button fail simultaneously because they rely on
-    //   the same empty history stack.
-    //
-    //   The existing fallback (goto '/discover') only fires when `from`
-    //   is missing/invalid. When `from` IS present (shared link with a
-    //   from param), the old code called back() and returned — but
-    //   back() was a no-op, leaving the user stuck.
-    //
-    //   Fix: after calling back(), listen for popstate. If popstate
-    //   doesn't fire within one macrotask (setTimeout 0 — browsers
-    //   fire popstate as a macrotask, so if it hasn't fired by the
-    //   next macrotask it won't fire), fall back to goto(returnTo).
-    //   This preserves the snapshot-restore path for normal navigation
-    //   and only falls back when back() provably did nothing.
-    //
-    //   Fast path: if history.length === 1, there is provably no
-    //   previous entry — skip back() entirely and go straight to the
-    //   goto fallback (no timeout needed).
-    //
-    // The final fallback (`goto('/discover', ...)`) is preserved for
-    // the direct-detail-page case where there is no valid internal
-    // `from` to go back to.
-    if (returnTo?.startsWith('/') && !returnTo.startsWith('//')) {
-      if (typeof window !== 'undefined' && typeof window.history.back === 'function') {
-        // Fast path: history.length === 1 means we're at the first entry
-        // — back() would no-op. Skip it and go straight to goto.
-        // replaceState: true replaces the deep-link DetailPage entry with
-        // the listing URL so the user can't go "back" to a page they
-        // never navigated to.
-        if (window.history.length <= 1) {
-          void goto(returnTo, { replaceState: true, keepFocus: true });
-          return;
-        }
-        // Normal path: call back() + detect whether popstate fires.
-        // If it doesn't (back() no-op due to history cursor at index 0
-        // despite length > 1 — rare but possible), fall back to goto.
-        let navigated = false;
-        const onPopState = () => { navigated = true; cleanup(); };
-        const timer = setTimeout(() => {
-          cleanup();
-          if (!navigated) {
-            // back() was a no-op — no previous history entry. Fall
-            // back to a fresh goto. replaceState: true replaces the
-            // DetailPage entry so the user can't go "back" to a page
-            // they never navigated to. This loses snapshot restore, but
-            // there's no snapshot to restore (deep-link case).
-            void goto(returnTo, { replaceState: true, keepFocus: true });
-          }
-        }, 0);
-        function cleanup() {
-          window.removeEventListener('popstate', onPopState);
-          clearTimeout(timer);
-        }
-        window.addEventListener('popstate', onPopState, { once: true });
-        window.history.back();
-        return;
-      }
-      // Defensive fallback (very old browsers, JSdom) — preserve the
-      // pre-fix behavior so the button still works.
-      void goto(returnTo, { replaceState: true, keepFocus: true });
-      return;
-    }
-    void goto('/discover', { replaceState: true, keepFocus: true });
+    // history.back() is fire-and-forget and SILENTLY no-ops without a
+    // previous entry — navigateBackOr's popstate watchdog detects that
+    // (popstate fires as a macrotask; if it hasn't fired by the next
+    // macrotask, back() did nothing) and runs the fallback.
+    const validReturnTo = returnTo?.startsWith('/') && !returnTo.startsWith('//') ? returnTo : null;
+    const fallbackDestination = validReturnTo ?? '/discover';
+    navigateBackOr(() => {
+      void goto(fallbackDestination, { replaceState: true, keepFocus: true });
+    });
   }
 
   async function shareItem() {
@@ -685,10 +676,20 @@
       />
     {/if}
 
-    <!-- Recommendations -->
+    <!-- Recommendations (MAV-20 Phase D: loaded client-side — skeleton
+         while loading, hidden when empty/failed; never fixture-filled) -->
     {#if recommendations.length}
       <div class="recs-rail">
         <ContentRail title="You may also like" eyebrow="Keep exploring" items={recommendations} compact />
+      </div>
+    {:else if recommendationState === 'loading'}
+      <div class="recs-rail" aria-busy="true" aria-live="polite">
+        <div class="recs-head">
+          <h2 class="recs-title">You may also like</h2>
+        </div>
+        <div class="recs-skeleton">
+          {#each Array(6) as _, i (i)}<SkeletonCard />{/each}
+        </div>
       </div>
     {/if}
   </div>
@@ -1043,6 +1044,22 @@
 
   /* Recommendations */
   .recs-rail { margin-top: clamp(28px, 4vw, 40px); }
+  /* MAV-20 Phase D — skeleton state for the client-side rec rail. Uses
+     the SAME horizontal grid geometry as the populated rail so the
+     section height is stable from first paint (Phase 2-H convention). */
+  .recs-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; padding: 0 clamp(16px, 4vw, 32px); }
+  .recs-title {
+    margin: 0;
+    color: var(--ink, #f5f5f5);
+    font-family: 'Inter', sans-serif;
+    font-size: clamp(1rem, 1.7vw, 1.25rem);
+    font-weight: 800;
+    letter-spacing: -.02em;
+  }
+  .recs-skeleton {
+    display: grid; grid-auto-flow: column; grid-auto-columns: 178px; gap: 14px;
+    overflow: hidden; padding: 6px clamp(16px, 4vw, 32px) 12px;
+  }
 
   /* === Trailer modal ===
      Unchanged behavior — only colors aligned to Phase B tokens. */

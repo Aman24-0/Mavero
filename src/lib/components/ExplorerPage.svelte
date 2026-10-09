@@ -1,10 +1,38 @@
+<script module lang="ts">
+  // MAV-20 Phase D — feed snapshot contract types.
+  //
+  // The Explorer pages' accumulated infinite-scroll state (feedItems,
+  // pagination position, exhaustion) is preserved across back/forward
+  // navigation through SvelteKit page snapshots — the SAME proven
+  // architecture the Upcoming and Search pages already use. Because the
+  // state lives inside the ExplorerPage COMPONENT while SvelteKit
+  // snapshots are exported from the ROUTE's +page.svelte, the route
+  // registers the component's capture/restore handlers through the
+  // `registerFeedSnapshot` prop and delegates its exported snapshot to
+  // them.
+  import type { MediaItem } from '$data/content';
+
+  export type ExplorerFeedSnapshotValue = {
+    items: MediaItem[];
+    page: number;
+    hasNext: boolean;
+    totalPages: number | undefined;
+    exhausted: boolean;
+    error: string;
+  } | null;
+
+  export type ExplorerFeedSnapshotHandlers = {
+    capture: () => ExplorerFeedSnapshotValue;
+    restore: (value: unknown) => void;
+  };
+</script>
+
 <script lang="ts">
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { navigating, page } from '$app/state';
   import { Check, LoaderCircle, RotateCw } from 'lucide-svelte';
   import type { ContentType } from '$data/content';
-  import type { MediaItem } from '$data/content';
   import { DESTINATION_LABELS } from '$lib/shared/content-labels';
   import { EXPLORER_GENRES, EXPLORER_LANGUAGES, EXPLORER_SORT_TITLES, type ExplorerSort } from '$lib/shared/explorer-taxonomy';
   import ContentRail from '$components/ContentRail.svelte';
@@ -52,7 +80,8 @@
     hasNextPage = false,
     totalPages = undefined,
     filters = {},
-    errorMessage = undefined
+    errorMessage = undefined,
+    registerFeedSnapshot = undefined
   }: {
     type: ContentType;
     spotlight?: MediaItem[];
@@ -63,6 +92,10 @@
     totalPages?: number | undefined;
     filters?: { genre?: string; language?: string; sort?: string };
     errorMessage?: string | undefined;
+    /** MAV-20 Phase D — the route +page.svelte registers the component's
+     *  feed capture/restore handlers here and delegates its exported
+     *  SvelteKit snapshot to them (the Upcoming/Search page architecture). */
+    registerFeedSnapshot?: (handlers: ExplorerFeedSnapshotHandlers) => void;
   } = $props();
 
   const labels = $derived(DESTINATION_LABELS[type]);
@@ -73,6 +106,11 @@
   const selectedLanguage = $derived(filters.language && filters.language !== 'all' ? filters.language : '');
   const selectedSort = $derived(filters.sort === 'popular' || filters.sort === 'top-rated' ? (filters.sort as ExplorerSort) : undefined);
   const filtersActive = $derived(Boolean(selectedGenre || selectedLanguage || selectedSort));
+
+  // MAV-20 Phase D — the Explorer origin (page + ACTIVE FILTER STATE) the
+  // spotlight hero's links carry as `from`, so detail pages opened from the
+  // hero return to the exact filtered Explorer the user was browsing.
+  const explorerOrigin = $derived(`${page.url.pathname}${page.url.search}${page.url.hash}`);
 
   // ============================================================
   // Filter chip interactions — URL is the source of truth (the same
@@ -291,6 +329,49 @@
     if (filtersActive && !feedExhausted && feedItems.length > 0) {
       void topUpToResponsiveTarget();
     }
+
+    // MAV-20 Phase D — register the feed snapshot handlers with the
+    // route (which delegates its exported SvelteKit snapshot to them).
+    // Capture: the accumulated infinite-scroll state. Restore: re-seed
+    // the feed to the accumulated state — the content height is
+    // immediately right, so the root layout's scroll restoration has a
+    // page tall enough to land on (the old behavior re-seeded to the
+    // 10-item SSR page, so any saved scroll offset clamped near the
+    // top until the async top-up refetch re-arrived).
+    // The restore also marks the current server seed as CONSUMED
+    // (lastSeed = filteredItems) so the re-seed $effect above cannot
+    // clobber the restored state regardless of effect/restore ordering,
+    // and invalidates any in-flight appends (requestSequence += 1 —
+    // the Upcoming page's proven pattern).
+    registerFeedSnapshot?.({
+      capture: () => ({
+        items: [...feedItems],
+        page: feedPage,
+        hasNext: feedHasNext,
+        totalPages: feedTotalPages,
+        exhausted: feedExhausted,
+        error: feedError
+      }),
+      restore: (value: unknown) => {
+        if (!value || typeof value !== 'object') return;
+        const v = value as Partial<NonNullable<ExplorerFeedSnapshotValue>>;
+        if (Array.isArray(v.items) && v.items.length > 0) {
+          feedItems = [...v.items];
+          // Consume the current server seed so the re-seed effect
+          // never overwrites the restored accumulation.
+          lastSeed = filteredItems;
+        }
+        if (typeof v.page === 'number') feedPage = v.page;
+        if (typeof v.hasNext === 'boolean') feedHasNext = v.hasNext;
+        if (typeof v.totalPages === 'number' || v.totalPages === undefined) feedTotalPages = v.totalPages;
+        if (typeof v.exhausted === 'boolean') feedExhausted = v.exhausted;
+        if (typeof v.error === 'string') feedError = v.error;
+        // Invalidate any in-flight append from the pre-navigation mount.
+        requestSequence += 1;
+        loadingMore = false;
+      }
+    });
+
     return () => {
       routeActive = false;
       requestSequence += 1;
@@ -337,7 +418,7 @@
 
 <div class="explorer-page" data-destination={type}>
   {#if spotlight.length > 0}
-    <SpotlightCarousel items={spotlight} ariaLabel={`${labels.plural} spotlight`} />
+    <SpotlightCarousel items={spotlight} ariaLabel={`${labels.plural} spotlight`} returnTo={explorerOrigin} />
   {:else}
     <!-- Quiet fallback when the catalog cannot supply a spotlight lineup -->
     <section class="explorer-hero-fallback" aria-label={labels.plural}>

@@ -6,7 +6,7 @@
   import PlayerShell from '$lib/components/player/PlayerShell.svelte';
   import type { PlayerEpisode, PlayerEpisodeTarget, PlayerProgressEvent, PlayerSource, PlayerSourceOption } from '$lib/shared/player';
   import { resolveSandboxRuntime } from '$lib/shared/sandbox-policy';
-  import { appendReturnTo, safeReturnTo } from '$lib/shared/navigation';
+  import { appendReturnTo, navigateBackOr, safeReturnTo } from '$lib/shared/navigation';
   import type { PageData } from './$types';
   import { createProgressWriter, getLocalPersistenceState, getResumeProgress, setFavoriteStatus } from '$lib/client/progress/service';
   import { recordCloudHistory, syncAuthenticatedState } from '$lib/client/progress/cloud';
@@ -815,9 +815,39 @@
   }
 
   function closePlayer() {
+    // MAV-20 Phase D — REAL back navigation + immediate progress flush.
+    //
+    // The old implementation always did goto(destination, { replaceState:
+    // true }). That REPLACED the watch history entry with the detail
+    // entry, so after listing → detail → Play → Close the stack became
+    // [listing, detail, detail'] — Back from the post-player detail page
+    // returned to the SAME detail page again (the reported duplicate
+    // destination), and a listing-origin player (hero Play) skipped the
+    // origin entirely. It also meant the navigation waited on the
+    // destination's server load with zero escape hatch.
+    //
+    // The new policy (shared/navigation.ts navigateBackOr):
+    //   * An in-app previous entry exists (the normal case — the watch
+    //     page was PUSHED from the detail page or the origin listing) →
+    //     history.back() returns to the ACTUAL previous page, preserving
+    //     its history entry, query state, SvelteKit snapshot and forward
+    //     history. Episode changes use replaceState, so the watch entry
+    //     is still the one the origin pushed — back() is correct.
+    //   * No in-app origin (deep link to /watch) → the fallback goto
+    //     with replaceState (the old destination computation: the detail
+    //     page, carrying `from`).
+    //
+    // Progress durability: pause() initiates the final IndexedDB flush
+    // immediately (fire-and-forget — it does NOT block the navigation;
+    // IndexedDB writes complete independently), and onDestroy's
+    // writer.flush() is the backstop. The navigation itself starts
+    // instantly — nothing in this path awaits network cleanup.
+    void writer?.pause();
     const returnTo = safeReturnTo(page.url.searchParams.get('from'));
-    const destination = returnTo && isDetailPath(returnTo) ? returnTo : appendReturnTo(`/${contentType}/${item.id}`, returnTo ?? '/discover');
-    void goto(destination, { replaceState: true, keepFocus: true });
+    const fallbackDestination = returnTo && isDetailPath(returnTo) ? returnTo : appendReturnTo(`/${contentType}/${item.id}`, returnTo ?? '/discover');
+    navigateBackOr(() => {
+      void goto(fallbackDestination, { replaceState: true, keepFocus: true });
+    });
   }
 
   function openDetails() {

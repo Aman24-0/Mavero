@@ -1,17 +1,24 @@
 import { error } from '@sveltejs/kit';
-import { getDetailWithSafeRecommendations } from '$lib/server/content/service';
+import { getDetail } from '$lib/server/content/service';
 import { toMediaItem } from '$lib/server/content/presenter';
 import { canAccessAdultContent } from '$lib/server/content/adult-policy';
 import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ params, locals, cookies }) => {
   try {
-    // Phase 6: consumer detail path — recommendations of non-adult parents
-    // are classified through the ONE central classifier and adult/uncertain
-    // recs are dropped (a normal surface stays adult-free regardless of
-    // Adult Mode state). Adult parents keep their recs (Adult-specific
-    // surface, reachable only after the guard below).
-    const detail = await getDetailWithSafeRecommendations('series', params.id);
+    // MAV-20 Phase D — the page load fetches the PARENT detail only.
+    //
+    // The old load used getDetailWithSafeRecommendations, which runs the
+    // per-recommendation classification N+1 (up to 6 cached detail
+    // fetches) INLINE — every navigation to a detail page (including the
+    // back-navigation from the player, the reported ~2-3s stall) waited
+    // on it. The classified "You may also like" rail is now loaded
+    // client-side after render through /api/content/recommendations,
+    // which runs the EXACT same safety pipeline (the ONE central
+    // classifier + the identical adult gate). The adult PARENT gate
+    // below is unchanged — an unauthorized adult title still 404s at
+    // the page level.
+    const detail = await getDetail('series', params.id);
 
     // Phase 10: SSR adult content guard.
     if (detail.tags?.includes('Adult')) {
@@ -23,7 +30,11 @@ export const load: PageServerLoad = async ({ params, locals, cookies }) => {
       }
     }
 
-    return { item: toMediaItem(detail), recommendations: (detail.recommendations ?? []).map(toMediaItem) };
+    // Recommendations load client-side (see above) — the server response
+    // carries the parent only. toMediaItem maps an allowlist of card
+    // fields, so the detail's raw embedded recommendation rows never
+    // serialize into the page payload.
+    return { item: toMediaItem(detail), recommendations: [] };
   } catch {
     throw error(404, 'Series not found');
   }

@@ -213,13 +213,16 @@ function sliceOf(source: string, start: string, end: string): string {
 // §G — Route links preserved
 // ============================================================
 {
+        // MAV-20 Phase D: the links keep the SAME route patterns, now
+        // wrapped in appendReturnTo(..., returnTo) so they carry the
+        // Explorer origin as `from` for correct back-navigation.
         assert.ok(
-                spotlight.includes('href={`/watch/${slide.type}/${slide.id}`}'),
-                'Play keeps the /watch/{type}/{id} pattern'
+                spotlight.includes('appendReturnTo(`/watch/${slide.type}/${slide.id}`, returnTo)'),
+                'Play keeps the /watch/{type}/{id} pattern (with the Explorer origin)'
         );
         assert.ok(
-                spotlight.includes('href={`/${slide.type}/${slide.id}`}'),
-                'More details keeps the /{type}/{id} pattern'
+                spotlight.includes('appendReturnTo(`/${slide.type}/${slide.id}`, returnTo)'),
+                'More details keeps the /{type}/{id} pattern (with the Explorer origin)'
         );
         assert.ok(spotlight.includes('aria-roledescription="carousel"'), 'the carousel landmark is preserved');
         assert.ok(spotlight.includes('role="tab"'), 'dots remain tab semantics');

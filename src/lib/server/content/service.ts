@@ -1,4 +1,4 @@
-import { getTmdbCollection, getTmdbDetail, getTmdbDiscover, getTmdbPopular, getTmdbTrendingMoviesByLanguage, searchTmdb, getTmdbSeason, getTmdbNowPlaying, getTmdbNewOnOtt, getTmdbPopularByLanguage, getTmdbTopRated, getTmdbGenreByLanguage, getTmdbAnimeMerged, getTmdbAdultShows, getTmdbAdultDiscover } from './adapters/tmdb';
+import { getTmdbCollection, getTmdbDetail, getTmdbDiscover, getTmdbPopular, getTmdbTrendingMoviesByLanguage, searchTmdb, getTmdbSeason, getTmdbNowPlaying, getTmdbNewOnOtt, getTmdbNewOnOttTyped, getTmdbNewOnOttAnime, getTmdbPopularByLanguage, getTmdbTopRated, getTmdbGenreByLanguage, getTmdbTvGenreByLanguage, getTmdbAnimeMerged, getTmdbAdultShows, getTmdbAdultDiscover } from './adapters/tmdb';
 import { emptyAdultDiscoverResult, type AdultDiscoverFilters } from './adult-discover';
 import { media } from '$data/content';
 import type { CollectionFilters, ContentDetail, ContentList, ContentSearchResult, ContentType, DiscoverLanguage, DiscoverRailFilters, DiscoverSectionKey, NormalizedMediaItem, SearchFilters } from './types';
@@ -409,6 +409,59 @@ const GENRE_ID_BY_SECTION: Record<Extract<DiscoverSectionKey, `genre-${string}`>
   'genre-romance': 10749,
 };
 
+// ============================================================
+// MAV-20 Phase B — genre rail type-chip mappings.
+//
+// TMDB movie and TV genre taxonomies DIFFER (movie: 28 Action / 878
+// Sci-Fi / 53 Thriller; TV: 10759 Action & Adventure / 10765 Sci-Fi &
+// Fantasy — no Thriller/Horror/Romance TV genre exists). The anime
+// catalog is a MERGED movie+TV query, so each anime genre maps to an
+// id PER side. These mappings mirror the SHARED Explorer taxonomy
+// (src/lib/shared/explorer-taxonomy.ts — the ONE established source
+// for per-media-type genre ids) so the Discover chips can never drift
+// from the Explorer filters.
+//
+// NEVER-INVENT-AN-ID RULE (the established Explorer contract): a
+// section whose genre has no real equivalent for a side/type is
+// simply OMITTED here — that chip serves an honest EMPTY rail via the
+// same non-disclosing empty result used everywhere else. No invented
+// ids, no "closest match" substitution.
+// ============================================================
+type DiscoverGenreSection = Extract<DiscoverSectionKey, `genre-${string}`>;
+
+const TV_GENRE_ID_BY_DISCOVER_SECTION: Partial<Record<DiscoverGenreSection, number>> = {
+  // Source: EXPLORER_GENRES.series — 'Action & Adventure' 10759,
+  // 'Sci-Fi & Fantasy' 10765, Comedy 35, Crime 80, Drama 18.
+  'genre-action': 10759,
+  'genre-adventure': 10759,
+  'genre-comedy': 35,
+  'genre-crime': 80,
+  'genre-scifi': 10765,
+  'genre-drama': 18
+  // genre-thriller / genre-horror / genre-romance: TMDB has no such TV
+  // genre — omitted; the TV Shows chip serves an honest empty rail.
+};
+
+const ANIME_GENRE_BY_DISCOVER_SECTION: Partial<Record<DiscoverGenreSection, { movieGenreId?: number; tvGenreId?: number }>> = {
+  // Source: EXPLORER_GENRES.anime — per-side ids; Horror and Romance
+  // keep their MOVIE side only (no TV equivalent); Thriller has no
+  // anime equivalent at all and is omitted entirely.
+  'genre-action': { movieGenreId: 28, tvGenreId: 10759 },
+  'genre-adventure': { movieGenreId: 12, tvGenreId: 10759 },
+  'genre-comedy': { movieGenreId: 35, tvGenreId: 35 },
+  'genre-crime': { movieGenreId: 80, tvGenreId: 80 },
+  'genre-scifi': { movieGenreId: 878, tvGenreId: 10765 },
+  'genre-drama': { movieGenreId: 18, tvGenreId: 18 },
+  'genre-horror': { movieGenreId: 27 },
+  'genre-romance': { movieGenreId: 10749 }
+  // genre-thriller: no anime equivalent in the established taxonomy —
+  // omitted; the Anime chip serves an honest empty rail.
+};
+
+function emptyRailResult(page: number): ContentList {
+  return { items: [], page, hasNextPage: false, source: { provider: 'tmdb', fetchedAt: new Date().toISOString() } };
+}
+
 export function isDiscoverSectionKey(value: string): value is DiscoverSectionKey {
   return value === 'theatre' || value === 'new-ott'
     || value === 'popular-movie' || value === 'popular-series' || value === 'popular-anime'
@@ -433,6 +486,13 @@ export async function discoverRail(filters: DiscoverRailFilters, canAccessAdult 
       case 'theatre':
         return await getTmdbNowPlaying(language, page);
       case 'new-ott':
+        // MAV-20 Phase B: the Movie / TV Shows / Anime chips. Each typed
+        // variant reuses the SAME source and filtering semantics as the
+        // legacy merged rail, scoped to one content type. No `type` =
+        // the legacy merged (movie + TV) dataset — unchanged contract.
+        if (filters.type === 'movie') return await getTmdbNewOnOttTyped('movie', filters.provider, language, page);
+        if (filters.type === 'series') return await getTmdbNewOnOttTyped('series', filters.provider, language, page);
+        if (filters.type === 'anime') return await getTmdbNewOnOttAnime(filters.provider, page);
         return await getTmdbNewOnOtt(filters.provider, language, page);
       case 'popular-movie':
         return await getTmdbPopularByLanguage('movie', language, page);
@@ -459,7 +519,25 @@ export async function discoverRail(filters: DiscoverRailFilters, canAccessAdult 
       default: {
         // Genre sections.
         if (section in GENRE_ID_BY_SECTION) {
-          const genreId = GENRE_ID_BY_SECTION[section as Extract<DiscoverSectionKey, `genre-${string}`>];
+          const genreSection = section as DiscoverGenreSection;
+          // MAV-20 Phase B: TV Shows chip — the REAL TMDB TV genre id
+          // from the shared Explorer taxonomy. Sections with no TV
+          // genre equivalent return an honest EMPTY rail (never an
+          // invented id).
+          if (filters.type === 'series') {
+            const tvGenreId = TV_GENRE_ID_BY_DISCOVER_SECTION[genreSection];
+            if (tvGenreId === undefined) return emptyRailResult(page);
+            return await getTmdbTvGenreByLanguage(tvGenreId, language, page);
+          }
+          // Anime chip — the established merged anime query with the
+          // per-side genre constraint (the SAME function + constraint
+          // the Anime Explorer uses for genre filtering).
+          if (filters.type === 'anime') {
+            const constraint = ANIME_GENRE_BY_DISCOVER_SECTION[genreSection];
+            if (!constraint) return emptyRailResult(page);
+            return await getTmdbAnimeMerged('popularity', page, constraint);
+          }
+          const genreId = GENRE_ID_BY_SECTION[genreSection];
           return await getTmdbGenreByLanguage(genreId, language, page);
         }
         throw new ContentServiceError('Unknown Discover section.', { code: 'NOT_FOUND', status: 404 });
@@ -488,14 +566,45 @@ export async function discoverRail(filters: DiscoverRailFilters, canAccessAdult 
  *
  * Adult sections are NOT included in the batch — they remain independently
  * fetched by the existing per-rail endpoint.
+ *
+ * MAV-20 Phase B: the batch's `new-ott` entry is the MOVIE variant (the
+ * default chip of the consolidated New on OTT family). The injected
+ * fetchRail maps the untyped `new-ott` section key to `type: 'movie'` —
+ * the legacy merged dataset is no longer part of the batch surface (it
+ * remains available on the per-rail endpoint for backward compatibility).
+ *
+ * MAV-20 Phase E: `sections` optionally scopes the RETURNED rails to a
+ * subset of section keys (the caller may fetch the batch in priority
+ * tiers so the first rails render before the rest are computed). The
+ * dedup processing itself ALWAYS walks the full SECTION_PRIORITY list
+ * with the same global seen set — the scope only filters the RESPONSE,
+ * so a scoped request returns rails that are identical to the full
+ * batch's entries for those sections (higher-priority sections are
+ * still processed, just not serialized back). This keeps the cross-rail
+ * dedup invariant intact across tiered requests: two concurrent scoped
+ * requests share the same in-flight-deduplicated server caches, so
+ * tier 2 sees exactly the same seen-set prefix the full batch would
+ * have produced.
  */
 export async function discoverBatchDeduped(
   language: DiscoverLanguage,
   provider?: string,
-  canAccessAdult = false
+  canAccessAdult = false,
+  sections?: readonly string[]
 ): Promise<Record<string, { items: NormalizedMediaItem[]; page: number; hasNextPage: boolean }>> {
   const { discoverBatchDeduped: impl } = await import('./discover-batch');
-  return impl(language, provider, canAccessAdult, discoverRail);
+  return impl(
+    language,
+    provider,
+    canAccessAdult,
+    (filters, adult) => discoverRail(
+      filters.section === 'new-ott' && filters.type === undefined
+        ? { ...filters, type: 'movie' }
+        : filters,
+      adult
+    ),
+    sections
+  );
 }
 
 /**

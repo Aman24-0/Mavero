@@ -16,22 +16,39 @@ const discoverLoad = await readFile(path.join(repoRoot, 'src/lib/server/content/
 const appFooter = await readFile(path.join(repoRoot, 'src/lib/components/AppFooter.svelte'), 'utf8');
 
 // ============================================================================
-// A. Section configuration — exactly these sections in this order.
+// A. Section configuration — exactly these CHIP FAMILIES in this order
+//    (MAV-20 Phase B: Popular/Top Rated/New on OTT/genre rails are ONE
+//    family each with Movie / TV Shows / Anime chips; the separate
+//    popular-*/top-rated-* sections were consolidated).
 // ============================================================================
 {
-  // The SECTIONS array in DiscoverPage must list exactly the spec order.
-  assert.match(discoverPage, /key: 'theatre'.*?Running in theatre/, 'theatre section present with title');
-  assert.match(discoverPage, /key: 'new-ott'.*?New on OTT/, 'new-ott section present');
-  assert.match(discoverPage, /key: 'popular-movie'.*?Popular movies/, 'popular-movie section');
-  assert.match(discoverPage, /key: 'popular-series'.*?Popular TV shows/, 'popular-series section');
-  assert.match(discoverPage, /key: 'popular-anime'.*?Popular anime/, 'popular-anime section');
-  assert.match(discoverPage, /key: 'top-rated-movie'.*?Top rated movies/, 'top-rated-movie section');
-  assert.match(discoverPage, /key: 'top-rated-series'.*?Top rated TV shows/, 'top-rated-series section');
-  assert.match(discoverPage, /key: 'top-rated-anime'.*?Top rated anime/, 'top-rated-anime section');
-  // Genre sections
-  for (const g of ['action', 'adventure', 'comedy', 'crime', 'thriller', 'scifi', 'drama', 'horror', 'romance']) {
-    assert.match(discoverPage, new RegExp(`key: 'genre-${g}'`), `genre-${g} section present`);
+  // The FAMILIES array in DiscoverPage must list exactly the spec order.
+  assert.match(discoverPage, /key: 'theatre',\s*\n\s*title: 'Running in theatre 🎥',\s*\n\s*typeChips: false/, 'theatre family present, no chips');
+  assert.match(discoverPage, /key: 'new-ott',\s*\n\s*title: 'New on OTT',\s*\n\s*typeChips: true,\s*\n\s*languageFilter: false,\s*\n\s*providerFilter: true/, 'new-ott family: chips + provider filter, no language dropdown');
+  assert.match(discoverPage, /key: 'popular',\s*\n\s*title: 'Popular',\s*\n\s*typeChips: true/, 'popular family (consolidated) present with chips');
+  assert.match(discoverPage, /key: 'top-rated',\s*\n\s*title: 'Top Rated',\s*\n\s*typeChips: true/, 'top-rated family (consolidated) present with chips');
+  // The popular family selects the EXISTING per-type datasets (the same
+  // section keys the three separate rails used before consolidation).
+  assert.match(discoverPage, /movie: \{ section: 'popular-movie' \},\s*\n\s*series: \{ section: 'popular-series' \},\s*\n\s*anime: \{ section: 'popular-anime' \}/, 'popular chips map to the existing popular-{movie,series,anime} datasets');
+  assert.match(discoverPage, /movie: \{ section: 'top-rated-movie' \},\s*\n\s*series: \{ section: 'top-rated-series' \},\s*\n\s*anime: \{ section: 'top-rated-anime' \}/, 'top-rated chips map to the existing top-rated-{movie,series,anime} datasets');
+  // The new-ott family scopes the SAME OTT query per content type.
+  assert.match(discoverPage, /movie: \{ section: 'new-ott', type: 'movie' \},\s*\n\s*series: \{ section: 'new-ott', type: 'series' \},\s*\n\s*anime: \{ section: 'new-ott', type: 'anime' \}/, 'new-ott chips scope the OTT query per content type');
+  // Genre families: every genre keeps its section key + chips. The
+  // families are built by the shared genreFamily() factory — assert the
+  // factory builds the typed variants (movie default + TV/anime chips
+  // carrying the type dimension) AND that all nine genres are listed.
+  const genreTitles: Record<string, string> = { action: 'Action', adventure: 'Adventure', comedy: 'Comedy', crime: 'Crime', thriller: 'Thriller', scifi: 'Sci-Fi', drama: 'Drama', horror: 'Horror', romance: 'Romance' };
+  for (const g of Object.keys(genreTitles)) {
+    assert.match(discoverPage, new RegExp(`genreFamily\\('${g}', '${genreTitles[g]}'\\)`), `genre-${g} family present`);
   }
+  assert.match(discoverPage, /function genreFamily\([\s\S]*?key: section,[\s\S]*?typeChips: true,[\s\S]*?variants: \{[\s\S]*?movie: \{ section \},[\s\S]*?series: \{ section, type: 'series' \},[\s\S]*?anime: \{ section, type: 'anime' \}/, 'genreFamily factory: every genre rail gets the Movie/TV Shows/Anime chip variants');
+  // The OLD separate section titles are gone (consolidated into chips).
+  assert.doesNotMatch(discoverPage, /title: 'Popular movies'/, 'separate Popular movies section removed');
+  assert.doesNotMatch(discoverPage, /title: 'Popular TV shows'/, 'separate Popular TV shows section removed');
+  assert.doesNotMatch(discoverPage, /title: 'Popular anime'/, 'separate Popular anime section removed');
+  assert.doesNotMatch(discoverPage, /title: 'Top rated movies'/, 'separate Top rated movies section removed');
+  assert.doesNotMatch(discoverPage, /title: 'Top rated TV shows'/, 'separate Top rated TV shows section removed');
+  assert.doesNotMatch(discoverPage, /title: 'Top rated anime'/, 'separate Top rated anime section removed');
   // Old decorative genre tiles must be gone.
   assert.doesNotMatch(discoverPage, /class="genre-section"/, 'old genre-tile section removed');
   assert.doesNotMatch(discoverPage, /Browse by genre/, 'old genre-tile heading removed');
@@ -39,11 +56,11 @@ const appFooter = await readFile(path.join(repoRoot, 'src/lib/components/AppFoot
   assert.doesNotMatch(discoverPage, /Trending right now/, 'old "Trending right now" section removed');
   assert.doesNotMatch(discoverPage, /Trending Movies — Hindi/, 'old Hindi rail removed');
   assert.doesNotMatch(discoverPage, /Trending Movies — Regional/, 'old Regional rail removed');
-  // No duplicate sections (each key appears exactly once).
+  // No duplicate families (each key appears exactly once).
   const theatreCount = (discoverPage.match(/key: 'theatre'/g) || []).length;
-  assert.equal(theatreCount, 1, 'theatre section appears exactly once');
+  assert.equal(theatreCount, 1, 'theatre family appears exactly once');
   const newOttCount = (discoverPage.match(/key: 'new-ott'/g) || []).length;
-  assert.equal(newOttCount, 1, 'new-ott section appears exactly once');
+  assert.equal(newOttCount, 1, 'new-ott family appears exactly once');
 }
 
 // ============================================================================
@@ -286,8 +303,10 @@ const appFooter = await readFile(path.join(repoRoot, 'src/lib/components/AppFoot
   assert.doesNotMatch(discoverPage, /quickChips/, 'quick chips const removed');
   assert.doesNotMatch(discoverPage, /quick-chips/, 'quick chips markup/styles removed');
   assert.doesNotMatch(discoverPage, /\/discover\/(movies|series|anime)/, 'no links to the legacy child pages remain');
-  // Anime rail View-all links target the first-class /anime route.
-  assert.match(discoverPage, /viewAllHref: '\/anime'/, 'anime View-all targets /anime');
+  // Anime chip View-all links target the first-class /anime route
+  // (MAV-20: the View-all renders on the ANIME VARIANT of the
+  // popular / top-rated families).
+  assert.match(discoverPage, /viewAllHref=\{\(fam\.key === 'popular' \|\| fam\.key === 'top-rated'\) && variantType === 'anime' \? '\/anime' : ''\}/, 'anime View-all targets /anime (anime chip only)');
   // Continue watching unchanged.
   assert.match(discoverPage, /ContentRail title="Continue watching"/);
   assert.match(discoverPage, /href="\/my-list\?status=watching"/);
@@ -300,7 +319,14 @@ const appFooter = await readFile(path.join(repoRoot, 'src/lib/components/AppFoot
   const layout = await readFile(path.join(repoRoot, 'src/routes/+layout.svelte'), 'utf8');
   assert.match(layout, /export const snapshot = \{/, 'root layout snapshot intact');
   const detailPage = await readFile(path.join(repoRoot, 'src/lib/components/DetailPage.svelte'), 'utf8');
-  assert.match(detailPage, /window\.history\.back\(\)/, 'DetailPage still uses history.back()');
+  // MAV-20 Phase D: the back button delegates to the ONE shared policy
+  // (navigateBackOr in shared/navigation.ts), which performs the REAL
+  // history.back() with the popstate watchdog + fallback.
+  assert.match(detailPage, /navigateBackOr\(\(\) => \{/, 'DetailPage back control uses the shared navigateBackOr policy');
+  const navigation = await readFile(path.join(repoRoot, 'src/lib/shared/navigation.ts'), 'utf8');
+  assert.match(navigation, /window\.history\.back\(\)/, 'navigateBackOr performs the real history.back()');
+  assert.match(navigation, /export function recordInAppNavigation\(/, 'in-app origin tracking: the root layout records in-app navigations');
+  assert.match(navigation, /lastInAppNavigationFrom !== null/, 'hasInAppHistoryEntry is driven by the recorded in-app navigation');
 }
 
 // ============================================================================

@@ -11,22 +11,45 @@
   // Changing Action's language must NOT reset Popular Movie — each
   // section's state is local to this component instance.
   //
-  // The "Show more" button appends the next 10 items; the existing 10
-  // remain. No full-page reload, no scroll reset. The fetch goes through
-  // the cached /api/discover/rail endpoint.
+  // MAV-20 Phase B — content-type chips. The consolidated Discover page
+  // renders ONE rail family per title (Popular, Top Rated, New on OTT,
+  // every genre rail) with Movie / TV Shows / Anime chips. The PARENT
+  // owns the selected type and re-keys this component on chip switch,
+  // so a switch is a fresh mount with fresh state — the previous type's
+  // items, pagination cursor, loading state and error CANNOT leak by
+  // construction. The active variant is identified by the `section` +
+  // `requestType` props (the rail request parameters), while the chips
+  // themselves are rendered here (beside the title) from the
+  // `typeFilter` / `activeType` / `onTypeChange` props.
   //
-  // For anime sections (popular-anime / top-rated-anime) no dropdown is
-  // rendered — they only get a "View all →" link to /discover/anime.
+  // MAV-20 Phase C — Show More is an INLINE terminal card at the end of
+  // the horizontal rail (not a separate row underneath). The endcap
+  // occupies one rail column, matches the card geometry, never looks
+  // like a fake poster (no artwork, dashed outline), and turns into the
+  // loading / retry state in place. It disappears when the dataset is
+  // exhausted; a failed load-more keeps the loaded items and surfaces
+  // an inline retry inside the same endcap.
+  //
+  // The "Show more" card appends the next batch; the existing items
+  // remain. No full-page reload, no scroll reset — appending grid
+  // columns to the right keeps the user's horizontal position stable.
+  // The fetch goes through the cached /api/discover/rail endpoint.
+  //
+  // For anime sections (popular-anime / top-rated-anime variants, and
+  // the anime chips of new-ott + genre families) no language dropdown
+  // is rendered — the parent passes languageFilter=false for them (the
+  // anime catalog is Japanese by construction; the same reason the
+  // Anime Explorer offers no language row).
 
   import { onMount } from 'svelte';
-  import { LoaderCircle, Plus, ArrowRight, RotateCw } from 'lucide-svelte';
+  import { ArrowRight, LoaderCircle, Plus, RotateCw } from 'lucide-svelte';
   import type { MediaItem } from '$data/content';
   import MediaCard from '$components/MediaCard.svelte';
   import DiscoverDropdown from '$components/DiscoverDropdown.svelte';
   import SkeletonCard from '$components/SkeletonCard.svelte';
   import { getCachedRail, setCachedRail } from '$lib/client/discover/rail-cache';
   import { page } from '$app/state';
-  import type { DiscoverLanguage, DiscoverSectionKey } from '$lib/server/content/types';
+  import type { DiscoverLanguage, DiscoverRailType, DiscoverSectionKey } from '$lib/server/content/types';
   // Phase 9 fix: import the pure decision function from the SHARED module
   // (not from $lib/server/* which is server-only and rejected by the
   // SvelteKit browser-bundle guard).
@@ -57,6 +80,14 @@
   // this section, so Show More computes `nextPage = currentPage + 1`
   // from the correct continuation point (never re-fetching already-
   // consumed pages).
+  //
+  // MAV-20 Phase B: the parent passes 'failed' for chip variants that
+  // are NOT part of the batch payload (the TV Shows / Anime variants of
+  // the new-ott + genre families) — meaning "no batch dataset exists
+  // for this variant; an independent fetch is allowed". The parent only
+  // does that once the batch has RESOLVED (passing 'pending' until
+  // then), so the independent fetch can carry the full cross-rail
+  // exclude list and never races the dedup foundation.
   type BatchStatus = 'pending' | 'success' | 'failed';
 
   type LanguageOption = { value: DiscoverLanguage; label: string };
@@ -64,7 +95,11 @@
 
   let {
     section,
+    requestType = undefined,
     title,
+    typeFilter = false,
+    activeType = 'movie',
+    onTypeChange = undefined,
     languageFilter = true,
     providerFilter = false,
     providers = [],
@@ -77,8 +112,17 @@
     excludeIds = [] as string[],
     batchStatus = 'pending' as BatchStatus,
   }: {
+    /** The ACTIVE variant's rail section key (e.g. 'popular-series', 'genre-action', 'new-ott'). */
     section: DiscoverSectionKey;
+    /** The ACTIVE variant's content-type dimension — only for new-ott / genre-* variants. */
+    requestType?: DiscoverRailType;
     title: string;
+    /** Render the Movie / TV Shows / Anime chips beside the title. */
+    typeFilter?: boolean;
+    /** The currently selected chip (parent-owned). */
+    activeType?: DiscoverRailType;
+    /** Chip switch handler (parent re-keys this component on change). */
+    onTypeChange?: (type: DiscoverRailType) => void;
     languageFilter?: boolean;
     providerFilter?: boolean;
     providers?: ProviderOption[];
@@ -103,6 +147,15 @@
     { value: 'other', label: 'Other language' },
   ];
 
+  // MAV-20 Phase B — the three compact content-type chips shown beside
+  // the section title. Labels follow the task spec exactly: Movie /
+  // TV Shows / Anime.
+  const TYPE_CHIP_OPTIONS: { value: DiscoverRailType; label: string }[] = [
+    { value: 'movie', label: 'Movie' },
+    { value: 'series', label: 'TV Shows' },
+    { value: 'anime', label: 'Anime' },
+  ];
+
   // Per-section independent state.
   let items = $state<MediaItem[]>([]);
   let loading = $state(false);
@@ -110,8 +163,8 @@
   let errorMessage = $state('');
   // Phase 2-L: separate error state for Show-more failures. The first-load
   // error replaces the empty state with an error message; the Show-more
-  // error preserves the existing items and surfaces a retry action BELOW
-  // them (never replaces the rail).
+  // error preserves the existing items and surfaces a retry action INSIDE
+  // the inline endcap (never replaces the rail).
   let showMoreError = $state('');
   let currentPage = $state(1);
   let hasNextPage = $state(false);
@@ -136,16 +189,24 @@
   // Phase 8 fix: railUrl now accepts an explicit exclude list instead of
   // relying on a boolean flag that only serialized the prop excludeIds.
   // This fixes the bug where current-rail items were NOT sent to the server.
+  // MAV-20 Phase B: the content-type dimension is part of the rail URL —
+  // and therefore of the client rail-cache key — so each chip variant
+  // has its own cache entries (no cross-type cache leakage).
   function railUrl(targetPage: number, excludeList: string[] = []) {
     const params = new URLSearchParams({
       section,
       language,
       page: String(targetPage),
     });
+    if (requestType) params.set('type', requestType);
     if (providerFilter && provider) params.set('provider', provider);
     // Phase 8: send the exclude list for Show More so the server can
     // filter out items already displayed in higher-priority rails AND
     // in this rail's current items.
+    // MAV-20: the FIRST load of a non-batch chip variant (and any
+    // language/provider change) sends the cross-rail exclude list too —
+    // an independent fetch must honor the same cross-rail dedup contract
+    // the batch enforces server-side.
     if (excludeList.length > 0) {
       params.set('exclude', excludeList.slice(0, 500).join(','));
     }
@@ -200,10 +261,14 @@
     loading = true;
     loadingMore = false;
     errorMessage = '';
+    // MAV-20: the independent first load carries the cross-rail exclude
+    // list (higher-priority rails' canonical IDs) so it cannot
+    // re-introduce items already displayed above — the same invariant
+    // the server-side batch dedup enforces.
+    const url = railUrl(1, excludeIds);
     // Phase 2-G: check the in-memory rail cache first. A hit avoids the
     // network roundtrip on back-navigation (component remount). The cache
     // is per-user + TTL-bound (see rail-cache.ts for the safety contract).
-    const url = railUrl(1);
     const cached = getCachedRail<MediaItem>(url, page.data.user?.id);
     if (cached) {
       items = cached.items;
@@ -274,8 +339,9 @@
     } catch (error) {
       if (requestId !== requestSequence) return;
       // Phase 2-L: keep existing items visible AND surface a transient
-      // error WITH a retry action. The rail is NOT replaced with an
-      // error page — only the Show-more button reflects the failure.
+      // error WITH a retry action INSIDE the inline endcap. The rail is
+      // NOT replaced with an error page — only the endcap reflects the
+      // failure (it becomes the Retry card in place).
       showMoreError = error instanceof Error ? error.message : 'Could not load more titles.';
     } finally {
       if (requestId === requestSequence) loadingMore = false;
@@ -306,6 +372,15 @@
     items = [];
     loading = true;
     void loadFirst();
+  }
+
+  function changeType(next: DiscoverRailType) {
+    if (next === activeType) return;
+    // The parent owns the type selection and re-keys this component on
+    // change — a fresh instance mounts with the new variant's props
+    // (section/requestType/initialItems). This handler only forwards
+    // the selection; no local state to migrate (nothing can leak).
+    onTypeChange?.(next);
   }
 
   onMount(() => {
@@ -346,18 +421,34 @@
 
   // Build the dropdown options. For language-filterable sections we
   // render the language dropdown. For the OTT section we render the
-  // provider dropdown (with logos). Both are mutually exclusive in
-  // the current spec (OTT has no language dropdown; other sections
+  // provider dropdown (with logos). Both are mutually exclusive in the
+  // current spec (OTT has no language dropdown; other sections
   // have no provider dropdown) but the component supports both.
   let showLanguageDropdown = $derived(languageFilter);
   let showProviderDropdown = $derived(providerFilter && providers.length > 0);
   let showAnyControl = $derived(showLanguageDropdown || showProviderDropdown || Boolean(viewAllHref));
 </script>
 
-<section class="discover-section" aria-labelledby={`section-${section}-title`}>
+<section class="discover-section" aria-labelledby={`section-${section}${requestType ? `-${requestType}` : ''}-title`}>
   <div class="section-head">
     <div class="section-head-left">
-      <h2 id={`section-${section}-title`} class="section-title">{title}</h2>
+      <h2 id={`section-${section}${requestType ? `-${requestType}` : ''}-title`} class="section-title">{title}</h2>
+      {#if typeFilter}
+        <!-- MAV-20 Phase B — the three compact content-type chips beside
+             the title. aria-pressed communicates the selection; the
+             buttons are real buttons (keyboard + touch accessible). -->
+        <div class="type-chips" role="group" aria-label={`Filter ${title} by content type`}>
+          {#each TYPE_CHIP_OPTIONS as chip (chip.value)}
+            <button
+              class="type-chip"
+              class:active={activeType === chip.value}
+              type="button"
+              aria-pressed={activeType === chip.value}
+              onclick={() => changeType(chip.value)}
+            >{chip.label}</button>
+          {/each}
+        </div>
+      {/if}
     </div>
     <div class="section-head-right">
       {#if showProviderDropdown}
@@ -407,34 +498,44 @@
         <span>No titles available right now.</span>
       </div>
     {:else}
+      <!-- MAV-20 Phase C — the rail itself, with the Show More control as
+           an INLINE terminal item at the end of the horizontal list (not
+           a separate row underneath). Appending new grid columns to the
+           right keeps the user's horizontal scroll position stable. -->
       <div class="rail">
         {#each items as item (item.type + ':' + item.id)}
           <MediaCard {item} />
         {/each}
-      </div>
-      {#if hasNextPage}
-        <button
-          class="show-more"
-          type="button"
-          onclick={loadMore}
-          disabled={loadingMore}
-          aria-label={`Show more ${title}`}
-        >
-          {#if loadingMore}<LoaderCircle size={14} />{:else}<Plus size={14} />{/if}
-          <span>{loadingMore ? 'Loading…' : 'Show more'}</span>
-        </button>
-        <!-- Phase 2-L: Show-more failure preserves the existing rail AND
-             surfaces the error with a retry. The rail is NOT replaced. -->
-        {#if showMoreError}
-          <div class="show-more-error" role="alert">
-            <span>{showMoreError}</span>
-            <button class="retry-btn" type="button" onclick={loadMore} disabled={loadingMore} aria-label={`Retry loading more ${title}`}>
-              <RotateCw size={14} />
-              <span>Retry</span>
+        {#if hasNextPage}
+          <div class="rail-endcap">
+            <button
+              class="show-more-card"
+              class:retry={Boolean(showMoreError)}
+              type="button"
+              onclick={loadMore}
+              disabled={loadingMore}
+              aria-label={showMoreError ? `Retry loading more ${title}` : `Show more ${title}`}
+            >
+              {#if loadingMore}
+                <LoaderCircle size={18} aria-hidden="true" />
+                <span>Loading…</span>
+              {:else if showMoreError}
+                <RotateCw size={18} aria-hidden="true" />
+                <span>Retry</span>
+              {:else}
+                <Plus size={18} aria-hidden="true" />
+                <span>Show more</span>
+              {/if}
             </button>
+            <!-- Phase 2-L: Show-more failure preserves the existing rail AND
+                 surfaces the error inside the same endcap. The rail is NOT
+                 replaced. -->
+            {#if showMoreError}
+              <p class="show-more-error" role="alert">{showMoreError}</p>
+            {/if}
           </div>
         {/if}
-      {/if}
+      </div>
     {/if}
   </div>
 </section>
@@ -448,7 +549,10 @@
     display: flex; align-items: end; justify-content: space-between; gap: 12px;
     margin-bottom: 14px;
   }
-  .section-head-left { min-width: 0; }
+  .section-head-left {
+    min-width: 0;
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  }
   .section-head-right {
     display: inline-flex; align-items: center; gap: 10px;
     flex-shrink: 0;
@@ -463,6 +567,39 @@
     line-height: 1.1;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
+
+  /* MAV-20 Phase B — compact content-type chips beside the title.
+     Active chip: filled with the dynamic accent theme (the same
+     --color-primary token every Mavero control uses); inactive chips:
+     quiet bordered pills. Real buttons — keyboard focusable, visible
+     focus ring, aria-pressed state. */
+  .type-chips {
+    display: inline-flex; align-items: center; gap: 5px;
+    flex-shrink: 0;
+  }
+  .type-chip {
+    display: inline-flex; align-items: center;
+    min-height: 26px;
+    padding: 0 11px;
+    border: 1px solid rgba(255, 255, 255, .14);
+    border-radius: 999px;
+    color: var(--muted, #969696);
+    background: rgba(255, 255, 255, .03);
+    font: inherit;
+    font-size: .64rem; font-weight: 700;
+    letter-spacing: .02em;
+    cursor: pointer;
+    transition: background 160ms ease, border-color 160ms ease, color 160ms ease;
+  }
+  .type-chip:hover { color: var(--ink, #f5f5f5); background: rgba(255, 255, 255, .07); border-color: rgba(255, 255, 255, .26); }
+  .type-chip:focus-visible { outline: 2px solid var(--color-focus, #f5f5f5); outline-offset: 1px; }
+  .type-chip.active {
+    color: #050708;
+    background: var(--color-primary, #00ff9c);
+    border-color: var(--color-primary, #00ff9c);
+    box-shadow: 0 0 14px rgba(0, 255, 156, .22);
+  }
+
   .section-link {
     display: inline-flex; align-items: center; gap: 6px;
     color: var(--muted, #969696);
@@ -478,6 +615,43 @@
     scrollbar-width: none; padding: 6px 2px 12px;
   }
   .rail::-webkit-scrollbar { display: none; }
+
+  /* MAV-20 Phase C — the inline terminal Show More card. Occupies one
+     rail column (same grid geometry as the cards — no distortion), but
+     is deliberately NOT poster-shaped: a dashed-outline glass panel
+     with a centered icon + label. It stretches to the row height so it
+     fits the rail's card geometry at every breakpoint. */
+  .rail-endcap {
+    display: flex; flex-direction: column; gap: 6px;
+    min-width: 0;
+  }
+  .show-more-card {
+    flex: 1;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+    padding: 12px;
+    border: 1px dashed rgba(255, 255, 255, .2);
+    border-radius: 14px;
+    color: var(--ink, #f5f5f5);
+    background: rgba(255, 255, 255, .03);
+    font: inherit;
+    font-size: .7rem; font-weight: 700;
+    cursor: pointer;
+    transition: background 180ms ease, border-color 180ms ease;
+  }
+  .show-more-card:hover:not(:disabled) { background: rgba(255, 255, 255, .08); border-color: rgba(255, 255, 255, .38); }
+  .show-more-card:focus-visible { outline: 2px solid var(--color-focus, #f5f5f5); outline-offset: 2px; }
+  .show-more-card:disabled { opacity: .55; cursor: not-allowed; }
+  .show-more-card :global(svg) { animation: spin 1s linear infinite; }
+  /* Failure state: the SAME endcap becomes the retry card in place —
+     the loaded items are never discarded. */
+  .show-more-card.retry { border-style: solid; border-color: rgba(255, 176, 32, .45); color: #ffb020; background: rgba(255, 176, 32, .06); }
+  .show-more-card.retry:hover:not(:disabled) { background: rgba(255, 176, 32, .14); border-color: rgba(255, 176, 32, .65); }
+  .show-more-error {
+    margin: 0;
+    color: #ffb020;
+    font-size: .62rem; font-weight: 600; line-height: 1.35;
+    text-align: center;
+  }
 
   .section-error, .section-empty {
     display: grid; place-items: center; gap: 8px;
@@ -504,17 +678,6 @@
   .retry-btn:focus-visible { outline: 2px solid #ffb020; outline-offset: 1px; }
   .retry-btn:disabled { opacity: .5; cursor: not-allowed; }
   .retry-btn :global(svg) { animation: spin 1s linear infinite; }
-  /* Phase 2-L: Show-more error — preserved rail + inline retry below. */
-  .show-more-error {
-    display: inline-flex; align-items: center; gap: 10px;
-    margin-top: 8px;
-    padding: 8px 14px;
-    border: 1px solid rgba(255,176,32,.3);
-    border-radius: 12px;
-    color: #ffb020;
-    background: rgba(255,176,32,.06);
-    font-size: .72rem;
-  }
   /* Phase 2-H: skeleton rail uses the same grid as the populated rail so
      the section height is stable from first paint. The skeleton cards
      are aria-hidden — the aria-busy + aria-live on the parent communicates
@@ -522,36 +685,22 @@
   .skeleton-rail { min-height: 0; }
   @keyframes spin { to { transform: rotate(360deg); } }
 
-  .show-more {
-    display: inline-flex; align-items: center; gap: 6px;
-    min-height: 34px;
-    padding: 0 16px;
-    margin-top: 4px;
-    border: 1px solid rgba(255,255,255,.14);
-    border-radius: 999px;
-    color: #f5f5f5;
-    background: rgba(255,255,255,.04);
-    font: inherit;
-    font-size: .7rem; font-weight: 700;
-    cursor: pointer;
-    transition: background 180ms ease, border-color 180ms ease;
-  }
-  .show-more:hover:not(:disabled) { background: rgba(255,255,255,.1); border-color: rgba(255,255,255,.28); }
-  .show-more:focus-visible { outline: 2px solid #f5f5f5; outline-offset: 1px; }
-  .show-more:disabled { opacity: .5; cursor: not-allowed; }
-  .show-more :global(svg) { animation: spin 1s linear infinite; }
-
   @media (max-width: 640px) {
     .discover-section { margin-top: 28px; }
     .section-head { gap: 8px; }
     .section-title { font-size: 1.05rem; }
     .rail { grid-auto-columns: 40vw; gap: 10px; }
     .section-head-right { gap: 6px; }
+    /* Compact chips on mobile — the header stays tight. */
+    .section-head-left { gap: 8px; }
+    .type-chips { gap: 4px; }
+    .type-chip { min-height: 24px; padding: 0 9px; font-size: .6rem; }
   }
   @media (min-width: 1900px) {
     .rail { grid-auto-columns: 210px; gap: 18px; }
   }
   @media (prefers-reduced-motion: reduce) {
-    .show-more :global(svg) { animation: none; }
+    .show-more-card :global(svg) { animation: none; }
+    .type-chip, .show-more-card { transition: none; }
   }
 </style>

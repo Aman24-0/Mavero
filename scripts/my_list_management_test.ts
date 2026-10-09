@@ -386,8 +386,9 @@ async function resetLocal() {
   assert.match(detailSource, /showSuccessToast\('Added to My List'\)/, 'add toast added');
   assert.match(detailSource, /showSuccessToast\(`Moved to \$\{label\}`\)/, 'status change toast added');
   assert.match(detailSource, /showSuccessToast\('Removed from My List'\)/, 'remove toast added');
-  // Navigation: history.back() must remain (the recent nav fix).
-  assert.match(detailSource, /window\.history\.back\(\)/, 'DetailPage.goBack still uses history.back()');
+  // Navigation: the real history.back() must remain — MAV-20 Phase D
+  // moved it into the ONE shared back policy, which DetailPage delegates to.
+  assert.match(detailSource, /navigateBackOr\(\(\) => \{/, 'DetailPage.goBack delegates to the shared navigateBackOr policy');
   // No regression: DetailPage must NOT use replaceState goto for the
   // valid-from case (that was the bug we just fixed).
   assert.doesNotMatch(detailSource, /if \(returnTo\?\.startsWith\('\/'\) && !returnTo\.startsWith\('\/\/'\)\)\s*\{\s*void goto\(returnTo, \{ replaceState: true, keepFocus: true \}\);\s*return;\s*\}/,

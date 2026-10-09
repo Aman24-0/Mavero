@@ -932,8 +932,15 @@ assert.doesNotMatch(upcomingSrc, /with_type/, 'TMDB with_type is deliberately NO
 // DetailPage's existing back behavior is UNCHANGED: `from` param +
 // history.back() (SvelteKit snapshot/scroll restoration depends on it).
 assert.match(detailPageSrc, /page\.url\.searchParams\.get\('from'\)/, 'DetailPage still reads the `from` return parameter');
-assert.match(detailPageSrc, /window\.history\.back\(\)/, 'DetailPage back still performs a real popstate history.back()');
-assert.match(detailPageSrc, /goto\('\/discover', \{ replaceState: true, keepFocus: true \}\)/, 'DetailPage keeps its direct-visit /discover fallback (Upcoming adds `from`, so it never fires from Upcoming)');
+// MAV-20 Phase D: the real history.back() lives in the shared policy now.
+assert.match(detailPageSrc, /navigateBackOr\(\(\) => \{/, 'DetailPage back delegates to the shared navigateBackOr policy');
+const navigationPolicySrc = await readFile(new URL('../src/lib/shared/navigation.ts', import.meta.url), 'utf8');
+assert.match(navigationPolicySrc, /window\.history\.back\(\)/, 'navigateBackOr performs the real popstate history.back()');
+// MAV-20 Phase D: the direct-visit fallback destination is computed from
+// the `from` param with /discover as the final default (Upcoming adds
+// `from`, so the /discover default never fires from Upcoming).
+assert.match(detailPageSrc, /const fallbackDestination = validReturnTo \?\? '\/discover';/, 'DetailPage keeps its direct-visit /discover fallback (from-aware, /discover default)');
+assert.match(detailPageSrc, /void goto\(fallbackDestination, \{ replaceState: true, keepFocus: true \}\);/, 'the fallback navigates with replaceState (deep-link entry replaced)');
 // MediaCard's return-state architecture is UNCHANGED.
 assert.match(mediaCardSrc, /appendReturnTo\(`\/\$\{item\.type\}\/\$\{item\.id\}`/, 'MediaCard still builds detail links through appendReturnTo');
 assert.match(mediaCardSrc, /page\.url\.pathname\}\$\{page\.url\.search\}\$\{page\.url\.hash/, 'MediaCard return context shape unchanged (pathname+search+hash)');

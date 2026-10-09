@@ -133,6 +133,28 @@ async function boundedAll<T>(
  * Adult sections are NOT included in the batch — they remain independently
  * fetched by the existing per-rail endpoint.
  *
+ * MAV-20 Phase E — `sections` response scoping:
+ *   The dedup processing ALWAYS walks the FULL SECTION_PRIORITY list with
+ *   the same global seen set (byte-identical dedup outcome regardless of
+ *   scope). `sections`, when provided, only filters WHICH rails are
+ *   returned to the caller. This lets the client fetch the batch in
+ *   priority tiers — the first tier renders as soon as ITS sections are
+ *   computed, while a concurrent tier-2 request processes the same full
+ *   priority list (sharing the in-flight-deduplicated server caches) and
+ *   returns the remaining rails. Because every scoped request sees the
+ *   same seen-set prefix, tiered responses compose into exactly the same
+ *   rails a single full-batch request would have returned.
+ *
+ *   SCOPING RULE (prefix short-circuit): a scoped request processes
+ *   every section UP TO AND INCLUDING the LAST scoped section in
+ *   SECTION_PRIORITY order — sections before the last scoped one are
+ *   processed even when out of scope because their accepted items seed
+ *   the global seen set the scoped sections' dedup depends on — and
+ *   SKIPS every section after it entirely (lower-priority sections can
+ *   never influence higher-priority ones, so skipping them is exact,
+ *   not an approximation). A tier-1 request scoped to the priority
+ *   PREFIX therefore returns after processing only its own sections.
+ *
  * @param language   Discover language filter.
  * @param provider   OTT provider key (only meaningful for new-ott).
  * @param canAccessAdult Reserved for future use; batch does not include
@@ -140,30 +162,51 @@ async function boundedAll<T>(
  * @param fetchRail  REQUIRED rail fetcher. Production callers pass the
  *                   real `discoverRail` from `service.ts`. Tests pass
  *                   a mock to avoid hitting real TMDB.
+ * @param sections   Optional subset of section keys to RETURN. The
+ *                   processing prefix runs through the LAST scoped
+ *                   section (dedup seeding); sections after it are
+ *                   skipped. Unknown keys match nothing — a scope that
+ *                   matches no section returns an empty rails object.
  */
 export async function discoverBatchDeduped(
   language: DiscoverLanguage,
   provider: string | undefined,
   canAccessAdult: boolean,
-  fetchRail: (filters: DiscoverRailFilters, canAccessAdult: boolean) => Promise<ContentList>
+  fetchRail: (filters: DiscoverRailFilters, canAccessAdult: boolean) => Promise<ContentList>,
+  sections?: readonly string[]
 ): Promise<Record<string, { items: NormalizedMediaItem[]; page: number; hasNextPage: boolean }>> {
   const seen = new Set<string>();
   const results: Record<string, { items: NormalizedMediaItem[]; page: number; hasNextPage: boolean }> = {};
   const TARGET_ITEMS = 10;
   const MAX_PAGES = 3;
 
+  // MAV-20 Phase E — resolve the response scope to a processing PREFIX
+  // of SECTION_PRIORITY: everything up to the last scoped section runs
+  // (out-of-scope sections still seed the seen set), everything after
+  // the last scoped section is skipped entirely.
+  const scopeSet = sections !== undefined && sections.length > 0 ? new Set(sections) : undefined;
+  let lastScopedIndex = SECTION_PRIORITY.length - 1;
+  if (scopeSet) {
+    lastScopedIndex = -1;
+    for (let i = 0; i < SECTION_PRIORITY.length; i++) {
+      if (scopeSet.has(SECTION_PRIORITY[i])) lastScopedIndex = i;
+    }
+    if (lastScopedIndex === -1) return {}; // scope matches nothing — nothing to process
+  }
+  const processCount = lastScopedIndex + 1;
+
   // ============================================================
-  // F3: Fetch page-1 for ALL sections in parallel (bounded).
-  // Page-1 fetches are independent — no section's page-1 result
-  // depends on another section's page-1 result. The dedup only
+  // F3: Fetch page-1 for the sections being processed in parallel
+  // (bounded). Page-1 fetches are independent — no section's page-1
+  // result depends on another section's page-1 result. The dedup only
   // matters when deciding which items to KEEP.
   //
   // CRITICAL: pass LAZY TASK FUNCTIONS (() => Promise<T>), NOT
   // already-started promises. This ensures fetchRail is only INVOKED
-  // when a concurrency slot is available — preventing all 17 requests
+  // when a concurrency slot is available — preventing all requests
   // from being in flight simultaneously.
   // ============================================================
-  const page1Tasks = SECTION_PRIORITY.map((section) => () =>
+  const page1Tasks = SECTION_PRIORITY.slice(0, processCount).map((section) => () =>
     fetchRail(
       { section: section as DiscoverSectionKey, language, provider, page: 1 },
       canAccessAdult
@@ -176,7 +219,7 @@ export async function discoverBatchDeduped(
   // This preserves deterministic ordering — completion timing does
   // NOT affect which items are kept or which section gets priority.
   // ============================================================
-  for (let i = 0; i < SECTION_PRIORITY.length; i++) {
+  for (let i = 0; i < processCount; i++) {
     const section = SECTION_PRIORITY[i];
     const page1Result = page1Results[i];
 
@@ -236,11 +279,17 @@ export async function discoverBatchDeduped(
       }
     }
 
-    results[section] = {
-      items: railItems.slice(0, 20), // Cap at 20 per rail
-      page: lastFetchedPage,
-      hasNextPage: hasNext,
-    };
+    // MAV-20 Phase E — store the rail only when the section is in the
+    // requested scope. Out-of-scope sections before the last scoped
+    // section were still PROCESSED above (their accepted items are in
+    // the seen set — the dedup seeding the scoped sections rely on).
+    if (!scopeSet || scopeSet.has(section)) {
+      results[section] = {
+        items: railItems.slice(0, 20), // Cap at 20 per rail
+        page: lastFetchedPage,
+        hasNextPage: hasNext,
+      };
+    }
   }
 
   return results;

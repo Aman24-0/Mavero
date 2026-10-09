@@ -1,6 +1,7 @@
 <script lang="ts">
   import '$lib/../app.css';
   import { onMount } from 'svelte';
+  import { afterNavigate } from '$app/navigation';
   import { page, navigating } from '$app/state';
   import AppShell from '$components/AppShell.svelte';
   import PwaExperience from '$components/PwaExperience.svelte';
@@ -11,6 +12,7 @@
   import { syncAuthenticatedState } from '$lib/client/progress/cloud';
   import { syncDevtoolProtection } from '$lib/client/devtool-protection';
   import { isLibraryAwareRoute } from '$lib/shared/route-policy';
+  import { recordInAppNavigation } from '$lib/shared/navigation';
   import { analytics } from '$lib/client/analytics/dispatcher';
 
   let { children: pageChildren, data }: { children: Snippet; data: LayoutData } = $props();
@@ -60,6 +62,19 @@
     return () => window.removeEventListener('online', retry);
   });
 
+  // MAV-20 Phase D — in-app navigation tracking for the shared back
+  // policy (shared/navigation.ts). Every COMPLETED client-side
+  // navigation reports its origin URL; the initial load reports null.
+  // The flag is the deterministic "an in-app history entry exists before
+  // the current one" signal the back controls rely on — history.back()
+  // then provably stays inside the app. (SvelteKit's own
+  // history.state['sveltekit:history'] index cannot prove this: it is
+  // seeded with Date.now() on first load, so it is non-zero even for a
+  // deep-linked first entry.)
+  afterNavigate(({ from }) => {
+    recordInAppNavigation(from ? `${from.url.pathname}${from.url.search}` : null);
+  });
+
   // DevTools protection (disable-devtool integration) — client-only.
   //
   // $effect never runs during SSR, and the protection module has no
@@ -85,11 +100,11 @@
     syncDevtoolProtection(data.devtoolExempt === true);
   });
 
-  // Root layout snapshot — captures the window scroll position whenever
-  // the user navigates away from any page in the app, and restores it
-  // when the user navigates back via the browser Back/Forward button or
-  // via `history.back()` (which is what the DetailPage back-arrow icon
-  // uses when there's a valid internal `from` parameter).
+  // Root layout snapshot — captures the scroll position whenever the
+  // user navigates away from any page in the app, and restores it when
+  // the user navigates back via the browser Back/Forward button or via
+  // `history.back()` (which is what the in-app back controls use
+  // through the shared navigateBackOr policy).
   //
   // Why a snapshot instead of a custom scroll Map
   // ============================================
@@ -116,10 +131,27 @@
   // bottom nav while on a deep-scroll Search page correctly starts at
   // the top of Discover rather than inheriting Search's scroll.
   //
-  // The restore happens on `requestAnimationFrame` so the DOM has had
-  // a chance to lay out — for pages whose height depends on async data
-  // (e.g. My List loading from IndexedDB), restoring synchronously
-  // could land at a position the page hasn't grown to yet.
+  // MAV-20 Phase D — BOTH scrollers, INSTANT, content-driven:
+  //   * BOTH scrollers: on viewports ≤1024px the WINDOW scrolls; on
+  //     desktop (≥1025px) the real scroller is the AppShell's
+  //     `.app-main` container (height:100dvh; overflow-y:auto — the
+  //     window never moves there). The old snapshot captured/restored
+  //     window scroll only, so back navigation on desktop ALWAYS landed
+  //     at the top. The snapshot now captures BOTH positions and
+  //     restores BOTH — the inactive scroller's value is always 0 and
+  //     its container is not scrollable at that breakpoint, so the
+  //     extra restore is a guaranteed no-op.
+  //   * INSTANT: `html { scroll-behavior: smooth }` animates programmatic
+  //     scrolls — a restored position would glide instead of snapping,
+  //     and mid-flight user interaction could leave it short. Restores
+  //     use scrollTo({ behavior: 'instant' }) to bypass the animation.
+  //   * CONTENT-DRIVEN: restoring before the destination's async content
+  //     exists (Explorer re-seeding its grid, My List reading IndexedDB)
+  //     would clamp to the not-yet-grown height. The restore waits on a
+  //     rAF loop UNTIL the target scroller's scrollHeight covers the
+  //     saved offset (or a bounded frame budget passes), then clamps —
+  //     restoring as soon as the layout exists, never after an
+  //     arbitrary fixed timeout.
   //
   // Note: this is the ROOT layout snapshot. It runs alongside any
   // per-page snapshots (e.g. the Search page's query/type/results
@@ -127,26 +159,59 @@
   // (layout + page) atomically on navigation, so scroll + page state
   // always restore together.
   export const snapshot = {
-    capture: (): { x: number; y: number } => {
-      if (typeof window === 'undefined') return { x: 0, y: 0 };
-      return { x: window.scrollX, y: window.scrollY };
+    capture: (): { x: number; y: number; mainTop: number } => {
+      if (typeof window === 'undefined') return { x: 0, y: 0, mainTop: 0 };
+      // Capture BOTH scrollers — one of them is always 0; capturing
+      // both means the correct one is always present regardless of the
+      // viewport the page was viewed at (and viewport changes between
+      // capture and restore are handled by restoring both).
+      const main = document.querySelector<HTMLElement>('.app-main');
+      return {
+        x: window.scrollX,
+        y: window.scrollY,
+        mainTop: main?.scrollTop ?? 0
+      };
     },
-    restore: (value: { x: number; y: number }) => {
+    restore: (value: { x: number; y: number; mainTop: number }) => {
       if (typeof window === 'undefined') return;
       if (!value || typeof value !== 'object') return;
       const x = Number.isFinite(value.x) ? value.x : 0;
       const y = Number.isFinite(value.y) ? value.y : 0;
-      requestAnimationFrame(() => {
-        // Clamp to current document bounds — if the page hasn't grown to
-        // the saved height yet (async data still loading), this still
-        // scrolls as far as possible.
-        const maxX = document.documentElement.scrollWidth - window.innerWidth;
-        const maxY = document.documentElement.scrollHeight - window.innerHeight;
-        window.scrollTo(
-          Math.max(0, Math.min(x, Math.max(0, maxX))),
-          Math.max(0, Math.min(y, Math.max(0, maxY)))
-        );
-      });
+      const mainTop = Number.isFinite(value.mainTop) ? value.mainTop : 0;
+
+      // Bounded, content-driven restore: wait (rAF loop) until the
+      // target scroller's content covers the saved offset, then clamp
+      // and restore INSTANTLY. The frame budget (40 frames ≈ 650ms at
+      // 60Hz) only bounds the pathological case (content never arrives);
+      // the normal case restores as soon as the layout exists.
+      const FRAME_BUDGET = 40;
+      let frames = 0;
+      const restoreNow = () => {
+        // Window scroller (mobile/tablet) — instant, clamped to bounds.
+        const maxX = Math.max(0, document.documentElement.scrollWidth - window.innerWidth);
+        const maxY = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+        window.scrollTo({ left: Math.max(0, Math.min(x, maxX)), top: Math.max(0, Math.min(y, maxY)), behavior: 'instant' } as ScrollToOptions);
+        // Desktop scroller (.app-main) — instant, clamped to bounds. On
+        // viewports where .app-main is not the scroll container it is
+        // either absent or overflow-visible, making this a no-op.
+        const main = document.querySelector<HTMLElement>('.app-main');
+        if (main) {
+          const maxTop = Math.max(0, main.scrollHeight - main.clientHeight);
+          main.scrollTo({ top: Math.max(0, Math.min(mainTop, maxTop)), behavior: 'instant' } as ScrollToOptions);
+        }
+      };
+      const waitForContent = () => {
+        frames += 1;
+        const main = document.querySelector<HTMLElement>('.app-main');
+        const mainReady = !main || mainTop <= 0 || main.scrollHeight - main.clientHeight >= mainTop - 1;
+        const windowReady = y <= 0 || document.documentElement.scrollHeight - window.innerHeight >= y - 1;
+        if (mainReady && windowReady || frames >= FRAME_BUDGET) {
+          restoreNow();
+          return;
+        }
+        requestAnimationFrame(waitForContent);
+      };
+      requestAnimationFrame(waitForContent);
     }
   };
 </script>
