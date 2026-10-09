@@ -149,9 +149,13 @@ ok('4. MAV-22 Detail 3.0: poster-overlap hero (every surface), side-by-side iden
 // MAV-22: provider availability became the COMPACT hero strip (genuine
 // data only); the separate provider cards are gone (pinned by
 // mav22_detail_page_3_test §12).
-assert.match(detailPage, /class="provider-strip" aria-label=\{`Available on \$\{heroProviderNames\}`\}/, 'the compact provider strip renders near the hero actions');
+// MAV-24 supersession (Issue 3): the strip left the hero for a labelled
+// STREAMING PROVIDER(S) field inside the More Details grid — same genuine
+// data, no hero duplication (pinned by mav24_final_polish_test).
+assert.doesNotMatch(detailPage, /class="provider-strip"/, 'the hero provider strip is gone (moved into More Details)');
+assert.match(detailPage, /class="fact-row fact-row-providers"/, 'provider availability renders in the More Details grid');
 assert.doesNotMatch(detailPage, />Streaming on</, 'no "Streaming on" heading remains');
 assert.doesNotMatch(detailPage, /streaming-heading/, 'no separate provider section remains');
-ok('5. Change 6 (superseded by MAV-22): compact provider hero strip; no duplicate provider section');
+ok('5. Change 6 (superseded by MAV-22 → MAV-24): provider field in More Details; no duplicate provider section');
 
 console.log(`\nExplorer navigation/search/detail tests passed (${passed} check groups).`);

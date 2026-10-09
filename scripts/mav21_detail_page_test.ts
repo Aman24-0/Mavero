@@ -153,8 +153,10 @@ assert.match(detailPage, /\{#if heroGenreOverflow > 0\} <span class="genre-more"
   'the "+N more" affordance renders');
 assert.match(detailPage, /const hasLongOverview = \$derived\(item\.description\.length > 280\);/,
   'Overview expansion threshold is 280 chars');
-assert.match(detailPage, /\.detail-desc \{[\s\S]*?-webkit-line-clamp: 2; line-clamp: 2;/,
-  'hero synopsis is a 2-line preview (full synopsis lives in Overview)');
+// MAV-24 supersession (Issue 1): the hero synopsis preview was REMOVED;
+// the Overview section below the hero is the single synopsis home.
+assert.doesNotMatch(detailPage, /class="detail-desc"/,
+  'hero synopsis preview removed (full synopsis lives ONLY in Overview)');
 assert.match(detailPage, /\.overview-text \{[\s\S]*?-webkit-line-clamp: 4; line-clamp: 4;/,
   'Overview synopsis clamps at 4 lines until expanded');
 assert.match(detailPage, /\.detail-title \{[\s\S]*?-webkit-line-clamp: 3; line-clamp: 3;/,
@@ -188,8 +190,10 @@ assert.match(detailPage, /\.poster-card \{[\s\S]*?aspect-ratio: 2 \/ 3;/,
 // intent are unchanged.
 assert.match(detailPage, /@media \(max-width: 640px\) \{[\s\S]*?\.play-btn \{ flex: 1 1 62%; min-height: 52px;/,
   'mobile Play keeps the dominant 62% row with a ≥52px thumb target');
-assert.match(detailPage, /@media \(max-width: 640px\) \{[\s\S]*?\.download-btn \{ flex: 1 1 38%; min-height: 52px; \}/,
-  'mobile Download shares the primary row (≥52px thumb target)');
+// MAV-24 supersession (Issue 2): Download is an icon-only 52px square that
+// shares the primary row with Play (same 52px target, no visible text).
+assert.match(detailPage, /\.download-btn \{[\s\S]*?flex: 0 0 auto; width: 52px; min-height: 52px;/,
+  'mobile/base Download shares the primary row as a 52px icon square (≥52px thumb target)');
 assert.match(detailPage, /@media \(max-width: 1024px\) and \(orientation: landscape\) and \(max-height: 480px\) \{[\s\S]*?\.hero \{ min-height: auto; height: auto; \}/,
   'landscape-short: hero collapses so title+actions stay visible');
 assert.match(detailPage, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?transition: none !important;[\s\S]*?animation: none !important;/,
@@ -205,11 +209,13 @@ console.log('\n7. Below the fold');
 
 assert.match(detailPage, /<h2 class="section-h" id="overview-heading">Overview<\/h2>/,
   'Overview section present');
-// MAV-22 UPDATE: the separate "Available on" section was replaced by
-// the COMPACT provider strip near the hero actions (same genuine data,
-// no hero-blocking cards — pinned by mav22_detail_page_3_test §12).
-assert.match(detailPage, /class="provider-strip" aria-label=\{`Available on \$\{heroProviderNames\}`\}/,
-  'provider availability renders as a compact hero strip (honest data only)');
+// MAV-24 supersession (Issue 3): the provider strip left the hero for a
+// labelled field inside the More Details grid (same genuine data —
+// pinned by mav22_detail_page_3_test §12 + mav24_final_polish_test).
+assert.doesNotMatch(detailPage, /class="provider-strip"/,
+  'no provider strip in the hero (it renders in More Details now)');
+assert.match(detailPage, /class="fact-row fact-row-providers"/,
+  'provider availability renders as a labelled More Details field (honest data only)');
 assert.doesNotMatch(detailPage, /streaming-heading/,
   'no separate provider section remains (it duplicated the compact strip)');
 assert.match(detailPage, /<div class="cast-photo cast-photo-fallback" aria-hidden="true"><span>\{member\.name\.slice\(0, 1\)\.toUpperCase\(\)\}<\/span><\/div>/,

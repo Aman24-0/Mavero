@@ -57,19 +57,29 @@ ok(/clamp\(78px,\s*19vw,\s*112px\)/.test(mobileBlock), 'F1: mobile overlap depth
 ok(/grid-template-columns:\s*clamp\(96px,\s*25vw,\s*124px\)/.test(mobileBlock), 'F1: mobile poster column compacted (2:3 overlap card retained)');
 ok(!/\.play-btn\s*\{[^}]*flex:\s*1 1 100%/.test(mobileBlock), 'F1: mobile Play no longer forces a full-width row (side-by-side with Download)');
 ok(/\.play-btn\s*\{[^}]*flex:\s*1 1 62%/.test(mobileBlock), 'F1: Play remains the dominant 62% primary action on mobile');
-ok(/\.download-btn\s*\{[^}]*flex:\s*1 1 38%/.test(mobileBlock), 'F1: Download shares the primary row on mobile (saves a full 52px row)');
+// MAV-24 supersession (Issue 2): Download is now an icon-only 52px square
+// sharing the primary row (the labelled 38% pill was replaced — same row,
+// same 52px target, no visible text).
+ok(!/\.download-btn\s*\{[^}]*flex:\s*1 1 38%/.test(mobileBlock), 'F1→MAV-24: mobile Download no longer stretches 38% (fixed icon square beside Play)');
+ok(/\.download-btn\s*\{[^}]*flex:\s*0 0 auto; width: 52px; min-height: 52px;/.test(detailPage), 'F1→MAV-24: Download is a 52px icon square at the same row height as Play');
 ok(/\.actions\s*\{[^}]*margin-top:\s*12px/.test(mobileBlock), 'F1: action block margin compacted');
-ok(/\.provider-strip\s*\{[^}]*margin-top:\s*10px/.test(mobileBlock), 'F1: provider strip pulled tighter beneath the actions');
-ok(/\.provider-strip\s*\{[^}]*padding:\s*5px 10px/.test(mobileBlock), 'F1: provider strip padding compacted');
-ok(/min-height:\s*52px/.test(mobileBlock.split('.download-btn')[1] ?? ''), 'F1: Download keeps a 52px touch target on mobile');
+// MAV-24 supersession (Issue 3): the hero provider strip is GONE — the
+// provider field renders in the More Details grid instead, so the strip
+// compaction rules were removed with it.
+ok(!/\.provider-strip/.test(mobileBlock), 'F1→MAV-24: the hero provider strip is gone (provider field lives in More Details)');
+ok(/min-height:\s*52px/.test(detailPage.split('.download-btn {')[1]?.split('}')[0] ?? ''), 'F1→MAV-24: Download keeps its 52px touch target (base rule)');
 ok(/\.secondary-btn\s*\{[^}]*min-height:\s*44px|\.secondary-btn\s*\{[^}]*padding:\s*10px 12px/.test(detailPage) || /\.secondary-btn\s*\{[^}]*padding:\s*10px 12px/.test(mobileBlock), 'F1: secondary buttons stay >=44px touch targets while compacted');
 // Desktop composition untouched (the approved 3.0 look).
 ok(/min-height:\s*clamp\(520px,\s*76vh,\s*760px\)/.test(detailPage), 'F1: desktop hero min-height unchanged (approved composition preserved)');
 ok(/margin-top:\s*calc\(-1 \* clamp\(180px,\s*22vw,\s*260px\)\)/.test(detailPage), 'F1: desktop overlap depth unchanged');
 // Landscape-short guard still present.
 ok(/orientation: landscape\) and \(max-height: 480px\)/.test(detailPage), 'F1: landscape-short guard retained');
-// Every hero element required above the chip still renders (no removals).
-for (const el of ['poster-card', 'detail-title', 'meta-row', 'genre-chips', 'detail-desc', 'primary-actions', 'secondary-actions', 'provider-strip']) {
+// Every hero element required above the fold still renders (no removals).
+// MAV-24 supersessions: the hero synopsis preview (Issue 1) and the hero
+// provider strip (Issue 3) were DELIBERATELY removed — the Overview
+// section and the More Details grid own that content now (pinned by
+// mav24_final_polish_test).
+for (const el of ['poster-card', 'detail-title', 'meta-row', 'genre-chips', 'primary-actions', 'secondary-actions']) {
   ok(detailPage.includes(`class="${el}"`) || detailPage.includes(`class="${el} `), `F1: hero element .${el} still rendered (nothing removed to force the fold)`);
 }
 
@@ -138,8 +148,12 @@ ok(/\{#if trailerActive && hasTrailer\}[\s\S]*?\{:else\}[\s\S]*?heroArtworkSrc/.
 ok(/\{trailerActive \? 'Trailer Off' : 'Trailer'\}/.test(detailPage), 'F4: the toggle label switches Trailer / Trailer Off');
 ok(/aria-pressed=\{trailerActive\}/.test(detailPage), 'F4: the toggle exposes aria-pressed');
 ok(/class="secondary-btn trailer-fs-btn"/.test(detailPage), 'F4: an accessible fullscreen control sits next to the toggle while playback is active');
-ok(/aria-label="Show trailer fullscreen"/.test(detailPage), 'F4: the fullscreen control has an accessible label');
-ok(/\{#if trailerActive\}\s*<button\s+class="secondary-btn trailer-fs-btn"/.test(detailPage.replace(/\n\s*/g, ' ')), 'F4: the fullscreen control renders ONLY while the trailer is active');
+// MAV-24 supersession (Issue 2): the fullscreen control is icon-only and
+// its accessible label now reflects the fullscreen state (and it toggles
+// enter/exit).
+ok(/aria-label=\{trailerFullscreen \? 'Exit trailer fullscreen' : 'Show trailer fullscreen'\}/.test(detailPage), 'F4→MAV-24: the fullscreen control has a state-aware accessible label');
+ok(/\{#if trailerActive\}[\s\S]{0,1000}?<button\s+class="secondary-btn trailer-fs-btn"/.test(detailPage), 'F4→MAV-24: the fullscreen control renders ONLY while the trailer is active');
+ok(!/<span>Fullscreen<\/span>/.test(detailPage), 'F4→MAV-24: the fullscreen control is icon-only (no visible "Fullscreen" text)');
 ok(/youtube\.com\/embed\/\$\{trailerKey\}/.test(detailPage), 'F4: the SAME YouTube embed source contract is preserved');
 ok(!/trailerKey\s*=\s*['"][a-zA-Z0-9_-]{5,}['"]/.test(detailPage), 'F4: no hardcoded trailer id in the page');
 ok(/requestFullscreen/.test(detailPage) && /try\s*\{[\s\S]*?requestFullscreen[\s\S]*?\}\s*catch/.test(detailPage), 'F4: Fullscreen API is guarded (graceful fallback where unsupported)');
@@ -203,7 +217,7 @@ ok(!palette.includes('--color-primary'), 'R: palette never touches the global ac
 ok(/DetailPaletteController/.test(palette) && /isStale/.test(palette), 'R: stale-safe palette controller intact');
 ok(/CACHE_MAX_ENTRIES = 24/.test(palette), 'R: bounded LRU palette cache intact');
 // DetailPage MAV-22 contracts (spot checks — the full mav22 suite still runs).
-for (const marker of ['poster-card', 'hero-info', 'details-grid', 'cast-section', 'recs-section', 'provider-strip', 'overview-section']) {
+for (const marker of ['poster-card', 'hero-info', 'details-grid', 'cast-section', 'recs-section', 'provider-chip', 'overview-section']) {
   ok(detailPage.includes(marker), `R: MAV-22 structure .${marker} preserved`);
 }
 ok(/appendReturnTo|navigateBackOr/.test(detailPage), 'R: back/return navigation contract preserved');

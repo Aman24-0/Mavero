@@ -2,7 +2,7 @@
   import { onMount, tick, untrack } from 'svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
-  import { ArrowLeft, Heart, Play, Share2, Star, ListPlus, Film, Download, AlertCircle, LoaderCircle, AlertTriangle, Maximize } from 'lucide-svelte';
+  import { ArrowLeft, Heart, Play, Share2, Star, ListPlus, Film, Download, AlertCircle, LoaderCircle, AlertTriangle, Maximize, Minimize } from 'lucide-svelte';
   import SelectionSheet from '$components/SelectionSheet.svelte';
   import DownloadSheet from '$components/DownloadSheet.svelte';
   import type { ContentType } from '$data/content';
@@ -162,15 +162,16 @@
   const heroGenres = $derived(item.genres.slice(0, MAX_HERO_GENRES));
   const heroGenreOverflow = $derived(Math.max(0, item.genres.length - MAX_HERO_GENRES));
 
-  // MAV-22 — compact provider-availability indicator (hero actions area).
-  // Only providers the metadata genuinely supplies; at most 3 logos + an
-  // overflow count. A missing/empty list renders NOTHING (no invented
-  // availability).
-  const MAX_HERO_PROVIDERS = 3;
-  const heroProviders = $derived((item.streamingProviders ?? []).filter((provider) => provider.name?.trim()));
-  const heroProvidersTop = $derived(heroProviders.slice(0, MAX_HERO_PROVIDERS));
-  const heroProviderOverflow = $derived(Math.max(0, heroProviders.length - MAX_HERO_PROVIDERS));
-  const heroProviderNames = $derived(heroProvidersTop.map((provider) => provider.name).join(', '));
+  // MAV-24 Issue 3 — provider availability moved OUT of the hero into the
+  // More Details grid (the hero action area must stay compact). The same
+  // genuine-metadata contract as the former hero strip: only providers the
+  // metadata actually supplies, and a missing/empty list renders NO field
+  // (no invented availability). Every provider renders — the grid cell is
+  // a wrapping flex container, so multiple providers can never overflow;
+  // the former 3-logo cap and "+N" overflow count were hero-space
+  // constraints that no longer apply inside the details grid.
+  const detailProviders = $derived((item.streamingProviders ?? []).filter((provider) => provider.name?.trim()));
+  const providerFieldLabel = $derived(detailProviders.length > 1 ? 'Streaming Providers' : 'Streaming Provider');
 
   // Overview expansion (below-fold full synopsis).
   const hasLongOverview = $derived(item.description.length > 280);
@@ -735,11 +736,14 @@
          the graceful fallback) with a readability scrim.
        • hero-body — the poster card OVERLAPS the lower portion of the
          artwork (negative margin), with the title + compact metadata
-         BESIDE it on every surface. Actions, genre chips, the short
-         synopsis and the compact provider strip complete the hero.
-       • detail-body — Overview (full synopsis, no hero duplication),
-         More Details (two-column grid), Cast (rectangular portrait
-         cards), Seasons & Episodes, You May Also Like.
+         BESIDE it on every surface. Genre chips and the action
+         hierarchy complete the hero (MAV-24: the hero synopsis preview
+         was REMOVED — the Overview section owns the synopsis; the
+         provider indicator lives in the More Details grid).
+       • detail-body — Overview (the full synopsis with Show More),
+         More Details (two-column grid incl. the streaming-provider
+         field), Cast (rectangular portrait cards), Seasons &
+         Episodes, You May Also Like.
 
      All hero data is SSR; recommendations load progressively
      client-side. The palette is async and non-blocking.
@@ -821,8 +825,9 @@
 
   <!-- Poster-overlap body: pulled up over the artwork's lower portion.
        The poster card + the title/compact-metadata block sit side by
-       side; genre chips, the short synopsis, the action hierarchy and
-       the compact provider strip complete the hero block. -->
+       side; genre chips and the action hierarchy complete the hero
+       block. MAV-24: no synopsis here (Overview owns it below) and no
+       provider strip here (More Details owns it below). -->
   <div class="hero-body">
     <div class="hero-grid">
       {#if posterSrc && !posterFailed}
@@ -866,9 +871,10 @@
           </div>
         {/if}
 
-        {#if item.description}
-          <p class="detail-desc">{item.description}</p>
-        {/if}
+        <!-- MAV-24 Issue 1 — the hero synopsis preview is REMOVED: the
+             Overview section below the hero carries the full expandable
+             synopsis (Show More), so a second truncated copy here only
+             consumed first-viewport space. -->
 
         <!-- Action hierarchy: the dominant main action first, the
              approved secondary row immediately beneath it. -->
@@ -882,9 +888,12 @@
               </span>
             </a>
             {#if showDownloadButton}
+              <!-- MAV-24 Issue 2 — icon-only Download (the visible text
+                   was unnecessary; the accessible name carries the
+                   semantics). Same click behavior, one aligned primary
+                   row with Play. -->
               <button class="download-btn" type="button" onclick={openDownloadSheet} aria-haspopup="dialog" aria-expanded={downloadSheetOpen} aria-label={`Download ${item.title}`}>
-                <Download size={17} />
-                <span>Download</span>
+                <Download size={18} aria-hidden="true" />
               </button>
             {:else if showDownloadFailure}
               <button class="download-btn download-unavailable" type="button" onclick={retryDownloadProviders} disabled={downloadProvidersLoading} aria-label="Download temporarily unavailable — retry loading providers">
@@ -914,13 +923,24 @@
                 <Film size={15} /><span>{trailerActive ? 'Trailer Off' : 'Trailer'}</span>
               </button>
               {#if trailerActive}
+                <!-- MAV-24 Issue 2 — icon-only fullscreen control beside
+                    Trailer Off (the word "Fullscreen" was unnecessary and
+                    its width pushed the control onto its own wrapped row).
+                    Placement note: the PREFERRED spot (bottom-left, over
+                    the player) is not reliably possible here — the YouTube
+                    iframe owns that corner (its play/pause + volume bar),
+                    and a parent-page overlay is a cross-origin boundary we
+                    cannot integrate with, so it would obscure YouTube's
+                    own essential controls. The spec's sanctioned fallback
+                    is this spot, immediately beside Trailer Off. The
+                    button toggles fullscreen and announces its state. -->
                 <button
                   class="secondary-btn trailer-fs-btn"
-                  onclick={enterTrailerFullscreen}
+                  onclick={() => (trailerFullscreen ? exitTrailerFullscreen() : enterTrailerFullscreen())}
                   aria-pressed={trailerFullscreen}
-                  aria-label="Show trailer fullscreen"
+                  aria-label={trailerFullscreen ? 'Exit trailer fullscreen' : 'Show trailer fullscreen'}
                 >
-                  <Maximize size={15} /><span>Fullscreen</span>
+                  {#if trailerFullscreen}<Minimize size={15} aria-hidden="true" />{:else}<Maximize size={15} aria-hidden="true" />{/if}
                 </button>
               {/if}
             {/if}
@@ -928,23 +948,10 @@
           {#if saveError}<div class="save-error" role="status">{saveError}</div>{/if}
         </div>
 
-        <!-- MAV-22 — compact provider availability (near the hero
-             actions; never blocks them; only genuine metadata). -->
-        {#if heroProviders.length}
-          <div class="provider-strip" aria-label={`Available on ${heroProviderNames}`}>
-            <span class="provider-strip-label">On</span>
-            <span class="provider-logos" aria-hidden="true">
-              {#each heroProvidersTop as provider (provider.id)}
-                {#if provider.logo}
-                  <img src={provider.logo} alt="" class="provider-logo" width="20" height="20" loading="lazy" decoding="async" />
-                {:else}
-                  <span class="provider-logo provider-logo-fallback">{provider.name.slice(0, 1)}</span>
-                {/if}
-              {/each}
-            </span>
-            <span class="provider-names">{heroProviderNames}{#if heroProviderOverflow > 0} <span class="provider-more">+{heroProviderOverflow}</span>{/if}</span>
-          </div>
-        {/if}
+        <!-- MAV-24 Issue 3 — the hero provider strip is REMOVED: the same
+             provider information renders as a labelled field inside the
+             More Details grid below (see the details-section), so the
+             hero action area stays compact. -->
       </div>
     </div>
   </div>
@@ -973,11 +980,35 @@
 
     <!-- MAV-22 — More Details: the responsive information grid
          (two columns on mobile, expanding on larger screens). Every row
-         is presence-gated and hero-deduplicated (see factRows). -->
-    {#if factRows.length}
+         is presence-gated and hero-deduplicated (see factRows).
+         MAV-24 Issue 3: the streaming-provider field renders here as the
+         FIRST grid field (labelled, logo + name per provider, wrapping —
+         never overflowing), gated on genuine data. The section itself
+         renders when EITHER the fact rows OR the provider field has
+         content. -->
+    {#if factRows.length || detailProviders.length}
       <section class="details-section" aria-labelledby="details-heading">
         <h2 class="section-h" id="details-heading">More Details</h2>
         <dl class="details-grid">
+          {#if detailProviders.length}
+            <div class="fact-row fact-row-providers">
+              <dt class="fact-label">{providerFieldLabel}</dt>
+              <dd class="fact-value">
+                <span class="provider-list">
+                  {#each detailProviders as provider (provider.id)}
+                    <span class="provider-chip">
+                      {#if provider.logo}
+                        <img src={provider.logo} alt="" class="provider-logo" width="20" height="20" loading="lazy" decoding="async" />
+                      {:else}
+                        <span class="provider-logo provider-logo-fallback" aria-hidden="true">{provider.name.slice(0, 1)}</span>
+                      {/if}
+                      <span class="provider-chip-name">{provider.name}</span>
+                    </span>
+                  {/each}
+                </span>
+              </dd>
+            </div>
+          {/if}
           {#each factRows as fact (fact.label)}
             <div class="fact-row">
               <dt class="fact-label">{fact.label}</dt>
@@ -1315,13 +1346,8 @@
   }
   .genre-more { color: var(--color-text-deep); font-size: .62rem; font-weight: 600; }
 
-  /* Hero synopsis preview — two lines; the expandable full synopsis
-     lives in the Overview section below (never a duplicate section). */
-  .detail-desc {
-    margin: 10px 0 0;
-    color: var(--color-text-muted); font-size: .78rem; line-height: 1.55;
-    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden;
-  }
+  /* MAV-24 Issue 1 — the hero synopsis preview CSS is REMOVED with the
+     markup: the Overview section below the hero owns the synopsis. */
 
   /* ---- Actions ----
      The main action is DOMINANT (largest target, bright surface that
@@ -1353,10 +1379,13 @@
     font-size: .62rem; font-weight: 700; letter-spacing: .05em;
     color: rgba(5,7,8,.72); line-height: 1.1;
   }
+  /* MAV-24 Issue 2 — icon-only Download: a square target locked to the
+     SAME 52px height as Play, so the primary row reads as one aligned
+     bar (Play flexes, Download keeps a fixed icon square). */
   .download-btn {
-    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-    flex: 1 1 38%; min-height: 52px;
-    padding: 12px 16px; border-radius: 999px;
+    display: inline-flex; align-items: center; justify-content: center;
+    flex: 0 0 auto; width: 52px; min-height: 52px;
+    padding: 0; border-radius: 999px;
     border: 1px solid rgba(255,255,255,.16);
     color: var(--color-text); font-size: .86rem; font-weight: 800; cursor: pointer;
     background: rgba(255,255,255,.05); backdrop-filter: blur(6px);
@@ -1395,24 +1424,24 @@
   .secondary-btn:focus-visible { outline: 2px solid var(--dp-accent); outline-offset: 2px; }
   .save-error { margin-top: 4px; color: var(--color-warning); font-size: .66rem; text-align: center; }
 
-  /* ---- Compact provider availability ----
-     A single bounded strip near the hero actions: at most 3 logos + an
-     overflow count. Only genuine metadata renders it; it never blocks
-     or displaces the playback actions. */
-  .provider-strip {
-    display: inline-flex; flex-wrap: wrap; align-items: center;
-    gap: 8px; margin-top: 14px;
+  /* ---- Streaming-provider field (MAV-24 Issue 3) ----
+     Renders INSIDE the More Details grid as a labelled field: one chip
+     per provider (logo + name), wrapping safely so multiple providers
+     can never overflow the grid cell. The same title-palette tokens as
+     the rest of the page (--dp-* surfaces/borders/accent). Only genuine
+     provider data renders (empty list → no field at all). */
+  .provider-list {
+    display: flex; flex-wrap: wrap; align-items: center;
+    gap: 6px;
+  }
+  .provider-chip {
+    display: inline-flex; align-items: center; gap: 6px;
     max-width: 100%;
-    padding: 6px 12px;
+    padding: 4px 10px 4px 5px;
     border: 1px solid var(--dp-accent-border);
     border-radius: 999px;
     background: var(--dp-surface);
   }
-  .provider-strip-label {
-    color: var(--color-text-deep);
-    font-size: .56rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase;
-  }
-  .provider-logos { display: inline-flex; align-items: center; gap: 4px; }
   .provider-logo {
     width: 20px; height: 20px; border-radius: 4px;
     object-fit: cover; flex: 0 0 auto;
@@ -1425,11 +1454,10 @@
     font-size: .6rem; font-weight: 800;
     background: var(--dp-accent-soft);
   }
-  .provider-names {
+  .provider-chip-name {
     color: var(--color-text); font-size: .72rem; font-weight: 700;
     overflow-wrap: anywhere;
   }
-  .provider-more { color: var(--color-text-deep); font-weight: 600; }
 
   /* ---- Below the fold ---- */
   .detail-body {
@@ -1622,6 +1650,14 @@
   .trailer-inline-retry:focus-visible { outline: 2px solid var(--dp-accent); outline-offset: 2px; }
   /* The engaged Trailer toggle reads as "on" without shouting. */
   .trailer-toggle.engaged { background: var(--dp-accent-soft); border-color: var(--dp-accent-border); }
+  /* MAV-24 Issue 2 — the fullscreen control is ICON-ONLY: a compact
+     square that stays beside Trailer Off on one row (the labelled
+     version wrapped onto its own row on narrow screens). The 44px
+     min-width keeps an adequate touch/keyboard target. */
+  .trailer-fs-btn {
+    min-width: 44px; justify-content: center; padding: 10px 12px;
+  }
+  .trailer-fs-btn:focus-visible { outline: 2px solid var(--dp-accent); outline-offset: 2px; }
 
   /* ============================================================
      RESPONSIVE — the overlap composition at every surface.
@@ -1635,7 +1671,7 @@
     .detail-eyebrow { font-size: .64rem; }
     .detail-title { font-size: clamp(1.6rem, 3.2vw, 2.2rem); }
     .meta-row { font-size: .76rem; }
-    .detail-desc { font-size: .82rem; max-width: 640px; }
+    /* MAV-24: .detail-desc removed with the hero synopsis. */
     .primary-actions, .secondary-actions { max-width: 480px; }
     .cast-card { flex: 0 0 clamp(120px, 18vw, 150px); }
   }
@@ -1659,7 +1695,7 @@
     .detail-eyebrow { font-size: .68rem; }
     .detail-title { font-size: clamp(2rem, 3.4vw, 2.9rem); -webkit-line-clamp: 2; line-clamp: 2; }
     .meta-row { font-size: .8rem; gap: 8px; }
-    .detail-desc { font-size: .88rem; max-width: 680px; }
+    /* MAV-24: .detail-desc removed with the hero synopsis. */
     .primary-actions, .secondary-actions { max-width: 480px; }
     .play-btn { padding: 14px 28px; }
     .cast-card { flex: 0 0 clamp(130px, 12vw, 160px); }
@@ -1671,7 +1707,7 @@
     .hero-body, .detail-body { width: min(1700px, calc(100% - 120px)); }
     .hero-grid { grid-template-columns: clamp(280px, 16vw, 340px) minmax(0, 1fr); }
     .detail-title { font-size: clamp(2.6rem, 3vw, 3.4rem); }
-    .detail-desc { max-width: 760px; font-size: .94rem; }
+    /* MAV-24: .detail-desc removed with the hero synopsis. */
     .details-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   }
 
@@ -1705,17 +1741,20 @@
     .hero-grid { grid-template-columns: clamp(96px, 25vw, 124px) minmax(0, 1fr); row-gap: 10px; }
     .detail-title { font-size: clamp(1.24rem, 5vw, 1.6rem); }
     .meta-row { margin-top: 6px; }
-    .detail-desc { font-size: .76rem; margin-top: 8px; }
+    /* MAV-24: .detail-desc removed with the hero synopsis. */
     /* Compact action block: Play + Download share ONE dominant row
-       (Play keeps the 62% dominance); the secondary row follows. This
-       recovers a full button height vs the MAV-22 stacked rows. */
+       (Play flexes; Download is a fixed 52px icon square at the same
+       height). The secondary row follows. */
     .actions { margin-top: 12px; gap: 8px; }
     .primary-actions { max-width: 100%; }
     .play-btn { flex: 1 1 62%; min-height: 52px; padding: 12px 16px; }
-    .download-btn { flex: 1 1 38%; min-height: 52px; }
-    .secondary-actions { gap: 6px; }
-    .secondary-btn { padding: 10px 12px; font-size: .72rem; }
-    .provider-strip { margin-top: 10px; padding: 5px 10px; }
+    /* MAV-24 Issue 2: the icon-only fullscreen control joins this row
+       while the trailer plays — the 3px/side padding trim + 5px gap keep
+       ALL FOUR controls (My List · Share · Trailer Off · fs-icon) on ONE
+       row at 360px (measured 337px needed vs 336px available before the
+       trim; ~316-322px after). Heights are untouched (min 44px targets). */
+    .secondary-actions { gap: 5px; }
+    .secondary-btn { padding: 10px 9px; font-size: .72rem; }
     .recs-row { grid-auto-columns: clamp(122px, 36vw, 148px); }
   }
 
@@ -1726,12 +1765,13 @@
     .hero-body { margin-top: -64px; }
     .hero-grid { grid-template-columns: clamp(84px, 18vw, 120px) minmax(0, 1fr); }
     .detail-title { font-size: clamp(1.2rem, 3vw, 1.6rem); }
-    .detail-desc { -webkit-line-clamp: 1; line-clamp: 1; }
+    /* MAV-24: .detail-desc removed with the hero synopsis. */
     .primary-actions { max-width: 100%; }
     /* MAV-23 Fix 1: landscape-short keeps Play + Download on ONE row so
-       the provider chip stays reachable on short viewports. */
+       the action block stays reachable on short viewports (MAV-24:
+       Download is the fixed icon square at the row height). */
     .play-btn { flex: 1 1 62%; min-height: 46px; }
-    .download-btn { flex: 1 1 38%; min-height: 46px; }
+    .download-btn { min-height: 46px; width: 46px; }
   }
 
   @media (prefers-reduced-motion: reduce) {

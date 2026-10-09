@@ -451,20 +451,27 @@ assert.doesNotMatch(detailPage, /class="facts-grid"/, 'the old overview fact lis
 ok('11. rectangular cast (2:3, no circles) + responsive 2/3/4-column details grid');
 
 // ============================================================
-// 12. Compact provider availability (hero actions area)
+// 12. Streaming-provider field (MAV-24 Issue 3: More Details grid)
 // ============================================================
-console.log('\n12. Compact provider indicator');
+console.log('\n12. Streaming-provider field in More Details');
 
-assert.match(detailPage, /class="provider-strip" aria-label=\{`Available on \$\{heroProviderNames\}`\}/, 'the compact provider strip sits in the HERO (near the actions)');
-assert.match(detailPage, /const MAX_HERO_PROVIDERS = 3;/, 'at most 3 provider logos + an overflow count');
-assert.match(detailPage, /const heroProviders = \$derived\(\(item\.streamingProviders \?\? \[\]\)\.filter\(\(provider\) => provider\.name\?\.trim\(\)\)\);/, 'only GENUINE provider metadata renders the strip');
-assert.match(detailPage, /\{#if heroProviderOverflow > 0\} <span class="provider-more">\+\{heroProviderOverflow\}<\/span>\{\/if\}/, 'overflow surfaces as a count');
-assert.match(detailPage, /\{#if heroProviders\.length\}[\s\S]*?class="provider-strip"/, 'empty provider data renders NOTHING (no invented availability)');
-assert.match(detailPage, /\.provider-strip \{[\s\S]*?margin-top: 14px;/, 'the strip sits BELOW the action rows (never blocks playback)');
-assert.doesNotMatch(detailPage, /streaming-heading/, 'the old separate provider section is GONE (it added nothing beyond the compact strip)');
+// MAV-24 supersession (Issue 3): the compact provider strip moved OUT of
+// the hero into the More Details grid (the hero action area must stay
+// compact). The genuine-metadata contract is UNCHANGED: only providers
+// the metadata supplies, an empty list renders NO field, and the grid
+// cell wraps so multiple providers never overflow.
+assert.doesNotMatch(detailPage, /class="provider-strip"/, 'the hero provider strip is GONE (moved into More Details — no duplication)');
+assert.doesNotMatch(detailPage, /MAX_HERO_PROVIDERS/, 'the hero 3-logo cap is gone (the wrapping grid renders every provider)');
+assert.match(detailPage, /const detailProviders = \$derived\(\(item\.streamingProviders \?\? \[\]\)\.filter\(\(provider\) => provider\.name\?\.trim\(\)\)\);/, 'only GENUINE provider metadata renders the field');
+assert.match(detailPage, /\{#if detailProviders\.length\}[\s\S]*?class="fact-row fact-row-providers"/, 'empty provider data renders NO field (no invented availability)');
+assert.match(detailPage, /const providerFieldLabel = \$derived\(detailProviders\.length > 1 \? 'Streaming Providers' : 'Streaming Provider'\);/, 'the field carries a proper singular/plural-aware label');
+assert.match(detailPage, /class="provider-chip"/, 'each provider renders as a logo+name chip (grid design, not a hero strip)');
+assert.match(detailPage, /\{#if provider\.logo\}[\s\S]*?provider-logo[\s\S]*?\{:else\}[\s\S]*?provider-logo-fallback/, 'logoless providers fall back to the initial monogram (never a broken image)');
+assert.match(detailPage, /\{#if factRows\.length \|\| detailProviders\.length\}/, 'the More Details section renders when EITHER fact rows OR the provider field has content');
+assert.doesNotMatch(detailPage, /streaming-heading/, 'the old separate provider section is still GONE');
 assert.doesNotMatch(detailPage, /class="streaming-provider"/, 'no large redundant provider cards remain');
-assert.doesNotMatch(appCss, /mav22-provider/, 'no global CSS additions for the strip (component-scoped)');
-ok('12. compact strip: genuine data, bounded, after the actions, section duplication removed');
+assert.doesNotMatch(appCss, /mav22-provider/, 'no global CSS additions for the provider field (component-scoped)');
+ok('12. provider field in More Details: genuine data, labelled, wrapping, no hero duplication');
 
 // ============================================================
 // 13. Content-type labels — the approved vocabulary
@@ -496,8 +503,11 @@ ok('13. labels: Movie / TV Series / Anime Movie / Anime Series');
 // ============================================================
 console.log('\n14. Overview section (no duplicate synopsis)');
 
-// The hero carries a CSS-clamped 2-line PREVIEW only.
-assert.match(detailPage, /\.detail-desc \{[\s\S]*?-webkit-line-clamp: 2; line-clamp: 2;/, 'hero synopsis = a 2-line preview');
+// MAV-24 supersession (Issue 1): the hero synopsis preview was REMOVED —
+// the Overview section below the hero is the single synopsis home (with
+// its Show More expansion); no duplicated copy remains anywhere in the
+// hero.
+assert.doesNotMatch(detailPage, /class="detail-desc"/, 'hero synopsis preview REMOVED (Overview owns the synopsis)');
 // Overview is a clearly titled section with the FULL synopsis.
 assert.match(detailPage, /<h2 class="section-h" id="overview-heading">Overview<\/h2>/, 'Overview section present');
 assert.match(detailPage, /\.overview-text \{[\s\S]*?-webkit-line-clamp: 4; line-clamp: 4;/, 'Overview clamps at 4 lines until expanded');
@@ -580,7 +590,7 @@ assert.match(detailPage, /\.back-btn \{[\s\S]*?top: calc\(1[24]px \+ env\(safe-a
 assert.match(detailPage, /padding-bottom: clamp\(36px, 5vw, 72px\);/, 'bottom clearance (compact, Android nav bars safe)');
 assert.match(detailPage, /@media \(max-width: 640px\) \{[\s\S]*?padding-bottom: calc\(36px \+ env\(safe-area-inset-bottom, 0px\)\);/, 'mobile bottom clearance + safe-area');
 assert.match(detailPage, /\.hero-grid \{[\s\S]*?minmax\(0, 1fr\)/, 'the info column can never overflow (minmax 0)');
-assert.match(detailPage, /\.provider-names \{[\s\S]*?overflow-wrap: anywhere;/, 'provider names wrap safely');
+assert.match(detailPage, /\.provider-chip-name \{[\s\S]*?overflow-wrap: anywhere;/, 'provider chip names wrap safely');
 assert.match(detailPage, /\.palette-canvas,[\s\S]*?transition: none !important;/, 'reduced-motion: palette transition disabled');
 assert.match(detailPage, /aria-hidden="true"><\/div>/, 'decorative layers are aria-hidden');
 assert.match(detailPage, /<h1 class="detail-title">\{item\.title\}<\/h1>/, 'semantic h1 for the title');
