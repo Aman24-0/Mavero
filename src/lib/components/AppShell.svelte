@@ -4,7 +4,7 @@
   import AccountSheet from '$components/AccountSheet.svelte';
   import { haptic } from '$lib/client/haptics';
 
-  let { children, currentPath = '/', showMobileNav = true, user = null, isAuthenticated = false }: { children: Snippet; currentPath?: string; showMobileNav?: boolean; user?: { id: string; email?: string | null; displayName?: string | null } | null; isAuthenticated?: boolean } = $props();
+  let { children, currentPath = '/', user = null, isAuthenticated = false }: { children: Snippet; currentPath?: string; user?: { id: string; email?: string | null; displayName?: string | null } | null; isAuthenticated?: boolean } = $props();
   let shell: HTMLElement;
 
   // Navigation & Settings Redesign, Phase 1 — the six primary destinations.
@@ -89,7 +89,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" />
 </svelte:head>
 
-<div class="page-shell" class:no-mobile-nav={!showMobileNav} bind:this={shell}>
+<div class="page-shell" bind:this={shell}>
   <!-- Desktop sidebar (fixed, 1025px+) -->
   <aside class="app-sidebar" aria-label="Primary navigation">
     <a class="brand-lockup" href="/discover" aria-label="MAVERO home">
@@ -161,9 +161,12 @@
        List + Settings -->
   <AccountSheet open={accountSheetOpen} onClose={closeAccountSheet} {user} {isAuthenticated} />
 
-  <!-- Mobile + tablet bottom nav (touch composition, ≤1024px) -->
-  {#if showMobileNav}
-    <nav class="mobile-nav" aria-label="Mobile navigation">
+  <!-- Mobile + tablet bottom nav (touch composition, ≤1024px).
+       MAV-21 Workstream D — rendered UNCONDITIONALLY on every shell
+       route: global navigation must never be suppressed by a page
+       (the former /settings opt-out is removed along with its
+       page-specific Back button). -->
+  <nav class="mobile-nav" aria-label="Mobile navigation">
       <div class="mobile-nav-inner">
         {#each primaryLinks as link}
           {@const Icon = link.icon}
@@ -180,7 +183,6 @@
         {/each}
       </div>
     </nav>
-  {/if}
 </div>
 
 <style>
@@ -414,9 +416,6 @@
     .header-account:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
   }
 
-  @media (max-width: 640px) {
-    .page-shell.no-mobile-nav { padding-bottom: 0; }
-  }
   @media (prefers-reduced-motion: reduce) {
     .sidebar-link, .topbar-account, .header-account, .mobile-nav a { transition: none; }
   }

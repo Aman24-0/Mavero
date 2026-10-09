@@ -3,8 +3,15 @@
   "compilerOptions": {
     "baseUrl": ".",
     "paths": {
-      "$lib/*": ["src/lib/*"],
-      "$env/dynamic/private": ["scripts/stubs/env-dynamic-private.ts"]
+      "$lib/*": [
+        "src/lib/*"
+      ],
+      "$env/dynamic/private": [
+        "scripts/stubs/env-dynamic-private.ts"
+      ],
+      "$data/*": [
+        "src/lib/data/*"
+      ]
     }
   }
 }

@@ -96,20 +96,15 @@ export function selectFeatured<T extends RankableMedia>(items: T[]) {
   })[0];
 }
 
-// Anime is now a TMDB TV subtype. The TMDB adapter sets `isAnime === true`
-// AND `animeFormat === 'series'` for TV series whose genre_ids include 16
-// (Animation) and whose original_language is 'ja'. The discover/collection/
-// popular rails for type === 'anime' load the TMDB TV rail and filter
-// client-side to anime-flagged items. Anime movies (TMDB-tagged type ===
-// 'movie' with isAnime === true + animeFormat === 'movie') are NOT included
-// in the anime rail — they appear in the regular movie rails and play
-// through the normal movie provider pipeline.
-function isAnimeSeries(item: NormalizedMediaItem) {
-  return item.isAnime === true && item.animeFormat !== 'movie';
-}
-
-function filterAnimeSeries(items: NormalizedMediaItem[]): NormalizedMediaItem[] {
-  return items.filter(isAnimeSeries);
+// MAV-21 Workstream A — anime is a MERGED movie+TV category (the
+// Discover V2 contract: getTmdbAnimeMerged serves both formats to the
+// Anime rails and the Anime Explorer). The anime SEARCH path follows
+// the SAME contract: both /search/movie and /search/tv are queried and
+// the results are filtered to isAnime === true — anime movies AND anime
+// series. (The pre-MAV-21 behavior searched TV only — anime movies were
+// unfindable through the Anime search surface.)
+function isAnimeItem(item: NormalizedMediaItem) {
+  return item.isAnime === true;
 }
 
 // BUG 4 fix: Adult content classification — centralized via isAdultContent.
@@ -243,9 +238,33 @@ export async function search(query: string, type?: ContentType, page = 1, filter
   await ensureAdultProvidersResolved(() => getTmdbIndiaProviders());
   try {
     if (type === 'anime') {
-      const result = await searchTmdb(normalized, 'series', page, filters, canAccessAdult);
-      const items = applyAnimeFilters(filterAnimeSeries(result.items), filters);
-      return { ...result, items, query: normalized, filters };
+      // MAV-21: the merged anime contract — BOTH formats. Search the movie
+      // and TV halves in parallel, keep only isAnime === true rows (the
+      // canonical 16 + 'ja' classification set by mapTmdb), merge by
+      // popularity (the same interleave discipline as the merged anime
+      // rails) and dedupe by canonical type+id.
+      const [movieResult, seriesResult] = await Promise.all([
+        searchTmdb(normalized, 'movie', page, filters, canAccessAdult),
+        searchTmdb(normalized, 'series', page, filters, canAccessAdult)
+      ]);
+      const animeItems = [...movieResult.items, ...seriesResult.items]
+        .filter(isAnimeItem)
+        .sort((left, right) => (right.popularity ?? 0) - (left.popularity ?? 0));
+      const seen = new Set<string>();
+      const deduped = animeItems.filter((item) => {
+        const key = `${item.type}:${item.id}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      const items = applyAnimeFilters(deduped, filters);
+      return {
+        ...seriesResult,
+        items,
+        hasNextPage: movieResult.hasNextPage || seriesResult.hasNextPage,
+        query: normalized,
+        filters
+      };
     }
     if (type === 'movie' || type === 'series') {
       const result = await searchTmdb(normalized, type, page, filters, canAccessAdult);

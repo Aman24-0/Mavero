@@ -80,7 +80,7 @@ assert.ok(bareCondition, 'the bare-render condition expression is parseable');
 assert.doesNotMatch(bareCondition![1], /'\/movies'|'\/tv-shows'|'\/anime'/, 'the new destinations are never bare-rendered (they render inside AppShell)');
 const elseBranch = rootLayout.slice(rootLayout.indexOf('{:else}'), rootLayout.indexOf('{/if}'));
 assert.match(elseBranch, /<AppShell currentPath=\{page\.url\.pathname\}/, 'the new destinations render inside AppShell');
-assert.match(elseBranch, /showMobileNav=\{!page\.url\.pathname\.startsWith\('\/settings'\)\}/, '/settings opt-out unchanged');
+assert.doesNotMatch(elseBranch, /showMobileNav/, 'MAV-21: global navigation is unconditional (no /settings opt-out)');
 ok('1. /movies, /tv-shows, /anime render inside the consumer AppShell (no bare render)');
 
 // ============================================================

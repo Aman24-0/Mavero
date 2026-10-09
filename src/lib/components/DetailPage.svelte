@@ -101,7 +101,55 @@
   const trailerKey = $derived(item.trailerKey ?? '');
   const hasTrailer = $derived(Boolean(trailerKey));
   const castMembers = $derived(item.cast ?? []);
-  const hasLongOverview = $derived(item.description.length > 240);
+
+  // ============================================================
+  // MAV-21 Workstream F — Cinematic Detail Page 2.0 derived state.
+  // ============================================================
+
+  // Series-like covers TV series AND anime series (the established
+  // resume/seasons predicate — identical to the progress pipeline's).
+  const isSeriesLike = $derived(type === 'series' || (item.isAnime && item.animeFormat !== 'movie'));
+
+  // Hero artwork: backdrop first (immersive), poster as the graceful
+  // fallback when no backdrop exists. A failed image load falls back to
+  // the gradient surface (never a broken-image icon over the hero).
+  let heroArtworkFailed = $state(false);
+  const heroArtwork = $derived(item.backdropHero || item.backdrop || item.poster || '');
+  const heroArtworkSrc = $derived(heroArtworkFailed ? '' : heroArtwork);
+
+  // Primary action label — the dominant button communicates EXACTLY what
+  // pressing it does, using the existing playback/progress logic:
+  //   series-like + resume target → "Continue Watching" (+ SxEy sub-label)
+  //   movie + active progress     → "Resume"
+  //   otherwise                   → "Play" (series: the established
+  //                                 first-episode behavior via watchHref)
+  const playLabel = $derived(
+    isSeriesLike && resumeEpisode ? 'Continue Watching'
+      : !isSeriesLike && hasActiveProgress ? 'Resume'
+        : 'Play'
+  );
+  const playSubLabel = $derived(isSeriesLike && resumeEpisode ? `S${resumeEpisode.season} · E${resumeEpisode.episode}` : '');
+
+  // Compact genre presentation for the first viewport: at most 4 genres
+  // on one bounded line; the FULL list lives in the Overview facts
+  // (never let a long genre list dominate the hero).
+  const MAX_HERO_GENRES = 4;
+  const heroGenres = $derived(item.genres.slice(0, MAX_HERO_GENRES));
+  const heroGenreOverflow = $derived(Math.max(0, item.genres.length - MAX_HERO_GENRES));
+
+  // Overview expansion (below-fold full synopsis).
+  const hasLongOverview = $derived(item.description.length > 280);
+
+  // Readable language name from the TMDB code (client-side
+  // Intl.DisplayNames; falls back to the raw code, never invents).
+  function languageName(code: string | undefined): string {
+    if (!code) return '';
+    try {
+      return new Intl.DisplayNames(['en'], { type: 'language' }).of(code) ?? code;
+    } catch {
+      return code;
+    }
+  }
 
   // P2: Format an ISO date string (YYYY-MM-DD) into a human-readable date.
   // Returns the year-only fallback if the date is invalid/missing.
@@ -112,6 +160,26 @@
     // Use en-GB for day-before-month format (07 Mar 2026).
     return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' });
   }
+
+  // Facts rows — ONLY values the trusted metadata actually supplies.
+  // Missing metadata renders NO row (no empty labels, no misleading
+  // zeros, no fabricated certifications). All values come from the SSR
+  // detail payload, so the grid cannot shift when it renders.
+  const factRows = $derived.by(() => {
+    const rows: Array<{ label: string; value: string }> = [];
+    if (item.releaseDate) rows.push({ label: isSeriesLike ? 'First aired' : 'Release date', value: formatDate(item.releaseDate) });
+    else if (item.year > 0) rows.push({ label: isSeriesLike ? 'First aired' : 'Release year', value: String(item.year) });
+    if (!isSeriesLike && item.runtime) rows.push({ label: 'Runtime', value: item.runtime });
+    if (isSeriesLike && item.seasons) rows.push({ label: 'Seasons', value: String(item.seasons) });
+    if (isSeriesLike && item.episodes) rows.push({ label: 'Episodes', value: String(item.episodes) });
+    if (item.maturity) rows.push({ label: 'Certification', value: item.maturity });
+    const language = languageName(item.originalLanguage);
+    if (language) rows.push({ label: 'Original language', value: language });
+    if (!isSeriesLike && item.director) rows.push({ label: 'Director', value: item.director });
+    if (isSeriesLike && item.creators?.length) rows.push({ label: 'Creators', value: item.creators.join(', ') });
+    if (item.genres.length) rows.push({ label: 'Genres', value: item.genres.join(', ') });
+    return rows;
+  });
 
   // MAV-20 Phase D — client-side "You may also like" fetch (see the
   // recommendations derived above). Cached per-user for 2 minutes, so
@@ -149,7 +217,6 @@
       // A user can click S2E3 and leave immediately — S2E3 is still the
       // resume target. For movies, we still require currentTime > 0
       // (a zero-progress movie record means nothing was actually watched).
-      const isSeriesLike = type === 'series' || (item.isAnime && item.animeFormat !== 'movie');
       if (isSeriesLike) {
         const target = getLatestResumeTarget(type, item.id, progress);
         hasActiveProgress = !!target;
@@ -268,12 +335,6 @@
     //      restores the origin page's content + scroll position.
     //   2. `from` absent           → REAL history.back() WHENEVER an
     //      in-app previous entry exists (SvelteKit's history index > 0).
-    //      The old code fell straight to a HARDCODED /discover goto —
-    //      opening a detail page from a hero (which previously carried
-    //      no `from`) and pressing Back sent the user to Discover even
-    //      when they came from Movies / TV Shows / Anime / Search, and
-    //      the replaceState goto REPLACED the detail entry (destroying
-    //      forward history + creating duplicate-entry confusion).
     //   3. No in-app origin at all (deep link, first entry) → the safe
     //      fallback destination. The goto uses replaceState so the
     //      deep-linked detail entry is replaced by the destination —
@@ -363,10 +424,8 @@
   // fields preserved by the existing anime routing.
   const downloadMediaType = $derived((type === 'movie' || (item.isAnime && item.animeFormat === 'movie')) ? 'movie' : 'tv' as DownloadMediaType);
 
-  // The top-level Download button beside Play is now MOVIES-ONLY.
+  // The top-level Download button beside Play is MOVIES-ONLY.
   // TV/anime series get a Download button on each episode card instead.
-  // This avoids the previous bug where the top-level TV Download button
-  // could only resolve one episode (the resume/S1E1 fallback).
   const isMovieLike = $derived(downloadMediaType === 'movie');
 
   // Filtered providers for the current media type. The DownloadSheet uses
@@ -376,39 +435,21 @@
   const visibleDownloadProviders = $derived(filterProvidersByMediaType(downloadProviders, downloadMediaType));
   // Phase E final corrective (§6): the top-level Download button is shown
   // for ALL movie-like items UNCONDITIONALLY — it must NOT be gated on
-  // `downloadProvidersLoaded` or `visibleDownloadProviders.length > 0`. The
-  // previous gating caused a real production regression where the button
-  // silently disappeared when the prefetch failed OR returned zero matching
-  // providers, leaving the user with no way to open the sheet at all.
+  // `downloadProvidersLoaded` or `visibleDownloadProviders.length > 0`.
   //
-  // Architecture now: USER CLICKS DOWNLOAD → SHEET OPENS IMMEDIATELY →
+  // Architecture: USER CLICKS DOWNLOAD → SHEET OPENS IMMEDIATELY →
   // sheet renders Loading / Success / Empty / Error state internally. The
-  // prefetch remains an optimization (so the sheet can show providers
-  // instantly when the prefetch already resolved) but it is no longer a
-  // functional prerequisite for opening the sheet.
+  // prefetch remains an optimization but is not a functional prerequisite.
   const showDownloadButton = $derived(isMovieLike);
   // The inline "Download unavailable · Retry" affordance is kept for the
-  // narrow case where the prefetch FAILED before the user clicked. When
-  // the user clicks Retry, the prefetch re-runs; on success the normal
-  // Download button replaces the retry affordance. The user can ALSO just
-  // click the normal Download button to open the sheet (which will retry
-  // internally and show its own loading state).
+  // narrow case where the prefetch FAILED before the user clicked.
   const showDownloadFailure = $derived(false);
 
   // TMDB id resolution. The DetailPage's `item.id` is the content id used
-  // across the app — for TMDB-backed content this IS the TMDB id. For
-  // fixtures (the static `media` array used in dev) the id is a slug like
-  // 'afterlight'; the download URLs would not resolve for those, but
-  // production DetailPage is always reached via the SSR load which sets
-  // dataItem from a real TMDB detail (so item.externalIds?.tmdb is set).
-  // We prefer the explicit externalIds.tmdb, fall back to item.id, and
-  // finally to '' (the sheet will show its "can't open this title" state).
+  // across the app — for TMDB-backed content this IS the TMDB id.
   const downloadTmdbId = $derived(item.externalIds?.tmdb || item.id || '');
 
-  // Release year for the Cineverse alternate-URL candidate. item.year is
-  // already resolved by the existing content presenter (TMDB release_year
-  // for movies, first-air-year for series). Passed through to the sheet
-  // — other providers ignore it.
+  // Release year for the Cineverse alternate-URL candidate.
   const downloadReleaseYear = $derived(item.year || undefined);
 
   async function loadDownloadProviders() {
@@ -425,19 +466,13 @@
     } catch (error) {
       console.error('[DetailPage] Failed to load downloader config', error);
       downloadProvidersFailed = true;
-      // Phase 2-K (audit UIX-2): the failure is now surfaced via the
-      // showDownloadFailure derived state (an inline "Download temporarily
-      // unavailable / Retry" affordance in the actions row). No toast —
-      // the user hasn't opened the sheet yet, and the inline affordance
-      // is more discoverable than a transient toast.
     } finally {
       downloadProvidersLoading = false;
     }
   }
 
   // Phase 2-K: retry entry point — re-attempts the prefetch when the user
-  // clicks the inline Retry affordance. Resets the failed flag and re-runs
-  // loadDownloadProviders (which has its own loading/failure management).
+  // clicks the inline Retry affordance.
   function retryDownloadProviders() {
     if (downloadProvidersLoading || downloadProvidersLoaded) return;
     void loadDownloadProviders();
@@ -447,11 +482,6 @@
   // uses the movie URL template. The target state stays undefined.
   function openDownloadSheet() {
     haptic('light');
-    // The downloader config is prefetched on mount, so by the time the
-    // user can see + click the Download button the providers are already
-    // loaded. If the prefetch failed (e.g. transient network error), we
-    // retry here so a click still opens the sheet with a fresh attempt —
-    // the sheet itself shows the empty state if the retry also fails.
     if (!downloadProvidersLoaded && !downloadProvidersLoading) {
       void loadDownloadProviders();
     }
@@ -460,10 +490,7 @@
     downloadSheetOpen = true;
   }
 
-  // Open the sheet for an EPISODE download. Called from SeasonEpisodes's
-  // onDownload callback with the EXACT clicked episode's season + number.
-  // We do NOT consult resumeEpisode or fall back to S1E1 — the user
-  // clicked a specific episode, so that's what the download URL targets.
+  // Open the sheet for an EPISODE download — the EXACT clicked episode.
   function openEpisodeDownloadSheet(season: number, episode: number) {
     haptic('light');
     if (!downloadProvidersLoaded && !downloadProvidersLoading) {
@@ -476,11 +503,6 @@
 
   function closeDownloadSheet() {
     downloadSheetOpen = false;
-    // Leave downloadTargetSeason/Episode alone so re-opening the sheet
-    // (e.g. by clicking another episode) sees the last values until the
-    // new onDownload call overwrites them. The openDownloadSheet and
-    // openEpisodeDownloadSheet functions always set both values before
-    // flipping downloadSheetOpen=true, so there's no stale-state risk.
   }
 
 </script>
@@ -505,22 +527,53 @@
 
 <div class="detail-page">
   <!-- ============================================================
-       CINEMATIC HERO — three intentional layout modes:
-         • mobile  (≤640px): full-bleed backdrop → centered poster
-           overlapping the hero/content boundary → left-aligned title,
-           full-width Play, grouped secondary actions.
-         • tablet  (641–1024px): backdrop still on top, but poster +
-           identity sit side-by-side in a horizontal composition.
-         • desktop (≥1025px): one cinematic hero. Backdrop fills the
-           hero, dark gradient scrims guarantee readability, and the
-           poster + identity + actions form a single horizontal block
-           left-aligned over the lower-left of the backdrop.
-       The same DOM is rendered at every breakpoint — only CSS Grid
-       + clamp() decide the composition.
+       MAV-21 WORKSTREAM F — CINEMATIC HERO 2.0.
+
+       Immersive full-bleed artwork (backdrop, poster as the graceful
+       fallback), bottom-anchored identity, and an action hierarchy that
+       fits the first mobile viewport (target 390×844):
+
+         content-type label
+         title (line-clamped — long titles never push actions away)
+         compact meta line (only available facts)
+         one-line genre strip (max 4 + overflow count)
+         2-line synopsis preview (full synopsis lives in Overview)
+         ▶ dominant Play / Resume / Continue Watching
+         Watching · Share · Trailer (· Download for movie-like items)
+
+       Touch surfaces (≤1024px) prioritize the artwork — no poster in
+       the hero. Desktop (≥1025px) adds the poster composition to the
+       lower-left of the backdrop.
        ============================================================ -->
   <header class="hero">
-    {#if item.backdrop}
-      <img src={item.backdropHero || item.backdrop} alt="" class="hero-img" loading="eager" fetchpriority="high" />
+    {#if heroArtworkSrc}
+      <!-- MAV-21 Workstream E — the hero follows the SAME responsive
+           artwork contract as the Discover/Explorer carousels (the
+           established tier decision, documented there): mobile ≤640px
+           standard DPI gets w780 (bandwidth-friendly), mobile retina
+           gets w1280, tablet/desktop ≥641px gets original. A single
+           original-size <img> on a 390px phone was a multi-hundred-KB
+           LCP penalty on every detail page. Sources WITHOUT a tier fall
+           back through the chain; a missing srcset makes that <source>
+           inert, and the <img> fallback (w1280 backdrop, poster when no
+           backdrop exists) still renders. -->
+      <picture>
+        <source media="(max-width: 640px) and (-webkit-min-device-pixel-ratio: 2), (max-width: 640px) and (min-resolution: 192dpi)" srcset={item.backdrop || item.backdropSmall || item.poster} />
+        <source media="(max-width: 640px)" srcset={item.backdropSmall || item.backdrop || item.poster} />
+        <source media="(min-width: 641px)" srcset={item.backdropHero || item.backdrop || item.backdropSmall || item.poster} />
+        <img
+          src={heroArtworkSrc}
+          alt=""
+          class="hero-img"
+          width="1280"
+          height="720"
+          sizes="100vw"
+          loading="eager"
+          fetchpriority="high"
+          decoding="async"
+          onerror={() => (heroArtworkFailed = true)}
+        />
+      </picture>
     {/if}
     <div class="hero-scrim" aria-hidden="true"></div>
     <button class="back-btn" type="button" onclick={goBack} aria-label="Go back">
@@ -529,17 +582,15 @@
 
     <div class="hero-inner">
       <div class="hero-composition">
-        <!-- Poster — never centered on desktop. On mobile it sits
-             below the backdrop image and overlaps the boundary. -->
+        <!-- Poster — desktop composition only (hidden ≤1024px; the
+             mobile/tablet hero is poster-free so the artwork stays
+             immersive and the actions stay in the first viewport). -->
         {#if item.poster}
           <div class="poster-wrap">
-            <img src={item.posterSmall || item.poster} alt={`${item.title} poster`} class="poster-img" />
+            <img src={item.posterSmall || item.poster} alt={`${item.title} poster`} class="poster-img" loading="eager" />
           </div>
         {/if}
 
-        <!-- Identity + actions: title / metadata / overview / genres /
-             primary CTA / secondary actions all live in one block so
-             they visually belong together. -->
         <section class="identity">
           <div class="detail-eyebrow">{detailBadges.primary}{#if detailBadges.secondary} · {detailBadges.secondary}{/if}</div>
           <h1 class="detail-title">{item.title}</h1>
@@ -553,46 +604,45 @@
             {:else if item.year > 0}
               <span class="dot"></span><span>{item.year}</span>
             {/if}
-            {#if item.maturity}<span class="dot"></span><span>{item.maturity}</span>{/if}
-            {#if type === 'series' && item.seasons}
+            {#if item.maturity}<span class="dot"></span><span class="maturity">{item.maturity}</span>{/if}
+            {#if isSeriesLike && item.seasons}
               <span class="dot"></span><span>{item.seasons} season{item.seasons === 1 ? '' : 's'}</span>
-            {:else if item.isAnime && item.episodes}
+            {:else if isSeriesLike && item.episodes}
               <span class="dot"></span><span>{item.episodes} episode{item.episodes === 1 ? '' : 's'}</span>
-            {:else if type === 'movie' && item.runtime}
+            {:else if !isSeriesLike && item.runtime}
               <span class="dot"></span><span>{item.runtime}</span>
             {/if}
           </div>
 
+          {#if heroGenres.length}
+            <p class="genre-line">
+              {#each heroGenres as genre, index}{index > 0 ? ' · ' : ''}{genre}{/each}{#if heroGenreOverflow > 0} <span class="genre-more">+{heroGenreOverflow} more</span>{/if}
+            </p>
+          {/if}
+
           {#if item.description}
-            <p class="detail-desc" class:expanded={overviewExpanded}>{item.description}</p>
-            {#if hasLongOverview}
-              <button class="show-more" type="button" onclick={() => (overviewExpanded = !overviewExpanded)} aria-expanded={overviewExpanded}>
-                {overviewExpanded ? 'Show Less' : 'Show More'}
-              </button>
-            {/if}
+            <p class="detail-desc">{item.description}</p>
           {/if}
 
-          {#if item.genres.length}
-            <div class="genre-tags">
-              {#each item.genres as genre}<span class="genre-tag">{genre}</span>{/each}
-            </div>
-          {/if}
-
-          <!-- Actions -->
+          <!-- Action hierarchy: the dominant main action first, the
+               approved secondary row immediately beneath it. -->
           <div class="actions">
             <div class="primary-actions">
-              <a class="play-btn" href={watchHref}>
-                <Play size={16} fill="currentColor" strokeWidth={0} />
-                {#if type === 'series' && resumeEpisode}Resume S{resumeEpisode.season}E{resumeEpisode.episode}{:else if type === 'movie' && hasActiveProgress}Resume{:else}Play{/if}
+              <a class="play-btn" href={watchHref} aria-label={playSubLabel ? `${playLabel} — season ${resumeEpisode?.season}, episode ${resumeEpisode?.episode}` : `${playLabel} ${item.title}`}>
+                <Play size={17} fill="currentColor" strokeWidth={0} />
+                <span class="play-copy">
+                  <span class="play-label">{playLabel}</span>
+                  {#if playSubLabel}<span class="play-sub">{playSubLabel}</span>{/if}
+                </span>
               </a>
               {#if showDownloadButton}
-                <button class="download-btn" type="button" onclick={openDownloadSheet} aria-haspopup="dialog" aria-expanded={downloadSheetOpen}>
-                  <Download size={16} />
+                <button class="download-btn" type="button" onclick={openDownloadSheet} aria-haspopup="dialog" aria-expanded={downloadSheetOpen} aria-label={`Download ${item.title}`}>
+                  <Download size={17} />
                   <span>Download</span>
                 </button>
               {:else if showDownloadFailure}
                 <button class="download-btn download-unavailable" type="button" onclick={retryDownloadProviders} disabled={downloadProvidersLoading} aria-label="Download temporarily unavailable — retry loading providers">
-                  {#if downloadProvidersLoading}<LoaderCircle size={16} />{:else}<AlertCircle size={16} />{/if}
+                  {#if downloadProvidersLoading}<LoaderCircle size={17} />{:else}<AlertCircle size={17} />{/if}
                   <span>{downloadProvidersLoading ? 'Retrying…' : 'Download unavailable · Retry'}</span>
                 </button>
               {/if}
@@ -619,12 +669,39 @@
   </header>
 
   <!-- ============================================================
-       BELOW THE FOLD — Cast / Episodes / Recommendations.
-       All sections share the same content max-width so the page
-       reads as one composed column rather than a stack of
-       disconnected cards.
+       BELOW THE FOLD — Overview (+ facts) / Available on / Cast /
+       Seasons & Episodes / Recommendations. Scannable sections in one
+       composed column; nothing here blocks the hero (all hero data is
+       SSR; recommendations load progressively client-side).
        ============================================================ -->
   <div class="detail-body">
+    <!-- Overview: the expandable full synopsis + compact factual
+         metadata. Facts render ONLY when the trusted metadata supplies
+         them — no empty labels, no invented values. -->
+    {#if item.description || factRows.length}
+      <section class="overview-section" aria-labelledby="overview-heading">
+        <h2 class="section-h" id="overview-heading">Overview</h2>
+        {#if item.description}
+          <p class="overview-text" class:expanded={overviewExpanded}>{item.description}</p>
+          {#if hasLongOverview}
+            <button class="show-more" type="button" onclick={() => (overviewExpanded = !overviewExpanded)} aria-expanded={overviewExpanded}>
+              {overviewExpanded ? 'Show Less' : 'Show More'}
+            </button>
+          {/if}
+        {/if}
+        {#if factRows.length}
+          <dl class="facts-grid">
+            {#each factRows as fact (fact.label)}
+              <div class="fact-row">
+                <dt class="fact-label">{fact.label}</dt>
+                <dd class="fact-value">{fact.value}</dd>
+              </div>
+            {/each}
+          </dl>
+        {/if}
+      </section>
+    {/if}
+
     <!-- P3: Available on (renamed from "Streaming on" in the Explorer
          redesign, Change 6 — label copy only; the provider cards/logos
          and their behavior are unchanged) — India flatrate OTT
@@ -653,7 +730,7 @@
           {#each castMembers as member}
             <div class="cast-card" role="listitem">
               {#if member.photo}
-                <img src={member.photo} alt={member.name} class="cast-photo" loading="lazy" decoding="async" />
+                <img src={member.photo} alt={member.name} class="cast-photo" loading="lazy" decoding="async" width="96" height="96" />
               {:else}
                 <div class="cast-photo cast-photo-fallback" aria-hidden="true"><span>{member.name.slice(0, 1).toUpperCase()}</span></div>
               {/if}
@@ -666,7 +743,7 @@
     {/if}
 
     <!-- Series: seasons + episodes (includes anime series via isAnime + animeFormat) -->
-    {#if type === 'series' || (item.isAnime && item.animeFormat !== 'movie')}
+    {#if isSeriesLike}
       <SeasonEpisodes
         id={item.id}
         seasonCount={item.seasons ?? 1}
@@ -721,17 +798,7 @@
 
 <!-- Download sheet (modal bottom-sheet). The sheet is rendered always-on
      (with open=false) so the iframe lifecycle is owned by the sheet itself;
-     the parent only flips `open` and supplies the media context. For
-     movies, season/episode are undefined (the sheet uses the movie URL).
-     For TV/anime series, the values come from downloadTargetSeason/
-     downloadTargetEpisode which are set by openEpisodeDownloadSheet when
-     the user clicks an episode card's Download button.
-
-     Phase E final corrective (§6): the parent passes provider loading/
-     failed/retry state to the sheet so the sheet can render Loading / Error
-     states internally — decoupled from the parent's prefetch timing. The
-     button is always visible for movie-like items; clicking it opens the
-     sheet immediately, which then handles the loading/error/empty UX. -->
+     the parent only flips `open` and supplies the media context. -->
 <DownloadSheet
   open={downloadSheetOpen}
   title={item.title}
@@ -752,21 +819,22 @@
 
 <style>
   /* ============================================================
-     DETAIL PAGE — Matrix/Cyberpunk cinematic redesign (Phase B P2)
+     MAV-21 WORKSTREAM F — CINEMATIC DETAIL PAGE 2.0
      -----------------------------------------------------------------
-     Layout modes:
-       • mobile  (≤640px): backdrop hero → centered poster overlap
-         → left-aligned identity → full-width Play → grouped secondary
-       • tablet  (641–1024px): poster + identity side-by-side
-       • desktop (≥1025px): cinematic hero with horizontal composition
-         (poster left, identity/actions right) over the lower-left of
-         a full-bleed backdrop.
-       • large   (≥1900px): same composition, wider max-width, larger
-         poster + bounded typography so 4K doesn't look like an
-         enlarged 1080p layout.
-     The hero never has a hard rectangular backdrop edge: a dark
-     bottom gradient blends into the page background so the
-     transition below the fold is invisible.
+     Layout modes (one DOM, CSS decides the composition):
+       • mobile  (≤640px): immersive full-bleed backdrop, poster-free
+         hero, identity + actions BOTTOM-ANCHORED — the dominant Play
+         action and the Watching / Share / Trailer row fit the first
+         390×844 viewport together with the title and compact metadata.
+       • tablet  (641–1024px): same immersive composition, wider type
+         scale, still poster-free (touch surfaces prioritize artwork).
+       • desktop (≥1025px): the poster joins the composition — poster +
+         identity + actions form one block anchored over the lower-left
+         of the full-bleed backdrop.
+       • large   (≥1900px): wider max-width, bounded typography.
+     The hero never has a hard rectangular backdrop edge: dark
+     gradients blend it into the page background. Space is reserved
+     (min-height + aspect-ratio) so metadata cannot shift the layout.
      ============================================================ */
 
   .detail-page {
@@ -780,10 +848,9 @@
   .hero {
     position: relative;
     width: 100%;
-    /* Hero height adapts to viewport — short landscape phones stay
-       tall enough to show poster + title, but never eats the whole
-       viewport on desktop. */
     min-height: clamp(440px, 78vh, 760px);
+    display: flex;
+    align-items: flex-end;
     overflow: hidden;
     background: var(--color-surface);
     isolation: isolate;
@@ -794,13 +861,14 @@
     object-fit: cover;
     object-position: center 18%;
   }
-  /* Scrim — cinematic dark gradients. Multiple stops blend the
-     backdrop into the page background so there's no hard edge. */
+  /* Scrim — cinematic gradients: a readable top (back button), a clear
+     band for the artwork, and a strong bottom fade that guarantees
+     title/action contrast over ANY artwork. */
   .hero-scrim {
     position: absolute; inset: 0; z-index: 1; pointer-events: none;
     background:
-      linear-gradient(180deg, rgba(5,7,8,.55) 0%, rgba(5,7,8,.18) 22%, rgba(5,7,8,.32) 60%, rgba(5,7,8,.92) 88%, var(--color-bg) 100%),
-      linear-gradient(90deg, rgba(5,7,8,.72) 0%, rgba(5,7,8,.32) 32%, transparent 60%);
+      linear-gradient(180deg, rgba(5,7,8,.58) 0%, rgba(5,7,8,.14) 24%, rgba(5,7,8,.30) 52%, rgba(5,7,8,.78) 76%, rgba(5,7,8,.94) 92%, var(--color-bg) 100%),
+      linear-gradient(90deg, rgba(5,7,8,.55) 0%, rgba(5,7,8,.22) 34%, transparent 62%);
   }
 
   /* Back button — floats over the hero top-left, with safe-area. */
@@ -819,15 +887,12 @@
   .back-btn:active { transform: scale(.97); }
   .back-btn:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 
-  /* ---- Hero inner (the responsive composition container) ----
-     On mobile this is a vertical flex (poster overlaps the boundary).
-     On tablet/desktop it becomes a horizontal grid: poster + identity. */
+  /* ---- Hero inner (bottom-anchored composition) ---- */
   .hero-inner {
     position: relative; z-index: 3;
     width: min(1500px, calc(100% - clamp(28px, 5vw, 96px)));
     margin-inline: auto;
-    padding-top: clamp(60px, 10vh, 120px);
-    padding-bottom: clamp(28px, 4vh, 56px);
+    padding-bottom: clamp(18px, 3vh, 34px);
   }
   .hero-composition {
     display: grid;
@@ -836,17 +901,10 @@
     align-items: end;
   }
 
-  /* Poster — on mobile, centered + overlapping the hero/content
-     boundary. On tablet/desktop, left-aligned, sitting on top of the
-     lower-left of the backdrop. */
-  .poster-wrap {
-    display: flex; justify-content: center;
-    /* Pull the poster down so it overlaps the hero bottom edge. */
-    margin-top: clamp(-92px, -16vw, -52px);
-    position: relative; z-index: 4;
-  }
+  /* Poster — desktop composition only (hidden on touch surfaces). */
+  .poster-wrap { display: none; }
   .poster-img {
-    width: clamp(120px, 36vw, 156px);
+    width: clamp(220px, 18vw, 280px);
     aspect-ratio: 2 / 3; object-fit: cover;
     border-radius: var(--radius-md);
     border: 1px solid var(--color-border-strong);
@@ -856,7 +914,7 @@
   /* Identity block */
   .identity {
     text-align: center;
-    /* On desktop this becomes left-aligned (see media queries). */
+    min-width: 0;
   }
   .detail-eyebrow {
     color: var(--color-primary);
@@ -868,12 +926,17 @@
   .detail-title {
     margin: 0;
     color: var(--color-text);
-    font-size: clamp(1.7rem, 6vw, 2.6rem);
+    font-size: clamp(1.65rem, 6.2vw, 2.6rem);
     font-weight: 900;
     letter-spacing: -.025em;
-    line-height: 1.04;
+    line-height: 1.06;
     text-wrap: balance;
     text-shadow: 0 2px 18px rgba(0,0,0,.55);
+    /* Deliberate clamp: a long title never pushes the actions out of
+       the first viewport (spec: prioritize actions without clipping
+       essential title information — 3 lines on touch, 2 on desktop). */
+    display: -webkit-box; -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden;
   }
   .meta-row {
     display: flex; flex-wrap: wrap; align-items: center; justify-content: center;
@@ -885,58 +948,49 @@
     display: inline-flex; align-items: center; gap: 3px;
     color: #ffc94d; font-weight: 800;
   }
+  .maturity {
+    border: 1px solid var(--color-border-strong);
+    border-radius: 5px;
+    padding: 1px 6px;
+    font-size: .64rem; font-weight: 800; letter-spacing: .03em;
+  }
   .dot { width: 3px; height: 3px; border-radius: 50%; background: var(--color-text-deep); }
 
-  .detail-desc {
-    /* On desktop this becomes left-aligned (see media queries). */
-    max-width: 620px; margin: 14px auto 0;
-    color: var(--color-text-muted); font-size: .84rem; line-height: 1.6;
-    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden;
-  }
-  .detail-desc.expanded { -webkit-line-clamp: unset; line-clamp: unset; overflow: visible; }
-  .show-more {
-    display: inline-block; margin: 8px auto 0;
-    padding: 4px 8px; border: 0; background: transparent;
-    color: var(--color-primary); font: inherit;
-    font-size: .7rem; font-weight: 700; cursor: pointer;
-    text-decoration: underline; text-underline-offset: 3px;
-    text-decoration-color: var(--color-primary-border);
-    transition: text-decoration-color var(--motion-fast) var(--ease-out);
-  }
-  .show-more:hover { text-decoration-color: var(--color-primary); }
-  .show-more:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; border-radius: 4px; }
-
-  .genre-tags {
-    display: flex; flex-wrap: wrap; gap: 6px;
-    justify-content: center;
-    margin-top: 16px;
-  }
-  .genre-tag {
-    padding: 4px 11px;
-    border: 1px solid var(--color-border-strong);
-    border-radius: 999px;
+  /* Compact genre strip — ONE bounded line; the full list lives in the
+     Overview facts. A long genre list can never dominate the hero. */
+  .genre-line {
+    margin: 10px auto 0;
+    max-width: 560px;
     color: var(--color-text-muted);
-    font-size: .66rem; font-weight: 700;
-    background: rgba(0,255,156,.04);
-    backdrop-filter: blur(6px);
+    font-size: .7rem; font-weight: 700; letter-spacing: .02em;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .genre-more { color: var(--color-text-deep); font-weight: 600; }
+
+  /* Hero synopsis preview — two lines; the expandable full synopsis
+     lives in the Overview section below. */
+  .detail-desc {
+    max-width: 620px; margin: 10px auto 0;
+    color: var(--color-text-muted); font-size: .8rem; line-height: 1.55;
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden;
   }
 
   /* ---- Actions ----
-     Mobile: Play is near-full-width, secondary actions wrap below in a
-     compact grouped row. Desktop: inline cluster, left-aligned. */
+     The main action is DOMINANT (primary-filled, largest target);
+     the approved secondary row sits immediately beneath it. */
   .actions {
-    margin-top: 22px;
+    margin-top: 18px;
     display: flex; flex-direction: column; align-items: center; gap: 10px;
   }
   .primary-actions {
     display: flex; align-items: stretch; gap: 8px;
-    width: 100%; max-width: 460px;
+    width: 100%; max-width: 480px;
   }
   .play-btn {
-    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-    flex: 1 1 60%; min-height: 48px;
-    padding: 14px 24px; border-radius: 999px;
-    color: #050708; font-size: .9rem; font-weight: 800;
+    display: inline-flex; align-items: center; justify-content: center; gap: 10px;
+    flex: 1 1 62%; min-height: 52px;
+    padding: 12px 22px; border-radius: 999px;
+    color: #050708; font-size: .92rem; font-weight: 800;
     text-decoration: none;
     background: var(--color-primary);
     box-shadow: 0 6px 22px rgba(0,255,156,.28), var(--glow-primary);
@@ -945,12 +999,18 @@
   .play-btn:hover { transform: translateY(-1px); filter: brightness(1.06); box-shadow: 0 8px 28px rgba(0,255,156,.4), var(--glow-primary); }
   .play-btn:active { transform: scale(.98); }
   .play-btn:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 3px; }
+  .play-copy { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; min-width: 0; }
+  .play-label { line-height: 1.1; }
+  .play-sub {
+    font-size: .62rem; font-weight: 700; letter-spacing: .05em;
+    color: rgba(5,7,8,.72); line-height: 1.1;
+  }
   .download-btn {
     display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-    flex: 1 1 40%; min-height: 48px;
-    padding: 14px 18px; border-radius: 999px;
+    flex: 1 1 38%; min-height: 52px;
+    padding: 12px 16px; border-radius: 999px;
     border: 1px solid var(--color-border-strong);
-    color: var(--color-text); font-size: .9rem; font-weight: 800; cursor: pointer;
+    color: var(--color-text); font-size: .88rem; font-weight: 800; cursor: pointer;
     background: rgba(255,255,255,.04); backdrop-filter: blur(6px);
     transition: transform var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out);
   }
@@ -972,11 +1032,11 @@
   .secondary-actions {
     display: flex; flex-wrap: wrap; align-items: center; justify-content: center;
     gap: 8px;
-    width: 100%; max-width: 460px;
+    width: 100%; max-width: 480px;
   }
   .secondary-btn {
     display: inline-flex; align-items: center; gap: 6px;
-    min-height: 40px; padding: 10px 16px; border-radius: 999px;
+    min-height: 44px; padding: 10px 16px; border-radius: 999px;
     color: var(--color-text); font-size: .76rem; font-weight: 700;
     border: 1px solid var(--color-border-strong);
     background: rgba(255,255,255,.04); cursor: pointer;
@@ -995,15 +1055,6 @@
     padding-top: clamp(8px, 2vh, 24px);
   }
 
-  /* Cast rail */
-  /* P3: Available on section (renamed copy, Change 6) — compact, above Cast. */
-  .streaming-section { margin-top: clamp(28px, 4vw, 40px); }
-  .streaming-providers { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
-  .streaming-provider { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border: 1px solid var(--color-border-strong); border-radius: 999px; background: var(--color-surface); }
-  .streaming-logo { width: 24px; height: 24px; border-radius: 4px; object-fit: cover; flex: 0 0 auto; }
-  .streaming-name { color: var(--color-text); font-size: .75rem; font-weight: 600; white-space: nowrap; }
-
-  .cast-section { margin-top: clamp(28px, 4vw, 40px); }
   .section-h {
     color: var(--color-text);
     font-size: clamp(1.05rem, 1.6vw, 1.3rem);
@@ -1012,6 +1063,53 @@
     padding-bottom: 8px;
     border-bottom: 1px solid var(--color-border);
   }
+
+  /* Overview — full synopsis + facts grid. */
+  .overview-section { margin-top: clamp(20px, 3vw, 32px); }
+  .overview-text {
+    margin: 0;
+    color: var(--color-text-muted); font-size: .86rem; line-height: 1.65;
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; line-clamp: 4; overflow: hidden;
+  }
+  .overview-text.expanded { -webkit-line-clamp: unset; line-clamp: unset; overflow: visible; }
+  .show-more {
+    display: inline-block; margin: 8px 0 0;
+    padding: 4px 8px; border: 0; background: transparent;
+    color: var(--color-primary); font: inherit;
+    font-size: .7rem; font-weight: 700; cursor: pointer;
+    text-decoration: underline; text-underline-offset: 3px;
+    text-decoration-color: var(--color-primary-border);
+    transition: text-decoration-color var(--motion-fast) var(--ease-out);
+  }
+  .show-more:hover { text-decoration-color: var(--color-primary); }
+  .show-more:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; border-radius: 4px; }
+  .facts-grid {
+    margin: 16px 0 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 10px 26px;
+  }
+  .fact-row { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .fact-label {
+    color: var(--color-text-deep);
+    font-size: .62rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase;
+  }
+  .fact-value {
+    margin: 0;
+    color: var(--color-text);
+    font-size: .8rem; font-weight: 600; line-height: 1.45;
+    overflow-wrap: anywhere;
+  }
+
+  /* P3: Available on section — compact, above Cast. */
+  .streaming-section { margin-top: clamp(28px, 4vw, 40px); }
+  .streaming-providers { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
+  .streaming-provider { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border: 1px solid var(--color-border-strong); border-radius: 999px; background: var(--color-surface); }
+  .streaming-logo { width: 24px; height: 24px; border-radius: 4px; object-fit: cover; flex: 0 0 auto; }
+  .streaming-name { color: var(--color-text); font-size: .75rem; font-weight: 600; white-space: nowrap; }
+
+  /* Cast rail */
+  .cast-section { margin-top: clamp(28px, 4vw, 40px); }
   .cast-rail {
     display: flex; gap: 12px;
     overflow-x: auto; scroll-snap-type: x proximity;
@@ -1046,7 +1144,7 @@
   .recs-rail { margin-top: clamp(28px, 4vw, 40px); }
   /* MAV-20 Phase D — skeleton state for the client-side rec rail. Uses
      the SAME horizontal grid geometry as the populated rail so the
-     section height is stable from first paint (Phase 2-H convention). */
+     section height is stable from first paint. */
   .recs-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; padding: 0 clamp(16px, 4vw, 32px); }
   .recs-title {
     margin: 0;
@@ -1061,8 +1159,7 @@
     overflow: hidden; padding: 6px clamp(16px, 4vw, 32px) 12px;
   }
 
-  /* === Trailer modal ===
-     Unchanged behavior — only colors aligned to Phase B tokens. */
+  /* === Trailer modal === (unchanged behavior) */
   .trailer-layer { position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; padding: 16px; }
   .trailer-backdrop {
     position: absolute; inset: 0; border: 0;
@@ -1098,36 +1195,25 @@
   @keyframes trailer-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
 
   /* ============================================================
-     RESPONSIVE — three intentional layout modes.
-     Mobile is the base stylesheet above. Below: tablet, desktop,
-     large desktop/4K, and landscape mobile tweaks.
+     RESPONSIVE — deliberate composition per surface.
      ============================================================ */
 
-  /* TABLET — poster + identity side-by-side. */
+  /* TABLET — immersive artwork, left-aligned identity, poster-free. */
   @media (min-width: 641px) and (max-width: 1024px) {
-    .hero { min-height: clamp(420px, 60vh, 560px); }
-    .hero-inner { padding-top: clamp(80px, 12vh, 140px); }
-    .hero-composition {
-      grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
-      gap: clamp(24px, 4vw, 40px);
-      align-items: end;
-    }
-    .poster-wrap { justify-content: flex-start; margin-top: 0; }
-    .poster-img { width: clamp(160px, 22vw, 220px); }
+    .hero { min-height: clamp(460px, 70vh, 640px); }
+    .hero-inner { padding-top: clamp(60px, 10vh, 120px); }
     .identity { text-align: left; }
     .meta-row { justify-content: flex-start; }
-    .detail-desc {
-      margin-left: 0; margin-right: 0;
-      text-align: left;
-    }
-    .genre-tags { justify-content: flex-start; }
+    .genre-line { margin-left: 0; }
+    .detail-desc { margin-left: 0; margin-right: 0; }
     .actions { align-items: flex-start; }
-    .primary-actions, .secondary-actions { max-width: 460px; }
+    .primary-actions, .secondary-actions { max-width: 480px; }
     .cast-card { flex: 0 0 110px; }
     .cast-photo { width: 110px; height: 110px; }
+    .facts-grid { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
   }
 
-  /* DESKTOP — full cinematic hero. */
+  /* DESKTOP — the poster joins the cinematic composition. */
   @media (min-width: 1025px) {
     .hero { min-height: clamp(520px, 76vh, 760px); }
     .hero-inner {
@@ -1140,29 +1226,25 @@
       gap: clamp(32px, 4vw, 56px);
       align-items: end;
     }
-    .poster-wrap { justify-content: flex-start; margin-top: 0; }
-    .poster-img { width: clamp(220px, 18vw, 280px); }
+    .poster-wrap { display: flex; justify-content: flex-start; }
     .identity { text-align: left; }
     .detail-eyebrow { font-size: .68rem; }
-    .detail-title { font-size: clamp(2.2rem, 4.2vw, 3.4rem); }
+    .detail-title { font-size: clamp(2.2rem, 4.2vw, 3.4rem); -webkit-line-clamp: 2; line-clamp: 2; }
     .meta-row { justify-content: flex-start; font-size: .82rem; }
+    .genre-line { margin-left: 0; }
     .detail-desc {
-      margin-left: 0; margin-right: 0; text-align: left;
+      margin-left: 0; margin-right: 0;
       font-size: .9rem; max-width: 680px;
     }
-    .show-more { margin-left: 0; }
-    .genre-tags { justify-content: flex-start; }
     .actions { align-items: flex-start; }
     .primary-actions, .secondary-actions { max-width: 480px; }
-    .play-btn { padding: 16px 28px; }
+    .play-btn { padding: 14px 28px; }
     .cast-card { flex: 0 0 120px; }
     .cast-photo { width: 120px; height: 120px; }
+    .facts-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 32px; }
   }
 
-  /* LARGE DESKTOP / 4K — wider composition + bounded typography.
-     The hero composition stays anchored to the lower-left, the
-     content max-width grows but typography stays readable so 4K
-     doesn't look like an enlarged 1080p layout. */
+  /* LARGE DESKTOP / 4K — wider composition + bounded typography. */
   @media (min-width: 1900px) {
     .hero-inner {
       width: min(1700px, calc(100% - 120px));
@@ -1175,91 +1257,58 @@
     .detail-body { width: min(1700px, calc(100% - 120px)); }
     .cast-card { flex: 0 0 130px; }
     .cast-photo { width: 130px; height: 130px; }
+    .facts-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   }
 
-  /* MOBILE — fine-tune base. */
+  /* MOBILE — the poster-free immersive hero; identity + actions
+     bottom-anchored so the dominant Play action and the Watching /
+     Share / Trailer row land INSIDE the first 390×844 viewport. */
   @media (max-width: 640px) {
     .detail-page { padding-bottom: 96px; }
-    /* Mobile hero: remove the viewport-relative min-height. The base rule
-       `min-height: clamp(440px, 78vh, 760px)` is overridden to `auto` so
-       the hero sizes to its content — poster + title + metadata +
-       description + actions. The previous min-height forced the hero to
-       be 520px+ tall even when the content was only ~400px, leaving
-       100-140px of dead space between the last action button and the
-       hero bottom edge (which is where the Cast section starts). */
-    .hero { min-height: auto; }
+    .hero { min-height: clamp(430px, 68vh, 580px); }
     .back-btn { top: calc(12px + env(safe-area-inset-top)); left: 12px; padding: 0 12px; min-height: 34px; font-size: .68rem; }
-    /* Mobile backdrop fix: the backdrop image MUST be visible from the
-       actual top of the hero. The previous design used an opaque
-       var(--color-bg) gradient for the top 38%, hiding the backdrop.
-       The new design uses a cinematic gradient that keeps the backdrop
-       visible from the top while maintaining readable text:
-         TOP → light dark overlay (backdrop visible)
-         MIDDLE → darker overlay for poster/title/metadata
-         BOTTOM → strong fade into var(--color-bg)
-       The poster/content composition enters ~30-40% down from the top,
-       over the darker middle section. */
+    /* The scrim keeps the artwork visible at the top while the
+       bottom-anchored identity/actions sit on a strong readable fade —
+       all rgba stops, no opaque band (the audited mobile-backdrop
+       contract). */
     .hero-scrim {
       background:
         linear-gradient(180deg,
-          rgba(5,7,8,.45) 0%,
-          rgba(5,7,8,.35) 15%,
-          rgba(5,7,8,.55) 30%,
-          rgba(5,7,8,.78) 45%,
-          rgba(5,7,8,.88) 60%,
-          rgba(5,7,8,.94) 80%,
-          var(--color-bg) 100%);
+          rgba(5,7,8,.42) 0%,
+          rgba(5,7,8,.30) 16%,
+          rgba(5,7,8,.48) 34%,
+          rgba(5,7,8,.72) 55%,
+          rgba(5,7,8,.88) 74%,
+          rgba(5,7,8,.95) 90%,
+          var(--color-bg) 100%),
+        linear-gradient(90deg, rgba(5,7,8,.38) 0%, rgba(5,7,8,.16) 40%, transparent 68%);
     }
-    .hero-inner {
-      width: calc(100% - 28px);
-      padding-top: clamp(56px, 12vh, 100px);
-    }
-    .hero-composition { gap: 18px; }
-    /* Follow-up task 2 (§2) — second surgical ~10px reduction of the
-       mobile top spacing above the poster/identity block (132px →
-       122px). The audited computed layout confirmed .poster-wrap's
-       mobile margin-top as the responsible vertical driver: it pulls
-       the poster (and the identity/actions stack below it) down, so
-       lowering it lifts Resume/Play, Download, Watching, Share and
-       Trailer ~10px earlier into the viewport at 360x800 / 390x844.
-       The backdrop composition, aspect ratio, button behavior and
-       every other breakpoint remain untouched. */
-    .poster-wrap { margin-top: 122px; }
-    .poster-img { width: clamp(120px, 36vw, 142px); border-radius: 10px; }
+    .hero-inner { width: calc(100% - 30px); }
+    .hero-composition { gap: 0; }
+    .poster-wrap { display: none; }
     .detail-title { font-size: clamp(1.5rem, 6.4vw, 2rem); }
     .meta-row { font-size: .7rem; gap: 6px; }
-    .detail-desc { font-size: .8rem; }
+    .genre-line { font-size: .68rem; }
+    .detail-desc { font-size: .78rem; }
     .primary-actions { max-width: 100%; }
-    .play-btn { flex: 1 1 100%; padding: 14px 22px; font-size: .9rem; }
-    .download-btn {
-      flex: 1 1 100%;
-    }
-    .secondary-btn { padding: 9px 14px; font-size: .72rem; }
-    /* Consolidate the gap between the last hero action row and the first
-       content section below (Cast / Episodes / Recommendations). The base
-       rules stack three independent spacings: hero-inner padding-bottom
-       (clamp(28px, 4vh, 56px)) + detail-body padding-top (clamp(8px, 2vh,
-       24px)) + cast-section margin-top (clamp(28px, 4vw, 40px)). On a tall
-       phone these can total 80-100px+ of dead space. The mobile override
-       below collapses them into a single compact 24px total gap. */
-    .hero-inner { padding-bottom: 8px; }
+    .play-btn { flex: 1 1 100%; min-height: 52px; }
+    .download-btn { flex: 1 1 100%; min-height: 48px; }
+    .secondary-btn { padding: 10px 14px; font-size: .72rem; }
+    .hero-inner { padding-bottom: 14px; }
     .detail-body { padding-top: 0; }
-    .cast-section { margin-top: 16px; }
-    .recs-rail { margin-top: 16px; }
+    .overview-section { margin-top: 18px; }
+    .cast-section { margin-top: 24px; }
+    .recs-rail { margin-top: 24px; }
+    .facts-grid { grid-template-columns: 1fr; gap: 10px; }
   }
 
-  /* LANDSCAPE MOBILE — short viewport: keep the title + Play above
+  /* LANDSCAPE MOBILE — short viewport: keep the title + actions above
      the fold, never push content below the visible area. */
   @media (max-width: 1024px) and (orientation: landscape) and (max-height: 480px) {
-    .hero {
-      min-height: auto;
-      height: auto;
-    }
-    .hero-inner { padding-top: clamp(48px, 10vh, 80px); padding-bottom: 16px; }
-    .hero-composition { gap: 18px; }
-    .poster-img { width: clamp(110px, 18vw, 160px); }
+    .hero { min-height: auto; height: auto; }
+    .hero-inner { padding-top: clamp(44px, 10vh, 72px); padding-bottom: 12px; }
     .detail-title { font-size: clamp(1.3rem, 3vw, 1.8rem); }
-    .detail-desc { -webkit-line-clamp: 2; line-clamp: 2; }
+    .detail-desc { -webkit-line-clamp: 1; line-clamp: 1; }
     .primary-actions { max-width: 100%; }
     .play-btn { flex: 1 1 100%; }
   }
@@ -1272,3 +1321,4 @@
     }
   }
 </style>
+

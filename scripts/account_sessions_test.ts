@@ -90,8 +90,14 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   ok(page.includes('/api/account/sessions/revoke'), 'account page: posts to revoke API');
   ok(page.includes('isCurrent'), 'account page: identifies current session');
   ok(page.includes('This device'), 'account page: shows "This device" indicator');
-  ok(page.includes('relativeTime'), 'account page: has relative time display');
-  ok(page.includes('Active now'), 'account page: shows "Active now" for current session');
+  // MAV-21 Workstream B — session DURATION is the immutable session
+  // start (created_at), NOT the heartbeat last_seen_at.
+  ok(page.includes('elapsedSince'), 'account page: has the elapsed-since formatter');
+  ok(page.includes('Signed in {elapsedSince(session.createdAt)}'), 'account page: card duration renders the immutable session START (created_at)');
+  ok(!page.includes('{relativeTime(session.lastSeenAt)}'), 'account page: card duration NEVER renders the heartbeat last_seen_at');
+  ok(page.includes('isRecentlyActive'), 'account page: activity is derived from lastSeenAt separately');
+  ok(page.includes('Active now'), 'account page: shows "Active now" as the activity signal for recently-heartbeated sessions');
+  ok(page.includes('Last active'), 'account page: stale sessions show "Last active" (activity, not duration)');
   ok(page.includes('Revoke'), 'account page: has Revoke button');
   ok(page.includes('ConfirmDialog') && page.includes('revokeTarget') && page.includes('Revoke this session?'), 'account page: uses ConfirmDialog for revocation');
   ok(page.includes('showSuccessToast'), 'account page: shows success toast');

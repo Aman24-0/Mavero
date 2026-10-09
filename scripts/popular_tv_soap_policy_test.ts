@@ -104,7 +104,7 @@ ok('1. daily-soap rule: boundaries + live-measured evidence (soaps out, prestige
   const fn = tmdb.match(/export async function getTmdbPopularByLanguage[\s\S]*?^}/m);
   const body = fn![0];
   assert.match(body, /soapPolicyKey = type === 'series' \? INDIAN_POPULAR_TV_SOAP_POLICY_KEY : INDIAN_POPULAR_TV_NO_SOAP_POLICY_KEY/, 'policy key is a per-type constant dimension');
-  assert.match(body, /:\$\{soapPolicyKey\}`/, 'cache key template ends with the soap-policy dimension');
+  assert.match(body, /:\$\{soapPolicyKey\}:\$\{ANIME_EXCLUSION_POLICY_KEY\}`/, 'cache key template ends with the soap-policy dimension (+ the MAV-21 anime-exclusion policy dimension)');
   // The genre + adult dimensions are still in the key (Phase 8 contract).
   assert.match(body, /\$\{adultExclusion \?\? 'no-adult'\}:\$\{genreExclusion \?\? 'no-genre-exclusion'\}:\$\{soapPolicyKey\}/, 'adult + genre + soap dimensions all present');
   ok('3. cache key carries adult + genre + soap-policy dimensions (policy bump re-keys)');

@@ -31,6 +31,11 @@ export function toMediaItem(item: NormalizedMediaItem): MediaItem {
     cast: item.cast,
     externalIds: item.externalIds,
     streamingProviders: item.streamingProviders,
+    // MAV-21: detail-path enrichment — director (movies) + creators
+    // (series) ride the SAME detail payload; maturity carries the
+    // honest TMDB certification (never the old hardcoded badge).
+    director: item.director,
+    creators: item.creators,
     originalLanguage: item.originalLanguage,
     popularity: item.popularity,
     voteCount: item.voteCount

@@ -397,7 +397,7 @@ const appFooter = await readFile(path.join(repoRoot, 'src/lib/components/AppFoot
 // ============================================================================
 {
   // Each TMDB query function must include language + page in its cache key.
-  assert.match(tmdb, /key = `tmdb:theatre:\$\{language\}:\$\{page\}`/, 'theatre cache key includes language + page');
+  assert.match(tmdb, /key = `tmdb:theatre:\$\{language\}:\$\{page\}:\$\{ANIME_EXCLUSION_POLICY_KEY\}`/, 'theatre cache key includes language + page (+ the MAV-21 anime-exclusion policy dimension)');
   assert.match(tmdb, /key = `tmdb:new-ott:\$\{providerKey/, 'OTT cache key includes provider');
   assert.match(tmdb, /key = `tmdb:popular-v2:\$\{type\}:\$\{language\}:\$\{page\}:[^`]+`/, 'popular cache key includes type + language + page + adult exclusion');
   assert.match(tmdb, /key = `tmdb:top-rated-v2:\$\{type\}:\$\{language\}:\$\{page\}:[^`]+`/, 'top-rated cache key includes type + language + page + adult exclusion');
@@ -423,8 +423,8 @@ const appFooter = await readFile(path.join(repoRoot, 'src/lib/components/AppFoot
   // with versioned pool cache keys.
   assert.match(tmdb, /export async function getTmdbHeroMoviePool/, 'TMDB adapter exports the expanded movie pool');
   assert.match(tmdb, /export async function getTmdbHeroSeriesPool/, 'TMDB adapter exports the expanded series pool');
-  assert.match(tmdb, /tmdb:hero-pool:movie:v3/, 'movie pool cache key is v3-versioned');
-  assert.match(tmdb, /tmdb:hero-pool:series:v3/, 'series pool cache key is v3-versioned');
+  assert.match(tmdb, /tmdb:hero-pool:movie:v4/, 'movie pool cache key is v4-versioned (MAV-21: anime-excluded pool)');
+  assert.match(tmdb, /tmdb:hero-pool:series:v4/, 'series pool cache key is v4-versioned (MAV-21: anime-excluded pool items)');
   // v3 cache-poisoning prevention — uses getOrSetValidated, NOT getOrSet.
   assert.match(discoverLoad, /getOrSetValidated/, 'discover-load uses getOrSetValidated (empty lineup NEVER cached)');
   assert.match(discoverLoad, /isHeroLineupCacheable/, 'discover-load uses the cacheability predicate (lineup.length >= 1)');

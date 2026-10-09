@@ -59,6 +59,10 @@ export type MediaItem = {
   };
   /** P3: India streaming/OTT providers (flatrate only) from TMDB watch/providers. */
   streamingProviders?: Array<{ id: number; name: string; logo: string }>;
+  /** MAV-21: movie director (TMDB credits.crew), detail payload only. */
+  director?: string;
+  /** MAV-21: TV/anime-series creators (TMDB created_by), detail payload only. */
+  creators?: string[];
   /**
    * TMDB original_language code (e.g. 'hi', 'en', 'ja'). Used by the
    * Discover Hero selector for the controlled Indian-content boost.

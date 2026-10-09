@@ -25,7 +25,11 @@ console.log('Trailer + cast data-flow contract tests');
 
 // --- 1. TMDB adapter extracts trailerKey from YouTube Trailer video ---
 assert.match(tmdbSrc, /trailerKey:\s*raw\.videos\?\.results\?\.find\(\(video\)\s*=>\s*video\.site\s*===\s*'YouTube'\s*&&\s*video\.type\s*===\s*'Trailer'\)\?\.key/, 'TMDB adapter extracts YouTube Trailer key');
-assert.match(tmdbSrc, /append_to_response:\s*'videos,external_ids,recommendations,credits,watch\/providers'/, 'TMDB adapter appends credits + watch/providers to detail request');
+// MAV-21: the append BASE is unchanged; the detail request now ALSO
+// appends the certification endpoint per type (movies → release_dates,
+// TV → content_ratings) on the SAME request — zero extra roundtrips.
+assert.match(tmdbSrc, /const appendBase = 'videos,external_ids,recommendations,credits,watch\/providers';/, 'TMDB adapter keeps the credits + watch/providers append base');
+assert.match(tmdbSrc, /append_to_response: type === 'movie' \? `\$\{appendBase\},release_dates` : `\$\{appendBase\},content_ratings`/, 'TMDB detail appends the per-type certification endpoint (MAV-21)');
 
 // --- 2. TMDB adapter extracts cast from credits ---
 assert.match(tmdbSrc, /function extractCast/, 'TMDB adapter defines extractCast helper');

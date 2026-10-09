@@ -70,7 +70,7 @@ assert.match(detailPage, /function goBack\(event: MouseEvent\)/,
   'DetailPage has goBack function');
 assert.match(detailPage, /const returnTo = page\.url\.searchParams\.get\('from'\)/,
   'goBack reads from param via searchParams.get');
-assert.match(detailPage, /if \(returnTo\?\.startsWith\('\/'\) && !returnTo\.startsWith\('\/\/'\)\)/,
+assert.match(detailPage, /const validReturnTo = returnTo\?\.startsWith\('\/'\) && !returnTo\.startsWith\('\/\/'\) \? returnTo : null;/,
   'goBack checks returnTo starts with / and not // (valid internal from)');
 ok('DetailPage recognizes valid internal from (starts with /, not //)');
 
@@ -104,10 +104,19 @@ ok('navigation.ts helpers (appendReturnTo, safeReturnTo) reject external values'
 // ============================================================
 console.log('\n4. Normal history traversal preserved for valid from');
 
-// The primary path MUST still be window.history.back() — NOT goto(returnTo).
-// This is what triggers SvelteKit's snapshot/scroll restoration.
-assert.match(detailPage, /window\.history\.back\(\)/,
-  'goBack calls window.history.back() for the valid-from case (primary path)');
+// The primary path is REAL history.back() — NOT goto(returnTo).
+// MAV-20 Phase D + MAV-21: DetailPage delegates the whole policy to the
+// shared navigateBackOr (src/lib/shared/navigation.ts) — back() stays
+// primary, with the popstate watchdog + explicit fallback INSIDE the
+// shared helper.
+assert.match(detailPage, /import \{ appendReturnTo, navigateBackOr \} from '\$lib\/shared\/navigation'/,
+  'DetailPage imports the shared back policy (navigateBackOr)');
+assert.match(detailPage, /navigateBackOr\(\(\) => \{/,
+  'goBack delegates to navigateBackOr (REAL history.back() is the primary path)');
+assert.match(navigation, /window\.history\.back\(\)/,
+  'navigateBackOr calls window.history.back() (the primary path)');
+assert.match(navigation, /if \(!hasInAppHistoryEntry\(\)\) \{[\s\S]*?onFallback\(\);[\s\S]*?return;/,
+  'navigateBackOr never blind-backs on a deep link (no in-app entry)');
 
 // The old broken pattern (goto with replaceState as the PRIMARY action for
 // valid from) must NOT be present.
@@ -115,23 +124,30 @@ assert.doesNotMatch(detailPage,
   /if \(returnTo\?\.startsWith\('\/'\) && !returnTo\.startsWith\('\/\/'\)\)\s*\{\s*void goto\(returnTo, \{ replaceState: true, keepFocus: true \}\);\s*return;\s*\}/,
   'goBack must NOT use goto(returnTo, { replaceState: true }) as the primary valid-from action');
 
-// The popstate-detection safety net must be present (the fix).
-assert.match(detailPage, /window\.addEventListener\('popstate', onPopState/,
-  'goBack adds a popstate listener to detect whether back() navigated');
-assert.match(detailPage, /let navigated = false/,
-  'goBack tracks navigated state');
-assert.match(detailPage, /if \(!navigated\)/,
-  'goBack falls back to goto when popstate did not fire (back() no-op)');
-ok('Normal history traversal preserved (back() is primary); popstate-detection is the safety net');
+// The popstate-detection safety net must be present INSIDE the shared
+// helper (the fix).
+assert.match(navigation, /window\.addEventListener\('popstate', onPopState/,
+  'navigateBackOr adds a popstate listener to detect whether back() navigated');
+assert.match(navigation, /let navigated = false/,
+  'navigateBackOr tracks navigated state');
+assert.match(navigation, /if \(!navigated\) onFallback\(\)/,
+  'navigateBackOr falls back when popstate did not fire (back() no-op)');
+ok('Normal history traversal preserved (back() is primary via the shared policy); popstate-detection is the safety net');
 
 // ============================================================
 // 5. Direct DetailPage fallback remains /discover
 // ============================================================
 console.log('\n5. /discover fallback for missing/invalid from');
 
-assert.match(detailPage, /goto\('\/discover', \{ replaceState: true, keepFocus: true \}\)/,
-  'goBack falls back to goto(/discover) when from is missing/invalid');
-ok('/discover fallback preserved for missing/invalid from');
+// The fallback destination: valid from → that origin; otherwise the
+// safe /discover destination. The goto uses replaceState so a
+// deep-linked detail entry is REPLACED (the user cannot go "back" to a
+// page they never navigated to).
+assert.match(detailPage, /const fallbackDestination = validReturnTo \?\? '\/discover';/,
+  'goBack fallback destination = valid from origin, else /discover');
+assert.match(detailPage, /goto\(fallbackDestination, \{ replaceState: true, keepFocus: true \}\)/,
+  'goBack fallback uses goto(destination, { replaceState: true })');
+ok('Fallback destination contract: from-origin when valid, /discover for deep links');
 
 // ============================================================
 // 6. Existing snapshot/navigation contract not accidentally removed
@@ -169,22 +185,25 @@ ok('appendReturnTo helper intact (with URL encoding)');
 // ============================================================
 console.log('\n7. No duplicate popstate/back handlers');
 
-// The popstate listener in goBack must be properly cleaned up (removeEventListener).
-assert.match(detailPage, /window\.removeEventListener\('popstate', onPopState\)/,
-  'goBack cleans up the popstate listener (removeEventListener)');
-assert.match(detailPage, /clearTimeout\(timer\)/,
-  'goBack cleans up the setTimeout timer');
+// The popstate listener + timer in navigateBackOr must be properly
+// cleaned up (the shared helper owns the whole lifecycle now).
+assert.match(navigation, /window\.removeEventListener\('popstate', onPopState\)/,
+  'navigateBackOr cleans up the popstate listener (removeEventListener)');
+assert.match(navigation, /clearTimeout\(timer\)/,
+  'navigateBackOr cleans up the setTimeout timer');
 ok('popstate listener + timer are properly cleaned up (no leaks)');
 
-// No other popstate handlers in DetailPage (the only popstate listener is
-// the one inside goBack).
+// DetailPage itself has NO popstate handlers (the policy is delegated).
 const detailPagePopstateCount = (detailPage.match(/addEventListener\('popstate'/g) ?? []).length;
-assert.equal(detailPagePopstateCount, 1,
-  'DetailPage has exactly one popstate listener (inside goBack)');
-const detailPageRemovePopstateCount = (detailPage.match(/removeEventListener\('popstate'/g) ?? []).length;
-assert.equal(detailPageRemovePopstateCount, 1,
-  'DetailPage has exactly one removeEventListener(popstate) (cleanup)');
-ok('No duplicate popstate handlers in DetailPage');
+assert.equal(detailPagePopstateCount, 0,
+  'DetailPage registers no popstate listener (delegated to navigateBackOr)');
+const navigationPopstateCount = (navigation.match(/addEventListener\('popstate'/g) ?? []).length;
+assert.equal(navigationPopstateCount, 1,
+  'navigation.ts has exactly one popstate listener (inside navigateBackOr)');
+const navigationRemovePopstateCount = (navigation.match(/removeEventListener\('popstate'/g) ?? []).length;
+assert.equal(navigationRemovePopstateCount, 1,
+  'navigation.ts has exactly one removeEventListener(popstate) (cleanup)');
+ok('No duplicate popstate handlers (one, inside the shared policy)');
 
 // No popstate handlers in DownloadSheet (shouldn't interfere with navigation).
 assert.doesNotMatch(downloadSheet, /popstate/,
@@ -193,14 +212,18 @@ assert.doesNotMatch(downloadSheet, /history\.back/,
   'DownloadSheet does not call history.back (does not interfere)');
 ok('DownloadSheet does not introduce conflicting popstate/back handlers');
 
-// No beforeNavigate/onNavigate/afterNavigate anywhere (the failed approach).
+// MAV-20 Phase G: the root layout NOW legitimately uses the top-level
+// afterNavigate hook (recordInAppNavigation — the in-app origin tracker
+// the shared back policy depends on). What must NOT happen: registering
+// navigation hooks INSIDE onMount (the failed approach — handlers that
+// survive remounts and stack up).
 assert.doesNotMatch(layout, /onMount\(\(\)\s*=>\s*\{[\s\S]*?beforeNavigate\(/,
   'Root layout does NOT register beforeNavigate inside onMount');
 assert.doesNotMatch(layout, /onMount\(\(\)\s*=>\s*\{[\s\S]*?onNavigate\(/,
   'Root layout does NOT register onNavigate inside onMount');
-assert.doesNotMatch(layout, /onMount\(\(\)\s*=>\s*\{[\s\S]*?afterNavigate\(/,
-  'Root layout does NOT register afterNavigate inside onMount');
-ok('No beforeNavigate/onNavigate/afterNavigate hooks (failed approach absent)');
+assert.match(layout, /afterNavigate\(\(\{ from \}\) => \{/,
+  'Root layout uses the top-level afterNavigate hook (the origin tracker)');
+ok('Navigation hooks: top-level afterNavigate only (never registered inside onMount)');
 
 // ============================================================
 // 8. Recent downloader DetailPage changes do not interfere with navigation
@@ -233,22 +256,32 @@ assert.doesNotMatch(downloadSheet, /pushState/,
 ok('DownloadSheet does not use goto/replaceState/pushState');
 
 // The onMount cleanup must still set active = false (the existing async guard).
-assert.match(detailPage, /return \(\) => \{ active = false; \}/,
+assert.match(detailPage, /return \(\) => \{\s*active = false;/,
   'onMount cleanup sets active = false (async guard intact)');
 ok('DetailPage onMount cleanup (active = false) intact');
 
 // ============================================================
-// 9. history.length fast-path (deep-link detection)
+// 9. Deep-link detection (in-app navigation tracking)
 // ============================================================
-console.log('\n9. history.length fast-path for deep-link detection');
+console.log('\n9. Deep-link detection (no in-app history entry)');
 
-// When history.length === 1, back() would no-op. The fix skips back() and
-// goes straight to goto(returnTo, { replaceState: true }).
-assert.match(detailPage, /window\.history\.length <= 1/,
-  'goBack checks history.length <= 1 (deep-link fast path)');
-assert.match(detailPage, /if \(window\.history\.length <= 1\) \{[\s\S]*?void goto\(returnTo, \{ replaceState: true, keepFocus: true \}\)/,
-  'history.length <= 1 → goto(returnTo, { replaceState: true }) (skip back())');
-ok('history.length fast-path: skips back() when at first history entry');
+// MAV-20 Phase G: history.length and SvelteKit's history.state index are
+// BOTH unreliable deep-link signals (SvelteKit seeds its index with
+// Date.now() on first load). The app tracks its OWN navigations instead:
+// the root layout records every completed client-side navigation via
+// afterNavigate → recordInAppNavigation, and navigateBackOr checks
+// hasInAppHistoryEntry() BEFORE attempting back().
+assert.match(navigation, /export function recordInAppNavigation/,
+  'navigation.ts exports recordInAppNavigation (the in-app origin tracker)');
+assert.match(navigation, /export function hasInAppHistoryEntry/,
+  'navigation.ts exports hasInAppHistoryEntry (the deep-link guard)');
+assert.match(navigation, /if \(typeof window === 'undefined'\) return false;/,
+  'hasInAppHistoryEntry is SSR-safe');
+assert.match(layout, /recordInAppNavigation/,
+  'Root layout records in-app navigations (afterNavigate wiring)');
+assert.doesNotMatch(navigation, /window\.history\.length/,
+  'The policy does NOT use history.length (unreliable signal)');
+ok('Deep-link detection: in-app navigation tracking, never history.length');
 
 // ============================================================
 // 10. popstate-detection safety net (back() no-op detection)
@@ -256,21 +289,22 @@ ok('history.length fast-path: skips back() when at first history entry');
 console.log('\n10. popstate-detection safety net');
 
 // The safety net: after back(), listen for popstate. If it doesn't fire
-// within one macrotask (setTimeout 0), fall back to goto.
-assert.match(detailPage, /setTimeout\([\s\S]*?, 0\)/,
-  'goBack uses setTimeout(..., 0) for popstate detection (single macrotask)');
-assert.match(detailPage, /if \(!navigated\) \{[\s\S]*?void goto\(returnTo, \{ replaceState: true, keepFocus: true \}\)/,
-  'popstate-detection fallback calls goto(returnTo, { replaceState: true })');
-ok('popstate-detection: falls back to goto when back() is a no-op');
+// within one macrotask (setTimeout 0), fall back. Lives INSIDE the shared
+// navigateBackOr now.
+assert.match(navigation, /setTimeout\([\s\S]*?, 0\)/,
+  'navigateBackOr uses setTimeout(..., 0) for popstate detection (single macrotask)');
+assert.match(navigation, /if \(!navigated\) onFallback\(\)/,
+  'popstate-detection fallback runs onFallback (the goto) when back() is a no-op');
+ok('popstate-detection: falls back to the explicit navigation when back() is a no-op');
 
 // ============================================================
-// 11. Defensive fallback for old browsers preserved
+// 11. Defensive fallback for non-DOM environments preserved
 // ============================================================
-console.log('\n11. Old-browser defensive fallback preserved');
+console.log('\n11. Non-DOM defensive fallback preserved');
 
-assert.match(detailPage, /void goto\(returnTo, \{ replaceState: true, keepFocus: true \}\)/,
-  'Defensive goto(returnTo, { replaceState: true }) preserved for old browsers');
-ok('Old-browser defensive goto fallback preserved');
+assert.match(navigation, /if \(typeof window === 'undefined' \|\| typeof window\.history\.back !== 'function'\) \{[\s\S]*?onFallback\(\);[\s\S]*?return;/,
+  'navigateBackOr runs the explicit fallback when window/history are unavailable');
+ok('Non-DOM defensive fallback preserved (in the shared policy)');
 
 // ============================================================
 // 12. Functional test: appendReturnTo + safeReturnTo round-trip

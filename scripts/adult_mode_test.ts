@@ -368,7 +368,11 @@ const accountPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pag
 {
   // getTmdbDetail must append_to_response watch/providers so it can
   // classify adult content without a separate N+1 API call.
-  assert.match(tmdb, /append_to_response: 'videos,external_ids,recommendations,credits,watch\/providers'/, 'detail fetches watch/providers via append_to_response');
+  // MAV-21: the append list was hoisted to appendBase (the certification
+  // append rides the SAME request) — watch/providers is still included
+  // on BOTH the movie and TV append paths.
+  assert.match(tmdb, /const appendBase = 'videos,external_ids,recommendations,credits,watch\/providers';/, 'detail append list includes watch/providers');
+  assert.match(tmdb, /append_to_response: type === 'movie' \? `\$\{appendBase\},release_dates` : `\$\{appendBase\},content_ratings`/, 'detail fetches watch/providers (plus certification) via append_to_response on both paths');
   // isAdultContent is called in getTmdbDetail (2026-10-07: with the
   // attribution evidence argument — the orphan/homepage/overview signals).
   assert.match(tmdb, /getTmdbDetail[\s\S]*?isAdultContent\(item\.tags, providerIds, tmdbAdult, item\.isAnime, networks, attribution\)/, 'detail calls isAdultContent');
@@ -420,7 +424,7 @@ const accountPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pag
   assert.ok(discoverFn, 'getTmdbDiscover function body found');
   assert.match(discoverFn, /filterAdultFromListPage/, 'getTmdbDiscover runs the central classification filter');
   assert.doesNotMatch(discoverFn, /adultExclusion/, 'getTmdbDiscover no longer keys on the obsolete provider dimension');
-  assert.match(discoverFn, /key = `tmdb:discover:\$\{type\}:\$\{page\}`/, 'getTmdbDiscover cache key is content-only (filter is a content fact)');
+  assert.match(discoverFn, /key = `tmdb:discover:\$\{type\}:\$\{page\}:\$\{ANIME_EXCLUSION_POLICY_KEY\}`/, 'getTmdbDiscover cache key is content-only + the anime-exclusion policy dimension (MAV-21) — no Adult Mode state');
   // getTmdbCollection: TV via networks + transitional movie providers.
   assert.match(tmdb, /getTmdbCollection[\s\S]*?without_networks: networkExclusion/, 'getTmdbCollection TV excludes adult networks');
   assert.match(tmdb, /getTmdbCollection[\s\S]*?'without_watch_providers': providerExclusion/, 'getTmdbCollection movies keep transitional provider exclusion');
@@ -542,7 +546,7 @@ const accountPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pag
   assert.match(tmdb, /import \{ adultNetworkExclusionValue, withAdultNetworksParams, getVerifiedAdultNetworkIdForKey \} from '\.\.\/adult-catalog'/, 'adapter imports the adult-catalog bridge');
   assert.doesNotMatch(tmdb, /\b(2902|4573|7355)\b/, 'adapter contains no hardcoded network ids');
   // New-ott cache key embeds BOTH exclusion dimensions (TV networks + movie providers).
-  assert.match(tmdb, /key = `tmdb:new-ott:.*:\$\{networkExclusion \?\? 'no-nets'\}:\$\{providerExclusion \?\? 'no-providers'\}`/, 'new-ott cache key embeds both exclusion dimensions');
+  assert.match(tmdb, /key = `tmdb:new-ott:.*:\$\{networkExclusion \?\? 'no-nets'\}:\$\{providerExclusion \?\? 'no-providers'\}:\$\{ANIME_EXCLUSION_POLICY_KEY\}`/, 'new-ott cache key embeds both exclusion dimensions (MAV-21: + the anime-exclusion policy dimension)');
 }
 
 // ============================================================================

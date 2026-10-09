@@ -663,7 +663,9 @@ function section_regression(): void {
   // §F1c (Explorer redesign): DetailPage.svelte evolved in the approved
   // task (mobile top spacing 150→132px + "Streaming on" → "Available on"
   // label copy). The DOWNLOADER action model it hosts is unchanged —
-  // pinned here line-for-line.
+  // pinned here line-for-line. (MAV-21 Cinematic Detail Page 2.0: the
+  // icon size moved 16→17 to match the dominant Play action's 17px icon
+  // in the new action hierarchy — the model itself is unchanged.)
   const detailPageSrc = read('src/lib/components/DetailPage.svelte');
   for (const pinned of [
     'function openDownloadSheet(',
@@ -673,7 +675,7 @@ function section_regression(): void {
     'class="download-btn download-unavailable"',
     'retryDownloadProviders',
     'downloadProvidersLoading',
-    '<Download size={16} />',
+    '<Download size={17} />',
     '<DownloadSheet'
   ]) {
     ok(detailPageSrc.includes(pinned), `§F1c: DetailPage keeps the downloader action model line: ${pinned}`);

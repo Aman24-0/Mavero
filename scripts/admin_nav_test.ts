@@ -53,9 +53,9 @@ const condIdx = bareBranch![0].indexOf("startsWith('/admin')");
 const renderIdx = bareBranch![0].indexOf('{@render pageChildren()}');
 assert.ok(condIdx >= 0 && renderIdx >= 0 && condIdx < renderIdx, 'the bare branch renders children directly');
 const elseBranch = rootLayout.slice(rootLayout.indexOf('{:else}'), rootLayout.indexOf('{/if}'));
-assert.match(elseBranch, /<AppShell/, 'consumer pages still render inside AppShell');
-assert.match(elseBranch, /showMobileNav=\{!page\.url\.pathname\.startsWith\('\/settings'\)\}/, "the /settings opt-out behavior is unchanged");
-ok('1. root layout: /admin/* renders bare; consumer pages keep AppShell exactly as before');
+assert.match(elseBranch, /<AppShell currentPath=\{page\.url\.pathname\} user=/, 'consumer pages still render inside AppShell');
+assert.doesNotMatch(elseBranch, /showMobileNav/, 'MAV-21: no consumer route suppresses the mobile navigation');
+ok('1. root layout: /admin/* renders bare; consumer pages keep AppShell with unconditional global nav');
 
 // ============================================================
 // 2. Admin pages: overview uses AdminAppShell; legacy registry pages

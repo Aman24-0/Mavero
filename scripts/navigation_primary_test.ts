@@ -209,12 +209,12 @@ assert.match(rootLayout, /startsWith\('\/settings\/scan-tv'\)/, 'the QR login ro
 ok('9. /settings is canonical; the new destinations render inside the AppShell');
 
 // ============================================================
-// 10. LAYOUT — existing opt-out + bare-render contracts untouched
+// 10. LAYOUT — MAV-21: global navigation is unconditional + bare-render contracts untouched
 // ============================================================
-assert.match(rootLayout, /showMobileNav=\{!page\.url\.pathname\.startsWith\('\/settings'\)\}/, '/settings mobile-nav opt-out unchanged');
+assert.doesNotMatch(rootLayout, /showMobileNav/, 'MAV-21: no route can suppress the AppShell mobile navigation (the /settings opt-out is removed)');
 assert.match(rootLayout, /startsWith\('\/admin'\)/, '/admin bare behavior unchanged');
 assert.match(rootLayout, /startsWith\('\/watch\/'\)/, '/watch bare behavior unchanged');
-ok('10. layout contracts (settings opt-out, admin/watch bare) untouched');
+ok('10. layout contracts (unconditional global nav, admin/watch bare) intact');
 
 // ============================================================
 // 11. DISCOVER — no longer owns the content destinations
@@ -222,7 +222,10 @@ ok('10. layout contracts (settings opt-out, admin/watch bare) untouched');
 assert.doesNotMatch(discoverPage, /quickChips/, 'the Movies/TV Shows/Anime quick chips are removed from Discover');
 assert.doesNotMatch(discoverPage, /quick-chips/, 'quick-chips markup and styles are removed');
 assert.doesNotMatch(discoverPage, /href: '\/discover\/(movies|series|anime)'/, 'Discover links no longer point at the old child pages');
-assert.match(discoverPage, /viewAllHref: '\/anime'/, 'anime rail View-all links target the first-class /anime route');
+// MAV-20 contract (supersedes the older unconditional link): the anime
+// View-all link appears ONLY on the popular/top-rated anime chip
+// variants (genre anime chips intentionally have no View-all).
+assert.match(discoverPage, /viewAllHref=\{\(fam\.key === 'popular' \|\| fam\.key === 'top-rated'\) && variantType === 'anime' \? '\/anime' : ''\}/, 'anime rail View-all links target the first-class /anime route (popular/top-rated anime chips only)');
 ok('11. Discover no longer routes to the old child pages; anime View-all targets /anime');
 
 // ============================================================

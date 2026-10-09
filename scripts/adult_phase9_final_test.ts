@@ -263,7 +263,7 @@ const POLICY_OFF = { allowLoggedIn: false, allowGuest: false };
   assert.match(popularTv, /with_watch_monetization_types: 'flatrate'/, 'OTT flatrate bias retained');
   assert.match(popularTv, /with_original_language: langParam/, 'language filter retained');
   assert.match(popularTv, /networkExclusion \? \{ without_networks: networkExclusion \}/, 'verified-network exclusion retained alongside');
-  assert.match(popularTv, /const key = `tmdb:popular-v2:\$\{type\}:\$\{language\}:\$\{page\}:\$\{adultExclusion \?\? 'no-adult'\}:\$\{genreExclusion \?\? 'no-genre-exclusion'\}:\$\{soapPolicyKey\}`/, 'cache key embeds the genre-exclusion AND daily-soap policy dimensions');
+  assert.match(popularTv, /const key = `tmdb:popular-v2:\$\{type\}:\$\{language\}:\$\{page\}:\$\{adultExclusion \?\? 'no-adult'\}:\$\{genreExclusion \?\? 'no-genre-exclusion'\}:\$\{soapPolicyKey\}:\$\{ANIME_EXCLUSION_POLICY_KEY\}`/, 'cache key embeds the genre-exclusion AND daily-soap policy dimensions (MAV-21: + the anime-exclusion policy dimension)');
   assert.match(popularTv, /isDailySoapEpisodeCount/, 'the isolated daily-soap policy is applied in the rail');
   // The genre filter adds no classification weight: Soap/News/Talk genre IDs are not network IDs.
   assert.equal(isKnownAdultNetwork({ id: 10764, name: 'Soap' }), false, 'Soap genre ID is not an adult network');

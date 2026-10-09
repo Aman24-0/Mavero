@@ -1,7 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { goto } from '$app/navigation';
-  import { ArrowLeft, Check, LockKeyhole, LogIn, LogOut, Mail, Monitor, ShieldCheck, Smartphone, Sparkles, Trash2, Tv, UserRound, Laptop, LoaderCircle, QrCode } from 'lucide-svelte';
+  import { Check, LockKeyhole, LogIn, LogOut, Mail, Monitor, ShieldCheck, Smartphone, Sparkles, Trash2, Tv, UserRound, Laptop, LoaderCircle, QrCode } from 'lucide-svelte';
   import type { PageData } from './$types';
   import ConfirmDialog from '$components/ConfirmDialog.svelte';
   import AppFooter from '$components/AppFooter.svelte';
@@ -141,15 +140,34 @@
   let revokeTarget = $state<SessionInfo | null>(null);
   let revokeBusy = $state(false);
 
-  function relativeTime(iso: string): string {
-    const now = Date.now();
+  // MAV-21 Workstream B — session-duration semantics.
+  // The card's PRIMARY time is the immutable session START
+  // (device_sessions.created_at — written once at row creation, never
+  // updated by any code path), so a continuously-authenticated session
+  // keeps its original "Signed in X ago" value no matter how often the
+  // row heartbeats or the access token refreshes. `lastSeenAt` (the
+  // heartbeat column, rewritten at most every ~5 minutes while active)
+  // is shown SEPARATELY as an activity signal — never as the duration.
+  function elapsedSince(iso: string): string {
     const then = new Date(iso).getTime();
-    const diff = now - then;
-    if (diff < 60_000) return 'Active now';
-    if (diff < 3600_000) return `${Math.floor(diff / 60_000)} minute${Math.floor(diff / 60_000) === 1 ? '' : 's'} ago`;
-    if (diff < 86400_000) return `${Math.floor(diff / 3600_000)} hour${Math.floor(diff / 3600_000) === 1 ? '' : 's'} ago`;
+    if (Number.isNaN(then)) return 'unknown';
+    const diff = Date.now() - then;
+    if (diff < 60_000) return 'just now';
+    const minutes = Math.floor(diff / 60_000);
+    if (diff < 3600_000) return `${minutes} minute${minutes === 1 ? '' : 's'} ago`;
+    const hours = Math.floor(diff / 3600_000);
+    if (diff < 86400_000) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
     if (diff < 172800_000) return 'Yesterday';
     return new Date(iso).toLocaleDateString();
+  }
+
+  // Activity signal from the heartbeat column. Sessions heartbeat at
+  // most every 5 minutes, so "recently active" must cover that window
+  // (a device that heartbeated 5 minutes ago is still in use).
+  const SESSION_ACTIVE_WINDOW_MS = 6 * 60_000;
+  function isRecentlyActive(session: SessionInfo): boolean {
+    const seen = new Date(session.lastSeenAt).getTime();
+    return !Number.isNaN(seen) && Date.now() - seen < SESSION_ACTIVE_WINDOW_MS;
   }
 
   function deviceIcon(type: string) {
@@ -436,24 +454,13 @@
 <svelte:head><title>Settings — Mavero</title><meta name="description" content="Your Mavero settings, account and preferences in one place." /><meta name="robots" content="noindex,nofollow" /></svelte:head>
 
 <div class="settings-page">
-  <!-- Compact identity header: back + eyebrow + avatar + name + email +
-       sync state. Follow-up task 2 §13 moved the Back-to-Discover
-       control INTO the header (first child of the inner container) so it
-       shares the header's surface, gutter and background — no
-       standalone full-width back row, no blank right side, no detached
-       background strip; the page identity begins naturally below it.
-       It uses replace-state navigation so the phone/browser Back
-       button afterwards does not loop straight back into Settings. -->
+  <!-- MAV-21 Workstream D — the page-specific Back control is removed:
+       global navigation covers every breakpoint (mobile bottom pill +
+       topbar ≤1024px, desktop sidebar ≥1025px), so a page-local back
+       affordance is redundant. The header keeps the identity block
+       (eyebrow + avatar + name + email + sync state). -->
   <header class="settings-top">
     <div class="top-inner">
-      <a
-        class="back-to-discover"
-        href="/discover"
-        aria-label="Back to Discover"
-        onclick={(event) => { event.preventDefault(); void goto('/discover', { replaceState: true }); }}
-      >
-        <ArrowLeft size={15} /> <span>Back</span>
-      </a>
       <div class="page-eyebrow"><UserRound size={12} /> MAVERO / Settings</div>
       <div class="identity-row">
         <div class="avatar" aria-hidden="true">{initials()}</div>
@@ -636,7 +643,15 @@
                   {/if}
                 </div>
                 <div class="session-card-foot">
-                  <span class="session-time" title={absoluteTime(session.lastSeenAt)}>{relativeTime(session.lastSeenAt)}</span>
+                  <div class="session-when">
+                    <!-- MAV-21: duration = immutable session START. -->
+                    <span class="session-time" title={`Signed in ${absoluteTime(session.createdAt)}`}>Signed in {elapsedSince(session.createdAt)}</span>
+                    {#if isRecentlyActive(session)}
+                      <span class="session-activity live"><i aria-hidden="true"></i>Active now</span>
+                    {:else if session.lastSeenAt}
+                      <span class="session-activity" title={`Last active ${absoluteTime(session.lastSeenAt)}`}>Last active {elapsedSince(session.lastSeenAt)}</span>
+                    {/if}
+                  </div>
                   {#if session.isCurrent}
                     <!-- Phase 3 — the standalone Session section was removed;
                          the CURRENT device's card carries Sign out (same
@@ -732,28 +747,6 @@
       radial-gradient(circle at 88% -40%, var(--color-primary-soft), transparent 46%),
       var(--color-bg);
   }
-  /* Back to Discover (Change 2; Follow-up task 2 §13) — same gutter
-     + design language as the shell controls (glass chip, focus-visible,
-     reduced motion). First child of the header inner container: shares
-     the header surface/gutter; the identity block begins naturally
-     below it (no standalone full-width back row). */
-  .back-to-discover {
-    display: inline-flex; align-items: center; gap: 7px;
-    min-height: 44px; padding: 0 16px;
-    margin-bottom: 14px;
-    border: 1px solid var(--color-border);
-    border-radius: 999px;
-    color: var(--color-text-muted);
-    background: rgba(8, 11, 13, .55);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-    font-size: .74rem; font-weight: 800; letter-spacing: .02em;
-    text-decoration: none;
-    transition: color var(--motion-fast), border-color var(--motion-fast), background var(--motion-fast), transform var(--motion-fast);
-  }
-  .back-to-discover:hover { color: var(--color-primary); border-color: var(--color-primary-border); background: var(--color-primary-soft); }
-  .back-to-discover:active { transform: scale(.97); }
-  .back-to-discover:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
   .top-inner { width: min(800px, 100%); margin-inline: auto; }
   .page-eyebrow {
     display: inline-flex; align-items: center; gap: 6px;
@@ -1105,7 +1098,6 @@
   }
   @media (min-width: 900px) {
     .settings-top { padding-top: 26px; }
-    .back-to-discover { margin-bottom: 18px; }
     .avatar { width: 52px; height: 52px; font-size: 1.02rem; }
     .identity-copy h1 { font-size: 1.26rem; }
     .settings-section { padding: 15px 18px 17px; }
@@ -1116,7 +1108,7 @@
     .top-inner { width: min(1100px, 100%); }
   }
   @media (prefers-reduced-motion: reduce) {
-    .sign-in-cta, .secondary-cta, .toggle-switch i, .toggle-switch i::after, .signout-btn, .delete-account-btn, .cinelog-cta, .identity-meta > span.syncing, .back-to-discover { transition: none; animation: none; }
+    .sign-in-cta, .secondary-cta, .toggle-switch i, .toggle-switch i::after, .signout-btn, .delete-account-btn, .cinelog-cta, .identity-meta > span.syncing { transition: none; animation: none; }
   }
 
   /* ── Device sessions (Phase 2) ── */
@@ -1156,7 +1148,14 @@
   .session-card-foot {
     display: flex; align-items: center; justify-content: space-between; gap: 8px;
   }
+  .session-when { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
   .session-time { color: var(--color-text-deep); font-size: .58rem; font-family: 'JetBrains Mono', ui-monospace, monospace; }
+  .session-activity { display: inline-flex; align-items: center; gap: 5px; color: var(--color-text-deep); font-size: .56rem; font-family: 'JetBrains Mono', ui-monospace, monospace; opacity: .85; }
+  .session-activity.live { color: #3ddc97; opacity: 1; }
+  .session-activity i { width: 5px; height: 5px; border-radius: 50%; background: currentColor; flex: 0 0 auto; }
+  .session-activity.live i { animation: session-pulse 2.4s ease-in-out infinite; }
+  @keyframes session-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+  @media (prefers-reduced-motion: reduce) { .session-activity.live i { animation: none; } }
   .revoke-btn {
     display: inline-flex; align-items: center;
     min-height: 32px; padding: 0 12px;

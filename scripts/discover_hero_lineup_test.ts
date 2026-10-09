@@ -127,8 +127,8 @@ const repoRoot = new URL('../', import.meta.url).pathname;
   // TMDB adapter v3 additions (versioned cache keys to invalidate v2).
   assert.match(tmdbAdapter, /export async function getTmdbHeroMoviePool/, 'TMDB adapter exports the expanded movie pool');
   assert.match(tmdbAdapter, /export async function getTmdbHeroSeriesPool/, 'TMDB adapter exports the expanded series pool');
-  assert.match(tmdbAdapter, /tmdb:hero-pool:movie:v3/, 'movie pool cache key is v3-versioned');
-  assert.match(tmdbAdapter, /tmdb:hero-pool:series:v3/, 'series pool cache key is v3-versioned');
+  assert.match(tmdbAdapter, /tmdb:hero-pool:movie:v4/, 'movie pool cache key is v4-versioned (MAV-21: anime-excluded pool)');
+  assert.match(tmdbAdapter, /tmdb:hero-pool:series:v4/, 'series pool cache key is v4-versioned (MAV-21: anime-excluded pool items)');
   assert.match(tmdbAdapter, /\/movie\/now_playing/, 'now_playing endpoint used for fresh movies');
   assert.match(tmdbAdapter, /\/tv\/airing_today/, 'airing_today endpoint used for currently-active series');
   assert.match(tmdbAdapter, /\/tv\/on_the_air/, 'on_the_air endpoint used for currently-active series');

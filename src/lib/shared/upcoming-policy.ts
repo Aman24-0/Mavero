@@ -445,6 +445,12 @@ export function parseUpcomingLanguage(value: string | null | undefined): string 
 }
 
 // ---------- anime identity (Series must never mix anime) ----------
+// MAV-21 Workstream A: the canonical home of this rule is
+// $lib/shared/anime-classification.ts (isAnimeTitle). This module is
+// DELIBERATELY import-free (a pure leaf — enforced by upcoming_test
+// §18), so the rule is restated here verbatim; the mav21 regression
+// suite asserts isAnimeCandidate === isAnimeTitle behaviorally, so the
+// two can never drift apart.
 
 /** TMDB genre id 16 = Animation — half of Mavero's anime definition. */
 export const UPCOMING_ANIME_GENRE_ID = 16;
@@ -453,10 +459,10 @@ export const UPCOMING_ANIME_GENRE_ID = 16;
 export const UPCOMING_ANIME_ORIGINAL_LANGUAGE = 'ja';
 
 /**
- * Mavero's EXISTING anime identity, unchanged: TMDB TV with genre 16
- * (Animation) AND original_language 'ja'. Non-Japanese animation
- * (genre 16 + any other original language) is NOT anime in Mavero —
- * it belongs to the Series pipeline.
+ * Mavero's anime identity: TMDB with genre 16 (Animation) AND
+ * original_language 'ja'. Non-Japanese animation (genre 16 + any other
+ * original language) is NOT anime in Mavero — it belongs to the
+ * ordinary Series pipeline.
  *
  * Used by the Upcoming Series pipeline to REJECT anime candidates
  * before any expensive detail/season/provider work, and by the adult

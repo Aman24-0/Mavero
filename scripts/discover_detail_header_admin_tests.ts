@@ -1013,13 +1013,17 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // SOURCE CONTRACT TESTS — wiring
 // ============================================================
 
-// F. Batch endpoint exists with no-store
+// F. Batch endpoint exists with the MAV-20 tiered public-catalog cache
+//    policy (the old all-or-nothing no-store contract was replaced when
+//    the batch became tiered + client-cached; the response is public
+//    catalog data with no user dimension — user isolation lives in the
+//    per-user CLIENT rail-cache, verified by mav20_discover_nav_perf_test).
 {
   const batchApi = read('src/routes/api/discover/batch/+server.ts');
   ok(batchApi.includes('GET'));
   ok(batchApi.includes('discoverBatchDeduped'));
-  ok(batchApi.includes('no-store'));
-  ok('F. batch endpoint with no-store');
+  ok(batchApi.includes('PUBLIC_CATALOG_CACHE'));
+  ok('F. batch endpoint with the tiered public-catalog cache policy');
 }
 
 // F2. DiscoverPage wired with batchStatus + page + hasNextPage propagation
@@ -1032,12 +1036,22 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   // Phase 9 fix: DiscoverPage passes the full batchStatus state (not a
   // derived boolean) so DiscoverSection can distinguish success from
   // failure — only failure permits an independent fetch fallback.
-  ok(discoverPage.includes('batchStatus={batchStatus}'));
+  // MAV-20 Phase B: status is now computed PER VARIANT (chip datasets)
+  // via batchStatusFor(variant) — same full-state contract, scoped to
+  // the active variant.
+  ok(discoverPage.includes('batchStatus={batchStatusFor(variant)}'), 'F2. passes per-variant full batchStatus state');
   // Phase 9 fix: DiscoverPage propagates the batch's authoritative
   // hasNextPage and actual last-fetched page to each section.
-  ok(discoverPage.includes('initialHasNextPage={batchRails'));
-  ok(discoverPage.includes('initialPage={batchRails'));
-  ok(discoverPage.includes('clearRailCache'));
+  // MAV-20 Phase B: the batch entry is resolved PER VARIANT (variant.type
+  // === undefined → the shared section entry) — same authoritative-source
+  // contract, scoped to the active chip dataset.
+  ok(discoverPage.includes('initialHasNextPage={batchEntry?.hasNextPage ?? false}'), 'F2. propagates authoritative hasNextPage');
+  ok(discoverPage.includes('initialPage={batchEntry?.page ?? 1}'), 'F2. propagates authoritative actual page');
+  // MAV-20 Phase E: the client rail cache moved behind fetchBatchWithCache
+  // (rail-cache.ts owns the per-user TTL/LRU/in-flight dedup); DiscoverPage
+  // no longer clears it inline — the cache module exposes clearRailCache()
+  // and the batch flows through fetchBatchWithCache.
+  ok(discoverPage.includes('fetchBatchWithCache'), 'F2. batch requests flow through the client cache (fetchBatchWithCache)');
   // Phase 9 refactor: `externalIds?.tmdb` now lives in
   // canonicalExcludeIds() (shared module) — DiscoverPage no longer
   // inlines the canonical-key computation. The next assertions verify
@@ -1062,17 +1076,20 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // future refactor cannot accidentally reorder the rendered rails.
 {
   const discoverPage = read('src/lib/components/DiscoverPage.svelte');
-  // Find the SECTIONS array literal and extract the genre entries' order.
-  const sectionsStart = discoverPage.indexOf('const SECTIONS: SectionDef[]');
-  ok(sectionsStart > -1, 'F2b. SECTIONS array present');
+  // MAV-20 Phase B: the flat SECTIONS array was consolidated into chip
+  // FAMILIES; the nine genre rails are created by genreFamily() calls in
+  // their VISUAL order. Lock that order so a future refactor cannot
+  // accidentally reorder the rendered rails.
+  const sectionsStart = discoverPage.indexOf('const FAMILIES: SectionFamily[]');
+  ok(sectionsStart > -1, 'F2b. FAMILIES array present (chip families)');
   const sectionsEnd = discoverPage.indexOf('];', sectionsStart);
   const sectionsBlock = discoverPage.slice(sectionsStart, sectionsEnd);
-  // Extract genre section keys in their visual order.
+  // Extract genre family keys in their visual order.
   const genreKeys: string[] = [];
-  const genreKeyRegex = /key:\s*'(genre-[a-z]+)'/g;
+  const genreKeyRegex = /genreFamily\('([a-z]+)'/g;
   let match: RegExpExecArray | null;
   while ((match = genreKeyRegex.exec(sectionsBlock)) !== null) {
-    genreKeys.push(match[1]);
+    genreKeys.push(`genre-${match[1]}`);
   }
   // Expected visual order — Comedy BEFORE Crime/Thriller/Sci-Fi.
   const expectedVisualOrder = [

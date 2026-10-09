@@ -236,7 +236,13 @@
        are server-side 308 redirects and never reach this layout. -->
   {@render pageChildren()}
 {:else}
-  <AppShell currentPath={page.url.pathname} showMobileNav={!page.url.pathname.startsWith('/settings')} user={data.user} isAuthenticated={data.isAuthenticated}>
+  <!-- MAV-21 Workstream D — AppShell renders global navigation on
+       EVERY consumer route (mobile bottom pill + topbar ≤1024px,
+       desktop sidebar ≥1025px). The former /settings mobile-nav
+       opt-out is removed together with the Settings/My List
+       page-specific Back buttons: global navigation alone provides
+       navigation on those pages, at every breakpoint. -->
+  <AppShell currentPath={page.url.pathname} user={data.user} isAuthenticated={data.isAuthenticated}>
     {#snippet children()}
       {@render pageChildren()}
     {/snippet}

@@ -4,8 +4,10 @@ import { readFileSync } from 'node:fs';
 // MAVERO — Explorer redesign navigation + search + detail contracts
 // (approved changes 2, 3, 4, 5, 6).
 //
-//   CHANGE 2 — My List + Settings carry an explicit Back control that
-//              returns to /discover (accessible, shell-consistent).
+//   CHANGE 2 — (MAV-21 superseded) My List + Settings Back controls
+//              REMOVED — global navigation is the single provider on
+//              both pages (mobile pill + topbar ≤1024px, desktop
+//              sidebar ≥1025px).
 //   CHANGE 3 — phone/browser Back from /my-list or /settings returns
 //              to /discover (no Account/My List/Settings history
 //              loop) via replace-state navigation in the account
@@ -35,28 +37,31 @@ const recentSearches = read('../src/lib/client/recent-searches.ts');
 const detailPage = read('../src/lib/components/DetailPage.svelte');
 
 // ============================================================
-// 1. CHANGE 2 — explicit Back buttons → /discover on both pages
+// 1. MAV-21 WORKSTREAMS C+D — page-specific Back controls REMOVED
+//    from My List + Settings; global navigation (AppShell) is the
+//    single navigation provider on both pages at every breakpoint.
 // ============================================================
+const rootLayout = read('../src/routes/+layout.svelte');
+const appShell = read('../src/lib/components/AppShell.svelte');
 for (const [name, src] of [['My List', myList], ['Settings', settings]] as const) {
-  assert.match(src, /class="back-to-discover"/, `${name} renders the explicit back control`);
-  assert.match(src, /href="\/discover"/, `${name} back targets /discover (never an arbitrary previous route)`);
-  assert.match(src, /aria-label="Back to Discover"/, `${name} back control carries an accessible name`);
-  assert.match(src, /goto\('\/discover', \{ replaceState: true \}\)/, `${name} back uses replace-state navigation`);
-  assert.match(src, /\.back-to-discover:focus-visible \{ outline: 2px solid var\(--color-focus\)/, `${name} back control keeps focus-visible states`);
-  assert.match(src, /min-height: 44px/, `${name} back control keeps the 44px touch target`);
-  assert.match(src, /ArrowLeft size=\{15\}/, `${name} back control uses the shell's arrow language`);
-  assert.match(src, /prefers-reduced-motion: reduce[\s\S]*back-to-discover/, `${name} back control honors reduced motion`);
-  // Follow-up task 2 (§13): the back control lives INSIDE the page
-  // header (contextual header composition) — NO standalone full-width
-  // back row, no blank detached strip above the header.
-  assert.doesNotMatch(src, /class="back-row"/, `${name} has NO standalone full-width back row (Follow-up task 2 §13)`);
-  if (name === 'My List') {
-    assert.match(src, /<header class="list-header">[\s\S]*?<a\s*\n?\s*class="back-to-discover"/, 'My List back is the first control inside the page header surface');
-  } else {
-    assert.match(src, /<header class="settings-top">[\s\S]*?<a\s*\n?\s*class="back-to-discover"/, 'Settings back is the first control inside the page header surface');
-  }
+  assert.doesNotMatch(src, /back-to-discover/, `${name} has NO page-specific back control (MAV-21 C/D)`);
+  assert.doesNotMatch(src, /aria-label="Back to Discover"/, `${name} has no Back-to-Discover accessibility label`);
+  assert.doesNotMatch(src, /ArrowLeft/, `${name} no longer imports/renders the back arrow icon`);
+  assert.doesNotMatch(src, /class="back-row"/, `${name} has NO standalone full-width back row`);
+  // The pages keep their header identity + functionality.
 }
-ok('1. Change 2: My List + Settings back controls — contextual header composition, accessible, → /discover, replace-state');
+assert.match(myList, /MAVERO \/ My List/, 'My List keeps its page identity header');
+assert.match(myList, /toggleSelectionMode/, 'My List keeps selection mode');
+assert.match(settings, /MAVERO \/ Settings/, 'Settings keeps its page identity header');
+assert.match(settings, /loadSessions/, 'Settings keeps Devices & Sessions');
+// Global navigation is rendered unconditionally by the shell — no page
+// can suppress it (the former /settings opt-out is gone).
+assert.doesNotMatch(rootLayout, /showMobileNav/, 'the root layout no longer suppresses mobile navigation on any route');
+assert.doesNotMatch(appShell, /showMobileNav/, 'AppShell has no navigation opt-out prop — global nav is unconditional');
+assert.match(appShell, /<nav class="mobile-nav" aria-label="Mobile navigation">/, 'AppShell renders the mobile bottom nav');
+// My List keeps goto only for its remaining in-page navigation.
+assert.doesNotMatch(settings, /goto\('\/discover'/, 'Settings no longer performs replace-state navigation to /discover');
+ok('1. MAV-21 C+D: page Back controls removed from My List + Settings; global navigation unconditional');
 
 // ============================================================
 // 2. CHANGE 3 — history fix via replace-state on account surfaces
@@ -111,26 +116,30 @@ assert.doesNotMatch(searchPage, /EXPLORER_GENRES|EXPLORER_LANGUAGES|explorer-tax
 ok('3. Change 4: recent-searches row only — storage module, a11y, horizontal scroll, individual removal; search behavior untouched');
 
 // ============================================================
-// 4. CHANGE 5 — detail page top spacing reduced ~15-20px (mobile)
+// 4. CHANGE 5 (superseded by MAV-21 Detail 2.0) — the mobile hero is
+//    now POSTER-FREE with identity + actions bottom-anchored, so the
+//    dominant Play action and the Watching/Share/Trailer row land in
+//    the first 390×844 viewport by design (the original intent of the
+//    spacing patches — solved structurally instead of by nudges).
 // ============================================================
-const mobilePosterRule = detailPage.match(/@media \(max-width: 640px\)[\s\S]*?\.poster-wrap \{ margin-top: (\d+)px; \}/);
-assert.ok(mobilePosterRule, 'the mobile poster-wrap top spacing rule is present');
-const posterTop = Number(mobilePosterRule![1]);
-// Follow-up task 2 (§2): the audited computed layout confirmed
-// .poster-wrap's mobile margin-top as the responsible vertical driver;
-// reduced by the specified ~10px (132 → 122).
-assert.ok(posterTop === 122, `the mobile top spacing is reduced by 10px (132 → ${posterTop})`);
+// Touch surfaces (≤1024px) render NO poster in the hero.
+assert.match(detailPage, /\.poster-wrap \{ display: none; \}/, 'the base poster-wrap is hidden (touch surfaces are poster-free)');
+assert.match(detailPage, /@media \(max-width: 640px\)[\s\S]*?\.poster-wrap \{ display: none; \}/, 'the mobile hero explicitly hides the poster-wrap');
+assert.match(detailPage, /@media \(min-width: 1025px\)[\s\S]*?\.poster-wrap \{ display: flex; justify-content: flex-start; \}/, 'the desktop composition restores the poster');
+// Identity + actions are bottom-anchored (flex align-items: flex-end).
+assert.match(detailPage, /\.hero \{[\s\S]*?display: flex;\s*align-items: flex-end;/, 'the hero bottom-anchors its composition');
 // The action pipeline is untouched.
 assert.match(detailPage, /class="play-btn"/, 'Play/Resume action untouched');
 assert.match(detailPage, /class="download-btn"/, 'Download action untouched');
 assert.match(detailPage, /openStatusSheet/, 'Watching status action untouched');
 assert.match(detailPage, /shareItem/, 'Share action untouched');
 assert.match(detailPage, /openTrailer/, 'Trailer action untouched');
-// Other breakpoints untouched.
+// Breakpoints + reserved hero space.
 assert.match(detailPage, /@media \(min-width: 1025px\)[\s\S]*?padding-top: clamp\(96px, 14vh, 160px\)/, 'desktop hero spacing untouched');
-assert.match(detailPage, /@media \(min-width: 641px\) and \(max-width: 1024px\)[\s\S]*?\.poster-wrap \{ justify-content: flex-start; margin-top: 0; \}/, 'tablet poster composition untouched');
 assert.match(detailPage, /min-height: clamp\(440px, 78vh, 760px\)/, 'hero min-height (backdrop composition) untouched');
-ok('4. Change 5 (Follow-up task 2 §2): mobile top spacing −10px (132→122); actions, breakpoints and hero composition untouched');
+// Title clamping keeps long titles from pushing the actions away.
+assert.match(detailPage, /\.detail-title \{[\s\S]*?-webkit-line-clamp: 3/, 'the hero title is line-clamped (long titles cannot push actions out of the viewport)');
+ok('4. MAV-21 Detail 2.0: poster-free touch hero, bottom-anchored identity + actions, clamped title; action pipeline + breakpoints intact');
 
 // ============================================================
 // 5. CHANGE 6 — "Available on" rename (copy only)

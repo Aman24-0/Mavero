@@ -19,6 +19,14 @@
     <link rel="icon" type="image/png" sizes="192x192" href="/icons/mavero-192.png" />
     <link rel="apple-touch-icon" href="/icons/mavero-apple-touch.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
+    <!-- MAV-21 Workstream E — preconnect to the TMDB image CDN (the
+         origin of EVERY poster/backdrop in the app). Without this, the
+         browser only discovers image.tmdb.org when the first hero/rail
+         <img> parses, then pays DNS + TCP + TLS (~100-300ms on mobile)
+         BEFORE the LCP artwork even starts. No `crossorigin`: <img>
+         loads are no-cors, so a crossorigin preconnect would open a
+         connection the images never use. -->
+    <link rel="preconnect" href="https://image.tmdb.org" />
     %sveltekit.head%
   </head>
   <body data-sveltekit-preload-data="hover">

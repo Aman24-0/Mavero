@@ -24,6 +24,7 @@ import {
 } from '../adult-discover';
 import { mapWithConcurrency } from '../concurrency';
 import { INDIAN_POPULAR_TV_SOAP_POLICY_KEY, INDIAN_POPULAR_TV_NO_SOAP_POLICY_KEY, INDIAN_POPULAR_TV_SOAP_CHECK_CONCURRENCY, isDailySoapEpisodeCount } from '../popular-tv-policy';
+import { isAnimeTitle, ANIME_EXCLUSION_POLICY_KEY } from '$lib/shared/anime-classification';
 import { movieRowVerdict, detailVerdict, collectSafeSearchPage, searchFilterMode, buildSearchCacheKey, type CandidateVerdict, type UpstreamSearchPage } from '../search-classify';
 import { filterSafeRailItems, type RailCandidateRow, type DetailVerdictLoader } from '../list-classify';
 
@@ -49,6 +50,8 @@ type TmdbMovie = {
   videos?: { results?: { key?: string; site?: string; type?: string }[] };
   recommendations?: TmdbList<TmdbMovie>;
   credits?: TmdbCredits;
+  /** MAV-21: release_dates append (movie certification per country). */
+  release_dates?: TmdbReleaseDates;
 };
 type TmdbNetwork = { id?: number; name?: string | null; logo_path?: string | null; origin_country?: string[] };
 type TmdbTv = {
@@ -78,13 +81,19 @@ type TmdbTv = {
    */
   networks?: TmdbNetwork[];
   external_ids?: { imdb_id?: string | null };
+  created_by?: { id: number; name?: string }[];
+  content_ratings?: TmdbContentRatings;
   videos?: { results?: { key?: string; site?: string; type?: string }[] };
   recommendations?: TmdbList<TmdbTv>;
   seasons?: { season_number?: number; name?: string; episode_count?: number; air_date?: string; poster_path?: string | null }[];
   credits?: TmdbCredits;
 };
-type TmdbCredit = { id: number; name?: string; character?: string; profile_path?: string | null };
-type TmdbCredits = { cast?: TmdbCredit[] };
+type TmdbCredit = { id: number; name?: string; character?: string; profile_path?: string | null; job?: string };
+type TmdbCredits = { cast?: TmdbCredit[]; crew?: TmdbCredit[] };
+/** MAV-21: movie release_dates append — certification per country. */
+type TmdbReleaseDates = { results?: { iso_3166_1?: string; release_dates?: { certification?: string; note?: string }[] }[] };
+/** MAV-21: TV content_ratings append — certification per country. */
+type TmdbContentRatings = { results?: { iso_3166_1?: string; rating?: string }[] };
 type TmdbEpisode = { id: number; episode_number?: number; season_number?: number; name?: string; overview?: string; air_date?: string; runtime?: number | null; still_path?: string | null };
 type TmdbSeason = { season_number?: number; name?: string; episode_count?: number; air_date?: string; poster_path?: string | null; episodes?: TmdbEpisode[] };
 
@@ -205,7 +214,12 @@ function mapTmdb(raw: TmdbMedia, type: Exclude<ContentType, 'anime'>, tag?: stri
     type,
     isAnime,
     animeFormat,
-    maturity: '13+',
+    // MAV-21: certification is NEVER invented on list rows. TMDB list
+    // responses carry no certification data, so list items leave
+    // maturity undefined and certification badges hide honestly (the
+    // old hardcoded '13+' was a false badge on every title). The DETAIL
+    // path maps the authoritative release_dates/content_ratings append.
+    maturity: undefined,
     runtime: isMovie ? runtime(movie.runtime) : seasons ? `${seasons} season${seasons === 1 ? '' : 's'}` : 'Series',
     rating,
     popularity: asNumber(raw.popularity),
@@ -230,6 +244,28 @@ function mapTmdb(raw: TmdbMedia, type: Exclude<ContentType, 'anime'>, tag?: stri
     tmdbGenreIds: genreIds.length > 0 ? genreIds : undefined,
     originalLanguage: typeof raw.original_language === 'string' && raw.original_language.trim() ? raw.original_language.trim() : undefined
   };
+}
+
+/**
+ * MAV-21 Workstream A — the anime EXCLUSION half of the classification
+ * contract, applied to every NON-ANIME catalog surface.
+ *
+ * TMDB's query language cannot express NOT(genre 16 AND original_language
+ * 'ja') — there is no `without_original_language` param, and
+ * `without_genres=16` would wrongly evict WESTERN animation (genre 16,
+ * non-Japanese) which belongs in the ordinary catalogs. So non-anime
+ * surfaces post-filter raw rows with the canonical predicate: anime
+ * titles (16 + 'ja') are reserved for the Anime category (its own
+ * merged movie+TV queries), while ordinary animation, ordinary series
+ * and ordinary movies stay.
+ *
+ * Applied INSIDE the page-walk loops so walk-based queries compensate
+ * by fetching further upstream pages (rails stay full); every affected
+ * cache key embeds ANIME_EXCLUSION_POLICY_KEY so pre-policy entries are
+ * never served.
+ */
+function excludesAnimeRows<T extends TmdbMedia>(rows: T[]): T[] {
+  return rows.filter((row) => !isAnimeTitle(row.genre_ids ?? row.genres?.map((genre) => genre.id) ?? [], row.original_language));
 }
 
 function requireCredentials() {
@@ -406,12 +442,13 @@ export async function getTmdbDiscover(type: Exclude<ContentType, 'anime'>, page 
   // state (normal rails stay adult-free). The old provider-gated post-filter
   // was a no-op (it passed `undefined` for the flag and TV rows have no
   // networks) and is replaced by this classification step.
-  const key = `tmdb:discover:${type}:${page}`;
+  const key = `tmdb:discover:${type}:${page}:${ANIME_EXCLUSION_POLICY_KEY}`;
   const { value, stale } = await getOrSet(key, listPolicy, async () => {
     const path = type === 'movie' ? '/trending/movie/week' : '/trending/tv/week';
     const result = await tmdbRequest<TmdbList<TmdbMedia>>(path, { page });
     // Build candidate rows at map time so movie rows keep the raw adult flag.
-    const rows: RailCandidateRow<NormalizedMediaItem>[] = (result.results ?? [])
+    // MAV-21: anime rows (16 + 'ja') are reserved for the Anime category.
+    const rows: RailCandidateRow<NormalizedMediaItem>[] = excludesAnimeRows(result.results ?? [])
       .filter((item) => hasRequiredListMetadata(item, type))
       .map((item) => ({
         item: mapTmdb(item, type, 'Trending'),
@@ -440,7 +477,7 @@ export async function getTmdbCollection(type: Exclude<ContentType, 'anime'>, pag
   // pre-Explorer single-page behavior byte-for-byte.
   const language = filters.language && filters.language !== 'all' ? filters.language : undefined;
   const langParam = language && language !== 'other' ? DISCOVER_LANGUAGE_PARAM[language] : undefined;
-  const key = `tmdb:collection:${type}:${page}:${genreId ?? ''}:${year ?? ''}:${filters.sort ?? ''}:${language ?? 'all'}:${adultExclusion ?? 'no-adult'}`;
+  const key = `tmdb:collection:${type}:${page}:${genreId ?? ''}:${year ?? ''}:${filters.sort ?? ''}:${language ?? 'all'}:${adultExclusion ?? 'no-adult'}:${ANIME_EXCLUSION_POLICY_KEY}`;
   const { value, stale } = await getOrSet(key, listPolicy, async () => {
     const path = type === 'movie' ? '/discover/movie' : '/discover/tv';
     // Language-filtered walk — the EXACT deterministicSoapWalk pattern
@@ -473,7 +510,9 @@ export async function getTmdbCollection(type: Exclude<ContentType, 'anime'>, pag
       };
       const result = await tmdbRequest<TmdbList<TmdbMedia>>(path, params);
       lastTotalPages = result.total_pages;
-      const raw = (result.results ?? []).filter((item) => hasRequiredListMetadata(item, type));
+      // MAV-21: anime exclusion applies BEFORE the adult classification
+      // (inside the walk — the loop compensates so pages stay full).
+      const raw = excludesAnimeRows(result.results ?? []).filter((item) => hasRequiredListMetadata(item, type));
       const filtered = language ? applyLanguageFilter(raw, language) : raw;
       // DEFENSE-IN-DEPTH (2026-10 bug fix): the query-level exclusion
       // (without_networks / without_watch_providers) must not be the ONLY
@@ -537,11 +576,12 @@ export async function getTmdbPopular(type: Exclude<ContentType, 'anime'>, page =
   // TV rows carry no networks[] — same classification contract as trending
   // above (movies: flag path; TV: cached-detail path; adult AND uncertain
   // excluded unconditionally; the old provider-gated no-op filter replaced).
-  const key = `tmdb:popular:${type}:${page}`;
+  const key = `tmdb:popular:${type}:${page}:${ANIME_EXCLUSION_POLICY_KEY}`;
   const { value, stale } = await getOrSet(key, listPolicy, async () => {
     const path = type === 'movie' ? '/movie/popular' : '/tv/popular';
     const result = await tmdbRequest<TmdbList<TmdbMedia>>(path, { page });
-    const rows: RailCandidateRow<NormalizedMediaItem>[] = (result.results ?? [])
+    // MAV-21: anime rows are reserved for the Anime category.
+    const rows: RailCandidateRow<NormalizedMediaItem>[] = excludesAnimeRows(result.results ?? [])
       .filter((item) => hasRequiredListMetadata(item, type))
       .map((item) => ({
         item: mapTmdb(item, type, 'Popular'),
@@ -708,8 +748,36 @@ export async function getTmdbDetail(type: Exclude<ContentType, 'anime'>, externa
   const key = `tmdb:detail:${type}:${numericId}`;
   const { value, stale } = await getOrSet(key, detailPolicy, async () => {
     const path = type === 'movie' ? `/movie/${numericId}` : `/tv/${numericId}`;
-    const raw = await tmdbRequest<TmdbMedia>(path, { append_to_response: 'videos,external_ids,recommendations,credits,watch/providers' });
+    // MAV-21: the certification append rides the SAME detail request
+    // (append_to_response — zero extra roundtrips): movies get
+    // release_dates, TV gets content_ratings.
+    const appendBase = 'videos,external_ids,recommendations,credits,watch/providers';
+    const raw = await tmdbRequest<TmdbMedia>(path, {
+      append_to_response: type === 'movie' ? `${appendBase},release_dates` : `${appendBase},content_ratings`
+    });
     const item = mapTmdb(raw, type);
+    // MAV-21 — honest certification (India first, then US, then any
+    // non-empty value). Never invented: a title with no certification
+    // data keeps maturity undefined and the UI badge hides.
+    const movieCertEntries = (raw as TmdbMovie).release_dates?.results ?? [];
+    const tvCertEntries = (raw as TmdbTv).content_ratings?.results ?? [];
+    const certification = type === 'movie'
+      ? movieCertEntries.find((entry) => entry.iso_3166_1 === 'IN')?.release_dates?.find((rd) => rd.certification?.trim())?.certification?.trim()
+        ?? movieCertEntries.find((entry) => entry.iso_3166_1 === 'US')?.release_dates?.find((rd) => rd.certification?.trim())?.certification?.trim()
+        ?? movieCertEntries.flatMap((entry) => entry.release_dates ?? []).find((rd) => rd.certification?.trim())?.certification?.trim()
+      : tvCertEntries.find((entry) => entry.iso_3166_1 === 'IN')?.rating?.trim()
+        ?? tvCertEntries.find((entry) => entry.iso_3166_1 === 'US')?.rating?.trim()
+        ?? tvCertEntries.find((entry) => entry.rating?.trim())?.rating?.trim();
+    if (certification) item.maturity = certification;
+    // MAV-21 — movie director (credits.crew job === 'Director') and TV
+    // creators (created_by). Only displayed when present; never inferred.
+    if (type === 'movie') {
+      const director = (raw as TmdbMovie).credits?.crew?.find((member) => member.job === 'Director' && member.name?.trim())?.name?.trim();
+      if (director) item.director = director;
+    } else {
+      const creators = ((raw as TmdbTv).created_by ?? []).map((member) => member.name?.trim()).filter((name): name is string => Boolean(name));
+      if (creators.length) item.creators = creators.slice(0, 3);
+    }
     // BUG 1 fix: Central adult classification for detail lookups.
     // The detail response now includes watch/providers data (via
     // append_to_response), so we can check if the title is available
@@ -853,7 +921,7 @@ function slicePage(items: NormalizedMediaItem[], page: number, upstreamHasNext: 
  * theatrical). Language filter is original_language.
  */
 export async function getTmdbNowPlaying(language: DiscoverLanguage, page = 1): Promise<ContentList> {
-  const key = `tmdb:theatre:${language}:${page}`;
+  const key = `tmdb:theatre:${language}:${page}:${ANIME_EXCLUSION_POLICY_KEY}`;
   const { value, stale } = await getOrSet(key, listPolicy, async () => {
     // For "all" we fetch the upstream page directly. For specific
     // languages we may need to walk pages until we have 10 valid
@@ -864,7 +932,9 @@ export async function getTmdbNowPlaying(language: DiscoverLanguage, page = 1): P
     let pagesWalked = 0;
     while (collected.length < DISCOVER_PAGE_SIZE && upstreamHasNext && pagesWalked < MAX_OTHER_LANGUAGE_PAGES) {
       const result = await tmdbRequest<TmdbList<TmdbMovie>>('/movie/now_playing', { page: upstreamPage, region: 'IN' });
-      const raw = (result.results ?? []).filter((item) => hasRequiredListMetadata(item, 'movie'));
+      // MAV-21: anime movies in theatres are reserved for the Anime
+      // category (inside the walk — the loop compensates).
+      const raw = excludesAnimeRows(result.results ?? []).filter((item) => hasRequiredListMetadata(item, 'movie'));
       const filtered = applyLanguageFilter(raw, language);
       for (const item of filtered) {
         if (!collected.some((existing) => existing.id === item.id)) collected.push(item);
@@ -926,7 +996,7 @@ export async function getTmdbNewOnOtt(providerKey: string | undefined, language:
   // Both halves share one cache entry, so the key embeds BOTH applied
   // exclusion values (no collision between provider-era and network-era
   // semantics, and the two dimensions change independently).
-  const key = `tmdb:new-ott:${providerKey ?? 'all'}:${language}:${page}:${networkExclusion ?? 'no-nets'}:${providerExclusion ?? 'no-providers'}`;
+  const key = `tmdb:new-ott:${providerKey ?? 'all'}:${language}:${page}:${networkExclusion ?? 'no-nets'}:${providerExclusion ?? 'no-providers'}:${ANIME_EXCLUSION_POLICY_KEY}`;
   const { value, stale } = await getOrSet(key, listPolicy, async () => {
     // TMDB returns 20 items per page. We need 10 per Discover page.
     // Since we merge movie + TV (up to 40 items per upstream page pair),
@@ -962,12 +1032,16 @@ export async function getTmdbNewOnOtt(providerKey: string | undefined, language:
       tmdbRequest<TmdbList<TmdbMovie>>('/discover/movie', movieParams),
       tmdbRequest<TmdbList<TmdbTv>>('/discover/tv', tvParams)
     ]);
-    let movieItems = (movieResult.results ?? []).filter((item) => hasRequiredListMetadata(item, 'movie')).map((item) => mapTmdb(item, 'movie', 'New on OTT'));
-    let tvItems = (tvResult.results ?? []).filter((item) => hasRequiredListMetadata(item, 'series')).map((item) => mapTmdb(item, 'series', 'New on OTT'));
+    // MAV-21: anime rows are reserved for the Anime category — the
+    // exclusion applies to the RAW halves before the adult classification
+    // (and before the 'other'-language re-filter, which reads the same
+    // raw rows).
+    let movieItems = excludesAnimeRows(movieResult.results ?? []).filter((item) => hasRequiredListMetadata(item, 'movie')).map((item) => mapTmdb(item, 'movie', 'New on OTT'));
+    let tvItems = excludesAnimeRows(tvResult.results ?? []).filter((item) => hasRequiredListMetadata(item, 'series')).map((item) => mapTmdb(item, 'series', 'New on OTT'));
     // For "other" language, exclude the 6 known languages.
     if (language === 'other') {
-      const movieRaw = (movieResult.results ?? []).filter((item) => hasRequiredListMetadata(item, 'movie'));
-      const tvRaw = (tvResult.results ?? []).filter((item) => hasRequiredListMetadata(item, 'series'));
+      const movieRaw = excludesAnimeRows(movieResult.results ?? []).filter((item) => hasRequiredListMetadata(item, 'movie'));
+      const tvRaw = excludesAnimeRows(tvResult.results ?? []).filter((item) => hasRequiredListMetadata(item, 'series'));
       movieItems = movieRaw.filter((item) => !OTHER_LANGUAGE_EXCLUSIONS.has(item.original_language ?? '')).map((item) => mapTmdb(item, 'movie', 'New on OTT'));
       tvItems = tvRaw.filter((item) => !OTHER_LANGUAGE_EXCLUSIONS.has(item.original_language ?? '')).map((item) => mapTmdb(item, 'series', 'New on OTT'));
     }
@@ -1039,7 +1113,7 @@ export async function getTmdbNewOnOttTyped(
   const networkExclusion = adultNetworkExclusionValue();
   const adultIds = await getResolvedAdultProviderIds();
   const providerExclusion = adultIds.length > 0 ? adultIds.join('|') : undefined;
-  const key = `tmdb:new-ott-type:${type}:${providerKey ?? 'all'}:${language}:${page}:${networkExclusion ?? 'no-nets'}:${providerExclusion ?? 'no-providers'}`;
+  const key = `tmdb:new-ott-type:${type}:${providerKey ?? 'all'}:${language}:${page}:${networkExclusion ?? 'no-nets'}:${providerExclusion ?? 'no-providers'}:${ANIME_EXCLUSION_POLICY_KEY}`;
   const { value, stale } = await getOrSet(key, listPolicy, async () => {
     const langParam = language !== 'all' && language !== 'other' ? DISCOVER_LANGUAGE_PARAM[language] : undefined;
     if (type === 'movie') {
@@ -1054,7 +1128,7 @@ export async function getTmdbNewOnOttTyped(
         ...(langParam ? { with_original_language: langParam } : {}),
         ...(providerExclusion ? { without_watch_providers: providerExclusion } : {})
       });
-      let items = (result.results ?? []).filter((item) => hasRequiredListMetadata(item, 'movie'));
+      let items = excludesAnimeRows(result.results ?? []).filter((item) => hasRequiredListMetadata(item, 'movie'));
       if (language === 'other') {
         items = items.filter((item) => !OTHER_LANGUAGE_EXCLUSIONS.has(item.original_language ?? ''));
       }
@@ -1073,7 +1147,7 @@ export async function getTmdbNewOnOttTyped(
       ...(langParam ? { with_original_language: langParam } : {}),
       ...(networkExclusion ? { without_networks: networkExclusion } : {})
     });
-    let items = (result.results ?? []).filter((item) => hasRequiredListMetadata(item, 'series'));
+    let items = excludesAnimeRows(result.results ?? []).filter((item) => hasRequiredListMetadata(item, 'series'));
     if (language === 'other') {
       items = items.filter((item) => !OTHER_LANGUAGE_EXCLUSIONS.has(item.original_language ?? ''));
     }
@@ -1219,7 +1293,7 @@ export async function getTmdbPopularByLanguage(type: Exclude<ContentType, 'anime
   // too (constant per media type) — a policy bump re-keys instead of serving
   // stale-era rails.
   const soapPolicyKey = type === 'series' ? INDIAN_POPULAR_TV_SOAP_POLICY_KEY : INDIAN_POPULAR_TV_NO_SOAP_POLICY_KEY;
-  const key = `tmdb:popular-v2:${type}:${language}:${page}:${adultExclusion ?? 'no-adult'}:${genreExclusion ?? 'no-genre-exclusion'}:${soapPolicyKey}`;
+  const key = `tmdb:popular-v2:${type}:${language}:${page}:${adultExclusion ?? 'no-adult'}:${genreExclusion ?? 'no-genre-exclusion'}:${soapPolicyKey}:${ANIME_EXCLUSION_POLICY_KEY}`;
   const { value, stale } = await getOrSet(key, listPolicy, async () => {
     const path = type === 'movie' ? '/discover/movie' : '/discover/tv';
     const langParam = language !== 'all' && language !== 'other' ? DISCOVER_LANGUAGE_PARAM[language] : undefined;
@@ -1258,10 +1332,12 @@ export async function getTmdbPopularByLanguage(type: Exclude<ContentType, 'anime
         // of) the adult exclusion and the central classifier.
         ...(genreExclusion ? { without_genres: genreExclusion } : {}),
       });
-      const raw = (result.results ?? []).filter((item) => hasRequiredListMetadata(item, type));
+      const raw = excludesAnimeRows(result.results ?? []).filter((item) => hasRequiredListMetadata(item, type));
       const filtered = applyLanguageFilter(raw, language);
       // DAILY-SOAP STRUCTURAL EXCLUSION + ADULT DEFENSE-IN-DEPTH (Popular
       // TV rail only — see the function header and popular-tv-policy.ts).
+      // MAV-21: the anime exclusion above runs BEFORE this block, so anime
+      // candidates never consume the per-candidate detail lookups.
       // One CACHED detail lookup per candidate feeds BOTH verdicts (no
       // extra network cost over the pre-existing soap check):
       //   - adult (2026-10 bug fix): the central classifier's detail
@@ -1321,7 +1397,7 @@ export async function getTmdbTopRated(type: Exclude<ContentType, 'anime'>, langu
   const adultIds = type === 'movie' ? await getResolvedAdultProviderIds() : [];
   const providerExclusion = type === 'movie' && adultIds.length > 0 ? adultIds.join('|') : undefined;
   const adultExclusion = networkExclusion ?? providerExclusion;
-  const key = `tmdb:top-rated-v2:${type}:${language}:${page}:${adultExclusion ?? 'no-adult'}`;
+  const key = `tmdb:top-rated-v2:${type}:${language}:${page}:${adultExclusion ?? 'no-adult'}:${ANIME_EXCLUSION_POLICY_KEY}`;
   const { value, stale } = await getOrSet(key, listPolicy, async () => {
     const path = type === 'movie' ? '/discover/movie' : '/discover/tv';
     const langParam = language !== 'all' && language !== 'other' ? DISCOVER_LANGUAGE_PARAM[language] : undefined;
@@ -1340,7 +1416,7 @@ export async function getTmdbTopRated(type: Exclude<ContentType, 'anime'>, langu
         ...(networkExclusion ? { without_networks: networkExclusion } : {}),
         ...(providerExclusion ? { 'without_watch_providers': providerExclusion, watch_region: 'IN' } : {}),
       });
-      const raw = (result.results ?? []).filter((item) => hasRequiredListMetadata(item, type));
+      const raw = excludesAnimeRows(result.results ?? []).filter((item) => hasRequiredListMetadata(item, type));
       const filtered = applyLanguageFilter(raw, language);
       // DEFENSE-IN-DEPTH (2026-10 bug fix): see getTmdbCollection — the
       // normal Top Rated catalog must not rely solely on the query-level
@@ -1370,7 +1446,7 @@ export async function getTmdbTopRated(type: Exclude<ContentType, 'anime'>, langu
 export async function getTmdbGenreByLanguage(genreId: number, language: DiscoverLanguage, page = 1): Promise<ContentList> {
   const adultIds = await getResolvedAdultProviderIds();
   const adultExclusion = adultIds.length > 0 ? adultIds.join('|') : undefined;
-  const key = `tmdb:genre-v2:${genreId}:${language}:${page}:${adultExclusion ?? 'no-adult'}`;
+  const key = `tmdb:genre-v2:${genreId}:${language}:${page}:${adultExclusion ?? 'no-adult'}:${ANIME_EXCLUSION_POLICY_KEY}`;
   const { value, stale } = await getOrSet(key, listPolicy, async () => {
     const langParam = language !== 'all' && language !== 'other' ? DISCOVER_LANGUAGE_PARAM[language] : undefined;
     const collected: TmdbMovie[] = [];
@@ -1391,7 +1467,7 @@ export async function getTmdbGenreByLanguage(genreId: number, language: Discover
         // exclusion silently never applied on the genre rails.
         ...(adultExclusion ? { 'without_watch_providers': adultExclusion, watch_region: 'IN' } : {}),
       });
-      const raw = (result.results ?? []).filter((item) => hasRequiredListMetadata(item, 'movie'));
+      const raw = excludesAnimeRows(result.results ?? []).filter((item) => hasRequiredListMetadata(item, 'movie'));
       const filtered = applyLanguageFilter(raw, language);
       for (const item of filtered) {
         if (!collected.some((existing) => existing.id === item.id)) collected.push(item);
@@ -1439,7 +1515,7 @@ export async function getTmdbGenreByLanguage(genreId: number, language: Discover
  */
 export async function getTmdbTvGenreByLanguage(tvGenreId: number, language: DiscoverLanguage, page = 1): Promise<ContentList> {
   const networkExclusion = adultNetworkExclusionValue();
-  const key = `tmdb:tv-genre-v2:${tvGenreId}:${language}:${page}:${networkExclusion ?? 'no-adult'}`;
+  const key = `tmdb:tv-genre-v2:${tvGenreId}:${language}:${page}:${networkExclusion ?? 'no-adult'}:${ANIME_EXCLUSION_POLICY_KEY}`;
   const { value, stale } = await getOrSet(key, listPolicy, async () => {
     const langParam = language !== 'all' && language !== 'other' ? DISCOVER_LANGUAGE_PARAM[language] : undefined;
     const collected: TmdbTv[] = [];
@@ -1458,7 +1534,7 @@ export async function getTmdbTvGenreByLanguage(tvGenreId: number, language: Disc
         ...(networkExclusion ? { without_networks: networkExclusion } : {}),
         without_genres: POPULAR_TV_WITHOUT_GENRES
       });
-      const raw = (result.results ?? []).filter((item) => hasRequiredListMetadata(item, 'series'));
+      const raw = excludesAnimeRows(result.results ?? []).filter((item) => hasRequiredListMetadata(item, 'series'));
       const filtered = applyLanguageFilter(raw, language);
       for (const item of filtered) {
         if (!collected.some((existing) => existing.id === item.id)) collected.push(item);
@@ -1709,12 +1785,15 @@ export async function getTmdbIndiaFlatrateIds(maxPages = 2): Promise<Set<string>
 // ============================================================
 
 /**
- * Hero movie pool — trending + now-playing movies + anime movies.
- * The trending rail gives popularity depth; now_playing gives
- * genuinely fresh theatrical releases that pass the 30-day gate.
+ * Hero movie pool — trending + now-playing movies. The trending rail
+ * gives popularity depth; now_playing gives genuinely fresh theatrical
+ * releases that pass the 30-day gate. Anime movies are excluded
+ * (MAV-21) — they belong to the Anime category.
  */
 export async function getTmdbHeroMoviePool(): Promise<{ items: NormalizedMediaItem[]; stale?: boolean }> {
-  const key = 'tmdb:hero-pool:movie:v3';
+  // v4 (MAV-21): anime movies excluded — the hero's movie slots present
+  // the ordinary Movie catalog; anime movies belong to the Anime category.
+  const key = 'tmdb:hero-pool:movie:v4';
   const { value, stale } = await getOrSet(key, listPolicy, async () => {
     const [trendingRes, nowPlayingRes] = await Promise.allSettled([
       (async () => {
@@ -1745,8 +1824,10 @@ export async function getTmdbHeroMoviePool(): Promise<{ items: NormalizedMediaIt
       }
     }
     const preClassifierCount = merged.length;
+    // MAV-21: anime movies are reserved for the Anime category.
+    const nonAnimeMerged = excludesAnimeRows(merged);
     // Build candidate rows for the central classifier.
-    const rows: RailCandidateRow<NormalizedMediaItem>[] = merged.map((item) => ({
+    const rows: RailCandidateRow<NormalizedMediaItem>[] = nonAnimeMerged.map((item) => ({
       item: mapTmdb(item, 'movie', 'Trending'),
       mediaType: 'movie' as const,
       rawAdult: (item as TmdbMovie).adult
@@ -1779,7 +1860,13 @@ export async function getTmdbHeroMoviePool(): Promise<{ items: NormalizedMediaIt
  * series" — see hero-select.ts.
  */
 export async function getTmdbHeroSeriesPool(): Promise<{ items: NormalizedMediaItem[]; activeSeriesIds: Set<string>; stale?: boolean }> {
-  const key = 'tmdb:hero-pool:series:v3';
+  // v4 (MAV-21): anime series excluded from the pool ITEMS — the hero's
+  // series slots present the ordinary TV catalog; anime series belong to
+  // the Anime category. activeSeriesIds is INTENTIONALLY unfiltered: it
+  // is the currently-airing eligibility signal the Anime spotlight also
+  // consumes (hero-select), and an anime series being "currently airing"
+  // is true regardless of which category presents it.
+  const key = 'tmdb:hero-pool:series:v4';
   const { value, stale } = await getOrSet(key, listPolicy, async () => {
     const [trendingRes, airingTodayRes, onAirRes] = await Promise.allSettled([
       (async () => {
@@ -1827,10 +1914,13 @@ export async function getTmdbHeroSeriesPool(): Promise<{ items: NormalizedMediaI
       }
     }
     const preClassifierCount = merged.length;
+    // MAV-21: anime series are reserved for the Anime category (the
+    // activeSeriesIds set above is deliberately NOT filtered).
+    const nonAnimeMerged = excludesAnimeRows(merged);
     // Build candidate rows for the central classifier (TV rows need
     // the cached-detail path for the authoritative network signal —
     // see RAIL_CLASSIFY_CONCURRENCY contract in the file header).
-    const rows: RailCandidateRow<NormalizedMediaItem>[] = merged.map((item) => ({
+    const rows: RailCandidateRow<NormalizedMediaItem>[] = nonAnimeMerged.map((item) => ({
       item: mapTmdb(item, 'series', 'Trending'),
       mediaType: 'series' as const,
       rawAdult: (item as TmdbMovie).adult

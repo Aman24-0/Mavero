@@ -77,9 +77,13 @@ const authorize = read('src/routes/authorize/+page.svelte');
   // §18 silent refresh keeps cards visible (no UI reset).
   ok(account.includes('options?.silent'), 'F36c: silent mode distinguishes first load from refreshes');
 
-  // §29 timestamps.
-  ok(account.includes("'Active now'"), 'F29d: relative "Active now" label');
-  ok(account.includes('title={absoluteTime(session.lastSeenAt)}'), 'F29e: absolute timestamp exposed via title tooltip');
+  // §29 timestamps. MAV-21 Workstream B: the session card now shows the
+  // IMMUTABLE "Signed in X ago" (created_at) as the primary time, with
+  // lastSeenAt as the separate activity signal — relative labels +
+  // absolute-time tooltips preserved on both.
+  ok(account.includes('Active now'), 'F29d: relative "Active now" activity label');
+  ok(account.includes('title={`Signed in ${absoluteTime(session.createdAt)}`}'), 'F29e-a: absolute signed-in timestamp exposed via title tooltip');
+  ok(account.includes('title={`Last active ${absoluteTime(session.lastSeenAt)}`}'), 'F29e-b: absolute last-active timestamp exposed via title tooltip');
 }
 
 // ============================================================

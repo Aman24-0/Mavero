@@ -92,10 +92,17 @@ function explorerErrorMessage(type: ContentType): string {
 // Candidate pools (all existing, all cached):
 //   movie  — hero movie pool (now_playing etc.) + trending + popular
 //   series — hero series pool (airing_today/on_the_air) + trending + popular
-//   anime  — BOTH hero pools filtered to isAnime + trending + popular
+//   anime  — the merged anime catalog (both formats, popularity +
+//             top-rated depth) + trending + popular. The hero pools are
+//             anime-free since MAV-21 (their movie/series slots present
+//             the ordinary catalogs), so the anime spotlight sources its
+//             candidates from the SAME merged anime queries that power the
+//             Anime rails — one source of anime truth. activeSeriesIds
+//             (currently-airing eligibility) still comes from the series
+//             pool's raw airing signals and still includes anime ids.
 // ============================================================
 
-const SPOTLIGHT_CACHE_VERSION = 'v1';
+const SPOTLIGHT_CACHE_VERSION = 'v2';
 const SPOTLIGHT_POLICY = { ttlMs: 1000 * 60 * 60 * 24, staleWhileRevalidateMs: 1000 * 60 * 60 * 6 };
 
 function dedupeCandidates(items: NormalizedMediaItem[]): NormalizedMediaItem[] {
@@ -132,10 +139,16 @@ async function loadSpotlightCandidates(type: ContentType): Promise<{ items: Norm
   if (type === 'series') {
     return { items: dedupeCandidates([...seriesPool.items, ...trendingItems, ...popularItems]), activeSeriesIds };
   }
-  // anime — the hero pools are movie/TV-wide; keep the anime-tagged rows
-  // (both formats count: anime movies + anime series).
-  const animeFromPools = [...moviePool.items, ...seriesPool.items].filter((item) => item.isAnime === true);
-  return { items: dedupeCandidates([...animeFromPools, ...trendingItems, ...popularItems]), activeSeriesIds };
+  // anime — MAV-21: the hero pools are anime-free (their slots present the
+  // ordinary catalogs), so the anime spotlight pulls its candidate depth
+  // from the SAME merged anime queries that power the Anime rails (both
+  // formats: anime movies + anime series). One source of anime truth.
+  const [animePopular, animeTopRated] = await Promise.all([
+    getTmdbAnimeMerged('popularity', 1).catch(() => null),
+    getTmdbAnimeMerged('top-rated', 1).catch(() => null)
+  ]);
+  const animeDepth = [animePopular?.items ?? [], animeTopRated?.items ?? []].flat();
+  return { items: dedupeCandidates([...animeDepth, ...trendingItems, ...popularItems]), activeSeriesIds };
 }
 
 export async function loadExplorerSpotlight(type: ContentType): Promise<MediaItem[]> {

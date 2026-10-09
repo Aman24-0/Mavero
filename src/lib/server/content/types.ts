@@ -66,7 +66,19 @@ export type NormalizedMediaItem = {
    * (or `type` if animeFormat is absent).
    */
   animeFormat?: 'movie' | 'series';
+  /**
+   * Content certification (e.g. 'UA', 'U/A 13+', 'TV-14'). MAV-21:
+   * populated ONLY from authoritative TMDB certification endpoints
+   * (movie release_dates / TV content_ratings, India first) on the
+   * DETAIL path — never invented. List rows carry no certification
+   * (TMDB list responses have none), so list items leave it undefined
+   * and UI badges hide honestly.
+   */
   maturity?: string;
+  /** MAV-21: movie director (TMDB credits.crew job === 'Director'), detail path only. */
+  director?: string;
+  /** MAV-21: TV/anime-series creators (TMDB created_by), detail path only. */
+  creators?: string[];
   runtime: string;
   rating: number;
   popularity?: number;

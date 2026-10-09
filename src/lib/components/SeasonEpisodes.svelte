@@ -9,6 +9,65 @@
   type Episode = { id: string; number: number; season: number; title: string; overview?: string; airDate?: string; runtime?: string; still?: string };
   type Season = { number: number; title: string; episodeCount: number; episodes?: Episode[] };
 
+  // ============================================================
+  // MAV-21 Workstream E — season response cache + request-race guard.
+  //
+  // CACHE: switching seasons used to re-fetch EVERY selection — S1 →
+  // S2 → S1 was three HTTP roundtrips for the same payloads (the
+  // server SWR cache made them cheap server-side, but the client
+  // still paid the roundtrip + re-parse + full spinner). Seasons are
+  // immutable facts of a finished/airing show, so a short-TTL
+  // module-level cache (shared across mounts — back-nav to the detail
+  // page renders the season instantly) is safe. Bounded, same
+  // expired-first-then-FIFO eviction pattern as the server's
+  // heartbeat/revocation caches.
+  //
+  // RACE GUARD: rapid tab taps could resolve out of order — a slow S1
+  // response overwrote an already-rendered S2 (selectedSeason said 2,
+  // the list said Season 1). Every load now carries a sequence number;
+  // a response that is no longer the NEWEST request is dropped.
+  // ============================================================
+  type SeasonCacheEntry = { season: Season; cachedAt: number };
+  const seasonCache = new Map<string, SeasonCacheEntry>();
+  const SEASON_CACHE_TTL_MS = 10 * 60 * 1000;
+  const SEASON_CACHE_MAX_ENTRIES = 60;
+
+  function seasonCacheKey(seriesId: string, seasonNumber: number): string {
+    return `${seriesId}:${seasonNumber}`;
+  }
+
+  function readCachedSeason(seriesId: string, seasonNumber: number): Season | undefined {
+    const key = seasonCacheKey(seriesId, seasonNumber);
+    const entry = seasonCache.get(key);
+    if (!entry) return undefined;
+    if (Date.now() - entry.cachedAt > SEASON_CACHE_TTL_MS) {
+      seasonCache.delete(key);
+      return undefined;
+    }
+    // Refresh recency for bounded FIFO eviction.
+    seasonCache.delete(key);
+    seasonCache.set(key, entry);
+    return entry.season;
+  }
+
+  function writeCachedSeason(seriesId: string, seasonNumber: number, season: Season): void {
+    const key = seasonCacheKey(seriesId, seasonNumber);
+    if (seasonCache.size >= SEASON_CACHE_MAX_ENTRIES) {
+      // Expired entries first; then the oldest (Map preserves insertion
+      // order — same pattern as the server-side bounded caches).
+      const now = Date.now();
+      for (const [k, v] of seasonCache) {
+        if (now - v.cachedAt > SEASON_CACHE_TTL_MS) seasonCache.delete(k);
+      }
+      while (seasonCache.size >= SEASON_CACHE_MAX_ENTRIES) {
+        const oldest = seasonCache.keys().next().value as string | undefined;
+        if (oldest === undefined) break;
+        seasonCache.delete(oldest);
+      }
+    }
+    seasonCache.set(key, { season, cachedAt: Date.now() });
+  }
+
   export let id: string;
   export let seasonCount = 1;
   // Phase 7F+ (anime routing): the URL type segment for watch links.
@@ -32,21 +91,43 @@
   let season: Season | undefined;
   let loading = true;
   let errorMessage = '';
+  // MAV-21 Workstream E — the monotonically increasing request
+  // sequence. A response is only allowed to render (and to populate
+  // the cache) while it is still the NEWEST request for this mount.
+  let requestSequence = 0;
 
   async function loadSeason(number: number) {
     selectedSeason = number;
+    // Cache hit — render synchronously: no spinner flash, no HTTP
+    // roundtrip, no race window at all.
+    const cached = readCachedSeason(id, number);
+    if (cached) {
+      requestSequence += 1;
+      season = cached;
+      loading = false;
+      errorMessage = '';
+      return;
+    }
+    const sequence = ++requestSequence;
     loading = true;
     errorMessage = '';
     try {
       const response = await fetch(`/api/content/series/${encodeURIComponent(id)}/season/${number}`);
       const payload = await response.json();
+      // Stale response — a newer season selection superseded this
+      // request while it was in flight. Drop it entirely: no render, no
+      // cache write, no loading-state change (the newer request owns
+      // those).
+      if (sequence !== requestSequence) return;
       if (!response.ok || !payload.ok) throw new Error(payload.error?.message || 'Episodes are temporarily unavailable.');
       season = payload.season as Season;
+      writeCachedSeason(id, number, season);
     } catch (error) {
+      if (sequence !== requestSequence) return;
       errorMessage = error instanceof Error ? error.message : 'Episodes are temporarily unavailable.';
       season = undefined;
     } finally {
-      loading = false;
+      if (sequence === requestSequence) loading = false;
     }
   }
 
