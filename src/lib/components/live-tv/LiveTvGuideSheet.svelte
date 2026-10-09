@@ -1,12 +1,14 @@
 <script lang="ts">
-  // LT-18 — Live TV Guide sheet (presentation only).
+  // LT-18 — Live TV Guide sheet (presentation only); LT-19 — single list.
   //
-  // ONE sheet holding the full guide experience that used to live in two
-  // permanent page sections: NOW PLAYING / UP NEXT (LiveTvNowPlaying) and
-  // the FULL GUIDE schedule (LiveTvGuide). Both existing components are
-  // reused VERBATIM — the sheet is pure chrome around them, so the existing
-  // guide loading/error/retry/empty logic and the page's guide state are the
-  // single source of truth:
+  // ONE sheet holding the full guide experience: the FULL GUIDE schedule
+  // (LiveTvGuide) is the SINGLE source of programme-card presentation —
+  // its continuous list already contains the current programme as its first
+  // entry (marked "On air" by real [start, stop) timing) followed by the
+  // upcoming programmes. The former duplicate NOW PLAYING / UP NEXT cards
+  // are gone (LT-19). The existing component is reused VERBATIM — the sheet
+  // is pure chrome around it, so the existing guide loading/error/retry/
+  // empty logic and the page's guide state are the single source of truth:
   //   * opening the sheet NEVER fetches anything (the page loads the guide
   //     with the channel selection, independent of playback — LT-4 §13);
   //   * closing the sheet never affects playback;
@@ -18,7 +20,6 @@
   // sits), focus MOVES INTO the dialog on open (the ARIA pattern), the
   // backdrop click closes, and the sheet never renders when closed.
   import { X } from 'lucide-svelte';
-  import LiveTvNowPlaying from '$components/live-tv/LiveTvNowPlaying.svelte';
   import LiveTvGuide from '$components/live-tv/LiveTvGuide.svelte';
   import type { LiveTvChannel, LiveTvGuide as LiveTvGuideModel } from '$lib/client/live-tv/types';
 
@@ -97,9 +98,8 @@
     </header>
 
     <div class="sheet-body">
-      <!-- NOW PLAYING + UP NEXT — the existing component, existing state. -->
-      <LiveTvNowPlaying {guide} {loading} {errorMessage} {onretry} />
-      <!-- FULL GUIDE — the existing schedule list, existing state. -->
+      <!-- FULL GUIDE — the existing schedule list, existing state; the
+           single source of programme cards (current marked "On air"). -->
       <LiveTvGuide {guide} {nowSeconds} {loading} {errorMessage} {onretry} />
     </div>
   </div>

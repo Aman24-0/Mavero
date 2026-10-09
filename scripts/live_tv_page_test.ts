@@ -47,7 +47,9 @@ const card = read('../src/lib/components/live-tv/LiveTvChannelCard.svelte');
 const categoryBar = read('../src/lib/components/live-tv/LiveTvCategoryBar.svelte');
 const filterSheet = read('../src/lib/components/live-tv/LiveTvFilterSheet.svelte');
 const guideSheet = read('../src/lib/components/live-tv/LiveTvGuideSheet.svelte');
-const nowPlaying = read('../src/lib/components/live-tv/LiveTvNowPlaying.svelte');
+// LT-19 — LiveTvNowPlaying is DELETED (the Guide sheet's single continuous
+// LiveTvGuide list is the only programme-card surface; §11 asserts its
+// loading/error/empty states directly).
 const guideList = read('../src/lib/components/live-tv/LiveTvGuide.svelte');
 const epgSource = read('../src/lib/client/live-tv/epg.ts');
 
@@ -312,12 +314,13 @@ const NOW = 1_700_000_000; // fixed absolute instant for determinism
         ok('guide independence: own controller/sequence, never awaited by playback, own retry');
 
         // Component states: loading / error / empty are all presentational.
-        assert.match(nowPlaying, /\{#if loading\}/, 'now-playing loading state');
-        assert.match(nowPlaying, /\{:else if errorMessage\}/, 'now-playing failure state');
+        // LT-19 — the guide LIST (LiveTvGuide) is the single programme-card
+        // surface in the Guide sheet; its states are the ones that matter.
+        assert.match(guideList, /\{#if loading\}/, 'guide list loading state');
+        assert.match(guideList, /\{:else if errorMessage\}/, 'guide list failure state');
         assert.match(page, /const GUIDE_FALLBACK_MESSAGE = 'Guide unavailable right now\.';/, 'fixed guide-failure fallback text (page-owned)');
-        assert.match(nowPlaying, /No programme information for this channel right now\./, 'empty guide is a quiet valid state');
-        assert.match(guideList, /No upcoming programmes listed for this channel right now\./, 'empty schedule is a quiet valid state');
-        assert.match(nowPlaying, /aria-label="Now playing"/, 'now-playing article labelled');
+        assert.match(guideList, /No upcoming programmes listed for this channel right now\./, 'empty guide is a quiet valid state');
+        assert.match(guideList, /aria-label="Programme guide"/, 'guide list labelled');
         ok('guide component states: loading, retryable failure, valid empty');
 }
 
@@ -407,7 +410,7 @@ const NOW = 1_700_000_000; // fixed absolute instant for determinism
 // §15 Security — no secrets to persisted state / logs / errors / URLs
 // ============================================================
 {
-        const uiSources = [page, player, card, categoryBar, filterSheet, guideSheet, nowPlaying, guideList, epgSource];
+        const uiSources = [page, player, card, categoryBar, filterSheet, guideSheet, guideList, epgSource];
         for (const source of uiSources) {
                 assert.doesNotMatch(source, /console\./, 'no console calls');
                 assert.doesNotMatch(source, /localStorage|sessionStorage|indexedDB/i, 'no storage APIs');
@@ -445,7 +448,7 @@ const NOW = 1_700_000_000; // fixed absolute instant for determinism
         const engineCreations = page.match(/new LiveTvPlaybackEngine\(\)/g) ?? [];
         assert.equal(engineCreations.length, 1, 'exactly one engine construction site in the page');
         assert.doesNotMatch(player, /new LiveTvPlaybackEngine/, 'components never construct engines');
-        const videoTags = [page, player, card, categoryBar, filterSheet, guideSheet, nowPlaying, guideList]
+        const videoTags = [page, player, card, categoryBar, filterSheet, guideSheet, guideList]
                 .map((s) => stripComments(s).match(/<video[\s>]/g) ?? []).reduce((a, b) => a + b.length, 0);
         assert.equal(videoTags, 1, 'exactly one rendered <video> element across the Live TV UI');
         // The previous engine is destroyed before a new one is constructed —

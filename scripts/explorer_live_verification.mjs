@@ -89,7 +89,7 @@ for (const viewport of VIEWPORTS) {
   });
   check('sticky chips block present', layout.sticky === 'sticky', `position=${layout.sticky}`);
   if (viewport.name === '360' || viewport.name === '390') {
-    check('mobile: chips stick below the fixed topbar (56px + safe-area)', layout.top.startsWith('calc(56px') || layout.top === '56px', `top=${layout.top}`);
+    check('mobile: chips stick below the sticky topbar (56px + safe-area)', layout.top.startsWith('calc(56px') || layout.top === '56px', `top=${layout.top}`);
   } else if (viewport.name === '820') {
     check('tablet: chips stick at 72px (below the sticky topbar)', layout.top === '72px', `top=${layout.top}`);
   } else {

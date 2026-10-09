@@ -160,7 +160,7 @@ assert.match(explorerPage, /aria-pressed=\{!selectedGenre\}/, 'All chips expose 
 assert.match(explorerPage, /chip-scroll[\s\S]*?overflow-x: auto/, 'chip rows scroll horizontally on narrow screens');
 assert.match(explorerPage, /\.chip-scroll::-webkit-scrollbar \{ display: none; \}/, 'chip rows hide their scrollbar (contained, no page overflow)');
 assert.match(explorerPage, /\.filter-chip:focus-visible \{ outline: 2px solid var\(--color-focus\)/, 'chips keep focus-visible states');
-assert.match(explorerPage, /position: sticky;\s*\n?\s*top: var\(--topbar-h-safe\)/, 'the chip block is sticky (mobile: below the fixed topbar)');
+assert.match(explorerPage, /position: sticky;\s*\n?\s*top: var\(--topbar-h-safe\)/, 'the chip block is sticky (mobile: below the sticky topbar)');
 assert.match(explorerPage, /@media \(min-width: 641px\) and \(max-width: 1024px\)[\s\S]*?\.explorer-filters \{ top: 72px; \}/, 'tablet: chips stick below the 72px sticky topbar');
 assert.match(explorerPage, /@media \(min-width: 1025px\)[\s\S]*?\.explorer-filters \{ top: 0; \}/, 'desktop: chips stick at the app-main scrollport top (no topbar)');
 assert.match(explorerPage, /z-index: 30/, 'chip z-index sits below the topbar (they slide under it, never cover it)');

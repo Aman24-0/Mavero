@@ -465,8 +465,9 @@
   }
 
   .list-header {
-    /* The shell already adds the topbar offset via --shell-content-top.
-       We only add a deliberate per-page breathing room here. */
+    /* The shell already adds the topbar offset (the in-flow sticky
+       topbar — LT-19). We only add a deliberate per-page breathing
+       room here. */
     padding: 28px var(--l-gutter) 18px;
     border-bottom: 1px solid var(--color-border);
     background:

@@ -544,7 +544,7 @@
   .fallback-desc { margin: 10px 0 0; color: #9a9aa2; font-size: .82rem; line-height: 1.6; max-width: 520px; }
 
   /* ── Filter chips (sticky) ──
-     Mobile ≤640px: below the fixed topbar (var(--topbar-h-safe)).
+     Mobile ≤640px: below the sticky topbar (var(--topbar-h-safe)).
      Tablet 641–1024px: below the 72px sticky topbar.
      Desktop ≥1025px: top of the app-main scroll container (no topbar).
      z-index sits BELOW the topbar (40) so chips slide under it. */

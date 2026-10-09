@@ -320,13 +320,21 @@
 
     /* Floating pill bottom nav — the touch composition for phones AND
        tablets (Phase 2: closes the former 641-1024px navigation gap where
-       neither the sidebar nor the pill was visible). */
+       neither the sidebar nor the pill was visible).
+       LT-19 — centered WITHOUT a transform: a transformed fixed layer is
+       the documented Chrome-Android class that fails to re-anchor during
+       URL-bar show/hide scroll transitions (the pill drifted ~20-25% into
+       the viewport bottom edge and recovered on direction change). Edge
+       anchoring (left: 0; right: 0) + auto margins centers pixel-identically
+       with zero transforms — the same pattern the Admin shell's bottom nav
+       uses. */
     .mobile-nav {
       display: block;
-      position: fixed; left: 50%; bottom: calc(14px + env(safe-area-inset-bottom, 0px));
-      transform: translateX(-50%);
+      position: fixed; left: 0; right: 0;
+      bottom: calc(14px + env(safe-area-inset-bottom, 0px));
       z-index: 50;
       width: min(calc(100% - 24px), 480px);
+      margin-inline: auto;
     }
     .mobile-nav-inner {
       display: grid; grid-template-columns: repeat(6, 1fr);
@@ -356,14 +364,19 @@
   }
 
   @media (max-width: 640px) {
+    /* LT-19 — the phone topbar joins the tablet range's STICKY pattern
+       (the 641-1024px rule above, probe-proven to pin through scrolls):
+       position:fixed headers are the Chrome-Android fixed-layer class that
+       fails to re-anchor during URL-bar show/hide scroll transitions (the
+       reported ~25% crop on scroll-up, recovering on direction change).
+       Sticky is regular scrolled content — immune. The phone height +
+       safe-area padding rules are kept verbatim, so the geometry is
+       pixel-identical; the former .app-main padding-top compensation is
+       gone because the in-flow topbar now provides the offset itself. */
     .topbar {
-      position: fixed; top: 0; left: 0; right: 0;
-      width: 100%; box-sizing: border-box;
       height: var(--topbar-h-safe);
       padding: env(safe-area-inset-top, 0px) 16px 0;
-      border-bottom: 1px solid var(--color-border);
     }
-    .app-main { padding-top: var(--shell-content-top); }
     .page-shell { padding-bottom: 0; }
 
     /* Phone-size refinements for the shared touch pill: tighter max

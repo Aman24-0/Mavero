@@ -2,11 +2,11 @@
 //
 // Covers the LT-18 §1 (ONE in-surface control system), §3 (embed-only
 // embed mode), §4 (page redesign: toolbar / filter sheet / guide sheet /
-// channel list) and the truthful language model in the repo's two UI-phase
+// channel list) with the LT-19 updates (category-only filter; single
+// guide list) in the repo's two UI-phase
 // styles:
 //   * BEHAVIORAL sections drive the REAL pure modules (the LT-2 local
-//     utilities + the LT-18 language classification) under Node — which
-//     also proves SSR safety.
+//     utilities) under Node — which also proves SSR safety.
 //   * SOURCE-CONTRACT sections assert the component/page wiring.
 //
 // Directive case map (LT-18 §6A/§6C/§6D/§6E):
@@ -20,9 +20,12 @@
 //   no Mavero reload button in embed mode ......... §A5
 //   no Mavero fullscreen button in embed mode ..... §A5
 //   native controls return after embed ............ §A6
-//   filter sheet: category / language / compose / reset / active .. §C
-//   guide sheet: opens / contents / state reuse / no refetch /
-//                no-channel / retry ................ §D
+//   filter sheet: category-only / compose / reset / active ......... §C
+//                (LT-19: the Language section is REMOVED — the original
+//                 provider category taxonomy is the only dimension)
+//   guide sheet: single list / honest current / state reuse /
+//                no refetch / no-channel / retry .. §D
+//                (LT-19: the Now Playing + Up Next cards are REMOVED)
 //   page ordering: title → player → toolbar → channels; sheets are
 //                overlays .......................... §E
 //
@@ -34,11 +37,8 @@ import { fileURLToPath } from 'node:url';
 
 import {
         extractLiveTvCategories,
-        extractLiveTvLanguages,
         filterLiveTvChannelsByCategory,
-        filterLiveTvChannelsByLanguage,
-        filterLiveTvChannelsByQuery,
-        liveTvLanguageFromCategory
+        filterLiveTvChannelsByQuery
 } from '$lib/client/live-tv/api';
 import type { LiveTvChannel } from '$lib/client/live-tv/types';
 
@@ -251,119 +251,125 @@ function sliceOf(source: string, start: string, end: string): string {
 // §C — Filter sheet (truthful filters, composition, reset, active state)
 // ============================================================
 {
-        // ---- Behavioral: the language model is truthful. ----
-        // Recognized language categories (grounded in the 2026-10-09 wire
-        // census) normalize to their display spellings.
-        assert.equal(liveTvLanguageFromCategory('English'), 'English', 'English category -> English language');
-        assert.equal(liveTvLanguageFromCategory('tamil'), 'Tamil', 'case-insensitive match');
-        assert.equal(liveTvLanguageFromCategory('Malyalam'), 'Malayalam', 'the upstream typo aliases to Malayalam');
-        assert.equal(liveTvLanguageFromCategory(' Telugu '), 'Telugu', 'trimmed match');
-        // Genre categories NEVER produce a language.
-        for (const genre of ['News', 'Sports', 'Movies', 'Entertainment', 'Kids', 'Unknown', 'Music', 'Devotional', 'Infotainment', 'Lifestyle', 'Business News', 'Educational']) {
-                assert.equal(liveTvLanguageFromCategory(genre), undefined, `${genre} is a genre — no language`);
-        }
-        assert.equal(liveTvLanguageFromCategory('Hindi'), undefined, 'NO Hindi fabrication (upstream has no Hindi value)');
-        assert.equal(liveTvLanguageFromCategory(''), undefined, 'empty -> no language');
-        assert.equal(liveTvLanguageFromCategory(undefined), undefined, 'non-string -> no language');
-
-        // ---- Behavioral: catalogue derivation + filtering compose. ----
-        // Fixtures model the NORMALIZED model exactly as the LT-2
-        // normalizer produces it (the wiring contract is asserted below):
-        // channel.language === liveTvLanguageFromCategory(channel.category).
-        const wire: LiveTvChannel[] = [
-                { id: '1', name: 'Star Gold HD', category: 'Movies' },               // genre only
-                { id: '2', name: 'Sun TV HD', category: 'Tamil' },                    // language
-                { id: '3', name: 'CNN NEWS18', category: 'English' },                 // language
-                { id: '4', name: 'Sony Yay Tamil', category: 'Tamil' },               // language
-                { id: '5', name: 'Aastha' },                                          // no category
-                { id: '6', name: 'Zee Marathi', category: 'Marathi' }                 // language
+        // ---- Behavioral (LT-19): the ORIGINAL provider category taxonomy is
+        //      the ONLY filter dimension. Language-like values the provider
+        //      supplies as categories (English, Tamil, Gujarati, …) are
+        //      ordinary category options — never reinterpreted. ----
+        const catalogue: LiveTvChannel[] = [
+                { id: '1', name: 'Star Gold HD', category: 'Movies' },   // genre category
+                { id: '2', name: 'Sun TV HD', category: 'Tamil' },        // language-as-category
+                { id: '3', name: 'CNN NEWS18', category: 'English' },     // language-as-category
+                { id: '4', name: 'Sony Yay Tamil', category: 'Tamil' },   // language-as-category
+                { id: '5', name: 'Aastha' },                              // no category
+                { id: '6', name: 'Zee Marathi', category: 'Marathi' }     // language-as-category
         ];
-        const catalogue = wire.map((channel) => ({
-                ...channel,
-                language: liveTvLanguageFromCategory(channel.category)
-        }));
-        // Languages are data-derived (no language channels contribute)…
+        // Categories derive from the data VERBATIM (original spellings,
+        // stable first-appearance order; language-like values appear as
+        // ordinary categories).
         assert.deepEqual(
-                extractLiveTvLanguages(catalogue),
-                ['English', 'Marathi', 'Tamil'],
-                'languages derive from the catalogue, sorted, truthful only'
+                extractLiveTvCategories(catalogue),
+                ['Movies', 'Tamil', 'English', 'Marathi'],
+                'categories are the ORIGINAL provider values in stable first-appearance order — language-like ones included verbatim'
         );
-        assert.deepEqual(extractLiveTvLanguages([]), [], 'empty catalogue -> no language chips');
-        // …and the language filter matches only those channels.
+        assert.deepEqual(extractLiveTvCategories([]), [], 'empty catalogue -> no chips');
+        // The category filter matches those channels case-insensitively.
         assert.deepEqual(
-                filterLiveTvChannelsByLanguage(catalogue, 'tamil').map((c) => c.id),
+                filterLiveTvChannelsByCategory(catalogue, 'tamil').map((c) => c.id),
                 ['2', '4'],
-                'language filter is case-insensitive and exact'
+                'category filter is case-insensitive and exact on the provider value'
         );
-        assert.equal(filterLiveTvChannelsByLanguage(catalogue, '').length, 6, 'empty language = All semantics');
-        // Category + language + search compose (the page's exact order).
+        assert.equal(filterLiveTvChannelsByCategory(catalogue, '').length, 6, 'empty category = All semantics');
+        // Category + search compose (the page's exact order).
         let list = filterLiveTvChannelsByCategory(catalogue, 'Tamil');
-        list = filterLiveTvChannelsByLanguage(list, 'tamil');
         list = filterLiveTvChannelsByQuery(list, 'sun');
         assert.deepEqual(list.map((c) => c.id), ['2'], 'search composes over the filtered list');
-        // A category filter can yield channels without languages — the empty
-        // language filter must not exclude them.
-        const movies = filterLiveTvChannelsByCategory(catalogue, 'Movies');
-        assert.equal(filterLiveTvChannelsByLanguage(movies, '').length, 1, 'genre channels survive an empty language filter');
 
-        // ---- Source: the LT-2 normalizer wires the classification into BOTH
-        //      channel paths (catalogue + resolution). ----
+        // ---- Source (LT-19): the language model is FULLY REMOVED. ----
+        // No language map, no language derivation, no language filter — the
+        // category value is carried verbatim and nothing else is classified.
+        assert.ok(!apiSource.includes('LIVE_TV_LANGUAGE_CATEGORIES'), 'no language category map');
+        assert.ok(!apiSource.includes('liveTvLanguageFromCategory'), 'no language derivation helper');
+        assert.ok(!apiSource.includes('extractLiveTvLanguages'), 'no language extraction');
+        assert.ok(!apiSource.includes('filterLiveTvChannelsByLanguage'), 'no language filter');
+        assert.ok(!apiSource.includes('language:'), 'no language assignment anywhere in the API layer');
+        const typesSource = read('../src/lib/client/live-tv/types.ts');
+        assert.ok(!typesSource.includes('language'), 'the channel type carries NO language field');
         const normalizer = sliceOf(apiSource, 'function normalizeChannelEntry(', 'function normalizeChannelList');
         assert.ok(
-                normalizer.includes('const language = liveTvLanguageFromCategory(raw.category);'),
-                'the catalogue normalizer derives language from the truthful category'
+                normalizer.includes('channel.category = raw.category;'),
+                'the catalogue normalizer carries the category VERBATIM'
         );
-        const resolutionFlow = sliceOf(apiSource, 'export async function resolveLiveTvPlayback', '// ---------------------------------------------------------------------------');
-        assert.ok(
-                resolutionFlow.includes('liveTvLanguageFromCategory(body.category)'),
-                'the resolution path derives language too'
-        );
-        // The language map is grounded in the audited wire census (no Hindi).
-        assert.ok(!apiSource.includes("hindi:"), 'no fabricated Hindi mapping');
 
-        // ---- Source: the sheet applies immediately; Apply closes; Reset clears. ----
+        // ---- Source: the sheet is category-only; applies immediately;
+        //      Apply closes; Reset clears. ----
         assert.ok(
                 filterSheet.includes('onselect={onselectcategory}'),
                 'the sheet routes category chips straight to the page handler'
         );
+        assert.ok(!filterSheet.includes('languages'), 'NO language list prop');
+        assert.ok(!filterSheet.includes('selectedLanguage'), 'NO selected-language prop');
+        assert.ok(!filterSheet.includes('onselectlanguage'), 'NO language selection handler');
+        assert.ok(!filterSheet.includes('ltv-language'), 'NO language section styles');
+        assert.ok(!filterSheet.includes('ltv-chip'), 'NO language chip styles');
+        assert.ok(!filterSheet.includes('Filter by language'), 'NO language section');
         assert.ok(page.includes('onselectcategory={applyCategory}'), 'the page wires immediate category application');
-        assert.ok(page.includes('onselectlanguage={applyLanguage}'), 'the page wires immediate language application');
+        assert.ok(!page.includes('applyLanguage'), 'the page has NO language handler');
         assert.ok(page.includes('function resetFilters(): void'), 'reset exists');
         const resetBody = sliceOf(page, 'function resetFilters(): void {', '\n  }');
-        assert.ok(resetBody.includes("category = ''") && resetBody.includes("language = ''"), 'reset clears BOTH filters');
+        assert.ok(resetBody.includes("category = ''"), 'reset clears the filter');
+        assert.ok(!resetBody.includes('language'), 'reset touches NO language (the dimension is gone)');
         assert.ok(filterSheet.includes('onclick={onclose}'), 'Apply closes the sheet');
-        assert.ok(filterSheet.includes('aria-pressed'), 'chips carry selection state');
-        // The language section renders ONLY with truthful data.
-        assert.ok(
-                filterSheet.includes('{#if languages.length > 0}'),
-                'the language section is omitted when the catalogue has no languages'
-        );
+        const categoryBar = read('../src/lib/components/live-tv/LiveTvCategoryBar.svelte');
+        assert.ok(categoryBar.includes('aria-pressed'), 'chips carry selection state (LiveTvCategoryBar)');
         assert.ok(filterSheet.includes('aria-modal="true"'), 'the sheet is a modal dialog');
         assert.ok(filterSheet.includes("event.key === 'Escape'"), 'Escape closes the sheet');
         // Active-filter state on the toolbar button.
         assert.ok(page.includes('class:active={filtersActive}'), 'the Filter button reflects active filters');
         assert.ok(page.includes('{activeFilterCount}'), 'the Filter button shows the active count');
         const countBody = sliceOf(page, 'const activeFilterCount = $derived(', '\n  );');
-        assert.ok(countBody.includes('category') && countBody.includes('language'), 'the count covers both dimensions');
+        assert.ok(countBody.includes('category') && !countBody.includes('language'), 'the count covers the category dimension ONLY');
         // No URL params / no network for filtering.
         assert.ok(!filterSheet.includes('fetch('), 'the filter sheet never fetches');
         assert.ok(!filterSheet.includes('searchParams'), 'the filter sheet never writes URL params');
-        ok('C. filter sheet: truthful category+language, immediate apply, compose, reset, active state');
+        ok('C. filter sheet: category-only (original provider taxonomy), immediate apply, compose, reset, active state');
 }
 
 // ============================================================
 // §D — Guide sheet (contents, state reuse, no refetch, no-channel, retry)
 // ============================================================
 {
-        // The sheet contains BOTH existing components: Now Playing / Up
-        // Next (LiveTvNowPlaying) and the Full Guide (LiveTvGuide).
-        assert.ok(guideSheet.includes('<LiveTvNowPlaying'), 'NOW PLAYING / UP NEXT render inside the sheet');
+        // LT-19 — the FULL GUIDE (LiveTvGuide) is the SINGLE source of
+        // programme cards: ONE continuous list whose current programme is
+        // marked honestly. The duplicate Now Playing / Up Next cards are
+        // GONE.
+        assert.ok(!guideSheet.includes('LiveTvNowPlaying'), 'NO separate Now Playing / Up Next component in the sheet');
         assert.ok(guideSheet.includes('<LiveTvGuide'), 'the FULL GUIDE renders inside the sheet');
+        // Exactly ONE programme-card source inside the sheet body.
+        const sheetBody = sliceOf(guideSheet, 'class="sheet-body"', '</div>');
+        assert.equal(
+                (sheetBody.match(/<LiveTv[A-Z][A-Za-z]*/g) ?? []).length,
+                1,
+                'exactly ONE guide component in the sheet body (LiveTvGuide)'
+        );
+        // The list marks the current programme ONLY by real [start, stop)
+        // timing — never by list position, never when data is absent/stale.
+        const guideList = read('../src/lib/components/live-tv/LiveTvGuide.svelte');
+        assert.ok(guideList.includes("programmeStatusAt(entry, nowSeconds) === 'current'"), 'the current marker is time-window derived');
+        assert.ok(guideList.includes('On air'), 'the current programme is visibly marked');
+        assert.ok(guideList.includes('{#if status === \'current\'}'), 'the marker renders ONLY for the real current entry');
+        // Finished programmes are filtered, upcoming kept in the SAME list.
+        assert.ok(guideList.includes('entry.stopSeconds <= now'), 'finished programmes are omitted');
+        assert.ok(guideList.includes('live.sort((a, b) => a.startSeconds - b.startSeconds)'), 'one continuous start-sorted list');
+        // The component file itself is deleted (no orphaned duplicate UI).
+        let orphanExists = true;
+        try { readFileSync(new URL('../src/lib/components/live-tv/LiveTvNowPlaying.svelte', import.meta.url), 'utf8'); } catch { orphanExists = false; }
+        assert.ok(!orphanExists, 'the orphaned LiveTvNowPlaying component file is deleted');
         // It renders the page's EXISTING guide state — never fetches.
         assert.ok(guideSheet.includes('{guide}'), 'the sheet renders the page guide state');
         assert.ok(guideSheet.includes('{loading}'), 'the sheet renders the page loading state');
         assert.ok(guideSheet.includes('{errorMessage}'), 'the sheet renders the page error state');
         assert.ok(guideSheet.includes('{onretry}'), 'the sheet reuses the page retry');
+        assert.ok(guideSheet.includes('{nowSeconds}'), 'the sheet forwards the page clock (the honest current marker)');
         assert.ok(!guideSheet.includes('getLiveTvGuide'), 'the sheet NEVER calls the guide API');
         assert.ok(!guideSheet.includes('loadGuide'), 'the sheet NEVER triggers a page guide load');
         assert.ok(!guideSheet.includes('fetch('), 'the sheet never fetches');
@@ -380,7 +386,7 @@ function sliceOf(source: string, start: string, end: string): string {
         // The page-level guide flow is unchanged (LT-4 independence).
         assert.ok(page.includes('function retryGuide(): void {'), 'the page retry survives');
         assert.ok(page.includes('void loadGuide(channel);'), 'guide loads with the selection');
-        ok('D. guide sheet: Now Playing + Up Next + Full Guide, existing state, no refetch, no-channel disabled, retry kept');
+        ok('D. guide sheet: single continuous guide list with honest current marking, existing state, no refetch, no-channel disabled, retry kept');
 }
 
 // ============================================================

@@ -11,7 +11,7 @@
   // select flow: they are handed straight from LT-2 to engine.load() and are
   // NEVER stored in reactive state, URL params, storage or logs (plan §11).
   // Reactive state carries only non-sensitive data: catalogue metadata
-  // (id/name/category/logo/language), engine states and SAFE messages from
+  // (id/name/category/logo), engine states and SAFE messages from
   // the fixed LT-2/LT-3 tables.
   //
   // CHANNEL SWITCHING (LT-4 brief §9, plan §9 — the critical path):
@@ -40,16 +40,18 @@
   //   Shaka. The activation point is the engine 'error' subscription,
   //   identity-guarded so a stale engine can never mount a fallback.
   //
-  // PAGE LAYOUT (LT-18 §4 — compact, mobile-first):
+  // PAGE LAYOUT (LT-18 §4 — compact, mobile-first; LT-19 updates):
   //     MAVERO / Live TV (title)
   //     PLAYER (controls INSIDE the player surface — LiveTvPlayer)
   //     TOOLBAR [Search channels…] [Filter] [Guide]
-  //     CHANNELS (search + category + language filtered list)
-  //   The permanent category chip row is GONE (the Filter sheet owns
-  //   category + the TRUTHFUL data-derived language dimension), and the
-  //   guide experience lives in the Guide sheet (NOW PLAYING + UP NEXT +
-  //   FULL GUIDE in one place) instead of permanent page sections. Both
-  //   sheets render as overlays, never as page structure.
+  //     CHANNELS (search + category filtered list)
+  //   The permanent category chip row is GONE (the Filter sheet owns the
+  //   category dimension — the ORIGINAL provider taxonomy, no separate
+  //   language section — LT-19), and the guide experience lives in the
+  //   Guide sheet (the FULL GUIDE schedule — one continuous list whose
+  //   current programme is marked "On air" — LT-19) instead of permanent
+  //   page sections. Both sheets render as overlays, never as page
+  //   structure.
   //
   // SEARCH/FILTERS: 100% local filtering of the loaded catalogue through
   // the LT-2 pure utilities — no per-keystroke network, no URL params, no
@@ -80,9 +82,7 @@
     getLiveTvGuide,
     resolveLiveTvPlayback,
     extractLiveTvCategories,
-    extractLiveTvLanguages,
     filterLiveTvChannelsByCategory,
-    filterLiveTvChannelsByLanguage,
     filterLiveTvChannelsByQuery
   } from '$lib/client/live-tv/api';
   import { isLiveTvError } from '$lib/client/live-tv/errors';
@@ -153,12 +153,13 @@
 
   // ---------------------------------------------------------------------
   // Search + filters (LOCAL filtering only — LT-2 pure utilities).
-  // LT-18: category + language live in the Filter sheet; both apply
-  // immediately and compose with the toolbar search.
+  // LT-19: the category filter lives in the Filter sheet; it applies
+  // immediately and composes with the toolbar search. Category values are
+  // the ORIGINAL provider taxonomy (language-like values included as
+  // ordinary categories; no separate language dimension).
   // ---------------------------------------------------------------------
   let query = $state('');
   let category = $state(''); // '' = All
-  let language = $state(''); // '' = All
   let searchInputEl: HTMLInputElement | undefined = $state();
 
   // LT-18 sheet open state (page-owned; overlays, never page sections).
@@ -166,18 +167,14 @@
   let guideSheetOpen = $state(false);
 
   const categories = $derived(extractLiveTvCategories(channels));
-  // Languages are TRUTHFUL data only: the distinct normalized languages of
-  // the loaded catalogue (channels whose upstream category is a language).
-  const languages = $derived(extractLiveTvLanguages(channels));
   const visibleChannels = $derived.by(() => {
     let list = filterLiveTvChannelsByCategory(channels, category);
-    list = filterLiveTvChannelsByLanguage(list, language);
     const trimmed = query.trim();
     if (trimmed) list = filterLiveTvChannelsByQuery(list, trimmed);
     return list;
   });
-  const filtersActive = $derived(Boolean(category || language));
-  const activeFilterCount = $derived((category ? 1 : 0) + (language ? 1 : 0));
+  const filtersActive = $derived(Boolean(category));
+  const activeFilterCount = $derived(category ? 1 : 0);
 
   // Incremental rendering: the catalogue can exceed 1000 channels; the grid
   // renders in bounded batches behind an IntersectionObserver sentinel (the
@@ -195,14 +192,8 @@
     resetVisibleLimit();
   }
 
-  function applyLanguage(next: string): void {
-    language = next;
-    resetVisibleLimit();
-  }
-
   function resetFilters(): void {
     category = '';
-    language = '';
     resetVisibleLimit();
   }
 
@@ -610,7 +601,7 @@
       </button>
     </section>
 
-    <!-- Channel catalogue (respects search + category + language filters) -->
+    <!-- Channel catalogue (respects search + category filters) -->
     <section class="ltv-channels" aria-label="Channels">
       <div class="channels-head">
         <h2 class="ltv-section-title">Channels</h2>
@@ -678,12 +669,9 @@
 <LiveTvFilterSheet
   open={filterSheetOpen}
   {categories}
-  {languages}
   selectedCategory={category}
-  selectedLanguage={language}
   onclose={() => (filterSheetOpen = false)}
   onselectcategory={applyCategory}
-  onselectlanguage={applyLanguage}
   onreset={resetFilters}
 />
 <LiveTvGuideSheet

@@ -1,22 +1,21 @@
 <script lang="ts">
-  // LT-18 — Live TV Filter sheet (presentation only).
+  // LT-18 — Live TV Filter sheet (presentation only); LT-19 — category-only.
   //
   // The /live-tv page's ONE filter surface, replacing the permanent category
   // chip row. Opens as a bottom sheet on mobile and a centered dialog on
   // larger screens (the same markup, one CSS switch at 640px).
   //
-  // DATA TRUTHFULNESS (LT-18 brief §4D):
+  // DATA TRUTHFULNESS (LT-19):
   //   * Category chips are the page's data-derived list (LT-2
-  //     extractLiveTvCategories) rendered through the existing
-  //     LiveTvCategoryBar (wrap layout).
-  //   * Language chips are the page's data-derived list (LT-18
-  //     extractLiveTvLanguages — ONLY channels whose upstream category IS a
-  //     language contribute; nothing is fabricated). When the loaded
-  //     catalogue exposes no languages, the section is omitted entirely
-  //     rather than showing a fake dimension.
-  //   * Both filters apply IMMEDIATELY (page-owned reactive state; local
+  //     extractLiveTvCategories over the ORIGINAL provider `category` values)
+  //     rendered through the existing LiveTvCategoryBar (wrap layout).
+  //     Language-like values the provider supplies as categories (English,
+  //     Tamil, Gujarati, …) appear as ordinary category options — the
+  //     original taxonomy is never reinterpreted. The former separate
+  //     Language section is gone.
+  //   * The filter applies IMMEDIATELY (page-owned reactive state; local
   //     filtering only — no network, no URL params, no persistence).
-  //     "Apply" acknowledges and closes; "Reset" clears both filters.
+  //     "Apply" acknowledges and closes; "Reset" clears the filter.
   //
   // A11y: role="dialog" with aria-modal, a labelled heading, Escape closes
   // (listened at the window level while open — it must work no matter where
@@ -29,35 +28,26 @@
   let {
     open = false,
     categories = [],
-    languages = [],
     selectedCategory = '',
-    selectedLanguage = '',
     onclose = () => {},
     onselectcategory = (category: string) => {},
-    onselectlanguage = (language: string) => {},
     onreset = () => {}
   }: {
     /** Whether the sheet is open (the page owns the state). */
     open?: boolean;
-    /** Data-derived category list (page-owned). */
+    /** Data-derived category list (page-owned; original provider values). */
     categories?: string[];
-    /** Data-derived language list (page-owned; may be empty). */
-    languages?: string[];
     /** The active category; '' = All. */
     selectedCategory?: string;
-    /** The active language; '' = All. */
-    selectedLanguage?: string;
     /** Close the sheet (backdrop, Escape, Apply, X). */
     onclose?: () => void;
     /** Apply a category IMMEDIATELY ('' = All). */
     onselectcategory?: (category: string) => void;
-    /** Apply a language IMMEDIATELY ('' = All). */
-    onselectlanguage?: (language: string) => void;
     /** Reset every filter back to All (stays open for a fresh pick). */
     onreset?: () => void;
   } = $props();
 
-  const filtersActive = $derived(Boolean(selectedCategory || selectedLanguage));
+  const filtersActive = $derived(Boolean(selectedCategory));
 
   let sheetEl: HTMLElement | undefined = $state();
 
@@ -112,30 +102,6 @@
           onselect={onselectcategory}
         />
       </section>
-
-      {#if languages.length > 0}
-        <section class="sheet-section" aria-label="Filter by language">
-          <h3 class="section-label">Language</h3>
-          <div class="ltv-language-bar" role="group" aria-label="Filter channels by language">
-            <button
-              type="button"
-              class="ltv-chip"
-              class:active={!selectedLanguage}
-              aria-pressed={!selectedLanguage}
-              onclick={() => onselectlanguage('')}
-            >All</button>
-            {#each languages as language (language)}
-              <button
-                type="button"
-                class="ltv-chip"
-                class:active={selectedLanguage === language}
-                aria-pressed={selectedLanguage === language}
-                onclick={() => onselectlanguage(language)}
-              >{language}{#if selectedLanguage === language}<Check size={12} aria-hidden="true" />{/if}</button>
-            {/each}
-          </div>
-        </section>
-      {/if}
     </div>
 
     <footer class="sheet-foot">
@@ -241,48 +207,6 @@
     text-transform: uppercase;
   }
 
-  /* Language chips mirror the category bar's wrapped layout. */
-  .ltv-language-bar {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 8px;
-    min-width: 0;
-    max-width: 100%;
-    padding: 2px 2px 4px;
-  }
-  .ltv-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    flex: 0 0 auto;
-    min-height: 40px;
-    padding: 0 14px;
-    border: 1px solid var(--color-border);
-    border-radius: 999px;
-    color: var(--color-text-muted);
-    background: rgba(8, 11, 13, .55);
-    font-size: .74rem;
-    font-weight: 700;
-    letter-spacing: .01em;
-    white-space: nowrap;
-    cursor: pointer;
-    transition: color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out);
-  }
-  .ltv-chip:hover {
-    color: var(--color-text);
-    border-color: var(--color-border-strong);
-    background: var(--color-surface-raised);
-  }
-  .ltv-chip.active {
-    color: var(--color-primary);
-    border-color: var(--color-primary-border);
-    background: var(--color-primary-soft);
-    box-shadow: var(--glow-primary);
-  }
-  .ltv-chip.active :global(svg) { color: var(--color-primary); }
-  .ltv-chip:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
-
   .sheet-foot {
     display: flex;
     align-items: center;
@@ -328,6 +252,6 @@
   .sheet-apply:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 
   @media (prefers-reduced-motion: reduce) {
-    .ltv-chip, .sheet-reset, .sheet-apply, .sheet-close { transition: none; }
+    .sheet-reset, .sheet-apply, .sheet-close { transition: none; }
   }
 </style>

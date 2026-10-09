@@ -49,16 +49,6 @@ export type LiveTvChannel = {
         category?: string;
         /** Logo URL exactly as LiveGT provides it. Omitted when the source has no usable logo. */
         logo?: string;
-        /**
-         * LT-18 — the channel's LANGUAGE, derived ONLY from the truthful
-         * upstream `category` value when that value is a recognized language
-         * name (LiveGT V1 has NO dedicated language field — verified against
-         * the live wire payload 2026-10-09: fields are exactly
-         * id/name/category/logo/embed/watch). Omitted for genre-classified
-         * channels (News, Sports, Movies, …) — never guessed, never
-         * fabricated. Normalized in api.ts (liveTvLanguageFromCategory).
-         */
-        language?: string;
 };
 
 /**
