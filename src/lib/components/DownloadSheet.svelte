@@ -55,6 +55,14 @@
   // deterministic slug; the alternate is offered as a manual fallback.
   export let releaseYear: number | undefined = undefined;
   export let onClose: () => void = () => {};
+  // MAV-23 Fix 5 — title-palette contract. The DetailPage forwards the
+  // ACTIVE title's artwork-derived palette as the SAME inline --dp-*
+  // custom-property string the page root uses (buildPaletteStyle output).
+  // The sheet applies it on its own layer: scoped, non-global, discarded
+  // with the layer on close, updated automatically on title switch.
+  // Empty string (standalone entry points / no palette) keeps the exact
+  // previous neutral look through the var() fallbacks below.
+  export let paletteStyle: string = '';
 
   // ----- Internal state -----
   // The currently-selected provider (object, not just id) — recomputed when
@@ -387,7 +395,7 @@
 <svelte:window onkeydown={handleKeydown} onclick={handleWindowClick} />
 
 {#if open}
-  <div class="dl-layer" role="presentation">
+  <div class="dl-layer" role="presentation" style={paletteStyle}>
     <button class="dl-backdrop" aria-label="Close download sheet" onclick={handleBackdropClick}></button>
     <div
       class="dl-sheet"
@@ -700,6 +708,19 @@
     align-items: end;
     /* Allow pointer events through to the backdrop, but the sheet itself
        captures its own. */
+
+    /* MAV-23 Fix 5 — title-palette adoption. The parent DetailPage passes
+       the active title's palette as --dp-* custom properties on this
+       layer; every surface below consumes them through the design-system
+       aliases. Without a palette (standalone entry points) every fallback
+       preserves the exact previous neutral styling. The override is
+       scoped to THIS layer — it never reaches :root or other routes. */
+    --accent: var(--dp-accent, var(--color-primary, #00ff9c));
+    --accent-strong: var(--dp-accent, var(--color-primary-hover, #00e676));
+    --accent-soft: var(--dp-accent-soft, var(--color-primary-soft, rgba(0, 255, 156, .08)));
+    --accent-2: var(--dp-accent-2, var(--color-secondary, #00d9ff));
+    --accent-2-soft: var(--dp-accent-2-soft, var(--color-secondary-soft, rgba(0, 217, 255, .08)));
+    --glow-primary: 0 0 20px var(--dp-glow, rgba(0, 255, 156, .15));
   }
   .dl-backdrop {
     position: absolute;
@@ -721,10 +742,10 @@
     overflow: hidden;
     display: flex;
     flex-direction: column;
-    border: 1px solid rgba(255, 255, 255, 0.14);
+    border: 1px solid var(--dp-accent-border, rgba(255, 255, 255, 0.14));
     border-bottom: 0;
     border-radius: var(--radius-xl, 26px) var(--radius-xl, 26px) 0 0;
-    background: #0d0d0d;
+    background: var(--dp-deep, #0d0d0d);
     box-shadow: 0 -18px 80px rgba(0, 0, 0, 0.55);
     animation: dl-sheet-in 260ms var(--ease-out, cubic-bezier(.22, 1, .36, 1));
     outline: none;
@@ -743,12 +764,12 @@
     justify-content: space-between;
     gap: 16px;
     padding: 12px 18px 12px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    border-bottom: 1px solid var(--dp-accent-border, rgba(255, 255, 255, 0.08));
     flex: 0 0 auto;
   }
   .dl-header-title { min-width: 0; flex: 1; }
   .dl-eyebrow {
-    color: #646464;
+    color: var(--dp-accent, #646464);
     font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
     font-size: 0.5rem;
     font-weight: 700;
@@ -757,7 +778,7 @@
   }
   .dl-header h2 {
     margin: 4px 0 0;
-    color: #f5f5f5;
+    color: var(--color-text, #f5f5f5);
     font-size: 1rem;
     font-weight: 800;
     letter-spacing: -0.015em;
@@ -779,17 +800,17 @@
     align-items: center;
     gap: 8px;
     padding: 8px 12px;
-    border: 1px solid rgba(255, 255, 255, 0.14);
+    border: 1px solid var(--dp-accent-border, rgba(255, 255, 255, 0.14));
     border-radius: 999px;
-    color: #f5f5f5;
-    background: rgba(255, 255, 255, 0.06);
+    color: var(--color-text, #f5f5f5);
+    background: var(--dp-surface, rgba(255, 255, 255, 0.06));
     font-size: 0.72rem;
     font-weight: 700;
     cursor: pointer;
     transition: background 180ms ease, border-color 180ms ease;
     max-width: 220px;
   }
-  .dl-dropdown-trigger:hover { background: rgba(255, 255, 255, 0.12); border-color: rgba(255, 255, 255, 0.24); }
+  .dl-dropdown-trigger:hover { background: var(--dp-accent-soft, rgba(255, 255, 255, 0.12)); border-color: var(--dp-accent, rgba(255, 255, 255, 0.24)); }
   .dl-dropdown-label {
     overflow: hidden;
     text-overflow: ellipsis;
@@ -811,9 +832,9 @@
     margin: 0;
     padding: 6px;
     list-style: none;
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    border: 1px solid var(--dp-accent-border, rgba(255, 255, 255, 0.12));
     border-radius: 12px;
-    background: #141414;
+    background: var(--dp-deep-alt, #141414);
     box-shadow: 0 18px 44px rgba(0, 0, 0, 0.6);
     animation: dl-fade 140ms ease;
   }
@@ -835,7 +856,7 @@
     padding: 9px 11px;
     border: 0;
     border-radius: 8px;
-    color: #c7c7cc;
+    color: var(--color-text-muted, #c7c7cc);
     background: transparent;
     font-size: 0.74rem;
     font-weight: 600;
@@ -843,8 +864,8 @@
     cursor: pointer;
     transition: background 140ms ease, color 140ms ease;
   }
-  .dl-dropdown-item:hover { background: rgba(255, 255, 255, 0.06); color: #f5f5f5; }
-  .dl-dropdown-item.active { background: rgba(255, 255, 255, 0.1); color: #fff; }
+  .dl-dropdown-item:hover { background: var(--dp-accent-soft, rgba(255, 255, 255, 0.06)); color: var(--color-text, #f5f5f5); }
+  .dl-dropdown-item.active { background: var(--dp-accent-soft, rgba(255, 255, 255, 0.1)); color: var(--color-text, #fff); }
   .dl-item-name {
     flex: 1 1 auto;
     min-width: 0;
@@ -857,8 +878,8 @@
     margin-left: auto;
     padding: 2px 7px;
     border-radius: 999px;
-    color: #0d0d0d;
-    background: #f5f5f5;
+    color: var(--dp-deep, #0d0d0d);
+    background: var(--dp-accent, #f5f5f5);
     font-size: 0.55rem;
     font-weight: 800;
     text-transform: uppercase;
@@ -870,14 +891,14 @@
     place-items: center;
     width: 34px;
     height: 34px;
-    border: 1px solid rgba(255, 255, 255, 0.14);
+    border: 1px solid var(--dp-accent-border, rgba(255, 255, 255, 0.14));
     border-radius: 50%;
-    color: #b7b7bd;
-    background: rgba(245, 246, 250, 0.04);
+    color: var(--color-text-muted, #b7b7bd);
+    background: var(--dp-surface, rgba(245, 246, 250, 0.04));
     cursor: pointer;
     transition: color 180ms ease, border-color 180ms ease, background 180ms ease;
   }
-  .dl-close:hover { color: #fff; border-color: rgba(255, 255, 255, 0.3); background: rgba(255, 255, 255, 0.08); }
+  .dl-close:hover { color: var(--color-text, #fff); border-color: var(--dp-accent, rgba(255, 255, 255, 0.3)); background: var(--dp-accent-soft, rgba(255, 255, 255, 0.08)); }
 
   .dl-body {
     flex: 1 1 auto;
@@ -979,8 +1000,8 @@
     align-items: center;
     justify-content: center;
     gap: 12px;
-    color: #b7b7bd;
-    background: #0a0a10;
+    color: var(--color-text-muted, #b7b7bd);
+    background: var(--dp-deep, #0a0a10);
     font-size: 0.78rem;
   }
   .dl-spin { animation: dl-spin 0.9s linear infinite; }
@@ -995,11 +1016,11 @@
     gap: 10px;
     padding: 40px 20px;
     text-align: center;
-    color: #b7b7bd;
-    background: #0a0a10;
+    color: var(--color-text-muted, #b7b7bd);
+    background: var(--dp-deep, #0a0a10);
   }
-  .dl-empty h3 { margin: 6px 0 0; color: #f5f5f5; font-size: 1rem; font-weight: 800; }
-  .dl-empty p { margin: 0; max-width: 460px; color: #969696; font-size: 0.78rem; line-height: 1.6; }
+  .dl-empty h3 { margin: 6px 0 0; color: var(--color-text, #f5f5f5); font-size: 1rem; font-weight: 800; }
+  .dl-empty p { margin: 0; max-width: 460px; color: var(--color-text-deep, #969696); font-size: 0.78rem; line-height: 1.6; }
   .dl-open-external {
     display: inline-flex;
     align-items: center;
@@ -1007,14 +1028,14 @@
     margin-top: 14px;
     padding: 10px 16px;
     border-radius: 999px;
-    color: #0d0d0d;
-    background: #f5f5f5;
+    color: var(--dp-deep, #0d0d0d);
+    background: var(--dp-accent, #f5f5f5);
     font-size: 0.78rem;
     font-weight: 800;
     text-decoration: none;
     transition: transform 180ms ease, box-shadow 180ms ease;
   }
-  .dl-open-external:hover { transform: translateY(-1px); box-shadow: 0 8px 24px rgba(255, 255, 255, 0.18); }
+  .dl-open-external:hover { transform: translateY(-1px); box-shadow: 0 8px 24px var(--dp-glow, rgba(255, 255, 255, 0.18)); }
 
   /* External-sub-server info banner. Shown for providers that open
      download servers in a separate browsing context (Cineverse today).
@@ -1103,18 +1124,18 @@
     align-items: center;
     gap: 5px;
     padding: 4px 10px;
-    border: 1px solid rgba(255, 255, 255, 0.14);
+    border: 1px solid var(--dp-accent-border, rgba(255, 255, 255, 0.14));
     border-radius: 999px;
-    color: #c7c7cc;
-    background: rgba(255, 255, 255, 0.04);
+    color: var(--color-text-muted, #c7c7cc);
+    background: var(--dp-surface, rgba(255, 255, 255, 0.04));
     font: inherit;
     font-size: 0.6rem;
     font-weight: 700;
     cursor: pointer;
     transition: color 180ms ease, background 180ms ease, border-color 180ms ease;
   }
-  .dl-alt-toggle:hover { color: #f5f5f5; background: rgba(255, 255, 255, 0.1); border-color: rgba(255, 255, 255, 0.24); }
-  .dl-alt-toggle[aria-pressed='true'] { color: #0d0d0d; background: #f5f5f5; border-color: transparent; }
+  .dl-alt-toggle:hover { color: var(--color-text, #f5f5f5); background: var(--dp-accent-soft, rgba(255, 255, 255, 0.1)); border-color: var(--dp-accent, rgba(255, 255, 255, 0.24)); }
+  .dl-alt-toggle[aria-pressed='true'] { color: var(--dp-deep, #0d0d0d); background: var(--dp-accent, #f5f5f5); border-color: transparent; }
   .dl-alt-tag {
     display: inline-block;
     margin-left: 6px;

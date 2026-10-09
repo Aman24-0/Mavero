@@ -75,8 +75,14 @@ assert.match(detailSrc, /class="hero-info"/, 'DetailPage has the hero-info secti
 assert.match(detailSrc, /class="actions"/, 'DetailPage has actions section');
 assert.match(detailSrc, /class="cast-section"/, 'DetailPage has cast-section (renders when cast exists)');
 
-// --- 9. Trailer modal uses YouTube embed with autoplay ---
-assert.match(detailSrc, /trailer-modal/, 'DetailPage has trailer-modal');
+// --- 9. Inline trailer (MAV-23 supersession: the former modal became the
+// approved INLINE player in the cinematic backdrop — same YouTube embed
+// source contract; Trailer/Trailer-Off toggle + adjacent fullscreen
+// control replace the dialog chrome) ---
+assert.match(detailSrc, /class="trailer-inline"/, 'DetailPage renders the trailer INLINE in the hero (MAV-23: no separate modal)');
+assert.doesNotMatch(detailSrc, /trailer-modal/, 'the separate trailer modal layer is gone');
+assert.match(detailSrc, /\{trailerActive \? 'Trailer Off' : 'Trailer'\}/, 'the toggle label flips Trailer / Trailer Off while playback is active');
+assert.match(detailSrc, /trailer-fs-btn/, 'an adjacent fullscreen control renders while the trailer is active');
 assert.match(detailSrc, /youtube\.com\/embed\/\$\{trailerKey\}/, 'Trailer iframe uses YouTube embed with trailerKey');
 
 // --- 10. Custom Dropdown component ---

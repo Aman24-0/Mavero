@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
-  import { ArrowLeft, Heart, Play, Share2, Star, ListPlus, Film, X, Download, AlertCircle, LoaderCircle } from 'lucide-svelte';
+  import { ArrowLeft, Heart, Play, Share2, Star, ListPlus, Film, Download, AlertCircle, LoaderCircle, AlertTriangle, Maximize } from 'lucide-svelte';
   import SelectionSheet from '$components/SelectionSheet.svelte';
   import DownloadSheet from '$components/DownloadSheet.svelte';
   import type { ContentType } from '$data/content';
@@ -39,10 +39,25 @@
   let resumeEpisode = $state<{ season: number; episode: number } | undefined>(undefined);
   let hasActiveProgress = $state(false);
   let overviewExpanded = $state(false);
-  let trailerOpen = $state(false);
-  // Phase 4-E: trailer modal focus management.
-  let trailerModal = $state<HTMLDivElement>();
-  let trailerTrigger: HTMLElement | null = null;
+  // MAV-23 Fix 4 — INLINE trailer playback inside the cinematic backdrop.
+  // The trailer plays in the hero artwork area using the SAME YouTube
+  // embed source contract as the former modal (no new provider, no new
+  // stream, no untrusted fetch). The secondary "Trailer" button toggles
+  // playback; while active its label reads "Trailer Off" and an adjacent
+  // accessible Fullscreen control appears. Stopping unmounts the iframe,
+  // which releases the media element, its network fetches and listeners.
+  let trailerActive = $state(false);
+  let trailerStatus = $state<'loading' | 'ready' | 'error'>('loading');
+  // Retry remounts a FRESH iframe ({#key trailerAttempt}) — no stale media.
+  let trailerAttempt = $state(0);
+  let trailerContainer = $state<HTMLDivElement | null>(null);
+  let trailerFullscreen = $state(false);
+  let trailerToggle: HTMLElement | null = null;
+  let trailerLoadTimer: ReturnType<typeof setTimeout> | undefined = undefined;
+  // YouTube does not surface embed playback errors to the parent page
+  // without its IFrame API, so a bounded load timeout is the honest
+  // error signal: if the frame never loads, the error state renders.
+  const TRAILER_LOAD_TIMEOUT_MS = 12000;
 
   // ----- Download sheet state -----
   // The downloader registry is loaded lazily from the public
@@ -276,6 +291,15 @@
     void posterSrc;
     heroArtworkFailed = false;
     posterFailed = false;
+    // MAV-23 Fix 4 — stale-playback guard: navigating to another title
+    // must never keep the previous title's trailer playing. Stopping
+    // unmounts the iframe (media + listeners released with the DOM node).
+    // untrack() is REQUIRED: the playback state must NOT become a
+    // dependency of this effect, or the stop itself would re-trigger the
+    // effect and immediately undo a fresh start.
+    untrack(() => {
+      if (trailerActive) stopTrailer();
+    });
   });
 
   $effect(() => {
@@ -352,6 +376,13 @@
       // MAV-22 — palette teardown: no in-flight extraction may outlive
       // the page (nothing can mutate another route's state).
       paletteController.dispose();
+      // MAV-23 Fix 4 — teardown: no iframe media, load timer or
+      // fullscreen state may outlive the page (client-side navigation
+      // away during playback must leave nothing running).
+      clearTrailerLoadTimeout();
+      if (trailerActive && typeof document !== 'undefined' && document.fullscreenElement) {
+        void document.exitFullscreen().catch(() => {});
+      }
       if (typeof window !== 'undefined') {
         window.removeEventListener('mavero:sync-status', handleSyncComplete);
       }
@@ -447,40 +478,119 @@
     } catch { /* cancelled share */ }
   }
 
+  // ============================================================
+  // MAV-23 Fix 4 — inline trailer lifecycle.
+  //
+  //   openTrailer()  — user-initiated start: mounts ONE iframe in the
+  //                    hero, arms the load timeout, moves focus to the
+  //                    adjacent fullscreen control (keyboard reachable).
+  //   stopTrailer()  — Trailer Off: unmounts the iframe (playback stops,
+  //                    media/listeners released), exits fullscreen if the
+  //                    user fullscreened the player, restores focus.
+  //   Fullscreen     — Fullscreen API on the player container, guarded by
+  //                    try/catch; landscape orientation lock is attempted
+  //                    ONLY after a user-initiated fullscreen entry AND
+  //                    only where the API exists (Android/Chromium).
+  //                    Unsupported platforms keep inline playback — the
+  //                    limitation is documented, never faked.
+  // ============================================================
   function openTrailer() {
-    if (!hasTrailer) return;
-    // Phase 4-E: store the trigger element so we can restore focus on close.
-    trailerTrigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    trailerOpen = true;
+    if (!hasTrailer || trailerActive) return;
+    trailerToggle = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    trailerActive = true;
+    trailerStatus = 'loading';
+    trailerAttempt += 1;
+    armTrailerLoadTimeout();
     haptic('light');
-    // Auto-focus the close button after the modal renders.
-    void tick().then(() => trailerModal?.querySelector<HTMLElement>('.trailer-close')?.focus());
+    void tick().then(() => trailerContainer?.querySelector<HTMLElement>('.trailer-fs-btn')?.focus());
   }
-  function closeTrailer() {
-    trailerOpen = false;
-    // Phase 4-E: restore focus to the triggering element.
-    trailerTrigger?.focus();
-    trailerTrigger = null;
+
+  function stopTrailer() {
+    if (!trailerActive) return;
+    clearTrailerLoadTimeout();
+    if (trailerFullscreen) void exitTrailerFullscreen();
+    trailerActive = false;
+    trailerStatus = 'loading';
+    // Focus returns to the toggle (it is the same button — label flips
+    // back to "Trailer").
+    trailerToggle?.focus();
+    trailerToggle = null;
   }
-  function handleTrailerKeydown(event: KeyboardEvent) {
-    if (!trailerOpen) return;
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      closeTrailer();
-      return;
+
+  function armTrailerLoadTimeout() {
+    clearTrailerLoadTimeout();
+    trailerLoadTimer = setTimeout(() => {
+      if (trailerActive && trailerStatus === 'loading') trailerStatus = 'error';
+    }, TRAILER_LOAD_TIMEOUT_MS);
+  }
+
+  function clearTrailerLoadTimeout() {
+    if (trailerLoadTimer) {
+      clearTimeout(trailerLoadTimer);
+      trailerLoadTimer = undefined;
     }
-    // Phase 4-E: Tab trap — focus stays inside the trailer modal.
-    if (event.key !== 'Tab' || !trailerModal) return;
-    const focusable = [...trailerModal.querySelectorAll<HTMLElement>('button:not([disabled]), ref], [tabindex]:not([tabindex="-1"])')];
-    if (!focusable.length) return;
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    if (event.shiftKey && document.activeElement === first) {
+  }
+
+  function retryTrailer() {
+    if (!hasTrailer) return;
+    trailerStatus = 'loading';
+    trailerAttempt += 1;
+    armTrailerLoadTimeout();
+  }
+
+  async function enterTrailerFullscreen() {
+    const el = trailerContainer;
+    if (!el || !trailerActive) return;
+    haptic('light');
+    try {
+      if (el.requestFullscreen) {
+        await el.requestFullscreen({ navigationUI: 'hide' });
+      } else if ('webkitRequestFullscreen' in el) {
+        // Older WebKit fallback — best-effort, guarded below.
+        (el as HTMLElement & { webkitRequestFullscreen: () => void }).webkitRequestFullscreen();
+      }
+    } catch {
+      /* Fullscreen unsupported or refused — inline playback continues
+         (documented limitation: e.g. iOS Safari on non-video elements). */
+    }
+    // Landscape lock: Chromium/Android only, valid ONLY inside
+    // fullscreen and ONLY from this user-initiated handler. Any
+    // unsupported/refused case silently keeps the current orientation.
+    try {
+      const orientation = screen.orientation as (ScreenOrientation & { lock?: (orientation: string) => Promise<void> }) | undefined;
+      if (orientation?.lock && document.fullscreenElement) {
+        await orientation.lock('landscape');
+      }
+    } catch {
+      /* Orientation lock unsupported (e.g. iOS Safari) — playback
+         continues in the current orientation (documented limitation). */
+    }
+  }
+
+  async function exitTrailerFullscreen() {
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+    } catch { /* already exiting */ }
+    try {
+      (screen.orientation as (ScreenOrientation & { unlock?: () => void }) | undefined)?.unlock?.();
+    } catch { /* unsupported — nothing to unlock */ }
+  }
+
+  // System UI can exit fullscreen on its own (back gesture, notification);
+  // the player then simply returns to the inline layout — state and scroll
+  // position are untouched because fullscreen never scrolls the page.
+  function handleFullscreenChange() {
+    trailerFullscreen = trailerActive && document.fullscreenElement === trailerContainer;
+  }
+
+  function handleTrailerKeydown(event: KeyboardEvent) {
+    if (!trailerActive) return;
+    // Escape stops the inline trailer — EXCEPT while fullscreen, where
+    // the browser itself consumes Escape to exit fullscreen (and the
+    // trailer keeps playing, matching platform convention).
+    if (event.key === 'Escape' && !document.fullscreenElement) {
       event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault();
-      first.focus();
+      stopTrailer();
     }
   }
 
@@ -612,6 +722,7 @@
 </svelte:head>
 
 <svelte:window onkeydown={handleTrailerKeydown} />
+<svelte:document onfullscreenchange={handleFullscreenChange} />
 
 <!-- ============================================================
      MAV-22 — CINEMATIC DETAIL PAGE 3.0.
@@ -639,36 +750,70 @@
   <div class="palette-canvas" class:active={paletteStyle !== ''} aria-hidden="true"></div>
 
   <header class="hero">
-    {#if heroArtworkSrc}
-      <!-- MAV-21 Workstream E — the hero follows the SAME responsive
-           artwork contract as the Discover/Explorer carousels (the
-           established tier decision, documented there): mobile ≤640px
-           standard DPI gets w780 (bandwidth-friendly), mobile retina
-           gets w1280, tablet/desktop ≥641px gets original. A single
-           original-size <img> on a 390px phone was a multi-hundred-KB
-           LCP penalty on every detail page. Sources WITHOUT a tier fall
-           back through the chain; a missing srcset makes that <source>
-           inert, and the <img> fallback (w1280 backdrop, poster when no
-           backdrop exists) still renders. -->
-      <picture>
-        <source media="(max-width: 640px) and (-webkit-min-device-pixel-ratio: 2), (max-width: 640px) and (min-resolution: 192dpi)" srcset={item.backdrop || item.backdropSmall || item.poster} />
-        <source media="(max-width: 640px)" srcset={item.backdropSmall || item.backdrop || item.poster} />
-        <source media="(min-width: 641px)" srcset={item.backdropHero || item.backdrop || item.backdropSmall || item.poster} />
-        <img
-          src={heroArtworkSrc}
-          alt=""
-          class="hero-img"
-          width="1280"
-          height="720"
-          sizes="100vw"
-          loading="eager"
-          fetchpriority="high"
-          decoding="async"
-          onerror={() => (heroArtworkFailed = true)}
-        />
-      </picture>
+    {#if trailerActive && hasTrailer}
+      <!-- MAV-23 Fix 4 — INLINE trailer: plays INSIDE the cinematic
+           backdrop area. The poster-overlap composition, title metadata
+           and actions below are untouched; stopping restores the artwork
+           backdrop exactly. The iframe uses the existing trailer source
+           contract (item.trailerKey → YouTube embed). -->
+      <div class="trailer-inline" bind:this={trailerContainer}>
+        {#if trailerStatus !== 'error'}
+          {#key trailerAttempt}
+            <iframe
+              src={`https://www.youtube.com/embed/${trailerKey}?autoplay=1&rel=0`}
+              title={`${item.title} trailer`}
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
+              allowfullscreen
+              onload={() => { clearTrailerLoadTimeout(); trailerStatus = 'ready'; }}
+              onerror={() => { clearTrailerLoadTimeout(); trailerStatus = 'error'; }}
+            ></iframe>
+          {/key}
+        {/if}
+        {#if trailerStatus === 'loading'}
+          <div class="trailer-inline-note" role="status" aria-live="polite">
+            <LoaderCircle size={22} class="trailer-spinner" />
+            <span>Loading trailer…</span>
+          </div>
+        {:else if trailerStatus === 'error'}
+          <div class="trailer-inline-note trailer-inline-error" role="alert">
+            <AlertTriangle size={22} />
+            <span>Trailer is unavailable right now.</span>
+            <button type="button" class="trailer-inline-retry" onclick={retryTrailer}>Retry</button>
+          </div>
+        {/if}
+      </div>
+    {:else}
+      {#if heroArtworkSrc}
+        <!-- MAV-21 Workstream E — the hero follows the SAME responsive
+             artwork contract as the Discover/Explorer carousels (the
+             established tier decision, documented there): mobile ≤640px
+             standard DPI gets w780 (bandwidth-friendly), mobile retina
+             gets w1280, tablet/desktop ≥641px gets original. A single
+             original-size <img> on a 390px phone was a multi-hundred-KB
+             LCP penalty on every detail page. Sources WITHOUT a tier fall
+             back through the chain; a missing srcset makes that <source>
+             inert, and the <img> fallback (w1280 backdrop, poster when no
+             backdrop exists) still renders. -->
+        <picture>
+          <source media="(max-width: 640px) and (-webkit-min-device-pixel-ratio: 2), (max-width: 640px) and (min-resolution: 192dpi)" srcset={item.backdrop || item.backdropSmall || item.poster} />
+          <source media="(max-width: 640px)" srcset={item.backdropSmall || item.backdrop || item.poster} />
+          <source media="(min-width: 641px)" srcset={item.backdropHero || item.backdrop || item.backdropSmall || item.poster} />
+          <img
+            src={heroArtworkSrc}
+            alt=""
+            class="hero-img"
+            width="1280"
+            height="720"
+            sizes="100vw"
+            loading="eager"
+            fetchpriority="high"
+            decoding="async"
+            onerror={() => (heroArtworkFailed = true)}
+          />
+        </picture>
+      {/if}
+      <div class="hero-scrim" aria-hidden="true"></div>
     {/if}
-    <div class="hero-scrim" aria-hidden="true"></div>
     <button class="back-btn" type="button" onclick={goBack} aria-label="Go back">
       <ArrowLeft size={16} /> <span>Back</span>
     </button>
@@ -757,9 +902,27 @@
               <Share2 size={15} /><span>Share</span>
             </button>
             {#if hasTrailer}
-              <button class="secondary-btn" onclick={openTrailer} aria-haspopup="dialog" aria-expanded={trailerOpen}>
-                <Film size={15} /><span>Trailer</span>
+              <!-- MAV-23 Fix 4 — the toggle doubles as Trailer / Trailer
+                   Off. aria-pressed communicates the playing state; the
+                   adjacent fullscreen control appears only while active. -->
+              <button
+                class="secondary-btn trailer-toggle"
+                class:engaged={trailerActive}
+                aria-pressed={trailerActive}
+                onclick={() => (trailerActive ? stopTrailer() : openTrailer())}
+              >
+                <Film size={15} /><span>{trailerActive ? 'Trailer Off' : 'Trailer'}</span>
               </button>
+              {#if trailerActive}
+                <button
+                  class="secondary-btn trailer-fs-btn"
+                  onclick={enterTrailerFullscreen}
+                  aria-pressed={trailerFullscreen}
+                  aria-label="Show trailer fullscreen"
+                >
+                  <Maximize size={15} /><span>Fullscreen</span>
+                </button>
+              {/if}
             {/if}
           </div>
           {#if saveError}<div class="save-error" role="status">{saveError}</div>{/if}
@@ -899,33 +1062,13 @@
   <SelectionSheet open={statusSheetOpen} eyebrow="MAVERO / My List" title="Add to My List" options={statusSheetOptions} selected={watchlistStatus ?? ''} onClose={closeStatusSheet} onSelect={chooseStatus} />
 </div>
 
-<!-- Trailer modal (only renders when a real trailerKey exists) -->
-{#if trailerOpen && hasTrailer}
-  <div class="trailer-layer" role="presentation">
-    <button class="trailer-backdrop" aria-label="Close trailer" onclick={closeTrailer}></button>
-    <div class="trailer-modal" bind:this={trailerModal} role="dialog" aria-modal="true" aria-label={`${item.title} trailer`} tabindex="-1">
-      <div class="trailer-bar">
-        <div class="trailer-title"><Film size={14} /> {item.title} — Trailer</div>
-        <button class="trailer-close" type="button" aria-label="Close trailer" onclick={closeTrailer}><X size={16} /></button>
-      </div>
-      <div class="trailer-frame">
-        <iframe
-          src={`https://www.youtube.com/embed/${trailerKey}?autoplay=1&rel=0`}
-          title={`${item.title} trailer`}
-          loading="lazy"
-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-          allowfullscreen
-        ></iframe>
-      </div>
-    </div>
-  </div>
-{/if}
-
-<!-- Download sheet (modal bottom-sheet). The sheet is rendered always-on
-     (with open=false) so the iframe lifecycle is owned by the sheet itself;
-     the parent only flips `open` and supplies the media context. -->
+<!-- MAV-23 Fix 5 — the download sheet receives the ACTIVE title palette
+     (the same inline --dp-* custom-property string the page root uses).
+     The sheet applies it scoped to its own layer; closing the sheet or
+     navigating to another title updates/discards it automatically. -->
 <DownloadSheet
   open={downloadSheetOpen}
+  paletteStyle={paletteStyle}
   title={item.title}
   providers={visibleDownloadProviders}
   providersLoading={downloadProvidersLoading}
@@ -982,15 +1125,21 @@
     isolation: isolate;
     overflow-x: clip;
     /* The flowing page backdrop: derived deep tone → global base.
-       Pixel stops anchor the tinted band to the hero/overlap zone;
-       the tail blends into the app background before the footer. */
+       Pixel stops anchor the tinted band to the hero/overlap zone and
+       HOLD the palette-derived tone through the Cast / Episodes region
+       (MAV-23 Fix 2 — the MAV-22 1500px stop faded to near-black exactly
+       below the Cast row). The final stop is a percentage so the tail
+       ALWAYS lands on the app background at the page end, whatever the
+       page height. */
     background: linear-gradient(180deg,
       var(--dp-deep-alt) 0px,
-      var(--dp-deep) 380px,
-      var(--dp-deep) 720px,
-      var(--dp-fade-mid) 1500px,
-      #050708 2100px);
-    padding-bottom: clamp(72px, 8vw, 110px);
+      var(--dp-deep) 420px,
+      var(--dp-deep) 900px,
+      var(--dp-fade-mid) 2100px,
+      #050708 100%);
+    /* MAV-23 Fix 6 — reduced page bottom padding (was clamp(72px, 8vw,
+       110px)); the safe-area inset below covers system chrome. */
+    padding-bottom: clamp(36px, 5vw, 72px);
   }
 
   /* Cross-fade layer: transparent until the artwork palette arrives,
@@ -1001,10 +1150,10 @@
     pointer-events: none;
     background: linear-gradient(180deg,
       var(--dp-deep-alt) 0px,
-      var(--dp-deep) 380px,
-      var(--dp-deep) 720px,
-      var(--dp-fade-mid) 1500px,
-      #050708 2100px);
+      var(--dp-deep) 420px,
+      var(--dp-deep) 900px,
+      var(--dp-fade-mid) 2100px,
+      #050708 100%);
     opacity: 0;
     transition: opacity 480ms var(--ease-out);
   }
@@ -1433,40 +1582,46 @@
   .rec-rating { display: inline-flex; align-items: center; gap: 2px; color: #ffc94d; font-weight: 700; }
   .rec-skeleton { min-width: 0; }
 
-  /* === Trailer modal === (unchanged behavior) */
-  .trailer-layer { position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; padding: 16px; }
-  .trailer-backdrop {
-    position: absolute; inset: 0; border: 0;
-    background: rgba(5,7,8,.85); backdrop-filter: blur(8px);
-    cursor: default;
+  /* === Inline trailer (MAV-23 Fix 4) ===
+     Plays INSIDE the hero backdrop area. The hero keeps its full size;
+     the player fills it (letterboxed by the provider), the loading and
+     error states sit above it, and the back button stays reachable. */
+  .trailer-inline {
+    position: absolute; inset: 0; z-index: 2;
+    background: #000;
   }
-  .trailer-modal {
-    position: relative; width: min(960px, 100%); max-height: 90dvh; overflow: hidden;
-    border: 1px solid var(--color-border-strong); border-radius: var(--radius-lg);
-    background: var(--color-surface); box-shadow: var(--shadow-lg);
-    animation: trailer-in 240ms var(--ease-out);
+  .trailer-inline iframe {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    border: 0;
   }
-  .trailer-bar {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 10px 14px;
-    border-bottom: 1px solid var(--color-border);
-    color: var(--color-text); font-size: .76rem; font-weight: 700;
+  /* Fullscreen: the container itself becomes the screen. */
+  .trailer-inline:fullscreen { position: fixed; width: 100%; height: 100%; }
+  .trailer-inline-note {
+    position: absolute; inset: 0; z-index: 1;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+    padding: 16px; text-align: center;
+    color: var(--color-text);
+    background: rgba(5, 7, 8, 0.72);
+    font-size: 0.8rem; font-weight: 600;
   }
-  .trailer-title { display: inline-flex; align-items: center; gap: 8px; }
-  .trailer-close {
-    display: grid; place-items: center;
-    width: 32px; height: 32px;
-    border: 1px solid var(--color-border-strong); border-radius: 50%;
-    color: var(--color-text-muted);
-    background: rgba(255,255,255,.04);
+  .trailer-inline-note :global(svg) { color: var(--dp-accent); }
+  /* The spinner class passes through the lucide component boundary —
+     scope it globally (Svelte cannot see the forwarded class). */
+  .trailer-inline-note :global(.trailer-spinner) { animation: spin 1s linear infinite; }
+  .trailer-inline-error span { color: var(--color-text-muted); }
+  .trailer-inline-retry {
+    min-height: 40px; padding: 8px 18px;
+    border: 1px solid var(--dp-accent-border); border-radius: 999px;
+    color: var(--color-text); background: var(--dp-accent-soft);
+    font: inherit; font-size: 0.72rem; font-weight: 700;
     cursor: pointer;
-    transition: color var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out);
+    transition: background var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out);
   }
-  .trailer-close:hover { color: var(--color-text); border-color: var(--color-primary-border); }
-  .trailer-close:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
-  .trailer-frame { position: relative; aspect-ratio: 16 / 9; background: #000; }
-  .trailer-frame iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
-  @keyframes trailer-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+  .trailer-inline-retry:hover { background: var(--dp-surface); border-color: var(--dp-accent); }
+  .trailer-inline-retry:focus-visible { outline: 2px solid var(--dp-accent); outline-offset: 2px; }
+  /* The engaged Trailer toggle reads as "on" without shouting. */
+  .trailer-toggle.engaged { background: var(--dp-accent-soft); border-color: var(--dp-accent-border); }
 
   /* ============================================================
      RESPONSIVE — the overlap composition at every surface.
@@ -1520,11 +1675,17 @@
     .details-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   }
 
-  /* MOBILE — final polish for the overlap composition (the base rules
-     ARE the mobile layout; this block tunes spacing/scrim only). */
+  /* MOBILE — MAV-23 Fix 1: the compact fold. The base rules ARE the
+     mobile layout; this block tunes spacing/heights so the COMPLETE
+     cinematic hero composition — poster overlap, title, metadata, genre
+     chips, synopsis preview, Play + secondary actions AND the compact
+     provider chip — lands inside the initial viewport at 360×800,
+     390×844 and 430×932 (with browser chrome budgeted). Everything is a
+     min-height/spacing tune: nothing clips, nothing hides, and the
+     page scrolls normally when content legitimately exceeds the fold. */
   @media (max-width: 640px) {
-    .detail-page { padding-bottom: 96px; }
-    .hero { min-height: clamp(430px, 68vh, 580px); }
+    .detail-page { padding-bottom: calc(36px + env(safe-area-inset-bottom, 0px)); }
+    .hero { min-height: clamp(300px, 44vh, 460px); }
     .back-btn { top: calc(12px + env(safe-area-inset-top)); left: 12px; padding: 0 12px; min-height: 34px; font-size: .68rem; }
     /* The scrim keeps the artwork visible at the top while the overlap
        zone sits on a strong readable fade that lands on the palette
@@ -1540,12 +1701,21 @@
           var(--dp-deep) 100%),
         linear-gradient(90deg, rgba(4,6,7,.36) 0%, rgba(4,6,7,.14) 40%, transparent 68%);
     }
-    .hero-body { width: calc(100% - 24px); margin-top: calc(-1 * clamp(88px, 21vw, 120px)); }
-    .detail-desc { font-size: .76rem; }
+    .hero-body { width: calc(100% - 24px); margin-top: calc(-1 * clamp(78px, 19vw, 112px)); }
+    .hero-grid { grid-template-columns: clamp(96px, 25vw, 124px) minmax(0, 1fr); row-gap: 10px; }
+    .detail-title { font-size: clamp(1.24rem, 5vw, 1.6rem); }
+    .meta-row { margin-top: 6px; }
+    .detail-desc { font-size: .76rem; margin-top: 8px; }
+    /* Compact action block: Play + Download share ONE dominant row
+       (Play keeps the 62% dominance); the secondary row follows. This
+       recovers a full button height vs the MAV-22 stacked rows. */
+    .actions { margin-top: 12px; gap: 8px; }
     .primary-actions { max-width: 100%; }
-    .play-btn { flex: 1 1 100%; min-height: 52px; }
-    .download-btn { flex: 1 1 100%; min-height: 48px; }
-    .secondary-btn { padding: 10px 14px; font-size: .72rem; }
+    .play-btn { flex: 1 1 62%; min-height: 52px; padding: 12px 16px; }
+    .download-btn { flex: 1 1 38%; min-height: 52px; }
+    .secondary-actions { gap: 6px; }
+    .secondary-btn { padding: 10px 12px; font-size: .72rem; }
+    .provider-strip { margin-top: 10px; padding: 5px 10px; }
     .recs-row { grid-auto-columns: clamp(122px, 36vw, 148px); }
   }
 
@@ -1558,15 +1728,19 @@
     .detail-title { font-size: clamp(1.2rem, 3vw, 1.6rem); }
     .detail-desc { -webkit-line-clamp: 1; line-clamp: 1; }
     .primary-actions { max-width: 100%; }
-    .play-btn { flex: 1 1 100%; }
+    /* MAV-23 Fix 1: landscape-short keeps Play + Download on ONE row so
+       the provider chip stays reachable on short viewports. */
+    .play-btn { flex: 1 1 62%; min-height: 46px; }
+    .download-btn { flex: 1 1 38%; min-height: 46px; }
   }
 
   @media (prefers-reduced-motion: reduce) {
     .palette-canvas,
-    .back-btn, .play-btn, .download-btn, .secondary-btn, .trailer-modal,
-    .show-more, .trailer-close, .rec-poster {
+    .back-btn, .play-btn, .download-btn, .secondary-btn,
+    .show-more, .rec-poster, .trailer-inline-retry {
       transition: none !important;
       animation: none !important;
     }
+    .trailer-inline :global(.trailer-spinner) { animation: none !important; }
   }
 </style>

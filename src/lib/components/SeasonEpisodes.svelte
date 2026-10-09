@@ -233,6 +233,13 @@
 </section>
 
 <style>
+  /* MAV-23 Fix 2 — the Seasons/Episodes guide consumes the ACTIVE
+     title's artwork-derived palette through the DetailPage's scoped
+     --dp-* custom properties (CSS-var inheritance from .detail-page).
+     Every former global-green usage now reads a --dp-* var with the
+     ORIGINAL value as its fallback, so a standalone render (no palette
+     ancestor) keeps the exact previous look. No second color-extraction
+     system — the MAV-22 palette engine remains the single source. */
   .ep-section { margin-top: clamp(28px, 4vw, 40px); }
   .ep-head {
     display: flex; align-items: end; justify-content: space-between;
@@ -242,10 +249,10 @@
   }
   .ep-eyebrow {
     display: inline-flex; align-items: center; gap: 7px;
-    color: var(--color-primary);
+    color: var(--dp-accent, var(--color-primary));
     font-size: .58rem; font-weight: 800;
     letter-spacing: .12em; text-transform: uppercase;
-    text-shadow: 0 0 10px rgba(0, 255, 156, .3);
+    text-shadow: 0 0 10px var(--dp-glow, rgba(0, 255, 156, .3));
   }
   .ep-title {
     color: var(--color-text);
@@ -259,7 +266,7 @@
     max-width: 58%; overflow-x: auto;
     padding: 4px;
     border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm);
-    background: rgba(0, 255, 156, .03);
+    background: var(--dp-surface, rgba(0, 255, 156, .03));
     scrollbar-width: none;
   }
   .season-tabs::-webkit-scrollbar { display: none; }
@@ -274,11 +281,12 @@
     transition: color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out);
   }
   .season-tabs button.active {
-    color: #050708; background: var(--color-primary);
-    box-shadow: var(--glow-primary);
+    color: #050708;
+    background: var(--dp-accent, var(--color-primary));
+    box-shadow: 0 0 18px var(--dp-glow, rgba(0, 255, 156, .25));
   }
   .season-tabs button:hover:not(.active) {
-    color: var(--color-text); background: rgba(0, 255, 156, .08);
+    color: var(--color-text); background: var(--dp-accent-soft, rgba(0, 255, 156, .08));
   }
   .season-tabs button:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 
@@ -300,7 +308,7 @@
     font-size: .68rem; font-weight: 700;
     transition: background var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out);
   }
-  .retry-btn:hover { background: var(--color-primary-soft); border-color: var(--color-primary-border); }
+  .retry-btn:hover { background: var(--dp-accent-soft, var(--color-primary-soft)); border-color: var(--dp-accent-border, var(--color-primary-border)); }
   .retry-btn:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 
   .ep-list { padding-top: 8px; }
@@ -317,12 +325,12 @@
     border-radius: var(--radius-sm);
     transition: background var(--motion-fast) var(--ease-out);
   }
-  .ep-row:hover { background: rgba(0, 255, 156, .03); }
+  .ep-row:hover { background: var(--dp-surface, rgba(0, 255, 156, .03)); }
   .ep-row:focus-within {
-    background: rgba(0, 255, 156, .04);
-    /* TV / keyboard focus: lift the row slightly with a cyber-green
+    background: var(--dp-surface, rgba(0, 255, 156, .04));
+    /* TV / keyboard focus: lift the row slightly with a palette-derived
        left rail so the focused episode is unambiguous. */
-    box-shadow: inset 2px 0 0 var(--color-primary);
+    box-shadow: inset 2px 0 0 var(--dp-accent, var(--color-primary));
   }
 
   /* Thumbnail wrapper — preserves aspect-ratio so images never cause
@@ -342,7 +350,7 @@
   .ep-row:hover .ep-thumb-wrap img { transform: scale(1.04); }
   .ep-still {
     background:
-      radial-gradient(circle at 30% 30%, rgba(0,255,156,.05), transparent 55%),
+      radial-gradient(circle at 30% 30%, var(--dp-accent-soft, rgba(0, 255, 156, .05)), transparent 55%),
       var(--color-surface-elevated);
   }
   .ep-num {
@@ -389,8 +397,8 @@
   .ep-play {
     display: grid; place-items: center;
     width: 30px; height: 30px; border-radius: 50%;
-    color: #050708; background: var(--color-primary);
-    box-shadow: 0 4px 14px rgba(0,0,0,.4), var(--glow-primary);
+    color: #050708; background: var(--dp-accent, var(--color-primary));
+    box-shadow: 0 4px 14px rgba(0, 0, 0, .4), 0 0 16px var(--dp-glow, rgba(0, 255, 156, .15));
     text-decoration: none;
     transition: transform var(--motion-fast) var(--ease-out), filter var(--motion-fast) var(--ease-out);
   }
@@ -408,8 +416,8 @@
   }
   .ep-download:hover {
     transform: scale(1.08);
-    background: var(--color-primary-soft);
-    border-color: var(--color-primary-border);
+    background: var(--dp-accent-soft, var(--color-primary-soft));
+    border-color: var(--dp-accent-border, var(--color-primary-border));
   }
   .ep-download:active { transform: scale(.94); }
   .ep-download:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }

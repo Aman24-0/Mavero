@@ -182,8 +182,14 @@ assert.match(detailPage, /\.hero-grid \{[\s\S]*?grid-template-columns: clamp\(10
   'mobile hero grid: poster column + identity column side by side');
 assert.match(detailPage, /\.poster-card \{[\s\S]*?aspect-ratio: 2 \/ 3;/,
   'the poster is a distinct 2:3 card (aspect reserved)');
-assert.match(detailPage, /@media \(max-width: 640px\) \{[\s\S]*?\.play-btn \{ flex: 1 1 100%; min-height: 52px; \}/,
-  'mobile Play is full-width and stays ≥52px (thumb target)');
+// MAV-23 supersession: mobile Play shares ONE dominant row with Download
+// (62% / 38%) instead of stacking two full-width rows — the fold now
+// reaches the provider chip. The ≥52px thumb target and Play's dominance
+// intent are unchanged.
+assert.match(detailPage, /@media \(max-width: 640px\) \{[\s\S]*?\.play-btn \{ flex: 1 1 62%; min-height: 52px;/,
+  'mobile Play keeps the dominant 62% row with a ≥52px thumb target');
+assert.match(detailPage, /@media \(max-width: 640px\) \{[\s\S]*?\.download-btn \{ flex: 1 1 38%; min-height: 52px; \}/,
+  'mobile Download shares the primary row (≥52px thumb target)');
 assert.match(detailPage, /@media \(max-width: 1024px\) and \(orientation: landscape\) and \(max-height: 480px\) \{[\s\S]*?\.hero \{ min-height: auto; height: auto; \}/,
   'landscape-short: hero collapses so title+actions stay visible');
 assert.match(detailPage, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?transition: none !important;[\s\S]*?animation: none !important;/,
@@ -287,10 +293,15 @@ assert.match(detailPage, /<meta property="og:image" content=\{item\.backdrop \|\
   'og:image = backdrop || poster');
 assert.match(detailPage, /<script type="application\/ld\+json">\{structuredData\}<\/script>/,
   'structured data preserved');
-assert.match(detailPage, /if \(event\.shiftKey && document\.activeElement === first\) \{[\s\S]*?last\.focus\(\);[\s\S]*?\} else if \(!event\.shiftKey && document\.activeElement === last\) \{[\s\S]*?first\.focus\(\);/,
-  'trailer modal Tab trap preserved');
-assert.match(detailPage, /trailerTrigger\?\.focus\(\);/,
-  'trailer close restores focus to the trigger');
+// MAV-23 supersession: the trailer is now an INLINE player in the hero —
+// there is no modal to Tab-trap. The keyboard contract is preserved in the
+// inline form: Escape stops playback (except while the browser consumes
+// Escape to exit fullscreen), and focus moves to the adjacent fullscreen
+// control on start / back to the toggle on stop.
+assert.match(detailPage, /event\.key === 'Escape' && !document\.fullscreenElement[\s\S]*?stopTrailer\(\);/,
+  'trailer keyboard contract: Escape stops inline playback (fullscreen-aware)');
+assert.match(detailPage, /trailerToggle\?\.focus\(\);/,
+  'trailer stop restores focus to the trigger (the Trailer toggle)');
 ok('10. preserved: back policy, SEO head, trailer focus management');
 
 // ============================================================

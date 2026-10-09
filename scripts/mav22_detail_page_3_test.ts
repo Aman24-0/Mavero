@@ -333,7 +333,11 @@ assert.match(detailPage, /opacity: 0;[\s\S]*?transition: opacity 480ms var\(--ea
 // The hero scrim lands on the palette deep tone (flows into the page).
 assert.match(detailPage, /var\(--dp-deep\) 100%\)/, 'the hero scrim bottom fades INTO the derived deep tone');
 // The page background is a flowing gradient → global base.
-assert.match(detailPage, /background: linear-gradient\(180deg,[\s\S]*?#050708 2100px\)/, 'the page backdrop flows from the derived tone into the global base');
+// MAV-23 supersession: the final stop is now a percentage (`#050708 100%`)
+// so the palette-derived tint holds through Cast/Episodes and the tail
+// ALWAYS lands on the global base regardless of page height — the same
+// "flows into the global base" intent, no premature near-black plateau.
+assert.match(detailPage, /background: linear-gradient\(180deg,[\s\S]*?#050708 100%\)/, 'the page backdrop flows from the derived tone into the global base');
 
 // Poster OVERLAPS the backdrop on EVERY surface.
 assert.match(detailPage, /\.hero-body \{[\s\S]*?margin-top: calc\(-1 \* clamp\(96px, 20vw, 150px\)\);/, 'the poster body overlaps the artwork (mobile base negative margin)');
@@ -545,7 +549,11 @@ assert.match(detailPage, /navigateBackOr\(\(\) => \{/, 'back: shared policy pres
 assert.match(detailPage, /const watchHref = \$derived\(appendReturnTo\(watchPath, `\$\{page\.url\.pathname\}\$\{page\.url\.search\}\$\{page\.url\.hash\}`\)\);/, 'watch link carries the origin');
 assert.match(detailPage, /<link rel="canonical" href=\{canonicalUrl\} \/>/, 'canonical URL preserved');
 assert.match(detailPage, /<script type="application\/ld\+json">\{structuredData\}<\/script>/, 'structured data preserved');
-assert.match(detailPage, /trailerTrigger\?\.focus\(\);/, 'trailer close restores focus');
+// MAV-23 supersession: the inline player has no dialog chrome — focus
+// returns to the Trailer toggle on stop (the same "restore focus on
+// close" intent; the toggle IS the trigger now).
+assert.match(detailPage, /trailerToggle\?\.focus\(\);/, 'trailer stop restores focus (to the Trailer toggle)');
+assert.match(detailPage, /querySelector<HTMLElement>\('\.trailer-fs-btn'\)/, 'trailer start moves focus to the reachable fullscreen control');
 assert.match(detailPage, /return \(\) => \{\s*active = false;/, 'onMount cleanup (active guard) intact');
 assert.match(detailPage, /void loadDownloadProviders\(\)/, 'downloader prefetch (fire-and-forget) intact');
 assert.doesNotMatch(detailPage, /canAccessAdultContent/, 'no duplicated adult guard (SSR remains the authority)');
@@ -563,10 +571,14 @@ console.log('\n17. Responsive + a11y');
 assert.match(detailPage, /min-height: clamp\(440px, 78vh, 760px\)/, 'the hero reserves its space at every surface (no shift)');
 assert.match(detailPage, /\.hero \{ min-height: auto; height: auto; \}/, 'landscape-short collapses the hero');
 assert.match(detailPage, /\.poster-card \{ grid-row: 1 \/ span 2;/, 'desktop full-height poster');
-assert.match(detailPage, /@media \(max-width: 640px\) \{[\s\S]*?\.play-btn \{ flex: 1 1 100%; min-height: 52px; \}/, 'mobile Play is full-width ≥52px (thumb target)');
+// MAV-23 supersessions (Fix 1 + Fix 6): mobile Play shares the dominant
+// row with Download (62/38, both ≥52px) so the provider chip reaches the
+// initial viewport; the page bottom padding dropped from 96px/110px to a
+// compact clamp + safe-area (no obscured last cards).
+assert.match(detailPage, /@media \(max-width: 640px\) \{[\s\S]*?\.play-btn \{ flex: 1 1 62%; min-height: 52px;/, 'mobile Play keeps a ≥52px dominant target (shared primary row)');
 assert.match(detailPage, /\.back-btn \{[\s\S]*?top: calc\(1[24]px \+ env\(safe-area-inset-top\)\);/, 'back button respects the safe-area inset');
-assert.match(detailPage, /padding-bottom: clamp\(72px, 8vw, 110px\);/, 'bottom clearance (Android nav bars)');
-assert.match(detailPage, /@media \(max-width: 640px\) \{[\s\S]*?padding-bottom: 96px;/, 'mobile bottom clearance');
+assert.match(detailPage, /padding-bottom: clamp\(36px, 5vw, 72px\);/, 'bottom clearance (compact, Android nav bars safe)');
+assert.match(detailPage, /@media \(max-width: 640px\) \{[\s\S]*?padding-bottom: calc\(36px \+ env\(safe-area-inset-bottom, 0px\)\);/, 'mobile bottom clearance + safe-area');
 assert.match(detailPage, /\.hero-grid \{[\s\S]*?minmax\(0, 1fr\)/, 'the info column can never overflow (minmax 0)');
 assert.match(detailPage, /\.provider-names \{[\s\S]*?overflow-wrap: anywhere;/, 'provider names wrap safely');
 assert.match(detailPage, /\.palette-canvas,[\s\S]*?transition: none !important;/, 'reduced-motion: palette transition disabled');

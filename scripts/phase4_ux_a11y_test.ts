@@ -58,15 +58,24 @@ ok(/!event\.shiftKey && document\.activeElement === last/.test(selectionSheet), 
 ok(/event\.key === 'Escape'/.test(selectionSheet), '2j. Escape closes the sheet');
 
 // ============================================================
-// 3. Trailer modal accessibility (Phase 4-E).
+// 3. Trailer accessibility (Phase 4-E).
+//    MAV-23 supersession: the modal became the approved INLINE player in
+//    the cinematic backdrop. The same a11y intents persist in inline form:
+//    the toggle stores the trigger, focus returns to it on stop, focus
+//    moves to the adjacent fullscreen control on start, and Escape is
+//    handled (fullscreen-aware). The modal-only Tab trap has no dialog to
+//    trap — the fullscreen control is a normal flow button.
 // ============================================================
 const detailPage = read('src/lib/components/DetailPage.svelte');
-ok(/trailerTrigger = document\.activeElement/.test(detailPage), '3a. trailer modal stores trigger element (Phase 4-E)');
-ok(/trailerTrigger\?\.focus\(\)/.test(detailPage), '3b. trailer modal restores focus on close (Phase 4-E)');
-ok(/trailerModal\?\.querySelector<HTMLElement>\('\.trailer-close'\)\?\.focus\(\)/.test(detailPage), '3c. trailer modal auto-focuses close button on open (Phase 4-E)');
-ok(/bind:this=\{trailerModal\}/.test(detailPage), '3d. trailer modal has bind:this (Phase 4-E)');
-ok(/event\.key !== 'Tab' \|\| !trailerModal/.test(detailPage), '3e. trailer modal has Tab trap (Phase 4-E)');
-ok(/role="dialog" aria-modal="true"/.test(detailPage), '3f. trailer modal has role=dialog + aria-modal=true');
+ok(/trailerToggle = document\.activeElement/.test(detailPage), '3a. inline trailer stores the trigger element (Phase 4-E intent, MAV-23 inline form)');
+ok(/trailerToggle\?\.focus\(\)/.test(detailPage), '3b. inline trailer restores focus on stop (Phase 4-E intent)');
+ok(/querySelector<HTMLElement>\('\.trailer-fs-btn'\)\?\.focus\(\)/.test(detailPage), '3c. trailer start auto-focuses the adjacent fullscreen control (replaces the modal close-button focus)');
+ok(/bind:this=\{trailerContainer\}/.test(detailPage), '3d. the inline player container has bind:this');
+ok(/event\.key === 'Escape' && !document\.fullscreenElement/.test(detailPage), '3e. Escape stops the inline trailer (fullscreen-aware keyboard contract)');
+// 3f MAV-23 supersession: the modal (and its role=dialog chrome) is gone —
+// the trailer is inline page content (no dialog semantics to declare); the
+// player exposes state through the toggle's aria-pressed instead.
+ok(!/trailer-modal|trailer-layer/.test(detailPage) && /aria-pressed=\{trailerActive\}/.test(detailPage), '3f. inline trailer exposes playback state via aria-pressed (no dialog chrome)');
 
 // ============================================================
 // 4. ConfirmDialog accessibility (Phase 1 preserved).

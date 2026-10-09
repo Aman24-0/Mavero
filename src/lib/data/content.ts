@@ -57,8 +57,11 @@ export type MediaItem = {
     anilist?: string;
     mal?: string;
   };
-  /** P3: India streaming/OTT providers (flatrate only) from TMDB watch/providers. */
-  streamingProviders?: Array<{ id: number; name: string; logo: string }>;
+  /** P3: India streaming/OTT providers (flatrate only) from TMDB watch/providers.
+   * MAV-23: `logo` is optional — the DetailPage's provider strip renders a
+   * deliberate initial-fallback chip when a provider has no logo (the TMDB
+   * pipeline always supplies one; the fixture/QA pipeline may not). */
+  streamingProviders?: Array<{ id: number; name: string; logo?: string }>;
   /** MAV-21: movie director (TMDB credits.crew), detail payload only. */
   director?: string;
   /** MAV-21: TV/anime-series creators (TMDB created_by), detail payload only. */
@@ -84,6 +87,17 @@ export type MediaItem = {
 const image = (id: string, width = 900) =>
   `https://images.unsplash.com/${id}?auto=format&fit=crop&w=${width}&q=84`;
 
+// MAV-23 — fixture enrichment so the fixture-only environment (no TMDB
+// credentials) can exercise the provider-availability chip, the inline
+// trailer and the downloader palette paths exactly like the production
+// metadata pipeline does. Production titles never see these fixtures —
+// their providers/trailer come from the TMDB adapter. The trailer keys
+// are REAL, embeddable YouTube ids (no fake data is rendered through the
+// DetailPage contract); the provider logos are tiny inline SVG monograms
+// so the QA screenshots stay self-contained.
+const providerLogo = (letter: string, fill: string) =>
+  `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40'%3E%3Crect width='40' height='40' rx='9' fill='%23${fill}'/%3E%3Ctext x='20' y='27' font-size='20' font-weight='700' text-anchor='middle' fill='white' font-family='sans-serif'%3E${letter}%3C/text%3E%3C/svg%3E`;
+
 export const media: MediaItem[] = [
   {
     id: 'afterlight',
@@ -98,7 +112,13 @@ export const media: MediaItem[] = [
     poster: image('photo-1518709268805-4e9042af9f23', 720),
     backdrop: image('photo-1518709268805-4e9042af9f23', 1600),
     accent: '#9877ff',
-    tags: ['MAVERO Original', '4K']
+    tags: ['MAVERO Original', '4K'],
+    trailerKey: 'YoHD9XEInc0',
+    streamingProviders: [
+      { id: 8, name: 'Netflix', logo: providerLogo('N', 'e50914') },
+      { id: 9, name: 'Prime Video', logo: providerLogo('P', '00a8e1') },
+      { id: 337, name: 'JioHotstar' }
+    ]
   },
   {
     id: 'the-last-signal',
@@ -132,7 +152,12 @@ export const media: MediaItem[] = [
     progressLabel: 'S02 E04 · 32m left',
     seasons: 3,
     episodes: 24,
-    tags: ['Continue watching']
+    tags: ['Continue watching'],
+    trailerKey: 'aqz-KE-bpKQ',
+    streamingProviders: [
+      { id: 9, name: 'Prime Video', logo: providerLogo('P', '00a8e1') },
+      { id: 1899, name: 'MAX' }
+    ]
   },
   {
     id: 'paper-moons',
@@ -164,7 +189,12 @@ export const media: MediaItem[] = [
     poster: image('photo-1500534623283-312aade485b7', 720),
     backdrop: image('photo-1500534623283-312aade485b7', 1600),
     accent: '#e16e5e',
-    tags: ['Trending']
+    tags: ['Trending'],
+    trailerKey: 'TcMBFSGVi1c',
+    streamingProviders: [
+      { id: 8, name: 'Netflix', logo: providerLogo('N', 'e50914') },
+      { id: 350, name: 'Apple TV+' }
+    ]
   },
   {
     id: 'atlas-9',
@@ -181,7 +211,11 @@ export const media: MediaItem[] = [
     accent: '#69b7b2',
     seasons: 1,
     episodes: 8,
-    tags: ['Top rated']
+    tags: ['Top rated'],
+    streamingProviders: [
+      { id: 337, name: 'JioHotstar', logo: providerLogo('J', '1f80e0') },
+      { id: 350, name: 'Apple TV+' }
+    ]
   },
   {
     id: 'velvet-sky',

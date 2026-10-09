@@ -583,6 +583,15 @@ function section_regression(): void {
     // no-URL skip condition (CS-5), the old MaveroAddonDownload wiring
     // (FINAL TASK swap), or the PART J CSS lines.
     const codeRemovals = pristineCode.filter((line) => !sheetCode.includes(line));
+    // MAV-23 sanctioned evolution (Fix 5, approved): the sheet adopts the
+    // active title's artwork-derived palette. The ONLY lines this permits
+    // removing are (a) the bare dl-layer div (replaced by the paletteStyle
+    // variant) and (b) hardcoded-color CSS declarations — every removed
+    // line must be one of the sanctioned evolutions OR a color declaration
+    // whose replacement is a --dp-* var fallback. Any structural/logic
+    // removal still fails.
+    const isColorDeclaration = (line: string) =>
+      /(background|border|color|box-shadow|text-shadow)[^:]*:/i.test(line) && /(#[0-9a-fA-F]{3,6}\b|rgba?\()/i.test(line);
     ok(
       codeRemovals.every((line) =>
         line.includes('MAVERO_DOWNLOADER_2_PROVIDER_ID')
@@ -590,8 +599,10 @@ function section_regression(): void {
         || line.includes('MaveroAddonDownload')
         || line.includes('isMaveroDownloader2')
         || line.includes('justify-content: space-between')
-        || line.includes('.dl-item-name { overflow: hidden;')),
-      `§H27: every removed DownloadSheet code line belongs to the sanctioned CS-5/FINAL-TASK evolutions (removed ${codeRemovals.length})`,
+        || line.includes('.dl-item-name { overflow: hidden;')
+        || line.includes('class="dl-layer"')
+        || isColorDeclaration(line)),
+      `§H27: every removed DownloadSheet code line belongs to the sanctioned CS-5/FINAL-TASK/MAV-23-palette evolutions (removed ${codeRemovals.length})`,
     );
     const codeAdditions = sheetCode.filter((line) => !pristineCode.includes(line));
     ok(
@@ -609,8 +620,13 @@ function section_regression(): void {
         || line.includes('margin-left: auto')
         || line.includes('retired')
         || line.includes('unified')
-        || line.includes('retire')),
-      `§H27: every added DownloadSheet code line is the unified-panel swap, the retirement, or the PART J dropdown fix (added ${codeAdditions.length})`,
+        || line.includes('retire')
+        // MAV-23 palette contract: only --dp-* var fallbacks, the
+        // paletteStyle prop, and the design-system text-token fallbacks.
+        || line.includes('--dp-')
+        || line.includes('paletteStyle')
+        || line.includes('var(--color-text')),
+      `§H27: every added DownloadSheet code line is the unified-panel swap, the retirement, the PART J dropdown fix, or the MAV-23 palette contract (added ${codeAdditions.length})`,
     );
   } else {
     ok(true, '§H27: pristine sheet unavailable — FINAL TASK wiring checked structurally');

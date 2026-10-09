@@ -422,6 +422,12 @@ function section_sheetContracts(): void {
     const pristineCode = stripSheetComments(pristineSheet);
     const sheetCode = stripSheetComments(sheet);
     const codeRemovals = pristineCode.filter((line) => !sheetCode.includes(line));
+    // MAV-23 sanctioned evolution (Fix 5, approved): the sheet adopts the
+    // active title's artwork-derived palette — only the bare dl-layer div
+    // and hardcoded-color CSS declarations may be removed; any structural
+    // or logic removal still fails.
+    const isColorDeclaration = (line: string) =>
+      /(background|border|color|box-shadow|text-shadow)[^:]*:/i.test(line) && /(#[0-9a-fA-F]{3,6}\b|rgba?\()/i.test(line);
     ok(
       codeRemovals.every((line) =>
         line.includes('MAVERO_DOWNLOADER_2_PROVIDER_ID')
@@ -429,8 +435,10 @@ function section_sheetContracts(): void {
         || line.includes('MaveroAddonDownload')
         || line.includes('isMaveroDownloader2')
         || line.includes('justify-content: space-between')
-        || line.includes('.dl-item-name { overflow: hidden;')),
-      `§C6: every removed code line belongs to the retirement/unified swap/PART-J fix (removed ${codeRemovals.length})`,
+        || line.includes('.dl-item-name { overflow: hidden;')
+        || line.includes('class="dl-layer"')
+        || isColorDeclaration(line)),
+      `§C6: every removed code line belongs to the retirement/unified swap/PART-J/MAV-23-palette fix (removed ${codeRemovals.length})`,
     );
     const codeAdditions = sheetCode.filter((line) => !pristineCode.includes(line));
     ok(
@@ -448,7 +456,12 @@ function section_sheetContracts(): void {
         || line.includes('margin-left: auto')
         || line.includes('retired')
         || line.includes('retire')
-        || line.includes('unified')),
+        || line.includes('unified')
+        // MAV-23 palette contract (Fix 5): --dp-* var fallbacks, the
+        // paletteStyle prop, and the design-system text-token fallbacks.
+        || line.includes('--dp-')
+        || line.includes('paletteStyle')
+        || line.includes('var(--color-text')),
       `§C6: every added code line is the unified swap, the retirement, or the PART J fix (added ${codeAdditions.length})`,
     );
     // C6b hard guarantees: existing behavior lines survive verbatim.

@@ -233,6 +233,59 @@ async function loadHeroLineup(
 }
 
 export async function loadDiscoverData() {
+  // MAV-23 Fix 3 — composed-page cache (back-navigation acceleration).
+  //
+  // ROOT CAUSE (verified against SvelteKit's client router and a traced
+  // back-navigation): when the user returns from a detail page to any
+  // DIFFERENT-shaped route (detail → discover), SvelteKit re-runs the
+  // destination's leaf server load — the previous branch node at that
+  // index belongs to a different route (different loader identity), so
+  // `previous.loader !== loader[1]` marks the node invalid and the client
+  // fetches a fresh `__data.json` on EVERY back navigation. The re-run is
+  // the framework's data-freshness contract — correct behavior we must
+  // not bypass. But its COST was unbounded: each back navigation
+  // re-composed the whole Discover payload (three trending rails + the
+  // hero lineup fan-out). On production instances whose in-process TMDB
+  // caches are cold (ephemeral serverless), that re-ran the entire TMDB
+  // fan-out — the "noticeably slow" back navigation.
+  //
+  // FIX: memoize the COMPOSED payload for a short bounded window (45s
+  // fresh + 150s SWR — aligned with the client rail-cache's 2-minute
+  // philosophy). Catalog rails are non-user-specific, non-authorization
+  // data (the load reads no cookies/locals; user-specific pieces like the
+  // mature-content flag and provider chips are fetched client-side
+  // separately), so a process-wide short TTL is safe and never crosses
+  // users. getOrSetValidated + isDiscoverPageCacheable guarantee a failed
+  // or fully-empty load is NEVER cached (recovery is immediate), and SWR
+  // keeps serving the last good payload while a refresh runs.
+  const { value } = await getOrSetValidated<DiscoverPagePayload>(
+    DISCOVER_PAGE_CACHE_KEY,
+    DISCOVER_PAGE_POLICY,
+    (candidate) => isDiscoverPageCacheable(candidate),
+    loadDiscoverDataUncached
+  );
+  return value;
+}
+
+type DiscoverPagePayload = Awaited<ReturnType<typeof loadDiscoverDataUncached>>;
+
+// Bump the version when the payload SHAPE changes; the policy TTLs below
+// bound how long any composition is reused.
+const DISCOVER_PAGE_CACHE_KEY = 'v1:discover:page';
+const DISCOVER_PAGE_POLICY = { ttlMs: 45_000, staleWhileRevalidateMs: 150_000 };
+
+/**
+ * Validity predicate — mirrors the Hero's cache-poisoning guard. A load
+ * where EVERY trending rail failed (and no hero lineup) is a transient
+ * outage, not a catalog state: return it to the current request, but do
+ * NOT cache it — the next request retries immediately.
+ */
+function isDiscoverPageCacheable(payload: DiscoverPagePayload): boolean {
+  const hasAnyRail = payload.movies.length > 0 || payload.series.length > 0 || payload.anime.length > 0;
+  return hasAnyRail || payload.heroItems.length > 0;
+}
+
+async function loadDiscoverDataUncached() {
   // Discover V2: the page is now data-driven — each content section
   // loads its own data client-side via /api/discover/rail. The server
   // load only needs to fetch enough for the hero gallery's featured

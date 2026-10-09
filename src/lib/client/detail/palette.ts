@@ -53,6 +53,15 @@ export type DetailPalette = {
   surface: string;
   /** Readable accent (L ≈ 60%) for borders, chips, links, focus rings. */
   accent: string;
+  /**
+   * Softened SAME-HUE sibling accent (MAV-23 Fix 5). Surfaces that need a
+   * second accent slot (the downloader's plugin tab family) reuse the
+   * title palette instead of importing a conflicting fixed color. Same
+   * hue, restrained saturation — a muted companion, never a new palette.
+   */
+  accent2: string;
+  /** Soft fill (alpha .10) of the accent2 sibling. */
+  accent2Soft: string;
   /** Soft accent fill (alpha .12). */
   accentSoft: string;
   /** Accent border (alpha .30). */
@@ -213,7 +222,13 @@ function buildPalette(input: { key: string; hue: number; sat: number; neutral: b
   const accentBorder = cssHsla(hue, accentSat, 0.62, 0.3);
   const glow = cssHsla(hue, accentSat, 0.55, 0.22);
   const scrim = cssHsla(hue, clamp(input.sat * 0.9, 0.16, 0.5), 0.04, 0.55);
-  return { key, hue, neutral, deep, deepAlt, fadeMid, surface, accent, accentSoft, accentBorder, glow, scrim };
+  // MAV-23 Fix 5 — the SAME-HUE sibling accent: reduced saturation and a
+  // slightly lower lightness so the two accent slots stay distinguishable
+  // while remaining one palette family (never an unrelated fixed color).
+  const accent2Sat = clamp(accentSat * 0.62, 0.2, 0.5);
+  const accent2 = cssHsl(hue, accent2Sat, 0.56);
+  const accent2Soft = cssHsla(hue, accent2Sat, 0.56, 0.1);
+  return { key, hue, neutral, deep, deepAlt, fadeMid, surface, accent, accent2, accent2Soft, accentSoft, accentBorder, glow, scrim };
 }
 
 /**
@@ -234,7 +249,12 @@ export function buildPaletteStyle(palette: DetailPalette): string {
     `--dp-accent-soft: ${palette.accentSoft}`,
     `--dp-accent-border: ${palette.accentBorder}`,
     `--dp-glow: ${palette.glow}`,
-    `--dp-scrim: ${palette.scrim}`
+    `--dp-scrim: ${palette.scrim}`,
+    // MAV-23 Fix 5 — the same-hue sibling accent consumed by surfaces that
+    // render INSIDE the page's palette scope but carry their own two-slot
+    // accent system (the downloader sheet's add-on vs plugin tabs).
+    `--dp-accent-2: ${palette.accent2}`,
+    `--dp-accent-2-soft: ${palette.accent2Soft}`
   ].join('; ');
 }
 
