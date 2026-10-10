@@ -150,6 +150,93 @@ export function parseProviderForm(form: FormData) {
   };
 }
 
+// ----- Player Controls Position (per-source landscape control placement) -----
+//
+// Player redesign: the Admin Panel's "Player Controls Position" section of the
+// source edit sheet persists a validated placement inside the EXISTING
+// `streaming_sources.capabilities` JSONB under the `player_controls_position`
+// key (no schema change; the public config already exposes source
+// capabilities). The runtime shape + a TOTAL client-side parser live in
+// `$lib/shared/player-controls-position.ts` — this server-side parser is the
+// STRICT gate (malformed/non-finite/out-of-range values are REJECTED with a
+// clear admin-facing message, per the approved spec).
+//
+// Form fields:
+//   controls_position_mode           '' | 'default' | 'custom'
+//   controls_position_h_anchor       left | right | center
+//   controls_position_h_offset       0..100  (percent of viewport)
+//   controls_position_v_anchor       top | bottom | center
+//   controls_position_v_offset       0..100
+//   controls_position_p_h_anchor/_offset, controls_position_p_v_anchor/_offset
+//   controls_position_l_h_anchor/_offset, controls_position_l_v_anchor/_offset
+//     (optional portrait (_p_) / landscape (_l_) axis overrides)
+
+const CONTROLS_POSITION_H_ANCHORS = ['left', 'right', 'center'] as const;
+const CONTROLS_POSITION_V_ANCHORS = ['top', 'bottom', 'center'] as const;
+
+type ControlsPositionAxisJson = { anchor: string; offsetPercent: number };
+
+function controlsPositionPercent(form: FormData, field: string, anchor: string): number {
+  const raw = String(form.get(field) ?? '').trim();
+  if (!raw) return anchor === 'center' ? 50 : 0;
+  const parsed = Number(raw);
+  // Explicit rejection of malformed / non-finite / out-of-range offsets.
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 100) {
+    throw new StreamingValidationError('Player Controls Position offsets must be numbers between 0 and 100.');
+  }
+  return Math.round(parsed * 10) / 10;
+}
+
+function controlsPositionAxis(form: FormData, anchorField: string, offsetField: string, anchors: readonly string[]): ControlsPositionAxisJson | null {
+  const anchor = String(form.get(anchorField) ?? '').trim();
+  const offsetRaw = String(form.get(offsetField) ?? '').trim();
+  if (!anchor) {
+    // An offset without its anchor is a form inconsistency — reject rather
+    // than silently dropping the admin's (possibly meaningful) value.
+    if (offsetRaw) throw new StreamingValidationError('Player Controls Position offsets require a matching anchor.');
+    return null;
+  }
+  if (!anchors.includes(anchor)) throw new StreamingValidationError(`Player Controls Position anchor "${anchor}" is invalid.`);
+  return { anchor, offsetPercent: controlsPositionPercent(form, offsetField, anchor) };
+}
+
+function controlsPositionOverride(form: FormData, prefix: string): { horizontal?: ControlsPositionAxisJson; vertical?: ControlsPositionAxisJson } | null {
+  const horizontal = controlsPositionAxis(form, `${prefix}_h_anchor`, `${prefix}_h_offset`, CONTROLS_POSITION_H_ANCHORS);
+  const vertical = controlsPositionAxis(form, `${prefix}_v_anchor`, `${prefix}_v_offset`, CONTROLS_POSITION_V_ANCHORS);
+  if (!horizontal && !vertical) return null;
+  return { ...(horizontal ? { horizontal } : {}), ...(vertical ? { vertical } : {}) };
+}
+
+/**
+ * Parse the "Player Controls Position" form fields into the capability value.
+ * Always returns an object: `{ mode: 'default' }` when the admin keeps the
+ * default (which overwrites any stale custom config on merge), or the full
+ * validated custom placement.
+ */
+export function playerControlsPositionCapability(form: FormData): JsonObject {
+  const mode = String(form.get('controls_position_mode') ?? '').trim() || 'default';
+  if (mode === 'default') return { mode: 'default' };
+  if (mode !== 'custom') throw new StreamingValidationError('Player Controls Position mode is invalid.');
+  const horizontal = controlsPositionAxis(form, 'controls_position_h_anchor', 'controls_position_h_offset', CONTROLS_POSITION_H_ANCHORS);
+  const vertical = controlsPositionAxis(form, 'controls_position_v_anchor', 'controls_position_v_offset', CONTROLS_POSITION_V_ANCHORS);
+  const portrait = controlsPositionOverride(form, 'controls_position_p');
+  const landscape = controlsPositionOverride(form, 'controls_position_l');
+  if (!horizontal && !vertical && !portrait && !landscape) {
+    throw new StreamingValidationError('Custom Player Controls Position needs at least one anchor (horizontal or vertical).');
+  }
+  return {
+    mode: 'custom',
+    ...(horizontal ? { horizontal } : {}),
+    ...(vertical ? { vertical } : {}),
+    ...(portrait ? { portrait } : {}),
+    ...(landscape ? { landscape } : {}),
+  };
+}
+
+function withPlayerControlsPosition(capabilities: JsonObject, position: JsonObject): JsonObject {
+  return { ...capabilities, player_controls_position: position };
+}
+
 export function parseSourceForm(form: FormData) {
   const providerId = requiredText(form.get('provider_id'), 'Provider', 80);
   if (!/^[0-9a-f-]{36}$/i.test(providerId)) throw new StreamingValidationError('Provider is invalid.');
@@ -174,7 +261,15 @@ export function parseSourceForm(form: FormData) {
     // accept or store sandbox_policy. The capabilities JSON is parsed
     // as-is (preserving allowed_embed_origins, result_type, supports_*
     // fields, etc.) and any legacy sandbox_policy key is stripped.
-    capabilities: stripSandboxPolicy(jsonObject(form.get('capabilities'), 'Capabilities')),
+    // Player redesign: the per-source Landscape-control placement is parsed
+    // from its own form fields and stored under
+    // capabilities.player_controls_position (always emitted — 'default'
+    // overwrites any stale custom config that a previous save left behind,
+    // because the update path MERGES capabilities with the existing row).
+    capabilities: withPlayerControlsPosition(
+      stripSandboxPolicy(jsonObject(form.get('capabilities'), 'Capabilities')),
+      playerControlsPositionCapability(form),
+    ),
     movie_template: template(form.get('movie_template'), 'Movie template'),
     series_template: template(form.get('series_template'), 'Series template'),
     anime_template: template(form.get('anime_template'), 'Anime template'),

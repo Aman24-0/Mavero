@@ -181,15 +181,18 @@ const shell = readFileSync(new URL('../src/lib/components/player/PlayerShell.sve
 assert.match(shell, /\.player-shell\.landscape-mode \{ height: 100dvh; \}/, 'Test 15: landscape shell is full-viewport');
 assert.match(shell, /class="control-fab-group"/, 'Test 15: unified FAB control group present');
 
-// Test 16: Landscape toggle exposes pressed state and exit affordance.
-assert.match(shell, /class="fab-item"[^>]*aria-pressed=\{landscapeMode\}/, 'Test 16: landscape FAB item exposes aria-pressed');
-assert.match(shell, /aria-label=\{landscapeMode \? 'Exit landscape player' : 'Toggle landscape player'\}/, 'Test 16: landscape exit label preserved');
+// Test 16 — UPDATED (player redesign): the landscape toggle is the DEDICATED
+// bottom-right control FAB (no longer a menu item); it still exposes the
+// pressed state and the exit affordance.
+assert.match(shell, /class="control-fab landscape-fab"[^>]*aria-pressed=\{landscapeMode\}/, 'Test 16: landscape FAB exposes aria-pressed');
+assert.match(shell, /aria-label=\{landscapeMode \? 'Exit landscape player' : 'Enter landscape player'\}/, 'Test 16: landscape exit label preserved');
 
 // Test 17: Single Back affordance — the back FAB auto-hides with controls
 // (replaces the old {#if !landscapeMode} header gating; one back button in
 // every orientation, no duplicates).
 assert.match(shell, /class="back-fab"/, 'Test 17: single back FAB present');
-assert.match(shell, /\.player-shell\.controls-hidden:not\(\.menu-open\) \.back-fab \{ opacity: 0; visibility: hidden;/, 'Test 17: back FAB auto-hides with controls');
+// UPDATED (player redesign): the menu-open qualifier is gone with the menu.
+assert.match(shell, /\.player-shell\.controls-hidden \.back-fab \{ opacity: 0; visibility: hidden;/, 'Test 17: back FAB auto-hides with controls');
 assert.doesNotMatch(shell, /landscape-controls-overlay/, 'Test 17: no legacy landscape overlay');
 
 // Test 18: No legacy landscape-specific chrome in any orientation.

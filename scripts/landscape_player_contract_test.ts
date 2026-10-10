@@ -19,19 +19,21 @@ assert.match(shell, /class="back-fab"/);
 assert.match(shell, /\.back-fab \{[^}]*position: absolute/);
 assert.match(shell, /\.back-fab \{[^}]*top: max\(12px, env\(safe-area-inset-top\)\)/);
 assert.match(shell, /\.back-fab \{[^}]*left: max\(12px, env\(safe-area-inset-left\)\)/);
-// Control menu FAB exists (bottom-right overlay).
-assert.match(shell, /class="control-fab"/);
+// Player redesign: dedicated bottom-right Landscape/Fullscreen FAB + source chip.
+assert.match(shell, /class="control-fab landscape-fab"/);
 assert.match(shell, /class="control-fab-group"/);
+assert.match(shell, /class="source-chip"/);
 assert.match(shell, /\.control-fab-group \{[^}]*bottom: max\(16px, env\(safe-area-inset-bottom\)\)/);
 assert.match(shell, /\.control-fab-group \{[^}]*right: max\(16px, env\(safe-area-inset-right\)\)/);
-// Menu items with staggered animation.
+// Episodes pill with staggered animation (single item — keyframes preserved).
 assert.match(shell, /class="fab-item"/);
 assert.match(shell, /--fab-delay/);
 assert.match(shell, /@keyframes fab-unfold/);
-// Auto-hide: 10s timer.
-assert.match(shell, /10_000/);
-// Menu open state prevents auto-hide.
-assert.match(shell, /menuOpen/);
+// Auto-hide: FIVE-second timer (player redesign; was 10s).
+assert.match(shell, /5_000/);
+// Sheet-open state + keyboard-focus guard prevent auto-hide.
+assert.match(shell, /sourceMenuOpen && !episodeMenuOpen/);
+assert.match(shell, /focusWithinMaveroControls\(\)/);
 // Source sheet: bottom sheet on compact, right drawer on wide (media query, NOT landscapeMode).
 assert.match(shell, /\.source-sheet.*bottom: 0/);
 assert.match(shell, /@media \(min-width: 769px\)/);
@@ -55,4 +57,4 @@ assert.match(viewport, /allow="autoplay; fullscreen; picture-in-picture; encrypt
 assert.match(viewport, /allowfullscreen/);
 assert.match(viewport, /sandbox=\{sandboxAttribute\}/);
 
-console.log('Immersive PlayerShell contract tests passed: full viewport, Back FAB, Control Menu FAB, staggered animation, 10s auto-hide, responsive source sheet (bottom/right), safe-area, reduced-motion.');
+console.log('Immersive PlayerShell contract tests passed: full viewport, Back FAB, dedicated Landscape FAB + source chip, Episodes pill animation, 5s auto-hide with focus guard, responsive source sheet (bottom/right), safe-area, reduced-motion.');

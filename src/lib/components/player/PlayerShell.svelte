@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { AlertTriangle, ArrowLeft, Check, ChevronLeft, ChevronRight, Info, ListVideo, Maximize2, Menu, RotateCcw, Settings2, ShieldCheck, ShieldOff, Smartphone, X } from 'lucide-svelte';
+  import { AlertTriangle, ArrowLeft, Check, ListVideo, Maximize2, Minimize2, RotateCcw, Settings2, X } from 'lucide-svelte';
   // Task 13: safe source icon renderer + centralized badge labels for the
   // source selector (presentation metadata from the public streaming config).
   import SourceIcon from '$lib/components/source/SourceIcon.svelte';
@@ -19,7 +19,9 @@
   type AudioTrackHandle = { id: number; lang?: string; name?: string; default?: boolean };
   // Phase 10 (GOALS 12–15): honest badges for uncertain formats.
   import { checkMediaCompatibility, type MediaCompatibilityDecision } from '$lib/client/player/media-capabilities';
-  import type { SandboxPolicy } from '$lib/shared/sandbox-policy';
+  import { markPlayerMilestone, measurePlayerStartup } from '$lib/client/player/player-timing';
+  // Per-source Landscape-control positioning (Admin "Player Controls Position").
+  import { landscapeControlInlineStyle, resolveLandscapeControlPlacement } from '$lib/shared/player-controls-position';
 
   export let source: PlayerSource | null = null;
   export let content: PlayerContentContext;
@@ -47,6 +49,11 @@
   // acquire a wake lock — which is correct (iframe load ≠ actual playback).
   export let embedPlaybackEvent: { type: 'play' | 'pause' | 'ended'; _seq?: number; sourceId?: string } | null = null;
   export let resolving = false;
+  // Player redesign: server-derived device class (root layout data) — drives
+  // the landscape-first presentation. Desktop/TV devices never auto-enter
+  // fullscreen/orientation lock; mobile/tablet-class portrait devices make a
+  // SINGLE best-effort attempt on mount.
+  export let deviceType: string | undefined = undefined;
   export let resolutionError = '';
   export let resolutionMessage = '';
   export let resolutionKind: 'provider-error' | 'unsupported' | 'unavailable' = 'provider-error';
@@ -66,7 +73,12 @@
   let landscapeToggleInFlight = false;
   let pictureInPicture = false;
   let pictureInPictureSupported = false;
-  let state: PlayerPlaybackState = source ? 'preparing' : 'source-unavailable';
+  // Player startup redesign: the shell mounts BEFORE the source resolves —
+  // the initial state is 'preparing' (single lightweight loading card), never
+  // 'source-unavailable'. Real unavailability still arrives through explicit
+  // state mutations (togglePlay fallback, resolutionKind, adapter errors), so
+  // no error path is lost — only the mount-time flash of the error card is.
+  let state: PlayerPlaybackState = 'preparing';
   let errorMessage = '';
   let selectedQuality = '';
   let selectedSubtitle = '';
@@ -74,8 +86,9 @@
   let episodeMenuOpen = false;
   let controlsVisible = true;
   let hideTimer: ReturnType<typeof setTimeout> | undefined;
-  // Immersive redesign: control menu FAB state.
-  let menuOpen = false;
+  // Player controls redesign: the menu FAB was replaced by dedicated controls
+  // (bottom-right Landscape FAB, Episodes pill, right-edge source chip) — no
+  // menu state remains.
   // Responsive viewport detection: compact (portrait mobile) → bottom sheet;
   // wide (landscape/desktop/TV) → right drawer. Based on actual viewport,
   // NOT on landscapeMode toggle.
@@ -89,13 +102,12 @@
   let pendingSeekState: PendingSeekState = createPendingSeek(initialProgress, Date.now());
   let lastProgressReport = 0;
   let sourceIdentity = '';
-  let sandboxEnabled = true;
-  let sandboxSourceIdentity = '';
-  // Phase 11 (GOAL D): the EFFECTIVE sandbox policy the viewport renders.
-  // Server-resolved (`sandboxRuntime.effectiveSandboxPolicy` — configured
-  // vs effective are NEVER conflated); the dev toggle can override it for
-  // the current source session.
-  let sandboxPolicyOverride: SandboxPolicy | null = null;
+  // Phase 11 (GOAL D): the EFFECTIVE sandbox policy the viewport renders is
+  // resolved SERVER-side (source override → provider default → system default)
+  // and carried on the resolved source (`sandboxRuntime`). The player-redesign
+  // phase removed the user-facing Sandbox menu item AND its client-side
+  // override state — the runtime now applies the server-resolved policy
+  // verbatim and can never contradict the admin configuration.
   // Phase 6: episode identity tracker for the episode-switch reactive block.
   let episodeIdentity = '';
   // Phase 6 audit fix: sequence counter for embed playback events. Used by
@@ -182,7 +194,9 @@
   // player plays the WORKER-PROVIDED streaming url instead of the addon’s direct URL
   // (which the browser cannot decode). Cleared on any source/stream switch.
   $: mediaUrl = selectedQualityOption?.url ?? source?.url ?? null;
-  $: statusNote = '';
+  // statusNote (Phase 10 GOAL 14) removed with the duplicate viewport status
+  // label — see PlayerViewport. The shell surfaces loading/errors via its
+  // single loading/error card.
   // Stale-guard: a source object that no longer contains the selected
   // stream (e.g. after an episode switch clears the source) invalidates
   // any pending quality selection so it cannot ride into the new source.
@@ -224,21 +238,23 @@
   $: nextSourceId = adjacentSource(sourceOptions, source?.sourceId, 1);
   $: hasPreviousSource = Boolean(previousSourceId);
   $: hasNextSource = Boolean(nextSourceId);
+  // Player redesign: the ACTIVE source's Admin-configured Landscape-control
+  // placement (parsed + bounded; null/legacy sources keep the stylesheet
+  // default, bottom-right). Derived from the source option for the CURRENT
+  // sourceId only — one source's config can never leak into another's.
+  $: activeSourceOption = source ? sourceOptions.find((option) => option.id === source.sourceId) ?? null : null;
+  $: landscapeControlStyle = landscapeControlInlineStyle(resolveLandscapeControlPlacement(activeSourceOption?.controlsPosition ?? null, landscapeMode ? 'landscape' : 'portrait'));
   $: effectiveState = resolving ? 'switching-source' : resolutionError ? resolutionKind : state;
   $: embedReady = Boolean(source?.type === 'embed' && isEmbedOriginAllowed(source) && !sourceIsExpired(source));
-  $: if (source?.sourceId && source.sourceId !== sandboxSourceIdentity) {
-    sandboxSourceIdentity = source.sourceId;
-    sandboxEnabled = source.sandboxPolicy !== 'unrestricted';
-    sandboxPolicyOverride = null;
-  }
   // Phase 11 (GOAL D): the runtime applies the EFFECTIVE policy resolved
   // SERVER-side (source override → provider default → system default) and
   // carried on the resolved source (`sandboxRuntime`) — the client never
   // guesses. An intentionally unrestricted embed therefore renders NO
   // sandbox attribute, and the provider's own "sandbox" warning can no
-  // longer contradict the admin configuration.
-  $: sourceEffectiveSandboxPolicy = source ? source.sandboxRuntime?.effectiveSandboxPolicy ?? source.sandboxPolicy ?? (sandboxEnabled ? 'required' : 'unrestricted') : 'required';
-  $: effectiveSandboxPolicy = sandboxPolicyOverride ?? (source?.type === 'embed' ? sourceEffectiveSandboxPolicy : 'required');
+  // longer contradict the admin configuration. (The former client-side
+  // sandbox toggle + override were removed with the player control redesign.)
+  $: sourceEffectiveSandboxPolicy = source ? source.sandboxRuntime?.effectiveSandboxPolicy ?? source.sandboxPolicy ?? 'required' : 'required';
+  $: effectiveSandboxPolicy = source?.type === 'embed' ? sourceEffectiveSandboxPolicy : 'required';
   $: effectiveSandboxEnabled = effectiveSandboxPolicy !== 'unrestricted';
   // Phase 6 audit fix: reactive watcher for embed playback events. The watch
   // route pushes { type, _seq } into the embedPlaybackEvent prop whenever the
@@ -290,9 +306,7 @@
     clearMediaSession();
     // Phase 6: exit PiP if the active PiP element was Mavero's video. This
     // prevents the PiP window from showing stale video after a source switch.
-    if (document.pictureInPictureElement === videoElement) {
-      try { void document.exitPictureInPicture?.(); } catch { /* already exited */ }
-    }
+    if (document.pictureInPictureElement === videoElement) exitPipQuietly();
   }
   // Phase 6: episode switch cleanup. PlayerShell stays mounted across episode
   // changes (only props change), so we must release wake lock + clear Media
@@ -307,9 +321,7 @@
     if (source?.sourceId) embedPlaybackSourceId = source.sourceId;
     void releaseWakeLock();
     clearMediaSession();
-    if (document.pictureInPictureElement === videoElement) {
-      try { void document.exitPictureInPicture?.(); } catch { /* already exited */ }
-    }
+    if (document.pictureInPictureElement === videoElement) exitPipQuietly();
   }
 
   // Phase 6 audit fix: PiP events fire on the HTMLVideoElement, NOT on
@@ -324,6 +336,19 @@
   // new element whenever the identity of videoElement changes.
   let lastPipVideoElement: HTMLVideoElement | undefined = undefined;
   function handlePictureInPicture() { pictureInPicture = document.pictureInPictureElement === videoElement; }
+  /**
+   * Player redesign QA hardening: fire-and-forget PiP/fullscreen exit. The DOM
+   * methods return PROMISES that REJECT when there is nothing to exit (no
+   * active PiP element / no active fullscreen — e.g. a source switch racing
+   * an already-exited session). That is an expected no-op: the synchronous
+   * try/catch alone cannot stop an unhandled rejection.
+   */
+  function exitPipQuietly() {
+    try { Promise.resolve(document.exitPictureInPicture?.()).catch(() => { /* already exited */ }); } catch { /* already exited */ }
+  }
+  function exitFullscreenQuietly() {
+    try { Promise.resolve(document.exitFullscreen?.()).catch(() => { /* already exited */ }); } catch { /* already exited */ }
+  }
   function attachPipListeners(current: HTMLVideoElement | undefined) {
     if (current === lastPipVideoElement) return; // no change — avoid duplicates
     // Detach from the previous video element (if any).
@@ -357,6 +382,10 @@
   }
 
   onMount(() => {
+    // Player startup instrumentation: the shell is visible. Measured spans
+    // are DEV-only logged; marks remain inspectable in production.
+    markPlayerMilestone('mavero:shell');
+    measurePlayerStartup();
     pictureInPictureSupported = Boolean(document.pictureInPictureEnabled && videoElement && 'requestPictureInPicture' in videoElement);
     // Immersive redesign: responsive viewport detection for source sheet placement.
     // compact (portrait) → bottom sheet; wide (landscape/desktop/TV) → right drawer.
@@ -388,6 +417,25 @@
     // Embed sources cannot be commanded reliably (except CineSrc, but the
     // postMessage round-trip makes Media Session state updates unreliable).
     if (mediaSessionSupported) registerMediaSessionHandlers();
+    // Player redesign — LANDSCAPE-FIRST playback presentation. When the watch
+    // route is opened on a mobile/tablet-class device currently held in
+    // portrait, make ONE best-effort attempt to enter the landscape
+    // presentation (player fullscreen + `screen.orientation.lock('landscape')`
+    // through the EXISTING controller — no competing orientation system).
+    //   * Requires the platform to permit it: if the transient activation from
+    //     the Play click has expired during the async navigation, or the
+    //     browser/platform declines (iOS Safari, desktop, TV), the attempt
+    //     silently falls back and the Landscape control remains available.
+    //   * Desktop and TV-class devices keep the exact previous behaviour.
+    //   * Physical rotation is never promised — unsupported locks are caught,
+    //     and the CSS landscape layout is still applied when fullscreen works.
+    const landscapeFirstEligible = (deviceType === 'mobile' || deviceType === 'tablet')
+      && (() => {
+        try {
+          return window.matchMedia('(orientation: portrait)').matches && window.matchMedia('(pointer: coarse)').matches;
+        } catch { return false; }
+      })();
+    if (landscapeFirstEligible) void enterLandscapePresentation();
     const handleFullscreen = () => {
       fullscreen = document.fullscreenElement === playerRoot;
       if (!fullscreen && landscapeMode) {
@@ -407,30 +455,62 @@
         handleSheetKeydown(event);
         return;
       }
-      // Immersive redesign: Escape closes menu before leaving player.
-      if (event.key === 'Escape' && menuOpen) {
-        event.preventDefault();
-        closeMenu();
+      const target = event.target as HTMLElement | null;
+      // Never intercept shortcuts while typing in form fields or editable
+      // surfaces (input/textarea/select/contenteditable).
+      if (target?.matches('input, select, textarea, [contenteditable="true"]')) return;
+      // Player redesign shortcuts — available for BOTH direct and embed
+      // sources (Mavero owns these surfaces; they do not command the video
+      // element or the provider):
+      //   Escape → close an open sheet (above); otherwise exit Mavero
+      //     fullscreen when the SHELL owns fullscreen; otherwise the browser's
+      //     expected navigation behaviour is preserved (no preventDefault).
+      //   F      → toggle Mavero fullscreen (playerRoot), all sources.
+      //   S      → open the source selector sheet, all sources.
+      if (event.key === 'Escape') {
+        if (document.fullscreenElement === playerRoot) {
+          event.preventDefault();
+          void exitMaveroFullscreen();
+        }
         return;
       }
-      const target = event.target as HTMLElement | null;
-      if (target?.matches('input, select, textarea, button, [contenteditable="true"]')) return;
+      if (event.repeat) return; // toggles must not machine-gun on key repeat
+      if (event.key === 'f' || event.key === 'F') {
+        event.preventDefault();
+        void toggleFullscreen();
+        return;
+      }
+      if (event.key === 's' || event.key === 'S') {
+        if (sourceOptions.length) {
+          event.preventDefault();
+          openSourceSheet(playerRoot ?? (document.activeElement instanceof HTMLElement ? document.activeElement : playerRoot));
+        }
+        return;
+      }
+      // Direct-playback-only shortcuts — they command the <video> element.
       if (source?.type !== 'direct') return;
+      // Don't hijack Space on a focused button (double activation).
+      if (target?.matches('button')) return;
       if (event.key === ' ' || event.key.toLowerCase() === 'k') { event.preventDefault(); void togglePlay(); }
       else if (event.key === 'ArrowLeft') { event.preventDefault(); seekBy(-10); }
       else if (event.key === 'ArrowRight') { event.preventDefault(); seekBy(10); }
       else if (event.key.toLowerCase() === 'm') { event.preventDefault(); toggleMute(); }
-      else if (event.key.toLowerCase() === 'f') { event.preventDefault(); void toggleFullscreen(); }
-      else if (event.key === 'Escape') { menuOpen = false; sourceMenuOpen = false; episodeMenuOpen = false; }
     };
-    // Immersive redesign: ONE authoritative inactivity timer. All interaction
-    // signals (pointer move, pointer down, touch) route through `revealControls`
-    // — there is no duplicate timer body here. `revealControls` clears any
-    // pending hideTimer and starts a fresh 10s countdown, gated by the
-    // menu/sheet-open guards so an open menu or sheet is never auto-hidden.
+    // Player redesign: ONE authoritative inactivity timer. All interaction
+    // signals (pointer move, pointer down, touch, focus) route through
+    // `revealControls` — there is no duplicate timer body here.
+    // `revealControls` clears any pending hideTimer and starts a fresh
+    // 5-second countdown, gated by the sheet-open and focus-in-controls
+    // guards so an open sheet or a focused control is never auto-hidden.
     const showControls = () => { revealControls(); };
+    const handleFocusIn = (event: FocusEvent) => {
+      // Keyboard/tv-navigation activity: focusing any Mavero-owned surface
+      // inside the shell counts as user activity and keeps controls visible.
+      if (event.target instanceof Node && playerRoot?.contains(event.target)) revealControls();
+    };
     document.addEventListener('fullscreenchange', handleFullscreen);
     window.addEventListener('keydown', handleKeydown);
+    document.addEventListener('focusin', handleFocusIn);
     playerRoot?.addEventListener('pointermove', showControls);
     playerRoot?.addEventListener('pointerdown', showControls, { passive: true });
     playerRoot?.addEventListener('touchstart', showControls, { passive: true });
@@ -447,14 +527,15 @@
       document.removeEventListener('fullscreenchange', handleFullscreen);
       detachPictureInPictureListeners();
       window.removeEventListener('keydown', handleKeydown);
+      document.removeEventListener('focusin', handleFocusIn);
       playerRoot?.removeEventListener('pointermove', showControls);
       playerRoot?.removeEventListener('pointerdown', showControls);
       playerRoot?.removeEventListener('touchstart', showControls);
       // Phase 6: explicit teardown of shell-level playback features. The browser
       // auto-exits fullscreen/PiP when playerRoot leaves the DOM, but explicit
       // calls are deterministic and prevent stale state across SPA navigation.
-      if (document.pictureInPictureElement === videoElement) { try { void document.exitPictureInPicture?.(); } catch { /* already exited */ } }
-      if (document.fullscreenElement === playerRoot) { try { void document.exitFullscreen?.(); } catch { /* already exited */ } }
+      if (document.pictureInPictureElement === videoElement) exitPipQuietly();
+      if (document.fullscreenElement === playerRoot) exitFullscreenQuietly();
       // Phase 6 audit fix: set the destroyed flag BEFORE releaseWakeLock() so
       // any in-flight acquireWakeLock() request that resolves after this
       // cleanup will see wakeLockDestroyed === true and release its sentinel
@@ -652,24 +733,13 @@
     }
   }
 
-  function toggleSandbox() {
-    if (source?.type !== 'embed') return;
-    sandboxPolicyOverride = effectiveSandboxPolicy === 'unrestricted' ? 'required' : 'unrestricted';
-    sandboxEnabled = sandboxPolicyOverride !== 'unrestricted';
-    state = 'embed-loading';
-    errorMessage = '';
-    revealControls();
-    // Phase 2-I (PLR-05): toggling the sandbox policy REMOUNTS the iframe
-    // (the sandbox attribute change forces a fresh load — the browser
-    // re-fetches the provider URL). The previous embed load timeout was
-    // cleared by the source-switch path, but a NEW one was never armed
-    // for the remounted iframe. If the remounted iframe failed to fire
-    // `on:load` (e.g. the provider was slow), the player stayed in
-    // `embed-loading` indefinitely. We now arm a fresh timeout here,
-    // preserving the existing stale-source protection (the timeout captures
-    // sourceId at start time and no-ops if the user switches away).
-    if (source?.sourceId) startEmbedLoadTimeout(source.sourceId);
-  }
+  // REMOVED (player controls redesign — supersedes the Phase 2-I (PLR-05)
+  // sandbox-remount fix): the user-facing Sandbox menu item and its client-side
+  // override state are gone. The iframe sandbox attribute is applied from the
+  // SERVER-resolved effective policy (`resolveSandboxRuntime` →
+  // option.sandboxPolicy → source.sandboxRuntime → PlayerViewport
+  // `iframeSandboxAttribute`) — no runtime mutation path exists anymore. The
+  // Admin provider form remains the single place where sandbox policy changes.
 
   function seek(time: number) {
     if (!videoElement || !Number.isFinite(time)) return;
@@ -740,11 +810,33 @@
     return screen.orientation as OrientationController;
   }
 
+  /**
+   * Player redesign: landscape-first entry — ONE best-effort fullscreen +
+   * orientation-lock attempt when the shell mounts on a portrait mobile/
+   * tablet-class device (see onMount). Silent-fail by design: every decline
+   * (expired user activation, iOS, desktop, TV) leaves the player in its
+   * current orientation with the Landscape control available. Shares the
+   * rapid-toggle guard with toggleLandscape and reuses the SAME orientation
+   * controller — no competing orientation system.
+   */
+  async function enterLandscapePresentation() {
+    if (landscapeToggleInFlight) return;
+    landscapeToggleInFlight = true;
+    try {
+      await playerRoot?.requestFullscreen?.();
+      try { await orientationController()?.lock?.('landscape'); } catch { /* device/browser declined; fullscreen layout remains active */ }
+      landscapeMode = true;
+      revealControls();
+    } catch {
+      // Graceful fallback — the portrait presentation stays; no error is
+      // raised for an optional presentation preference.
+      landscapeMode = false;
+    } finally {
+      landscapeToggleInFlight = false;
+    }
+  }
+
   async function toggleLandscape() {
-    // Phase 6: rapid double-toggle guard. Without this, two rapid taps could
-    // both read the same `landscapeMode` value, both await requestFullscreen(),
-    // and the second await could resolve after the first exit has already
-    // cleared landscapeMode — producing inconsistent state.
     if (landscapeToggleInFlight) return;
     const entering = !landscapeMode;
     revealControls();
@@ -757,8 +849,8 @@
         try { await orientation?.lock?.('landscape'); } catch { /* device/browser declined; fullscreen layout remains active */ }
         landscapeMode = true;
         // FAB auto-hide: portrait↔landscape must NOT break the inactivity
-        // timer. Restart the 10s countdown cleanly via revealControls() so
-        // the FABs remain visible now and auto-hide after 10s of inactivity.
+        // timer. Restart the 5s countdown cleanly via revealControls() so
+        // the FABs remain visible now and auto-hide after 5s of inactivity.
         revealControls();
       } else {
         try { orientation?.unlock?.(); } catch { /* unsupported */ }
@@ -786,6 +878,19 @@
     } catch {
       errorMessage = 'Fullscreen is not available in this browser.';
     }
+  }
+
+  /**
+   * Player redesign keyboard contract: exit the MAVERO-owned fullscreen
+   * (entered by either toggleFullscreen or toggleLandscape). Used by the
+   * Escape branch AFTER sheets; state sync + orientation release mirror the
+   * browser-initiated-exit path in the fullscreenchange handler.
+   */
+  async function exitMaveroFullscreen() {
+    try { orientationController()?.unlock?.(); } catch { /* unsupported */ }
+    landscapeMode = false;
+    if (document.fullscreenElement === playerRoot) exitFullscreenQuietly();
+    revealControls();
   }
 
   async function togglePictureInPicture() {
@@ -832,52 +937,51 @@
   function revealControls() {
     controlsVisible = true;
     if (hideTimer) clearTimeout(hideTimer);
-    // Immersive redesign: 10s auto-hide, applies in all modes (portrait + landscape).
-    // Menu/source sheet open prevents auto-hide (checked in the timer callback).
+    // Player redesign: FIVE-second auto-hide, applies in all modes (portrait +
+    // landscape). Source/episode sheets being open prevents auto-hide (checked
+    // again in the timer callback), as does keyboard focus resting on a
+    // Mavero-owned control (focused controls are never hidden — a11y guard).
     //
     // Phase 2-I (PLR-04): embed playback must ALSO participate in auto-hide.
     // The previous condition checked only `playing` (set for direct sources),
     // so an embed source that was actively playing never auto-hid the
-    // controls. We now OR with `embedPlaying` so the same 10s countdown
+    // controls. We now OR with `embedPlaying` so the same 5s countdown
     // applies to embed playback too. The provider iframe content itself is
     // NOT hidden — only the Mavero control overlay (which is irrelevant
     // while the embed is playing).
-    if ((playing || embedPlaying) && !menuOpen && !sourceMenuOpen && !episodeMenuOpen) {
+    //
+    // Cross-origin honesty (documented limitation): pointer/touch activity
+    // INSIDE a provider iframe is unobservable from the parent page, so while
+    // an embed is playing the countdown reflects page-level activity only.
+    if ((playing || embedPlaying) && !sourceMenuOpen && !episodeMenuOpen) {
       hideTimer = setTimeout(() => {
-        if (!menuOpen && !sourceMenuOpen && !episodeMenuOpen) {
+        if (!sourceMenuOpen && !episodeMenuOpen && !focusWithinMaveroControls()) {
           controlsVisible = false;
         }
-      }, 10_000);
+      }, 5_000);
     }
   }
 
-  /** Immersive redesign: toggle the control menu FAB. */
-  function toggleMenu() {
-    menuOpen = !menuOpen;
-    if (menuOpen) {
-      revealControls();
-    } else {
-      revealControls();
-    }
+  /**
+   * Player redesign a11y guard: true while keyboard focus rests inside a
+   * Mavero-owned control surface (FABs, source chip, direct controls, sheets).
+   * Focused controls must never auto-hide — keyboard/TV users would lose the
+   * element they are interacting with.
+   */
+  function focusWithinMaveroControls(): boolean {
+    if (!playerRoot) return false;
+    const active = document.activeElement;
+    if (!(active instanceof HTMLElement) || !playerRoot.contains(active)) return false;
+    return Boolean(active.closest('.back-fab, .control-fab-group, .source-chip, .direct-controls-overlay, .source-sheet, .episode-sheet'));
   }
 
-  /** Immersive redesign: close menu and restart inactivity timer. */
-  function closeMenu() {
-    if (!menuOpen) return;
-    menuOpen = false;
-    revealControls();
-  }
-
-  /** Open source sheet from the menu — closes menu first. */
-  function openSourceFromMenu() {
-    closeMenu();
-    // Use the playerRoot as the trigger for focus restoration.
+  /** Open the source sheet from the bottom-right controls (focus returns there). */
+  function openSourceSheetFromControl() {
     openSourceSheet(playerRoot ?? document.activeElement as HTMLElement);
   }
 
-  /** Open episode sheet from the menu — closes menu first. */
-  function openEpisodeFromMenu() {
-    closeMenu();
+  /** Open the episode sheet from the bottom-right controls. */
+  function openEpisodeSheetFromControl() {
     openEpisodeSheet(playerRoot ?? document.activeElement as HTMLElement);
   }
 
@@ -973,7 +1077,7 @@
     sourceMenuOpen = false;
     restoreFocus(sourceSheetTrigger);
     sourceSheetTrigger = null;
-    // FAB auto-hide: closing a sheet restarts the 10s inactivity countdown.
+    // FAB auto-hide: closing a sheet restarts the 5s inactivity countdown.
     revealControls();
   }
 
@@ -981,7 +1085,7 @@
     episodeMenuOpen = false;
     restoreFocus(episodeSheetTrigger);
     episodeSheetTrigger = null;
-    // FAB auto-hide: closing a sheet restarts the 10s inactivity countdown.
+    // FAB auto-hide: closing a sheet restarts the 5s inactivity countdown.
     revealControls();
   }
 
@@ -1282,17 +1386,17 @@
 
 <svelte:window onbeforeunload={() => emitProgress('close')} onvisibilitychange={() => { if (document.hidden) emitProgress('visibility'); handleVisibilityChangeForWakeLock(); }} />
 
-  <div bind:this={playerRoot} class="player-shell" class:landscape-mode={landscapeMode} class:controls-hidden={!controlsVisible} class:menu-open={menuOpen} role="application" aria-label="MAVERO video player">
+  <div bind:this={playerRoot} class="player-shell" class:landscape-mode={landscapeMode} class:controls-hidden={!controlsVisible} role="application" aria-label="MAVERO video player">
 
   <!-- Immersive redesign: stage fills the ENTIRE viewport — no header/footer consuming space. -->
   <section class="stage-wrap" aria-label="Player viewport">
-    <PlayerViewport bind:this={viewport} bind:videoElement bind:iframeElement {source} {mediaUrl} sandboxEnabled={effectiveSandboxEnabled} sandboxPolicy={effectiveSandboxPolicy} poster={content.backdrop ?? content.poster ?? ''} title={content.title} state={effectiveState} subtitles={effectiveSubtitles} {statusNote} on:loadedmetadata={handleLoadedMetadata} on:timeupdate={handleTimeUpdate} on:play={handlePlay} on:pause={handlePause} on:waiting={handleWaiting} on:playing={handlePlaying} on:seeking={handleSeeking} on:seeked={handleSeeked} on:ended={handleEnded} on:error={handleMediaError} on:embedload={handleEmbedLoad} on:enginequality={handleEngineQuality} on:durationchange={handleSeekOpportunity} on:loadeddata={handleSeekOpportunity} on:canplay={handleSeekOpportunity} on:progress={handleSeekOpportunity} />
+    <PlayerViewport bind:this={viewport} bind:videoElement bind:iframeElement {source} {mediaUrl} sandboxEnabled={effectiveSandboxEnabled} sandboxPolicy={effectiveSandboxPolicy} poster={content.backdrop ?? content.poster ?? ''} title={content.title} state={effectiveState} subtitles={effectiveSubtitles} on:loadedmetadata={handleLoadedMetadata} on:timeupdate={handleTimeUpdate} on:play={handlePlay} on:pause={handlePause} on:waiting={handleWaiting} on:playing={handlePlaying} on:seeking={handleSeeking} on:seeked={handleSeeked} on:ended={handleEnded} on:error={handleMediaError} on:embedload={handleEmbedLoad} on:enginequality={handleEngineQuality} on:durationchange={handleSeekOpportunity} on:loadeddata={handleSeekOpportunity} on:canplay={handleSeekOpportunity} on:progress={handleSeekOpportunity} />
 
     {#if resolutionError || errorMessage || effectiveState === 'error' || effectiveState === 'provider-error' || effectiveState === 'source-unavailable' || effectiveState === 'unsupported-format' || effectiveState === 'embed-unavailable'}
       <div class="message-card" role="alert">
         <div class="message-icon"><AlertTriangle size={17} /></div>
         <div><strong>This source isn't available.</strong><p>{resolutionError || errorMessage || 'Choose another source or try again.'}</p></div>
-        <div class="message-actions"><button class="small-button" type="button" aria-label="Try again" onclick={retry}><RotateCcw size={14} /> Try again</button>{#if sourceOptions.length}<button class="small-button secondary" type="button" aria-label="Switch source" onclick={openSourceFromMenu}><Settings2 size={14} /> Switch source</button>{/if}</div>
+        <div class="message-actions"><button class="small-button" type="button" aria-label="Try again" onclick={retry}><RotateCcw size={14} /> Try again</button>{#if sourceOptions.length}<button class="small-button secondary" type="button" aria-label="Switch source" onclick={(event) => openSourceSheet(event.currentTarget instanceof HTMLElement ? event.currentTarget : playerRoot)}><Settings2 size={14} /> Switch source</button>{/if}</div>
       </div>
     {:else if state === 'completed'}
       <div class="completion-card" role="status"><Check size={18} /><span>Episode complete</span></div>
@@ -1309,43 +1413,42 @@
   <!-- Immersive redesign: Direct source playback controls as an overlay (auto-hiding). -->
   {#if source?.type === 'direct'}
     <div class="direct-controls-overlay" class:visible={controlsVisible}>
-      <PlayerControls playing={playing} {muted} {volume} {currentTime} {duration} {buffered} {playbackRate} {pictureInPictureSupported} {pictureInPicture} subtitles={subtitles} selectedSubtitle={selectedSubtitle} qualities={qualities} selectedQuality={selectedQuality} internalQualities={engineQuality?.options ?? []} selectedInternalQuality={engineQuality?.selected ?? PLAYER_AUTO_QUALITY_ID} sourceCount={sourceOptions.length} onTogglePlay={togglePlay} onSeek={seek} onVolume={setVolume} onToggleMute={toggleMute} onPlaybackRate={setPlaybackRate} onSubtitle={setSubtitle} onQuality={setQuality} onInternalQuality={setInternalQuality} onPictureInPicture={togglePictureInPicture} onStep={seekBy} onSources={openSourceFromMenu} />
+      <PlayerControls playing={playing} {muted} {volume} {currentTime} {duration} {buffered} {playbackRate} {pictureInPictureSupported} {pictureInPicture} subtitles={subtitles} selectedSubtitle={selectedSubtitle} qualities={qualities} selectedQuality={selectedQuality} internalQualities={engineQuality?.options ?? []} selectedInternalQuality={engineQuality?.selected ?? PLAYER_AUTO_QUALITY_ID} sourceCount={sourceOptions.length} onTogglePlay={togglePlay} onSeek={seek} onVolume={setVolume} onToggleMute={toggleMute} onPlaybackRate={setPlaybackRate} onSubtitle={setSubtitle} onQuality={setQuality} onInternalQuality={setInternalQuality} onPictureInPicture={togglePictureInPicture} onStep={seekBy} onSources={openSourceSheetFromControl} />
     </div>
   {/if}
 
-  <!-- Immersive redesign: Control Menu FAB — bottom-right overlay.
-       When clicked, unfolds Orientation / Source / Episodes / Sandbox vertically. -->
-  <div class="control-fab-group" class:visible={controlsVisible}>
-    {#if menuOpen}
-      <!-- Menu items unfold vertically above the FAB with staggered animation. -->
-      <button class="fab-item" style="--fab-delay: 0ms" type="button" aria-label={landscapeMode ? 'Exit landscape player' : 'Toggle landscape player'} aria-pressed={landscapeMode} onclick={() => { void toggleLandscape(); closeMenu(); }}>
-        <Maximize2 size={18} />
-        <span class="fab-item-label">{landscapeMode ? 'Portrait' : 'Landscape'}</span>
+  <!-- Player redesign: dedicated bottom-right Landscape/Portrait control.
+       ~48px circular touch target, safe-area aware, distinct orientation and
+       fullscreen states (fullscreen state is mirrored by the browser-synced
+       `fullscreen` flag + orientation lock attempt in toggleLandscape).
+       Positioning is overridable per source via the Admin
+       "Player Controls Position" config (CSS vars below). -->
+  <div class="control-fab-group" class:visible={controlsVisible} style={landscapeControlStyle}>
+    {#if episodes.length}
+      <button class="fab-item" style="--fab-delay: 0ms" type="button" aria-label="Open episode list" aria-haspopup="dialog" onclick={openEpisodeSheetFromControl}>
+        <ListVideo size={18} />
+        <span class="fab-item-label">Episodes</span>
       </button>
-      {#if sourceOptions.length}
-        <button class="fab-item" style="--fab-delay: 50ms" type="button" aria-label="Switch source" onclick={openSourceFromMenu}>
-          <Settings2 size={18} />
-          <span class="fab-item-label">Source</span>
-        </button>
-      {/if}
-      {#if episodes.length}
-        <button class="fab-item" style="--fab-delay: 100ms" type="button" aria-label="Open episode list" onclick={openEpisodeFromMenu}>
-          <ListVideo size={18} />
-          <span class="fab-item-label">Episodes</span>
-        </button>
-      {/if}
-      {#if source?.type === 'embed'}
-        <button class="fab-item" style="--fab-delay: 200ms" type="button" aria-label={`Turn sandbox ${effectiveSandboxEnabled ? 'off' : 'on'}`} aria-pressed={effectiveSandboxEnabled} onclick={() => { toggleSandbox(); closeMenu(); }}>
-          {#if effectiveSandboxEnabled}<ShieldCheck size={18} />{:else}<ShieldOff size={18} />{/if}
-          <span class="fab-item-label">Sandbox {effectiveSandboxEnabled ? 'ON' : 'OFF'}</span>
-        </button>
-      {/if}
     {/if}
-    <!-- The main FAB button: Menu icon when closed, X when open. -->
-    <button class="control-fab" type="button" aria-label={menuOpen ? 'Close menu' : 'Open player menu'} aria-expanded={menuOpen} onclick={toggleMenu}>
-      {#if menuOpen}<X size={22} />{:else}<Menu size={22} />{/if}
+    <button class="control-fab landscape-fab" style={landscapeControlStyle} type="button" aria-label={landscapeMode ? 'Exit landscape player' : 'Enter landscape player'} aria-pressed={landscapeMode} onclick={() => { void toggleLandscape(); }}>
+      {#if landscapeMode}<Minimize2 size={22} />{:else}<Maximize2 size={22} />{/if}
     </button>
   </div>
+
+  <!-- Player redesign: slim vertical source chip on the right edge, attached
+       around the vertical centre of the viewport (Rivestream reference).
+       ~5px visible bar with a large (>=44x64) accessible hit area; reveals a
+       "Source" label on hover/focus; opens the EXISTING source sheet (the
+       same sheet, grouping, ordering and state as before — no second source
+       system). Playback keeps running while the sheet is open. Hides with
+       the other Mavero controls; never covers provider controls (it hugs the
+       right edge and expands only leftward on hover). -->
+  {#if sourceOptions.length}
+    <button class="source-chip" class:visible={controlsVisible} type="button" aria-label="Choose source" aria-haspopup="dialog" onclick={(event) => openSourceSheet(event.currentTarget instanceof HTMLElement ? event.currentTarget : playerRoot)}>
+      <span class="source-chip-label" aria-hidden="true">Source</span>
+      <span class="source-chip-bar" aria-hidden="true"></span>
+    </button>
+  {/if}
 
   {#if sourceMenuOpen}
     <!-- Source sheet — responsive: bottom sheet on compact, right drawer on wide. -->
@@ -1389,22 +1492,41 @@
      The visibility transition has a delay matching the opacity fade so the FAB
      stays visible during the fade-out, then becomes invisible + non-interactive
      after the fade completes. When revealing, visibility flips back instantly. */
-  .player-shell.controls-hidden:not(.menu-open) .back-fab { opacity: 0; visibility: hidden; pointer-events: none; transition: opacity var(--motion-normal) var(--ease-out), transform var(--motion-normal) var(--ease-out), background var(--motion-fast) var(--ease-out), visibility 0s linear var(--motion-normal); }
+  .player-shell.controls-hidden .back-fab { opacity: 0; visibility: hidden; pointer-events: none; transition: opacity var(--motion-normal) var(--ease-out), transform var(--motion-normal) var(--ease-out), background var(--motion-fast) var(--ease-out), visibility 0s linear var(--motion-normal); }
 
   /* Direct source controls overlay — auto-hiding bottom bar. */
   .direct-controls-overlay { position: absolute; z-index: 10; bottom: 0; left: 0; right: 0; padding-bottom: env(safe-area-inset-bottom); opacity: 1; transition: opacity var(--motion-normal) var(--ease-out); pointer-events: auto; }
   .direct-controls-overlay:not(.visible) { opacity: 0; pointer-events: none; }
 
-  /* Control Menu FAB group — bottom-right overlay. */
+  /* Player redesign bottom-right control group — Landscape FAB + Episodes
+     pill. Bottom-right by default (safe-area aware); the Admin's per-source
+     "Player Controls Position" config overrides the offset via inline style
+     (viewport-relative percentages, see player-controls-position.ts). */
   .control-fab-group { position: absolute; z-index: 12; bottom: max(16px, env(safe-area-inset-bottom)); right: max(16px, env(safe-area-inset-right)); display: flex; flex-direction: column; align-items: flex-end; gap: 8px; visibility: visible; transition: opacity var(--motion-normal) var(--ease-out), visibility 0s linear 0s; }
   .control-fab-group:not(.visible) { opacity: 0; visibility: hidden; pointer-events: none; transition: opacity var(--motion-normal) var(--ease-out), visibility 0s linear var(--motion-normal); }
   .player-shell.controls-hidden .control-fab-group { opacity: 0; visibility: hidden; pointer-events: none; transition: opacity var(--motion-normal) var(--ease-out), visibility 0s linear var(--motion-normal); }
-  .player-shell.menu-open .control-fab-group { opacity: 1; visibility: visible; pointer-events: auto; }
 
-  /* Main FAB button. */
-  .control-fab { display: grid; place-items: center; width: 52px; height: 52px; border: 1px solid var(--line-strong); border-radius: 50%; color: #fff; background: rgba(0,0,0,.65); cursor: pointer; backdrop-filter: blur(12px); box-shadow: 0 4px 16px rgba(0,0,0,.4); transition: background var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
+  /* Landscape/fullscreen control — the group's primary FAB (48px touch
+     target, spec range 44–48). Distinct orientation states: Maximize2 when
+     entering landscape, Minimize2 when returning to portrait; the fullscreen
+     state itself is browser-synced via the fullscreenchange listener. */
+  .control-fab { display: grid; place-items: center; width: 48px; height: 48px; border: 1px solid var(--line-strong); border-radius: 50%; color: #fff; background: rgba(0,0,0,.65); cursor: pointer; backdrop-filter: blur(12px); box-shadow: 0 4px 16px rgba(0,0,0,.4); transition: background var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
   .control-fab:hover, .control-fab:focus-visible { background: rgba(0,0,0,.85); border-color: var(--accent); }
   .control-fab:active { transform: scale(.93); }
+
+  /* Source chip — slim vertical control attached to the right edge around the
+     vertical centre (Rivestream reference). Visible affordance: ~5px rounded
+     bar; interactive hit area 44x64+; hover/focus reveals the label leftward
+     (never rightward/over the edge). z-index below sheets (20/21); the chip
+     NEVER blocks provider controls — it hugs the edge and hides with the
+     other Mavero controls. */
+  .source-chip { position: absolute; z-index: 12; top: 50%; right: 0; transform: translateY(-50%); display: flex; align-items: center; justify-content: flex-end; min-width: 44px; min-height: 64px; padding: 0 0 0 14px; border: 0; border-left: 1px solid var(--line-strong); border-radius: 10px 0 0 10px; color: var(--ink-soft); background: rgba(0,0,0,.55); cursor: pointer; backdrop-filter: blur(12px); visibility: visible; transition: opacity var(--motion-normal) var(--ease-out), background var(--motion-fast) var(--ease-out), padding var(--motion-fast) var(--ease-out), visibility 0s linear 0s; }
+  .source-chip-bar { flex: 0 0 auto; width: 5px; height: 56px; border-radius: 999px 0 0 999px; background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--line-strong); }
+  .source-chip-label { overflow: hidden; max-width: 0; opacity: 0; white-space: nowrap; font: inherit; font-size: .6rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; transition: max-width var(--motion-fast) var(--ease-out), opacity var(--motion-fast) var(--ease-out); }
+  .source-chip:hover, .source-chip:focus-visible { background: rgba(0,0,0,.8); border-color: var(--accent); padding-left: 18px; }
+  .source-chip:hover .source-chip-label, .source-chip:focus-visible .source-chip-label { max-width: 90px; opacity: 1; margin-right: 8px; }
+  .source-chip:active { background: rgba(0,0,0,.9); }
+  .player-shell.controls-hidden .source-chip { opacity: 0; visibility: hidden; pointer-events: none; transition: opacity var(--motion-normal) var(--ease-out), background var(--motion-fast) var(--ease-out), padding var(--motion-fast) var(--ease-out), visibility 0s linear var(--motion-normal); }
 
   /* Menu items — staggered unfold animation. */
   .fab-item { display: flex; align-items: center; gap: 8px; height: 44px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 999px; color: #fff; background: rgba(0,0,0,.65); cursor: pointer; backdrop-filter: blur(12px); box-shadow: 0 2px 10px rgba(0,0,0,.3); font: inherit; font-size: .62rem; font-weight: 600; white-space: nowrap; opacity: 0; transform: translateY(8px) scale(0.9); animation: fab-unfold 200ms var(--ease-out) var(--fab-delay, 0ms) forwards; }
@@ -1483,16 +1605,18 @@
     .message-actions { width: 100%; margin-left: 46px; }
   }
 
-  /* Landscape phone — compact FAB positioning. */
+  /* Landscape phone — compact control positioning. */
   @media (orientation: landscape) and (max-height: 500px) {
     .back-fab { width: 40px; height: 40px; top: max(8px, env(safe-area-inset-top)); left: max(8px, env(safe-area-inset-left)); }
     .control-fab { width: 46px; height: 46px; }
     .fab-item { height: 40px; font-size: .58rem; }
+    .source-chip { min-height: 56px; }
+    .source-chip-bar { height: 48px; }
   }
 
   @media (prefers-reduced-motion: reduce) {
     .loading-ring, :global(.spin) { animation: none; }
-    .back-fab, .control-fab, .control-fab-group, .direct-controls-overlay { transition: none; }
+    .back-fab, .control-fab, .control-fab-group, .direct-controls-overlay, .source-chip, .source-chip-label { transition: none; }
     .fab-item { animation: none; opacity: 1; transform: none; }
     .source-sheet, .episode-sheet { animation: none; }
   }

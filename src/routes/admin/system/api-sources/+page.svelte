@@ -74,14 +74,84 @@
   let editingSource: any = $state(null);
   let sourceSheetTrigger: HTMLElement | null = null;
 
+  // --- Player Controls Position (per-source landscape control placement) ---
+  // Bound to the form fields; also drives the live preview box. Loaded from
+  // editingSource.capabilities.player_controls_position when the sheet opens.
+  let controlsPositionMode = $state('default');
+  let controlsHAnchor = $state('right');
+  let controlsHOffset = $state(16);
+  let controlsVAnchor = $state('bottom');
+  let controlsVOffset = $state(16);
+  let controlsPHAnchor = $state('');
+  let controlsPHOffset = $state(0);
+  let controlsPVAnchor = $state('');
+  let controlsPVOffset = $state(0);
+  let controlsLHAnchor = $state('');
+  let controlsLHOffset = $state(0);
+  let controlsLVAnchor = $state('');
+  let controlsLVOffset = $state(0);
+
+  function loadControlsPositionState(source: any) {
+    const raw = source?.capabilities?.player_controls_position;
+    const custom = raw && typeof raw === 'object' && raw.mode === 'custom' ? raw : null;
+    controlsPositionMode = custom ? 'custom' : 'default';
+    controlsHAnchor = custom?.horizontal?.anchor ?? 'right';
+    controlsHOffset = typeof custom?.horizontal?.offsetPercent === 'number' ? custom.horizontal.offsetPercent : 16;
+    controlsVAnchor = custom?.vertical?.anchor ?? 'bottom';
+    controlsVOffset = typeof custom?.vertical?.offsetPercent === 'number' ? custom.vertical.offsetPercent : 16;
+    controlsPHAnchor = custom?.portrait?.horizontal?.anchor ?? '';
+    controlsPHOffset = typeof custom?.portrait?.horizontal?.offsetPercent === 'number' ? custom.portrait.horizontal.offsetPercent : 0;
+    controlsPVAnchor = custom?.portrait?.vertical?.anchor ?? '';
+    controlsPVOffset = typeof custom?.portrait?.vertical?.offsetPercent === 'number' ? custom.portrait.vertical.offsetPercent : 0;
+    controlsLHAnchor = custom?.landscape?.horizontal?.anchor ?? '';
+    controlsLHOffset = typeof custom?.landscape?.horizontal?.offsetPercent === 'number' ? custom.landscape.horizontal.offsetPercent : 0;
+    controlsLVAnchor = custom?.landscape?.vertical?.anchor ?? '';
+    controlsLVOffset = typeof custom?.landscape?.vertical?.offsetPercent === 'number' ? custom.landscape.vertical.offsetPercent : 0;
+  }
+
+  function resetControlsPosition() {
+    controlsPositionMode = 'default';
+    controlsHAnchor = 'right';
+    controlsHOffset = 16;
+    controlsVAnchor = 'bottom';
+    controlsVOffset = 16;
+    controlsPHAnchor = '';
+    controlsPHOffset = 0;
+    controlsPVAnchor = '';
+    controlsPVOffset = 0;
+    controlsLHAnchor = '';
+    controlsLHOffset = 0;
+    controlsLVAnchor = '';
+    controlsLVOffset = 0;
+  }
+
+  // Preview placement — mirrors the runtime math in
+  // $lib/shared/player-controls-position.ts (bounded, viewport-relative %).
+  const controlsPreviewHStyle = $derived(
+    controlsPositionMode !== 'custom'
+      ? 'right:16px'
+      : controlsHAnchor === 'center'
+        ? 'left:50%;transform:translateX(-50%)'
+        : `${controlsHAnchor}:${controlsHOffset}%`
+  );
+  const controlsPreviewVStyle = $derived(
+    controlsPositionMode !== 'custom'
+      ? 'bottom:16px'
+      : controlsVAnchor === 'center'
+        ? 'top:50%;transform:translateY(-50%)'
+        : `${controlsVAnchor}:${controlsVOffset}%`
+  );
+
   function openCreateSource(event?: Event) {
     if (event) sourceSheetTrigger = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
     editingSource = null;
+    loadControlsPositionState(null);
     sourceSheetOpen = true;
   }
   function openEditSource(source: any, event?: Event) {
     if (event) sourceSheetTrigger = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
     editingSource = source;
+    loadControlsPositionState(source);
     sourceSheetOpen = true;
   }
   function closeSourceSheet() {
@@ -425,6 +495,95 @@
         <label class="a2-field"><span>Description</span><input name="description" value={editingSource?.description ?? ''} /></label>
         <label class="a2-field"><span>Notes</span><input name="notes" value={editingSource?.notes ?? ''} /></label>
       </AdminFormSection>
+      <!-- Player redesign: per-source Landscape-control placement. Persisted
+           inside capabilities.player_controls_position; the player positions
+           its bottom-right control group (Landscape/Fullscreen FAB + Episodes
+           pill) from this config for THIS source only. -->
+      <AdminFormSection heading="Player Controls Position">
+        <p class="a2-field-hint">Place the MAVERO Landscape button relative to this provider's own fullscreen control. Percentages are viewport-relative (0–100). Sources without a custom placement use the default bottom-right corner.</p>
+        <label class="a2-field"><span>Position Mode</span>
+          <select name="controls_position_mode" bind:value={controlsPositionMode}>
+            <option value="default">Default — bottom-right corner</option>
+            <option value="custom">Custom — manual placement</option>
+          </select>
+        </label>
+        {#if controlsPositionMode === 'custom'}
+          <div class="a2-position-grid">
+            <label class="a2-field"><span>Horizontal anchor</span>
+              <select name="controls_position_h_anchor" bind:value={controlsHAnchor}>
+                <option value="right">From right edge</option>
+                <option value="left">From left edge</option>
+                <option value="center">Centered</option>
+              </select>
+            </label>
+            {#if controlsHAnchor !== 'center'}
+              <label class="a2-field"><span>Horizontal offset %</span><input type="number" name="controls_position_h_offset" min="0" max="100" step="0.5" bind:value={controlsHOffset} /></label>
+            {/if}
+            <label class="a2-field"><span>Vertical anchor</span>
+              <select name="controls_position_v_anchor" bind:value={controlsVAnchor}>
+                <option value="bottom">From bottom edge</option>
+                <option value="top">From top edge</option>
+                <option value="center">Centered</option>
+              </select>
+            </label>
+            {#if controlsVAnchor !== 'center'}
+              <label class="a2-field"><span>Vertical offset %</span><input type="number" name="controls_position_v_offset" min="0" max="100" step="0.5" bind:value={controlsVOffset} /></label>
+            {/if}
+          </div>
+          <details class="a2-position-overrides">
+            <summary>Portrait / landscape overrides (optional)</summary>
+            <div class="a2-position-grid">
+              <span class="a2-position-axis-label">Portrait</span>
+              <label class="a2-field"><span>H anchor</span>
+                <select name="controls_position_p_h_anchor" bind:value={controlsPHAnchor}>
+                  <option value="">Inherit</option>
+                  <option value="right">From right</option>
+                  <option value="left">From left</option>
+                  <option value="center">Centered</option>
+                </select>
+              </label>
+              <label class="a2-field"><span>H offset %</span><input type="number" name="controls_position_p_h_offset" min="0" max="100" step="0.5" bind:value={controlsPHOffset} /></label>
+              <label class="a2-field"><span>V anchor</span>
+                <select name="controls_position_p_v_anchor" bind:value={controlsPVAnchor}>
+                  <option value="">Inherit</option>
+                  <option value="top">From top</option>
+                  <option value="bottom">From bottom</option>
+                  <option value="center">Centered</option>
+                </select>
+              </label>
+              <label class="a2-field"><span>V offset %</span><input type="number" name="controls_position_p_v_offset" min="0" max="100" step="0.5" bind:value={controlsPVOffset} /></label>
+              <span class="a2-position-axis-label">Landscape</span>
+              <label class="a2-field"><span>H anchor</span>
+                <select name="controls_position_l_h_anchor" bind:value={controlsLHAnchor}>
+                  <option value="">Inherit</option>
+                  <option value="right">From right</option>
+                  <option value="left">From left</option>
+                  <option value="center">Centered</option>
+                </select>
+              </label>
+              <label class="a2-field"><span>H offset %</span><input type="number" name="controls_position_l_h_offset" min="0" max="100" step="0.5" bind:value={controlsLHOffset} /></label>
+              <label class="a2-field"><span>V anchor</span>
+                <select name="controls_position_l_v_anchor" bind:value={controlsLVAnchor}>
+                  <option value="">Inherit</option>
+                  <option value="top">From top</option>
+                  <option value="bottom">From bottom</option>
+                  <option value="center">Centered</option>
+                </select>
+              </label>
+              <label class="a2-field"><span>V offset %</span><input type="number" name="controls_position_l_v_offset" min="0" max="100" step="0.5" bind:value={controlsLVOffset} /></label>
+            </div>
+          </details>
+          <!-- Calibration preview: 16:9 stage; the dot is the MAVERO
+               Landscape control, the corner marker is the provider's typical
+               fullscreen control position for reference. -->
+          <div class="a2-position-preview" role="img" aria-label="Preview of the Landscape control placement inside the player viewport">
+            <span class="a2-position-preview-provider" aria-hidden="true"></span>
+            <span class="a2-position-preview-dot" aria-hidden="true" style={`${controlsPreviewHStyle};${controlsPreviewVStyle}`}></span>
+            <span class="a2-position-preview-caption" aria-hidden="true">Landscape control preview</span>
+          </div>
+          <button type="button" class="a2-btn-secondary" onclick={resetControlsPosition}>Reset to default</button>
+        {/if}
+      </AdminFormSection>
       <div class="a2-form-actions">
         <button type="submit" class="a2-btn-primary">{editingSource ? 'Save' : 'Create'}</button>
         <button type="button" class="a2-btn-secondary" onclick={closeSourceSheet}>Cancel</button>
@@ -482,6 +641,17 @@
   .a2-btn-secondary { padding: 10px 16px; background: var(--a2-surface-3); border: 1px solid var(--a2-border-strong); border-radius: var(--a2-radius-sm); color: var(--a2-text); font-size: var(--a2-text-sm); font-weight: 600; cursor: pointer; min-height: 44px; }
 
   .mono { font-family: var(--a2-font-mono); font-size: var(--a2-text-2xs); }
+
+  /* Player Controls Position section (player redesign). */
+  .a2-field-hint { margin: 0; font-size: var(--a2-text-2xs); color: var(--a2-text-muted); line-height: 1.5; }
+  .a2-position-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--a2-space-2); align-items: end; }
+  .a2-position-axis-label { font-size: var(--a2-text-2xs); font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--a2-text-dim); padding-top: var(--a2-space-2); }
+  .a2-position-overrides { border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); padding: var(--a2-space-2) var(--a2-space-3); }
+  .a2-position-overrides summary { cursor: pointer; font-size: var(--a2-text-2xs); color: var(--a2-text-muted); }
+  .a2-position-preview { position: relative; aspect-ratio: 16 / 9; border: 1px solid var(--a2-border-strong); border-radius: var(--a2-radius-sm); background: linear-gradient(160deg, #0c0c14, #16161f); overflow: hidden; }
+  .a2-position-preview-provider { position: absolute; right: 8%; bottom: 10%; width: 18px; height: 10px; border: 1px dashed rgba(255,255,255,.35); border-radius: 2px; }
+  .a2-position-preview-dot { position: absolute; width: 14px; height: 14px; border-radius: 50%; background: var(--a2-cyan); box-shadow: 0 0 0 4px rgba(0,0,0,.35), 0 0 10px var(--a2-cyan); }
+  .a2-position-preview-caption { position: absolute; left: 8px; top: 6px; font-size: 9px; letter-spacing: .08em; text-transform: uppercase; color: rgba(255,255,255,.45); }
 
   @media (max-width: 768px) {
     .a2-sheet { max-width: 100%; }

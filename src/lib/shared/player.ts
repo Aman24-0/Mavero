@@ -1,6 +1,7 @@
 export type PlayerSourceType = 'direct' | 'embed' | 'unavailable' | 'error';
 import type { SandboxPolicy, SandboxPolicyRuntime } from './sandbox-policy';
 import type { SourceBadge } from './source-presentation';
+import type { PlayerControlsPosition } from './player-controls-position';
 
 export type PlayerProtocol = 'hls' | 'dash' | 'mp4' | 'file' | 'unknown';
 
@@ -180,6 +181,16 @@ export type PlayerSourceOption = {
    * (currently only MegaPlay) populate this field.
    */
   variants?: string[];
+  /**
+   * Player redesign: the Admin-configured Landscape-control placement for
+   * THIS source (parsed + bounded from the source's
+   * `capabilities.player_controls_position` by the watch route via
+   * `controlsPositionFromCapabilities`). null/undefined = default
+   * bottom-right positioning (all legacy sources). Parsed server-data →
+   * option mapping happens exactly once per option; the shell only reads
+   * the already-validated value for the ACTIVE sourceId.
+   */
+  controlsPosition?: PlayerControlsPosition | null;
 };
 
 export type PlayerEpisode = {

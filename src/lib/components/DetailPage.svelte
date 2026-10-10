@@ -9,6 +9,7 @@
   import { getMedia, type MediaItem } from '$data/content';
   import SkeletonCard from '$components/SkeletonCard.svelte';
   import { getCachedRail, setCachedRail } from '$lib/client/discover/rail-cache';
+  import { markPlayerMilestone } from '$lib/client/player/player-timing';
   import SeasonEpisodes from '$components/SeasonEpisodes.svelte';
   import { getFavoriteStatus, getLocalProgressRecords, removeFavoriteFromMyList, setFavoriteStatus } from '$lib/client/progress/service';
   import type { WatchlistStatus } from '$lib/client/progress/types';
@@ -880,7 +881,7 @@
              approved secondary row immediately beneath it. -->
         <div class="actions">
           <div class="primary-actions">
-            <a class="play-btn" href={watchHref} aria-label={playSubLabel ? `${playLabel} — season ${resumeEpisode?.season}, episode ${resumeEpisode?.episode}` : `${playLabel} ${item.title}`}>
+            <a class="play-btn" href={watchHref} aria-label={playSubLabel ? `${playLabel} — season ${resumeEpisode?.season}, episode ${resumeEpisode?.episode}` : `${playLabel} ${item.title}`} onclick={() => markPlayerMilestone('mavero:play')}>
               <Play size={17} fill="currentColor" strokeWidth={0} />
               <span class="play-copy">
                 <span class="play-label">{playLabel}</span>

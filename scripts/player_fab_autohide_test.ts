@@ -9,10 +9,10 @@ import { readFileSync } from 'node:fs';
 //
 // Verified behavior:
 //   1. FABs are initially visible (controlsVisible starts true)
-//   2. 10s inactivity hides FABs
+//   2. 5s inactivity hides FABs (player redesign; was 10s)
 //   3. User interaction reveals FABs again
 //   4. Interaction resets the timer (single authoritative timer)
-//   5. Menu-open state prevents hiding
+//   5. Sheet-open + keyboard-focus state prevents hiding
 //   6. Closing the menu restarts the timer
 //   7. Closing a sheet (source/episode/streams) restarts the timer
 //   8. Video/player itself is NOT hidden by the FAB auto-hide state
@@ -32,7 +32,7 @@ assert.match(shell, /let controlsVisible = true/, 'controlsVisible initial state
 // ============================================================
 // 2. 10s inactivity hides FABs
 // ============================================================
-assert.match(shell, /10_000/, '10s auto-hide timer value present');
+assert.match(shell, /5_000/, '5s auto-hide timer value present (player redesign)');
 assert.match(shell, /hideTimer = setTimeout\(\(\) => \{[^}]*controlsVisible = false/, 'timer callback sets controlsVisible = false');
 
 // ============================================================
@@ -70,19 +70,15 @@ assert.doesNotMatch(onMountBlock, /controlsVisible = false/, 'NO controlsVisible
 // ============================================================
 // 5. Menu-open state prevents hiding
 // ============================================================
-assert.match(shell, /if \(playing && !menuOpen && !sourceMenuOpen && !episodeMenuOpen && !streamsSheetOpen\)/, 'revealControls gates timer start on all open states');
-assert.match(shell, /if \(!menuOpen && !sourceMenuOpen && !episodeMenuOpen && !streamsSheetOpen\) \{[^}]*controlsVisible = false/, 'timer callback re-checks all open states before hiding');
-assert.match(shell, /\.player-shell\.menu-open \.control-fab-group \{[^}]*opacity: 1/, 'CSS keeps control-fab-group visible when menu-open');
+assert.match(shell, /\(playing \|\| embedPlaying\) && !sourceMenuOpen && !episodeMenuOpen/, 'revealControls gates timer start on playback + all open states');
+assert.match(shell, /!sourceMenuOpen && !episodeMenuOpen && !focusWithinMaveroControls\(\)\) \{[^}]*controlsVisible = false/, 'timer callback re-checks open states + focus guard before hiding');
+assert.match(shell, /function focusWithinMaveroControls\(\): boolean/, 'keyboard-focus a11y guard exists (focused controls are never hidden)');
 
 // ============================================================
-// 6. Closing the menu restarts the timer
+// 6. UPDATED (player redesign): the menu no longer exists — dedicated
+//    controls close via their own handlers and either sheet close restarts
+//    the countdown (section 7 below).
 // ============================================================
-const closeMenuStart = shell.indexOf('/** Immersive redesign: close menu and restart inactivity timer. */');
-const closeMenuEnd = shell.indexOf('}', closeMenuStart);
-assert.ok(closeMenuStart >= 0, 'closeMenu function found');
-const closeMenuBlock = shell.slice(closeMenuStart, closeMenuEnd);
-assert.match(closeMenuBlock, /menuOpen = false/, 'closeMenu sets menuOpen = false');
-assert.match(closeMenuBlock, /revealControls\(\)/, 'closeMenu calls revealControls to restart timer');
 
 // ============================================================
 // 7. Closing sheets restarts the timer
@@ -99,11 +95,8 @@ assert.ok(closeEpisodeSheetStart >= 0, 'closeEpisodeSheet function found');
 const closeEpisodeSheetBlock = shell.slice(closeEpisodeSheetStart, closeEpisodeSheetEnd);
 assert.match(closeEpisodeSheetBlock, /revealControls\(\)/, 'closeEpisodeSheet calls revealControls to restart timer');
 
-const closeStreamsSheetStart = shell.indexOf('function closeStreamsSheet()');
-const closeStreamsSheetEnd = shell.indexOf('\n  }', closeStreamsSheetStart);
-assert.ok(closeStreamsSheetStart >= 0, 'closeStreamsSheet function found');
-const closeStreamsSheetBlock = shell.slice(closeStreamsSheetStart, closeStreamsSheetEnd);
-assert.match(closeStreamsSheetBlock, /revealControls\(\)/, 'closeStreamsSheet calls revealControls to restart timer');
+// The dedicated streams sheet was RETIRED (0111d7f); only the source and
+// episode sheets remain — both covered above.
 
 // ============================================================
 // 8. Video / player itself is NOT hidden by the FAB auto-hide state
@@ -138,16 +131,17 @@ assert.match(cleanupBlock, /if \(hideTimer\) clearTimeout\(hideTimer\)/, 'cleanu
 assert.match(cleanupBlock, /removeEventListener\('pointermove', showControls\)/, 'cleanup removes pointermove listener');
 assert.match(cleanupBlock, /removeEventListener\('pointerdown', showControls\)/, 'cleanup removes pointerdown listener');
 assert.match(cleanupBlock, /removeEventListener\('touchstart', showControls\)/, 'cleanup removes touchstart listener');
+assert.match(cleanupBlock, /removeEventListener\('focusin', handleFocusIn\)/, 'cleanup removes focusin listener (player redesign)');
 
 // ============================================================
 // 10. visibility:hidden applied in the hidden CSS state (with transition delay)
 // ============================================================
 // Back FAB hidden state:
-assert.match(shell, /\.player-shell\.controls-hidden:not\(\.menu-open\) \.back-fab \{[^}]*opacity: 0/, 'back-fab hidden state sets opacity:0');
-assert.match(shell, /\.player-shell\.controls-hidden:not\(\.menu-open\) \.back-fab \{[^}]*visibility: hidden/, 'back-fab hidden state sets visibility:hidden');
-assert.match(shell, /\.player-shell\.controls-hidden:not\(\.menu-open\) \.back-fab \{[^}]*pointer-events: none/, 'back-fab hidden state sets pointer-events:none');
+assert.match(shell, /\.player-shell\.controls-hidden \.back-fab \{[^}]*opacity: 0/, 'back-fab hidden state sets opacity:0');
+assert.match(shell, /\.player-shell\.controls-hidden \.back-fab \{[^}]*visibility: hidden/, 'back-fab hidden state sets visibility:hidden');
+assert.match(shell, /\.player-shell\.controls-hidden \.back-fab \{[^}]*pointer-events: none/, 'back-fab hidden state sets pointer-events:none');
 // Transition delay on visibility so the fade-out animation is preserved:
-assert.match(shell, /\.player-shell\.controls-hidden:not\(\.menu-open\) \.back-fab \{[^}]*visibility 0s linear var\(--motion-normal\)/, 'back-fab hidden state delays visibility transition to preserve fade-out');
+assert.match(shell, /\.player-shell\.controls-hidden \.back-fab \{[^}]*visibility 0s linear var\(--motion-normal\)/, 'back-fab hidden state delays visibility transition to preserve fade-out');
 
 // Control FAB group hidden state:
 assert.match(shell, /\.player-shell\.controls-hidden \.control-fab-group \{[^}]*opacity: 0/, 'control-fab-group hidden state sets opacity:0');
@@ -155,10 +149,9 @@ assert.match(shell, /\.player-shell\.controls-hidden \.control-fab-group \{[^}]*
 assert.match(shell, /\.player-shell\.controls-hidden \.control-fab-group \{[^}]*pointer-events: none/, 'control-fab-group hidden state sets pointer-events:none');
 assert.match(shell, /\.player-shell\.controls-hidden \.control-fab-group \{[^}]*visibility 0s linear var\(--motion-normal\)/, 'control-fab-group hidden state delays visibility transition to preserve fade-out');
 
-// Menu-open state keeps the FAB group visible (visibility:visible):
-assert.match(shell, /\.player-shell\.menu-open \.control-fab-group \{[^}]*opacity: 1/, 'menu-open keeps control-fab-group opacity:1');
-assert.match(shell, /\.player-shell\.menu-open \.control-fab-group \{[^}]*visibility: visible/, 'menu-open keeps control-fab-group visibility:visible');
-assert.match(shell, /\.player-shell\.menu-open \.control-fab-group \{[^}]*pointer-events: auto/, 'menu-open keeps control-fab-group pointer-events:auto');
+// Player redesign: the menu state no longer exists — the group is kept
+// visible while a sheet is open via the revealControls guards (asserted
+// above) and while focus rests inside a Mavero control (focus guard).
 
 // Reduced-motion respected for FAB transitions (visibility delay becomes 0):
 // Extract the prefers-reduced-motion media block first, then assert on it.
@@ -216,11 +209,11 @@ assert.equal(controlsHiddenMatches.length, 1, 'exactly ONE controlsVisible = fal
 // These checks confirm the fix did NOT accidentally remove the Back FAB,
 // Control Menu FAB, or the Episodes button (intentionally present for TV).
 assert.match(shell, /class="back-fab"/, 'Back FAB still present');
-assert.match(shell, /class="control-fab"/, 'Control Menu FAB still present');
+assert.match(shell, /class="control-fab landscape-fab"/, 'Landscape control FAB still present (player redesign: menu FAB replaced by the dedicated landscape control)');
 assert.match(shell, /aria-label="Open episode list"/, 'Episodes button still present (TV/series playback)');
 
 // Source selector sheet behavior unchanged:
 assert.match(shell, /function openSourceSheet\(/, 'openSourceSheet function preserved');
 assert.match(shell, /function closeSourceSheet\(/, 'closeSourceSheet function preserved');
 
-console.log('FAB auto-hide behavior tests passed: initially visible (1); 10s inactivity hides (1); interaction listeners (4); single authoritative timer (3); menu-open prevents hiding (3); closeMenu restarts (2); closeSheet restarts (3); video/player NOT hidden (6); cleanup clears timers + listeners (4); visibility:hidden + transition delay (8); portrait/landscape no break (3); no competing timers (2); regressions preserved (5).');
+console.log('FAB auto-hide behavior tests passed: initially visible (1); 5s inactivity hides (1); interaction listeners (4); single authoritative timer (3); sheet-open + focus guards (3); sheet close restarts (2); closeSheet restarts (3); video/player NOT hidden (6); cleanup clears timers + listeners (5); visibility:hidden + transition delay (8); portrait/landscape no break (3); no competing timers (2); regressions preserved (5).');

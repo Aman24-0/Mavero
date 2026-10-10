@@ -116,9 +116,12 @@ function createProgressStoreMock() {
 
 // Landscape affordances live in the unified FAB group.
 assert.match(shell, /class="control-fab-group"/, 'unified FAB control group exists');
-assert.match(shell, /class="fab-item"[^>]*aria-pressed=\{landscapeMode\}/, 'landscape FAB item (toggle/exit) exists');
-assert.match(shell, /aria-label=\{landscapeMode \? 'Exit landscape player' : 'Toggle landscape player'\}/, 'landscape exit affordance exists');
-assert.match(shell, /class="fab-item"[^>]*aria-label="Switch source"/, 'source FAB item exists');
+// UPDATED (player redesign): the landscape toggle is the dedicated bottom-right
+// control FAB; source selection moved to the right-edge chip; the Episodes
+// pill remains in the group.
+assert.match(shell, /class="control-fab landscape-fab"[^>]*aria-pressed=\{landscapeMode\}/, 'landscape FAB (toggle/exit) exists');
+assert.match(shell, /aria-label=\{landscapeMode \? 'Exit landscape player' : 'Enter landscape player'\}/, 'landscape exit affordance exists');
+assert.match(shell, /class="source-chip"[^>]*aria-label="Choose source"/, 'source chip exists');
 assert.match(shell, /class="fab-item"[^>]*aria-label="Open episode list"/, 'episode FAB item exists');
 
 // No portrait-only header/bottom chrome remains in the immersive shell.

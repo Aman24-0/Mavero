@@ -4,6 +4,7 @@ import type { ProviderPlaybackCapabilities } from './capabilities';
 import { EMBED_PLAYBACK_CAPABILITIES } from './capabilities';
 import { PlayerAdapterRegistry, createDefaultAdapterRegistry } from './adapter-registry';
 import type { AdapterLoadContext, CommandResult, PlayerEvent, PlayerEventHandler, PlayerProviderAdapter } from './events';
+import { markPlayerMilestone } from './player-timing';
 
 /**
  * PlaybackManager — Phase 1.
@@ -304,12 +305,16 @@ export class PlaybackManager {
         // ignore this field. MegaPlay's resolver adapter substitutes the
         // URL path segment based on this value.
         if (request.variant) body.variant = request.variant;
+        // Player startup instrumentation: resolver dispatch + response.
+        // Milestone names only — never request bodies or URLs.
+        markPlayerMilestone('mavero:resolver-request');
         const response = await this.fetcher('/api/playback/resolve', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify(body),
           signal: controller.signal,
         });
+        markPlayerMilestone('mavero:resolver-response');
         const payload = (await response.json()) as { ok?: boolean; source?: unknown; error?: { code?: string; message?: string } };
         if (!this.active || sessionId !== this.sessionId) return;
 

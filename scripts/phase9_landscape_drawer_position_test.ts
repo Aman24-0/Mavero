@@ -154,8 +154,10 @@ assert.match(shell, /<div class="source-sheet"[^>]*>[\s\S]*?<div class="sheet-he
 // ============================================================
 
 assert.match(shell, /class="control-fab-group"/, 'unified FAB control group exists');
-assert.match(shell, /class="fab-item"[^>]*aria-pressed=\{landscapeMode\}/, 'landscape toggle/exit FAB item preserved');
-assert.match(shell, /aria-label=\{landscapeMode \? 'Exit landscape player' : 'Toggle landscape player'\}/, 'landscape exit label preserved');
+// UPDATED (player redesign): the landscape toggle is now the DEDICATED
+// bottom-right control FAB (no longer a menu item inside the group).
+assert.match(shell, /class="control-fab landscape-fab"[^>]*aria-pressed=\{landscapeMode\}/, 'landscape toggle/exit FAB preserved (dedicated control)');
+assert.match(shell, /aria-label=\{landscapeMode \? 'Exit landscape player' : 'Enter landscape player'\}/, 'landscape exit label preserved');
 
 // ============================================================
 // 11. Reduced motion disables the sheet entry animations

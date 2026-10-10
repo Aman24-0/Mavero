@@ -49,9 +49,16 @@ assert.match(shell, /pictureInPicture = document\.pictureInPictureElement === vi
 assert.match(shell, /pictureInPicture = document\.pictureInPictureElement === current/, 'PiP active state synced on new videoElement attachment');
 assert.match(shell, /pictureInPicture = false/, 'PiP active state cleared when videoElement becomes undefined');
 // PiP cleanup on source switch.
-assert.match(shell, /if \(document\.pictureInPictureElement === videoElement\)[\s\S]{0,80}exitPictureInPicture/, 'PiP exit on source switch');
+// UPDATED (player redesign QA hardening): the exit calls now route through
+// exitPipQuietly()/exitFullscreenQuietly() — fire-and-forget helpers that
+// also absorb the async REJECTION (document.exitPictureInPicture() rejects
+// when nothing is in PiP; the old bare `void document.exitPictureInPicture?.()`
+// leaked that rejection as an unhandled pageerror, exposed by the MAVP
+// browser QA source-switch flow).
+assert.match(shell, /if \(document\.pictureInPictureElement === videoElement\)[\s\S]{0,80}exitPipQuietly/, 'PiP exit on source switch (quiet helper — rejection-safe)');
+assert.match(shell, /function exitPipQuietly\(\)[\s\S]{0,200}\.catch\(\(\) =>/, 'PiP exit helper absorbs the expected async rejection');
 // PiP cleanup on destroy.
-assert.match(shell, /if \(document\.pictureInPictureElement === videoElement\)[\s\S]*?exitPictureInPicture[\s\S]*?releaseWakeLock/, 'PiP exit on destroy (in onMount cleanup)');
+assert.match(shell, /if \(document\.pictureInPictureElement === videoElement\) exitPipQuietly\(\);[\s\S]*?releaseWakeLock/, 'PiP exit on destroy (in onMount cleanup, rejection-safe)');
 // No iframe PiP invocation.
 assert.doesNotMatch(shell, /iframeElement[\s\S]{0,30}requestPictureInPicture/, 'no iframe PiP invocation (cross-origin safety)');
 
@@ -268,7 +275,7 @@ assert.match(shell, /env\(safe-area-inset-top\)/, 'safe-area-inset preserved');
 // ============================================================
 
 assert.match(shell, /class="direct-controls-overlay"/, 'direct controls overlay preserved (immersive redesign)');
-assert.match(shell, /class="control-fab"/, 'control FAB preserved (immersive redesign)');
+assert.match(shell, /class="control-fab landscape-fab"/, 'dedicated landscape/fullscreen control FAB preserved (player redesign; menu FAB replaced)');
 assert.match(shell, /source-sheet/, 'source sheet preserved');
 assert.match(shell, /episode-sheet/, 'episode sheet preserved');
 assert.match(shell, /This source isn't available\./, 'simplified error message preserved');
@@ -293,7 +300,10 @@ assert.match(shell, /bind:iframeElement/, 'iframeElement binding preserved');
 assert.match(shell, /chooseSource/, 'chooseSource preserved');
 assert.match(shell, /chooseAdjacentSource/, 'chooseAdjacentSource preserved');
 assert.match(shell, /chooseEpisode/, 'chooseEpisode preserved');
-assert.match(shell, /toggleSandbox/, 'toggleSandbox preserved');
+// UPDATED (player redesign): the user-facing Sandbox toggle was removed —
+// the server-resolved policy pipeline (PlayerViewport sandbox attribute) is
+// asserted instead (see the phase5 sandbox section).
+assert.match(shell, /effectiveSandboxPolicy = source\?\.type === 'embed' \? sourceEffectiveSandboxPolicy : 'required'/, 'server-resolved sandbox policy applied without client override');
 assert.match(shell, /emitProgress/, 'emitProgress preserved');
 
 // ============================================================

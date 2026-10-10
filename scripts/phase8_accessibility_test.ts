@@ -165,17 +165,17 @@ assert.match(shell, /aria-label="Close player"/, 'aria-label on Back button pres
 assert.match(shell, /aria-label="Switch source"/, 'aria-label on Switch source button preserved');
 assert.match(shell, /aria-label="Open episode list"/, 'aria-label on episode list button preserved');
 
-// 8f. aria-expanded on the menu toggle.
-//     Immersive redesign: sheets are no longer toggled by persistent buttons
-//     carrying per-sheet aria-expanded; the single FAB menu toggle exposes the
-//     expanded state (aria-expanded={menuOpen}) and sheets open as modal
-//     dialogs (focus moves in, close restores) — equivalent AT semantics.
-assert.match(shell, /aria-expanded=\{menuOpen\}/, 'aria-expanded on FAB menu toggle preserved');
-assert.match(shell, /aria-label=\{menuOpen \? 'Close menu' : 'Open player menu'\}/, 'menu toggle exposes dynamic state label');
+// 8f. UPDATED (player redesign): the menu FAB toggle was replaced by
+//     dedicated always-visible controls (landscape FAB, episodes pill,
+//     source chip). Sheets still open as modal dialogs with focus moved in
+//     and restored on close; the sheet-opening controls declare
+//     aria-haspopup="dialog" — equivalent AT semantics without a menu state.
+assert.match(shell, /aria-haspopup="dialog"/, 'sheet-opening controls declare aria-haspopup (player redesign)');
+assert.match(shell, /role="dialog"/, 'sheets remain modal dialogs');
 
 // 8g. aria-pressed on stateful toggles.
 assert.match(shell, /aria-pressed=\{landscapeMode\}/, 'aria-pressed on landscape toggle preserved');
-assert.match(shell, /aria-pressed=\{effectiveSandboxEnabled\}/, 'aria-pressed on sandbox toggle preserved');
+assert.doesNotMatch(shell, /aria-pressed=\{effectiveSandboxEnabled\}/, 'aria-pressed on sandbox toggle removed with the sandbox control (player redesign)');
 
 // 8h. PlayerControls icon-only buttons retain accessible labels.
 assert.match(controls, /aria-label=\{playing \? 'Pause' : 'Play'\}/, 'play/pause aria-label preserved');
@@ -188,14 +188,16 @@ assert.match(controls, /aria-label=\{pictureInPicture \? 'Exit Picture-in-Pictur
 // 9. Trigger elements pass themselves to open functions
 // ============================================================
 
-// 9a. Menu entry points route through the focus-managed sheet openers.
-//     Immersive redesign: triggers live inside the FAB menu; the open-from-menu
-//     helpers pass the player root (or the active element) as the focus-restore
-//     trigger — the same contract the old currentTarget passing served.
-assert.match(shell, /function openSourceFromMenu\(\) \{[\s\S]*?openSourceSheet\(playerRoot \?\? document\.activeElement as HTMLElement\)/, 'source menu entry passes a focus-restore trigger');
+// 9a. UPDATED (player redesign): the menu entries were replaced by the
+//     dedicated control entry points — the bottom-right controls and the
+//     source chip both route through the focus-managed sheet openers with a
+//     focus-restore trigger (playerRoot fallback; the chip passes its own
+//     currentTarget).
+assert.match(shell, /function openSourceSheetFromControl\(\) \{[\s\S]*?openSourceSheet\(playerRoot \?\? document\.activeElement as HTMLElement\)/, 'source control entry passes a focus-restore trigger');
+assert.match(shell, /onclick=\{\(event\) => openSourceSheet\(event\.currentTarget instanceof HTMLElement \? event\.currentTarget : playerRoot\)\}/, 'source chip passes itself as the focus-restore trigger');
 
-// 9b. Episode menu entry routes through the focus-managed opener.
-assert.match(shell, /function openEpisodeFromMenu\(\) \{[\s\S]*?openEpisodeSheet\(playerRoot \?\? document\.activeElement as HTMLElement\)/, 'episode menu entry passes a focus-restore trigger');
+// 9b. Episode control entry routes through the focus-managed opener.
+assert.match(shell, /function openEpisodeSheetFromControl\(\) \{[\s\S]*?openEpisodeSheet\(playerRoot \?\? document\.activeElement as HTMLElement\)/, 'episode control entry passes a focus-restore trigger');
 
 // 9c. Streams menu entry routes through the focus-managed opener.
 // 9c. The dedicated streams sheet was RETIRED with the obsolete Mavero

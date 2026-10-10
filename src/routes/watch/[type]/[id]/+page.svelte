@@ -6,15 +6,17 @@
   import PlayerShell from '$lib/components/player/PlayerShell.svelte';
   import type { PlayerEpisode, PlayerEpisodeTarget, PlayerProgressEvent, PlayerSource, PlayerSourceOption } from '$lib/shared/player';
   import { resolveSandboxRuntime } from '$lib/shared/sandbox-policy';
+  import { controlsPositionFromCapabilities } from '$lib/shared/player-controls-position';
   import { appendReturnTo, navigateBackOr, safeReturnTo } from '$lib/shared/navigation';
   import type { PageData } from './$types';
-  import { createProgressWriter, getLocalPersistenceState, getResumeProgress, setFavoriteStatus } from '$lib/client/progress/service';
+  import { createProgressWriter, getResumeProgress, setFavoriteStatus } from '$lib/client/progress/service';
   import { recordCloudHistory, syncAuthenticatedState } from '$lib/client/progress/cloud';
   import type { PlaybackContext } from '$lib/client/progress/types';
   import { PlaybackManager, type ResolutionState } from '$lib/client/player/PlaybackManager';
   import { nextEpisodeTarget } from '$lib/shared/player-state';
   import { isSourceBadge } from '$lib/shared/source-presentation';
   import { track as trackAnalytics } from '$lib/client/analytics/dispatcher';
+  import { markPlayerMilestone } from '$lib/client/player/player-timing';
 
   export let data: PageData;
 
@@ -112,6 +114,10 @@
         // option — unknown/legacy badge values render no badge.
         badge: isSourceBadge(source.badge) ? source.badge : undefined,
         icon: source.icon ?? undefined,
+        // Player redesign: per-source Landscape-control placement, parsed +
+        // bounded ONCE here (malformed capability values → null → the shell
+        // keeps the default bottom-right placement).
+        controlsPosition: controlsPositionFromCapabilities(source.capabilities),
       };
       return option;
     });
@@ -176,7 +182,6 @@
   // look fresher than a real-position record from another device).
   let currentPositionUpdatedAt = 0;
   let progressReady = false;
-  let localState = 'Preparing local progress…';
   let writer: ReturnType<typeof createProgressWriter> | undefined;
   let writerKey = '';
   let startedHistory = false;
@@ -557,7 +562,10 @@
     }
     // Phase 9 fix: load existing progress BEFORE creating the writer so
     // sourceRuntimes from the record are available at writer initialization.
-    const [resume, state] = await Promise.all([getResumeProgress(playbackContext), getLocalPersistenceState()]);
+    // (The previous getLocalPersistenceState read fed only the removed red
+    // loading screen's storage label — dropping it removes an IndexedDB
+    // roundtrip from the startup path without touching persistence itself.)
+    const [resume] = await Promise.all([getResumeProgress(playbackContext)]);
     if (!active || writerKey !== playbackKey) return;
     resumeTime = resume.resumeTime;
     duration = resume.record?.duration ?? 0;
@@ -586,7 +594,6 @@
     // of stamping now (which would make a stale-position record look
     // fresher than a real-position record from another device).
     writer = createProgressWriter({ ...playbackContext, selectedSourceId: selectedSourceId || undefined, sourceRuntimes, snapshot, initialCurrentTime: resume.record?.currentTime ?? 0, initialDuration: resume.record?.duration ?? 0, initialPositionUpdatedAt: currentPositionUpdatedAt });
-    localState = state.status === 'indexeddb' ? 'Local progress on this device' : 'Temporary local progress only';
     progressReady = true;
   }
 
@@ -859,20 +866,11 @@
 
 <svelte:head><title>Watching {item.title} — Mavero</title></svelte:head>
 
-{#if progressReady}
-  <PlayerShell source={resolvedSource} content={playerContent} initialProgress={resumeTime} sourceOptions={sourceOptions} {episodes} currentEpisode={currentEpisode ? { season: currentEpisode.season, episode: currentEpisode.number, title: currentEpisode.title } : null} resolving={resolutionState === 'resolving'} resolutionError={resolutionState === 'provider-error' || resolutionState === 'unsupported' || resolutionState === 'unavailable' || resolutionState === 'network-error' ? resolutionMessage : ''} resolutionKind={resolutionState === 'unsupported' ? 'unsupported' : resolutionState === 'unavailable' ? 'unavailable' : 'provider-error'} resolutionMessage={resolutionState === 'resolving' ? resolutionMessage : ''} onProgress={handlePlayerProgress} onSourceChange={handleSourceChange} onEpisodeChange={handleEpisodeChange} onClose={closePlayer} onDetails={openDetails} onIframeReady={(iframe) => manager.setIframe(iframe)} {embedPlaybackEvent} />
-{:else}
-  <main class="watch-loading" aria-live="polite"><div class="loading-ring" aria-hidden="true"><span></span></div><div class="loading-copy"><strong>{progressReady ? 'Starting your stream' : 'Loading player'}</strong><span>{progressReady ? 'Connecting to your provider…' : 'Preparing your watch session…'}</span></div><small>{progressReady ? resolutionMessage || 'Finding the best available source' : localState}</small></main>
-{/if}
-
-<style>
-  .watch-loading { display: grid; place-items: center; align-content: center; gap: 18px; min-height: 100dvh; color: var(--muted); background: radial-gradient(circle at 50% 43%, rgba(255, 62, 94,.12), transparent 24rem), #07070c; font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .66rem; text-align: center; }
-  .loading-ring { display: grid; place-items: center; width: 72px; height: 72px; border: 1px solid rgba(255,255,255,.1); border-radius: 50%; background: conic-gradient(from 0deg, transparent 0 24%, rgba(255, 88, 120, .95) 42%, rgba(255, 62, 94,.2) 72%, transparent 100%); box-shadow: 0 0 0 14px rgba(255, 62, 94,.045), 0 0 60px rgba(255, 62, 94,.22); animation: spin 1.2s linear infinite; }
-  .loading-ring span { width: 58px; height: 58px; border-radius: 50%; background: #07070c; box-shadow: inset 0 0 22px rgba(255, 62, 94,.12); }
-  .loading-copy { display: grid; gap: 6px; }
-  .loading-copy strong { color: var(--ink); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .92rem; letter-spacing: -.02em; }
-  .loading-copy span { color: var(--muted); font-size: .6rem; }
-  .watch-loading small { color: var(--muted-deep); font-size: .55rem; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  @media (prefers-reduced-motion: reduce) { .loading-ring { animation: none; } }
-</style>
+<!-- Player startup (MAVERO player redesign): the shell renders IMMEDIATELY —
+     local progress preparation (IndexedDB + cloud sync) no longer gates the
+     UI. While progressReady is false the shell shows its single lightweight
+     loading card ('preparing'); source selection still waits for the saved
+     progress record (Phase 9 contract — resume correctness), and resolution
+     starts the moment the selected source is known. The obsolete red
+     full-screen loading screen and its duplicate transitions are removed. -->
+<PlayerShell source={resolvedSource} content={playerContent} initialProgress={resumeTime} sourceOptions={sourceOptions} {episodes} currentEpisode={currentEpisode ? { season: currentEpisode.season, episode: currentEpisode.number, title: currentEpisode.title } : null} resolving={resolutionState === 'resolving'} deviceType={page.data.deviceType} resolutionError={resolutionState === 'provider-error' || resolutionState === 'unsupported' || resolutionState === 'unavailable' || resolutionState === 'network-error' ? resolutionMessage : ''} resolutionKind={resolutionState === 'unsupported' ? 'unsupported' : resolutionState === 'unavailable' ? 'unavailable' : 'provider-error'} resolutionMessage={resolutionState === 'resolving' ? resolutionMessage : ''} onProgress={handlePlayerProgress} onSourceChange={handleSourceChange} onEpisodeChange={handleEpisodeChange} onClose={closePlayer} onDetails={openDetails} onIframeReady={(iframe) => manager.setIframe(iframe)} {embedPlaybackEvent} />

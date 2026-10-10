@@ -24,7 +24,8 @@ assert.match(shell, /\.back-fab \{[^}]*top: max\(12px/, 'back FAB positioned top
 // 3. Control Menu FAB exists (bottom-right overlay)
 // ============================================================
 
-assert.match(shell, /class="control-fab"/, 'control FAB exists');
+assert.match(shell, /class="control-fab landscape-fab"/, 'landscape/fullscreen control FAB exists (player redesign)');
+assert.match(shell, /class="source-chip"/, 'right-edge source chip exists (player redesign)');
 assert.match(shell, /\.control-fab-group \{[^}]*bottom: max\(16px/, 'control FAB positioned bottom-right with safe area');
 
 // ============================================================
@@ -36,13 +37,14 @@ assert.match(shell, /--fab-delay/, 'staggered delay variable exists');
 assert.match(shell, /@keyframes fab-unfold/, 'unfold animation exists');
 
 // ============================================================
-// 5. Auto-hide 10s timer
+// 5. Auto-hide — UPDATED: FIVE-second timer (player redesign; was 10s)
 // ============================================================
 
-assert.match(shell, /10_000/, '10s auto-hide timer');
+assert.match(shell, /5_000/, '5s auto-hide timer');
 // The retired streams sheet (0111d7f) no longer contributes a state; the
-// auto-hide guard still checks every live open state (menu + both sheets).
-assert.match(shell, /!menuOpen && !sourceMenuOpen && !episodeMenuOpen/, 'auto-hide checks all open states');
+// auto-hide guard still checks every live open state (both sheets) plus the
+// keyboard-focus a11y guard added by the player redesign.
+assert.match(shell, /!sourceMenuOpen && !episodeMenuOpen && !focusWithinMaveroControls\(\)/, 'auto-hide checks all open states + focus guard');
 
 // ============================================================
 // 6. Source sheet: bottom on compact, right drawer on wide (media query)
@@ -88,4 +90,4 @@ assert.match(shell, /\.direct-controls-overlay:not\(\.visible\)/, 'direct contro
 // iframe fullscreen-capable is in PlayerViewport, not PlayerShell — verified in landscape_player_contract_test.ts
 // This test file focuses on PlayerShell immersive redesign contract.
 
-console.log('Immersive redesign tests passed: full viewport (2 checks); back FAB (2 checks); control FAB (2 checks); staggered animation (3 checks); 10s auto-hide (2 checks); responsive source sheet (3 checks); no persistent header/footer (2 checks); safe area (4 checks); reduced motion (1 check); direct controls overlay (2 checks); iframe fullscreen (1 check).');
+console.log('Immersive redesign tests passed: full viewport (2 checks); back FAB (2 checks); landscape FAB + source chip (3 checks); staggered animation (3 checks); 5s auto-hide (2 checks); responsive source sheet (3 checks); no persistent header/footer (2 checks); safe area (4 checks); reduced motion (1 check); direct controls overlay (2 checks); iframe fullscreen (1 check).');

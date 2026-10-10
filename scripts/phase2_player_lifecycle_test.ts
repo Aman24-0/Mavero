@@ -82,12 +82,19 @@ if (revealMatch) {
 ok(/provider iframe content itself is[\s\S]*?NOT hidden/.test(shell), 'PLR-04f. documented: provider iframe content not hidden, only Mavero control overlay');
 
 // ============================================================
-// PLR-05 — Sandbox toggle re-arms the embed load timeout.
+// PLR-05 — UPDATED (MAVERO player redesign): the user-facing Sandbox toggle
+// was REMOVED from the player UI, so the toggle-remount path no longer exists
+// and PLR-05a/b/c (toggleSandbox re-arming the timeout) are retired. The
+// underlying invariants that made PLR-05 valuable are preserved and now
+// asserted against the paths that still exist (embed source switches and
+// embed retries arm the timeout), PLUS the new contract: the iframe sandbox
+// attribute is applied from the SERVER-resolved effective policy only — no
+// client-side override state exists at all.
 // ============================================================
 ok(/Phase 2-I \(PLR-05\)/.test(shell), 'PLR-05a. fix annotated with Phase 2-I (PLR-05) comment');
-ok(/function toggleSandbox\(\)/.test(shell), 'PLR-05b. toggleSandbox function exists');
-ok(/if \(source\?\.sourceId\) startEmbedLoadTimeout\(source\.sourceId\)/.test(shell), 'PLR-05c. toggleSandbox arms a fresh embed load timeout after the policy change');
-// The stale-source protection in startEmbedLoadTimeout is preserved.
+ok(!/function toggleSandbox\(\)/.test(shell), 'PLR-05b-updated. client-side sandbox toggle removed from the player UI');
+ok(!/sandboxPolicyOverride\s*=/.test(shell), 'PLR-05c-updated. no client-side sandbox override state (server-resolved policy only)');
+ok(/if \(source\.type === 'embed'\) startEmbedLoadTimeout\(source\.sourceId\)/.test(shell), 'PLR-05c2. embed source switch arms a fresh embed load timeout');
 ok(/function startEmbedLoadTimeout\(sourceId: string\)/.test(shell), 'PLR-05d. startEmbedLoadTimeout function preserved');
 ok(/const timeoutSourceId = sourceId/.test(shell), 'PLR-05e. stale-source guard captures sourceId at start time (preserved)');
 ok(/if \(sourceIdentity !== timeoutSourceId\) return/.test(shell), 'PLR-05f. stale-source guard no-ops if user switched sources (preserved)');

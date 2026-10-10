@@ -5,6 +5,7 @@
   import { iframeSandboxAttribute, type SandboxPolicy } from '$lib/shared/sandbox-policy';
   import { urlPathIsM3u8 } from '$lib/shared/hls-detect';
   import { HlsPlaybackEngine, resolveDirectPlaybackMode, type HlsAudioTrackLike } from '$lib/client/player/hls-engine';
+  import { markPlayerMilestone } from '$lib/client/player/player-timing';
 
   export let source: PlayerSource | null = null;
   export let mediaUrl: string | null = null;
@@ -14,10 +15,10 @@
   export let state: PlayerPlaybackState = 'initial-loading';
   export let videoElement: HTMLVideoElement | undefined;
   export let iframeElement: HTMLIFrameElement | undefined;
-  // Phase 10 (GOAL 14): user-visible status line (e.g. "Preparing compatible
-  // stream…") rendered in the state label while a compatibility session is
-  // being prepared. Empty = the default state labels apply.
-  export let statusNote = '';
+  // Phase 10 (GOAL 14) REMOVED (player redesign): the statusNote channel fed
+  // only the duplicate viewport corner label; loading/status feedback is now
+  // the shell's single loading card. The shell keeps its compatibility-state
+  // messaging through errorMessage instead.
   // Phase 9: the subtitle tracks for the CURRENT media. PlayerShell passes
   // the SELECTED stream's addon-provided tracks (quality-option subtitles)
   // falling back to the aggregate source's tracks — provider sources are
@@ -230,6 +231,16 @@
 
   $: void wireHlsEngine(mediaUrl, source, videoElement);
 
+  // Player startup instrumentation: embed iframe enters the DOM. Svelte 5
+  // supports onload/on:load equivalently; the milestone fires per mount
+  // (iframeKey change = remount) — duplicate marks for the same key are
+  // avoided by tracking the last mounted key.
+  let lastMountedIframeKey = '';
+  $: if (source?.type === 'embed' && source.url && iframeKey !== lastMountedIframeKey) {
+    lastMountedIframeKey = iframeKey;
+    markPlayerMilestone('mavero:iframe-mounted');
+  }
+
   onDestroy(teardownHlsEngine);
 
   // ----- Phase 6: generic internal-quality controller (spec §31) -----
@@ -309,6 +320,10 @@
     </video>
   {:else if source?.type === 'embed' && source.url}
     {#key iframeKey}
+      <!-- Player startup instrumentation: the validated embed URL is ready and
+           the iframe is mounted — no intermediate waits exist between resolver
+           response and this element (the viewport renders it as soon as the
+           resolved source arrives). -->
       <iframe
         bind:this={iframeElement}
         src={source.url}
@@ -318,7 +333,7 @@
         sandbox={sandboxAttribute}
         referrerpolicy="no-referrer"
         allowfullscreen
-        on:load={() => dispatch('embedload')}
+        on:load={() => { markPlayerMilestone('mavero:iframe-load'); dispatch('embedload'); }}
       ></iframe>
     {/key}
   {:else}
@@ -326,9 +341,11 @@
   {/if}
 
   {#if source?.type !== 'embed'}<div class="viewport-shade" aria-hidden="true"></div>{/if}
-  <div class="state-label" aria-live="polite">
-    {#if statusNote}{statusNote}{:else if state === 'buffering'}Buffering…{:else if state === 'preparing' || state === 'resolving'}Preparing playback…{:else if state === 'switching-source'}Switching source…{:else if state === 'embed-loading'}Loading embed…{/if}
-  </div>
+  <!-- Player startup redesign: this corner label is now a PLAYBACK-status note
+       only (buffering). Preparation/resolution/source-switch/embed-load states
+       are shown exclusively by the shell's single lightweight loading card —
+       the previous duplicate label set rendered both at once. -->
+  {#if state === 'buffering'}<div class="state-label" aria-live="polite">Buffering…</div>{/if}
 </div>
 
 <style>

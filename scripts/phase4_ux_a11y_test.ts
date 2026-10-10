@@ -125,7 +125,10 @@ const playerShell = read('src/lib/components/player/PlayerShell.svelte');
 ok(/viewportMediaQuery\.removeEventListener\('change', handleViewportChange\)/.test(playerShell), '8a. PLR-02: viewportMediaQuery cleanup preserved');
 ok(/if \(source\?\.type === 'direct'\) \{[\s\S]*?registerMediaSessionHandlers\(\)/.test(playerShell), '8b. PLR-03: setupMediaSession restores handlers for direct sources');
 ok(/\(\s*playing\s*\|\|\s*embedPlaying\s*\)/.test(playerShell), '8c. PLR-04: (playing || embedPlaying) for auto-hide');
-ok(/startEmbedLoadTimeout/.test(playerShell) && /toggleSandbox/.test(playerShell), '8d. PLR-05: sandbox toggle re-arms embed load timeout');
+// UPDATED (player redesign): the user-facing sandbox toggle was removed;
+// the embed load timeout arming + stale-source guards are preserved on the
+// paths that remain (embed source switches and retries).
+ok(/startEmbedLoadTimeout/.test(playerShell) && !/function toggleSandbox\(\)/.test(playerShell), '8d. PLR-05-updated: embed load timeout preserved; client-side sandbox toggle removed');
 
 // ============================================================
 // 9. Phase 3 Regression-1: watch_history retention permission lockdown.
