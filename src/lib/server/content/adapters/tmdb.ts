@@ -830,7 +830,18 @@ export async function getTmdbDetail(type: Exclude<ContentType, 'anime'>, externa
     if (isAdultContent(item.tags, providerIds, tmdbAdult, item.isAnime, networks, attribution)) {
       item.tags = [...(item.tags ?? []), 'Adult'];
     }
-    const recommendations = (raw.recommendations?.results ?? []).filter((candidate) => hasRequiredListMetadata(candidate, type)).slice(0, 6).map((candidate) => mapTmdb(candidate, type, 'Recommended'));
+    // MAV-25 WS4 — the recommendation cap is raised from 6 to 20 (the
+    // TMDB append_to_response `recommendations` first-page size — the
+    // SAME single upstream response, no extra list request) so the
+    // "You may also like" rail can fill the wide desktop/TV detail
+    // container (the 1500px detail body fits ~8 portrait cards per row;
+    // the previous 6-cap left visible empty slots). The rows still flow
+    // through the SAME safety pipeline downstream: the ONE central
+    // classifier drops adult/uncertain recs fail-closed (see
+    // getDetailWithSafeRecommendations), order is TMDB's own, no rows
+    // are manufactured, and mobile keeps its existing card width and
+    // swipe behaviour (more items only extends the scrollable rail).
+    const recommendations = (raw.recommendations?.results ?? []).filter((candidate) => hasRequiredListMetadata(candidate, type)).slice(0, 20).map((candidate) => mapTmdb(candidate, type, 'Recommended'));
     return { ...item, recommendations };
   });
   return { ...value, source: { ...value.source, stale } };

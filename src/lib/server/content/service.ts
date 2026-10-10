@@ -328,7 +328,10 @@ export async function getDetail(type: ContentType, id: string): Promise<ContentD
 }
 
 // Max simultaneous recommendation classifications per detail (bounded N+1;
-// recommendations are <= 6 per detail — matches the rail concurrency).
+// MAV-25 WS4 raised the per-detail recommendation cap from 6 to the TMDB
+// first-page size of 20 — the classification batch stays bounded at 4
+// concurrent cached-detail verdicts; the rail loads off the navigation
+// critical path through /api/content/recommendations).
 const DETAIL_RECOMMENDATION_CONCURRENCY = 4;
 
 /**

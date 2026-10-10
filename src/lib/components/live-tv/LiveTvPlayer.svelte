@@ -1193,4 +1193,20 @@
     .surface-controls, .surface-controls.visible { transition: none; }
     .tap-play:hover { transform: none; }
   }
+
+  /* MAV-25 WS3 — desktop/TV 70/30 companion cap. Inside the 70% player
+     column the 16:9 surface scales with the column width; on a very
+     wide but short desktop window (e.g. 1366×640) that would overflow
+     the single-screen page fit. The cap bounds the surface to the
+     window height minus the hero/info chrome; the video itself keeps
+     its exact broadcast aspect ratio via object-fit: contain (the
+     surface simply letterboxes — never a distorted stretch, never an
+     overflow). Scoped to the same ≥1280px breakpoint as the page's
+     two-column layout. */
+  @media (min-width: 1280px) {
+    .player-surface {
+      max-height: calc(100dvh - 300px);
+      margin-inline: auto;
+    }
+  }
 </style>

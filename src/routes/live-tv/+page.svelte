@@ -610,57 +610,68 @@
         {/if}
       </div>
 
-      {#if catalogueState === 'loading'}
-        <div class="channel-grid" aria-busy="true">
-          {#each Array(12) as _, i (i)}
-            <div class="channel-skeleton" aria-hidden="true">
-              <span class="sk-logo"></span>
-              <span class="sk-lines"><span class="sk-line w70"></span><span class="sk-line w40"></span></span>
-            </div>
-          {/each}
-        </div>
-      {:else if catalogueState === 'error'}
-        <ErrorState
-          eyebrow="MAVERO / Live TV"
-          title="The signal dropped."
-          message={catalogueMessage ?? 'Live TV is unavailable right now.'}
-          retry={loadCatalogue}
-        />
-      {:else if channels.length === 0}
-        <div class="channels-empty" role="status">
-          <span class="empty-mark" aria-hidden="true"><Radio size={22} /></span>
-          <h3>No Live TV channels are currently available.</h3>
-          <p>The channel guide is empty right now. Try again in a moment.</p>
-          <button class="btn btn-secondary" type="button" onclick={() => void loadCatalogue()}>
-            <RefreshCw size={15} /> Retry
-          </button>
-        </div>
-      {:else if visibleChannels.length === 0}
-        <div class="channels-empty" role="status">
-          <span class="empty-mark" aria-hidden="true"><Search size={22} /></span>
-          <h3>No channels match your search.</h3>
-          <p>Try another name or pick a different category.</p>
-          <button class="btn btn-secondary" type="button" onclick={clearSearch}>Clear search</button>
-        </div>
-      {:else}
-        <div class="channel-grid">
-          {#each visibleChannels.slice(0, visibleLimit) as channel (channel.id)}
-            <LiveTvChannelCard
-              {channel}
-              selected={channel.id === selectedChannel?.id}
-              onselect={(c) => void selectChannel(c)}
-            />
-          {/each}
-          {#if visibleChannels.length > visibleLimit}
-            <div class="grid-sentinel" bind:this={sentinelEl} aria-hidden="true"></div>
-          {/if}
-        </div>
-        {#if visibleChannels.length > visibleLimit}
-          <div class="channels-more" role="status" aria-live="polite">
-            <LoaderCircle size={14} aria-hidden="true" /> Loading more channels…
+      <!-- MAV-25 WS3 — the ONE vertically-scrolling region. On desktop/TV
+           the right panel is height-constrained and ONLY this wrapper
+           scrolls (overflow-y: auto with min-height: 0 in the desktop
+           media query); the head, toolbar, player and app shell never
+           move. On mobile/tablet it renders as a plain block and the
+           existing stacked page scroll is unchanged. The Intersection-
+           Observer sentinel keeps working in both compositions (the
+           observer clips against ancestor scrollers, so the sentinel
+           fires as the internal list approaches its end). -->
+      <div class="channels-scroll">
+        {#if catalogueState === 'loading'}
+          <div class="channel-grid" aria-busy="true">
+            {#each Array(12) as _, i (i)}
+              <div class="channel-skeleton" aria-hidden="true">
+                <span class="sk-logo"></span>
+                <span class="sk-lines"><span class="sk-line w70"></span><span class="sk-line w40"></span></span>
+              </div>
+            {/each}
           </div>
+        {:else if catalogueState === 'error'}
+          <ErrorState
+            eyebrow="MAVERO / Live TV"
+            title="The signal dropped."
+            message={catalogueMessage ?? 'Live TV is unavailable right now.'}
+            retry={loadCatalogue}
+          />
+        {:else if channels.length === 0}
+          <div class="channels-empty" role="status">
+            <span class="empty-mark" aria-hidden="true"><Radio size={22} /></span>
+            <h3>No Live TV channels are currently available.</h3>
+            <p>The channel guide is empty right now. Try again in a moment.</p>
+            <button class="btn btn-secondary" type="button" onclick={() => void loadCatalogue()}>
+              <RefreshCw size={15} /> Retry
+            </button>
+          </div>
+        {:else if visibleChannels.length === 0}
+          <div class="channels-empty" role="status">
+            <span class="empty-mark" aria-hidden="true"><Search size={22} /></span>
+            <h3>No channels match your search.</h3>
+            <p>Try another name or pick a different category.</p>
+            <button class="btn btn-secondary" type="button" onclick={clearSearch}>Clear search</button>
+          </div>
+        {:else}
+          <div class="channel-grid">
+            {#each visibleChannels.slice(0, visibleLimit) as channel (channel.id)}
+              <LiveTvChannelCard
+                {channel}
+                selected={channel.id === selectedChannel?.id}
+                onselect={(c) => void selectChannel(c)}
+              />
+            {/each}
+            {#if visibleChannels.length > visibleLimit}
+              <div class="grid-sentinel" bind:this={sentinelEl} aria-hidden="true"></div>
+            {/if}
+          </div>
+          {#if visibleChannels.length > visibleLimit}
+            <div class="channels-more" role="status" aria-live="polite">
+              <LoaderCircle size={14} aria-hidden="true" /> Loading more channels…
+            </div>
+          {/if}
         {/if}
-      {/if}
+      </div>
     </section>
   </div>
 </div>
@@ -905,7 +916,7 @@
   }
 
   /* ---- channels ---- */
-  .ltv-channels { display: grid; gap: 12px; min-width: 0; }
+  .ltv-channels { display: grid; gap: 12px; min-width: 0; min-height: 0; }
   .channels-head {
     display: flex;
     align-items: baseline;
@@ -913,6 +924,12 @@
     gap: 12px;
   }
   .channels-count { color: var(--color-text-deep); font-size: .72rem; font-weight: 700; white-space: nowrap; }
+
+  /* MAV-25 WS3 — the ONE vertically-scrolling region of the page. On
+     mobile/tablet it is a plain block (the page scrolls as before); the
+     desktop/TV media query below turns it into the right panel's
+     internal scrollport. */
+  .channels-scroll { min-width: 0; min-height: 0; }
 
   .channel-grid {
     display: grid;
@@ -1002,6 +1019,94 @@
     .tool-btn { min-height: 44px; padding: 0 12px; font-size: .76rem; }
     .tool-btn span { display: none; }
     .tool-btn .tool-count { display: grid; }
+  }
+
+  /* ============================================================
+     MAV-25 WS3 — DESKTOP/TV 70/30 LAYOUT (≥1280px only).
+     -----------------------------------------------------------------
+     Approved design: ~70% of the available content width for the
+     player area (left), ~30% for channel controls + channel list
+     (right); search/filter/guide visible at the top of the right
+     panel; ONLY the channel-list region scrolls vertically; the page
+     fits the desktop viewport without unnecessary outer scrolling.
+
+     Breakpoint choice: the application desktop shell starts at 1025px,
+     but below ~1280px the fixed 240px sidebar leaves a content area
+     whose 30% falls under the right panel's practical minimum
+     (~320px). 1025–1279px therefore keeps the EXISTING stacked layout
+     unchanged (the safe fallback — phone/tablet compositions are
+     untouched below 1025px as before).
+
+     Scroll ownership (verified in the Phase 0 audit): on desktop the
+     app shell's `.app-main` is the page scroll container (height:
+     100dvh, overflow-y: auto). The page therefore sizes itself to
+     exactly one .app-main viewport (height: 100dvh, flex column) so
+     NOTHING overflows into an outer scrollbar, and the right panel's
+     `.channels-scroll` becomes the single internal scrollport
+     (overflow-y: auto + min-height: 0 inside the minmax(0, 1fr) grid
+     row). No global overflow: hidden anywhere — if content ever
+     overflows (error states, browser zoom), .app-main scrolls
+     gracefully instead of trapping anyone.
+
+     Grid areas keep the DOM order (title → player → toolbar →
+     channels) untouched — the two-column arrangement is purely a
+     desktop placement over the same elements, so the existing phone
+     layout and the page-order contracts are preserved byte-for-byte.
+     ============================================================ */
+  @media (min-width: 1280px) {
+    .live-tv-page {
+      height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      /* No mobile bottom-pill clearance on desktop (the pill does not
+         exist ≥1025px) — the page fits one shell viewport exactly. */
+      padding-bottom: 24px;
+      min-height: 0;
+    }
+    .ltv-hero { flex: 0 0 auto; }
+    .ltv-body {
+      flex: 1 1 auto;
+      min-height: 0;
+      width: min(1720px, calc(100% - clamp(24px, 3vw, 64px)));
+      display: grid;
+      grid-template-columns: minmax(0, 70fr) minmax(320px, 30fr);
+      grid-template-rows: auto minmax(0, 1fr);
+      grid-template-areas:
+        'player rail-tools'
+        'player rail-list';
+      gap: 14px 22px;
+      padding-top: 18px;
+    }
+    .ltv-player-column {
+      grid-area: player;
+      align-content: start;
+      min-height: 0;
+    }
+    /* The right panel header/control group (search + Filter + Guide):
+       always visible, never scrolls. */
+    .ltv-toolbar { grid-area: rail-tools; }
+    .ltv-channels {
+      grid-area: rail-list;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      min-height: 0;
+      min-width: 0;
+    }
+    .channels-head { flex: 0 0 auto; }
+    /* The ONE scrolling region: the channel list itself. */
+    .channels-scroll {
+      flex: 1 1 auto;
+      min-height: 0;
+      min-width: 0;
+      overflow-y: auto;
+      /* A hair of bottom padding so the last channel card never sits
+         flush against the shell edge while scrolling. */
+      padding-bottom: 6px;
+      overscroll-behavior: contain;
+      scrollbar-width: thin;
+      scrollbar-color: var(--color-border-strong, rgba(255, 255, 255, .2)) transparent;
+    }
   }
 
   @media (prefers-reduced-motion: reduce) {

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
-  import { AlertTriangle, Info, Loader2, RotateCw, Share2, Check, FileVideo, Radio, Magnet, Users, Volume2, HardDrive, Server, X, SearchX, Download, Play, SlidersHorizontal, HelpCircle, Captions } from 'lucide-svelte';
+  import { AlertTriangle, ChevronLeft, ChevronRight, Info, Loader2, RotateCw, Share2, Check, FileVideo, Radio, Magnet, Users, Volume2, HardDrive, Server, X, SearchX, Download, Play, SlidersHorizontal, HelpCircle, Captions } from 'lucide-svelte';
   import SelectionSheet from '$components/SelectionSheet.svelte';
   import DownloaderFilterSheet from '$components/DownloaderFilterSheet.svelte';
   import {
@@ -44,6 +44,20 @@
   import { cloudStreamAudioClass } from '$lib/shared/cloudstream-download-view';
   import type { CloudStreamDownloadLinkView, CloudStreamDownloadMediaView, CloudStreamDownloaderErrorCode } from '$lib/shared/cloudstream-types';
   import type { AudioClass } from '$lib/shared/stream-selection';
+  // MAV-25 WS5 — the SHARED carousel navigation helpers (the ContentRail
+  // §11 contract) for the source-chip rail's left/right controls.
+  import { railEdgeState, scrollRailByCards } from '$lib/shared/rail-navigation';
+  // MAV-25 WS6 — the pure per-source automatic-retry policy: exactly one
+  // automatic retry per source per logical load, then hide; deterministic
+  // fallback selection; the add-on server-side retry budget is respected
+  // (no accidental double-retries). See downloader-retry-policy.ts.
+  import {
+    autoRetryDecision,
+    hasValidUsableLinks,
+    planAutoRetries,
+    selectFallbackSourceId,
+    AUTO_RETRY_CONCURRENCY,
+  } from '$lib/shared/downloader-retry-policy';
 
   /**
    * MAVERO DOWNLOADER — the UNIFIED source panel (FINAL TASK).
@@ -112,6 +126,15 @@
     /** Plugin sources: curated server message (fallback display). */
     errorMessage?: string;
     abort?: AbortController;
+    // MAV-25 WS6 — the automatic-retry lifecycle (one retry per source
+    // per logical load; the flags are created fresh on every load(), so
+    // a manual refresh restores the budget while re-renders never do).
+    /** The policy's ONE automatic retry was already spent. */
+    autoRetryDone?: boolean;
+    /** The retry is queued or in flight right now (duplicate guard). */
+    retryQueued?: boolean;
+    /** Failed/empty after the retry — removed from the selector. */
+    hidden?: boolean;
   };
 
   /** The normalized link shape ONE card renderer consumes (both kinds). */
@@ -154,6 +177,20 @@
   let addonCatalogFailed = false;
   let extensionCatalogFailed = false;
   let activeSourceId: string | null = null;
+  /**
+   * MAV-25 WS6 — visible chip-rail sources. Sources that remain failed
+   * or empty after their ONE automatic retry are hidden from the
+   * selector (policy step 4); everything else renders in the unchanged
+   * global order.
+   */
+  $: visibleSources = sources.filter((source) => !source.hidden);
+  /**
+   * MAV-25 WS6 — policy step 5: when EVERY source ended hidden after
+   * its retry, the panel shows a clear, recoverable state instead of an
+   * empty-looking selector (retryAll starts a fresh logical load with
+   * fresh budgets). Not shown while the initial load is still running.
+   */
+  $: allSourcesHidden = !sourcesLoading && !sourcesFailed && sources.length > 0 && visibleSources.length === 0;
 
   // The plugin batch carries a server media echo (episode context line).
   let pluginMedia: CloudStreamDownloadMediaView | null = null;
@@ -269,6 +306,50 @@
     activeSourceId = id;
   }
 
+  // ============================================================
+  // MAV-25 WS5 — source-chip rail left/right navigation (the shared
+  // ContentRail §11 contract). The arrows scroll ONLY the .mud-tabs
+  // chip container — never the sheet body, never the page. Edge state
+  // re-syncs on scroll, after the source set changes (loading → chips
+  // appear; sources hiding after retries shrink the rail), tab changes
+  // and container resizes (ResizeObserver on the chip rail itself).
+  // Hidden on ≤640px where native touch scrolling stays the primary
+  // interaction (the existing mobile behaviour is unchanged).
+  // (Legacy-mode component: plain lets + `$:` reactivity, NOT runes.)
+  // ============================================================
+  let tabsEl: HTMLElement | undefined;
+  let tabsObserver: ResizeObserver | undefined;
+  let tabsAtStart = true;
+  let tabsAtEnd = false;
+
+  function updateTabsState(): void {
+    if (!tabsEl) return;
+    const edge = railEdgeState(tabsEl);
+    tabsAtStart = edge.atStart;
+    tabsAtEnd = edge.atEnd;
+  }
+
+  function scrollTabsByCard(direction: 1 | -1): void {
+    if (!tabsEl) return;
+    scrollRailByCards(tabsEl, direction);
+  }
+
+  // Re-syncs the edge state + observer whenever the chip rail mounts
+  // (bind:this) or the rendered chip set changes (source hiding after
+  // retries, catalog degradation, retry states). The previous observer
+  // is disconnected on every re-run — no stale observers, no leaks.
+  function syncTabsRail(tabs: HTMLElement | undefined, _chipCount: number): void {
+    tabsObserver?.disconnect();
+    tabsObserver = undefined;
+    if (!tabs) return;
+    updateTabsState();
+    if (typeof ResizeObserver === 'function') {
+      tabsObserver = new ResizeObserver(() => updateTabsState());
+      tabsObserver.observe(tabs);
+    }
+  }
+  $: syncTabsRail(tabsEl, visibleSources.length);
+
   // ----- Transport / badge helpers (the shared visual language) -----
   function transportLabel(kind: UnifiedLinkView['kind']): string {
     if (kind === 'external') return 'EXTERNAL · Page';
@@ -345,8 +426,111 @@
   }
 
   function defaultSourceId(list: UnifiedSource[]): string | null {
-    if (!list.length) return null;
-    return (list.find((source) => (source.status === 'loaded' || source.status === 'empty') && source.links.length > 0) ?? list[0]).id;
+    // MAV-25 WS6 — hidden sources (failed/empty after their automatic
+    // retry) are never selected.
+    const candidates = list.filter((source) => !source.hidden);
+    if (!candidates.length) return null;
+    return (candidates.find((source) => (source.status === 'loaded' || source.status === 'empty') && source.links.length > 0) ?? candidates[0]).id;
+  }
+
+  /**
+   * MAV-25 WS6 — applies the ONE authoritative automatic-retry decision
+   * to a settled source, hides it when its budget is spent without
+   * valid links, and keeps the active selection valid. Diagnostics are
+   * structured (kind/id/status/errorCode/attempt count) and NEVER carry
+   * URLs, tokens, playback secrets or response payloads.
+   */
+  function evaluateSourcePolicy(sourceId: string): void {
+    const source = sources.find((candidate) => candidate.id === sourceId);
+    if (!source) return;
+    const decision = autoRetryDecision({
+      kind: source.kind,
+      status: source.status,
+      links: source.links,
+      autoRetryDone: source.autoRetryDone === true,
+      retryQueued: source.retryQueued === true,
+      hidden: source.hidden === true,
+    });
+    if (decision === 'hide') {
+      console.warn('[MaveroDownloader] source hidden after retry budget', {
+        kind: source.kind,
+        id: source.id,
+        status: source.status,
+        errorCode: source.errorCode,
+        autoRetryDone: source.autoRetryDone === true,
+      });
+      source.hidden = true;
+      source.links = [];
+      sources = [...sources];
+      // Recalculate the active selection safely: if the hidden source
+      // was active (or the active source no longer holds valid links),
+      // select the first visible loaded source deterministically (the
+      // array IS the global position order) WITHOUT triggering any
+      // fetch. When none remains, activeSourceId clears and the
+      // all-hidden recoverable state renders.
+      const current = sources.find((candidate) => candidate.id === activeSourceId);
+      if (!current || current.hidden || !hasValidUsableLinks(current.links)) {
+        activeSourceId = selectFallbackSourceId(sources);
+      }
+    }
+  }
+
+  // MAV-25 WS6 — the bounded automatic-retry scheduler. Resolutions
+  // land asynchronously (per-addon fetches + the ONE plugin batch), so
+  // the scheduler re-plans from the CURRENT source states and drains
+  // the queue AUTO_RETRY_CONCURRENCY sources at a time — never an
+  // unbounded burst of requests. The retryQueued flag is set BEFORE
+  // awaiting so a re-entrant plan can never double-schedule the same
+  // source/logical load.
+  let retryDrainActive = false;
+  /** MAV-25 WS6 — set on destroy so the scheduler never starts new work. */
+  let componentDestroyed = false;
+  function pumpAutoRetryScheduler(): void {
+    if (retryDrainActive || componentDestroyed) return;
+    retryDrainActive = true;
+    void drainAutoRetryQueue();
+  }
+
+  async function drainAutoRetryQueue(): Promise<void> {
+    try {
+      while (!componentDestroyed) {
+        const plan = planAutoRetries(sources);
+        if (plan.length === 0) return;
+        const batch = plan.slice(0, AUTO_RETRY_CONCURRENCY);
+        sources = sources.map((source) =>
+          batch.includes(source.id) ? { ...source, retryQueued: true } : source,
+        );
+        await Promise.all(batch.map((id) => runAutoRetry(id)));
+      }
+    } finally {
+      retryDrainActive = false;
+    }
+  }
+
+  /** The ONE automatic retry for a source (policy step 2). */
+  async function runAutoRetry(sourceId: string): Promise<void> {
+    const source = sources.find((candidate) => candidate.id === sourceId);
+    if (!source || source.hidden) return;
+    // Spend the budget FIRST — a re-entrant scan can never re-arm it.
+    source.autoRetryDone = true;
+    source.status = 'retrying';
+    source.errorCode = undefined;
+    source.errorMessage = undefined;
+    sources = [...sources];
+    try {
+      if (source.kind === 'addon') {
+        await resolveAddonSource(source);
+      } else {
+        await resolvePluginExtension(source);
+      }
+    } finally {
+      sources = sources.map((candidate) =>
+        candidate.id === sourceId ? { ...candidate, retryQueued: false } : candidate,
+      );
+      // Policy step 3/4: keep the source when the retry produced valid
+      // links, hide it when the retry failed or stayed empty.
+      evaluateSourcePolicy(sourceId);
+    }
   }
 
   /**
@@ -490,6 +674,16 @@
    * STEP 2a — ONE add-on source resolution (the EXISTING per-addon
    * progressive flow: independent fetch, per-source abort + retry, a failed
    * add-on never resets the others).
+   *
+   * MAV-25 WS6 additions: (a) normalization drops MALFORMED stream
+   * entries (no usable URL) while preserving every legitimate link and
+   * its metadata — "zero valid, usable links" is only confirmed after
+   * this normalization; (b) once the resolution settles, the ONE
+   * automatic-retry policy is evaluated (a server-'unavailable' add-on
+   * has ALREADY spent its full initial + one-retry server budget and is
+   * hidden without a client double-retry; an honest empty result still
+   * has the policy's single automatic retry available via the bounded
+   * scheduler).
    */
   async function resolveAddonSource(source: UnifiedSource): Promise<void> {
     source.abort?.abort();
@@ -508,14 +702,20 @@
       if (abort.signal.aborted) return;
       const payload = await response.json() as {
         ok?: boolean;
-        group?: { status?: string; streams?: AddonStreamPayload[]; errorCode?: string };
+        group?: { status?: string; streams?: (AddonStreamPayload | null | undefined)[]; errorCode?: string };
       };
       if (!response.ok || !payload.ok || !payload.group) throw new Error('unavailable');
       const groupStatus = payload.group.status;
       source.status = groupStatus === 'loaded' || groupStatus === 'empty' || groupStatus === 'loading' || groupStatus === 'retrying'
         ? (groupStatus as SourceStatus)
         : 'unavailable';
-      source.links = (payload.group.streams ?? []).map((stream) => addonStreamToLink(stream));
+      // Normalization: malformed/null/blank-URL entries are IGNORED (never
+      // surfaced as links, never counted as results); legitimate links and
+      // their metadata are preserved verbatim.
+      source.links = (payload.group.streams ?? [])
+        .filter((stream): stream is AddonStreamPayload => Boolean(stream) && typeof stream === 'object')
+        .map((stream) => addonStreamToLink(stream))
+        .filter((link) => typeof link.url === 'string' && link.url.trim().length > 0);
     } catch (error) {
       if (abort.signal.aborted) return;
       source.status = 'unavailable';
@@ -525,11 +725,16 @@
       if (!abort.signal.aborted) {
         sources = [...sources];
         if (activeSourceId === source.id && source.links.length === 0 && source.status !== 'loaded' && source.status !== 'empty') {
-          const firstLoaded = sources.find((candidate) => candidate.links.length > 0);
+          const firstLoaded = sources.find((candidate) => !candidate.hidden && candidate.links.length > 0);
           if (firstLoaded && firstLoaded.id !== activeSourceId) {
             activeSourceId = firstLoaded.id;
           }
         }
+        // MAV-25 WS6 — evaluate the policy for this settled source and
+        // let the bounded scheduler pick up any qualifying retry. Both
+        // are idempotent and safe to run for initial fetch AND retry.
+        evaluateSourcePolicy(source.id);
+        pumpAutoRetryScheduler();
       }
     }
   }
@@ -580,11 +785,17 @@
           : source,
       );
       console.warn('[MaveroDownloader] plugin batch failed', error);
+    } finally {
+      // MAV-25 WS6 — the plugin path has NO server-side retry layer, so
+      // failed/empty plugin sources qualify for the policy's single
+      // automatic retry through the bounded scheduler (per-extension
+      // requests, AUTO_RETRY_CONCURRENCY at a time).
+      pumpAutoRetryScheduler();
     }
   }
 
   /** Applies plugin batch groups to the matching sources (by extension id). */
-  function applyPluginGroups(groups: Array<{ extensionId: string; extensionName?: string; status?: string; links?: CloudStreamDownloadLinkView[]; errorCode?: CloudStreamDownloaderErrorCode; errorMessage?: string }>): void {
+  function applyPluginGroups(groups: Array<{ extensionId: string; extensionName?: string; status?: string; links?: (CloudStreamDownloadLinkView | null | undefined)[]; errorCode?: CloudStreamDownloaderErrorCode; errorMessage?: string }>): void {
     const byId = new Map(groups.map((group) => [group.extensionId, group]));
     sources = sources.map((source) => {
       if (source.kind !== 'plugin') return source;
@@ -594,27 +805,36 @@
       return {
         ...source,
         status,
-        links: (group.links ?? []).map(pluginLinkToLink),
+        // MAV-25 WS6 normalization: malformed/null/blank-URL entries are
+        // ignored (never surfaced, never counted); legitimate links and
+        // their metadata are preserved verbatim.
+        links: (group.links ?? [])
+          .filter((link): link is CloudStreamDownloadLinkView => Boolean(link) && typeof link === 'object')
+          .map(pluginLinkToLink)
+          .filter((link) => typeof link.url === 'string' && link.url.trim().length > 0),
         errorCode: group.errorCode,
         errorMessage: group.errorMessage,
       };
     });
   }
 
-  /** Per-source retry — ONLY the failing source is re-resolved. */
-  async function retrySource(source: UnifiedSource): Promise<void> {
-    if (source.status === 'loading' || source.status === 'retrying') return;
-    if (source.kind === 'addon') {
-      source.status = 'retrying';
-      await resolveAddonSource(source);
-      return;
-    }
+  /**
+   * MAV-25 WS6 — the shared per-extension plugin resolution used by BOTH
+   * the manual per-source retry and the automatic policy retry. `mode`
+   * only controls the presented status label ('loading' for a manual
+   * attempt, 'retrying' for the automatic one); the request, abort
+   * bookkeeping and error mapping are identical. A manual retry ALSO
+   * spends the automatic budget (autoRetryDone is set by the caller
+   * where required) so a manual + automatic stacking can never exceed
+   * the policy's one-retry-per-source contract.
+   */
+  async function resolvePluginExtension(source: UnifiedSource, mode: 'manual' | 'auto' = 'manual'): Promise<void> {
     retryAborts.get(source.id)?.abort();
     const abort = new AbortController();
     retryAborts.set(source.id, abort);
     sources = sources.map((candidate) =>
       candidate.id === source.id
-        ? { ...candidate, status: 'loading' as const, links: [], errorCode: undefined, errorMessage: undefined }
+        ? { ...candidate, status: (mode === 'auto' ? 'retrying' : 'loading') as SourceStatus, links: [], errorCode: undefined, errorMessage: undefined }
         : candidate,
     );
     const params = buildParams();
@@ -646,6 +866,26 @@
     }
   }
 
+  /** Per-source retry — ONLY the failing source is re-resolved. */
+  async function retrySource(source: UnifiedSource): Promise<void> {
+    if (source.status === 'loading' || source.status === 'retrying') return;
+    if (source.kind === 'addon') {
+      // MAV-25 WS6: a manual retry spends the automatic budget too —
+      // the total attempts per logical load stay initial + one.
+      source.autoRetryDone = true;
+      source.status = 'retrying';
+      await resolveAddonSource(source);
+      return;
+    }
+    // MAV-25 WS6: same budget rule for plugin sources.
+    source.autoRetryDone = true;
+    await resolvePluginExtension(source, 'manual');
+    // Policy evaluation: the manual retry either restored valid links
+    // (keep) or exhausted the source's attempts (hide).
+    evaluateSourcePolicy(source.id);
+    pumpAutoRetryScheduler();
+  }
+
   function markPluginSourceFailed(id: string, code: CloudStreamDownloaderErrorCode, message?: string): void {
     sources = sources.map((source) =>
       source.id === id
@@ -665,6 +905,13 @@
     if (sources.some((source) => source.kind === 'plugin')) {
       void resolvePluginBatch();
     }
+    // MAV-25 WS6 — the bounded automatic-retry scheduler. It re-plans
+    // from the live source states as resolutions land; a batch that
+    // resolves synchronously from cache (or a catalog with zero add-ons)
+    // still gets its policy pass. Fresh budgets: loadSources() rebuilt
+    // every source object, so autoRetryDone/retryQueued/hidden are reset
+    // per logical load — re-renders never re-arm anything.
+    pumpAutoRetryScheduler();
   }
 
   /** Full retry — sources + both engines (manual only; never automatic). */
@@ -747,11 +994,13 @@
   onDestroy(() => {
     // Cancel every in-flight request so no response ever applies to a
     // destroyed panel (provider switching unmounts the unified panel).
+    componentDestroyed = true;
     sourcesAbort?.abort();
     batchAbort?.abort();
     for (const source of sources) source.abort?.abort();
     for (const abort of retryAborts.values()) abort.abort();
     retryAborts.clear();
+    tabsObserver?.disconnect();
     if (shareTimer) clearTimeout(shareTimer);
   });
 </script>
@@ -807,36 +1056,74 @@
       <p class="mud-hint">CloudStream/Nuvio sources are temporarily unavailable.</p>
     {/if}
   {:else}
+    <!-- MAV-25 WS6 — policy step 5: every source failed/stayed empty
+         after its ONE automatic retry. A clear, recoverable state
+         replaces the (formerly empty-looking) selector; Retry starts a
+         fresh logical load with fresh budgets. -->
+    {#if allSourcesHidden}
+      <div class="mud-state mud-state-error" role="status">
+        <AlertTriangle size={16} />
+        <span>No sources could be resolved for this title right now.</span>
+        <button type="button" class="mud-retry" onclick={retryAll}><RotateCw size={11} /> Retry</button>
+      </div>
+    {:else}
     <!-- THE unified source chip rail — green = Stremio add-on, blue =
          CloudStream/Nuvio plugin (task PART C). Order = the global
          positions from the /sources payload (persisted ordering data,
          never array identity). Counts: add-on sources show their full
          stream count; plugin sources show non-external links (the
-         existing panels' per-kind counting rules). -->
-    <div class="mud-tabs" role="tablist" aria-label="Sources">
-      {#each sources as source (source.id)}
-        <button
-          class="mud-tab"
-          class:plugin={source.kind === 'plugin'}
-          class:active={source.id === activeSourceId}
-          type="button"
-          role="tab"
-          aria-selected={source.id === activeSourceId}
-          onclick={() => selectSource(source.id)}
-        >
-          <span class="mud-tab-kind" aria-hidden="true" title={source.kind === 'plugin' ? 'CloudStream/Nuvio plugin' : 'Stremio add-on'}></span>
-          <span class="mud-tab-name">{source.name}</span>
-          {#if source.status === 'loading' || source.status === 'retrying'}
-            <span class="mud-tab-state loading" role="status"><span class="mud-tab-spin"><Loader2 size={9} /></span></span>
-          {:else if source.status === 'unavailable' || source.status === 'failed'}
-            <span class="mud-tab-state failed" role="status">Failed</span>
-          {:else if (source.status === 'loaded' || source.status === 'empty') && source.links.length > 0}
-            <span class="mud-tab-state ok" class:plugin={source.kind === 'plugin'} role="status">{source.kind === 'plugin' ? source.links.filter((link) => link.kind !== 'external').length : source.links.length}</span>
-          {:else}
-            <span class="mud-tab-state" role="status">0</span>
-          {/if}
-        </button>
-      {/each}
+         existing panels' per-kind counting rules). MAV-25 WS6: sources
+         that stayed failed/empty after their automatic retry are hidden
+         from this rail. -->
+    <!-- MAV-25 WS5 — the wrap hosts the shared edge-aligned navigation
+         arrows for the chip row: visible on desktop/TV pointer surfaces,
+         disabled at the actual scroll ends, hidden on ≤640px phones.
+         They scroll ONLY the chip container and are separate buttons —
+         arrow clicks can never trigger a source selection. -->
+    <div class="mud-tabs-wrap">
+      <button
+        type="button"
+        class="mud-tab-nav mud-tab-nav-prev"
+        aria-label="Scroll sources left"
+        disabled={tabsAtStart}
+        onclick={() => scrollTabsByCard(-1)}
+      >
+        <ChevronLeft size={14} />
+      </button>
+      <button
+        type="button"
+        class="mud-tab-nav mud-tab-nav-next"
+        aria-label="Scroll sources right"
+        disabled={tabsAtEnd}
+        onclick={() => scrollTabsByCard(1)}
+      >
+        <ChevronRight size={14} />
+      </button>
+      <div class="mud-tabs" role="tablist" aria-label="Sources" bind:this={tabsEl} onscroll={updateTabsState}>
+        {#each visibleSources as source (source.id)}
+          <button
+            class="mud-tab"
+            class:plugin={source.kind === 'plugin'}
+            class:active={source.id === activeSourceId}
+            type="button"
+            role="tab"
+            aria-selected={source.id === activeSourceId}
+            onclick={() => selectSource(source.id)}
+          >
+            <span class="mud-tab-kind" aria-hidden="true" title={source.kind === 'plugin' ? 'CloudStream/Nuvio plugin' : 'Stremio add-on'}></span>
+            <span class="mud-tab-name">{source.name}</span>
+            {#if source.status === 'loading' || source.status === 'retrying'}
+              <span class="mud-tab-state loading" role="status"><span class="mud-tab-spin"><Loader2 size={9} /></span></span>
+            {:else if source.status === 'unavailable' || source.status === 'failed'}
+              <span class="mud-tab-state failed" role="status">Failed</span>
+            {:else if (source.status === 'loaded' || source.status === 'empty') && source.links.length > 0}
+              <span class="mud-tab-state ok" class:plugin={source.kind === 'plugin'} role="status">{source.kind === 'plugin' ? source.links.filter((link) => link.kind !== 'external').length : source.links.length}</span>
+            {:else}
+              <span class="mud-tab-state" role="status">0</span>
+            {/if}
+          </button>
+        {/each}
+      </div>
     </div>
 
     <!-- Per-kind catalog degradation notices (honest partial success). -->
@@ -1101,6 +1388,7 @@
         {/if}
       {/if}
     {/if}
+    {/if}
   {/if}
 </div>
 
@@ -1199,8 +1487,32 @@
   .mud-spin { display: inline-flex; animation: mud-spin 0.9s linear infinite; }
 
   /* ===== THE unified chip rail (task PART C) ===== */
+  /* MAV-25 WS5 — the wrap hosts the shared navigation arrows OUTSIDE the
+     chip scrollport (the ContentRail §11 edge-overlay composition).
+     Hidden on ≤640px phones: native touch scrolling stays the primary
+     interaction and the existing mobile UI is unchanged. */
+  .mud-tabs-wrap { position: relative; min-width: 0; }
   .mud-tabs { display: flex; flex-direction: row; flex-wrap: nowrap; overflow-x: auto; gap: 6px; padding: 2px; scrollbar-width: none; -ms-overflow-style: none; scroll-snap-type: x proximity; }
   .mud-tabs::-webkit-scrollbar { display: none; }
+  .mud-tab-nav {
+    position: absolute; top: 50%; transform: translateY(-50%);
+    z-index: 6;
+    display: grid; place-items: center;
+    width: 26px; height: 34px;
+    border: 1px solid var(--color-border-strong, rgba(255, 255, 255, .18)); border-radius: 9px;
+    background: rgba(8, 11, 13, .85); backdrop-filter: blur(10px);
+    color: var(--ink, #f5f5f5);
+    cursor: pointer;
+    transition: opacity var(--motion-fast, 150ms) var(--ease-out, ease-out), background var(--motion-fast, 150ms) var(--ease-out, ease-out), border-color var(--motion-fast, 150ms) var(--ease-out, ease-out);
+  }
+  .mud-tab-nav:focus-visible { outline: 2px solid var(--color-focus, #f5f5f5); outline-offset: 2px; }
+  .mud-tab-nav:hover:not(:disabled) {
+    background: rgba(0, 255, 156, .12);
+    border-color: var(--color-primary-border, rgba(0, 255, 156, .4));
+  }
+  .mud-tab-nav:disabled { opacity: .22; pointer-events: none; }
+  .mud-tab-nav-prev { left: -4px; }
+  .mud-tab-nav-next { right: -4px; }
   .mud-tab { display: flex; flex: 0 0 auto; align-items: center; gap: 5px; border: 1px solid var(--line); border-radius: 999px; background: var(--color-surface-elevated); color: var(--ink-soft); padding: 5px 10px; font: inherit; font-size: 0.62rem; font-weight: 700; cursor: pointer; transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out); }
   .mud-tab:hover { border-color: var(--line-strong); color: var(--ink); background: var(--color-surface-raised); }
   .mud-tab:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
@@ -1298,6 +1610,14 @@
     .mud-spin, .mud-tab-spin { animation: none; }
     .mud-action, .mud-row, .mud-tab { transition: none; }
     .mud-skeleton-kind, .mud-skeleton-line, .mud-skeleton-badge, .mud-skeleton-action { animation: none; opacity: 0.5; }
+    /* MAV-25 WS5 — the chip-rail arrows never animate. */
+    .mud-tab-nav { transition: none; }
+  }
+
+  /* MAV-25 WS5 — phones keep the native touch-scroll chip row: the
+     navigation arrows are a desktop/TV affordance only. */
+  @media (max-width: 640px) {
+    .mud-tab-nav { display: none; }
   }
 
   /* Responsive breakpoints (the existing panels' rules). */

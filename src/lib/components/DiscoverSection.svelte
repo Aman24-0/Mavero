@@ -42,13 +42,20 @@
   // Anime Explorer offers no language row).
 
   import { onMount } from 'svelte';
-  import { ArrowRight, LoaderCircle, Plus, RotateCw } from 'lucide-svelte';
+  import { ArrowRight, ChevronLeft, ChevronRight, LoaderCircle, Plus, RotateCw } from 'lucide-svelte';
   import type { MediaItem } from '$data/content';
   import MediaCard from '$components/MediaCard.svelte';
   import DiscoverDropdown from '$components/DiscoverDropdown.svelte';
   import SkeletonCard from '$components/SkeletonCard.svelte';
   import { getCachedRail, setCachedRail } from '$lib/client/discover/rail-cache';
   import { page } from '$app/state';
+  // MAV-25 WS1 — the ESTABLISHED carousel navigation behaviour (the same
+  // edge-state + stepped-scroll contract ContentRail ships) as ONE shared
+  // helper — no conflicting duplicate abstraction.
+  import { railEdgeState, scrollRailByCards } from '$lib/shared/rail-navigation';
+  // MAV-25 WS2 — the pure visible-row fill math (card-pitch → slot target)
+  // and its bounded-fetch budgets.
+  import { rowFillTarget, ROW_FILL_ITEM_CAP, ROW_FILL_FETCH_BUDGET } from '$lib/shared/rail-row-fill';
   import type { DiscoverLanguage, DiscoverRailType, DiscoverSectionKey } from '$lib/server/content/types';
   // Phase 9 fix: import the pure decision function from the SHARED module
   // (not from $lib/server/* which is server-only and rejected by the
@@ -185,6 +192,102 @@
   let requestSequence = 0;
   let requestController: AbortController | undefined;
   let mounted = false;
+
+  // ============================================================
+  // MAV-25 WS1 — rail navigation arrows (the ContentRail §11 contract).
+  // Edge state derives from the rail's own scrollLeft/scrollWidth on
+  // every scroll event + after the item set, container or viewport
+  // changes (ResizeObserver on the rail). Arrows scroll ONLY this
+  // section's rail — never the page, never another rail.
+  // ============================================================
+  let railEl: HTMLElement | undefined = $state();
+  let atStart = $state(true);
+  let atEnd = $state(false);
+
+  function updateRailState(): void {
+    if (!railEl) return;
+    const edge = railEdgeState(railEl);
+    atStart = edge.atStart;
+    atEnd = edge.atEnd;
+  }
+
+  function scrollByCard(direction: 1 | -1): void {
+    if (!railEl) return;
+    scrollRailByCards(railEl, direction);
+  }
+
+  // ============================================================
+  // MAV-25 WS2 — visible-row fill. The batch targets 10 items/rail;
+  // dedup-starved rails (the genre tail, language-filtered variants)
+  // can land with fewer items than a desktop row holds. When the rail's
+  // ACTUAL container (clientWidth — sidebar/gutters already excluded)
+  // fits more cards than are loaded AND more pages exist, additional
+  // pages are fetched through the EXISTING Show More pipeline (same
+  // endpoint, exclude contract, dedupe and loading guards) — bounded by
+  // ROW_FILL_FETCH_BUDGET + ROW_FILL_ITEM_CAP, re-evaluated on
+  // target-changing resizes, and never manufacturing placeholders.
+  // Mobile is unaffected: at the 40vw card pitch the target is 2-3, so
+  // the initially loaded items always satisfy it and NO extra fetch
+  // ever fires — the mobile initial count and swipe behaviour are
+  // preserved by construction.
+  // ============================================================
+  let fillFetchesUsed = 0;
+  let lastFillTarget = 0;
+  let fillToken = 0;
+  let fillScheduled = false;
+
+  function currentFillTarget(): number {
+    if (!railEl) return 1;
+    const firstCard = railEl.querySelector<HTMLElement>(':scope > *');
+    if (!firstCard) return 1;
+    const cardWidth = firstCard.getBoundingClientRect().width;
+    const gap = parseFloat(getComputedStyle(railEl).columnGap || getComputedStyle(railEl).gap || '0') || 0;
+    return rowFillTarget({
+      containerWidth: railEl.clientWidth,
+      cardWidth,
+      gap,
+      hasMore: hasNextPage,
+    });
+  }
+
+  function scheduleRowFill(): void {
+    if (fillScheduled || !mounted) return;
+    fillScheduled = true;
+    requestAnimationFrame(() => {
+      fillScheduled = false;
+      void runRowFill();
+    });
+  }
+
+  async function runRowFill(): Promise<void> {
+    if (!mounted || loading || loadingMore || showMoreError) return;
+    if (!hasNextPage || items.length === 0) return;
+    if (items.length >= ROW_FILL_ITEM_CAP) return;
+    const target = currentFillTarget();
+    if (items.length >= target) {
+      lastFillTarget = target;
+      return;
+    }
+    if (fillFetchesUsed >= ROW_FILL_FETCH_BUDGET) return;
+    lastFillTarget = target;
+    const token = ++fillToken;
+    // One bounded fetch per iteration; the trigger effect re-runs the
+    // driver after each append until the row is filled, the rail is
+    // exhausted, the budget is spent or a Show More error surfaces.
+    fillFetchesUsed += 1;
+    await loadMore();
+    if (token !== fillToken) return; // superseded by a filter change/retry
+    scheduleRowFill();
+  }
+
+  function onRailResize(): void {
+    updateRailState();
+    // Only re-evaluate the fill when the DERIVED target changed — a
+    // scroll-width-only mutation (appended columns) must never trigger
+    // more requests (no layout loops, no duplicate pagination).
+    const target = currentFillTarget();
+    if (target !== lastFillTarget) scheduleRowFill();
+  }
 
   // Phase 8 fix: railUrl now accepts an explicit exclude list instead of
   // relying on a boolean flag that only serialized the prop excludeIds.
@@ -356,6 +459,11 @@
     // are NEVER reused. A fresh filtered rail request will be performed.
     usedInitialItems = false;
     filterChanged = true;
+    // MAV-25 WS2: a filter change is a NEW logical load — the row-fill
+    // budget resets with it and any in-flight fill is invalidated.
+    fillFetchesUsed = 0;
+    lastFillTarget = 0;
+    fillToken += 1;
     // Clear items to show loading skeleton for the new language.
     items = [];
     loading = true;
@@ -369,6 +477,10 @@
     // Phase 8 fix: same as language change — stale initialItems must not be reused.
     usedInitialItems = false;
     filterChanged = true;
+    // MAV-25 WS2: same new-logical-load budget reset as language change.
+    fillFetchesUsed = 0;
+    lastFillTarget = 0;
+    fillToken += 1;
     items = [];
     loading = true;
     void loadFirst();
@@ -390,7 +502,41 @@
       mounted = false;
       requestSequence += 1;
       requestController?.abort();
+      fillToken += 1;
     };
+  });
+
+  // MAV-25 WS1 — edge-state + fill re-evaluation on container/viewport
+  // changes. The rail element only exists once data lands (the loading
+  // state renders the skeleton instead), so the observer attaches
+  // REACTIVELY to `railEl` — this effect re-runs when the populated rail
+  // mounts and cleans up the observer when it unmounts (no stale
+  // observers, no leaks on chip-variant remounts). The responsive card
+  // pitch (178px base / 40vw mobile / 210px TV) flows through here as a
+  // measured clientWidth change, never a viewport guess.
+  $effect(() => {
+    const rail = railEl;
+    if (!rail) return;
+    updateRailState();
+    const resizeObserver =
+      typeof ResizeObserver === 'function' ? new ResizeObserver(() => onRailResize()) : undefined;
+    resizeObserver?.observe(rail);
+    return () => resizeObserver?.disconnect();
+  });
+
+  // Re-sync the arrow edge state whenever the item set changes (a rail
+  // whose items grow may no longer be at the end), and (re-)evaluate the
+  // MAV-25 WS2 visible-row fill once a load settles. The fill driver is
+  // scheduled via rAF so this effect only ESTABLISHES tracking of the
+  // settle signals — the async work (and its state writes) runs outside
+  // the effect, preventing effect loops.
+  $effect(() => {
+    void items.length;
+    void hasNextPage;
+    void loading;
+    void loadingMore;
+    updateRailState();
+    if (!loading && !loadingMore && items.length > 0) scheduleRowFill();
   });
 
   // Phase 9 fix: reactive $effect that re-calls loadFirst() when
@@ -502,39 +648,70 @@
            an INLINE terminal item at the end of the horizontal list (not
            a separate row underneath). Appending new grid columns to the
            right keeps the user's horizontal scroll position stable. -->
-      <div class="rail">
-        {#each items as item (item.type + ':' + item.id)}
-          <MediaCard {item} />
-        {/each}
-        {#if hasNextPage}
-          <div class="rail-endcap">
-            <button
-              class="show-more-card"
-              class:retry={Boolean(showMoreError)}
-              type="button"
-              onclick={loadMore}
-              disabled={loadingMore}
-              aria-label={showMoreError ? `Retry loading more ${title}` : `Show more ${title}`}
-            >
-              {#if loadingMore}
-                <LoaderCircle size={18} aria-hidden="true" />
-                <span>Loading…</span>
-              {:else if showMoreError}
-                <RotateCw size={18} aria-hidden="true" />
-                <span>Retry</span>
-              {:else}
-                <Plus size={18} aria-hidden="true" />
-                <span>Show more</span>
+      <!-- MAV-25 WS1 — the rail-wrap hosts the ESTABLISHED edge-aligned
+           navigation arrows (the ContentRail §11 pattern): VISIBLE on
+           ≥641px pointer surfaces, DISABLED (not clickable dead) at the
+           actual scroll ends, hidden on ≤640px phones where native swipe
+           stays the primary interaction. The arrows sit OUTSIDE the rail
+           scrollport and scroll ONLY this rail — never the page, never
+           another section's rail. -->
+      <div class="rail-wrap">
+        <button
+          type="button"
+          class="rail-nav rail-nav-prev"
+          aria-label={`Scroll ${title} left`}
+          disabled={atStart}
+          onclick={() => scrollByCard(-1)}
+        >
+          <ChevronLeft size={18} />
+        </button>
+        <button
+          type="button"
+          class="rail-nav rail-nav-next"
+          aria-label={`Scroll ${title} right`}
+          disabled={atEnd}
+          onclick={() => scrollByCard(1)}
+        >
+          <ChevronRight size={18} />
+        </button>
+        <div
+          class="rail"
+          bind:this={railEl}
+          onscroll={updateRailState}
+        >
+          {#each items as item (item.type + ':' + item.id)}
+            <MediaCard {item} />
+          {/each}
+          {#if hasNextPage}
+            <div class="rail-endcap">
+              <button
+                class="show-more-card"
+                class:retry={Boolean(showMoreError)}
+                type="button"
+                onclick={loadMore}
+                disabled={loadingMore}
+                aria-label={showMoreError ? `Retry loading more ${title}` : `Show more ${title}`}
+              >
+                {#if loadingMore}
+                  <LoaderCircle size={18} aria-hidden="true" />
+                  <span>Loading…</span>
+                {:else if showMoreError}
+                  <RotateCw size={18} aria-hidden="true" />
+                  <span>Retry</span>
+                {:else}
+                  <Plus size={18} aria-hidden="true" />
+                  <span>Show more</span>
+                {/if}
+              </button>
+              <!-- Phase 2-L: Show-more failure preserves the existing rail AND
+                   surfaces the error inside the same endcap. The rail is NOT
+                   replaced. -->
+              {#if showMoreError}
+                <p class="show-more-error" role="alert">{showMoreError}</p>
               {/if}
-            </button>
-            <!-- Phase 2-L: Show-more failure preserves the existing rail AND
-                 surfaces the error inside the same endcap. The rail is NOT
-                 replaced. -->
-            {#if showMoreError}
-              <p class="show-more-error" role="alert">{showMoreError}</p>
-            {/if}
-          </div>
-        {/if}
+            </div>
+          {/if}
+        </div>
       </div>
     {/if}
   </div>
@@ -609,12 +786,51 @@
   .section-link:hover { color: var(--ink, #f5f5f5); transform: translateX(3px); }
 
   .section-body { min-height: 60px; }
+  /* MAV-25 WS1 — the rail-wrap clips overflow and hosts the edge-aligned
+     navigation arrows OUTSIDE the rail scrollport (the ContentRail §11
+     composition: a true edge overlay that never covers mid-scroll card
+     content with layout-shifting appear/disappear behaviour — the slot
+     stays, the disabled state communicates the end). */
+  .rail-wrap { position: relative; overflow: hidden; border-radius: 14px; }
   .rail {
     display: grid; grid-auto-flow: column; grid-auto-columns: 178px; gap: 14px;
     overflow-x: auto; overflow-y: visible; scroll-snap-type: x proximity;
     scrollbar-width: none; padding: 6px 2px 12px;
   }
   .rail::-webkit-scrollbar { display: none; }
+
+  /* MAV-25 WS1 — the shared carousel navigation arrows. Same visual
+     language as ContentRail's .rail-nav (glass panel, focus ring, hover
+     glow, disabled-at-the-ends). Hidden on ≤640px phones — native
+     horizontal scroll remains the mobile interaction. */
+  .rail-nav {
+    position: absolute; top: 50%; transform: translateY(-50%);
+    z-index: 6;
+    display: grid; place-items: center;
+    width: 38px; height: 56px;
+    border: 1px solid var(--color-border-strong, rgba(255, 255, 255, .18)); border-radius: var(--radius-md, 12px);
+    background: rgba(8, 11, 13, .82); backdrop-filter: blur(12px);
+    color: var(--ink, #f5f5f5);
+    cursor: pointer;
+    transition: opacity var(--motion-fast, 150ms) var(--ease-out, ease-out), background var(--motion-fast, 150ms) var(--ease-out, ease-out), border-color var(--motion-fast, 150ms) var(--ease-out, ease-out), box-shadow var(--motion-fast, 150ms) var(--ease-out, ease-out);
+  }
+  .rail-nav:focus-visible {
+    outline: 2px solid var(--color-focus, #f5f5f5); outline-offset: 2px;
+  }
+  .rail-nav:hover:not(:disabled) {
+    background: rgba(0, 255, 156, .12);
+    border-color: var(--color-primary-border, rgba(0, 255, 156, .4));
+    box-shadow: var(--glow-primary, 0 0 18px rgba(0, 255, 156, .18));
+  }
+  /* Edge state: visibly and functionally off at the scroll ends (the
+     layout slot stays — no arrow appear/disappear jumpiness). */
+  .rail-nav:disabled {
+    opacity: .22;
+    pointer-events: none;
+    box-shadow: none;
+  }
+  .rail-nav-prev { left: 6px; }
+  .rail-nav-next { right: 6px; }
 
   /* MAV-20 Phase C — the inline terminal Show More card. Occupies one
      rail column (same grid geometry as the cards — no distortion), but
@@ -691,6 +907,10 @@
     .section-title { font-size: 1.05rem; }
     .rail { grid-auto-columns: 40vw; gap: 10px; }
     .section-head-right { gap: 6px; }
+    /* MAV-25 WS1 — hide the navigation arrows on phones: native
+       horizontal swipe is the primary interaction and the existing
+       mobile design is preserved unchanged. */
+    .rail-nav { display: none; }
     /* Compact chips on mobile — the header stays tight. */
     .section-head-left { gap: 8px; }
     .type-chips { gap: 4px; }
@@ -698,9 +918,13 @@
   }
   @media (min-width: 1900px) {
     .rail { grid-auto-columns: 210px; gap: 18px; }
+    /* MAV-25 WS1 — TV-scale arrows for the TV-scale card pitch. */
+    .rail-nav { width: 44px; height: 64px; }
   }
   @media (prefers-reduced-motion: reduce) {
     .show-more-card :global(svg) { animation: none; }
     .type-chip, .show-more-card { transition: none; }
+    /* MAV-25 WS1 — reduced motion: the arrows never animate. */
+    .rail-nav { transition: none; }
   }
 </style>
