@@ -6,6 +6,16 @@ Audit date: 2026-10-11 · Audit mode: read-only, no code changed during this pha
 
 ---
 
+**FOLLOW-UP (MAVP-2, 2026-10-11):** production bug fixes for landscape-first entry-point
+inconsistency, chip width, 5 s auto-hide reliability, per-source Back positioning, independent
+portrait/landscape profiles and the Admin positioning save error are documented in
+`MAVP2_PLAYER_BUGFIX_AUDIT.md` (root causes RC-A–RC-D, positioning contract v2, tests, gates,
+browser QA). This document's §6/§9 capability notes remain accurate; the landscape-first
+mount-time attempt described in §6 is now initiated at Play-click time with shell adoption
+(see the follow-up audit §2 RC-A).
+
+---
+
 ## 1. Repository baseline
 
 - Branch `main` == `origin/main` at `689e62b` ("feat: MAV-25 — discover rail navigation + desktop row fill, Live TV desktop 70/30 layout, detail recommendations width fill, downloader chip navigation + exactly-once source retry").

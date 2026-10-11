@@ -139,7 +139,10 @@ assert.doesNotMatch(shell, /function handleEmbedLoad\(\)[\s\S]{0,500}acquireWake
 // Embed playback events drive wake lock via handleEmbedPlaybackEvent.
 // Phase 6 audit fix 2: signature includes sourceId for stale-event rejection.
 assert.match(shell, /function handleEmbedPlaybackEvent\(event: \{ type: 'play' \| 'pause' \| 'ended'; sourceId\?: string \}\)/, 'handleEmbedPlaybackEvent function exists with sourceId');
-assert.match(shell, /if \(event\.type === 'play'\) \{[\s\S]{0,80}embedPlaying = true[\s\S]{0,30}acquireWakeLock/, 'embed play sets embedPlaying + acquires wake lock');
+// MAVP-2 supersession: the play branch also stamps `embedEverPlayed = true`
+// (auto-hide distinguishes event-posting providers from black-box ones) —
+// the window widens accordingly; the wake-lock contract is unchanged.
+assert.match(shell, /if \(event\.type === 'play'\) \{[\s\S]{0,110}embedPlaying = true[\s\S]{0,40}acquireWakeLock/, 'embed play sets embedPlaying + acquires wake lock');
 assert.match(shell, /event\.type === 'pause' \|\| event\.type === 'ended'[\s\S]{0,80}embedPlaying = false[\s\S]{0,30}releaseWakeLock/, 'embed pause/ended clears embedPlaying + releases wake lock');
 assert.match(shell, /if \(event\.sourceId && embedPlaybackSourceId && event\.sourceId !== embedPlaybackSourceId\) return/, 'stale source events rejected');
 assert.match(shell, /export let embedPlaybackEvent: \{ type: 'play' \| 'pause' \| 'ended'; _seq\?: number; sourceId\?: string \} \| null = null/, 'embedPlaybackEvent prop declared with sourceId');

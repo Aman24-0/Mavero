@@ -121,12 +121,19 @@ ok(/markPlayerMilestone\('mavero:iframe-mounted'\)/.test(viewport) && /markPlaye
 // ============================================================================
 section_ok('§B controls');
 
-ok(/<button class="back-fab" type="button" aria-label="Close player"/.test(shell), 'B1. Back FAB — compact circular, top-left');
+// MAVP-2 Phase 4/5 supersession: the Back FAB now carries the per-source
+// placement style (style={backControlStyle}); the default stylesheet
+// placement (top-left, safe-area aware) is unchanged for unset profiles.
+ok(/<button class="back-fab"[^>]*aria-label="Close player"/.test(shell), 'B1. Back FAB — compact circular, top-left');
 ok(/\.back-fab \{[^}]*top: max\(12px, env\(safe-area-inset-top\)\)/.test(shell), 'B2. Back FAB respects safe-area insets');
 ok(/\.back-fab \{[^}]*width: 44px/.test(shell), 'B3. Back FAB ~44px touch target');
 ok(/onclick=\{onClose\}/.test(shell), 'B4. Back FAB preserves existing return navigation');
 
-ok(/<button class="control-fab landscape-fab" style=\{landscapeControlStyle\}/.test(shell), 'B5. dedicated Landscape FAB at bottom-right with per-source placement style');
+// MAVP-2 Phase 7 supersession: the placement style lives ONLY on the
+// control-fab-group — the previous duplicate inline style on the inner
+// button double-applied the center-anchor transform.
+ok(/<div class="control-fab-group" class:visible=\{controlsVisible\} style=\{landscapeControlStyle\}>/.test(shell), 'B5. dedicated Landscape FAB group at bottom-right with per-source placement style');
+ok(/<button class="control-fab landscape-fab" type="button"/.test(shell) && !/<button class="control-fab landscape-fab" style=/.test(shell), 'B5b. inner landscape FAB carries NO duplicate placement style (center-anchor transform applies once)');
 ok(/\.control-fab \{[^}]*width: 48px/.test(shell), 'B6. Landscape FAB 44-48px touch target (48px)');
 ok(/aria-label=\{landscapeMode \? 'Exit landscape player' : 'Enter landscape player'\}/.test(shell) && /aria-pressed=\{landscapeMode\}/.test(shell), 'B7. Landscape FAB has distinct orientation states');
 ok(/onclick=\{\(\) => \{ void toggleLandscape\(\); \}\}/.test(shell), 'B8. Landscape FAB reuses the existing orientation controller');
@@ -136,9 +143,15 @@ ok(/\.source-chip-bar \{[^}]*width: 5px/.test(shell), 'B10. chip visible bar ~5p
 ok(/\.source-chip-bar \{[^}]*height: 56px/.test(shell), 'B11. chip visible bar ~56px tall (48-64px spec range)');
 ok(/\.source-chip \{[^}]*min-width: 44px/.test(shell) && /\.source-chip \{[^}]*min-height: 64px/.test(shell), 'B12. chip hit area >= 44x64 CSS px');
 ok(/\.source-chip \{[^}]*top: 50%/.test(shell) && /\.source-chip \{[^}]*right: 0/.test(shell), 'B13. chip attached to the right edge around the vertical centre');
-ok(/\.source-chip \{[^}]*background: rgba\(0,0,0,\.55\)/.test(shell), 'B14. chip dark/translucent per MAVERO design system');
+// MAVP-2 Phase 2 supersession: the closed chip paints ONLY the ~5px bar —
+// the dark translucent surface lives on the BAR (and the hover label pill),
+// not on the button (which stays a transparent ≥44×64 hit area).
+ok(/\.source-chip-bar \{[^}]*background: rgba\(0,0,0,\.55\)/.test(shell), 'B14. chip dark/translucent surface carried by the visible bar (compact closed chip)');
+ok(/\.source-chip \{[^}]*background: transparent/.test(shell), 'B14b. chip button surface is transparent (no wide slab beside the edge)');
 ok(/\.source-chip:hover \.source-chip-label, \.source-chip:focus-visible \.source-chip-label/.test(shell), 'B15. chip reveals label on hover/focus');
 ok(/aria-label="Choose source"/.test(shell) && /aria-haspopup="dialog"/.test(shell), 'B16. chip is keyboard/touch accessible and opens the source sheet');
+ok(/\.source-chip-label \{[^}]*text-overflow: ellipsis/.test(shell) && /\.source-chip-label \{[^}]*max-width: min\(42vw, 220px\)/.test(shell), 'B16b. chip label content-aware + ellipsis-truncated at a bounded max-width (MAVP-2 Phase 2)');
+ok(/\{activeSourceOption\?\.name \|\| 'Source'\}/.test(shell), 'B16c. chip label shows the ACTIVE source name (content-aware sizing)');
 ok(/\.player-shell\.controls-hidden \.source-chip \{ opacity: 0; visibility: hidden; pointer-events: none;/.test(shell), 'B17. chip hides and reappears with the other Mavero controls');
 ok(!/full-height/.test(shell) === false || true, 'B18. (documentation anchor) chip is never a full-height overlay');
 ok(/\.source-chip \{[^}]*z-index: 12/.test(shell) && /\.sheet-overlay \{[^}]*z-index: 20/.test(shell), 'B19. chip sits below the sheets and never blocks provider controls');
@@ -167,9 +180,11 @@ const revealStart = shell.indexOf('function revealControls()');
 const revealBody = shell.slice(revealStart, shell.indexOf('\n  }\n', revealStart));
 ok(revealBody.includes('controlsVisible = true') && revealBody.includes('clearTimeout(hideTimer)'), 'C3. revealControls resets the timer on every relevant interaction');
 ok((revealBody.match(/setTimeout/g) ?? []).length === 1, 'C4. single authoritative timer body inside revealControls');
-ok(/\(playing \|\| embedPlaying\) && !sourceMenuOpen && !episodeMenuOpen/.test(revealBody), 'C5. timer arms during direct AND embed playback, sheets prevent it');
+// MAVP-2 supersession: the arming condition now includes the shell-visible
+// embed session (black-box embeds never armed the old condition).
+ok(/\(playing \|\| embedPlaying \|\| embedSessionArms\) && !sourceMenuOpen && !episodeMenuOpen/.test(revealBody), 'C5. timer arms during direct AND embed playback (incl. shell-visible embed sessions), sheets prevent it');
 ok(/!sourceMenuOpen && !episodeMenuOpen && !focusWithinMaveroControls\(\)/.test(revealBody), 'C6. open sheets and focused controls are never hidden');
-ok(/playerRoot\?\.addEventListener\('pointermove', showControls\)/.test(shell) && /playerRoot\?\.addEventListener\('pointerdown', showControls/.test(shell) && /playerRoot\?\.addEventListener\('touchstart', showControls/.test(shell), 'C7. touch + pointer activity signals registered');
+ok(/playerRoot\?\.addEventListener\('pointermove', showControls, \{ passive: true \}\)/.test(shell) && /playerRoot\?\.addEventListener\('pointerdown', showControls/.test(shell) && /playerRoot\?\.addEventListener\('touchstart', showControls/.test(shell), 'C7. touch + pointer activity signals registered (pointermove passive — MAVP-2 perf hardening)');
 ok(/document\.addEventListener\('focusin', handleFocusIn\)/.test(shell), 'C8. keyboard/TV focus activity signal registered');
 ok(/document\.removeEventListener\('focusin', handleFocusIn\)/.test(shell), 'C9. focusin listener cleaned up on unmount');
 ok(/if \(hideTimer\) clearTimeout\(hideTimer\);/.test(shell), 'C10. inactivity timer cleaned up on unmount');
@@ -296,10 +311,17 @@ ok(/landscapeControlInlineStyle\(resolveLandscapeControlPlacement\(activeSourceO
 ok(/style=\{landscapeControlStyle\}/.test(shell) && shell.includes('control-fab-group" class:visible={controlsVisible} style={landscapeControlStyle}') === false || /control-fab-group" class:visible=\{controlsVisible\} style=\{landscapeControlStyle\}/.test(shell), 'E27. placement style applied to the control group');
 ok(/Player Controls Position/.test(adminPage), 'E28. Admin source sheet has the "Player Controls Position" section');
 ok(/name="controls_position_mode"/.test(adminPage), 'E29. Admin position mode select exists');
-ok(/name="controls_position_h_anchor"/.test(adminPage) && /name="controls_position_v_anchor"/.test(adminPage), 'E30. Admin horizontal + vertical anchors exist');
-ok(/name="controls_position_p_h_anchor"/.test(adminPage) && /name="controls_position_l_v_anchor"/.test(adminPage), 'E31. Admin portrait/landscape override fields exist');
+// E30. Admin position fields (MAVP-2 contract): ONE structured JSON payload
+//      + the mode select. The pre-MAVP-2 flat per-axis fields were removed
+//      with the flat-field form (their offset inputs submitted bare "0"
+//      while their anchor selects submitted "" — the root cause of the
+//      reported "offsets require a matching anchor" save error).
+ok(/name="controls_position_json"/.test(adminPage), 'E30. Admin submits the structured controls_position_json payload');
+ok(/name="controls_position_mode"/.test(adminPage), 'E30b. Admin position mode select exists');
+ok(/Portrait configuration/.test(adminPage) && /Landscape configuration/.test(adminPage), 'E30c. Admin has independent Portrait + Landscape configuration blocks');
 ok(/a2-position-preview/.test(adminPage), 'E32. Admin calibration preview exists');
-ok(/Reset to default/.test(adminPage), 'E33. Admin reset-to-default exists');
+ok(/a2-position-preview-back/.test(adminPage) && /a2-position-preview-dot/.test(adminPage), 'E32b. Admin preview shows BOTH control markers');
+ok(/Reset all positioning/.test(adminPage) && /resetControlProfile\(/.test(adminPage), 'E33. Admin per-control-per-orientation resets + reset-all exist (one control/orientation reset never touches another)');
 ok(/loadControlsPositionState\(source\)/.test(adminPage) && /loadControlsPositionState\(null\)/.test(adminPage), 'E34. saved settings load when the sheet opens (and defaults on create)');
 ok(/min="0" max="100"/.test(adminPage), 'E35. Admin inputs bound 0..100');
 ok(/playerControlsPositionCapability\(form\)/.test(read('../src/lib/server/streaming/validation.ts')), 'E36. server validation wired into parseSourceForm');

@@ -2,6 +2,9 @@
   import { onMount, tick, untrack } from 'svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
+  // MAVP-2 Phase 1: landscape-first presentation initiated at PLAY-CLICK time
+  // (freshest transient user activation) — the shell adopts it at mount.
+  import { requestLandscapeFirstPresentation } from '$lib/client/player/landscape-first';
   import { ArrowLeft, Heart, Play, Share2, Star, ListPlus, Film, Download, AlertCircle, LoaderCircle, AlertTriangle, Maximize, Minimize } from 'lucide-svelte';
   import SelectionSheet from '$components/SelectionSheet.svelte';
   import DownloadSheet from '$components/DownloadSheet.svelte';
@@ -881,7 +884,7 @@
              approved secondary row immediately beneath it. -->
         <div class="actions">
           <div class="primary-actions">
-            <a class="play-btn" href={watchHref} aria-label={playSubLabel ? `${playLabel} — season ${resumeEpisode?.season}, episode ${resumeEpisode?.episode}` : `${playLabel} ${item.title}`} onclick={() => markPlayerMilestone('mavero:play')}>
+            <a class="play-btn" href={watchHref} aria-label={playSubLabel ? `${playLabel} — season ${resumeEpisode?.season}, episode ${resumeEpisode?.episode}` : `${playLabel} ${item.title}`} onclick={() => { markPlayerMilestone('mavero:play'); requestLandscapeFirstPresentation(page.data.deviceType); }}>
               <Play size={17} fill="currentColor" strokeWidth={0} />
               <span class="play-copy">
                 <span class="play-label">{playLabel}</span>

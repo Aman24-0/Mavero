@@ -42,7 +42,10 @@ assert.match(shell, /function clearEmbedLoadTimeout\(\)/, 'clearEmbedLoadTimeout
 assert.match(shell, /clearEmbedLoadTimeout\(\);\s*if \(source\.type === 'embed'\) startEmbedLoadTimeout\(source\.sourceId\)/, 'timeout started for embed sources on source switch');
 
 // 1f. Timeout is cleared on successful embed load.
-assert.match(shell, /function handleEmbedLoad\(\)[\s\S]{0,300}clearEmbedLoadTimeout\(\)/, 'timeout cleared in handleEmbedLoad');
+// MAVP-2 supersession: handleEmbedLoad now arms the auto-hide countdown
+// (revealControls) before clearing the load timeout — the window widens;
+// the timeout-clearing contract is unchanged.
+assert.match(shell, /function handleEmbedLoad\(\)[\s\S]{0,950}clearEmbedLoadTimeout\(\)/, 'timeout cleared in handleEmbedLoad');
 
 // 1g. Timeout is cleared on source switch (before starting new).
 assert.match(shell, /clearEmbedLoadTimeout\(\);\s*if \(source\.type === 'embed'\)/, 'timeout cleared before starting new one on source switch');

@@ -39,7 +39,7 @@ assert.match(shell, /hideTimer = setTimeout\(\(\) => \{[^}]*controlsVisible = fa
 // 3. User interaction reveals FABs (event listeners route to revealControls)
 // ============================================================
 assert.match(shell, /const showControls = \(\) => \{ revealControls\(\); \};/, 'showControls delegates to revealControls (single authoritative timer)');
-assert.match(shell, /playerRoot\?\.addEventListener\('pointermove', showControls\)/, 'pointermove listener registered');
+assert.match(shell, /playerRoot\?\.addEventListener\('pointermove', showControls(, \{ passive: true \})?\)/, 'pointermove listener registered');
 assert.match(shell, /playerRoot\?\.addEventListener\('pointerdown', showControls/, 'pointerdown listener registered (desktop click + pen)');
 assert.match(shell, /playerRoot\?\.addEventListener\('touchstart', showControls/, 'touchstart listener registered (mobile tap)');
 
@@ -68,9 +68,16 @@ assert.doesNotMatch(onMountBlock, /hideTimer = setTimeout/, 'NO duplicate hideTi
 assert.doesNotMatch(onMountBlock, /controlsVisible = false/, 'NO controlsVisible = false mutation inside onMount — hiding happens only via revealControls timer');
 
 // ============================================================
-// 5. Menu-open state prevents hiding
+// 5. Playback-active state prevents hiding / arms the timer
+//    MAVP-2 supersession: the arming condition now ALSO includes the
+//    shell-visible embed session (source.type==='embed' && state==='playing'
+//    with no provider-reported pause) — the previous `(playing ||
+//    embedPlaying)` alone was never true for black-box embeds, so no timer
+//    was ever armed and the controls never auto-hid on real devices.
 // ============================================================
-assert.match(shell, /\(playing \|\| embedPlaying\) && !sourceMenuOpen && !episodeMenuOpen/, 'revealControls gates timer start on playback + all open states');
+assert.match(shell, /\(playing \|\| embedPlaying \|\| embedSessionArms\) && !sourceMenuOpen && !episodeMenuOpen/, 'revealControls gates timer start on playback (direct OR embed session) + all open states');
+assert.match(shell, /const embedSessionArms = source\?\.type === 'embed'\s*&& state === 'playing'\s*&& \(!embedEverPlayed \|\| embedPlaying\);/, 'embed session state participates in arming (black-box embeds arm from iframe load; event-posting embeds arm on provider play)');
+assert.match(shell, /function handleEmbedLoad\(\) \{[\s\S]*?revealControls\(\);/, 'embed load arms the countdown (no further user activity required)');
 assert.match(shell, /!sourceMenuOpen && !episodeMenuOpen && !focusWithinMaveroControls\(\)\) \{[^}]*controlsVisible = false/, 'timer callback re-checks open states + focus guard before hiding');
 assert.match(shell, /function focusWithinMaveroControls\(\): boolean/, 'keyboard-focus a11y guard exists (focused controls are never hidden)');
 

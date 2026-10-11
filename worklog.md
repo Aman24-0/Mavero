@@ -4109,3 +4109,51 @@ Commit: `7b936b0` pushed to `origin/main` (second-round leak hardening: registry
 No TMDB/Supabase credentials in this environment — browser QA ran against the in-process deterministic mocks (same QA-without-credentials class as MAV-24/25); guest mode only (auth-gated surfaces not exercised); the Admin "Player Controls Position" UI was verified by the contract suite (rendering logic, validation truth table, persistence wiring) but NOT driven in a browser (admin auth unavailable in QA); no real provider playback, no real device, no TV browser. NO production deployment was performed.
 
 **No migration** (capabilities JSONB already carries the key; zero database surface touched). **Commit:** MAVP commit on `origin/main` (20 files modified + 5 new: 4 runtime modules + 1 test suite; QA helper scripts/preload/assets stay uncommitted session artifacts).
+
+---
+
+# MAVP-2 — Player Orientation, Controls Auto-Hide, Responsive Positioning & Admin Calibration Bug Fixes
+
+**Date:** 2026-10-11
+**Baseline:** `81675a8` (MAVP, origin/main) — clean git worktree (`/home/z/my-project/mavero-mavp2`; the pre-existing `/home/z/my-project/mavero` checkout carries unrelated local modifications that were never touched). **Follow-up audit doc:** `MAVP2_PLAYER_BUGFIX_AUDIT.md` (committed) — exact root causes, positioning contract, tests, gates, browser QA, limitations.
+
+## Verified root causes (all fixed at the root)
+
+1. **RC-A landscape-first inconsistent/skipped:** the presentation was attempted at PlayerShell MOUNT — after the watch route's unbounded async data load. `requestFullscreen()` needs transient user activation (Chrome ≈5 s); slow route loads (content cards most often — no hover-preloaded data; detail page occasionally on mobile networks) expired the activation → rejected fullscreen → portrait. Entry-point asymmetry was a timing artifact.
+2. **RC-B chip too wide:** `.source-chip` painted a ~44 px translucent slab (min-width + padding + background + backdrop-filter) around a 5 px bar.
+3. **RC-C auto-hide never fired:** `revealControls()` armed the 5 s timer only on `(playing || embedPlaying)`; `playing` is the direct-video flag, `embedPlaying` needs provider postMessage events that black-box embeds never send, and `handleEmbedLoad()` never armed anything → NO timer during a typical embed session → controls stayed visible forever on real devices.
+4. **RC-D admin save error ("Player Controls Position offsets require a matching anchor"):** the sheet always rendered the four override offset inputs bound to `$state(0)` (submitted "0") while their anchor selects submitted "" (Inherit) → the strict validator rejected EVERY custom-mode save. Asymmetric flat-field transport contract.
+5. **Phase 7 findings:** duplicate placement style on the inner landscape FAB (double-applied center-anchor transform); non-passive pointermove activity listener; profile resolution keyed to the presentation toggle instead of the REAL orientation.
+
+## Implemented (no schema change, no migration, no new dependency)
+
+- **Phase 1 — landscape-first for every entry point:** NEW `src/lib/client/player/landscape-first.ts` — `requestLandscapeFirstPresentation()` called synchronously in ALL FOUR Play entry points (DetailPage, MediaCard, SpotlightCarousel, SeasonEpisodes): fullscreen on `document.documentElement` + `screen.orientation.lock('landscape')` at the freshest activation, silent-fail, TTL (15 s) intent marker. `enterLandscapePresentation()` ADOPTS the active presentation at mount (no duplicate fullscreen/orientation requests; lock only re-requested if not already landscape); the mount attempt remains the fallback for non-click entries. Desktop/TV gates unchanged at both layers; no iframe reload; no resolver involvement; resume chain byte-preserved.
+- **Phase 2 — compact chip:** dark translucent surface moved onto the 5 px BAR + hover label pill; button is a transparent ≥44×64 hit area; hover/focus reveals the ACTIVE SOURCE NAME, ellipsis-truncated at `max-width: min(42vw, 220px)`; sheet behaviour, ordering and z-layers unchanged.
+- **Phase 3 — reliable 5 s auto-hide:** arming condition includes the shell-visible embed session (`state === 'playing'` from embed load; `embedEverPlayed` distinguishes event-posting providers from black-box ones, reset on source AND episode switch); `handleEmbedLoad()` arms the countdown; ANY keypress outside editable surfaces is activity (TV); NEW iframe-tap recovery via the window-blur + activeElement-iframe signal (the only honest cross-origin-safe tap path — touch users can always reveal hidden controls; iframe DOM never touched); media progress still never resets the deadline; single authoritative timer + sheet/focus guards + full cleanup preserved.
+- **Phase 4/5 — per-source Back positioning + independent orientation profiles:** contract extended inside the existing `player_controls_position` capability — additive `back: { portrait, landscape }` section (axis = {anchor, offsetPercent}); `resolveControlPlacement(position, control, orientation)` enforces per-control AND per-orientation isolation (back never reads landscape-control axes); profiles follow the REAL viewport orientation (matchMedia, immediate on rotation, leak-free listener); back FAB carries its own placement style; defaults keep safe-area top-left. Admin "Player Controls Position" rebuilt: Portrait + Landscape configuration blocks × (Landscape button, Back button) × (H anchor/offset, V anchor/offset), per-control-per-orientation Reset, Reset-all, orientation-switchable 16:9/9:16 preview showing both markers; legacy base/override configs prefill and keep rendering byte-identically.
+- **Phase 6 — admin validation fixed at the contract level:** the sheet submits ONE structured `controls_position_json` field (exact stored shape) parsed by a STRICT server-side gate (same bounded/enum rules, admin-facing errors, authoritative); legacy flat-field path kept unchanged (its strictness preserved — the transport, not the validation, was the bug); the reported error is reproduced against the legacy transport and proven fixed via the JSON contract in the regression suite; malformed/legacy/partial stored settings normalize safely; `{ mode:'default' }` saves still overwrite stale custom configs through the existing capabilities MERGE.
+- **Phase 7 — performance:** duplicate inline style removed (also fixes the center-anchor double-transform); passive pointermove; one MediaQueryList for orientation profiles; CSS-only positioning (no per-frame JS); iframe keyed by source/url/sandbox only — visibility/position changes never remount it (browser-verified).
+
+## Tests
+
+- NEW `scripts/mavp2_player_bugfix_test.ts` — 108 checks (§A landscape-first 25, §B auto-hide 18, §C chip 11, §D positioning 31, §E admin validation incl. the exact reported error 18, §F protected behavior 8). Registered in the `pnpm test` chain (now 245 commands).
+- Updated with documented MAVP-2 supersession rationale (no assertion weakened below the new contract): `mavp_player_redesign_test`, `player_fab_autohide_test`, `phase6_player_apis_test`, `phase8_reliability_test`.
+
+## Gates (executed, not claimed)
+
+- Baseline (pristine `81675a8`): `pnpm check` 0/0 · `pnpm test` exit 0 (244) · `pnpm build` PASS.
+- MAVP-2 tree: `pnpm check` **0 errors / 0 warnings** · `pnpm test` **exit 0 (245 commands)** · `pnpm build` **PASS**.
+
+## Browser QA (Playwright headless Chromium; vite dev + in-process TMDB fetch-hook + deterministic fake Supabase; NO credentials, NO product changes; artifacts `/home/z/my-project/mavero-qa/mavp2/`): 31/31 checks passed
+
+- Chip: 5 px bar only (transparent button surface), 44×64 hit area, content-aware truncated label, S shortcut unchanged.
+- Auto-hide (root-cause fix, MEASURED): all three controls hid after **5.25 s** of embed-session inactivity; iframe tap revealed them; deadline reset (re-hid **5.02 s** after reveal); keyboard reveal works; hidden controls are non-interactive.
+- Positioning (geometry-proven): source B → back FAB right 30 %/bottom 40 %, landscape control left 12 %/top 22 %; portrait resize applied the portrait profile immediately; landscape restored; iframe NEVER remounted (src stable) across every orientation/profile change.
+- Landscape-first: mobile UA (portrait, coarse) marks the intent at Play-click; desktop never does; full milestone chain (`play → shell → resolver-request/response → iframe-mounted → iframe-load`) recorded.
+- Zero unexpected page errors (desktop + mobile flows); reduced motion disables control transitions (measured).
+
+## Environment limitations (documented)
+
+No real Android/TV hardware — real-device orientation-lock behaviour, cutout safe-areas and provider fullscreen interactions remain UNVERIFIED on hardware (all orientation paths are best-effort with silent fallback). No admin credentials — the authenticated Admin save/reload workflow was not browser-driven (server validation, round-trip persistence and the save-path contract are test-verified). The fixture explorer feed rendered no MediaCard chips — the card entry path is verified by the shared-helper contract + the identical helper verified end-to-end from the detail page. NO production deployment was performed.
+
+**No migration** (capabilities JSONB already carries the key). **Commit:** MAVP-2 commit on `origin/main` (see the commit SHA in the completion report).

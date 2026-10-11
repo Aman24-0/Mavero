@@ -1,9 +1,13 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
+  import { page } from '$app/state';
   import { ArrowLeft, ArrowRight, Info, Play } from 'lucide-svelte';
   import type { MediaItem } from '$data/content';
   import { haptic } from '$lib/client/haptics';
   import { appendReturnTo } from '$lib/shared/navigation';
+  // MAVP-2 Phase 1: landscape-first presentation initiated at PLAY-CLICK time
+  // (freshest transient user activation) — the shell adopts it at mount.
+  import { requestLandscapeFirstPresentation } from '$lib/client/player/landscape-first';
 
   // MAVERO — Explorer Spotlight Carousel (Movies / TV Shows / Anime).
   //
@@ -255,7 +259,7 @@
                      (page + filter state) as `from`, so the detail page's back
                      control returns to the ACTUAL Explorer the user was
                      browsing — not the hardcoded /discover fallback. -->
-                <a class="slide-play" href={appendReturnTo(`/watch/${slide.type}/${slide.id}`, returnTo)}>
+                <a class="slide-play" href={appendReturnTo(`/watch/${slide.type}/${slide.id}`, returnTo)} onclick={() => requestLandscapeFirstPresentation(page.data.deviceType)}>
                   <Play size={15} fill="currentColor" strokeWidth={0} /> Play
                 </a>
                 <a class="slide-more" href={appendReturnTo(`/${slide.type}/${slide.id}`, returnTo)} aria-label={`Details for ${slide.title}`}>

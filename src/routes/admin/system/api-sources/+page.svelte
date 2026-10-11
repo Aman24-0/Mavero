@@ -74,73 +74,180 @@
   let editingSource: any = $state(null);
   let sourceSheetTrigger: HTMLElement | null = null;
 
-  // --- Player Controls Position (per-source landscape control placement) ---
-  // Bound to the form fields; also drives the live preview box. Loaded from
-  // editingSource.capabilities.player_controls_position when the sheet opens.
+  // --- Player Controls Position (per-source floating-control placement) ---
+  // MAVP-2 contract: the Admin sheet edits TWO independent controls
+  // ('landscape' = Landscape/fullscreen FAB group, 'back' = Back FAB), each
+  // with an independent PORTRAIT and LANDSCAPE profile, each profile holding
+  // an independent horizontal + vertical axis (anchor + offset). The sheet
+  // serializes the draft into ONE hidden `controls_position_json` form field
+  // (the stored shape verbatim); the server validates it strictly
+  // (playerControlsPositionCapability). Legacy sources saved before MAVP-2
+  // (base axes + orientation overrides for the Landscape control only) are
+  // prefilled into the visible profiles on load; saving rewrites them as
+  // explicit per-orientation profiles. Loading is TOTAL — malformed legacy
+  // values degrade to the unset (default) state instead of throwing.
+  type ControlsAxisDraft = { anchor: string; offset: string };
+  type ControlsProfileDraft = { h: ControlsAxisDraft; v: ControlsAxisDraft };
+  type ControlsControlDraft = { portrait: ControlsProfileDraft; landscape: ControlsProfileDraft };
+  const emptyAxisDraft = (): ControlsAxisDraft => ({ anchor: '', offset: '' });
+  const emptyProfileDraft = (): ControlsProfileDraft => ({ h: emptyAxisDraft(), v: emptyAxisDraft() });
+  const emptyControlDraft = (): ControlsControlDraft => ({ portrait: emptyProfileDraft(), landscape: emptyProfileDraft() });
+
   let controlsPositionMode = $state('default');
-  let controlsHAnchor = $state('right');
-  let controlsHOffset = $state(16);
-  let controlsVAnchor = $state('bottom');
-  let controlsVOffset = $state(16);
-  let controlsPHAnchor = $state('');
-  let controlsPHOffset = $state(0);
-  let controlsPVAnchor = $state('');
-  let controlsPVOffset = $state(0);
-  let controlsLHAnchor = $state('');
-  let controlsLHOffset = $state(0);
-  let controlsLVAnchor = $state('');
-  let controlsLVOffset = $state(0);
+  let positionDraft = $state<{ landscapeControl: ControlsControlDraft; back: ControlsControlDraft }>({
+    landscapeControl: emptyControlDraft(),
+    back: emptyControlDraft(),
+  });
+  // Preview/calibration orientation — which orientation the preview stage and
+  // its control markers are currently showing.
+  let positionPreviewOrientation = $state<'portrait' | 'landscape'>('landscape');
+
+  type LegacyAxisLike = { anchor?: unknown; offsetPercent?: unknown } | null | undefined;
+
+  /** Total legacy-axis read: valid anchor enum + finite 0..100 offset, else unset. */
+  function readLegacyAxis(axis: LegacyAxisLike, anchors: string[]): ControlsAxisDraft {
+    if (!axis || typeof axis !== 'object') return emptyAxisDraft();
+    const anchor = typeof axis.anchor === 'string' && anchors.includes(axis.anchor) ? axis.anchor : '';
+    if (!anchor) return emptyAxisDraft();
+    const offset = typeof axis.offsetPercent === 'number' && Number.isFinite(axis.offsetPercent) && axis.offsetPercent >= 0 && axis.offsetPercent <= 100
+      ? String(axis.offsetPercent)
+      : '';
+    return { anchor, offset };
+  }
 
   function loadControlsPositionState(source: any) {
     const raw = source?.capabilities?.player_controls_position;
-    const custom = raw && typeof raw === 'object' && raw.mode === 'custom' ? raw : null;
+    const custom = raw && typeof raw === 'object' && !Array.isArray(raw) && raw.mode === 'custom' ? raw : null;
     controlsPositionMode = custom ? 'custom' : 'default';
-    controlsHAnchor = custom?.horizontal?.anchor ?? 'right';
-    controlsHOffset = typeof custom?.horizontal?.offsetPercent === 'number' ? custom.horizontal.offsetPercent : 16;
-    controlsVAnchor = custom?.vertical?.anchor ?? 'bottom';
-    controlsVOffset = typeof custom?.vertical?.offsetPercent === 'number' ? custom.vertical.offsetPercent : 16;
-    controlsPHAnchor = custom?.portrait?.horizontal?.anchor ?? '';
-    controlsPHOffset = typeof custom?.portrait?.horizontal?.offsetPercent === 'number' ? custom.portrait.horizontal.offsetPercent : 0;
-    controlsPVAnchor = custom?.portrait?.vertical?.anchor ?? '';
-    controlsPVOffset = typeof custom?.portrait?.vertical?.offsetPercent === 'number' ? custom.portrait.vertical.offsetPercent : 0;
-    controlsLHAnchor = custom?.landscape?.horizontal?.anchor ?? '';
-    controlsLHOffset = typeof custom?.landscape?.horizontal?.offsetPercent === 'number' ? custom.landscape.horizontal.offsetPercent : 0;
-    controlsLVAnchor = custom?.landscape?.vertical?.anchor ?? '';
-    controlsLVOffset = typeof custom?.landscape?.vertical?.offsetPercent === 'number' ? custom.landscape.vertical.offsetPercent : 0;
+    positionDraft = {
+      // Landscape control: prefill each orientation profile from its stored
+      // override, falling back to the LEGACY base axes (pre-MAVP-2 saves).
+      landscapeControl: {
+        portrait: {
+          h: readLegacyAxis(custom?.portrait?.horizontal ?? custom?.horizontal, ['left', 'right', 'center']),
+          v: readLegacyAxis(custom?.portrait?.vertical ?? custom?.vertical, ['top', 'bottom', 'center']),
+        },
+        landscape: {
+          h: readLegacyAxis(custom?.landscape?.horizontal ?? custom?.horizontal, ['left', 'right', 'center']),
+          v: readLegacyAxis(custom?.landscape?.vertical ?? custom?.vertical, ['top', 'bottom', 'center']),
+        },
+      },
+      // Back control (MAVP-2): independent — never inherits the Landscape
+      // control's stored axes.
+      back: {
+        portrait: {
+          h: readLegacyAxis(custom?.back?.portrait?.horizontal, ['left', 'right', 'center']),
+          v: readLegacyAxis(custom?.back?.portrait?.vertical, ['top', 'bottom', 'center']),
+        },
+        landscape: {
+          h: readLegacyAxis(custom?.back?.landscape?.horizontal, ['left', 'right', 'center']),
+          v: readLegacyAxis(custom?.back?.landscape?.vertical, ['top', 'bottom', 'center']),
+        },
+      },
+    };
   }
 
-  function resetControlsPosition() {
+  function resetControlProfile(control: 'landscapeControl' | 'back', orientation: 'portrait' | 'landscape') {
+    positionDraft[control][orientation] = emptyProfileDraft();
+  }
+
+  function resetAllControlsPosition() {
+    positionDraft = { landscapeControl: emptyControlDraft(), back: emptyControlDraft() };
     controlsPositionMode = 'default';
-    controlsHAnchor = 'right';
-    controlsHOffset = 16;
-    controlsVAnchor = 'bottom';
-    controlsVOffset = 16;
-    controlsPHAnchor = '';
-    controlsPHOffset = 0;
-    controlsPVAnchor = '';
-    controlsPVOffset = 0;
-    controlsLHAnchor = '';
-    controlsLHOffset = 0;
-    controlsLVAnchor = '';
-    controlsLVOffset = 0;
   }
 
-  // Preview placement — mirrors the runtime math in
-  // $lib/shared/player-controls-position.ts (bounded, viewport-relative %).
-  const controlsPreviewHStyle = $derived(
-    controlsPositionMode !== 'custom'
-      ? 'right:16px'
-      : controlsHAnchor === 'center'
-        ? 'left:50%;transform:translateX(-50%)'
-        : `${controlsHAnchor}:${controlsHOffset}%`
-  );
-  const controlsPreviewVStyle = $derived(
-    controlsPositionMode !== 'custom'
-      ? 'bottom:16px'
-      : controlsVAnchor === 'center'
-        ? 'top:50%;transform:translateY(-50%)'
-        : `${controlsVAnchor}:${controlsVOffset}%`
-  );
+  /** One axis object in the stored contract shape, or null when unset. */
+  function serializeAxisDraft(axis: ControlsAxisDraft, anchors: string[]): { anchor: string; offsetPercent: number } | null {
+    if (!axis.anchor || !anchors.includes(axis.anchor)) return null;
+    const raw = String(axis.offset ?? '').trim();
+    let offsetPercent: number;
+    if (!raw) {
+      offsetPercent = axis.anchor === 'center' ? 50 : 0; // anchor-default semantics, mirrors the server
+    } else {
+      const parsed = Number(raw);
+      if (!Number.isFinite(parsed) || parsed < 0 || parsed > 100) return null; // invalid input → axis unset (server re-validates authoritatively)
+      offsetPercent = Math.round(parsed * 10) / 10;
+    }
+    return { anchor: axis.anchor, offsetPercent };
+  }
+
+  /**
+   * Serialize the draft into the `controls_position_json` payload — the
+   * EXACT stored contract shape. Unset axes/sections are omitted; custom
+   * mode with no usable axis at all serializes as 'default' (the server's
+   * "at least one anchor" rule then never rejects a UI-driven save).
+   */
+  const controlsPositionJson = $derived.by(() => {
+    if (controlsPositionMode !== 'custom') return JSON.stringify({ mode: 'default' });
+    const landscapeControl = {
+      portrait: {
+        horizontal: serializeAxisDraft(positionDraft.landscapeControl.portrait.h, ['left', 'right', 'center']),
+        vertical: serializeAxisDraft(positionDraft.landscapeControl.portrait.v, ['top', 'bottom', 'center']),
+      },
+      landscape: {
+        horizontal: serializeAxisDraft(positionDraft.landscapeControl.landscape.h, ['left', 'right', 'center']),
+        vertical: serializeAxisDraft(positionDraft.landscapeControl.landscape.v, ['top', 'bottom', 'center']),
+      },
+    };
+    const back = {
+      portrait: {
+        horizontal: serializeAxisDraft(positionDraft.back.portrait.h, ['left', 'right', 'center']),
+        vertical: serializeAxisDraft(positionDraft.back.portrait.v, ['top', 'bottom', 'center']),
+      },
+      landscape: {
+        horizontal: serializeAxisDraft(positionDraft.back.landscape.h, ['left', 'right', 'center']),
+        vertical: serializeAxisDraft(positionDraft.back.landscape.v, ['top', 'bottom', 'center']),
+      },
+    };
+    const payload: Record<string, unknown> = { mode: 'custom' };
+    const lcPortrait: Record<string, unknown> = {};
+    const lcLandscape: Record<string, unknown> = {};
+    if (landscapeControl.portrait.horizontal || landscapeControl.portrait.vertical) lcPortrait.portrait = Object.fromEntries(Object.entries(landscapeControl.portrait).filter(([, v]) => v !== null));
+    if (landscapeControl.landscape.horizontal || landscapeControl.landscape.vertical) lcLandscape.landscape = Object.fromEntries(Object.entries(landscapeControl.landscape).filter(([, v]) => v !== null));
+    if (lcPortrait.portrait) payload.portrait = lcPortrait.portrait;
+    if (lcLandscape.landscape) payload.landscape = lcLandscape.landscape;
+    const backOut: Record<string, unknown> = {};
+    if (back.portrait.horizontal || back.portrait.vertical) backOut.portrait = Object.fromEntries(Object.entries(back.portrait).filter(([, v]) => v !== null));
+    if (back.landscape.horizontal || back.landscape.vertical) backOut.landscape = Object.fromEntries(Object.entries(back.landscape).filter(([, v]) => v !== null));
+    if (Object.keys(backOut).length) payload.back = backOut;
+    if (Object.keys(payload).length === 1) return JSON.stringify({ mode: 'default' });
+    return JSON.stringify(payload);
+  });
+
+  /**
+   * Effective preview style for one control profile — mirrors the runtime
+   * resolution in $lib/shared/player-controls-position.ts (bounded,
+   * viewport-relative %; unset axes fall back to the control's stylesheet
+   * default corner). Pure string composition for the preview stage.
+   */
+  function previewProfileStyle(profile: ControlsProfileDraft, defaultH: string, defaultV: string): string {
+    const h = serializeAxisDraft(profile.h, ['left', 'right', 'center']);
+    const v = serializeAxisDraft(profile.v, ['top', 'bottom', 'center']);
+    const parts: string[] = [];
+    const transforms: string[] = [];
+    if (h) {
+      if (h.anchor === 'center') { parts.push('left:50%'); transforms.push('translateX(-50%)'); }
+      else parts.push(h.anchor === 'left' ? `left:${h.offsetPercent}%` : `right:${h.offsetPercent}%`);
+    } else {
+      parts.push(defaultH);
+    }
+    if (v) {
+      if (v.anchor === 'center') { parts.push('top:50%'); transforms.push('translateY(-50%)'); }
+      else parts.push(v.anchor === 'top' ? `top:${v.offsetPercent}%` : `bottom:${v.offsetPercent}%`);
+    } else {
+      parts.push(defaultV);
+    }
+    if (transforms.length) parts.push(`transform:${transforms.join(' ')}`);
+    return parts.join(';');
+  }
+
+  // Section template loops (typed so the per-control reset + bindings stay
+  // literal-union safe).
+  const POSITION_ORIENTATIONS: Array<'portrait' | 'landscape'> = ['portrait', 'landscape'];
+  const POSITION_CONTROLS: Array<{ id: 'landscapeControl' | 'back'; title: string }> = [
+    { id: 'landscapeControl', title: 'Landscape button' },
+    { id: 'back', title: 'Back button' },
+  ];
 
   function openCreateSource(event?: Event) {
     if (event) sourceSheetTrigger = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
@@ -495,93 +602,77 @@
         <label class="a2-field"><span>Description</span><input name="description" value={editingSource?.description ?? ''} /></label>
         <label class="a2-field"><span>Notes</span><input name="notes" value={editingSource?.notes ?? ''} /></label>
       </AdminFormSection>
-      <!-- Player redesign: per-source Landscape-control placement. Persisted
-           inside capabilities.player_controls_position; the player positions
-           its bottom-right control group (Landscape/Fullscreen FAB + Episodes
-           pill) from this config for THIS source only. -->
+      <!-- MAVP-2: per-source floating-control placement. Persisted inside
+           capabilities.player_controls_position as ONE structured JSON payload
+           (controls_position_json) validated strictly by the server action.
+           TWO independent controls (Landscape button, Back button) × TWO
+           independent orientation profiles (portrait, landscape) × TWO
+           independent axes (horizontal anchor+offset, vertical anchor+offset).
+           Unset axes keep the player's stylesheet defaults (Landscape button
+           = bottom-right, Back button = top-left — both safe-area aware). -->
       <AdminFormSection heading="Player Controls Position">
-        <p class="a2-field-hint">Place the MAVERO Landscape button relative to this provider's own fullscreen control. Percentages are viewport-relative (0–100). Sources without a custom placement use the default bottom-right corner.</p>
+        <p class="a2-field-hint">Position the MAVERO floating controls per source. Each control has an independent portrait and landscape profile; each profile has an independent horizontal and vertical axis. Percentages are viewport-relative (0–100), measured from the anchor edge toward the centre. Sources without a custom placement use the defaults: Landscape button bottom-right, Back button top-left.</p>
+        <input type="hidden" name="controls_position_json" value={controlsPositionJson} />
         <label class="a2-field"><span>Position Mode</span>
           <select name="controls_position_mode" bind:value={controlsPositionMode}>
-            <option value="default">Default — bottom-right corner</option>
+            <option value="default">Default — stylesheet corners</option>
             <option value="custom">Custom — manual placement</option>
           </select>
         </label>
         {#if controlsPositionMode === 'custom'}
-          <div class="a2-position-grid">
-            <label class="a2-field"><span>Horizontal anchor</span>
-              <select name="controls_position_h_anchor" bind:value={controlsHAnchor}>
-                <option value="right">From right edge</option>
-                <option value="left">From left edge</option>
-                <option value="center">Centered</option>
-              </select>
-            </label>
-            {#if controlsHAnchor !== 'center'}
-              <label class="a2-field"><span>Horizontal offset %</span><input type="number" name="controls_position_h_offset" min="0" max="100" step="0.5" bind:value={controlsHOffset} /></label>
-            {/if}
-            <label class="a2-field"><span>Vertical anchor</span>
-              <select name="controls_position_v_anchor" bind:value={controlsVAnchor}>
-                <option value="bottom">From bottom edge</option>
-                <option value="top">From top edge</option>
-                <option value="center">Centered</option>
-              </select>
-            </label>
-            {#if controlsVAnchor !== 'center'}
-              <label class="a2-field"><span>Vertical offset %</span><input type="number" name="controls_position_v_offset" min="0" max="100" step="0.5" bind:value={controlsVOffset} /></label>
-            {/if}
-          </div>
-          <details class="a2-position-overrides">
-            <summary>Portrait / landscape overrides (optional)</summary>
-            <div class="a2-position-grid">
-              <span class="a2-position-axis-label">Portrait</span>
-              <label class="a2-field"><span>H anchor</span>
-                <select name="controls_position_p_h_anchor" bind:value={controlsPHAnchor}>
-                  <option value="">Inherit</option>
-                  <option value="right">From right</option>
-                  <option value="left">From left</option>
-                  <option value="center">Centered</option>
-                </select>
-              </label>
-              <label class="a2-field"><span>H offset %</span><input type="number" name="controls_position_p_h_offset" min="0" max="100" step="0.5" bind:value={controlsPHOffset} /></label>
-              <label class="a2-field"><span>V anchor</span>
-                <select name="controls_position_p_v_anchor" bind:value={controlsPVAnchor}>
-                  <option value="">Inherit</option>
-                  <option value="top">From top</option>
-                  <option value="bottom">From bottom</option>
-                  <option value="center">Centered</option>
-                </select>
-              </label>
-              <label class="a2-field"><span>V offset %</span><input type="number" name="controls_position_p_v_offset" min="0" max="100" step="0.5" bind:value={controlsPVOffset} /></label>
-              <span class="a2-position-axis-label">Landscape</span>
-              <label class="a2-field"><span>H anchor</span>
-                <select name="controls_position_l_h_anchor" bind:value={controlsLHAnchor}>
-                  <option value="">Inherit</option>
-                  <option value="right">From right</option>
-                  <option value="left">From left</option>
-                  <option value="center">Centered</option>
-                </select>
-              </label>
-              <label class="a2-field"><span>H offset %</span><input type="number" name="controls_position_l_h_offset" min="0" max="100" step="0.5" bind:value={controlsLHOffset} /></label>
-              <label class="a2-field"><span>V anchor</span>
-                <select name="controls_position_l_v_anchor" bind:value={controlsLVAnchor}>
-                  <option value="">Inherit</option>
-                  <option value="top">From top</option>
-                  <option value="bottom">From bottom</option>
-                  <option value="center">Centered</option>
-                </select>
-              </label>
-              <label class="a2-field"><span>V offset %</span><input type="number" name="controls_position_l_v_offset" min="0" max="100" step="0.5" bind:value={controlsLVOffset} /></label>
+          {#each POSITION_ORIENTATIONS as orientation}
+            <div class="a2-position-orientation-block">
+              <span class="a2-position-axis-label">{orientation === 'portrait' ? 'Portrait configuration' : 'Landscape configuration'}</span>
+              {#each POSITION_CONTROLS as control}
+                <div class="a2-position-control-group">
+                  <div class="a2-position-control-head">
+                    <span class="a2-position-control-title">{control.title} — {orientation === 'portrait' ? 'Portrait' : 'Landscape'}</span>
+                    <button type="button" class="a2-btn-mini" onclick={() => resetControlProfile(control.id, orientation)}>Reset</button>
+                  </div>
+                  <div class="a2-position-grid">
+                    <label class="a2-field"><span>H anchor</span>
+                      <select bind:value={positionDraft[control.id][orientation].h.anchor}>
+                        <option value="">Default</option>
+                        <option value="right">From right</option>
+                        <option value="left">From left</option>
+                        <option value="center">Centered</option>
+                      </select>
+                    </label>
+                    <label class="a2-field"><span>H offset %</span>
+                      <input type="number" min="0" max="100" step="0.5" bind:value={positionDraft[control.id][orientation].h.offset} disabled={!positionDraft[control.id][orientation].h.anchor || positionDraft[control.id][orientation].h.anchor === 'center'} />
+                    </label>
+                    <label class="a2-field"><span>V anchor</span>
+                      <select bind:value={positionDraft[control.id][orientation].v.anchor}>
+                        <option value="">Default</option>
+                        <option value="bottom">From bottom</option>
+                        <option value="top">From top</option>
+                        <option value="center">Centered</option>
+                      </select>
+                    </label>
+                    <label class="a2-field"><span>V offset %</span>
+                      <input type="number" min="0" max="100" step="0.5" bind:value={positionDraft[control.id][orientation].v.offset} disabled={!positionDraft[control.id][orientation].v.anchor || positionDraft[control.id][orientation].v.anchor === 'center'} />
+                    </label>
+                  </div>
+                </div>
+              {/each}
             </div>
-          </details>
-          <!-- Calibration preview: 16:9 stage; the dot is the MAVERO
-               Landscape control, the corner marker is the provider's typical
+          {/each}
+          <!-- Calibration preview: the orientation toggle switches the stage
+               between a 16:9 landscape and a 9:16 portrait viewport; the
+               square marker is the Back button, the round dot the Landscape
+               control group, the dashed corner marker the provider's typical
                fullscreen control position for reference. -->
-          <div class="a2-position-preview" role="img" aria-label="Preview of the Landscape control placement inside the player viewport">
-            <span class="a2-position-preview-provider" aria-hidden="true"></span>
-            <span class="a2-position-preview-dot" aria-hidden="true" style={`${controlsPreviewHStyle};${controlsPreviewVStyle}`}></span>
-            <span class="a2-position-preview-caption" aria-hidden="true">Landscape control preview</span>
+          <div class="a2-position-preview-orientation" role="group" aria-label="Preview orientation">
+            <button type="button" class:active={positionPreviewOrientation === 'landscape'} onclick={() => (positionPreviewOrientation = 'landscape')}>Landscape preview</button>
+            <button type="button" class:active={positionPreviewOrientation === 'portrait'} onclick={() => (positionPreviewOrientation = 'portrait')}>Portrait preview</button>
           </div>
-          <button type="button" class="a2-btn-secondary" onclick={resetControlsPosition}>Reset to default</button>
+          <div class="a2-position-preview" class:portrait={positionPreviewOrientation === 'portrait'} role="img" aria-label={`Preview of the floating-control placement in ${positionPreviewOrientation} orientation`}>
+            <span class="a2-position-preview-provider" aria-hidden="true"></span>
+            <span class="a2-position-preview-back" aria-hidden="true" style={previewProfileStyle(positionDraft.back[positionPreviewOrientation], 'left:16px', 'top:16px')}></span>
+            <span class="a2-position-preview-dot" aria-hidden="true" style={previewProfileStyle(positionDraft.landscapeControl[positionPreviewOrientation], 'right:16px', 'bottom:16px')}></span>
+            <span class="a2-position-preview-caption" aria-hidden="true">{positionPreviewOrientation} preview · back (square) · landscape control (dot)</span>
+          </div>
+          <button type="button" class="a2-btn-secondary" onclick={resetAllControlsPosition}>Reset all positioning</button>
         {/if}
       </AdminFormSection>
       <div class="a2-form-actions">
@@ -642,15 +733,25 @@
 
   .mono { font-family: var(--a2-font-mono); font-size: var(--a2-text-2xs); }
 
-  /* Player Controls Position section (player redesign). */
+  /* Player Controls Position section (player redesign; MAVP-2 per-control,
+     per-orientation profiles). */
   .a2-field-hint { margin: 0; font-size: var(--a2-text-2xs); color: var(--a2-text-muted); line-height: 1.5; }
   .a2-position-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--a2-space-2); align-items: end; }
   .a2-position-axis-label { font-size: var(--a2-text-2xs); font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--a2-text-dim); padding-top: var(--a2-space-2); }
-  .a2-position-overrides { border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); padding: var(--a2-space-2) var(--a2-space-3); }
-  .a2-position-overrides summary { cursor: pointer; font-size: var(--a2-text-2xs); color: var(--a2-text-muted); }
+  .a2-position-orientation-block { display: flex; flex-direction: column; gap: var(--a2-space-2); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); padding: var(--a2-space-2) var(--a2-space-3); }
+  .a2-position-control-group { display: flex; flex-direction: column; gap: var(--a2-space-1); }
+  .a2-position-control-head { display: flex; align-items: center; justify-content: space-between; gap: var(--a2-space-2); }
+  .a2-position-control-title { font-size: var(--a2-text-2xs); font-weight: 600; color: var(--a2-text-muted); }
+  .a2-btn-mini { padding: 4px 10px; background: var(--a2-surface-3); border: 1px solid var(--a2-border-strong); border-radius: var(--a2-radius-sm); color: var(--a2-text-muted); font-size: var(--a2-text-2xs); font-weight: 600; cursor: pointer; }
+  .a2-btn-mini:hover { color: var(--a2-cyan); border-color: var(--a2-cyan-border); }
+  .a2-position-preview-orientation { display: inline-flex; gap: 6px; }
+  .a2-position-preview-orientation button { padding: 6px 12px; background: var(--a2-surface-3); border: 1px solid var(--a2-border-strong); border-radius: var(--a2-radius-sm); color: var(--a2-text-muted); font-size: var(--a2-text-2xs); font-weight: 600; cursor: pointer; }
+  .a2-position-preview-orientation button.active { color: var(--a2-cyan); border-color: var(--a2-cyan-border); background: var(--a2-cyan-soft); }
   .a2-position-preview { position: relative; aspect-ratio: 16 / 9; border: 1px solid var(--a2-border-strong); border-radius: var(--a2-radius-sm); background: linear-gradient(160deg, #0c0c14, #16161f); overflow: hidden; }
+  .a2-position-preview.portrait { aspect-ratio: 9 / 16; max-width: 220px; margin: 0 auto; }
   .a2-position-preview-provider { position: absolute; right: 8%; bottom: 10%; width: 18px; height: 10px; border: 1px dashed rgba(255,255,255,.35); border-radius: 2px; }
   .a2-position-preview-dot { position: absolute; width: 14px; height: 14px; border-radius: 50%; background: var(--a2-cyan); box-shadow: 0 0 0 4px rgba(0,0,0,.35), 0 0 10px var(--a2-cyan); }
+  .a2-position-preview-back { position: absolute; width: 12px; height: 12px; border-radius: 4px; background: var(--a2-green, #7ee2a8); box-shadow: 0 0 0 4px rgba(0,0,0,.35), 0 0 10px var(--a2-green, #7ee2a8); }
   .a2-position-preview-caption { position: absolute; left: 8px; top: 6px; font-size: 9px; letter-spacing: .08em; text-transform: uppercase; color: rgba(255,255,255,.45); }
 
   @media (max-width: 768px) {

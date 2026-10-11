@@ -162,6 +162,19 @@ export function parseProviderForm(form: FormData) {
 // clear admin-facing message, per the approved spec).
 //
 // Form fields:
+//   controls_position_json (MAVP-2, preferred): ONE field carrying the full
+//     JSON document in the EXACT stored shape ({ mode, portrait?,
+//     landscape?, back? } with axis objects { anchor, offsetPercent }). A
+//     single structured payload eliminates the reported bug class for good:
+//     individual text fields could arrive with an offset but a missing
+//     anchor (the Admin sheet always rendered the four override offset
+//     inputs bound to 0 while their anchor selects submitted an empty
+//     "Inherit" value → "Player Controls Position offsets require a
+//     matching anchor." on EVERY custom-mode save). The payload is still
+//     STRICTLY validated here — server-side validation stays authoritative.
+//   Legacy flat fields (kept for backward compatibility with pre-MAVP-2
+//     callers and tests; parsed exactly as before when the JSON payload is
+//     absent):
 //   controls_position_mode           '' | 'default' | 'custom'
 //   controls_position_h_anchor       left | right | center
 //   controls_position_h_offset       0..100  (percent of viewport)
@@ -175,6 +188,94 @@ const CONTROLS_POSITION_H_ANCHORS = ['left', 'right', 'center'] as const;
 const CONTROLS_POSITION_V_ANCHORS = ['top', 'bottom', 'center'] as const;
 
 type ControlsPositionAxisJson = { anchor: string; offsetPercent: number };
+type ControlsPositionOverrideJson = { horizontal?: ControlsPositionAxisJson; vertical?: ControlsPositionAxisJson };
+
+function controlsPositionAxisJson(value: unknown, label: string, anchors: readonly string[]): ControlsPositionAxisJson | null {
+  if (value === undefined || value === null) return null;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new StreamingValidationError(`Player Controls Position ${label} must be an object with anchor and offsetPercent.`);
+  }
+  const record = value as Record<string, unknown>;
+  const anchor = record.anchor;
+  if (typeof anchor !== 'string' || !anchors.includes(anchor)) {
+    throw new StreamingValidationError(`Player Controls Position ${label} anchor is invalid.`);
+  }
+  // offsetPercent defaults per anchor semantics when omitted (mirrors the
+  // legacy flat-field behavior): center = 50, edges = 0.
+  const rawOffset = record.offsetPercent;
+  if (rawOffset === undefined || rawOffset === null || rawOffset === '') {
+    return { anchor, offsetPercent: anchor === 'center' ? 50 : 0 };
+  }
+  if (typeof rawOffset !== 'number' || !Number.isFinite(rawOffset) || rawOffset < 0 || rawOffset > 100) {
+    throw new StreamingValidationError(`Player Controls Position ${label} offset must be a number between 0 and 100.`);
+  }
+  return { anchor, offsetPercent: Math.round(rawOffset * 10) / 10 };
+}
+
+function controlsPositionOverrideJson(value: unknown, label: string): ControlsPositionOverrideJson | null {
+  if (value === undefined || value === null) return null;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new StreamingValidationError(`Player Controls Position ${label} profile must be an object.`);
+  }
+  const record = value as Record<string, unknown>;
+  const horizontal = controlsPositionAxisJson(record.horizontal, `${label} horizontal`, CONTROLS_POSITION_H_ANCHORS);
+  const vertical = controlsPositionAxisJson(record.vertical, `${label} vertical`, CONTROLS_POSITION_V_ANCHORS);
+  if (!horizontal && !vertical) return null;
+  return { ...(horizontal ? { horizontal } : {}), ...(vertical ? { vertical } : {}) };
+}
+
+/**
+ * Strict parse of the `controls_position_json` transport field (MAVP-2).
+ * Returns the canonical stored value, or null when the field is absent or
+ * empty (the caller then falls back to the legacy flat-field parser and the
+ * mode field). Every value is validated with the same strictness as the
+ * flat fields — this is the authoritative gate; the Admin UI cannot bypass
+ * it. Unknown keys inside the payload are ignored (tolerant), known keys
+ * are validated strictly.
+ */
+function playerControlsPositionFromJson(raw: string): JsonObject | null {
+  if (!raw.trim()) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new StreamingValidationError('Player Controls Position payload must be valid JSON.');
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new StreamingValidationError('Player Controls Position payload must be a JSON object.');
+  }
+  const record = parsed as Record<string, unknown>;
+  const mode = record.mode;
+  if (mode === 'default') return { mode: 'default' };
+  if (mode !== 'custom') throw new StreamingValidationError('Player Controls Position mode is invalid.');
+  const horizontal = controlsPositionAxisJson(record.horizontal, 'horizontal', CONTROLS_POSITION_H_ANCHORS);
+  const vertical = controlsPositionAxisJson(record.vertical, 'vertical', CONTROLS_POSITION_V_ANCHORS);
+  const portrait = controlsPositionOverrideJson(record.portrait, 'portrait');
+  const landscape = controlsPositionOverrideJson(record.landscape, 'landscape');
+  let back: ControlsPositionOverrideJsonContainer | null = null;
+  if (record.back !== undefined && record.back !== null) {
+    if (!record.back || typeof record.back !== 'object' || Array.isArray(record.back)) {
+      throw new StreamingValidationError('Player Controls Position back section must be an object.');
+    }
+    const backRecord = record.back as Record<string, unknown>;
+    const backPortrait = controlsPositionOverrideJson(backRecord.portrait, 'back portrait');
+    const backLandscape = controlsPositionOverrideJson(backRecord.landscape, 'back landscape');
+    if (backPortrait || backLandscape) back = { ...(backPortrait ? { portrait: backPortrait } : {}), ...(backLandscape ? { landscape: backLandscape } : {}) };
+  }
+  if (!horizontal && !vertical && !portrait && !landscape && !back) {
+    throw new StreamingValidationError('Custom Player Controls Position needs at least one anchor (horizontal or vertical).');
+  }
+  return {
+    mode: 'custom',
+    ...(horizontal ? { horizontal } : {}),
+    ...(vertical ? { vertical } : {}),
+    ...(portrait ? { portrait } : {}),
+    ...(landscape ? { landscape } : {}),
+    ...(back ? { back } : {}),
+  };
+}
+
+type ControlsPositionOverrideJsonContainer = { portrait?: ControlsPositionOverrideJson; landscape?: ControlsPositionOverrideJson };
 
 function controlsPositionPercent(form: FormData, field: string, anchor: string): number {
   const raw = String(form.get(field) ?? '').trim();
@@ -212,8 +313,21 @@ function controlsPositionOverride(form: FormData, prefix: string): { horizontal?
  * Always returns an object: `{ mode: 'default' }` when the admin keeps the
  * default (which overwrites any stale custom config on merge), or the full
  * validated custom placement.
+ *
+ * Transport priority: the structured `controls_position_json` payload (the
+ * Admin sheet's MAVP-2 contract) wins when present; the legacy flat fields
+ * are parsed exactly as before when the payload is absent — existing
+ * callers and tests keep working unchanged.
  */
 export function playerControlsPositionCapability(form: FormData): JsonObject {
+  const jsonPayload = form.get('controls_position_json');
+  if (jsonPayload !== null) {
+    const parsed = playerControlsPositionFromJson(String(jsonPayload));
+    if (parsed) return parsed;
+    // An explicitly empty payload means the admin saved the DEFAULT mode —
+    // fall through and let the mode field decide (identical outcome),
+    // preserving the overwrite-stale-custom-config merge behavior.
+  }
   const mode = String(form.get('controls_position_mode') ?? '').trim() || 'default';
   if (mode === 'default') return { mode: 'default' };
   if (mode !== 'custom') throw new StreamingValidationError('Player Controls Position mode is invalid.');

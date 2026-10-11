@@ -21,7 +21,11 @@
   import { checkMediaCompatibility, type MediaCompatibilityDecision } from '$lib/client/player/media-capabilities';
   import { markPlayerMilestone, measurePlayerStartup } from '$lib/client/player/player-timing';
   // Per-source Landscape-control positioning (Admin "Player Controls Position").
-  import { landscapeControlInlineStyle, resolveLandscapeControlPlacement } from '$lib/shared/player-controls-position';
+  import { landscapeControlInlineStyle, controlsPlacementInlineStyle, resolveControlPlacement, resolveLandscapeControlPlacement } from '$lib/shared/player-controls-position';
+  // MAVP-2 Phase 1: landscape-first presentation initiated at PLAY-CLICK time
+  // (freshest transient user activation) with the shell adopting the already
+  // active presentation at mount — no duplicate fullscreen/orientation requests.
+  import { consumeLandscapeFirstIntent } from '$lib/client/player/landscape-first';
 
   export let source: PlayerSource | null = null;
   export let content: PlayerContentContext;
@@ -71,6 +75,13 @@
   let fullscreen = false;
   let landscapeMode = false;
   let landscapeToggleInFlight = false;
+  // MAVP-2 Phase 5: the position PROFILES follow the REAL viewport orientation
+  // (not the Mavero landscape presentation toggle) so a physically rotated
+  // device — even when the orientation LOCK was declined — immediately uses
+  // the matching saved profile. Tracked via matchMedia in onMount; the SSR
+  // default mirrors the previous behaviour (landscapeMode=false → portrait).
+  let playerOrientation: 'portrait' | 'landscape' = 'portrait';
+  let orientationMediaQuery: MediaQueryList | undefined;
   let pictureInPicture = false;
   let pictureInPictureSupported = false;
   // Player startup redesign: the shell mounts BEFORE the source resolves —
@@ -143,6 +154,11 @@
   // cannot be reused for embed sources because handleEmbedLoad sets state to
   // 'playing' but that does not reflect actual provider playback.
   let embedPlaying = false;
+  // MAVP-2 Phase 3: true once the ACTIVE embed source has posted at least one
+  // normalized 'play' event. Distinguishes event-posting providers (whose
+  // pause state is real) from black-box providers (whose playback state is
+  // unobservable — the shell-visible session state drives auto-hide).
+  let embedEverPlayed = false;
   // Phase 6 audit fix 2: the sourceId that the current embedPlaybackEvent
   // was emitted for. Used to reject stale events from an old source after a
   // source switch. Set in the source-switch reactive block, checked in
@@ -238,12 +254,15 @@
   $: nextSourceId = adjacentSource(sourceOptions, source?.sourceId, 1);
   $: hasPreviousSource = Boolean(previousSourceId);
   $: hasNextSource = Boolean(nextSourceId);
-  // Player redesign: the ACTIVE source's Admin-configured Landscape-control
-  // placement (parsed + bounded; null/legacy sources keep the stylesheet
-  // default, bottom-right). Derived from the source option for the CURRENT
-  // sourceId only — one source's config can never leak into another's.
+  // Player redesign: the ACTIVE source's Admin-configured floating-control
+  // placements (parsed + bounded; null/legacy axes keep the stylesheet
+  // defaults — back = top-left, landscape control = bottom-right). Derived
+  // from the source option for the CURRENT sourceId only — one source's
+  // config can never leak into another's, and the portrait/landscape
+  // profiles resolve independently per control per orientation.
   $: activeSourceOption = source ? sourceOptions.find((option) => option.id === source.sourceId) ?? null : null;
-  $: landscapeControlStyle = landscapeControlInlineStyle(resolveLandscapeControlPlacement(activeSourceOption?.controlsPosition ?? null, landscapeMode ? 'landscape' : 'portrait'));
+  $: landscapeControlStyle = landscapeControlInlineStyle(resolveLandscapeControlPlacement(activeSourceOption?.controlsPosition ?? null, playerOrientation));
+  $: backControlStyle = controlsPlacementInlineStyle(resolveControlPlacement(activeSourceOption?.controlsPosition ?? null, 'back', playerOrientation));
   $: effectiveState = resolving ? 'switching-source' : resolutionError ? resolutionKind : state;
   $: embedReady = Boolean(source?.type === 'embed' && isEmbedOriginAllowed(source) && !sourceIsExpired(source));
   // Phase 11 (GOAL D): the runtime applies the EFFECTIVE policy resolved
@@ -297,6 +316,7 @@
     // 'play' event arrives. Also stamp the sourceId so stale events from
     // the old source can be rejected in handleEmbedPlaybackEvent.
     embedPlaying = false;
+    embedEverPlayed = false;
     embedPlaybackSourceId = source.sourceId;
     // Phase 6: release wake lock + clear Media Session on source switch.
     // Wake lock is re-acquired when the new source starts playing (handlePlay
@@ -318,6 +338,7 @@
     clearEmbedLoadTimeout();
     // Phase 6 audit fix 2: reset embed playback state on episode switch.
     embedPlaying = false;
+    embedEverPlayed = false;
     if (source?.sourceId) embedPlaybackSourceId = source.sourceId;
     void releaseWakeLock();
     clearMediaSession();
@@ -417,11 +438,26 @@
     // Embed sources cannot be commanded reliably (except CineSrc, but the
     // postMessage round-trip makes Media Session state updates unreliable).
     if (mediaSessionSupported) registerMediaSessionHandlers();
+    // MAVP-2 Phase 5: track the REAL viewport orientation so per-orientation
+    // position profiles switch the moment the device rotates — including when
+    // the orientation LOCK was declined and the OS auto-rotated on its own.
+    let handleOrientationChange: ((e: MediaQueryListEvent) => void) | undefined;
+    if (typeof window !== 'undefined' && window.matchMedia) {
+      orientationMediaQuery = window.matchMedia('(orientation: landscape)');
+      playerOrientation = orientationMediaQuery.matches ? 'landscape' : 'portrait';
+      handleOrientationChange = (e: MediaQueryListEvent) => { playerOrientation = e.matches ? 'landscape' : 'portrait'; };
+      orientationMediaQuery.addEventListener('change', handleOrientationChange);
+    }
     // Player redesign — LANDSCAPE-FIRST playback presentation. When the watch
     // route is opened on a mobile/tablet-class device currently held in
     // portrait, make ONE best-effort attempt to enter the landscape
     // presentation (player fullscreen + `screen.orientation.lock('landscape')`
     // through the EXISTING controller — no competing orientation system).
+    // MAVP-2: when the Play CLICK already initiated the presentation (see
+    // landscape-first.ts — freshest user activation beats the mount-time
+    // attempt on slow route loads), the shell ADOPTS the active fullscreen +
+    // orientation lock instead of issuing duplicate requests; the mount-time
+    // attempt remains the fallback for entries without a click gesture.
     //   * Requires the platform to permit it: if the transient activation from
     //     the Play click has expired during the async navigation, or the
     //     browser/platform declines (iOS Safari, desktop, TV), the attempt
@@ -459,6 +495,11 @@
       // Never intercept shortcuts while typing in form fields or editable
       // surfaces (input/textarea/select/contenteditable).
       if (target?.matches('input, select, textarea, [contenteditable="true"]')) return;
+      // MAVP-2 Phase 3: ANY key press outside editable surfaces is user
+      // activity — TV remotes and keyboard users navigate with keys that are
+      // NOT Mavero shortcuts (channel/volume/scroll keys); all of them must
+      // reveal the controls and reset the inactivity deadline.
+      revealControls();
       // Player redesign shortcuts — available for BOTH direct and embed
       // sources (Mavero owns these surfaces; they do not command the video
       // element or the provider):
@@ -508,10 +549,24 @@
       // inside the shell counts as user activity and keeps controls visible.
       if (event.target instanceof Node && playerRoot?.contains(event.target)) revealControls();
     };
+    // MAVP-2 Phase 3: reveal on iframe-tap. When the user taps/clicks INSIDE
+    // a provider embed, the iframe takes focus and the PARENT window fires
+    // `blur` with document.activeElement === the iframe — the only honest,
+    // cross-origin-safe signal that touch activity happened inside the
+    // embed. Without it, controls that auto-hid during embed playback could
+    // never be revealed again on touch-only devices (pointer/touch events
+    // inside a cross-origin iframe are unobservable — documented limitation).
+    // Non-iframe blurs (tab switches, address bar) are filtered out; the
+    // listener never touches the iframe's DOM or contentWindow.
+    const handleWindowBlur = () => {
+      const active = document.activeElement;
+      if (active instanceof HTMLIFrameElement && playerRoot?.contains(active)) revealControls();
+    };
     document.addEventListener('fullscreenchange', handleFullscreen);
     window.addEventListener('keydown', handleKeydown);
+    window.addEventListener('blur', handleWindowBlur);
     document.addEventListener('focusin', handleFocusIn);
-    playerRoot?.addEventListener('pointermove', showControls);
+    playerRoot?.addEventListener('pointermove', showControls, { passive: true });
     playerRoot?.addEventListener('pointerdown', showControls, { passive: true });
     playerRoot?.addEventListener('touchstart', showControls, { passive: true });
     return () => {
@@ -524,9 +579,15 @@
       if (viewportMediaQuery && handleViewportChange) {
         try { viewportMediaQuery.removeEventListener('change', handleViewportChange); } catch { /* already removed */ }
       }
+      // MAVP-2 Phase 5: remove the orientation MediaQueryList listener
+      // (same leak class as PLR-02 — one listener per mount, never removed).
+      if (orientationMediaQuery && handleOrientationChange) {
+        try { orientationMediaQuery.removeEventListener('change', handleOrientationChange); } catch { /* already removed */ }
+      }
       document.removeEventListener('fullscreenchange', handleFullscreen);
       detachPictureInPictureListeners();
       window.removeEventListener('keydown', handleKeydown);
+      window.removeEventListener('blur', handleWindowBlur);
       document.removeEventListener('focusin', handleFocusIn);
       playerRoot?.removeEventListener('pointermove', showControls);
       playerRoot?.removeEventListener('pointerdown', showControls);
@@ -679,6 +740,15 @@
   function handleEmbedLoad() {
     state = 'playing';
     errorMessage = '';
+    // MAVP-2 Phase 3 fix (auto-hide root cause): the old implementation never
+    // armed the countdown here and its arming condition never matched embed
+    // sessions (`playing` is the direct-video flag; `embedPlaying` needs
+    // provider postMessage events that black-box providers never send), so
+    // the floating controls never auto-hid on real devices. Arming here (the
+    // gate lives inside revealControls) starts the 5s countdown at embed
+    // load; provider activity inside the cross-origin iframe remains
+    // unobservable (documented limitation) and does NOT reset the deadline.
+    revealControls();
     // Phase 8: the iframe loaded successfully — clear the load timeout so
     // it cannot fire and override the 'playing' state.
     clearEmbedLoadTimeout();
@@ -720,6 +790,7 @@
     if (event.sourceId && embedPlaybackSourceId && event.sourceId !== embedPlaybackSourceId) return;
     if (event.type === 'play') {
       embedPlaying = true;
+      embedEverPlayed = true;
       acquireWakeLock();
     } else if (event.type === 'pause' || event.type === 'ended') {
       embedPlaying = false;
@@ -818,11 +889,31 @@
    * current orientation with the Landscape control available. Shares the
    * rapid-toggle guard with toggleLandscape and reuses the SAME orientation
    * controller — no competing orientation system.
+   *
+   * MAVP-2: when the Play CLICK already initiated the presentation
+   * (requestLandscapeFirstPresentation — documentElement fullscreen +
+   * orientation lock at the point of freshest user activation), this function
+   * ADOPTS the running presentation instead of issuing duplicate fullscreen
+   * or orientation requests: landscapeMode is set from the live fullscreen
+   * state and the lock is only (re)requested when the device is somehow not
+   * already landscape. The intent marker is consumed exactly once.
    */
   async function enterLandscapePresentation() {
     if (landscapeToggleInFlight) return;
     landscapeToggleInFlight = true;
     try {
+      if (document.fullscreenElement && consumeLandscapeFirstIntent()) {
+        // Presentation entered at Play-click time — adopt it, no new requests.
+        landscapeMode = true;
+        try {
+          if (!String(screen.orientation?.type ?? '').startsWith('landscape')) {
+            await orientationController()?.lock?.('landscape');
+          }
+        } catch { /* device/browser declined; fullscreen layout remains active */ }
+        revealControls();
+        return;
+      }
+      consumeLandscapeFirstIntent(); // stale marker — never leaks to a later entry
       await playerRoot?.requestFullscreen?.();
       try { await orientationController()?.lock?.('landscape'); } catch { /* device/browser declined; fullscreen layout remains active */ }
       landscapeMode = true;
@@ -950,10 +1041,29 @@
     // NOT hidden — only the Mavero control overlay (which is irrelevant
     // while the embed is playing).
     //
+    // MAVP-2 Phase 3 ROOT-CAUSE FIX: `(playing || embedPlaying)` alone was
+    // never true for a typical embed session — `playing` is the DIRECT-video
+    // flag and `embedPlaying` is only set when a provider posts normalized
+    // play/pause postMessage events, which most black-box providers never do.
+    // Combined with the missing revealControls() call at embed load (fixed in
+    // handleEmbedLoad), NO timer was ever armed → the floating controls never
+    // auto-hid on real devices. The shell-visible embed session state
+    // (`source.type === 'embed' && state === 'playing'`) now participates:
+    //   * black-box embeds (embedEverPlayed=false): armed from iframe load —
+    //     honest, since the provider controls playback inside the iframe and
+    //     Mavero cannot observe pause events;
+    //   * event-posting embeds (embedEverPlayed=true): armed on the provider's
+    //     OWN play state — a provider-reported pause keeps the controls up.
+    // Media progress events (timeupdate etc.) never call revealControls —
+    // background playback cannot reset the deadline (spec requirement).
+    //
     // Cross-origin honesty (documented limitation): pointer/touch activity
     // INSIDE a provider iframe is unobservable from the parent page, so while
     // an embed is playing the countdown reflects page-level activity only.
-    if ((playing || embedPlaying) && !sourceMenuOpen && !episodeMenuOpen) {
+    const embedSessionArms = source?.type === 'embed'
+      && state === 'playing'
+      && (!embedEverPlayed || embedPlaying);
+    if ((playing || embedPlaying || embedSessionArms) && !sourceMenuOpen && !episodeMenuOpen) {
       hideTimer = setTimeout(() => {
         if (!sourceMenuOpen && !episodeMenuOpen && !focusWithinMaveroControls()) {
           controlsVisible = false;
@@ -1405,8 +1515,11 @@
     {/if}
   </section>
 
-  <!-- Immersive redesign: Back FAB — top-left overlay, translucent, safe-area aware. -->
-  <button class="back-fab" type="button" aria-label="Close player" onclick={onClose}>
+  <!-- Immersive redesign: Back FAB — top-left overlay, translucent, safe-area aware.
+       MAVP-2 Phase 4/5: per-source Back-button placement (Admin "Player
+       Controls Position" → Back control, independent portrait/landscape
+       profiles). Empty inline style = stylesheet default (top-left). -->
+  <button class="back-fab" class:custom-position={Boolean(backControlStyle)} type="button" aria-label="Close player" style={backControlStyle} onclick={onClose}>
     <ArrowLeft size={20} />
   </button>
 
@@ -1430,22 +1543,32 @@
         <span class="fab-item-label">Episodes</span>
       </button>
     {/if}
-    <button class="control-fab landscape-fab" style={landscapeControlStyle} type="button" aria-label={landscapeMode ? 'Exit landscape player' : 'Enter landscape player'} aria-pressed={landscapeMode} onclick={() => { void toggleLandscape(); }}>
+    <!-- MAVP-2 Phase 7: the placement style lives ONLY on the group — the
+         previous duplicate inline style on this inner button double-applied
+         the center-anchor transform (button shifted -50% twice) and forced
+         an extra style recomputation on every placement change. -->
+    <button class="control-fab landscape-fab" type="button" aria-label={landscapeMode ? 'Exit landscape player' : 'Enter landscape player'} aria-pressed={landscapeMode} onclick={() => { void toggleLandscape(); }}>
       {#if landscapeMode}<Minimize2 size={22} />{:else}<Maximize2 size={22} />{/if}
     </button>
   </div>
 
   <!-- Player redesign: slim vertical source chip on the right edge, attached
        around the vertical centre of the viewport (Rivestream reference).
-       ~5px visible bar with a large (>=44x64) accessible hit area; reveals a
-       "Source" label on hover/focus; opens the EXISTING source sheet (the
-       same sheet, grouping, ordering and state as before — no second source
-       system). Playback keeps running while the sheet is open. Hides with
-       the other Mavero controls; never covers provider controls (it hugs the
-       right edge and expands only leftward on hover). -->
+       MAVP-2 Phase 2: the CLOSED chip is only the ~6px visible bar — the
+       dark translucent surface is carried by the BAR (and the hover label
+       pill), NOT by a wide slab behind them; the button itself is a
+       transparent ≥44×64 hit area so the touch target stays usable without
+       the visual bulk. On hover/focus it reveals the ACTIVE source's name
+       (content-aware) truncated with an ellipsis at a bounded max-width so
+       long names can never expand the chip or push controls off-screen.
+       Opens the EXISTING source sheet (the same sheet, grouping, ordering
+       and state as before — no second source system). Playback keeps
+       running while the sheet is open. Hides with the other Mavero
+       controls; never covers provider controls (it hugs the right edge and
+       expands only leftward on hover). -->
   {#if sourceOptions.length}
     <button class="source-chip" class:visible={controlsVisible} type="button" aria-label="Choose source" aria-haspopup="dialog" onclick={(event) => openSourceSheet(event.currentTarget instanceof HTMLElement ? event.currentTarget : playerRoot)}>
-      <span class="source-chip-label" aria-hidden="true">Source</span>
+      <span class="source-chip-label" aria-hidden="true">{activeSourceOption?.name || 'Source'}</span>
       <span class="source-chip-bar" aria-hidden="true"></span>
     </button>
   {/if}
@@ -1484,7 +1607,12 @@
   .stage-wrap :global(.viewport.embed) { width: 100%; }
   .stage-wrap :global(.viewport iframe), .stage-wrap :global(.viewport video) { width: 100%; height: 100%; }
 
-  /* Back FAB — top-left overlay, translucent, safe-area aware. */
+  /* Back FAB — top-left overlay, translucent, safe-area aware.
+     MAVP-2 Phase 4/5: a per-source Back-button placement (Admin "Player
+     Controls Position" → Back control) is applied as an inline style and
+     overrides the top/left/bottom/right defaults below; the DEFAULTS (and
+     every source without a custom profile) keep the safe-area-aware
+     top-left placement exactly as shipped. */
   .back-fab { position: absolute; z-index: 12; top: max(12px, env(safe-area-inset-top)); left: max(12px, env(safe-area-inset-left)); display: grid; place-items: center; width: 44px; height: 44px; border: 1px solid var(--line-strong); border-radius: 50%; color: #fff; background: rgba(0,0,0,.55); cursor: pointer; backdrop-filter: blur(12px); visibility: visible; transition: opacity var(--motion-normal) var(--ease-out), transform var(--motion-normal) var(--ease-out), background var(--motion-fast) var(--ease-out), visibility 0s linear 0s; }
   .back-fab:hover, .back-fab:focus-visible { background: rgba(0,0,0,.75); border-color: var(--accent); }
   .back-fab:active { transform: scale(.94); }
@@ -1515,18 +1643,24 @@
   .control-fab:active { transform: scale(.93); }
 
   /* Source chip — slim vertical control attached to the right edge around the
-     vertical centre (Rivestream reference). Visible affordance: ~5px rounded
-     bar; interactive hit area 44x64+; hover/focus reveals the label leftward
-     (never rightward/over the edge). z-index below sheets (20/21); the chip
-     NEVER blocks provider controls — it hugs the edge and hides with the
-     other Mavero controls. */
-  .source-chip { position: absolute; z-index: 12; top: 50%; right: 0; transform: translateY(-50%); display: flex; align-items: center; justify-content: flex-end; min-width: 44px; min-height: 64px; padding: 0 0 0 14px; border: 0; border-left: 1px solid var(--line-strong); border-radius: 10px 0 0 10px; color: var(--ink-soft); background: rgba(0,0,0,.55); cursor: pointer; backdrop-filter: blur(12px); visibility: visible; transition: opacity var(--motion-normal) var(--ease-out), background var(--motion-fast) var(--ease-out), padding var(--motion-fast) var(--ease-out), visibility 0s linear 0s; }
-  .source-chip-bar { flex: 0 0 auto; width: 5px; height: 56px; border-radius: 999px 0 0 999px; background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--line-strong); }
-  .source-chip-label { overflow: hidden; max-width: 0; opacity: 0; white-space: nowrap; font: inherit; font-size: .6rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; transition: max-width var(--motion-fast) var(--ease-out), opacity var(--motion-fast) var(--ease-out); }
-  .source-chip:hover, .source-chip:focus-visible { background: rgba(0,0,0,.8); border-color: var(--accent); padding-left: 18px; }
-  .source-chip:hover .source-chip-label, .source-chip:focus-visible .source-chip-label { max-width: 90px; opacity: 1; margin-right: 8px; }
-  .source-chip:active { background: rgba(0,0,0,.9); }
-  .player-shell.controls-hidden .source-chip { opacity: 0; visibility: hidden; pointer-events: none; transition: opacity var(--motion-normal) var(--ease-out), background var(--motion-fast) var(--ease-out), padding var(--motion-fast) var(--ease-out), visibility 0s linear var(--motion-normal); }
+     vertical centre (Rivestream reference). MAVP-2 Phase 2: the CLOSED chip
+     paints ONLY the ~5px bar — the dark translucent surface lives on the BAR
+     (and the hover label pill), not on the button, so there is no wide
+     translucent slab beside the edge. The button stays a transparent ≥44×64
+     hit area (touch target preserved without visual bulk). Hover/focus
+     reveals the ACTIVE source's name leftward, ellipsis-truncated at a
+     bounded max-width so long names can never expand the chip or push other
+     controls off-screen (the chip is absolutely positioned and expands
+     leftward only — no layout shift possible). z-index below sheets (20/21);
+     the chip NEVER blocks provider controls — it hugs the edge and hides
+     with the other Mavero controls. */
+  .source-chip { position: absolute; z-index: 12; top: 50%; right: 0; transform: translateY(-50%); display: flex; align-items: center; justify-content: flex-end; min-width: 44px; min-height: 64px; padding: 0; border: 0; background: transparent; cursor: pointer; visibility: visible; transition: opacity var(--motion-normal) var(--ease-out), visibility 0s linear 0s; }
+  .source-chip-bar { flex: 0 0 auto; width: 5px; height: 56px; border-radius: 999px 0 0 999px; background: rgba(0,0,0,.55); box-shadow: inset 0 0 0 1px var(--line-strong); backdrop-filter: blur(12px); transition: background var(--motion-fast) var(--ease-out), box-shadow var(--motion-fast) var(--ease-out); }
+  .source-chip-label { overflow: hidden; max-width: 0; opacity: 0; white-space: nowrap; text-overflow: ellipsis; font: inherit; font-size: .6rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-soft); background: rgba(0,0,0,.55); border: 1px solid var(--line-strong); border-right: 0; border-radius: 10px 0 0 10px; padding: 0 0 0 0; backdrop-filter: blur(12px); transition: max-width var(--motion-fast) var(--ease-out), opacity var(--motion-fast) var(--ease-out), padding var(--motion-fast) var(--ease-out); }
+  .source-chip:hover .source-chip-bar, .source-chip:focus-visible .source-chip-bar { background: rgba(0,0,0,.8); box-shadow: inset 0 0 0 1px var(--accent); }
+  .source-chip:hover .source-chip-label, .source-chip:focus-visible .source-chip-label { max-width: min(42vw, 220px); opacity: 1; padding: 12px 0 12px 14px; margin-right: 6px; }
+  .source-chip:active .source-chip-bar { background: rgba(0,0,0,.9); }
+  .player-shell.controls-hidden .source-chip { opacity: 0; visibility: hidden; pointer-events: none; transition: opacity var(--motion-normal) var(--ease-out), visibility 0s linear var(--motion-normal); }
 
   /* Menu items — staggered unfold animation. */
   .fab-item { display: flex; align-items: center; gap: 8px; height: 44px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 999px; color: #fff; background: rgba(0,0,0,.65); cursor: pointer; backdrop-filter: blur(12px); box-shadow: 0 2px 10px rgba(0,0,0,.3); font: inherit; font-size: .62rem; font-weight: 600; white-space: nowrap; opacity: 0; transform: translateY(8px) scale(0.9); animation: fab-unfold 200ms var(--ease-out) var(--fab-delay, 0ms) forwards; }

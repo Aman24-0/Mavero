@@ -2,6 +2,9 @@
   import { onMount } from 'svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
+  // MAVP-2 Phase 1: landscape-first presentation initiated at PLAY-CLICK time
+  // (freshest transient user activation) — the shell adopts it at mount.
+  import { requestLandscapeFirstPresentation } from '$lib/client/player/landscape-first';
   import { AlertTriangle, ChevronRight, Download, LoaderCircle, Play } from 'lucide-svelte';
   import { appendReturnTo } from '$lib/shared/navigation';
   import { markEpisodeAsResumeTarget } from '$lib/client/progress/service';
@@ -207,6 +210,7 @@
                     );
                   } catch { /* local persistence failure is non-fatal — navigation still proceeds */ }
                 }
+                void requestLandscapeFirstPresentation(page.data.deviceType);
                 void goto(appendReturnTo(`/watch/${watchType}/${id}?season=${selectedSeason}&episode=${episode.number}`, returnTo));
               }}
             >

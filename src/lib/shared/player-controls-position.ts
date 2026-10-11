@@ -1,5 +1,5 @@
 /**
- * Per-source landscape-control positioning — MAVERO player redesign.
+ * Per-source floating-control positioning — MAVERO player redesign.
  *
  * The Admin Panel ("Player Controls Position" section of the source edit
  * sheet) persists a validated positioning config per SOURCE inside the
@@ -7,19 +7,48 @@
  * `player_controls_position` key. No schema change: the public streaming
  * config already exposes source capabilities verbatim.
  *
- * Shape (all numeric bounds enforced — 0..100 viewport-relative percent):
+ * POSITIONING CONTRACT (MAVP-2 — shared by the Admin UI, server validation,
+ * persistence and the player renderer):
+ *
+ *   axis            = { "anchor": <H|V anchor>, "offsetPercent": 0..100 }
+ *   H anchor        = 'left' | 'right' | 'center'
+ *   V anchor        = 'top' | 'bottom' | 'center'
+ *   orientation     = 'portrait' | 'landscape'   (real viewport orientation)
+ *   control         = 'landscape' (Landscape/fullscreen FAB group)
+ *                   | 'back'      (Back FAB)
+ *
+ * Stored capability value:
  * {
  *   "mode": "custom",
- *   "horizontal": { "anchor": "right", "offsetPercent": 18 },
- *   "vertical":   { "anchor": "bottom", "offsetPercent": 12 },
- *   "portrait":   { "horizontal": {...}, "vertical": {...} },   // optional
- *   "landscape":  { "horizontal": {...}, "vertical": {...} }    // optional
+ *   // Landscape control — LEGACY base axes + orientation overrides.
+ *   // Kept for backward compatibility: sources saved before MAVP-2 carry
+ *   // these, and the renderer still honours them as the base that a
+ *   // missing orientation override inherits.
+ *   "horizontal": { "anchor": "right", "offsetPercent": 18 },   // optional
+ *   "vertical":   { "anchor": "bottom", "offsetPercent": 12 },  // optional
+ *   "portrait":   { "horizontal": axis|null, "vertical": axis|null },  // optional
+ *   "landscape":  { "horizontal": axis|null, "vertical": axis|null },  // optional
+ *   // Back control — MAVP-2, fully independent from the Landscape control.
+ *   "back": {
+ *     "portrait":  { "horizontal": axis|null, "vertical": axis|null },  // optional
+ *     "landscape": { "horizontal": axis|null, "vertical": axis|null }   // optional
+ *   }
  * }
+ *
+ * Coordinate convention: offsets are VIEWPORT-RELATIVE PERCENTAGES measured
+ * FROM THE ANCHOR EDGE TOWARD THE VIEWPORT INTERIOR. anchor right + offset
+ * 18 => `right: 18%` (18% of the viewport width away from the right edge);
+ * anchor top + offset 8 => `top: 8%`. Center anchors ignore the offset and
+ * translate the control by -50% on that axis. Horizontal and vertical axes
+ * are fully INDEPENDENT objects — changing one can never mutate the other,
+ * and per-orientation profiles are separate objects, so a portrait
+ * calibration can never leak into landscape or vice versa.
  *
  * Every parser is TOTAL: malformed, non-finite, out-of-bounds or wrongly
  * typed values return null (the caller falls back to the default position).
- * Legacy sources without the key are default-positioned (bottom-right).
- * Parsing is pure — source A's config can never leak into source B.
+ * Legacy sources without the key are default-positioned (back = top-left,
+ * landscape control = bottom-right). Parsing is pure — source A's config
+ * can never leak into source B.
  */
 
 export const PLAYER_CONTROLS_POSITION_CAPABILITY_KEY = 'player_controls_position';
@@ -40,7 +69,19 @@ export type PlayerControlsPosition = {
   vertical: ControlsAxisPosition | null;
   portrait: { horizontal: ControlsAxisPosition | null; vertical: ControlsAxisPosition | null } | null;
   landscape: { horizontal: ControlsAxisPosition | null; vertical: ControlsAxisPosition | null } | null;
+  /** MAVP-2: independent per-orientation Back-button profiles (optional). */
+  back: {
+    portrait: { horizontal: ControlsAxisPosition | null; vertical: ControlsAxisPosition | null } | null;
+    landscape: { horizontal: ControlsAxisPosition | null; vertical: ControlsAxisPosition | null } | null;
+  } | null;
 };
+
+/** The two floating controls that can be positioned per source. */
+export type ControlsControlId = 'landscape' | 'back';
+
+export type ControlsOrientation = 'portrait' | 'landscape';
+
+export type ControlsOrientationOverride = { horizontal: ControlsAxisPosition | null; vertical: ControlsAxisPosition | null };
 
 const HORIZONTAL_ANCHORS = ['left', 'right', 'center'] as const;
 const VERTICAL_ANCHORS = ['top', 'bottom', 'center'] as const;
@@ -73,12 +114,24 @@ function parseVerticalAxis(value: unknown): ControlsAxisPosition | null {
   return { anchor: anchor as ControlsAnchor, offsetPercent };
 }
 
-function parseOrientationOverride(value: unknown): { horizontal: ControlsAxisPosition | null; vertical: ControlsAxisPosition | null } | null {
+function parseOrientationOverride(value: unknown): ControlsOrientationOverride | null {
   if (!isRecord(value)) return null;
   return {
     horizontal: value.horizontal === undefined ? null : parseHorizontalAxis(value.horizontal),
     vertical: value.vertical === undefined ? null : parseVerticalAxis(value.vertical),
   };
+}
+
+function parseBackSection(value: unknown): PlayerControlsPosition['back'] {
+  if (!isRecord(value)) return null;
+  const portrait = value.portrait === undefined ? null : parseOrientationOverride(value.portrait);
+  const landscape = value.landscape === undefined ? null : parseOrientationOverride(value.landscape);
+  // A back section with no usable axis is not a back config at all.
+  if (!portrait && !landscape) return null;
+  const hasAxis = (override: ControlsOrientationOverride | null): boolean =>
+    Boolean(override && (override.horizontal || override.vertical));
+  if (!hasAxis(portrait) && !hasAxis(landscape)) return null;
+  return { portrait, landscape };
 }
 
 /**
@@ -89,7 +142,7 @@ export function parsePlayerControlsPosition(value: unknown): PlayerControlsPosit
   if (!isRecord(value)) return null;
   const mode = value.mode;
   if (mode === 'default') {
-    return { mode: 'default', horizontal: null, vertical: null, portrait: null, landscape: null };
+    return { mode: 'default', horizontal: null, vertical: null, portrait: null, landscape: null, back: null };
   }
   if (mode !== 'custom') return null;
   const position: PlayerControlsPosition = {
@@ -98,11 +151,20 @@ export function parsePlayerControlsPosition(value: unknown): PlayerControlsPosit
     vertical: value.vertical === undefined ? null : parseVerticalAxis(value.vertical),
     portrait: value.portrait === undefined ? null : parseOrientationOverride(value.portrait),
     landscape: value.landscape === undefined ? null : parseOrientationOverride(value.landscape),
+    back: value.back === undefined ? null : parseBackSection(value.back),
   };
   // A custom config with NO usable axis is treated as malformed — the admin
   // most likely saved a half-empty config; default positioning is safer.
-  if (!position.horizontal && !position.vertical && !position.portrait && !position.landscape) return null;
+  if (
+    !position.horizontal && !position.vertical
+    && !hasUsableAxis(position.portrait) && !hasUsableAxis(position.landscape)
+    && !hasUsableAxis(position.back?.portrait ?? null) && !hasUsableAxis(position.back?.landscape ?? null)
+  ) return null;
   return position;
+}
+
+function hasUsableAxis(override: ControlsOrientationOverride | null): boolean {
+  return Boolean(override && (override.horizontal || override.vertical));
 }
 
 /**
@@ -122,16 +184,38 @@ export type LandscapeControlPlacement = {
 };
 
 /**
- * Resolve the placement for a given orientation, honouring the optional
- * portrait/landscape overrides. Pure — same inputs always yield the same
+ * Resolve the Landscape control's placement for a given orientation,
+ * honouring the optional portrait/landscape overrides (which inherit the
+ * legacy base axes per axis). Pure — same inputs always yield the same
  * placement for the same source.
  */
 export function resolveLandscapeControlPlacement(
   position: PlayerControlsPosition | null,
-  orientation: 'portrait' | 'landscape',
+  orientation: ControlsOrientation,
+): LandscapeControlPlacement {
+  return resolveControlPlacement(position, 'landscape', orientation);
+}
+
+/**
+ * Resolve EITHER floating control's placement for a given orientation.
+ *   'landscape' control → orientation override ?? legacy base ?? default.
+ *   'back' control      → back[orientation] axes only (fully independent —
+ *                         the Landscape control's config can never leak in).
+ * Unset axes resolve to null → the caller keeps the stylesheet default
+ * (back = top-left, landscape control = bottom-right, both safe-area aware).
+ * Pure — same inputs always yield the same placement for the same source.
+ */
+export function resolveControlPlacement(
+  position: PlayerControlsPosition | null,
+  control: ControlsControlId,
+  orientation: ControlsOrientation,
 ): LandscapeControlPlacement {
   if (!position || position.mode !== 'custom') {
     return { horizontal: null, vertical: null };
+  }
+  if (control === 'back') {
+    const profile = orientation === 'portrait' ? position.back?.portrait : position.back?.landscape;
+    return { horizontal: profile?.horizontal ?? null, vertical: profile?.vertical ?? null };
   }
   const override = orientation === 'portrait' ? position.portrait : position.landscape;
   return {
@@ -141,11 +225,21 @@ export function resolveLandscapeControlPlacement(
 }
 
 /**
- * Build the inline CSS for the Landscape control group given a resolved
- * placement. Null axes mean "keep the stylesheet default" (bottom-right,
- * safe-area aware) — the returned string is empty in that case. Center
- * anchors translate the group by -50% on that axis so `50%` centres it.
- * Percentages are viewport-relative and bounded (validated 0..100).
+ * Build the inline CSS for a floating control given a resolved placement.
+ * Null axes mean "keep the stylesheet default" (back = top-left, landscape
+ * control = bottom-right — both safe-area aware) — the returned string is
+ * empty in that case. Center anchors translate the control by -50% on that
+ * axis so `50%` centres it. Percentages are viewport-relative and bounded
+ * (validated 0..100) per the positioning contract above.
+ */
+export function controlsPlacementInlineStyle(placement: LandscapeControlPlacement): string {
+  return landscapeControlInlineStyle(placement);
+}
+
+/**
+ * Legacy alias — the Landscape control was the only positioned control
+ * before MAVP-2. Kept (and kept authoritative for existing callers/tests);
+ * new call sites should use `controlsPlacementInlineStyle`.
  */
 export function landscapeControlInlineStyle(placement: LandscapeControlPlacement): string {
   const decls: string[] = [];
