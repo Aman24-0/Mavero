@@ -232,5 +232,5 @@ documented supersession rationale; no product regression behind them).
 
 ## 10. Commit
 
-Single commit on `origin/main` (see the MAVP-2 worklog entry in `worklog.md` for the SHA),
+Single commit on `origin/main`: **`5f15349`** (pushed: `81675a8..5f15349 HEAD -> main`),
 containing exactly the files in §4. No production deployment was performed.

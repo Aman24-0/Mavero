@@ -4156,4 +4156,4 @@ No TMDB/Supabase credentials in this environment — browser QA ran against the 
 
 No real Android/TV hardware — real-device orientation-lock behaviour, cutout safe-areas and provider fullscreen interactions remain UNVERIFIED on hardware (all orientation paths are best-effort with silent fallback). No admin credentials — the authenticated Admin save/reload workflow was not browser-driven (server validation, round-trip persistence and the save-path contract are test-verified). The fixture explorer feed rendered no MediaCard chips — the card entry path is verified by the shared-helper contract + the identical helper verified end-to-end from the detail page. NO production deployment was performed.
 
-**No migration** (capabilities JSONB already carries the key). **Commit:** MAVP-2 commit on `origin/main` (see the commit SHA in the completion report).
+**No migration** (capabilities JSONB already carries the key). **Commit:** `5f15349` on `origin/main` (pushed: `81675a8..5f15349 HEAD -> main`).
