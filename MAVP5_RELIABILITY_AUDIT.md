@@ -246,6 +246,9 @@ regression suite re-runs the Gentlemen conditions after the cache fix to prove n
 
 ## 4. Implementation record
 
+**Implementation commit:** `175cfd7` (`fix(player): MAVP-5 — player reliability, source
+fallback & episode UX`) on `mavp5-task`, based on verified `origin/main` = `02e8aff`.
+
 **Files changed (implementation):**
 
 - RC-1 (Issue 1): `src/app.css` — root-level dual-axis scroll lock + `overscroll-behavior: none`;
