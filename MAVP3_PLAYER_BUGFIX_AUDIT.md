@@ -177,7 +177,7 @@ contract): `mavp2_player_bugfix_test` (§A 20 checks rewritten for removal, §C 
 | `pnpm test` | exit 0 (245 commands) | see §6a below (246 commands) |
 | `pnpm build` | PASS | see §6a below |
 
-## 6a. Actual gate results
+## 6a. Actual gate results (recorded from the executed runs on the committed tree)
 
 - `pnpm check` → **svelte-check found 0 errors and 0 warnings** (exit 0).
 - `pnpm test` → **exit 0** (246-command chain, final MAVP-3 suite green; full log captured during the run).
@@ -198,6 +198,7 @@ contract): `mavp2_player_bugfix_test` (§A 20 checks rewritten for removal, §C 
 
 ## 8. Commit
 
-Single commit on `origin/main` — see the worklog entry for the SHA. Contains exactly the files in §4.
+Implementation commit **`350eb03`** ("fix(player): remove auto-landscape and harden controls") on `origin/main`,
+followed by a docs commit recording this SHA (MAVP-2 pattern). Contains exactly the files in §4.
 No production deployment was performed. No unrelated user changes were staged (the unrelated WIP in the
 `/home/z/my-project/mavero` checkout was never touched).

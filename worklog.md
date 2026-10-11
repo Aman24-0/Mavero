@@ -4196,4 +4196,4 @@ No real Android/TV hardware — real-device orientation-lock behaviour, cutout s
 
 **NO browser testing was performed** (explicitly excluded by the task) — all verification is source tracing + deterministic automated tests; real-device behaviour (touch reveal cadence, provider iframe focus quirks) remains unverified on hardware. No authenticated Admin browser pass (no credentials — same as all prior phases). The `?controls=calibrate` affordance is documented in the editor hint, not a UI button. NO production deployment was performed.
 
-**No migration** (capabilities JSONB already carries the key). **Commit:** on `origin/main` (13 files modified + 1 deleted + 2 new; the unrelated WIP in `/home/z/my-project/mavero` was never staged).
+**No migration** (capabilities JSONB already carries the key). **Commit:** `350eb03` "fix(player): remove auto-landscape and harden controls" on `origin/main` (16 files: 13 modified + 1 deleted + 2 new; the unrelated WIP in `/home/z/my-project/mavero` was never staged).
