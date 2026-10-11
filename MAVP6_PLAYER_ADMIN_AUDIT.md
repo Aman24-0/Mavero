@@ -303,6 +303,13 @@ do the strict form parsers (`parseSourceAssignmentForm`,
 
 ## 5. Implementation record
 
+**Implementation commit:** `13b5ff1` (`fix(player,admin): MAVP-6 — production
+playback 500 diagnostics, fixed episode chip alignment & category source
+management`) on `mavp6-task`, based on verified `origin/main` = `f7a7714`.
+**Push:** fast-forward `f7a7714..13b5ff1 mavp6-task -> main`, verified by a
+post-push fetch — `origin/main` = `13b5ff1`; working tree clean. No force
+push; the primary worktree's unrelated WIP was never staged.
+
 **Files changed (implementation):**
 
 - Issue 1: `src/hooks.client.ts` (NEW), `src/lib/client/error-reporting.ts`
