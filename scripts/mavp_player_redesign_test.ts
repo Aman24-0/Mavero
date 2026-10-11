@@ -160,8 +160,21 @@ ok(!/full-height/.test(shell) === false || true, 'B18. (documentation anchor) ch
 ok(/\.source-chip \{[^}]*z-index: 12/.test(shell) && /\.sheet-overlay \{[^}]*z-index: 20/.test(shell), 'B19. chip sits below the sheets and never blocks provider controls');
 ok(/\.stage-wrap :global\(\.viewport iframe\)[^}]*z-index: 1|\.viewport iframe \{ position: relative; z-index: 1/.test(viewport) || /z-index: 1/.test(viewport), 'B20. iframe remains interactive (chip does not create an intercepting layer over it)');
 
-ok(/class="fab-item"/.test(shell) && /aria-label="Open episode list"/.test(shell), 'B21. Episodes entry preserved (pill above the Landscape FAB)');
-ok(/openSourceSheetFromControl/.test(shell) && /openEpisodeSheetFromControl/.test(shell), 'B22. sheet openers route through the focus-managed openers');
+// MAVP-5 Issue 4 supersession: the Episodes pill (inside the Landscape FAB
+// group, sharing its position) is REPLACED by the dedicated left-edge
+// episode chip — the mirror of the source chip, with its OWN independent
+// position contract (position.episodes + sizes.episodes) and a LEFT-opening
+// episode sheet. Same single episode system, one openEpisodeSheet entry,
+// movies still never render an episode entry.
+ok(/class="episode-chip"/.test(shell) && /aria-label="Choose episode"/.test(shell), 'B21. Episodes entry preserved (dedicated left-edge episode chip, MAVP-5)');
+ok(!/class="fab-item"/.test(shell), 'B21-MAVP5 the old Episodes pill is fully replaced (no duplicate entry point)');
+ok(!/aria-label="Open episode list"/.test(shell) && shell.includes('openEpisodeSheet('), 'B21-MAVP5 the chip opens the SAME focus-managed episode sheet');
+ok(/openSourceSheetFromControl/.test(shell), 'B22. the source control keeps its focus-managed opener (PlayerControls entry)');
+// MAVP-5 Issue 4 supersession: the episode opener helper
+// (openEpisodeSheetFromControl) was removed WITH the Episodes pill it
+// served — the episode chip opens the same focus-managed sheet directly
+// with ITSELF as the trigger (strictly stronger focus restoration).
+ok(/onclick=\{\(event\) => openEpisodeSheet\(event\.currentTarget instanceof HTMLElement \? event\.currentTarget : playerRoot\)\}/.test(shell), 'B22-MAVP5 the episode chip opens the focus-managed sheet with itself as the trigger');
 
 // B23-B27: sandbox control removed WITHOUT weakening the policy pipeline.
 ok(!/toggleSandbox/.test(shell), 'B23. user-facing sandbox toggle fully removed');
@@ -191,7 +204,9 @@ ok(/playerRoot\?\.addEventListener\('pointermove', showControls, \{ passive: tru
 ok(/document\.addEventListener\('focusin', handleFocusIn\)/.test(shell), 'C8. keyboard/TV focus activity signal registered');
 ok(/document\.removeEventListener\('focusin', handleFocusIn\)/.test(shell), 'C9. focusin listener cleaned up on unmount');
 ok(/if \(hideTimer\) clearTimeout\(hideTimer\);/.test(shell), 'C10. inactivity timer cleaned up on unmount');
-ok(/function focusWithinMaveroControls\(\): boolean/.test(shell) && /\.back-fab, \.control-fab-group, \.source-chip, \.direct-controls-overlay, \.source-sheet, \.episode-sheet/.test(shell), 'C11. focus guard covers every Mavero-owned control surface');
+// MAVP-5 Issue 4 supersession: the focus guard now also covers the dedicated
+// episode chip (a Mavero-owned control surface that must never auto-hide).
+ok(/function focusWithinMaveroControls\(\): boolean/.test(shell) && /\.back-fab, \.control-fab-group, \.source-chip, \.episode-chip, \.direct-controls-overlay, \.source-sheet, \.episode-sheet/.test(shell), 'C11. focus guard covers every Mavero-owned control surface (incl. the MAVP-5 episode chip)');
 ok(/closing a sheet restarts the 5s inactivity countdown/.test(shell), 'C12. closing sheets restarts the countdown');
 ok(/pointer\/touch activity\s*\n?\s*\* INSIDE a provider iframe is unobservable/.test(shell) || /INSIDE a provider iframe is unobservable/.test(shell), 'C13. cross-origin limitation documented honestly in code');
 

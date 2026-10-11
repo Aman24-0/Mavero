@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { AlertTriangle, ArrowLeft, Check, ListVideo, Maximize2, Minimize2, RotateCcw, Settings2, X } from 'lucide-svelte';
+  import { AlertTriangle, ArrowLeft, Check, Maximize2, Minimize2, RotateCcw, Settings2, X } from 'lucide-svelte';
   // Task 13: safe source icon renderer + centralized badge labels for the
   // source selector (presentation metadata from the public streaming config).
   import SourceIcon from '$lib/components/source/SourceIcon.svelte';
@@ -87,6 +87,38 @@
   let fullscreen = false;
   let landscapeMode = false;
   let landscapeToggleInFlight = false;
+  // MAVP-5 (Issue 5) — LANDSCAPE PRESENTATION-INTENT PRESERVATION.
+  //
+  // A source switch REMOUNTS the provider iframe ({#key iframeKey}); when
+  // the provider iframe holds document focus (the normal post-Play state —
+  // the MAVP-3 recurring-reveal contract relies on it), removing the
+  // focused element inside the fullscreen element makes mobile browsers
+  // fire a fullscreen-exit. The fullscreenchange handler treated EVERY
+  // fullscreen loss as a user exit — unlocking the orientation and
+  // reverting the shell to portrait mid-source-switch.
+  //
+  // The presentation is now intent-preserving:
+  //   * entering the landscape presentation records `landscapePresentationIntent`;
+  //   * a fullscreen loss WHILE the intent is active AND within a bounded
+  //     window after the last source switch (lastSourceSwitchAt — both the
+  //     new-source and same-source-URL remount watchers stamp it) is treated
+  //     as a switch-triggered loss: the shell re-acquires the Mavero
+  //     fullscreen + re-issues the landscape orientation lock ONCE
+  //     (bounded, no duplicate lock requests — landscapeRestoreInFlight)
+  //     and KEEPS the CSS landscape presentation (`.landscape-mode` works
+  //     without fullscreen) if the platform declines the re-acquisition;
+  //   * explicit user exits (toggleLandscape exit branch,
+  //     exitMaveroFullscreen) clear the intent and behave exactly as before;
+  //   * portrait sessions are untouched — nothing in the switch path ever
+  //     SETS landscapeMode, so switching sources in portrait stays portrait;
+  //   * the intent clears on destroy (no stale state across navigation).
+  // The window is a documented policy bound (like the 18 s load timeout and
+  // the 5 s auto-hide) — it can never capture a deliberate user exit more
+  // than LANDSCAPE_RESTORE_WINDOW_MS after a source switch.
+  let landscapePresentationIntent = false;
+  let landscapeRestoreInFlight = false;
+  let lastSourceSwitchAt = 0;
+  const LANDSCAPE_RESTORE_WINDOW_MS = 2000;
   // MAVP-2 Phase 5: the position PROFILES follow the REAL viewport orientation
   // (not the Mavero landscape presentation toggle) so a physically rotated
   // device — even when the orientation LOCK was declined — immediately uses
@@ -302,6 +334,21 @@
   // so the element still gets ONE style write per orientation/profile change.
   $: backSizePx = resolveControlSize(activeSourceOption?.controlsPosition ?? null, 'back');
   $: landscapeSizePx = resolveControlSize(activeSourceOption?.controlsPosition ?? null, 'landscape');
+  // MAVP-5 (Issue 4): the Episodes chip resolves through its OWN position
+  // contract (position.episodes + sizes.episodes) — fully independent from
+  // the Back and Landscape controls. Default (unset axes): attached to the
+  // LEFT edge at the vertical centre, mirroring the source chip on the
+  // right edge. Styles follow the exact same inline-style pipeline as the
+  // other controls (placement axes + a disjoint size custom property).
+  $: episodesSizePx = resolveControlSize(activeSourceOption?.controlsPosition ?? null, 'episodes');
+  $: episodesControlStyle = [
+    controlsPlacementInlineStyle(resolveControlPlacement(activeSourceOption?.controlsPosition ?? null, 'episodes', playerOrientation)),
+    controlsSizeInlineStyle(activeSourceOption?.controlsPosition ?? null, 'episodes', '--episodes-chip-size'),
+  ].filter(Boolean).join(';');
+  // The chip's hover label mirrors the source chip's content-aware label:
+  // it shows the CURRENT episode ("S2 · E08"), or simply "Episodes" when no
+  // specific episode is active.
+  $: episodeChipLabel = currentEpisode ? `S${currentEpisode.season} · E${String(currentEpisode.episode).padStart(2, '0')}` : 'Episodes';
   $: backControlStyle = [
     controlsPlacementInlineStyle(resolveControlPlacement(activeSourceOption?.controlsPosition ?? null, 'back', playerOrientation)),
     controlsSizeInlineStyle(activeSourceOption?.controlsPosition ?? null, 'back', '--back-fab-size'),
@@ -344,6 +391,10 @@
   }
   $: if (source?.sourceId && source.sourceId !== sourceIdentity) {
     sourceIdentity = source.sourceId;
+    // MAVP-5 (Issue 5): stamp the source-switch window — a fullscreen loss
+    // within LANDSCAPE_RESTORE_WINDOW_MS of this stamp while the landscape
+    // intent is active is the switch-triggered loss (see handleFullscreen).
+    lastSourceSwitchAt = Date.now();
     // Phase 9: capture (re-stamp) the pending seek for the NEW source —
     // position-preserving switches keep working, and the new token makes
     // any older capture inapplicable.
@@ -400,6 +451,9 @@
     const identity = `${source.sourceId}:${source.url}`;
     if (identity !== embedSurfaceIdentity) {
       embedSurfaceIdentity = identity;
+      // MAVP-5 (Issue 5): same-source URL change (episode switch) remounts
+      // the iframe too — stamp the switch window identically.
+      lastSourceSwitchAt = Date.now();
       // Phase 9: re-stamp the pending seek for the NEW surface — the old
       // capture can never land on the remounted iframe.
       capturePendingSeek(pendingSeekState, currentTime, Date.now());
@@ -494,6 +548,48 @@
     }
   }
 
+  const handleFullscreen = () => {
+    fullscreen = document.fullscreenElement === playerRoot;
+    if (!fullscreen && landscapeMode) {
+      // MAVP-5 (Issue 5): a fullscreen loss WITHIN the source-switch window
+      // while the user's landscape intent is active is the switch-triggered
+      // loss (the iframe remount dropped the focused element inside the
+      // fullscreen element). Restore the presentation ONCE instead of
+      // reverting to portrait: re-acquire Mavero fullscreen + re-issue the
+      // landscape lock (bounded by landscapeRestoreInFlight — never a
+      // duplicate lock request loop); if the platform declines, the CSS
+      // landscape presentation remains (`.landscape-mode` does not require
+      // fullscreen). The intent stays active until an explicit user exit.
+      if (landscapePresentationIntent && lastSourceSwitchAt > 0 && Date.now() - lastSourceSwitchAt <= LANDSCAPE_RESTORE_WINDOW_MS) {
+        void restoreLandscapePresentationOnce();
+        return;
+      }
+      // Phase 6: browser-initiated fullscreen exit (Esc / F11 / navigation)
+      // must release the orientation lock explicitly. The Screen Orientation
+      // API spec says the browser auto-releases the lock when the document
+      // exits fullscreen, but some browsers leave a stale lock — calling
+      // unlock() is safe (it's a no-op if the lock was already released).
+      try { orientationController()?.unlock?.(); } catch { /* unsupported */ }
+      landscapeMode = false;
+      revealControls();
+    }
+  };
+
+  /** MAVP-5 (Issue 5): ONE bounded re-acquisition attempt per fullscreen loss. */
+  async function restoreLandscapePresentationOnce() {
+    if (landscapeRestoreInFlight) return;
+    landscapeRestoreInFlight = true;
+    try {
+      if (document.fullscreenElement !== playerRoot) {
+        try { await playerRoot?.requestFullscreen?.(); } catch { /* declined — the CSS landscape presentation remains */ }
+      }
+      try { await orientationController()?.lock?.('landscape'); } catch { /* device/browser declined; CSS presentation remains */ }
+      revealControls();
+    } finally {
+      landscapeRestoreInFlight = false;
+    }
+  }
+
   onMount(() => {
     // Player startup instrumentation: the shell is visible. Measured spans
     // are DEV-only logged; marks remain inspectable in production.
@@ -557,19 +653,6 @@
     // manual Landscape control and the F-key fullscreen remain the only
     // fullscreen/orientation entry points; no hidden fallback re-introduces
     // automatic rotation after navigation or iframe mounting.
-    const handleFullscreen = () => {
-      fullscreen = document.fullscreenElement === playerRoot;
-      if (!fullscreen && landscapeMode) {
-        // Phase 6: browser-initiated fullscreen exit (Esc / F11 / navigation)
-        // must release the orientation lock explicitly. The Screen Orientation
-        // API spec says the browser auto-releases the lock when the document
-        // exits fullscreen, but some browsers leave a stale lock — calling
-        // unlock() is safe (it's a no-op if the lock was already released).
-        try { orientationController()?.unlock?.(); } catch { /* unsupported */ }
-        landscapeMode = false;
-        revealControls();
-      }
-    };
     const handleKeydown = (event: KeyboardEvent) => {
       // Phase 8: sheet focus trap + Escape takes priority over player shortcuts.
       if (sourceMenuOpen || episodeMenuOpen) {
@@ -713,6 +796,9 @@
       wakeLockDestroyed = true;
       releaseWakeLock();
       clearMediaSession();
+      // MAVP-5 (Issue 5): the presentation intent dies with the shell — no
+      // stale landscape intent can leak into the next playback session.
+      landscapePresentationIntent = false;
     };
   });
 
@@ -1068,6 +1154,8 @@
     try {
       const orientation = orientationController();
       if (entering) {
+        // MAVP-5 (Issue 5): record the user's landscape presentation intent.
+        landscapePresentationIntent = true;
         // Fullscreen belongs to MAVERO's shell. The provider iframe is never invoked or manipulated.
         await playerRoot?.requestFullscreen?.();
         try { await orientation?.lock?.('landscape'); } catch { /* device/browser declined; fullscreen layout remains active */ }
@@ -1077,6 +1165,9 @@
         // the FABs remain visible now and auto-hide after 5s of inactivity.
         revealControls();
       } else {
+        // MAVP-5 (Issue 5): an explicit user exit clears the presentation
+        // intent — a later fullscreen loss must behave exactly as before.
+        landscapePresentationIntent = false;
         try { orientation?.unlock?.(); } catch { /* unsupported */ }
         landscapeMode = false;
         if (document.fullscreenElement === playerRoot) await document.exitFullscreen?.();
@@ -1084,6 +1175,7 @@
       }
     } catch {
       landscapeMode = false;
+      landscapePresentationIntent = false;
       errorMessage = 'Landscape mode is not available in this browser.';
     } finally {
       landscapeToggleInFlight = false;
@@ -1111,6 +1203,8 @@
    * browser-initiated-exit path in the fullscreenchange handler.
    */
   async function exitMaveroFullscreen() {
+    // MAVP-5 (Issue 5): an explicit keyboard exit clears the presentation intent.
+    landscapePresentationIntent = false;
     try { orientationController()?.unlock?.(); } catch { /* unsupported */ }
     landscapeMode = false;
     if (document.fullscreenElement === playerRoot) exitFullscreenQuietly();
@@ -1248,7 +1342,7 @@
     if (!playerRoot) return false;
     const active = document.activeElement;
     if (!(active instanceof HTMLElement) || !playerRoot.contains(active)) return false;
-    return Boolean(active.closest('.back-fab, .control-fab-group, .source-chip, .direct-controls-overlay, .source-sheet, .episode-sheet'));
+    return Boolean(active.closest('.back-fab, .control-fab-group, .source-chip, .episode-chip, .direct-controls-overlay, .source-sheet, .episode-sheet'));
   }
 
   /** Open the source sheet from the bottom-right controls (focus returns there). */
@@ -1256,10 +1350,10 @@
     openSourceSheet(playerRoot ?? document.activeElement as HTMLElement);
   }
 
-  /** Open the episode sheet from the bottom-right controls. */
-  function openEpisodeSheetFromControl() {
-    openEpisodeSheet(playerRoot ?? document.activeElement as HTMLElement);
-  }
+  // MAVP-5 (Issue 4): the old openEpisodeSheetFromControl helper was removed
+  // together with the bottom-right Episodes pill — the dedicated left-edge
+  // episode chip opens the sheet directly with itself as the focus-restore
+  // trigger (openEpisodeSheet(event.currentTarget)).
 
   function retry() {
     errorMessage = '';
@@ -1722,19 +1816,11 @@
        Positioning is overridable per source via the Admin
        "Player Controls Position" config (CSS vars below). -->
   <div class="control-fab-group" class:visible={controlsVisible} style={landscapeControlStyle}>
-    {#if episodes.length}
-      <button class="fab-item" style="--fab-delay: 0ms" type="button" aria-label="Open episode list" aria-haspopup="dialog" onclick={openEpisodeSheetFromControl}>
-        <ListVideo size={18} />
-        <span class="fab-item-label">Episodes</span>
-      </button>
-    {/if}
-    <!-- MAVP-2 Phase 7: the placement style lives ONLY on the group — the
-         previous duplicate inline style on this inner button double-applied
-         the center-anchor transform (button shifted -50% twice) and forced
-         an extra style recomputation on every placement change.
-         MAVP-3 Issue 5: the group style may also carry the per-source
-         Landscape-button size (--landscape-fab-size); the custom-size class
-         applies it to the FAB ONLY (the Episodes pill keeps its own size). -->
+    <!-- MAVP-5 (Issue 4): the Episodes entry point moved OUT of the
+         Landscape control group into the dedicated left-edge episode chip
+         (mirroring the right-edge source chip) with its own independent
+         position contract. The group now carries only the Landscape FAB,
+         whose per-source positioning/sizing is byte-unchanged. -->
     <button class="control-fab landscape-fab" class:custom-size={landscapeSizePx !== null} type="button" aria-label={landscapeMode ? 'Exit landscape player' : 'Enter landscape player'} aria-pressed={landscapeMode} onclick={() => { void toggleLandscape(); }}>
       {#if landscapeMode}<Minimize2 size={22} />{:else}<Maximize2 size={22} />{/if}
     </button>
@@ -1758,6 +1844,21 @@
     <button class="source-chip" class:visible={controlsVisible} type="button" aria-label="Choose source" aria-haspopup="dialog" onclick={(event) => openSourceSheet(event.currentTarget instanceof HTMLElement ? event.currentTarget : playerRoot)}>
       <span class="source-chip-label" aria-hidden="true">{activeSourceOption?.name || 'Source'}</span>
       <span class="source-chip-bar" aria-hidden="true"></span>
+    </button>
+  {/if}
+
+  <!-- MAVP-5 (Issue 4): dedicated LEFT-edge episode chip — the exact mirror
+       of the source chip (bar + hover label + ≥44px touch target), rendered
+       ONLY when the current content supports episode selection (movies never
+       render it — the episodes list is empty there). Its position is the
+       chip's OWN per-source contract (position.episodes + sizes.episodes) —
+       it can never overwrite or share the source chip's or the Landscape
+       control's configured position. Opens the EXISTING episode sheet,
+       which now slides in from the LEFT. -->
+  {#if episodes.length}
+    <button class="episode-chip" class:visible={controlsVisible} class:custom-position={Boolean(episodesControlStyle)} class:custom-size={episodesSizePx !== null} type="button" aria-label="Choose episode" aria-haspopup="dialog" style={episodesControlStyle} onclick={(event) => openEpisodeSheet(event.currentTarget instanceof HTMLElement ? event.currentTarget : playerRoot)}>
+      <span class="episode-chip-bar" aria-hidden="true"></span>
+      <span class="episode-chip-label" aria-hidden="true">{episodeChipLabel}</span>
     </button>
   {/if}
 
@@ -1812,6 +1913,14 @@
      sizing model is explicit and order-independent, and the provider's own
      aspect handling is preserved inside the iframe. */
   .stage-wrap :global(.viewport.embed iframe) { aspect-ratio: auto; height: 100%; min-height: 0; }
+  /* MAVP-5 RC-1: the embed iframe box is EXPLICITLY bounded on both axes —
+     width:100%/height:100% size it to the stage, and the max-* invariants
+     guarantee the box can never exceed the stage even if a future rule
+     reintroduces intrinsic sizing pressure (the provider's OWN presentation
+     inside the box is untouched; no stretch, no crop — object-fit
+     untouched). The unsandboxed VidRift frame renders in exactly the same
+     bounded box as every other provider. */
+  .stage-wrap :global(.viewport.embed iframe) { max-width: 100%; max-height: 100%; }
 
   /* MAVP-4 Issue 1: embed presentation veil — opaque shell-background layer
      covering the stage while the embed loads/boots. z-index sits BETWEEN the
@@ -1887,12 +1996,27 @@
   .source-chip:active .source-chip-bar { background: var(--accent-strong); }
   .player-shell.controls-hidden .source-chip { opacity: 0; visibility: hidden; pointer-events: none; transition: opacity var(--motion-normal) var(--ease-out), visibility 0s linear var(--motion-normal); }
 
-  /* Menu items — staggered unfold animation. */
-  .fab-item { display: flex; align-items: center; gap: 8px; height: 44px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 999px; color: #fff; background: rgba(0,0,0,.65); cursor: pointer; backdrop-filter: blur(12px); box-shadow: 0 2px 10px rgba(0,0,0,.3); font: inherit; font-size: .62rem; font-weight: 600; white-space: nowrap; opacity: 0; transform: translateY(8px) scale(0.9); animation: fab-unfold 200ms var(--ease-out) var(--fab-delay, 0ms) forwards; }
-  .fab-item:hover, .fab-item:focus-visible { background: rgba(0,0,0,.85); border-color: var(--accent); }
-  .fab-item:active { transform: scale(.95); }
-  .fab-item-label { color: var(--ink-soft); }
-  @keyframes fab-unfold { to { opacity: 1; transform: translateY(0) scale(1); } }
+  /* MAVP-5 (Issue 4): LEFT-edge episode chip — the exact mirror of the
+     source chip (same bar + hover-label design system, same ≥44×64 hit
+     area, same auto-hide participation, same z-index layering). Attached to
+     the LEFT edge at the vertical centre; the hover label expands RIGHTWARD
+     (bounded max-width, ellipsis) so it can never push other controls or
+     overflow the viewport. A per-source position config overrides the
+     placement via the same inline-style pipeline as the other controls; the
+     per-source SIZE (--episodes-chip-size) applies to the chip's hit area
+     height only when configured. Movies never render it (no episodes). */
+  .episode-chip { position: absolute; z-index: 12; top: 50%; left: 0; transform: translateY(-50%); display: flex; align-items: center; justify-content: flex-start; min-width: 44px; min-height: var(--episodes-chip-size, 64px); padding: 0; border: 0; background: transparent; cursor: pointer; visibility: visible; transition: opacity var(--motion-normal) var(--ease-out), visibility 0s linear 0s; }
+  .episode-chip.custom-size { min-height: var(--episodes-chip-size, 64px); }
+  .episode-chip-bar { flex: 0 0 auto; width: 5px; height: 56px; border-radius: 0 999px 999px 0; background: var(--accent); box-shadow: inset 0 0 0 1px var(--accent-strong); backdrop-filter: blur(12px); transition: background var(--motion-fast) var(--ease-out), box-shadow var(--motion-fast) var(--ease-out); }
+  .episode-chip-label { overflow: hidden; max-width: 0; opacity: 0; white-space: nowrap; text-overflow: ellipsis; font: inherit; font-size: .6rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); background: var(--accent-soft); border: 1px solid var(--accent-soft); border-left: 0; border-radius: 0 10px 10px 0; padding: 0 0 0 0; backdrop-filter: blur(12px); transition: max-width var(--motion-fast) var(--ease-out), opacity var(--motion-fast) var(--ease-out), padding var(--motion-fast) var(--ease-out); }
+  .episode-chip:hover .episode-chip-bar, .episode-chip:focus-visible .episode-chip-bar { background: var(--accent-strong); box-shadow: inset 0 0 0 1px var(--accent); }
+  .episode-chip:hover .episode-chip-label, .episode-chip:focus-visible .episode-chip-label { max-width: min(42vw, 220px); opacity: 1; padding: 12px 14px 12px 0; margin-left: 6px; }
+  .episode-chip:active .episode-chip-bar { background: var(--accent-strong); }
+  .player-shell.controls-hidden .episode-chip { opacity: 0; visibility: hidden; pointer-events: none; transition: opacity var(--motion-normal) var(--ease-out), visibility 0s linear var(--motion-normal); }
+
+  /* MAVP-5 (Issue 4): the staggered-unfold `.fab-item` pill styles were
+     removed together with the Episodes pill (its entry point is now the
+     dedicated left-edge episode chip above). */
 
   /* Overlay cards (error/loading/completion) — centered in viewport. */
   .message-card, .completion-card, .loading-card { position: absolute; z-index: 7; right: 50%; bottom: 50%; display: flex; align-items: center; gap: 12px; max-width: min(590px, calc(100% - 36px)); transform: translate(50%, 50%); border: 1px solid var(--line); border-radius: var(--radius-md); padding: 15px 16px; color: var(--ink); background: rgba(13,13,13,.92); box-shadow: var(--shadow-lg); backdrop-filter: blur(22px); }
@@ -1913,10 +2037,11 @@
 
   /* Source/episode/streams sheets — responsive:
      compact viewport → bottom sheet; wide viewport → right drawer.
-     Based on actual viewport width (matchMedia), NOT landscapeMode. */
+     Based on actual viewport width (matchMedia), NOT landscapeMode.
+     MAVP-5 (Issue 4): the EPISODE sheet is removed from this shared rule —
+     it is now a LEFT drawer at every viewport (see below). */
   .sheet-overlay { position: absolute; z-index: 20; inset: 0; background: rgba(0,0,0,.4); backdrop-filter: blur(2px); }
-  .source-sheet, .episode-sheet { position: absolute; z-index: 21; bottom: 0; left: 0; right: 0; top: auto; max-height: 60dvh; overflow: auto; border-top: 1px solid var(--line-strong); border-radius: var(--radius-lg) var(--radius-lg) 0 0; background: rgba(13,13,13,.98); box-shadow: var(--shadow-lg); backdrop-filter: blur(28px); padding-bottom: env(safe-area-inset-bottom); transform: none; animation: sheet-up var(--motion-normal) var(--ease-out); }
-  .episode-sheet { max-height: 65dvh; }
+  .source-sheet { position: absolute; z-index: 21; bottom: 0; left: 0; right: 0; top: auto; max-height: 60dvh; overflow: auto; border-top: 1px solid var(--line-strong); border-radius: var(--radius-lg) var(--radius-lg) 0 0; background: rgba(13,13,13,.98); box-shadow: var(--shadow-lg); backdrop-filter: blur(28px); padding-bottom: env(safe-area-inset-bottom); transform: none; animation: sheet-up var(--motion-normal) var(--ease-out); }
   .sheet-handle { width: 36px; height: 4px; margin: 8px auto 4px; border-radius: 999px; background: var(--line-strong); }
   .sheet-head { display: flex; align-items: center; justify-content: space-between; padding: 4px 18px 10px; }
   .sheet-head .eyebrow { color: var(--muted); }
@@ -1956,12 +2081,21 @@
   @keyframes spin { to { transform: rotate(360deg); } }
   @keyframes sheet-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
 
-  /* Wide viewport (landscape/desktop/TV): source/episode/streams sheets
-     become right-edge drawers. Based on viewport width, NOT landscapeMode. */
+  /* MAVP-5 (Issue 4): the episode sheet opens from the LEFT at every
+     viewport — a full-height drawer sliding in from the left edge with a
+     consistent open/close animation, mirroring the right-edge source sheet
+     on wide viewports. Same surface system (z-21, blur, border, safe-area
+     bottom padding); same focus trap, Escape and focus-restore contracts. */
+  .episode-sheet { position: absolute; z-index: 21; top: 0; bottom: 0; left: 0; right: auto; width: min(360px, 88vw); max-height: none; overflow: hidden; display: grid; grid-template-rows: auto auto 1fr; border-top: 0; border-right: 1px solid var(--line-strong); border-radius: 0; background: rgba(13,13,13,.98); box-shadow: var(--shadow-lg); backdrop-filter: blur(28px); padding-bottom: 0; animation: sheet-left var(--motion-normal) var(--ease-out); }
+  .episode-sheet .sheet-list { max-height: 100%; overflow-y: auto; padding-bottom: max(14px, env(safe-area-inset-bottom)); }
+  @keyframes sheet-left { from { transform: translateX(-100%); } to { transform: translateX(0); } }
+
+  /* Wide viewport (landscape/desktop/TV): the source sheet becomes a
+     right-edge drawer (the episode sheet is a LEFT drawer at every
+     viewport — MAVP-5 Issue 4). Based on viewport width, NOT landscapeMode. */
   @media (min-width: 769px) {
-    .source-sheet, .episode-sheet { top: 0; right: 0; bottom: 0; left: auto; width: min(360px, 32vw); height: 100%; max-height: 100%; border-top: 0; border-radius: 0; border-left: 1px solid var(--line-strong); animation: slide-right var(--motion-normal) var(--ease-out); }
-    .source-sheet .sheet-list, .episode-sheet .sheet-list { max-height: 100%; overflow-y: auto; padding-bottom: max(14px, env(safe-area-inset-bottom)); }
-    .episode-sheet { width: min(380px, 34vw); }
+    .source-sheet { top: 0; right: 0; bottom: 0; left: auto; width: min(360px, 32vw); height: 100%; max-height: 100%; border-top: 0; border-radius: 0; border-left: 1px solid var(--line-strong); animation: slide-right var(--motion-normal) var(--ease-out); }
+    .source-sheet .sheet-list { max-height: 100%; overflow-y: auto; padding-bottom: max(14px, env(safe-area-inset-bottom)); }
     @keyframes slide-right { from { transform: translateX(100%); } to { transform: translateX(0); } }
   }
 
@@ -1975,15 +2109,15 @@
   @media (orientation: landscape) and (max-height: 500px) {
     .back-fab { width: 40px; height: 40px; top: max(8px, env(safe-area-inset-top)); left: max(8px, env(safe-area-inset-left)); }
     .control-fab { width: 46px; height: 46px; }
-    .fab-item { height: 40px; font-size: .58rem; }
     .source-chip { min-height: 56px; }
     .source-chip-bar { height: 48px; }
+    .episode-chip { min-height: 56px; }
+    .episode-chip-bar { height: 48px; }
   }
 
   @media (prefers-reduced-motion: reduce) {
     .loading-ring, :global(.spin) { animation: none; }
-    .back-fab, .control-fab, .control-fab-group, .direct-controls-overlay, .source-chip, .source-chip-label { transition: none; }
-    .fab-item { animation: none; opacity: 1; transform: none; }
+    .back-fab, .control-fab, .control-fab-group, .direct-controls-overlay, .source-chip, .source-chip-label, .episode-chip, .episode-chip-label { transition: none; }
     .source-sheet, .episode-sheet { animation: none; }
   }
 </style>

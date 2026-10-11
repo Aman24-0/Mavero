@@ -35,7 +35,7 @@
   // the runtime player — the serialized payload is parsed by the real total
   // parser and mapped by the shared preview geometry helper, so the preview
   // can never diverge from the runtime interpretation.
-  import { CONTROLS_SIZE_MIN_PX, CONTROLS_SIZE_MAX_PX, BACK_CONTROL_DEFAULT_SIZE_PX, LANDSCAPE_CONTROL_DEFAULT_SIZE_PX, parsePlayerControlsPosition, controlsPreviewMarkerStyle, CONTROLS_PREVIEW_REFERENCE_PORTRAIT, CONTROLS_PREVIEW_REFERENCE_LANDSCAPE } from '$lib/shared/player-controls-position';
+  import { CONTROLS_SIZE_MIN_PX, CONTROLS_SIZE_MAX_PX, BACK_CONTROL_DEFAULT_SIZE_PX, LANDSCAPE_CONTROL_DEFAULT_SIZE_PX, EPISODES_CONTROL_DEFAULT_SIZE_PX, parsePlayerControlsPosition, controlsPreviewMarkerStyle, CONTROLS_PREVIEW_REFERENCE_PORTRAIT, CONTROLS_PREVIEW_REFERENCE_LANDSCAPE } from '$lib/shared/player-controls-position';
   import type { PageData, ActionData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -268,16 +268,19 @@
   const emptyControlDraft = (): ControlsControlDraft => ({ portrait: emptyProfileDraft(), landscape: emptyProfileDraft() });
 
   let controlsPositionMode = $state('default');
-  let positionDraft = $state<{ landscapeControl: ControlsControlDraft; back: ControlsControlDraft }>({
+  let positionDraft = $state<{ landscapeControl: ControlsControlDraft; back: ControlsControlDraft; episodes: ControlsControlDraft }>({
     landscapeControl: emptyControlDraft(),
     back: emptyControlDraft(),
+    episodes: emptyControlDraft(),
   });
   // MAVP-3 Issue 5: independent per-control SIZE drafts (Back button,
   // Landscape button) in px. Empty string = default size (44/48 — the
   // player's stylesheet values). Sizes are orientation-independent and fully
   // independent of the placement axes: editing a size never touches any
   // anchor/offset draft and vice versa, and each control's size is its own.
-  let controlsSizesDraft = $state<{ back: string; landscape: string }>({ back: '', landscape: '' });
+  // MAVP-5 (Issue 4): the Episodes chip carries its OWN size draft
+  // (default 64) — independent from the other controls.
+  let controlsSizesDraft = $state<{ back: string; landscape: string; episodes: string }>({ back: '', landscape: '', episodes: '' });
   // Preview/calibration orientation — which orientation the preview stage and
   // its control markers are currently showing.
   let positionPreviewOrientation = $state<'portrait' | 'landscape'>('landscape');
@@ -307,6 +310,7 @@
     controlsSizesDraft = {
       back: readSizeDraft(storedSizes?.back),
       landscape: readSizeDraft(storedSizes?.landscape),
+      episodes: readSizeDraft(storedSizes?.episodes),
     };
     positionDraft = {
       // Landscape control: prefill each orientation profile from its stored
@@ -333,23 +337,36 @@
           v: readLegacyAxis(custom?.back?.landscape?.vertical, ['top', 'bottom', 'center']),
         },
       },
+      // Episodes chip (MAVP-5 Issue 4): independent — never inherits the
+      // Back or Landscape control's stored axes. Its default corner is the
+      // LEFT edge at the vertical centre (mirroring the source chip).
+      episodes: {
+        portrait: {
+          h: readLegacyAxis(custom?.episodes?.portrait?.horizontal, ['left', 'right', 'center']),
+          v: readLegacyAxis(custom?.episodes?.portrait?.vertical, ['top', 'bottom', 'center']),
+        },
+        landscape: {
+          h: readLegacyAxis(custom?.episodes?.landscape?.horizontal, ['left', 'right', 'center']),
+          v: readLegacyAxis(custom?.episodes?.landscape?.vertical, ['top', 'bottom', 'center']),
+        },
+      },
     };
   }
 
-  function resetControlProfile(control: 'landscapeControl' | 'back', orientation: 'portrait' | 'landscape') {
+  function resetControlProfile(control: 'landscapeControl' | 'back' | 'episodes', orientation: 'portrait' | 'landscape') {
     positionDraft[control][orientation] = emptyProfileDraft();
   }
 
   /** MAVP-3 Issue 5: reset ONE control's size without touching any other
    *  setting (its placement profiles, its axes, and the other control's
    *  size all stay exactly as edited). */
-  function resetControlSize(control: 'back' | 'landscape') {
+  function resetControlSize(control: 'back' | 'landscape' | 'episodes') {
     controlsSizesDraft = { ...controlsSizesDraft, [control]: '' };
   }
 
   function resetAllControlsPosition() {
-    positionDraft = { landscapeControl: emptyControlDraft(), back: emptyControlDraft() };
-    controlsSizesDraft = { back: '', landscape: '' };
+    positionDraft = { landscapeControl: emptyControlDraft(), back: emptyControlDraft(), episodes: emptyControlDraft() };
+    controlsSizesDraft = { back: '', landscape: '', episodes: '' };
     controlsPositionMode = 'default';
   }
 
@@ -383,7 +400,7 @@
   }
 
   /** MAVP-3 Issue 5: the active size draft for the calibration preview markers. */
-  function previewMarkerSize(control: 'back' | 'landscape'): number | null {
+  function previewMarkerSize(control: 'back' | 'landscape' | 'episodes'): number | null {
     return serializeSizeDraft(controlsSizesDraft[control]);
   }
 
@@ -415,6 +432,19 @@
         vertical: serializeAxisDraft(positionDraft.back.landscape.v, ['top', 'bottom', 'center']),
       },
     };
+    // MAVP-5 (Issue 4): the Episodes chip — its OWN section in the stored
+    // contract, serialized independently (it can never overwrite or share
+    // the Back/Landscape controls' configured positions).
+    const episodes = {
+      portrait: {
+        horizontal: serializeAxisDraft(positionDraft.episodes.portrait.h, ['left', 'right', 'center']),
+        vertical: serializeAxisDraft(positionDraft.episodes.portrait.v, ['top', 'bottom', 'center']),
+      },
+      landscape: {
+        horizontal: serializeAxisDraft(positionDraft.episodes.landscape.h, ['left', 'right', 'center']),
+        vertical: serializeAxisDraft(positionDraft.episodes.landscape.v, ['top', 'bottom', 'center']),
+      },
+    };
     const payload: Record<string, unknown> = { mode: 'custom' };
     const lcPortrait: Record<string, unknown> = {};
     const lcLandscape: Record<string, unknown> = {};
@@ -426,12 +456,24 @@
     if (back.portrait.horizontal || back.portrait.vertical) backOut.portrait = Object.fromEntries(Object.entries(back.portrait).filter(([, v]) => v !== null));
     if (back.landscape.horizontal || back.landscape.vertical) backOut.landscape = Object.fromEntries(Object.entries(back.landscape).filter(([, v]) => v !== null));
     if (Object.keys(backOut).length) payload.back = backOut;
+    const episodesOut: Record<string, unknown> = {};
+    if (episodes.portrait.horizontal || episodes.portrait.vertical) episodesOut.portrait = Object.fromEntries(Object.entries(episodes.portrait).filter(([, v]) => v !== null));
+    if (episodes.landscape.horizontal || episodes.landscape.vertical) episodesOut.landscape = Object.fromEntries(Object.entries(episodes.landscape).filter(([, v]) => v !== null));
+    if (Object.keys(episodesOut).length) payload.episodes = episodesOut;
     // MAVP-3 Issue 5: independent per-control sizes — serialized ONLY when at
     // least one is set; each entry stands alone (one control's size never
-    // carries or resets the other's).
+    // carries or resets the other's). MAVP-5 (Issue 4): the Episodes chip
+    // size rides the same section.
     const backSize = serializeSizeDraft(controlsSizesDraft.back);
     const landscapeSize = serializeSizeDraft(controlsSizesDraft.landscape);
-    if (backSize !== null || landscapeSize !== null) payload.sizes = { ...(backSize !== null ? { back: backSize } : {}), ...(landscapeSize !== null ? { landscape: landscapeSize } : {}) };
+    const episodesSize = serializeSizeDraft(controlsSizesDraft.episodes);
+    if (backSize !== null || landscapeSize !== null || episodesSize !== null) {
+      payload.sizes = {
+        ...(backSize !== null ? { back: backSize } : {}),
+        ...(landscapeSize !== null ? { landscape: landscapeSize } : {}),
+        ...(episodesSize !== null ? { episodes: episodesSize } : {}),
+      };
+    }
     if (Object.keys(payload).length === 1) return JSON.stringify({ mode: 'default' });
     return JSON.stringify(payload);
   });
@@ -457,16 +499,23 @@
     }
   });
 
-  /** Shared-resolver inline styles for the two preview markers. */
+  /** Shared-resolver inline styles for the three preview markers. */
   const previewBackStyle = $derived(controlsPreviewMarkerStyle(previewPosition, 'back', positionPreviewOrientation));
   const previewLandscapeStyle = $derived(controlsPreviewMarkerStyle(previewPosition, 'landscape', positionPreviewOrientation));
+  // MAVP-5 (Issue 4): the Episodes chip marker renders through the SAME
+  // shared resolver — defaults, configured anchors/offsets, sizes and resets
+  // are previewed exactly like the runtime interprets them.
+  const previewEpisodesStyle = $derived(controlsPreviewMarkerStyle(previewPosition, 'episodes', positionPreviewOrientation));
 
   // Section template loops (typed so the per-control reset + bindings stay
   // literal-union safe).
   const POSITION_ORIENTATIONS: Array<'portrait' | 'landscape'> = ['portrait', 'landscape'];
-  const POSITION_CONTROLS: Array<{ id: 'landscapeControl' | 'back'; title: string }> = [
-    { id: 'landscapeControl', title: 'Landscape button' },
-    { id: 'back', title: 'Back button' },
+  const POSITION_CONTROLS: Array<{ id: 'landscapeControl' | 'back' | 'episodes'; title: string; sizeKey: 'landscape' | 'back' | 'episodes'; defaultSize: number }> = [
+    { id: 'landscapeControl', title: 'Landscape button', sizeKey: 'landscape', defaultSize: LANDSCAPE_CONTROL_DEFAULT_SIZE_PX },
+    { id: 'back', title: 'Back button', sizeKey: 'back', defaultSize: BACK_CONTROL_DEFAULT_SIZE_PX },
+    // MAVP-5 (Issue 4): the Episodes chip has its own placement + size —
+    // fully independent from the other controls.
+    { id: 'episodes', title: 'Episodes chip', sizeKey: 'episodes', defaultSize: EPISODES_CONTROL_DEFAULT_SIZE_PX },
   ];
 
   function openCreateSource(event?: Event) {
@@ -502,6 +551,17 @@
   }
   function defaultForType(type: string): any | null {
     return data.defaults.find((d: any) => d.content_type === type) ?? null;
+  }
+  // MAVP-5 (Issue 6): ordered default slots for one content type — the
+  // saved slot rows in position order (1..3). Falls back to the legacy
+  // single default as a one-entry order so pre-migration configurations
+  // render identically before any slot row exists.
+  function slotsForType(type: string): string[] {
+    const rows = ((data.defaultSlots ?? []) as any[]).filter((row) => row.content_type === type).sort((a, b) => a.position - b.position);
+    const ids = rows.map((row) => row.source_id as string).filter(Boolean);
+    if (ids.length) return ids;
+    const legacy = defaultForType(type);
+    return legacy?.source_id ? [legacy.source_id as string] : [];
   }
   function sourceName(sourceId: string | null): string {
     if (!sourceId) return '—';
@@ -688,30 +748,45 @@
         <button type="button" class="a2-sheet-close" onclick={() => { defaultsOpen = false; }} aria-label="Close"><X size={16} /></button>
       </header>
       <div class="a2-sheet-body">
-        <p class="a2-sheet-desc">Configure which source is preferred for each content type.</p>
+        <p class="a2-sheet-desc">Configure the preferred source order for each content type: a primary choice plus two automatic fallbacks. When the primary source cannot play a title, Mavero tries the fallbacks in order before any other source.</p>
         {#each CONTENT_TYPES as ct}
-          {@const def = defaultForType(ct.type)}
+          {@const slotIds = slotsForType(ct.type)}
           <div class="a2-default-row">
             <div class="a2-default-row-label">
               <span class="a2-default-row-type">{ct.label}</span>
               <span class="a2-default-row-current">
-                {#if def?.source_id}Current: <strong>{sourceName(def.source_id)}</strong>{:else}<span class="a2-default-row-none">No default set</span>{/if}
+                {#if slotIds.length}Current: <strong>{slotIds.map((id) => sourceName(id)).join(' → ')}</strong>{:else}<span class="a2-default-row-none">No default set</span>{/if}
               </span>
             </div>
             <div class="a2-default-row-control">
-              <form method="POST" action="?/saveDefault" style="display:flex; gap:4px; flex:1;">
+              <!-- MAVP-5 (Issue 6): THREE ordered slots per category —
+                   primary (1), secondary fallback (2), tertiary fallback (3).
+                   One form posts all three in order (slot_source repeated
+                   field; position = order of appearance). Already-chosen
+                   sources are disabled in the OTHER slots of the same
+                   category (distinct choices); ineligible sources stay
+                   disabled everywhere (same rule as before). -->
+              <form method="POST" action="?/saveDefaultSlots" style="display:flex; gap:4px; flex:1; flex-wrap:wrap;">
                 <input type="hidden" name="content_type" value={ct.type} />
-                <select name="source_id" class="a2-default-select">
-                  <option value="">— Select —</option>
-                  {#each data.sources as source (source.id)}
-                    {@const eligible = isSourceEligible(source)}
-                    <option value={source.id} selected={def?.source_id === source.id} disabled={!eligible}>
-                      {source.name}{#if !eligible} (ineligible){/if}
-                    </option>
-                  {/each}
-                </select>
-                <button type="submit" class="a2-default-save">Save</button>
-                {#if def?.source_id}
+                {#each [0, 1, 2] as slotIndex}
+                  {@const chosen = slotIds[slotIndex] ?? ''}
+                  {@const positionLabel = slotIndex === 0 ? 'Primary' : slotIndex === 1 ? 'Secondary' : 'Tertiary'}
+                  <label class="a2-default-slot">
+                    <span class="a2-default-slot-label">{positionLabel}</span>
+                    <select name="slot_source" class="a2-default-select">
+                      <option value="">— None —</option>
+                      {#each data.sources as source (source.id)}
+                        {@const eligible = isSourceEligible(source)}
+                        {@const chosenElsewhere = slotIds.some((id, i) => i !== slotIndex && id === source.id)}
+                        <option value={source.id} selected={chosen === source.id} disabled={!eligible || chosenElsewhere}>
+                          {source.name}{#if !eligible} (ineligible){:else if chosenElsewhere} (already chosen){/if}
+                        </option>
+                      {/each}
+                    </select>
+                  </label>
+                {/each}
+                <button type="submit" class="a2-default-save">Save order</button>
+                {#if slotIds.length}
                   <button type="submit" formaction="?/clearDefault" name="content_type" value={ct.type} class="a2-default-clear">Clear</button>
                 {/if}
               </form>
@@ -955,12 +1030,12 @@
             {#each POSITION_CONTROLS as control}
               <div class="a2-position-control-group">
                 <div class="a2-position-control-head">
-                  <span class="a2-position-control-title">{control.title} size (px, {CONTROLS_SIZE_MIN_PX}–{CONTROLS_SIZE_MAX_PX}{control.id === 'back' ? `, default ${BACK_CONTROL_DEFAULT_SIZE_PX}` : `, default ${LANDSCAPE_CONTROL_DEFAULT_SIZE_PX}`})</span>
-                  <button type="button" class="a2-btn-mini" onclick={() => resetControlSize(control.id === 'back' ? 'back' : 'landscape')}>Reset size</button>
+                  <span class="a2-position-control-title">{control.title} size (px, {CONTROLS_SIZE_MIN_PX}–{CONTROLS_SIZE_MAX_PX}, default {control.defaultSize})</span>
+                  <button type="button" class="a2-btn-mini" onclick={() => resetControlSize(control.sizeKey)}>Reset size</button>
                 </div>
                 <div class="a2-position-grid">
                   <label class="a2-field"><span>Size px</span>
-                    <input type="number" min={CONTROLS_SIZE_MIN_PX} max={CONTROLS_SIZE_MAX_PX} step="1" bind:value={controlsSizesDraft[control.id === 'back' ? 'back' : 'landscape']} placeholder="default" />
+                    <input type="number" min={CONTROLS_SIZE_MIN_PX} max={CONTROLS_SIZE_MAX_PX} step="1" bind:value={controlsSizesDraft[control.sizeKey]} placeholder="default" />
                   </label>
                 </div>
               </div>
@@ -985,7 +1060,8 @@
             <span class="a2-position-preview-provider" aria-hidden="true"></span>
             <span class="a2-position-preview-back" aria-hidden="true" style={previewBackStyle}></span>
             <span class="a2-position-preview-dot" aria-hidden="true" style={previewLandscapeStyle}></span>
-            <span class="a2-position-preview-caption" aria-hidden="true">{positionPreviewOrientation} preview · back {previewMarkerSize('back') ?? BACK_CONTROL_DEFAULT_SIZE_PX}px · landscape {previewMarkerSize('landscape') ?? LANDSCAPE_CONTROL_DEFAULT_SIZE_PX}px · scaled from {positionPreviewOrientation === 'portrait' ? `${CONTROLS_PREVIEW_REFERENCE_PORTRAIT.width}×${CONTROLS_PREVIEW_REFERENCE_PORTRAIT.height}` : `${CONTROLS_PREVIEW_REFERENCE_LANDSCAPE.width}×${CONTROLS_PREVIEW_REFERENCE_LANDSCAPE.height}`} reference</span>
+            <span class="a2-position-preview-episode" aria-hidden="true" style={previewEpisodesStyle}></span>
+            <span class="a2-position-preview-caption" aria-hidden="true">{positionPreviewOrientation} preview · back {previewMarkerSize('back') ?? BACK_CONTROL_DEFAULT_SIZE_PX}px · landscape {previewMarkerSize('landscape') ?? LANDSCAPE_CONTROL_DEFAULT_SIZE_PX}px · episodes {previewMarkerSize('episodes') ?? EPISODES_CONTROL_DEFAULT_SIZE_PX}px · scaled from {positionPreviewOrientation === 'portrait' ? `${CONTROLS_PREVIEW_REFERENCE_PORTRAIT.width}×${CONTROLS_PREVIEW_REFERENCE_PORTRAIT.height}` : `${CONTROLS_PREVIEW_REFERENCE_LANDSCAPE.width}×${CONTROLS_PREVIEW_REFERENCE_LANDSCAPE.height}`} reference</span>
           </div>
           <button type="button" class="a2-btn-secondary" onclick={resetAllControlsPosition}>Reset all positioning</button>
         {/if}
@@ -1002,6 +1078,10 @@
   .a2-notice { display: inline-flex; align-items: center; gap: var(--a2-space-2); padding: var(--a2-space-2) var(--a2-space-3); background: var(--a2-green-soft); border: 1px solid var(--a2-green-border); border-radius: var(--a2-radius-sm); color: var(--a2-green); font-size: var(--a2-text-sm); }
   .a2-form-error { padding: var(--a2-space-2) var(--a2-space-3); background: var(--a2-red-soft); border: 1px solid var(--a2-red-border); border-radius: var(--a2-radius-sm); color: var(--a2-red); font-size: var(--a2-text-sm); }
   .a2-defaults-btn { display: inline-flex; align-items: center; gap: var(--a2-space-2); padding: var(--a2-space-2) var(--a2-space-4); background: var(--a2-surface-3); border: 1px solid var(--a2-border-strong); border-radius: var(--a2-radius-sm); color: var(--a2-text); font-size: var(--a2-text-sm); font-weight: 600; cursor: pointer; }
+  /* MAVP-5 (Issue 6): ordered slot selects — three labelled selects per
+     category row, wrapping on narrow viewports without breaking the sheet. */
+  .a2-default-slot { display: flex; flex-direction: column; gap: 2px; min-width: 150px; flex: 1 1 150px; }
+  .a2-default-slot-label { color: var(--a2-text-muted); font-size: var(--a2-text-xs); letter-spacing: 0.04em; text-transform: uppercase; }
   .a2-defaults-btn:hover { background: var(--a2-cyan-soft); border-color: var(--a2-cyan); color: var(--a2-cyan); }
   .a2-empty { display: flex; flex-direction: column; align-items: center; gap: var(--a2-space-3); padding: var(--a2-space-8); text-align: center; color: var(--a2-text-muted); }
   .a2-empty h3 { margin: 0; font-size: var(--a2-text-base); color: var(--a2-text); }
@@ -1099,6 +1179,10 @@
   .a2-position-preview-provider { position: absolute; right: 8%; bottom: 10%; width: 18px; height: 10px; border: 1px dashed rgba(255,255,255,.35); border-radius: 2px; }
   .a2-position-preview-dot { position: absolute; border-radius: 50%; background: var(--a2-cyan); box-shadow: 0 0 0 4px rgba(0,0,0,.35), 0 0 10px var(--a2-cyan); }
   .a2-position-preview-back { position: absolute; border-radius: 4px; background: var(--a2-green, #7ee2a8); box-shadow: 0 0 0 4px rgba(0,0,0,.35), 0 0 10px var(--a2-green, #7ee2a8); }
+  /* MAVP-5 (Issue 4): the Episodes-chip preview marker — a slim vertical
+     bar mirroring the chip's real shape, positioned by the SAME shared
+     resolver as the runtime (left edge / vertical centre by default). */
+  .a2-position-preview-episode { position: absolute; border-radius: 3px; background: var(--a2-amber, #f5b942); box-shadow: 0 0 0 4px rgba(0,0,0,.35), 0 0 10px var(--a2-amber, #f5b942); }
   .a2-position-preview-caption { position: absolute; left: 8px; top: 6px; font-size: 9px; letter-spacing: .08em; text-transform: uppercase; color: rgba(255,255,255,.45); }
 
   @media (max-width: 768px) {

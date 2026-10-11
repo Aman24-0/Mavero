@@ -300,6 +300,11 @@ export class PlaybackManager {
         // Only forwarded when allowFallback is true (manual source switches
         // pass allowFallback=false and do not want the default forced back).
         if (allowFallback && request.defaultSourceId) body.defaultSourceId = request.defaultSourceId;
+        // MAVP-5 (Issue 6): the admin-configured ORDERED default sources
+        // (primary → secondary → tertiary) — forwarded only when
+        // allowFallback is true, same policy as the single default. The
+        // resolver attempts each in order before health-ranked fallback.
+        if (allowFallback && request.defaultSourceIds?.length) body.defaultSourceIds = request.defaultSourceIds;
         // Phase 7F (MegaPlay): forward the user-selected playback variant
         // (e.g. 'sub' or 'dub'). Adapters that do not support variants
         // ignore this field. MegaPlay's resolver adapter substitutes the
@@ -414,7 +419,20 @@ export class PlaybackManager {
         resolving: false,
         state: initialPlaybackState,
         resolutionState: 'ready',
-        resolutionMessage: resolvedSource.type === 'direct' ? 'MAVERO direct playback is ready.' : 'Provider embed is ready inside the MAVERO shell.',
+        // MAVP-5 (Issue 6): when the resolver walked the ordered defaults /
+        // fallback candidates and landed on a DIFFERENT source than the one
+        // that was requested, the loading card carries the documented
+        // fallback message during the transition to the new source. The
+        // message is inherently bounded: it is shown by the single loading
+        // card, which unmounts at the presentation reveal (playback is
+        // live), at the terminal error card, or at the bounded embed-load
+        // timeout — it can never remain stuck after success or failure.
+        // Manual source switches (allowFallback=false) never enter the
+        // fallback walk, so the message can never appear for an explicit
+        // user selection.
+        resolutionMessage: resolvedSource.sourceId !== request.sourceId
+          ? 'Streaming not available, changing to a better source.'
+          : resolvedSource.type === 'direct' ? 'MAVERO direct playback is ready.' : 'Provider embed is ready inside the MAVERO shell.',
         capabilities,
       });
       // Phase 8: clear the resolver timeout on successful resolution.
@@ -778,6 +796,16 @@ export type ResolverRequest = {
    * behavior).
    */
   defaultSourceId?: string;
+  /**
+   * MAVP-5 (Issue 6): the admin-configured ORDERED default sources
+   * (primary → secondary → tertiary) for the content type. Forwarded to
+   * `/api/playback/resolve` so the resolver can attempt each in order
+   * before health-ranked fallback. Only forwarded when `allowFallback` is
+   * true — manual source switches never re-enter the default chain. When
+   * absent, the single `defaultSourceId` (and then ranking-only order)
+   * applies.
+   */
+  defaultSourceIds?: string[];
   /**
    * Phase 7F (MegaPlay): optional playback variant requested by the user
    * (e.g. 'sub' or 'dub'). Forwarded to `/api/playback/resolve`. Only

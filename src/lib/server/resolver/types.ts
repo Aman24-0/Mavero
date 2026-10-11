@@ -26,6 +26,17 @@ export type ResolverRequest = {
    */
   defaultSourceId?: string;
   /**
+   * MAVP-5 (Issue 6): the admin-configured ORDERED default sources for the
+   * content type — up to three distinct ids in explicit attempt order
+   * (primary → secondary → tertiary). When `allowFallback !== false`, the
+   * resolver attempts each in order (each at most once) before the
+   * health-ranked fallback walk; ineligible/deleted/disabled entries are
+   * skipped exactly like the single default always was. `defaultSourceId`
+   * remains supported for backward compatibility and is treated as a
+   * one-entry order when `defaultSourceIds` is absent.
+   */
+  defaultSourceIds?: string[];
+  /**
    * Phase 7F (MegaPlay): optional playback variant requested by the user.
    * Currently only consumed by the MegaPlay anime adapter to switch
    * between SUB and DUB audio. Adapters that do not support variants

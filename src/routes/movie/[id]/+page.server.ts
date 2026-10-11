@@ -4,7 +4,18 @@ import { toMediaItem } from '$lib/server/content/presenter';
 import { canAccessAdultContent } from '$lib/server/content/adult-policy';
 import type { PageServerLoad } from './$types';
 
-export const load: PageServerLoad = async ({ params, locals, cookies }) => {
+export const load: PageServerLoad = async ({ params, locals, cookies, setHeaders }) => {
+  // MAVP-5 (RC-7 — slow Back navigation from the player): the detail data
+  // response carries a SHORT PRIVATE cache policy. The SvelteKit client
+  // router honors it, so the history.back() navigation from the player
+  // paints the detail page from the just-populated cache within the TTL
+  // instead of re-executing this load (a serverless invocation + a possible
+  // TMDB roundtrip) before every Back. TMDB detail data is effectively
+  // static on a 60 s scale (the server-side content cache TTL is 30 min),
+  // so freshness guarantees are unchanged; `private` keeps the payload out
+  // of shared/CDN caches. The header is set on the SUCCESS path only
+  // (directly before the return) so a thrown 404/adult-gate error response
+  // is never cacheable.
   try {
     // MAV-20 Phase D — the page load fetches the PARENT detail only.
     //
@@ -34,6 +45,8 @@ export const load: PageServerLoad = async ({ params, locals, cookies }) => {
     // carries the parent only. toMediaItem maps an allowlist of card
     // fields, so the detail's raw embedded recommendation rows never
     // serialize into the page payload.
+    // MAVP-5 (RC-7): success-path-only cache policy (see the header comment).
+    setHeaders({ 'cache-control': 'private, max-age=60' });
     return { item: toMediaItem(detail), recommendations: [] };
   } catch {
     throw error(404, 'Movie not found');

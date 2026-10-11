@@ -205,8 +205,16 @@ function rawRegionCode(source: string, startMarker: string, endMarker: string): 
   // 2.3 The document scroll lock (project convention, applied + removed with the shell).
   ok(shellCode.includes("document.documentElement.setAttribute('data-player-open', '');"), '2.3a the shell sets the html data-player-open attribute on mount');
   ok(shellCode.includes("document.documentElement.removeAttribute('data-player-open');"), '2.3b the shell removes the attribute on destroy (never global)');
-  ok(appCss.includes('html[data-player-open] body { overflow: hidden; }'), '2.3c app.css locks the body scroll under the established convention');
-  const lockComments = appCss.includes('Player route scroll lock (MAVP-4 Issue 2)');
+  // MAVP-5 RC-1 supersession: the lock is COMPLETED at the root — the html
+  // element is locked too (both axes) and both rules carry
+  // overscroll-behavior: none (gesture chaining from the only unsandboxed
+  // embed is absorbed). The body rule is a strict superset of the MAVP-4
+  // contract (stronger assertion, same attribute lifecycle).
+  ok(appCss.includes('html[data-player-open] body { overflow: hidden; overscroll-behavior: none; }'), '2.3c app.css locks the body scroll under the established convention (MAVP-5: + overscroll-behavior)');
+  ok(appCss.includes('html[data-player-open] { overflow: hidden; overscroll-behavior: none; }'), '2.3c-MAVP5 the html ROOT scroller is locked too (VidRift gesture-chaining absorbed)');
+  // MAVP-5 RC-1 supersession: the lock comment now documents BOTH the MAVP-4
+  // introduction and the MAVP-5 root-level completion.
+  const lockComments = appCss.includes('Player route scroll lock (MAVP-4 Issue 2; completed by MAVP-5 RC-1)');
   ok(lockComments, '2.3d the scroll lock is documented in app.css');
   // The lock must NOT be touch-action:none (the player needs its gestures).
   ok(!/html\[data-player-open\] body \{[^}]*touch-action:\s*none/.test(appCss), '2.3e the player scroll lock does not disable touch gestures');

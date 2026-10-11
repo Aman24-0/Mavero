@@ -232,6 +232,11 @@ function section_registry(): void {
   // CHECK-constraint widening on streaming_sources.icon/badge only (rich
   // icons + extensible badges). No registry/download_provider tables touched.
   const mavp4IconBadgeMigration = '20261106000000_source_icon_badge_contracts.sql';
+  // MAVP-5 (sanctioned): ordered default-source slots — additive NEW table
+  // (streaming_default_source_slots) + idempotent backfill. No registry /
+  // download_provider / cloudstream tables touched; the legacy single-default
+  // table is unchanged.
+  const mavp5DefaultSlotsMigration = '20261107000000_default_source_slots.sql';
   const added = migrations.filter((name) => !pristineMigrations.includes(name));
   const phase2Sql = read(`supabase/migrations/${phase2Migration}`);
   const phase2SqlNoComments = phase2Sql.replace(/--[^\n]*/g, '');
@@ -240,7 +245,7 @@ function section_registry(): void {
   const unifiedSql = read(`supabase/migrations/${unifiedMigration}`);
   const unifiedSqlNoComments = unifiedSql.replace(/--[^\n]*/g, '');
   ok(
-    added.length === 9
+    added.length === 10
       && added.includes(migrationName)
       && added.includes(phase2Migration)
       && added.includes(phase3Migration)
@@ -249,8 +254,9 @@ function section_registry(): void {
       && added.includes(liveTvAnalyticsMigration)
       && added.includes(liveTvFallbackMigration)
       && added.includes(vidriftProviderMigration)
-      && added.includes(mavp4IconBadgeMigration),
-    `§A10: exactly the CS-5 + Phase 2 + Phase 3 + FINAL TASK + build-lifecycle + LT-5-analytics + LT-15-fallback-event + VidRift-provider + MAVP-4-icon-badge migrations were added (${added.join(', ') || 'none'})`,
+      && added.includes(mavp4IconBadgeMigration)
+      && added.includes(mavp5DefaultSlotsMigration),
+    `§A10: exactly the CS-5 + Phase 2 + Phase 3 + FINAL TASK + build-lifecycle + LT-5-analytics + LT-15-fallback-event + VidRift-provider + MAVP-4-icon-badge + MAVP-5-default-slots migrations were added (${added.join(', ') || 'none'})`,
   );
   // VIDRIFT (sanctioned): insert-only registration — no destructive verbs,
   // no download_providers / registry-table references.

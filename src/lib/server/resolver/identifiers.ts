@@ -36,6 +36,21 @@ export function parseResolverRequest(input: unknown): ResolverRequest {
   if (typeof input.defaultSourceId === 'string' && uuidPattern.test(input.defaultSourceId)) {
     request.defaultSourceId = input.defaultSourceId;
   }
+  // MAVP-5 (Issue 6): the ORDERED default sources (primary → secondary →
+  // tertiary). Strictly validated: each entry must be a UUID, at most
+  // three, all distinct; anything malformed drops the whole list (the
+  // request stays valid — the resolver just proceeds without ordered
+  // defaults, exactly as it does when no default is configured). A legacy
+  // `defaultSourceId` becomes a one-entry order when the array is absent.
+  if (Array.isArray(input.defaultSourceIds)) {
+    const rawIds = input.defaultSourceIds;
+    if (rawIds.length <= 3 && rawIds.every((id) => typeof id === 'string' && uuidPattern.test(id)) && new Set(rawIds).size === rawIds.length) {
+      request.defaultSourceIds = rawIds as string[];
+    }
+  }
+  if (!request.defaultSourceIds && request.defaultSourceId) {
+    request.defaultSourceIds = [request.defaultSourceId];
+  }
   // Phase 7F (MegaPlay): optional playback variant. Lowercased, length-bounded
   // (e.g. 'sub' or 'dub'). Adapters that do not support variants ignore it.
   if (typeof input.variant === 'string' && input.variant.length > 0 && input.variant.length <= 16 && /^[a-z0-9_-]+$/i.test(input.variant)) {

@@ -29,3 +29,29 @@ export function applyDefaultSourceOrdering(configs: TrustedResolutionConfig[], d
   }
   return reordered;
 }
+
+/**
+ * MAVP-5 (Issue 6): ordered-default variant. Moves EVERY configured default
+ * to the front of the candidate list, in the given attempt order (primary →
+ * secondary → tertiary), preserving the relative order of the remaining
+ * candidates. Idempotent and additive-only: defaults not present in the
+ * list are ignored (never injected); the ranking gates still apply to every
+ * candidate. The single-id function above remains the exact behavior for a
+ * one-element order (and stays exported for the Phase 2 contract tests).
+ */
+export function applyOrderedDefaultSourceOrdering(configs: TrustedResolutionConfig[], defaultSourceIds: readonly string[] | undefined): TrustedResolutionConfig[] {
+  if (!defaultSourceIds || defaultSourceIds.length === 0 || configs.length <= 1) return configs;
+  const orderedDefaults = [...defaultSourceIds].reverse(); // front-insert from the last so the first ends up first
+  const remaining = [...configs];
+  const reordered: TrustedResolutionConfig[] = [];
+  for (const defaultId of orderedDefaults) {
+    const index = remaining.findIndex((config) => config.source.id === defaultId);
+    if (index === -1) continue; // Not in the candidate list — never injected.
+    reordered.unshift(remaining.splice(index, 1)[0]);
+  }
+  // `reordered` holds the defaults in attempt order (each unshift placed its
+  // predecessor in front), followed by the untouched remainder — except when
+  // NO default was found, in which case the input is returned unchanged.
+  if (!reordered.length) return configs;
+  return [...reordered, ...remaining];
+}

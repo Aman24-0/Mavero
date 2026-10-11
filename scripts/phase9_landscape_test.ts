@@ -32,9 +32,10 @@ assert.match(shell, /\.control-fab-group \{[^}]*bottom: max\(16px/, 'control FAB
 // 4. Menu unfolds with staggered animation
 // ============================================================
 
-assert.match(shell, /class="fab-item"/, 'menu items exist');
-assert.match(shell, /--fab-delay/, 'staggered delay variable exists');
-assert.match(shell, /@keyframes fab-unfold/, 'unfold animation exists');
+// MAVP-5 Issue 4 supersession: the staggered fab-item pill became the
+// dedicated episode chip + the left-opening episode drawer.
+assert.match(shell, /class="episode-chip"/, 'episode chip exists (replaces the menu fab-item)');
+assert.match(shell, /@keyframes sheet-left/, 'left drawer animation exists (MAVP-5 episode sheet)');
 
 // ============================================================
 // 5. Auto-hide — UPDATED: FIVE-second timer (player redesign; was 10s)
@@ -52,7 +53,10 @@ assert.match(shell, /!sourceMenuOpen && !episodeMenuOpen && !focusWithinMaveroCo
 
 assert.match(shell, /\.source-sheet.*bottom: 0/, 'source sheet defaults to bottom');
 assert.match(shell, /@media \(min-width: 769px\)/, 'wide viewport breakpoint at 769px');
-assert.match(shell, /\.source-sheet, \.episode-sheet \{[^}]*top: 0; right: 0; bottom: 0/, 'wide viewport: source sheet becomes right drawer');
+// MAVP-5 Issue 4 supersession: the wide-viewport right drawer is the SOURCE
+// sheet alone; the episode sheet is a LEFT drawer at every viewport.
+assert.match(shell, /@media \(min-width: 769px\) \{[\s\S]*?\.source-sheet \{[^}]*top: 0; right: 0; bottom: 0/, 'wide viewport: source sheet becomes right drawer (MAVP-5)');
+assert.match(shell, /\.episode-sheet \{[^}]*top: 0;[^}]*left: 0;/, 'wide viewport: episode sheet stays a LEFT drawer (MAVP-5)');
 
 // ============================================================
 // 7. No persistent header/footer

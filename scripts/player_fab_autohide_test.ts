@@ -217,7 +217,11 @@ assert.equal(controlsHiddenMatches.length, 1, 'exactly ONE controlsVisible = fal
 // Control Menu FAB, or the Episodes button (intentionally present for TV).
 assert.match(shell, /class="back-fab"/, 'Back FAB still present');
 assert.match(shell, /class="control-fab landscape-fab"/, 'Landscape control FAB still present (player redesign: menu FAB replaced by the dedicated landscape control)');
-assert.match(shell, /aria-label="Open episode list"/, 'Episodes button still present (TV/series playback)');
+// MAVP-5 Issue 4 supersession: the Episodes entry is the dedicated left-edge
+// episode chip (same single episode system, opens the same sheet; the old
+// pill inside the Landscape group is replaced, not removed).
+assert.match(shell, /aria-label="Choose episode"/, 'Episodes entry still present (MAVP-5 dedicated left-edge episode chip)');
+assert.match(shell, /\{#if episodes\.length\}[\s\S]{0,600}episode-chip/, 'Episodes entry still gated on episode availability (movies never show it)');
 
 // Source selector sheet behavior unchanged:
 assert.match(shell, /function openSourceSheet\(/, 'openSourceSheet function preserved');

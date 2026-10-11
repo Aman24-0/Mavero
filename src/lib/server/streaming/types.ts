@@ -70,6 +70,19 @@ export type PublicStreamingConfig = {
    * a broken default to the user.
    */
   defaults: PublicStreamingDefaults;
+  /**
+   * MAVP-5 (Issue 6): admin-configured ORDERED default sources per content
+   * type — up to THREE entries (1=primary, 2=secondary fallback, 3=tertiary
+   * fallback), each resolved to a currently-public, enabled,
+   * active-or-experimental source, distinct within the category (the reader
+   * skips duplicates and keeps the FIRST eligible occurrence in position
+   * order). Invalid/disabled/deleted slots are silently omitted — the
+   * established reader convention. ADDITIVE: `defaults` (single) is
+   * preserved byte-compatibly for existing consumers; the two views agree
+   * (defaults[category] === defaultsOrder[category][0] whenever a primary
+   * slot exists).
+   */
+  defaultsOrder: PublicStreamingDefaultsOrder;
 };
 
 export type PublicStreamingDefaults = {
@@ -90,3 +103,19 @@ export type PublicStreamingDefaults = {
 export type StreamingDefaultRow = Tables<'streaming_default_sources'>;
 export type StreamingDefaultInsert = TablesInsert<'streaming_default_sources'>;
 export type StreamingDefaultUpdate = TablesUpdate<'streaming_default_sources'>;
+
+/** MAVP-5 (Issue 6): one ordered default-source slot row. */
+export type StreamingDefaultSlotRow = Tables<'streaming_default_source_slots'>;
+export type StreamingDefaultSlotInsert = TablesInsert<'streaming_default_source_slots'>;
+
+/**
+ * MAVP-5 (Issue 6): ordered default sources per category — at most three
+ * distinct, eligible source ids in explicit attempt order (primary →
+ * secondary → tertiary).
+ */
+export type PublicStreamingDefaultsOrder = {
+  movie?: string[];
+  series?: string[];
+  anime?: string[];
+  adult?: string[];
+};

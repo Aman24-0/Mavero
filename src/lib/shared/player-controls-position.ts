@@ -34,6 +34,12 @@
  *     "landscape": { "horizontal": axis|null, "vertical": axis|null }   // optional
  *   },
  *   "sizes": { "back": 44, "landscape": 48 }   // MAVP-3 — optional, integers, px
+ *   // Episodes chip — MAVP-5, fully independent from every other control.
+ *   "episodes": {
+ *     "portrait":  { "horizontal": axis|null, "vertical": axis|null },  // optional
+ *     "landscape": { "horizontal": axis|null, "vertical": axis|null }   // optional
+ *   },
+ *   // sizes.episodes — MAVP-5, same bounds/defaults as the other controls.
  * }
  *
  * Size contract (MAVP-3): `sizes` carries an INDEPENDENT size per control
@@ -73,6 +79,10 @@ export const PLAYER_CONTROLS_POSITION_CAPABILITY_KEY = 'player_controls_position
 // viewport-dominating (documented safe range; enforced server-side too).
 export const BACK_CONTROL_DEFAULT_SIZE_PX = 44;
 export const LANDSCAPE_CONTROL_DEFAULT_SIZE_PX = 48;
+/** MAVP-5 (Issue 4): the Episodes chip mirrors the source chip's visual system
+ * (bar + label); its default chip height matches the source chip's 64px hit
+ * area so both edge chips render as a consistent pair. */
+export const EPISODES_CONTROL_DEFAULT_SIZE_PX = 64;
 export const CONTROLS_SIZE_MIN_PX = 28;
 export const CONTROLS_SIZE_MAX_PX = 96;
 
@@ -97,13 +107,20 @@ export type PlayerControlsPosition = {
     portrait: { horizontal: ControlsAxisPosition | null; vertical: ControlsAxisPosition | null } | null;
     landscape: { horizontal: ControlsAxisPosition | null; vertical: ControlsAxisPosition | null } | null;
   } | null;
+  /** MAVP-5 (Issue 4): independent per-orientation Episodes-chip profiles
+   *  (optional). Fully independent from the Back and Landscape controls —
+   *  it must never overwrite or share their configured positions. */
+  episodes: {
+    portrait: { horizontal: ControlsAxisPosition | null; vertical: ControlsAxisPosition | null } | null;
+    landscape: { horizontal: ControlsAxisPosition | null; vertical: ControlsAxisPosition | null } | null;
+  } | null;
   /** MAVP-3: independent per-control size overrides in px (optional).
    *  null entry / absent section = the control's default stylesheet size. */
-  sizes: { back: number | null; landscape: number | null } | null;
+  sizes: { back: number | null; landscape: number | null; episodes: number | null } | null;
 };
 
-/** The two floating controls that can be positioned per source. */
-export type ControlsControlId = 'landscape' | 'back';
+/** The floating controls that can be positioned per source. */
+export type ControlsControlId = 'landscape' | 'back' | 'episodes';
 
 export type ControlsOrientation = 'portrait' | 'landscape';
 
@@ -160,6 +177,11 @@ function parseBackSection(value: unknown): PlayerControlsPosition['back'] {
   return { portrait, landscape };
 }
 
+/** MAVP-5 (Issue 4): the Episodes chip section — same shape as `back`. */
+function parseEpisodesSection(value: unknown): PlayerControlsPosition['episodes'] {
+  return parseBackSection(value);
+}
+
 /**
  * MAVP-3: TOTAL per-control size parse. Only finite integers within the
  * documented bounds are accepted; anything else (absent, null, wrong type,
@@ -183,8 +205,9 @@ function parseSizesSection(value: unknown): PlayerControlsPosition['sizes'] {
   if (!isRecord(value)) return null;
   const back = parseControlSize(value.back);
   const landscape = parseControlSize(value.landscape);
-  if (back === null && landscape === null) return null;
-  return { back, landscape };
+  const episodes = parseControlSize(value.episodes);
+  if (back === null && landscape === null && episodes === null) return null;
+  return { back, landscape, episodes };
 }
 
 /**
@@ -195,7 +218,7 @@ export function parsePlayerControlsPosition(value: unknown): PlayerControlsPosit
   if (!isRecord(value)) return null;
   const mode = value.mode;
   if (mode === 'default') {
-    return { mode: 'default', horizontal: null, vertical: null, portrait: null, landscape: null, back: null, sizes: null };
+    return { mode: 'default', horizontal: null, vertical: null, portrait: null, landscape: null, back: null, episodes: null, sizes: null };
   }
   if (mode !== 'custom') return null;
   const position: PlayerControlsPosition = {
@@ -205,6 +228,7 @@ export function parsePlayerControlsPosition(value: unknown): PlayerControlsPosit
     portrait: value.portrait === undefined ? null : parseOrientationOverride(value.portrait),
     landscape: value.landscape === undefined ? null : parseOrientationOverride(value.landscape),
     back: value.back === undefined ? null : parseBackSection(value.back),
+    episodes: value.episodes === undefined ? null : parseEpisodesSection(value.episodes),
     sizes: value.sizes === undefined ? null : parseSizesSection(value.sizes),
   };
   // A custom config with NO usable axis and NO usable size is treated as
@@ -215,6 +239,7 @@ export function parsePlayerControlsPosition(value: unknown): PlayerControlsPosit
     !position.horizontal && !position.vertical
     && !hasUsableAxis(position.portrait) && !hasUsableAxis(position.landscape)
     && !hasUsableAxis(position.back?.portrait ?? null) && !hasUsableAxis(position.back?.landscape ?? null)
+    && !hasUsableAxis(position.episodes?.portrait ?? null) && !hasUsableAxis(position.episodes?.landscape ?? null)
     && !position.sizes
   ) return null;
   return position;
@@ -272,6 +297,13 @@ export function resolveControlPlacement(
   }
   if (control === 'back') {
     const profile = orientation === 'portrait' ? position.back?.portrait : position.back?.landscape;
+    return { horizontal: profile?.horizontal ?? null, vertical: profile?.vertical ?? null };
+  }
+  if (control === 'episodes') {
+    // MAVP-5 (Issue 4): the Episodes chip resolves through its OWN section —
+    // fully independent from the Back and Landscape controls (it can never
+    // overwrite or inherit their configured positions).
+    const profile = orientation === 'portrait' ? position.episodes?.portrait : position.episodes?.landscape;
     return { horizontal: profile?.horizontal ?? null, vertical: profile?.vertical ?? null };
   }
   const override = orientation === 'portrait' ? position.portrait : position.landscape;
@@ -396,10 +428,13 @@ export const CONTROLS_PREVIEW_REFERENCE_LANDSCAPE = { width: 844, height: 390 } 
  */
 export const BACK_CONTROL_DEFAULT_EDGE_PX = 12;
 export const LANDSCAPE_CONTROL_DEFAULT_EDGE_PX = 16;
+/** MAVP-5 (Issue 4): the Episodes chip attaches AT the left edge (offset 0),
+ * exactly mirroring the source chip's right-edge attachment. */
+export const EPISODES_CONTROL_DEFAULT_EDGE_PX = 0;
 
 /** Runtime stylesheet default sizes (px) — the same values the renderer uses. */
 function defaultSizeFor(control: ControlsControlId): number {
-  return control === 'back' ? BACK_CONTROL_DEFAULT_SIZE_PX : LANDSCAPE_CONTROL_DEFAULT_SIZE_PX;
+  return control === 'back' ? BACK_CONTROL_DEFAULT_SIZE_PX : control === 'episodes' ? EPISODES_CONTROL_DEFAULT_SIZE_PX : LANDSCAPE_CONTROL_DEFAULT_SIZE_PX;
 }
 
 /**
@@ -417,11 +452,14 @@ export function controlsPreviewMarkerStyle(
   const reference = orientation === 'portrait' ? CONTROLS_PREVIEW_REFERENCE_PORTRAIT : CONTROLS_PREVIEW_REFERENCE_LANDSCAPE;
   const placement = resolveControlPlacement(position, control, orientation);
   const sizePx = resolveControlSize(position, control) ?? defaultSizeFor(control);
-  const defaultEdge = control === 'back' ? BACK_CONTROL_DEFAULT_EDGE_PX : LANDSCAPE_CONTROL_DEFAULT_EDGE_PX;
+  // The Episodes chip attaches AT the edge (like the source chip on the
+  // opposite edge); Back/Landscape keep their documented default offsets.
+  const defaultEdge = control === 'back' ? BACK_CONTROL_DEFAULT_EDGE_PX : control === 'episodes' ? EPISODES_CONTROL_DEFAULT_EDGE_PX : LANDSCAPE_CONTROL_DEFAULT_EDGE_PX;
   const decls: string[] = [];
   const transforms: string[] = [];
   // Horizontal axis: configured anchor wins; null → the control's default
-  // corner edge (Back hugs the left, Landscape hugs the right), scaled.
+  // corner edge (Back hugs the left, Landscape hugs the right, the Episodes
+  // chip hugs the LEFT — mirroring the source chip on the right edge), scaled.
   if (placement.horizontal) {
     if (placement.horizontal.anchor === 'center') {
       decls.push('left:50%', 'right:auto');
@@ -431,13 +469,15 @@ export function controlsPreviewMarkerStyle(
     } else {
       decls.push(`right:${placement.horizontal.offsetPercent}%`, 'left:auto');
     }
-  } else if (control === 'back') {
-    decls.push(`left:${cqw(defaultEdge, reference.width)}`, 'right:auto');
-  } else {
+  } else if (control === 'landscape') {
     decls.push(`right:${cqw(defaultEdge, reference.width)}`, 'left:auto');
+  } else {
+    // 'back' AND 'episodes' default to the left edge.
+    decls.push(`left:${cqw(defaultEdge, reference.width)}`, 'right:auto');
   }
   // Vertical axis: same contract (Back defaults to the top edge, Landscape
-  // to the bottom edge); vertical scale uses cqh against the reference height.
+  // to the bottom edge, the Episodes chip to the vertical CENTRE — mirroring
+  // the source chip); vertical scale uses cqh against the reference height.
   if (placement.vertical) {
     if (placement.vertical.anchor === 'center') {
       decls.push('top:50%', 'bottom:auto');
@@ -447,6 +487,9 @@ export function controlsPreviewMarkerStyle(
     } else {
       decls.push(`bottom:${placement.vertical.offsetPercent}%`, 'top:auto');
     }
+  } else if (control === 'episodes') {
+    decls.push('top:50%', 'bottom:auto');
+    transforms.push('translateY(-50%)');
   } else if (control === 'back') {
     decls.push(`top:${cqh(BACK_CONTROL_DEFAULT_EDGE_PX, reference.height)}`, 'bottom:auto');
   } else {

@@ -427,6 +427,18 @@
   // the content-type default applies exactly as before (unchanged behavior).
   $: isAdultTitle = item.tags?.includes('Adult') === true;
   $: defaultSourceId = (isAdultTitle ? data.streamingConfig.defaults?.adult : undefined) ?? data.streamingConfig.defaults?.[contentType];
+  // MAVP-5 (Issue 6): the admin-configured ORDERED default sources for the
+  // current content type (primary → secondary → tertiary), resolved from
+  // the public config's `defaultsOrder`. Adult-tagged titles use the
+  // dedicated 'adult' order when one is configured (the same post-release
+  // override the single default applies); otherwise the content-type order
+  // applies. The legacy single default is honored as a one-entry order for
+  // configs that were never normalized into slots. Only used for the
+  // INITIAL resolution (allowFallback=true) — manual source switches never
+  // re-enter the default chain.
+  $: defaultSourceIds = (isAdultTitle ? data.streamingConfig.defaultsOrder?.adult : undefined)
+    ?? data.streamingConfig.defaultsOrder?.[contentType]
+    ?? (defaultSourceId ? [defaultSourceId] : []);
   // Phase 9 fix: source selection MUST wait for progressReady before selecting.
   // The old code used `!selectedSourceId` which fired as soon as sourceOptions
   // was populated — before savedSourceId was loaded from IndexedDB. This caused
@@ -691,6 +703,14 @@
       if (allowFallback && defaultSourceId && !isResumeWithSavedSource) {
         request.defaultSourceId = defaultSourceId;
       }
+      // MAVP-5 (Issue 6): forward the ORDERED default sources (primary →
+      // secondary → tertiary) under the SAME allowFallback + resume policy
+      // as the single default. The resolver attempts each in order before
+      // health-ranked fallback; manual switches (allowFallback=false) and
+      // the movie saved-source resume path are excluded identically.
+      if (allowFallback && defaultSourceIds.length && !isResumeWithSavedSource) {
+        request.defaultSourceIds = defaultSourceIds;
+      }
       await manager.loadSource(
         request,
         startPosition,
@@ -817,13 +837,26 @@
   async function handleEpisodeChange(target: PlayerEpisodeTarget) {
     season = target.season;
     episode = target.episode;
-    // P11: reset selectedSourceId, savedSourceId, and resume state on
-    // episode change. The previous episode's selected source must NOT
-    // silently carry into the new episode. For series, the content-type
-    // default (e.g. VidZee) will be re-selected by the reactive block
-    // above. For movies, the existing source rules remain unchanged
-    // (movies don't have episode changes).
-    selectedSourceId = '';
+    // MAVP-5 (Issue 4) — ACTIVE-SOURCE PRESERVATION ACROSS EPISODES.
+    //
+    // The previous behavior (the Phase-11 "P11" rule) reset
+    // selectedSourceId on every episode change so the content-type DEFAULT
+    // was re-selected for the new episode. That rule is SUPERSEDED by the
+    // MAVP-5 source-preservation contract (documented intentional contract
+    // change): a user watching episode 7 through a NON-default source (e.g.
+    // VidStuck) who opens the episode sheet and selects episode 8 MUST
+    // stay on the SAME source. The active source is preserved by keeping
+    // selectedSourceId set — the reactive selection block only runs when
+    // selectedSourceId is empty, so the default/saved re-selection cannot
+    // fire. prepareSource() then re-resolves the SAME source for the new
+    // episode; if that source cannot resolve the new episode, the EXISTING
+    // explicit source-failure behavior applies (typed resolver error +
+    // retry/switch controls) — never a silent provider switch.
+    //
+    // Everything else in the reset below is unchanged: the new episode is a
+    // new playback session (fresh resume state, fresh progress writer
+    // context, cleared resolution session), and the manager is reset so a
+    // stale in-flight resolution cannot overwrite the new episode's state.
     savedSourceId = '';
     resumeApplied = false;
     currentPlaybackTime = 0;

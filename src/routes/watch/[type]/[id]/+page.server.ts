@@ -1,10 +1,11 @@
-import { error } from '@sveltejs/kit';
+import { error, isHttpError } from '@sveltejs/kit';
 import { getDetail, getSeriesSeason } from '$lib/server/content/service';
 import { getPublicStreamingConfig } from '$lib/server/streaming/public-config';
 import { toMediaItem } from '$lib/server/content/presenter';
 import { isContentType, type Episode } from '$lib/server/content/types';
 import { canAccessAdultContent } from '$lib/server/content/adult-policy';
 import { detailVerdict } from '$lib/server/content/search-classify';
+import { logger } from '$lib/server/http/log';
 import type { PageServerLoad } from './$types';
 
 // Phase 2-E (audit PERF-005) — Watch page server load parallelization.
@@ -55,6 +56,7 @@ type StreamingConfigFallback = {
   categories: never[];
   sourceCategories: never[];
   defaults: Record<string, never>;
+  defaultsOrder: Record<string, never[]>;
 };
 const EMPTY_STREAMING_CONFIG: StreamingConfigFallback = {
   version: 1,
@@ -63,7 +65,8 @@ const EMPTY_STREAMING_CONFIG: StreamingConfigFallback = {
   sources: [],
   categories: [],
   sourceCategories: [],
-  defaults: {}
+  defaults: {},
+  defaultsOrder: {}
 };
 
 export const load: PageServerLoad = async ({ params, locals, cookies, url }) => {
@@ -110,8 +113,33 @@ export const load: PageServerLoad = async ({ params, locals, cookies, url }) => 
   if (detailVerdict(item.tags) === 'adult') {
     // Phase 2-A: use hook-resolved locals.user (no second auth roundtrip).
     const user = locals.user;
-    const canAccess = await canAccessAdultContent(locals.supabase, user, cookies);
-    if (!canAccess) {
+    // MAVP-5 (RC-2): the policy/authorization read is the ONLY await in this
+    // load that previously had no rejection guard. The Supabase
+    // PostgrestBuilder promises inside getAdultAccessContext REJECT on
+    // transient network failures (the `{ data, error }` destructure inside
+    // that module normalizes Postgrest error SHAPES only, never rejections);
+    // an escaped rejection surfaced as a generic SvelteKit 500 ("The signal
+    // dropped.") on card-play and every other watch navigation. The gate is
+    // now explicitly fail-CLOSED: when the authorization evaluation itself
+    // fails we cannot verify access, so the request gets the SAME
+    // non-disclosing 404 as any unauthorized adult title (the Phase 6
+    // contract — "adult and forbidden" is indistinguishable from "does not
+    // exist"). The failure is logged server-side (error class only — never
+    // tokens, titles or user identifiers) so the transient infra failure
+    // keeps actionable operator reporting instead of a generic 500. A
+    // non-adult title never reaches this branch, so normal playback is
+    // unaffected.
+    try {
+      const canAccess = await canAccessAdultContent(locals.supabase, user, cookies);
+      if (!canAccess) {
+        throw error(404, 'Title not found');
+      }
+    } catch (gateError) {
+      // SvelteKit HttpError (the intentional 404 above) must propagate as-is.
+      if (isHttpError(gateError)) throw gateError;
+      logger.error('watch adult authorization check failed (fail closed)', {
+        errorType: gateError instanceof Error ? gateError.name : 'unknown'
+      });
       throw error(404, 'Title not found');
     }
   }

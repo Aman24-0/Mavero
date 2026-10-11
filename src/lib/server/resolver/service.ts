@@ -5,19 +5,34 @@ import { getDetail } from '$lib/server/content/service';
 import type { Database } from '$lib/server/supabase/database.types';
 import type { NormalizedMediaItem } from '$lib/server/content/types';
 import { resolveSourceFromConfig } from './core';
-import { ResolverError } from './errors';
+import { ResolverError, asResolverError } from './errors';
 import { parseResolverRequest } from './identifiers';
 import { DEFAULT_FALLBACK_MAX_ATTEMPTS, resolveWithBoundedFallback, type FallbackAttempt, type FallbackCandidate } from './fallback';
+// MAVP-5 (RC-3): the requested-source primary attempt reuses the walker's
+// eligibility gates — the deterministic negative cache and the transient-
+// failure provider cooldown — so a primary attempt follows exactly the same
+// skip/record policy the fallback walk applies to every candidate.
+import { getCachedNegative, setCachedNegative, negativeCacheKey, isCacheableNegative } from './negative-cache';
+import { isProviderEligible, isProbeDue, recordProviderSuccess, recordProviderFailure, isTransientFailure } from './provider-cooldown';
 import { createResolutionDeadline, RESOLVER_OVERALL_DEADLINE_MS } from './deadline';
 import { rankProviderSourceList } from './ranking';
 import { createBoundedHealthScheduler, loadSourceHealthMap, type BoundedHealthScheduler } from '$lib/server/streaming/health-service';
-import { applyDefaultSourceOrdering } from './default-source';
+import { applyDefaultSourceOrdering, applyOrderedDefaultSourceOrdering } from './default-source';
 import type { ResolverDependencies, ResolverRequest, TrustedResolutionConfig } from './types';
 
-export { applyDefaultSourceOrdering } from './default-source';
+export { applyDefaultSourceOrdering, applyOrderedDefaultSourceOrdering } from './default-source';
 export { RESOLVER_OVERALL_DEADLINE_MS } from './deadline';
 
 export type ResolverClient = SupabaseClient<Database>;
+
+/** MAVP-5 (RC-3): the primary attempt accepts exactly the walker's usable shapes. */
+function isPrimaryResultUsable(result: { type: string; url?: string | null }): boolean {
+  return result.type === 'direct' || result.type === 'embed' ? Boolean(result.url) : false;
+}
+
+function unavailableError(): ResolverError {
+  return new ResolverError('RESOLUTION_UNAVAILABLE');
+}
 
 function serviceClient(): ResolverClient {
   const supabaseUrl = publicEnv.PUBLIC_SUPABASE_URL;
@@ -113,17 +128,6 @@ export async function resolveSource(client: ResolverClient, input: unknown, depe
       return result;
     }
 
-    const orderedConfigs = sourceList?.length
-      ? sourceList
-      : dependencies.loadConfig
-        ? [config]
-        : (await loadTrustedFallbackCandidates(config)).map((candidate) => candidate.config);
-
-    // Phase 9: Default-first resolver policy.
-    // If an admin default source is configured AND it's in the candidate list,
-    // attempt it FIRST before health-ranked fallback. If the default succeeds,
-    // return immediately. If it fails, continue with health-ranked fallback
-    // from the remaining candidates (excluding the already-attempted default).
     const trustedClient = serviceClient();
     const skipHealthMutation = dependencies.skipHealthMutation === true;
     const defaultId = request.defaultSourceId;
@@ -133,38 +137,131 @@ export async function resolveSource(client: ResolverClient, input: unknown, depe
     // final flush is bounded (see createBoundedHealthScheduler).
     const health: BoundedHealthScheduler | null = skipHealthMutation ? null : createBoundedHealthScheduler(trustedClient);
 
+    // MAVP-5 (RC-3 — embed rendering delay): attempt the REQUESTED source
+    // FIRST, before any fallback infrastructure is loaded. The previous flow
+    // always ran `loadTrustedFallbackCandidates` (2 Supabase queries over up
+    // to ~200 sources + providers) AND `loadSourceHealthMap` AND full ranking
+    // BEFORE the first resolution attempt — pure serial overhead on the
+    // critical path between the player's resolver request and the embed
+    // iframe mount for every primary-source success. The requested source is
+    // also what the client already selected (the admin default on the
+    // initial path, the user's explicit choice on a resume path), so
+    // attempting it first honors the existing selection contracts (Phase 2
+    // default-first; Phase 4 "saved → default → health-ranked fallback").
+    //
+    // The attempt preserves the walker's eligibility gates for the requested
+    // source: the deterministic negative cache (a cached not-found/unsupported
+    // outcome for this exact source+content tuple is not re-attempted) and the
+    // transient-failure provider cooldown (unless a probe is due). It ALSO
+    // preserves the exact eligibility gates the ranking's eligible list has
+    // always applied to a default attempt (provider enabled, source enabled,
+    // public visibility): a disabled or hidden requested source is NOT
+    // attempted here and gets NO primary health bookkeeping — the lazy
+    // fallback pipeline below excludes it through the unchanged ranking,
+    // exactly like the pre-MAVP-5 flow. On success the resolver returns
+    // immediately — the fallback candidate list, the health map and the
+    // ranking are NEVER loaded (that is the latency win). On failure the
+    // full ranked fallback pipeline loads LAZILY below, with every existing
+    // semantic preserved (bounded attempts, duplicate-provider skipping,
+    // default-first ordering, negative cache, cooldowns, health
+    // bookkeeping, deadline guards).
+    const negativeKey = negativeCacheKey({
+      sourceId: config.source.id,
+      contentId: request.contentId,
+      mediaType: request.mediaType,
+      season: request.season,
+      episode: request.episode,
+    });
+    const primaryEligible =
+      config.provider.enabled && config.source.enabled && config.source.visibility === 'public';
+    const cachedNegative = getCachedNegative(negativeKey);
+    if (primaryEligible && !cachedNegative && !isProviderEligible(config.provider.id) && !isProbeDue(config.provider.id)) {
+      health?.recordFailure(config.provider.id, config.source.id, unavailableError());
+    } else if (primaryEligible && !cachedNegative) {
+      try {
+        const primaryResult = await deadline.guard(resolveSourceFromConfig(request, config, content, dependencies));
+        if (!isPrimaryResultUsable(primaryResult)) throw unavailableError();
+        health?.recordSuccess(config.provider.id, config.source.id);
+        recordProviderSuccess(config.provider.id);
+        return primaryResult;
+      } catch (primaryError) {
+        if (deadline.expired) throw primaryError;
+        health?.recordFailure(config.provider.id, config.source.id, primaryError);
+        const primaryResolverError = asResolverError(primaryError);
+        if (isCacheableNegative(primaryResolverError.code)) {
+          setCachedNegative(negativeKey, primaryResolverError.code, primaryResolverError.status);
+        }
+        if (isTransientFailure(primaryResolverError.code)) {
+          recordProviderFailure(config.provider.id, primaryResolverError.code);
+        }
+      }
+    }
+
+    // LAZY fallback pipeline — reached only when the requested source failed
+    // (or was gated out by the negative cache / cooldown). Everything below
+    // is the pre-existing fallback behavior, unchanged.
+    const orderedConfigs = sourceList?.length
+      ? sourceList
+      : dependencies.loadConfig
+        ? [config]
+        : (await loadTrustedFallbackCandidates(config)).map((candidate) => candidate.config);
+
+    // Phase 9: Default-first resolver policy.
+    // If an admin default source is configured AND it's in the candidate list,
+    // attempt it FIRST before health-ranked fallback — UNLESS the default IS
+    // the requested source, which the RC-3 primary attempt above already
+    // tried (the default must never get a second attempt after failing as
+    // the primary). If the default succeeds, return immediately. If it fails,
+    // continue with health-ranked fallback from the remaining candidates
+    // (excluding the already-attempted sources).
+
     try {
       // Build the full candidate list with ranking for fallback.
-      const sortedConfigs = applyDefaultSourceOrdering(orderedConfigs, defaultId);
+      const defaultSourceIds = request.defaultSourceIds
+        ?? (defaultId ? [defaultId] : []);
+      const sortedConfigs = applyOrderedDefaultSourceOrdering(orderedConfigs, defaultSourceIds);
       const healthMap = await deadline.guard(loadSourceHealthMap(trustedClient, sortedConfigs.map((candidate) => candidate.source.id)));
       const ranking = rankProviderSourceList(request, content, sortedConfigs, healthMap);
 
-      // Phase 9 fix: If there's a valid default, attempt it FIRST before fallback ranking.
-      let defaultAttempted = false;
-      if (defaultId) {
-        const defaultConfig = sortedConfigs.find((c) => c.source.id === defaultId);
-        const defaultRanked = ranking.eligible.find((r) => r.config.source.id === defaultId);
-        if (defaultConfig && defaultRanked) {
-          defaultAttempted = true;
-          try {
-            const defaultResult = await deadline.guard(resolveSourceFromConfig(request, defaultConfig, content, dependencies));
-            if (defaultResult.type === 'direct' || defaultResult.type === 'embed') {
-              // Default succeeded — record health (non-blocking) and return.
-              health?.recordSuccess(defaultConfig.provider.id, defaultConfig.source.id);
-              return defaultResult;
-            }
-          } catch (error) {
-            if (deadline.expired) throw error;
-            // Default failed — fall through to health-ranked fallback.
-            health?.recordFailure(defaultConfig.provider.id, defaultConfig.source.id, error);
+      // MAVP-5 (RC-3): the REQUESTED source was already attempted above (or
+      // gated by the negative cache / provider cooldown). It must never be
+      // re-attempted by the fallback walk.
+      const alreadyAttemptedSourceIds = new Set<string>([config.source.id]);
+
+      // Phase 9 fix + MAVP-5 (Issue 6): attempt the ORDERED DEFAULTS in
+      // explicit order (primary → secondary → tertiary), each at most once,
+      // BEFORE health-ranked fallback — unless a default IS the requested
+      // source (the RC-3 primary attempt already covered it; a failed source
+      // must never get a second attempt). Deleted, disabled, or ineligible
+      // defaults are skipped exactly like the single default always was
+      // (they are absent from the ranking's eligible list).
+      for (const orderedDefaultId of defaultSourceIds) {
+        if (alreadyAttemptedSourceIds.has(orderedDefaultId)) continue;
+        const defaultConfig = sortedConfigs.find((c) => c.source.id === orderedDefaultId);
+        const defaultRanked = ranking.eligible.find((r) => r.config.source.id === orderedDefaultId);
+        if (!defaultConfig || !defaultRanked) continue;
+        alreadyAttemptedSourceIds.add(orderedDefaultId);
+        try {
+          const defaultResult = await deadline.guard(resolveSourceFromConfig(request, defaultConfig, content, dependencies));
+          if (defaultResult.type === 'direct' || defaultResult.type === 'embed') {
+            // Default succeeded — record health (non-blocking) and return.
+            health?.recordSuccess(defaultConfig.provider.id, defaultConfig.source.id);
+            return defaultResult;
           }
+        } catch (error) {
+          if (deadline.expired) throw error;
+          // Default failed — continue with the next ordered default, then
+          // health-ranked fallback.
+          health?.recordFailure(defaultConfig.provider.id, defaultConfig.source.id, error);
         }
       }
 
-      // Phase 9 fix: Health-ranked fallback EXCLUDING the default if it was already
-      // attempted and failed. Do not give the default a second chance via fallback.
+      // Phase 9 fix: Health-ranked fallback EXCLUDING every already-attempted
+      // source (the requested source and every ordered default that was
+      // attempted here). No already-failed source gets a second attempt via
+      // fallback.
       const candidates: FallbackCandidate[] = ranking.eligible
-        .filter((ranked) => !(defaultAttempted && ranked.config.source.id === defaultId))
+        .filter((ranked) => !alreadyAttemptedSourceIds.has(ranked.config.source.id))
         .map((ranked) => ({ config: ranked.config, eligible: true }));
       const resolved = await resolveWithBoundedFallback(request, content, candidates, dependencies, {
         allowFallback: true,

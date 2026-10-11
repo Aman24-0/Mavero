@@ -1,5 +1,9 @@
 // Phase 2-D (audit PERF-004 / MEM-001) — Bound in-process content cache.
 //
+// MAVP-5 (RC-8): background (stale-while-revalidate) refreshes are absorbed
+// by `backgroundRefresh()` — an unhandled loader rejection crashes the Node
+// process on serverless. See the function comment below.
+//
 // Problem: the previous implementation used an unbounded `Map`. Cache keys
 // are derived from request params (section, language, provider, page,
 // type, id, sort, cursor, ...). Under sustained traffic against varied
@@ -31,6 +35,8 @@
 // prevent unbounded growth under adversarial probing, not to constrain
 // legitimate traffic.
 
+import { logger } from '$lib/server/http/log';
+
 const DEFAULT_MAX_ENTRIES = 256;
 const SWEEP_INTERVAL_MS = 60_000; // 1 minute — amortized expiry sweep
 
@@ -39,6 +45,35 @@ type CacheEntry<T> = {
   expiresAt: number;
   staleUntil: number;
 };
+
+// MAVP-5 (RC-8) — safe background-refresh sink.
+//
+// The stale-while-revalidate paths fire background refreshes WITHOUT awaiting
+// them (the response must not wait on the refresh). A background refresh CAN
+// reject — the loaders are network loaders (TMDB/Supabase) that reject with
+// typed errors on the 8 s timeout, 429 rate limiting, 5xx, or an invalid
+// response body. A discarded rejected promise is an UNHANDLED PROMISE
+// REJECTION, which is FATAL for the Node process since Node 15 (the default
+// `unhandledRejection` mode is `throw`) — on serverless (Netlify functions)
+// that kills the function instance and surfaces as Netlify's "This function
+// has crashed" page. The rejection class is an EXPECTED upstream failure, not
+// a programming error: the stale entry REMAINS (SWR semantics — serve stale
+// now) and the NEXT request retries the load because the entry is still past
+// its fresh TTL. The catch absorbs the failure and logs the error class via
+// the safe server logger (no URLs, no tokens, no provider details).
+function backgroundRefresh<T>(refreshPromise: Promise<T>): void {
+  refreshPromise.catch((error: unknown) => {
+    try {
+      const err = error as { code?: unknown; name?: unknown } | null;
+      logger.error('content cache background refresh failed', {
+        errorType: typeof err?.name === 'string' ? err.name : 'unknown',
+        errorCode: typeof err?.code === 'string' || typeof err?.code === 'number' ? String(err.code) : undefined
+      });
+    } catch {
+      /* absorption is the contract; logging is best-effort */
+    }
+  });
+}
 
 const entries = new Map<string, CacheEntry<unknown>>();
 const inFlight = new Map<string, Promise<unknown>>();
@@ -137,7 +172,9 @@ export async function getOrSet<T>(key: string, policy: CachePolicy, loader: () =
   }
 
   if (cached && cached.staleUntil > now) {
-    void refresh(key, policy, loader);
+    // MAVP-5 (RC-8): the background refresh MUST NOT become an unhandled
+    // rejection (process crash on Node ≥15). See backgroundRefresh().
+    backgroundRefresh(refresh(key, policy, loader));
     return { value: cached.value, stale: true };
   }
 
@@ -189,7 +226,9 @@ export async function getOrSetValidated<T>(
     // The background refresh uses `isValid` — if it produces invalid,
     // the existing (valid) stale entry is PRESERVED (not overwritten
     // by the invalid result).
-    void refreshValidated(key, policy, isValid, loader);
+    // MAVP-5 (RC-8): the background refresh MUST NOT become an unhandled
+    // rejection (process crash on Node ≥15). See backgroundRefresh().
+    backgroundRefresh(refreshValidated(key, policy, isValid, loader));
     return { value: cached.value, stale: true, fromCache: true };
   }
 

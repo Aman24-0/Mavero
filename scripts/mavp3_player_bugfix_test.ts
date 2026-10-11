@@ -121,11 +121,29 @@ ok(!/deviceType=\{page\.data\.deviceType\}/.test(watchCode) && !/export let devi
 // BOTH must be reachable ONLY from explicit user gestures.
 const toggleLandscapeBody = functionBody(shellCode, 'async function toggleLandscape()', 'async function toggleFullscreen()');
 const toggleFullscreenBody = functionBody(shellCode, 'async function toggleFullscreen()', 'async function exitMaveroFullscreen');
-const shellNoManual = shellCode.replace(toggleLandscapeBody, '').replace(toggleFullscreenBody, '');
-ok(!/lock\?\.\('landscape'\)|requestFullscreen/.test(shellNoManual), '1.6 NO orientation lock or fullscreen request exists outside the two manual controllers');
+// MAVP-5 Issue 5 supersession: the landscape RESTORE routine
+// (restoreLandscapePresentationOnce) re-issues the fullscreen + orientation
+// lock the user EXPLICITLY entered, ONCE, when a source switch's iframe
+// remount provably dropped the presentation within a bounded 2s window. It
+// is not an automatic-landscape path: it can never fire without the
+// user's prior intent (landscapePresentationIntent) and never rotates a
+// portrait session. It is excluded here alongside the two manual
+// controllers, and its own bounded guard is asserted separately below.
+const restoreBody = functionBody(shellCode, 'async function restoreLandscapePresentationOnce()', 'const handleKeydown');
+const shellNoManual = shellCode.replace(toggleLandscapeBody, '').replace(toggleFullscreenBody, '').replace(restoreBody, '');
+ok(!/lock\?\.\('landscape'\)|requestFullscreen/.test(shellNoManual), '1.6 NO orientation lock or fullscreen request exists outside the two manual controllers and the MAVP-5 intent-preserving restore');
+ok(shell.includes('if (landscapeRestoreInFlight) return;'), '1.6-MAVP5 the restore is bounded to ONE attempt per fullscreen loss (no duplicate lock requests)');
+ok(shell.includes('landscapePresentationIntent = false;') && (shell.match(/landscapePresentationIntent = false;/g) ?? []).length >= 3,
+  '1.6-MAVP5 the restore intent is cleared on explicit exits and destroy (never self-sustaining)');
 ok(/onclick=\{\(\) => \{ void toggleLandscape\(\); \}\}/.test(shell), '1.7 toggleLandscape is triggered ONLY by the Landscape control click (explicit user gesture)');
 ok(/event\.key === 'f' \|\| event\.key === 'F'[\s\S]{0,120}toggleFullscreen\(\)/.test(shellCode), '1.8 toggleFullscreen is triggered ONLY by the F key (explicit user gesture)');
-ok(!/onMount\(\(\) => \{[\s\S]{0,4000}requestFullscreen/.test(shellCode), '1.9 the shell onMount never requests fullscreen (no automatic presentation on mount)');
+// MAVP-5 Issue 5 supersession: the bounded restore routine (which contains
+// a requestFullscreen call) is intentionally defined AFTER the onMount body;
+// extract the onMount body precisely so the assertion keeps testing the
+// MOUNT path (no automatic presentation on mount) without false-positiving
+// on the restore routine's own definition.
+const onMountBody = functionBody(shellCode, 'onMount(() => {', 'async function togglePlay()');
+ok(!/requestFullscreen|lock\?\.\('landscape'\)/.test(onMountBody), '1.9 the shell onMount never requests fullscreen or an orientation lock (no automatic presentation on mount)');
 
 // Orientation/profile changes must stay presentation-only (no playback harm).
 ok(/iframeKey = `\$\{source\?\.sourceId \?\? 'empty'\}:\$\{source\?\.url \?\? ''\}:\$\{effectiveSandbox\}`/.test(viewport), '1.10 iframe key excludes orientation/position/size (no remount when the presentation changes)');
@@ -247,10 +265,13 @@ section_ok('§5 per-control sizes');
 
 // 5.1 Behavioral parser truth table (shared contract, TOTAL).
 okEq(parsePlayerControlsPosition({ mode: 'custom', sizes: { back: 56 } }), {
-  mode: 'custom', horizontal: null, vertical: null, portrait: null, landscape: null, back: null,
-  sizes: { back: 56, landscape: null },
+  mode: 'custom', horizontal: null, vertical: null, portrait: null, landscape: null, back: null, episodes: null,
+  // MAVP-5 Issue 4 supersession: the sizes section carries the additive
+  // `episodes` entry (null = the chip's default size) alongside the
+  // original two — a strict superset of the MAVP-3 contract.
+  sizes: { back: 56, landscape: null, episodes: null },
 }, '5.1a a sizes-only custom config parses (resize without repositioning is valid)');
-okEq(parsePlayerControlsPosition({ mode: 'custom', sizes: { back: 56.4, landscape: 61.9 } })?.sizes, { back: 56, landscape: 62 }, '5.1b sizes normalise to integer px');
+okEq(parsePlayerControlsPosition({ mode: 'custom', sizes: { back: 56.4, landscape: 61.9 } })?.sizes, { back: 56, landscape: 62, episodes: null }, '5.1b sizes normalise to integer px (MAVP-5: + additive episodes entry)');
 okEq(parsePlayerControlsPosition({ mode: 'custom', sizes: { back: 150 } })?.sizes ?? null, null, '5.1c out-of-bounds size → null (total parser, default size)');
 okEq(parsePlayerControlsPosition({ mode: 'custom', sizes: { back: 4 } })?.sizes ?? null, null, '5.1d unusably small size → null');
 okEq(parsePlayerControlsPosition({ mode: 'custom', sizes: { back: Number.NaN } })?.sizes ?? null, null, '5.1e NaN size → null');
@@ -263,7 +284,7 @@ okEq(parsePlayerControlsPosition({ mode: 'default', sizes: { back: 56 } })?.size
 okEq(parsePlayerControlsPosition({ mode: 'custom', horizontal: { anchor: 'left', offsetPercent: 5 } })?.sizes ?? null, null, '5.1l legacy configs (no sizes key) keep sizes null (backward compatible)');
 const sizeIsolationSource = { mode: 'custom', sizes: { back: 64, landscape: 36 }, back: { portrait: { horizontal: { anchor: 'left', offsetPercent: 3 } } } };
 const sizeIsolation = parsePlayerControlsPosition(sizeIsolationSource);
-okEq(sizeIsolation?.sizes, { back: 64, landscape: 36 }, '5.1m sizes parse alongside placement profiles');
+okEq(sizeIsolation?.sizes, { back: 64, landscape: 36, episodes: null }, '5.1m sizes parse alongside placement profiles (MAVP-5: + additive episodes entry)');
 if (sizeIsolation?.sizes) sizeIsolation.sizes.back = 1;
 okEq((sizeIsolationSource.sizes as { back: number }).back, 64, '5.1n parser deep-copies — mutating a parsed size never mutates the source config');
 okEq(sizeIsolation?.back?.portrait?.horizontal, { anchor: 'left', offsetPercent: 3 }, '5.1o sizes do not disturb placement profiles');
@@ -322,11 +343,11 @@ ok(/must be between \$\{CONTROLS_POSITION_SIZE_MIN_PX\} and \$\{CONTROLS_POSITIO
 ok(/CONTROLS_POSITION_SIZE_MIN_PX = 28;/.test(serverSizeGate) && /CONTROLS_POSITION_SIZE_MAX_PX = 96;/.test(serverSizeGate), '5.4j server bounds match the shared contract constants');
 
 // 5.5 Admin editor: draft state, load, reset isolation, serialization.
-ok(/let controlsSizesDraft = \$state<\{ back: string; landscape: string \}>\(\{ back: '', landscape: '' \}\);/.test(adminPage), '5.5a independent per-control size drafts (empty = default)');
-ok(/back: readSizeDraft\(storedSizes\?\.back\),\s*landscape: readSizeDraft\(storedSizes\?\.landscape\),/.test(adminPage), '5.5b saved sizes prefill on edit (bounded values only)');
-ok(/function resetControlSize\(control: 'back' \| 'landscape'\) \{\s*controlsSizesDraft = \{ \.\.\.controlsSizesDraft, \[control\]: '' \};/.test(adminPage), '5.5c resetting ONE control\'s size leaves the other control\'s size untouched');
-ok(/positionDraft = \{ landscapeControl: emptyControlDraft\(\), back: emptyControlDraft\(\) \};\s*controlsSizesDraft = \{ back: '', landscape: '' \};\s*controlsPositionMode = 'default';/.test(adminPage), '5.5d reset-all clears sizes AND placements together (explicit)');
-ok(/if \(backSize !== null \|\| landscapeSize !== null\) payload\.sizes = \{ \.\.\.\(backSize !== null \? \{ back: backSize \} : \{\}\), \.\.\.\(landscapeSize !== null \? \{ landscape: landscapeSize \} : \{\}\) \};/.test(adminPage), '5.5e sizes serialize independently into the JSON payload (unset entries omitted)');
+ok(/let controlsSizesDraft = \$state<\{ back: string; landscape: string; episodes: string \}>\(\{ back: '', landscape: '', episodes: '' \}\);/.test(adminPage), '5.5a independent per-control size drafts (empty = default; MAVP-5: + episodes draft)');
+ok(/back: readSizeDraft\(storedSizes\?\.back\),\s*landscape: readSizeDraft\(storedSizes\?\.landscape\),\s*episodes: readSizeDraft\(storedSizes\?\.episodes\),/.test(adminPage), '5.5b saved sizes prefill on edit (bounded values only; MAVP-5: + episodes)');
+ok(/function resetControlSize\(control: 'back' \| 'landscape' \| 'episodes'\) \{\s*controlsSizesDraft = \{ \.\.\.controlsSizesDraft, \[control\]: '' \};/.test(adminPage), '5.5c resetting ONE control\'s size leaves the other controls\' sizes untouched (MAVP-5: + episodes)');
+ok(/positionDraft = \{ landscapeControl: emptyControlDraft\(\), back: emptyControlDraft\(\), episodes: emptyControlDraft\(\) \};\s*controlsSizesDraft = \{ back: '', landscape: '', episodes: '' \};\s*controlsPositionMode = 'default';/.test(adminPage), '5.5d reset-all clears sizes AND placements together (explicit; MAVP-5: + episodes)');
+ok(/const episodesSize = serializeSizeDraft\(controlsSizesDraft\.episodes\);/.test(adminPage) && /episodesSize !== null \? \{ episodes: episodesSize \} : \{\}/.test(adminPage), '5.5e sizes serialize independently into the JSON payload (unset entries omitted; MAVP-5: + episodes entry)');
 ok(/type="number" min=\{CONTROLS_SIZE_MIN_PX\} max=\{CONTROLS_SIZE_MAX_PX\} step="1"/.test(adminPage), '5.5f size inputs carry the documented bounds');
 ok(/Control size \(both orientations\)/.test(adminPage), '5.5g the size block is clearly separated from the per-orientation placement profiles');
 ok(/Reset size/.test(adminPage), '5.5h per-control size reset exists in the editor');

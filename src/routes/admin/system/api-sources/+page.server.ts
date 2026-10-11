@@ -15,8 +15,8 @@ import type { Actions, PageServerLoad } from './$types';
 import { requireAdmin } from '$lib/server/streaming/admin-auth';
 import {
   listAdminProviders, listProviderHealthSummaries,
-  listAdminSources, listAdminDefaults,
-  upsertDefaultSource, clearDefaultSource,
+  listAdminSources, listAdminDefaults, listAdminDefaultSlots,
+  upsertDefaultSource, setDefaultSourceSlots,
   createProvider, updateProvider, deleteProvider,
   createSource, updateSource, deleteSource,
 } from '$lib/server/streaming/admin-service';
@@ -34,11 +34,12 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     throw error(400, 'Invalid tab. Use ?tab=providers|sources.');
   }
 
-  const [providers, health, sources, defaults] = await Promise.all([
+  const [providers, health, sources, defaults, defaultSlots] = await Promise.all([
     listAdminProviders(locals.supabase),
     listProviderHealthSummaries(locals.supabase),
     listAdminSources(locals.supabase),
     listAdminDefaults(locals.supabase),
+    listAdminDefaultSlots(locals.supabase),
   ]);
 
   const capabilityMap: Record<string, { supported: string[]; unsupported: string[]; unknown: boolean } | null> = {};
@@ -62,6 +63,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     capabilityMap,
     sources,
     defaults,
+    defaultSlots,
     notice: url.searchParams.get('notice'),
   };
 };
@@ -230,13 +232,38 @@ export const actions: Actions = {
       return fail(result.status === 'unknown' ? 503 : 400, { message: result.message, mutationStatus: result.status });
     }
   },
+  // MAVP-5 (Issue 6): save the THREE ordered default sources for one
+  // category. `slot_source` is a repeated form field — position = order of
+  // appearance (primary, secondary, tertiary); omitting all of them clears
+  // the category. Server-side validation (distinct, ≤3, valid UUIDs, known
+  // content type) lives in setDefaultSourceSlots; eligibility filtering
+  // happens at read time. The legacy single-default row is kept in sync
+  // with slot 1 for backward compatibility.
+  saveDefaultSlots: async ({ request, locals }) => {
+    await requireAdmin(locals, { redirectTo: '/admin/system/api-sources' });
+    try {
+      const form = await request.formData();
+      const contentType = String(form.get('content_type') ?? '');
+      if (!contentType) return fail(400, { message: 'Content type is required.', contentType });
+      const sourceIds = form.getAll('slot_source').filter((id): id is string => typeof id === 'string' && id.length > 0);
+      await setDefaultSourceSlots(locals.supabase, contentType, sourceIds);
+      throw redirect(303, `/admin/system/api-sources?notice=${encodeURIComponent(`Ordered default ${contentType} sources saved.`)}`);
+    } catch (error) {
+      if (isRedirect(error)) throw error;
+      const result = classifyAdminMutationError(error, 'Unable to save ordered default sources.');
+      return fail(result.status === 'unknown' ? 503 : 400, { message: result.message, mutationStatus: result.status });
+    }
+  },
   clearDefault: async ({ request, locals }) => {
     await requireAdmin(locals, { redirectTo: '/admin/system/api-sources' });
     try {
       const form = await request.formData();
       const contentType = String(form.get('content_type') ?? '');
       if (!contentType) return fail(400, { message: 'Content type is required.', contentType });
-      await clearDefaultSource(locals.supabase, contentType);
+      // MAVP-5 (Issue 6): Clear empties BOTH storage shapes — the ordered
+      // slots and the legacy single-default row — so the category really
+      // has no configured default afterwards.
+      await setDefaultSourceSlots(locals.supabase, contentType, []);
       throw redirect(303, `/admin/system/api-sources?notice=${encodeURIComponent(`Default ${contentType} source cleared.`)}`);
     } catch (error) {
       if (isRedirect(error)) throw error;

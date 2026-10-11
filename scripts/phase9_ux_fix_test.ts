@@ -122,7 +122,7 @@ assert.match(shell, /class="control-fab-group"/, 'unified FAB control group exis
 assert.match(shell, /class="control-fab landscape-fab"[^>]*aria-pressed=\{landscapeMode\}/, 'landscape FAB (toggle/exit) exists');
 assert.match(shell, /aria-label=\{landscapeMode \? 'Exit landscape player' : 'Enter landscape player'\}/, 'landscape exit affordance exists');
 assert.match(shell, /class="source-chip"[^>]*aria-label="Choose source"/, 'source chip exists');
-assert.match(shell, /class="fab-item"[^>]*aria-label="Open episode list"/, 'episode FAB item exists');
+assert.match(shell, /class="episode-chip"[^>]*aria-label="Choose episode"/, 'episode chip exists (MAVP-5: replaces the episode FAB item)');
 
 // No portrait-only header/bottom chrome remains in the immersive shell.
 assert.doesNotMatch(shell, /header-title/, 'no portrait-only header title');

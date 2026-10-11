@@ -1,9 +1,10 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '$lib/server/supabase/database.types';
 import { invalidatePublicStreamingConfig } from './public-config';
-import type { CategoryInsert, CategoryUpdate, ProviderInsert, ProviderUpdate, SourceInsert, SourceUpdate, StreamingCategoryRow, StreamingDefaultInsert, StreamingDefaultRow, StreamingProviderRow, StreamingSourceCategoryRow, StreamingSourceRow, AdminOverview, ProviderHealthSummary } from './types';
+import type { CategoryInsert, CategoryUpdate, ProviderInsert, ProviderUpdate, SourceInsert, SourceUpdate, StreamingCategoryRow, StreamingDefaultInsert, StreamingDefaultRow, StreamingDefaultSlotRow, StreamingProviderRow, StreamingSourceCategoryRow, StreamingSourceRow, AdminOverview, ProviderHealthSummary } from './types';
 import { applyPositionEdits } from '$lib/shared/reorder';
 import { listProviderHealthSummaries as loadProviderHealthSummaries } from './health-service';
+import { isMissingDefaultSlotsTableError } from './public-config';
 
 type StreamingClient = SupabaseClient<Database>;
 
@@ -441,4 +442,78 @@ export async function clearDefaultSource(client: StreamingClient, contentType: s
   const { error } = await client.from('streaming_default_sources').delete().eq('content_type', contentType);
   if (error) throwRegistryError('Clear default source', error);
   invalidatePublicStreamingConfig();
+}
+
+// ----- MAVP-5 (Issue 6): ordered default-source slots (≤3 per category) -----
+
+export async function listAdminDefaultSlots(client: StreamingClient): Promise<StreamingDefaultSlotRow[]> {
+  const { data, error } = await client.from('streaming_default_source_slots').select('*').order('content_type').order('position');
+  // MAVP-5 (Issue 6) deploy-ordering safety: until migration 20261107000000
+  // is applied the slots read fails with the missing-relation shape — the
+  // Admin page must still render (with an empty slots view) instead of 500.
+  // Every OTHER error remains a hard, surfaced failure. SAVING slots while
+  // the table is missing still fails loudly through setDefaultSourceSlots,
+  // so the misconfiguration can never be silently accepted.
+  if (error && !isMissingDefaultSlotsTableError(error)) throwRegistryError('List default source slots', error);
+  return data ?? [];
+}
+
+/**
+ * Validate the ORDERED default slots for one category before writing:
+ * 1–3 entries, distinct source ids, known content type. The application
+ * layer is the primary eligibility gate (active/enabled/public sources);
+ * the database UNIQUE(content_type, source_id) + position CHECKs are the
+ * second line of defense.
+ */
+function assertDefaultSlots(contentType: string, sourceIds: string[]): void {
+  assertDefaultContentType(contentType);
+  if (!Array.isArray(sourceIds) || sourceIds.length === 0 || sourceIds.length > 3) {
+    throw new Error('A category takes at most three ordered default sources.');
+  }
+  if (new Set(sourceIds).size !== sourceIds.length) {
+    throw new Error('The ordered default sources must be distinct.');
+  }
+  if (sourceIds.some((id) => typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id))) {
+    throw new Error('Invalid default source selection.');
+  }
+}
+
+/**
+ * Replace the ordered default slots for one category with the given source
+ * ids (position = array index + 1). Keeps the LEGACY single-default row in
+ * sync with slot 1 (backward compatibility for every existing consumer of
+ * `streaming_default_sources`): a filled primary slot upserts the legacy
+ * row; an emptied category deletes it. A source assigned to a DIFFERENT
+ * position within the same write is handled by deleting the category's
+ * rows first, then inserting the new ordering (single write transaction
+ * semantics are not available through the PostgREST builder — the delete
+ * + insert pair is ordered and both invalidate the public config).
+ */
+export async function setDefaultSourceSlots(client: StreamingClient, contentType: string, sourceIds: string[]): Promise<StreamingDefaultSlotRow[]> {
+  assertDefaultSlots(contentType, sourceIds);
+  const deleteResult = await client.from('streaming_default_source_slots').delete().eq('content_type', contentType);
+  if (deleteResult.error) throwRegistryError('Clear default source slots', deleteResult.error);
+  let inserted: StreamingDefaultSlotRow[] = [];
+  if (sourceIds.length) {
+    const insertResult = await client
+      .from('streaming_default_source_slots')
+      .insert(sourceIds.map((sourceId, index) => ({ content_type: contentType, position: index + 1, source_id: sourceId })))
+      .select('*');
+    if (insertResult.error) throwRegistryError('Save default source slots', insertResult.error);
+    inserted = insertResult.data ?? [];
+  }
+  // Legacy single-default mirror: keep streaming_default_sources aligned
+  // with slot 1 so every pre-MAVP-5 consumer (and the public config's
+  // `defaults` view) keeps seeing the primary choice.
+  if (sourceIds.length) {
+    const legacyResult = await client
+      .from('streaming_default_sources')
+      .upsert({ content_type: contentType, source_id: sourceIds[0] }, { onConflict: 'content_type' });
+    if (legacyResult.error) throwRegistryError('Sync legacy default source', legacyResult.error);
+  } else {
+    const legacyDelete = await client.from('streaming_default_sources').delete().eq('content_type', contentType);
+    if (legacyDelete.error) throwRegistryError('Clear legacy default source', legacyDelete.error);
+  }
+  invalidatePublicStreamingConfig();
+  return inserted;
 }

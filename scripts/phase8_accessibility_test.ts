@@ -163,11 +163,11 @@ assert.match(shell, /role="status"/, 'role=status preserved');
 // 8e. aria-label on icon-only buttons.
 assert.match(shell, /aria-label="Close player"/, 'aria-label on Back button preserved');
 assert.match(shell, /aria-label="Switch source"/, 'aria-label on Switch source button preserved');
-assert.match(shell, /aria-label="Open episode list"/, 'aria-label on episode list button preserved');
+assert.match(shell, /aria-label="Choose episode"/, 'aria-label on the MAVP-5 episode chip preserved (supersedes the pill\'s Open-episode-list label)');
 
 // 8f. UPDATED (player redesign): the menu FAB toggle was replaced by
-//     dedicated always-visible controls (landscape FAB, episodes pill,
-//     source chip). Sheets still open as modal dialogs with focus moved in
+//     dedicated always-visible controls (landscape FAB, the MAVP-5 episode
+//     chip, source chip). Sheets still open as modal dialogs with focus moved in
 //     and restored on close; the sheet-opening controls declare
 //     aria-haspopup="dialog" — equivalent AT semantics without a menu state.
 assert.match(shell, /aria-haspopup="dialog"/, 'sheet-opening controls declare aria-haspopup (player redesign)');
@@ -197,7 +197,13 @@ assert.match(shell, /function openSourceSheetFromControl\(\) \{[\s\S]*?openSourc
 assert.match(shell, /onclick=\{\(event\) => openSourceSheet\(event\.currentTarget instanceof HTMLElement \? event\.currentTarget : playerRoot\)\}/, 'source chip passes itself as the focus-restore trigger');
 
 // 9b. Episode control entry routes through the focus-managed opener.
-assert.match(shell, /function openEpisodeSheetFromControl\(\) \{[\s\S]*?openEpisodeSheet\(playerRoot \?\? document\.activeElement as HTMLElement\)/, 'episode control entry passes a focus-restore trigger');
+// MAVP-5 Issue 4 supersession: the bottom-right Episodes pill (and its
+// openEpisodeSheetFromControl root-fallback helper) became the dedicated
+// left-edge episode chip, which opens the sheet DIRECTLY with ITSELF as
+// the focus-restore trigger — a strictly stronger contract (focus returns
+// to the actual activating control, not the shell root).
+assert.match(shell, /class="episode-chip"/, 'episode control entry is the dedicated chip (MAVP-5)');
+assert.match(shell, /onclick=\{\(event\) => openEpisodeSheet\(event\.currentTarget instanceof HTMLElement \? event\.currentTarget : playerRoot\)\}/, 'episode chip passes itself as the focus-restore trigger');
 
 // 9c. Streams menu entry routes through the focus-managed opener.
 // 9c. The dedicated streams sheet was RETIRED with the obsolete Mavero

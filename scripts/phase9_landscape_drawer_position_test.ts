@@ -41,13 +41,19 @@ assert.match(shell, /\.player-shell \{[^}]*position: relative/, 'player-shell is
 // 2. Sheets are player-local absolute surfaces (NEVER viewport-fixed)
 // ============================================================
 
-const baseSheetsMatch = shell.match(/\.source-sheet, \.episode-sheet \{([^}]+)\}/);
-assert.ok(baseSheetsMatch, 'base sheets rule exists (the mavero-streams-sheet selector was retired with the obsolete player branch, 0111d7f)');
+// MAVP-5 Issue 4 supersession: the shared base rule now covers the SOURCE
+// sheet only — the episode sheet is a LEFT drawer with its own rule (same
+// surface system, same player-local anchoring, same z-index layering).
+const baseSheetsMatch = shell.match(/\.source-sheet \{([^}]+)\}/);
+assert.ok(baseSheetsMatch, 'base source-sheet rule exists (the mavero-streams-sheet selector was retired with the obsolete player branch, 0111d7f)');
 const baseSheetsBody = baseSheetsMatch[1];
+const episodeSheetMatch = shell.match(/\.episode-sheet \{([^}]+)\}/);
+assert.ok(episodeSheetMatch, 'MAVP-5: the episode-sheet left-drawer rule exists');
 
 assert.match(baseSheetsBody, /position: absolute/, 'sheets are absolute (player-local)');
 assert.doesNotMatch(baseSheetsBody, /position: fixed/, 'sheets are NOT fixed (never viewport-anchored)');
 assert.match(baseSheetsBody, /z-index: 21/, 'sheets z-index is 21 (above backdrop 20)');
+assert.match(episodeSheetMatch[1], /position: absolute; z-index: 21;/, 'MAVP-5: the episode sheet keeps the same absolute/z-21 anchoring');
 assert.match(baseSheetsBody, /transform: none/, 'sheets carry no transform (no popover translation)');
 
 // Portrait bottom-sheet base: bottom-anchored, capped height, vertical entry.
@@ -62,7 +68,10 @@ assert.match(baseSheetsBody, /animation: sheet-up/, 'base sheets use sheet-up (v
 // 3. Wide viewport (landscape/desktop/TV): right-edge full-height drawer
 // ============================================================
 
-const wideRuleMatch = shell.match(/@media \(min-width: 769px\) \{[\s\S]*?\.source-sheet, \.episode-sheet \{([^}]+)\}/);
+// MAVP-5 Issue 4 supersession: the wide-viewport media query anchors the
+// SOURCE sheet alone (the episode sheet is a LEFT drawer at every viewport,
+// asserted above — full-height, top: 0 there).
+const wideRuleMatch = shell.match(/@media \(min-width: 769px\) \{[\s\S]*?\.source-sheet \{([^}]+)\}/);
 assert.ok(wideRuleMatch, 'wide-viewport drawer rule exists');
 const wideRuleBody = wideRuleMatch[1];
 
@@ -87,9 +96,11 @@ for (const prop of ['top', 'bottom', 'left', 'height', 'max-height', 'animation'
   assert.match(wideRuleBody, new RegExp(`${prop}:`), `wide rule overrides ${prop} (no base-rule leak)`);
 }
 
-// Episode drawer shares the same contract with its own width. (The streams
-// drawer width contract was retired with the streams sheet, 0111d7f.)
-assert.match(shell, /\.episode-sheet \{ width: min\(380px, 34vw\); \}/, 'episode drawer width contract');
+// MAVP-5 Issue 4 supersession: the episode sheet's width contract is now
+// viewport-independent — a bounded min(360px, 88vw) LEFT drawer at every
+// viewport (narrow-screen-safe; the streams drawer contract was retired
+// with the streams sheet, 0111d7f).
+assert.match(shell, /\.episode-sheet \{[^}]*width: min\(360px, 88vw\);/, 'episode drawer width contract (MAVP-5 left drawer)');
 
 // ============================================================
 // 4. Backdrop is player-local
@@ -131,15 +142,21 @@ assert.doesNotMatch(shell, /translate\(-50%, -50%\)/, 'no centered popover trans
 // 7. Drawer list is scrollable and respects the safe area (wide context)
 // ============================================================
 
-assert.match(shell, /@media \(min-width: 769px\) \{[\s\S]*?\.source-sheet \.sheet-list, \.episode-sheet \.sheet-list \{[^}]*overflow-y: auto/, 'wide drawer has its own scrollable list (overflow-y: auto)');
-assert.match(shell, /@media \(min-width: 769px\) \{[\s\S]*?\.source-sheet \.sheet-list, \.episode-sheet \.sheet-list \{[^}]*padding-bottom: max\(14px, env\(safe-area-inset-bottom\)\)/, 'wide drawer list respects safe-area-inset-bottom');
+// MAVP-5 Issue 4 supersession: the wide media query scopes the source
+// sheet's list; the episode sheet's list scrolls via its own viewport-
+// independent rule (overflow-y: auto at every viewport).
+assert.match(shell, /@media \(min-width: 769px\) \{[\s\S]*?\.source-sheet \.sheet-list \{[^}]*overflow-y: auto/, 'wide drawer has its own scrollable list (overflow-y: auto)');
+assert.match(shell, /\.episode-sheet \.sheet-list \{[^}]*overflow-y: auto/, 'MAVP-5: the episode drawer list scrolls at every viewport');
+assert.match(shell, /@media \(min-width: 769px\) \{[\s\S]*?\.source-sheet \.sheet-list \{[^}]*padding-bottom: max\(14px, env\(safe-area-inset-bottom\)\)/, 'wide drawer list respects safe-area-inset-bottom');
 
 // ============================================================
 // 8. Touch targets remain >=44px
 // ============================================================
 
 assert.match(shell, /\.sheet-option \{[^}]*min-height: 52px/, 'sheet-option min-height is 52px (>= 44px touch target)');
-assert.match(shell, /\.fab-item \{[^}]*height: 44px/, 'FAB menu items are 44px tall (>= 44px touch target)');
+// MAVP-5 Issue 4 supersession: the fab-item pill was replaced by the episode
+// chip — the chip keeps the same >=44px touch target (min-width 44px).
+assert.match(shell, /\.episode-chip \{[^}]*min-width: 44px/, 'episode chip keeps the >=44px touch target (MAVP-5)');
 assert.match(shell, /\.back-fab \{[^}]*width: 44px; height: 44px/, 'back FAB is 44×44px');
 
 // ============================================================

@@ -135,10 +135,19 @@ ok(!/export let deviceType/.test(shellCode) && !/deviceType=\{page\.data\.device
 //      startup, route loading, or iframe mounting.
 const toggleLandscapeBody = functionBody(shellCode, 'async function toggleLandscape()', 'async function toggleFullscreen()');
 const toggleFullscreenBody = functionBody(shellCode, 'async function toggleFullscreen()', 'async function exitMaveroFullscreen');
-const shellCodeWithoutManualControllers = shellCode.replace(toggleLandscapeBody, '').replace(toggleFullscreenBody, '');
 ok(/lock\?\.\('landscape'\)/.test(toggleLandscapeBody), 'A10. the manual Landscape control still locks orientation (user-initiated only)');
 ok(/orientationController\(\)\?\.lock\?\.\('landscape'\)/.test(toggleFullscreenBody), 'A11. the manual F-key fullscreen still locks orientation (user-initiated only)');
-ok(!/lock\?\.\('landscape'\)/.test(shellCodeWithoutManualControllers), 'A12. NO orientation lock is reachable outside the two manual controllers (no automatic landscape anywhere)');
+// MAVP-5 Issue 5 supersession: the intent-preserving restore routine
+// (restoreLandscapePresentationOnce) re-issues the user's EXPLICIT
+// presentation when a source switch provably dropped it (bounded, ONE
+// attempt, requires the user's prior landscape intent). It is excluded
+// alongside the manual controllers; its boundedness is asserted below —
+// no automatic landscape path exists outside these three bodies.
+const restoreBodyA = functionBody(shellCode, 'async function restoreLandscapePresentationOnce()', 'const handleKeydown');
+const shellCodeWithoutManualControllers = shellCode.replace(toggleLandscapeBody, '').replace(toggleFullscreenBody, '').replace(restoreBodyA, '');
+ok(!/lock\?\.\('landscape'\)/.test(shellCodeWithoutManualControllers), 'A12. NO orientation lock is reachable outside the two manual controllers and the MAVP-5 intent-preserving restore (no automatic landscape anywhere)');
+ok(shell.includes('if (landscapeRestoreInFlight) return;') && shell.includes('LANDSCAPE_RESTORE_WINDOW_MS = 2000'),
+  'A12-MAVP5 the restore is bounded (one attempt, documented window) and requires the user\u2019s prior landscape intent');
 // A13. No PLAY entry path or watch-route code touches the orientation API.
 //      (The detail page's OWN inline-trailer fullscreen lock — a separate,
 //      user-initiated MAV-24 handler — is unrelated behavior and preserved;
@@ -225,7 +234,9 @@ ok(!shell.includes('contentWindow.addEventListener') && !shell.includes('iframe.
 
 // B17. Sheet/focus guards: an open sheet or focused control is never hidden.
 ok(/!sourceMenuOpen && !episodeMenuOpen && !focusWithinMaveroControls\(\)/.test(revealBody), 'B17. sheet-open + keyboard-focus guards inside the timer callback');
-ok(/\.back-fab, \.control-fab-group, \.source-chip, \.direct-controls-overlay, \.source-sheet, \.episode-sheet/.test(shell), 'B18. focus guard covers every Mavero-owned control surface');
+// MAVP-5 Issue 4 supersession: the focus guard now also covers the dedicated
+// episode chip (a Mavero-owned control surface that must never auto-hide).
+ok(/\.back-fab, \.control-fab-group, \.source-chip, \.episode-chip, \.direct-controls-overlay, \.source-sheet, \.episode-sheet/.test(shell), 'B18. focus guard covers every Mavero-owned control surface (incl. the MAVP-5 episode chip)');
 
 // ============================================================================
 // §C Source chip — compact closed sizing
@@ -323,7 +334,8 @@ ok(!/style=\{landscapeControlStyle\} type="button" aria-label=\{landscapeMode/.t
 //      per-orientation resets, reset-all, JSON payload contract.
 ok(/type ControlsControlDraft = \{ portrait: ControlsProfileDraft; landscape: ControlsProfileDraft \}/.test(adminPage), 'D25. Admin draft model has independent portrait/landscape profiles');
 ok(/landscapeControl: emptyControlDraft\(\),\s*back: emptyControlDraft\(\)/.test(adminPage), 'D26. Admin draft covers BOTH controls independently');
-ok(/function resetControlProfile\(control: 'landscapeControl' \| 'back', orientation: 'portrait' \| 'landscape'\)/.test(adminPage), 'D27. per-control per-orientation reset exists');
+// MAVP-5 Issue 4 supersession: the reset union now includes the dedicated 'episodes' control.
+ok(/function resetControlProfile\(control: 'landscapeControl' \| 'back' \| 'episodes', orientation: 'portrait' \| 'landscape'\)/.test(adminPage), 'D27. per-control per-orientation reset exists (incl. the MAVP-5 episodes chip)');
 ok(/positionDraft\[control\]\[orientation\] = emptyProfileDraft\(\)/.test(adminPage), 'D28. resetting one profile touches ONLY that profile');
 ok(/function resetAllControlsPosition\(\)/.test(adminPage), 'D29. reset-all exists');
 ok(/readLegacyAxis\(custom\?\.back\?\.portrait\?\.horizontal/.test(adminPage) && !/custom\?\.back\?\.portrait\?\.horizontal \?\? custom\?\.horizontal/.test(adminPage), 'D30. back control NEVER prefills from the landscape control legacy base');

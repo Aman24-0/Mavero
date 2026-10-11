@@ -386,15 +386,33 @@ html[data-account-sheet-open] body { overflow: hidden; }
 html[data-account-sheet-open] body { touch-action: none; }
 
 /* ============================================================
-   Player route scroll lock (MAVP-4 Issue 2) — same pattern as
-   the admin/account sheet locks. The player shell toggles this
-   attribute on <html> while it is mounted: the watch page
-   renders bare (no AppShell) and the player owns the entire
-   viewport, so the document must not scroll behind it (browser
-   UI transitions and overscroll used to scroll the player page).
-   Set on mount, removed on destroy — never a global change.
+   Player route scroll lock (MAVP-4 Issue 2; completed by MAVP-5 RC-1).
+   The MAVP-4 rule locked the body axis only: html[data-player-open] body
+   { overflow: hidden } — which relies on the CSS overflow-propagation
+   rule (the body's overflow moves to the viewport only while the html
+   element's own overflow is `visible`) and left the html ROOT scroller
+   itself unlocked, with no overscroll-behavior on either element.
+
+   MAVP-5 RC-1 (VidRift-only portrait scrolling): VidRift is the ONLY
+   provider whose iframe renders WITHOUT the sandbox attribute (provider
+   capability sandbox_policy='unrestricted' — required by the provider's
+   documented "a sandboxed iframe cannot play"), so its fully-privileged
+   document (whose own default mobile sheet UI is active) can chain
+   unconsumed vertical pan/overscroll gestures out of the iframe into the
+   parent document scroller — scrolling the outer Mavero page behind the
+   player. Sandboxed providers keep the gesture contained to the frame.
+
+   The lock is therefore completed at the ROOT level while the player is
+   open: BOTH axes on BOTH root elements (the html-level rule makes the
+   document scroller non-scrollable regardless of body-propagation
+   semantics) plus overscroll-behavior: none (kills gesture chaining /
+   rubber-band scroll-through for the unsandboxed frame). Deliberately
+   NOT touch-action: none — that would break the provider's own playback
+   controls and every other player interaction. Set on shell mount,
+   removed on shell destroy — never a global change.
    ============================================================ */
-html[data-player-open] body { overflow: hidden; }
+html[data-player-open] { overflow: hidden; overscroll-behavior: none; }
+html[data-player-open] body { overflow: hidden; overscroll-behavior: none; }
 
 /* ============================================================
    ADMIN 2.0 — NEON NOIR CONTROL SYSTEM

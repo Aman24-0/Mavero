@@ -154,7 +154,10 @@ ok('9a. Defaults sheet exists in API & Sources workspace (Phase 1 — a2-sheet c
 assert.match(apiSourcesServer, /saveDefault/, 'server has saveDefault action');
 assert.match(apiSourcesServer, /clearDefault/, 'server has clearDefault action');
 assert.match(apiSourcesServer, /upsertDefaultSource/, 'saveDefault calls existing upsertDefaultSource');
-assert.match(apiSourcesServer, /clearDefaultSource/, 'clearDefault calls existing clearDefaultSource');
+// MAVP-5 Issue 6 supersession: Clear now routes through setDefaultSourceSlots
+// (which empties BOTH the ordered slots and the legacy single-default row) —
+// a strictly stronger clear contract.
+assert.match(apiSourcesServer, /setDefaultSourceSlots/, 'clearDefault calls setDefaultSourceSlots (MAVP-5: clears slots + legacy row)');
 ok('10a. Defaults persistence uses existing admin-service (no new backend)');
 
 // ============================================================

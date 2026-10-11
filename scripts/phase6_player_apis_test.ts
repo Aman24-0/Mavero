@@ -75,7 +75,13 @@ assert.match(shell, /document\.removeEventListener\('fullscreenchange', handleFu
 // Fullscreen state sync.
 assert.match(shell, /fullscreen = document\.fullscreenElement === playerRoot/, 'fullscreen state synced from document.fullscreenElement');
 // Browser-initiated fullscreen exit (Esc) must unlock orientation if landscapeMode was active.
-assert.match(shell, /if \(!fullscreen && landscapeMode\)[\s\S]{0,500}orientationController\(\)\?\.unlock\?/, 'orientation unlock on browser-initiated fullscreen exit');
+// MAVP-5 Issue 5 supersession: the loss handler FIRST checks the intent-
+// preserving restore window (a switch-triggered loss restores instead of
+// unlocking); a genuine browser-initiated exit still unlocks orientation in
+// the fall-through branch (asserted against the handler body).
+const fullscreenHandlerMavp5 = shell.slice(shell.indexOf('const handleFullscreen = () => {'), shell.indexOf('async function restoreLandscapePresentationOnce'));
+assert.match(fullscreenHandlerMavp5, /if \(!fullscreen && landscapeMode\)[\s\S]{0,1500}orientationController\(\)\?\.unlock\?/, 'orientation unlock on browser-initiated fullscreen exit (after the MAVP-5 restore guard)');
+assert.match(fullscreenHandlerMavp5, /landscapePresentationIntent && lastSourceSwitchAt/, 'MAVP-5: the restore guard precedes the unlock (switch-triggered losses restore, not revert)');
 // Fullscreen cleanup on destroy.
 assert.match(shell, /if \(document\.fullscreenElement === playerRoot\)[\s\S]{0,80}exitFullscreen/, 'fullscreen exit on destroy');
 // Cross-origin boundary comment preserved (Phase 5 contract).

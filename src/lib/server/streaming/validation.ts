@@ -345,7 +345,7 @@ function controlsPositionSizeJson(value: unknown, label: string): number | null 
   return rounded;
 }
 
-function controlsPositionSizesJson(value: unknown): { back?: number; landscape?: number } | null {
+function controlsPositionSizesJson(value: unknown): { back?: number; landscape?: number; episodes?: number } | null {
   if (value === undefined || value === null) return null;
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new StreamingValidationError('Player Controls Position sizes section must be an object.');
@@ -353,8 +353,16 @@ function controlsPositionSizesJson(value: unknown): { back?: number; landscape?:
   const record = value as Record<string, unknown>;
   const back = controlsPositionSizeJson(record.back, 'back button');
   const landscape = controlsPositionSizeJson(record.landscape, 'landscape button');
-  if (back === null && landscape === null) return null;
-  return { ...(back !== null ? { back } : {}), ...(landscape !== null ? { landscape } : {}) };
+  // MAVP-5 (Issue 4): the Episodes chip size — same bounds and strictness
+  // as the other controls; fully independent (one control's size can never
+  // affect another's).
+  const episodes = controlsPositionSizeJson(record.episodes, 'episodes chip');
+  if (back === null && landscape === null && episodes === null) return null;
+  return {
+    ...(back !== null ? { back } : {}),
+    ...(landscape !== null ? { landscape } : {}),
+    ...(episodes !== null ? { episodes } : {}),
+  };
 }
 
 /**
@@ -395,11 +403,24 @@ function playerControlsPositionFromJson(raw: string): JsonObject | null {
     const backLandscape = controlsPositionOverrideJson(backRecord.landscape, 'back landscape');
     if (backPortrait || backLandscape) back = { ...(backPortrait ? { portrait: backPortrait } : {}), ...(backLandscape ? { landscape: backLandscape } : {}) };
   }
-  // MAVP-3: independent per-control sizes (Back button, Landscape button).
+  // MAVP-5 (Issue 4): the Episodes chip section — same strict per-orientation
+  // shape as `back`, fully independent from every other control.
+  let episodes: ControlsPositionOverrideJsonContainer | null = null;
+  if (record.episodes !== undefined && record.episodes !== null) {
+    if (!record.episodes || typeof record.episodes !== 'object' || Array.isArray(record.episodes)) {
+      throw new StreamingValidationError('Player Controls Position episodes section must be an object.');
+    }
+    const episodesRecord = record.episodes as Record<string, unknown>;
+    const episodesPortrait = controlsPositionOverrideJson(episodesRecord.portrait, 'episodes portrait');
+    const episodesLandscape = controlsPositionOverrideJson(episodesRecord.landscape, 'episodes landscape');
+    if (episodesPortrait || episodesLandscape) episodes = { ...(episodesPortrait ? { portrait: episodesPortrait } : {}), ...(episodesLandscape ? { landscape: episodesLandscape } : {}) };
+  }
+  // MAVP-3: independent per-control sizes (Back button, Landscape button,
+  // MAVP-5: Episodes chip).
   const sizes = controlsPositionSizesJson(record.sizes);
   // A custom payload needs at least one anchor OR at least one size — a
   // sizes-only save (resize without repositioning) is valid.
-  if (!horizontal && !vertical && !portrait && !landscape && !back && !sizes) {
+  if (!horizontal && !vertical && !portrait && !landscape && !back && !episodes && !sizes) {
     throw new StreamingValidationError('Custom Player Controls Position needs at least one anchor (horizontal or vertical).');
   }
   return {
@@ -409,6 +430,7 @@ function playerControlsPositionFromJson(raw: string): JsonObject | null {
     ...(portrait ? { portrait } : {}),
     ...(landscape ? { landscape } : {}),
     ...(back ? { back } : {}),
+    ...(episodes ? { episodes } : {}),
     ...(sizes ? { sizes } : {}),
   };
 }

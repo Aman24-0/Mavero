@@ -25,10 +25,11 @@ assert.match(shell, /class="control-fab-group"/);
 assert.match(shell, /class="source-chip"/);
 assert.match(shell, /\.control-fab-group \{[^}]*bottom: max\(16px, env\(safe-area-inset-bottom\)\)/);
 assert.match(shell, /\.control-fab-group \{[^}]*right: max\(16px, env\(safe-area-inset-right\)\)/);
-// Episodes pill with staggered animation (single item — keyframes preserved).
-assert.match(shell, /class="fab-item"/);
-assert.match(shell, /--fab-delay/);
-assert.match(shell, /@keyframes fab-unfold/);
+// MAVP-5 Issue 4 supersession: the Episodes pill (the only fab-item) is
+// replaced by the dedicated left-edge episode chip — the mirror of the
+// source chip, same single episode system, same sheet.
+assert.match(shell, /class="episode-chip"/);
+assert.match(shell, /@keyframes sheet-left/);
 // Auto-hide: FIVE-second timer (player redesign; was 10s).
 assert.match(shell, /5_000/);
 // Sheet-open state + keyboard-focus guard prevent auto-hide.

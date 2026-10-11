@@ -41,9 +41,14 @@ assert.doesNotMatch(progressService, /currentTime: 0, sourceRuntimes/, 'updateRu
 // 3. Resolver default-first: default excluded from fallback after failure (BLOCKER 5)
 // ============================================================
 
-assert.match(resolverService, /let defaultAttempted = false/, 'defaultAttempted flag exists');
-assert.match(resolverService, /defaultAttempted = true/, 'defaultAttempted set when default is tried');
-assert.match(resolverService, /\.filter\(\(ranked\) => !\(defaultAttempted && ranked\.config\.source\.id === defaultId\)\)/, 'default excluded from fallback after failure');
+// MAVP-5 Issue 6 supersession: the single-default attempt flag became the
+// ORDERED default walk — every ordered default is attempted at most once
+// via the already-attempted set (a strictly stronger no-second-attempt
+// contract that also covers the requested source itself).
+assert.match(resolverService, /alreadyAttemptedSourceIds = new Set<string>\(\[config\.source\.id\]\)/, 'the already-attempted set exists (requested source seeded)');
+assert.match(resolverService, /for \(const orderedDefaultId of defaultSourceIds\) \{\s*\n\s*if \(alreadyAttemptedSourceIds\.has\(orderedDefaultId\)\) continue;/, 'ordered defaults are each attempted at most once (defaultAttempted generalised)');
+assert.match(resolverService, /alreadyAttemptedSourceIds\.add\(orderedDefaultId\);/, 'each ordered default is marked attempted BEFORE its try (a failed default never gets a second attempt)');
+assert.match(resolverService, /\.filter\(\(ranked\) => !alreadyAttemptedSourceIds\.has\(ranked\.config\.source\.id\)\)/, 'every attempted source (requested + ordered defaults) excluded from fallback after failure');
 
 // ============================================================
 // 4. Behavioral test: sourceRuntimes state machine
@@ -209,8 +214,12 @@ assert.doesNotMatch(shell, /landscape-controls-toggle/, 'Test 19: no landscape-c
 // Test 21: Source drawer right-anchored on wide viewports (landscape/desktop/
 // TV) — viewport media query, not a landscapeMode class selector. (The
 // mavero-streams-sheet selector was retired with the obsolete player branch,
-// 0111d7f; the two live sheets keep the right-drawer anchoring.)
-assert.match(shell, /@media \(min-width: 769px\) \{[\s\S]*?\.source-sheet, \.episode-sheet \{ top: 0; right: 0; bottom: 0; left: auto;/, 'Test 21: source drawer right-anchored on wide viewports');
+// 0111d7f. MAVP-5 Issue 4 supersession: the wide-viewport right drawer is now
+// the SOURCE sheet only — the episode sheet is a LEFT drawer at every
+// viewport (its own documented contract), so the media query anchors the
+// source sheet alone.
+assert.match(shell, /@media \(min-width: 769px\) \{[\s\S]*?\.source-sheet \{ top: 0; right: 0; bottom: 0; left: auto;/, 'Test 21: source drawer right-anchored on wide viewports (MAVP-5: episode sheet moved to the left drawer)');
+assert.match(shell, /\.episode-sheet \{ position: absolute; z-index: 21; top: 0; bottom: 0; left: 0;/, 'Test 21-MAVP5: the episode sheet is a full-height LEFT drawer at every viewport');
 
 // Test 22: Source drawer uses translateX.
 assert.match(shell, /@keyframes slide-right \{ from \{ transform: translateX\(100\%\)/, 'Test 22: slide-right uses translateX');

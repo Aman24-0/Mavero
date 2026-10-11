@@ -48,18 +48,19 @@ assert.match(viewport, /var\(--base\)/, 'viewport uses var(--base)');
 // --- 3. Player redesign: Back FAB + dedicated bottom-right controls + source chip ---
 // UPDATED (MAVERO player redesign): the menu FAB was replaced by a dedicated
 // bottom-right Landscape/Fullscreen FAB (class="control-fab landscape-fab"),
-// an Episodes pill (class="fab-item" preserved) and a right-edge source chip
-// (class="source-chip"). The user-facing Sandbox toggle was REMOVED.
+// the MAVP-5 left-edge episode chip (class="episode-chip", the mirror of
+// the source chip — the old fab-item pill was replaced) and a right-edge
+// source chip (class="source-chip"). The user-facing Sandbox toggle was REMOVED.
 assert.match(shell, /class="back-fab"/, 'back FAB exists');
 assert.match(shell, /class="control-fab landscape-fab"/, 'landscape/fullscreen FAB exists (dedicated bottom-right control)');
 assert.match(shell, /class="control-fab-group"/, 'control FAB group exists');
-assert.match(shell, /class="fab-item"/, 'episodes pill exists');
+assert.match(shell, /class="episode-chip"/, 'left-edge episode chip exists (MAVP-5: replaces the episodes pill)');
 assert.match(shell, /class="source-chip"/, 'right-edge source chip exists');
 assert.match(shell, /aria-label="Close player"/, 'back FAB aria-label');
 assert.match(shell, /aria-label=\{landscapeMode \? 'Exit landscape player' : 'Enter landscape player'\}/, 'landscape FAB aria-label (distinct orientation states)');
 assert.match(shell, /aria-label="Choose source"/, 'source chip aria-label');
 assert.match(shell, /aria-haspopup="dialog"/, 'sheet-opening controls declare aria-haspopup');
-assert.match(shell, /aria-label="Open episode list"/, 'episode action exists');
+assert.match(shell, /aria-label="Choose episode"/, 'episode action exists (MAVP-5 episode chip)');
 assert.doesNotMatch(shell, /Sandbox \{/, 'user-facing Sandbox toggle removed');
 
 // --- 4. Compact source sheet (not old drawer) ---
