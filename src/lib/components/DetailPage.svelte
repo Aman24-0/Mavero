@@ -2,9 +2,10 @@
   import { onMount, tick, untrack } from 'svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
-  // MAVP-2 Phase 1: landscape-first presentation initiated at PLAY-CLICK time
-  // (freshest transient user activation) — the shell adopts it at mount.
-  import { requestLandscapeFirstPresentation } from '$lib/client/player/landscape-first';
+  // MAVP-3 Issue 1: the MAVP-2 click-time landscape-first presentation was
+  // REMOVED — playback must open in the device's existing orientation; the
+  // manual Landscape control in the player remains the only orientation
+  // entry point (no automatic rotation from any playback path).
   import { ArrowLeft, Heart, Play, Share2, Star, ListPlus, Film, Download, AlertCircle, LoaderCircle, AlertTriangle, Maximize, Minimize } from 'lucide-svelte';
   import SelectionSheet from '$components/SelectionSheet.svelte';
   import DownloadSheet from '$components/DownloadSheet.svelte';
@@ -884,7 +885,7 @@
              approved secondary row immediately beneath it. -->
         <div class="actions">
           <div class="primary-actions">
-            <a class="play-btn" href={watchHref} aria-label={playSubLabel ? `${playLabel} — season ${resumeEpisode?.season}, episode ${resumeEpisode?.episode}` : `${playLabel} ${item.title}`} onclick={() => { markPlayerMilestone('mavero:play'); requestLandscapeFirstPresentation(page.data.deviceType); }}>
+            <a class="play-btn" href={watchHref} aria-label={playSubLabel ? `${playLabel} — season ${resumeEpisode?.season}, episode ${resumeEpisode?.episode}` : `${playLabel} ${item.title}`} onclick={() => { markPlayerMilestone('mavero:play'); }}>
               <Play size={17} fill="currentColor" strokeWidth={0} />
               <span class="play-copy">
                 <span class="play-label">{playLabel}</span>

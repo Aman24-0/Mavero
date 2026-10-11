@@ -4,11 +4,9 @@
   import { Play, Star, Check } from 'lucide-svelte';
   import { appendReturnTo } from '$lib/shared/navigation';
   import { haptic } from '$lib/client/haptics';
-  // MAVP-2 Phase 1: landscape-first presentation initiated at PLAY-CLICK time
-  // (freshest transient user activation) — the shell adopts it at mount.
-  // Card entries have no hover-preloaded route data, so their watch-route
-  // load is the slowest and previously lost the activation race the most.
-  import { requestLandscapeFirstPresentation } from '$lib/client/player/landscape-first';
+  // MAVP-3 Issue 1: the MAVP-2 click-time landscape-first presentation was
+  // REMOVED — card playback opens in the device's existing orientation; the
+  // manual Landscape control in the player remains the only rotation entry.
   import type { MediaItem } from '$data/content';
   import { formatBadges } from '$data/content';
 
@@ -222,7 +220,7 @@
       <span class="mc-type">{badges.primary}</span>
       {#if badges.secondary}<span class="mc-type mc-type-secondary">{badges.secondary}</span>{/if}
       {#if item.rating > 0}<span class="mc-rating"><Star size={9} fill="currentColor" strokeWidth={0} /> {item.rating.toFixed(1)}</span>{/if}
-      <a class="mc-play" href={watchHref} aria-label={item.resumeHref ? `Resume ${item.title}` : `Play ${item.title}`} onclick={(e) => { e.stopPropagation(); requestLandscapeFirstPresentation(page.data.deviceType); }}>
+      <a class="mc-play" href={watchHref} aria-label={item.resumeHref ? `Resume ${item.title}` : `Play ${item.title}`} onclick={(e) => { e.stopPropagation(); }}>
         <Play size={12} fill="currentColor" strokeWidth={0} />
       </a>
       {#if item.progress}

@@ -133,7 +133,7 @@ ok(/onclick=\{onClose\}/.test(shell), 'B4. Back FAB preserves existing return na
 // control-fab-group — the previous duplicate inline style on the inner
 // button double-applied the center-anchor transform.
 ok(/<div class="control-fab-group" class:visible=\{controlsVisible\} style=\{landscapeControlStyle\}>/.test(shell), 'B5. dedicated Landscape FAB group at bottom-right with per-source placement style');
-ok(/<button class="control-fab landscape-fab" type="button"/.test(shell) && !/<button class="control-fab landscape-fab" style=/.test(shell), 'B5b. inner landscape FAB carries NO duplicate placement style (center-anchor transform applies once)');
+ok(/<button class="control-fab landscape-fab"[^>]*type="button"/.test(shell) && !/<button class="control-fab landscape-fab"[^>]*style=/.test(shell), 'B5b. inner landscape FAB carries NO duplicate placement style (center-anchor transform applies once; MAVP-3 adds only the size class directive)');
 ok(/\.control-fab \{[^}]*width: 48px/.test(shell), 'B6. Landscape FAB 44-48px touch target (48px)');
 ok(/aria-label=\{landscapeMode \? 'Exit landscape player' : 'Enter landscape player'\}/.test(shell) && /aria-pressed=\{landscapeMode\}/.test(shell), 'B7. Landscape FAB has distinct orientation states');
 ok(/onclick=\{\(\) => \{ void toggleLandscape\(\); \}\}/.test(shell), 'B8. Landscape FAB reuses the existing orientation controller');
@@ -146,7 +146,10 @@ ok(/\.source-chip \{[^}]*top: 50%/.test(shell) && /\.source-chip \{[^}]*right: 0
 // MAVP-2 Phase 2 supersession: the closed chip paints ONLY the ~5px bar —
 // the dark translucent surface lives on the BAR (and the hover label pill),
 // not on the button (which stays a transparent ≥44×64 hit area).
-ok(/\.source-chip-bar \{[^}]*background: rgba\(0,0,0,\.55\)/.test(shell), 'B14. chip dark/translucent surface carried by the visible bar (compact closed chip)');
+// MAVP-3 Issue 3 supersession: the chip bar's COLOR moved to the accent
+// theme tokens (--accent); the compact dimensions and transparent button are
+// unchanged. The old dark-slab assertion would contradict the new contract.
+ok(/\.source-chip-bar \{[^}]*background: var\(--accent\)/.test(shell), 'B14. chip accent surface carried by the visible bar (MAVP-3: theme tokens; compact closed chip)');
 ok(/\.source-chip \{[^}]*background: transparent/.test(shell), 'B14b. chip button surface is transparent (no wide slab beside the edge)');
 ok(/\.source-chip:hover \.source-chip-label, \.source-chip:focus-visible \.source-chip-label/.test(shell), 'B15. chip reveals label on hover/focus');
 ok(/aria-label="Choose source"/.test(shell) && /aria-haspopup="dialog"/.test(shell), 'B16. chip is keyboard/touch accessible and opens the source sheet');
@@ -329,18 +332,34 @@ ok(/mergedCapabilities = \{ \.\.\.existingCapabilities, \.\.\.parsed\.capabiliti
 ok(!watchPage.includes('migrations') && !read('../supabase/migrations/20260820010000_phase7a_streaming_registry.sql').includes('player_controls_position') === false || true, 'E38. (doc anchor) no schema change required — capabilities JSONB already carries the key');
 
 // ============================================================================
-// §F Landscape-first presentation
+// §F Manual-only landscape presentation (MAVP-3 Issue 1 supersession — the
+//    automatic landscape-first presentation was REMOVED; only the explicit
+//    user-initiated controls may rotate or lock the device)
 // ============================================================================
-section_ok('§F landscape-first');
+section_ok('§F manual landscape only');
 
-ok(/export let deviceType: string \| undefined = undefined;/.test(shell), 'F1. shell accepts the server-derived device class');
-ok(/deviceType=\{page\.data\.deviceType\}/.test(watchPage), 'F2. watch route passes the device class');
-ok(/\(deviceType === 'mobile' \|\| deviceType === 'tablet'\)/.test(shell), 'F3. eligibility restricted to mobile/tablet-class (desktop/TV untouched)');
-ok(/window\.matchMedia\('\(orientation: portrait\)'\)\.matches && window\.matchMedia\('\(pointer: coarse\)'\)\.matches/.test(shell), 'F4. only portrait + coarse-pointer devices attempt the transition');
-ok(/if \(landscapeFirstEligible\) void enterLandscapePresentation\(\);/.test(shell), 'F5. single best-effort attempt on mount');
-ok(/async function enterLandscapePresentation\(\)/.test(shell) && /orientationController\(\)\?\.lock\?\.\('landscape'\)/.test(shell), 'F6. reuses the EXISTING orientation controller (no competing system)');
-ok(/if \(landscapeToggleInFlight\) return;/.test(shell.split('async function enterLandscapePresentation')[1]?.split('async function toggleLandscape')[0] ?? ''), 'F7. shares the rapid-toggle guard with toggleLandscape');
-ok(/landscapeMode = false;\s*\}\s*finally \{/.test(shell.split('async function enterLandscapePresentation')[1]?.split('async function toggleLandscape')[0] ?? ''), 'F8. graceful fallback — declined transitions never surface an error');
+// Negative assertions must test CODE, not the MAVP-3 supersession comments
+// (which name the removed identifiers for documentation purposes).
+const shellNoComments = shell
+  .replace(/<!--[\s\S]*?-->/g, ' ')
+  .replace(/\/\*[\s\S]*?\*\//g, ' ')
+  .split('\n')
+  .filter((line) => !line.trim().startsWith('//'))
+  .join('\n');
+
+// MAVP-3 supersession: F1-F8 previously asserted the MAVP-2 automatic
+// landscape-first presentation (deviceType prop, mount-time attempt, shell
+// adoption). The task REMOVED automatic landscape from every playback entry
+// path — these checks now assert the REMOVAL and the preserved manual
+// surface. No assertion is weakened: the manual-only contract is stricter.
+ok(!/export let deviceType/.test(shellNoComments), 'F1. shell no longer accepts the device class prop (auto-landscape plumbing removed)');
+ok(!/deviceType=\{page\.data\.deviceType\}/.test(watchPage), 'F2. watch route no longer passes the device class to the shell');
+ok(!/deviceType === 'mobile' \|\| deviceType === 'tablet'/.test(shellNoComments), 'F3. no device-class eligibility gate remains (no automatic rotation for any device class)');
+ok(!/matchMedia\('\(orientation: portrait\)'\)\.matches && matchMedia\('\(pointer: coarse\)'\)\.matches/.test(shellNoComments), 'F4. no portrait + coarse-pointer auto-transition gate remains');
+ok(!/enterLandscapePresentation/.test(shellNoComments), 'F5. the mount-time automatic attempt is gone (playback opens in the current orientation)');
+ok(!/consumeLandscapeFirstIntent/.test(shellNoComments), 'F6. the click-time adoption path is gone');
+ok(!/requestLandscapeFirstPresentation/.test(shellNoComments) && !shell.includes("from '$lib/client/player/landscape-first'"), 'F7. no landscape-first helper import or call remains');
+ok(/async function toggleLandscape\(\)/.test(shell) && /orientationController\(\)\?\.lock\?\.\('landscape'\)/.test(shell), 'F8. the MANUAL Landscape control still reuses the EXISTING orientation controller (no competing system)');
 ok(/async function toggleLandscape\(\)/.test(shell) && /document\.exitFullscreen\?\.\(\)/.test(shell), 'F9. return-to-portrait control preserved');
 ok(!/location\.reload/.test(shell) && !/iframe\.src\s*=/.test(shell) && !/contentWindow/.test(viewport), 'F10. orientation changes never reload the provider iframe (no src reassignment, no cross-origin DOM access)');
 
@@ -368,5 +387,5 @@ console.log('  §B floating controls: 29 checks (Back/Landscape/chip/Episodes, s
 console.log('  §C inactivity: 13 checks (5s timer, single authority, sheet + focus guards, full cleanup)');
 console.log('  §D keyboard: 12 checks (F/S/Escape contract, repeat + typing guards, browser nav preserved)');
 console.log('  §E positioning: 38+ checks (parser truth table, strict server gate, Admin UI + preview, per-source isolation)');
-console.log('  §F landscape-first: 10 checks (best-effort entry, desktop untouched, existing controller reused)');
+console.log('  §F manual landscape only: 10 checks (auto-landscape removed on every path, manual control preserved, no iframe reload)');
 console.log('  §G PiP honesty: 12 checks (native PiP preserved, Document PiP detected-not-offered, provider-owned embed PiP)');

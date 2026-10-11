@@ -23,6 +23,10 @@
   import { CAPABILITY_FIELDS, CAPABILITY_LABELS } from '$lib/shared/player-capabilities';
   import { sandboxPolicyFromCapabilities, sandboxPolicies } from '$lib/shared/sandbox-policy';
   import { integrationTypes, providerStatuses } from '$lib/shared/streaming';
+  // MAVP-3 Issue 5: documented size bounds + defaults for the per-control
+  // Back/Landscape size settings (shared contract with the server gate and
+  // the player renderer).
+  import { CONTROLS_SIZE_MIN_PX, CONTROLS_SIZE_MAX_PX, BACK_CONTROL_DEFAULT_SIZE_PX, LANDSCAPE_CONTROL_DEFAULT_SIZE_PX } from '$lib/shared/player-controls-position';
   import type { PageData, ActionData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -98,6 +102,12 @@
     landscapeControl: emptyControlDraft(),
     back: emptyControlDraft(),
   });
+  // MAVP-3 Issue 5: independent per-control SIZE drafts (Back button,
+  // Landscape button) in px. Empty string = default size (44/48 — the
+  // player's stylesheet values). Sizes are orientation-independent and fully
+  // independent of the placement axes: editing a size never touches any
+  // anchor/offset draft and vice versa, and each control's size is its own.
+  let controlsSizesDraft = $state<{ back: string; landscape: string }>({ back: '', landscape: '' });
   // Preview/calibration orientation — which orientation the preview stage and
   // its control markers are currently showing.
   let positionPreviewOrientation = $state<'portrait' | 'landscape'>('landscape');
@@ -119,6 +129,15 @@
     const raw = source?.capabilities?.player_controls_position;
     const custom = raw && typeof raw === 'object' && !Array.isArray(raw) && raw.mode === 'custom' ? raw : null;
     controlsPositionMode = custom ? 'custom' : 'default';
+    // MAVP-3 Issue 5: prefill the per-control size drafts from the stored
+    // sizes section (valid bounded numbers only; anything else → default).
+    const storedSizes = custom && typeof custom.sizes === 'object' && custom.sizes !== null && !Array.isArray(custom.sizes) ? custom.sizes : null;
+    const readSizeDraft = (value: unknown): string =>
+      typeof value === 'number' && Number.isFinite(value) && value >= CONTROLS_SIZE_MIN_PX && value <= CONTROLS_SIZE_MAX_PX ? String(value) : '';
+    controlsSizesDraft = {
+      back: readSizeDraft(storedSizes?.back),
+      landscape: readSizeDraft(storedSizes?.landscape),
+    };
     positionDraft = {
       // Landscape control: prefill each orientation profile from its stored
       // override, falling back to the LEGACY base axes (pre-MAVP-2 saves).
@@ -151,8 +170,16 @@
     positionDraft[control][orientation] = emptyProfileDraft();
   }
 
+  /** MAVP-3 Issue 5: reset ONE control's size without touching any other
+   *  setting (its placement profiles, its axes, and the other control's
+   *  size all stay exactly as edited). */
+  function resetControlSize(control: 'back' | 'landscape') {
+    controlsSizesDraft = { ...controlsSizesDraft, [control]: '' };
+  }
+
   function resetAllControlsPosition() {
     positionDraft = { landscapeControl: emptyControlDraft(), back: emptyControlDraft() };
+    controlsSizesDraft = { back: '', landscape: '' };
     controlsPositionMode = 'default';
   }
 
@@ -172,9 +199,28 @@
   }
 
   /**
+   * MAVP-3 Issue 5: one control's size in the stored contract shape, or null
+   * when unset/invalid. Mirrors the axis precedent: an invalid non-empty
+   * value serializes as unset here (the server re-validates authoritatively
+   * for direct API callers; the inputs carry min/max for interactive guardrails).
+   */
+  function serializeSizeDraft(raw: string): number | null {
+    const trimmed = String(raw ?? '').trim();
+    if (!trimmed) return null;
+    const parsed = Number(trimmed);
+    if (!Number.isFinite(parsed) || parsed < CONTROLS_SIZE_MIN_PX || parsed > CONTROLS_SIZE_MAX_PX) return null;
+    return Math.round(parsed);
+  }
+
+  /** MAVP-3 Issue 5: the active size draft for the calibration preview markers. */
+  function previewMarkerSize(control: 'back' | 'landscape'): number | null {
+    return serializeSizeDraft(controlsSizesDraft[control]);
+  }
+
+  /**
    * Serialize the draft into the `controls_position_json` payload — the
-   * EXACT stored contract shape. Unset axes/sections are omitted; custom
-   * mode with no usable axis at all serializes as 'default' (the server's
+   * EXACT stored contract shape. Unset axes/sections/sizes are omitted; custom
+   * mode with no usable axis or size at all serializes as 'default' (the server's
    * "at least one anchor" rule then never rejects a UI-driven save).
    */
   const controlsPositionJson = $derived.by(() => {
@@ -210,6 +256,12 @@
     if (back.portrait.horizontal || back.portrait.vertical) backOut.portrait = Object.fromEntries(Object.entries(back.portrait).filter(([, v]) => v !== null));
     if (back.landscape.horizontal || back.landscape.vertical) backOut.landscape = Object.fromEntries(Object.entries(back.landscape).filter(([, v]) => v !== null));
     if (Object.keys(backOut).length) payload.back = backOut;
+    // MAVP-3 Issue 5: independent per-control sizes — serialized ONLY when at
+    // least one is set; each entry stands alone (one control's size never
+    // carries or resets the other's).
+    const backSize = serializeSizeDraft(controlsSizesDraft.back);
+    const landscapeSize = serializeSizeDraft(controlsSizesDraft.landscape);
+    if (backSize !== null || landscapeSize !== null) payload.sizes = { ...(backSize !== null ? { back: backSize } : {}), ...(landscapeSize !== null ? { landscape: landscapeSize } : {}) };
     if (Object.keys(payload).length === 1) return JSON.stringify({ mode: 'default' });
     return JSON.stringify(payload);
   });
@@ -611,7 +663,7 @@
            Unset axes keep the player's stylesheet defaults (Landscape button
            = bottom-right, Back button = top-left — both safe-area aware). -->
       <AdminFormSection heading="Player Controls Position">
-        <p class="a2-field-hint">Position the MAVERO floating controls per source. Each control has an independent portrait and landscape profile; each profile has an independent horizontal and vertical axis. Percentages are viewport-relative (0–100), measured from the anchor edge toward the centre. Sources without a custom placement use the defaults: Landscape button bottom-right, Back button top-left.</p>
+        <p class="a2-field-hint">Position the MAVERO floating controls per source. Each control has an independent portrait and landscape profile; each profile has an independent horizontal and vertical axis. Percentages are viewport-relative (0–100), measured from the anchor edge toward the centre. Each control also has an independent size ({CONTROLS_SIZE_MIN_PX}–{CONTROLS_SIZE_MAX_PX} px; empty = default: Back {BACK_CONTROL_DEFAULT_SIZE_PX} px, Landscape {LANDSCAPE_CONTROL_DEFAULT_SIZE_PX} px). Sources without a custom placement use the defaults: Landscape button bottom-right, Back button top-left. To inspect a saved placement in the running player, open any title's watch URL with <code>?controls=calibrate</code> appended — the player then holds the controls visible for that calibration session only (normal playback keeps the 5s auto-hide).</p>
         <input type="hidden" name="controls_position_json" value={controlsPositionJson} />
         <label class="a2-field"><span>Position Mode</span>
           <select name="controls_position_mode" bind:value={controlsPositionMode}>
@@ -657,6 +709,27 @@
               {/each}
             </div>
           {/each}
+          <!-- MAVP-3 Issue 5: independent per-control SIZE settings. Sizes are
+               orientation-independent (one size per control per source) and
+               fully independent of the placement profiles above: editing a
+               size never mutates any anchor/offset and vice versa. Empty =
+               the control's default stylesheet size. -->
+          <div class="a2-position-orientation-block">
+            <span class="a2-position-axis-label">Control size (both orientations)</span>
+            {#each POSITION_CONTROLS as control}
+              <div class="a2-position-control-group">
+                <div class="a2-position-control-head">
+                  <span class="a2-position-control-title">{control.title} size (px, {CONTROLS_SIZE_MIN_PX}–{CONTROLS_SIZE_MAX_PX}{control.id === 'back' ? `, default ${BACK_CONTROL_DEFAULT_SIZE_PX}` : `, default ${LANDSCAPE_CONTROL_DEFAULT_SIZE_PX}`})</span>
+                  <button type="button" class="a2-btn-mini" onclick={() => resetControlSize(control.id === 'back' ? 'back' : 'landscape')}>Reset size</button>
+                </div>
+                <div class="a2-position-grid">
+                  <label class="a2-field"><span>Size px</span>
+                    <input type="number" min={CONTROLS_SIZE_MIN_PX} max={CONTROLS_SIZE_MAX_PX} step="1" bind:value={controlsSizesDraft[control.id === 'back' ? 'back' : 'landscape']} placeholder="default" />
+                  </label>
+                </div>
+              </div>
+            {/each}
+          </div>
           <!-- Calibration preview: the orientation toggle switches the stage
                between a 16:9 landscape and a 9:16 portrait viewport; the
                square marker is the Back button, the round dot the Landscape
@@ -668,9 +741,9 @@
           </div>
           <div class="a2-position-preview" class:portrait={positionPreviewOrientation === 'portrait'} role="img" aria-label={`Preview of the floating-control placement in ${positionPreviewOrientation} orientation`}>
             <span class="a2-position-preview-provider" aria-hidden="true"></span>
-            <span class="a2-position-preview-back" aria-hidden="true" style={previewProfileStyle(positionDraft.back[positionPreviewOrientation], 'left:16px', 'top:16px')}></span>
-            <span class="a2-position-preview-dot" aria-hidden="true" style={previewProfileStyle(positionDraft.landscapeControl[positionPreviewOrientation], 'right:16px', 'bottom:16px')}></span>
-            <span class="a2-position-preview-caption" aria-hidden="true">{positionPreviewOrientation} preview · back (square) · landscape control (dot)</span>
+            <span class="a2-position-preview-back" aria-hidden="true" style={[previewProfileStyle(positionDraft.back[positionPreviewOrientation], 'left:16px', 'top:16px'), previewMarkerSize('back') ? `width:${previewMarkerSize('back')}px;height:${previewMarkerSize('back')}px` : ''].filter(Boolean).join(';')}></span>
+            <span class="a2-position-preview-dot" aria-hidden="true" style={[previewProfileStyle(positionDraft.landscapeControl[positionPreviewOrientation], 'right:16px', 'bottom:16px'), previewMarkerSize('landscape') ? `width:${previewMarkerSize('landscape')}px;height:${previewMarkerSize('landscape')}px` : ''].filter(Boolean).join(';')}></span>
+            <span class="a2-position-preview-caption" aria-hidden="true">{positionPreviewOrientation} preview · back (square, {previewMarkerSize('back') ?? BACK_CONTROL_DEFAULT_SIZE_PX}px) · landscape control (dot, {previewMarkerSize('landscape') ?? LANDSCAPE_CONTROL_DEFAULT_SIZE_PX}px)</span>
           </div>
           <button type="button" class="a2-btn-secondary" onclick={resetAllControlsPosition}>Reset all positioning</button>
         {/if}

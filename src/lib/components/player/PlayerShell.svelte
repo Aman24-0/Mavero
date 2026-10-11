@@ -21,11 +21,12 @@
   import { checkMediaCompatibility, type MediaCompatibilityDecision } from '$lib/client/player/media-capabilities';
   import { markPlayerMilestone, measurePlayerStartup } from '$lib/client/player/player-timing';
   // Per-source Landscape-control positioning (Admin "Player Controls Position").
-  import { landscapeControlInlineStyle, controlsPlacementInlineStyle, resolveControlPlacement, resolveLandscapeControlPlacement } from '$lib/shared/player-controls-position';
-  // MAVP-2 Phase 1: landscape-first presentation initiated at PLAY-CLICK time
-  // (freshest transient user activation) with the shell adopting the already
-  // active presentation at mount — no duplicate fullscreen/orientation requests.
-  import { consumeLandscapeFirstIntent } from '$lib/client/player/landscape-first';
+  import { landscapeControlInlineStyle, controlsPlacementInlineStyle, controlsSizeInlineStyle, resolveControlPlacement, resolveControlSize, resolveLandscapeControlPlacement } from '$lib/shared/player-controls-position';
+  // MAVP-3 Issue 1: the MAVP-2 landscape-first presentation (click-time
+  // request + shell mount adoption) was REMOVED — playback opens in the
+  // device's EXISTING orientation on every entry path. The manual Landscape
+  // control (toggleLandscape) and the F-key fullscreen remain the only
+  // orientation/fullscreen entry points, exactly as before.
 
   export let source: PlayerSource | null = null;
   export let content: PlayerContentContext;
@@ -53,11 +54,19 @@
   // acquire a wake lock — which is correct (iframe load ≠ actual playback).
   export let embedPlaybackEvent: { type: 'play' | 'pause' | 'ended'; _seq?: number; sourceId?: string } | null = null;
   export let resolving = false;
-  // Player redesign: server-derived device class (root layout data) — drives
-  // the landscape-first presentation. Desktop/TV devices never auto-enter
-  // fullscreen/orientation lock; mobile/tablet-class portrait devices make a
-  // SINGLE best-effort attempt on mount.
-  export let deviceType: string | undefined = undefined;
+  // MAVP-3 Issue 4: explicit control-position CALIBRATION session. The watch
+  // route sets this when the player was opened with `?controls=calibrate` —
+  // the documented way to inspect a per-source calibration in the running
+  // player. While the calibration session is open, the floating controls and
+  // the positioning are held visible (the inactivity timer is never armed);
+  // every playback session opened WITHOUT the parameter keeps the exact 5s
+  // auto-hide contract. The mode is per-session, opt-in, and never disables
+  // auto-hide globally or forces controls visible during normal playback.
+  export let calibrationMode = false;
+  // MAVP-3 Issue 1: the deviceType prop was removed together with the
+  // automatic landscape-first presentation it existed to gate. The shell no
+  // longer rotates or locks orientation on any entry path; desktop/TV and
+  // mobile behave identically at startup (the device's current orientation).
   export let resolutionError = '';
   export let resolutionMessage = '';
   export let resolutionKind: 'provider-error' | 'unsupported' | 'unavailable' = 'provider-error';
@@ -261,8 +270,21 @@
   // config can never leak into another's, and the portrait/landscape
   // profiles resolve independently per control per orientation.
   $: activeSourceOption = source ? sourceOptions.find((option) => option.id === source.sourceId) ?? null : null;
-  $: landscapeControlStyle = landscapeControlInlineStyle(resolveLandscapeControlPlacement(activeSourceOption?.controlsPosition ?? null, playerOrientation));
-  $: backControlStyle = controlsPlacementInlineStyle(resolveControlPlacement(activeSourceOption?.controlsPosition ?? null, 'back', playerOrientation));
+  // MAVP-3 Issue 5: per-control SIZE overrides resolve independently of the
+  // placement axes — a size change can never move a control, and a placement
+  // change can never resize one. The size rides the SAME inline style as the
+  // placement (disjoint CSS keys: anchors/offsets vs a custom-property var)
+  // so the element still gets ONE style write per orientation/profile change.
+  $: backSizePx = resolveControlSize(activeSourceOption?.controlsPosition ?? null, 'back');
+  $: landscapeSizePx = resolveControlSize(activeSourceOption?.controlsPosition ?? null, 'landscape');
+  $: backControlStyle = [
+    controlsPlacementInlineStyle(resolveControlPlacement(activeSourceOption?.controlsPosition ?? null, 'back', playerOrientation)),
+    controlsSizeInlineStyle(activeSourceOption?.controlsPosition ?? null, 'back', '--back-fab-size'),
+  ].filter(Boolean).join(';');
+  $: landscapeControlStyle = [
+    landscapeControlInlineStyle(resolveLandscapeControlPlacement(activeSourceOption?.controlsPosition ?? null, playerOrientation)),
+    controlsSizeInlineStyle(activeSourceOption?.controlsPosition ?? null, 'landscape', '--landscape-fab-size'),
+  ].filter(Boolean).join(';');
   $: effectiveState = resolving ? 'switching-source' : resolutionError ? resolutionKind : state;
   $: embedReady = Boolean(source?.type === 'embed' && isEmbedOriginAllowed(source) && !sourceIsExpired(source));
   // Phase 11 (GOAL D): the runtime applies the EFFECTIVE policy resolved
@@ -448,30 +470,14 @@
       handleOrientationChange = (e: MediaQueryListEvent) => { playerOrientation = e.matches ? 'landscape' : 'portrait'; };
       orientationMediaQuery.addEventListener('change', handleOrientationChange);
     }
-    // Player redesign — LANDSCAPE-FIRST playback presentation. When the watch
-    // route is opened on a mobile/tablet-class device currently held in
-    // portrait, make ONE best-effort attempt to enter the landscape
-    // presentation (player fullscreen + `screen.orientation.lock('landscape')`
-    // through the EXISTING controller — no competing orientation system).
-    // MAVP-2: when the Play CLICK already initiated the presentation (see
-    // landscape-first.ts — freshest user activation beats the mount-time
-    // attempt on slow route loads), the shell ADOPTS the active fullscreen +
-    // orientation lock instead of issuing duplicate requests; the mount-time
-    // attempt remains the fallback for entries without a click gesture.
-    //   * Requires the platform to permit it: if the transient activation from
-    //     the Play click has expired during the async navigation, or the
-    //     browser/platform declines (iOS Safari, desktop, TV), the attempt
-    //     silently falls back and the Landscape control remains available.
-    //   * Desktop and TV-class devices keep the exact previous behaviour.
-    //   * Physical rotation is never promised — unsupported locks are caught,
-    //     and the CSS landscape layout is still applied when fullscreen works.
-    const landscapeFirstEligible = (deviceType === 'mobile' || deviceType === 'tablet')
-      && (() => {
-        try {
-          return window.matchMedia('(orientation: portrait)').matches && window.matchMedia('(pointer: coarse)').matches;
-        } catch { return false; }
-      })();
-    if (landscapeFirstEligible) void enterLandscapePresentation();
+    // MAVP-3 Issue 1: the automatic landscape-first attempt that previously
+    // ran here (ONE best-effort playerRoot fullscreen + orientation lock on
+    // portrait mobile/tablet-class mounts) was REMOVED — playback must open
+    // in the device's existing orientation on every entry path (card, detail
+    // page, Continue Watching, episode links, programmatic navigations). The
+    // manual Landscape control and the F-key fullscreen remain the only
+    // fullscreen/orientation entry points; no hidden fallback re-introduces
+    // automatic rotation after navigation or iframe mounting.
     const handleFullscreen = () => {
       fullscreen = document.fullscreenElement === playerRoot;
       if (!fullscreen && landscapeMode) {
@@ -562,9 +568,18 @@
       const active = document.activeElement;
       if (active instanceof HTMLIFrameElement && playerRoot?.contains(active)) revealControls();
     };
+    // MAVP-3 Issue 2: reveal when the user RETURNS to this document while the
+    // embed holds focus (tab/app switch back). Returning to a playing embed
+    // is genuine user activity and the controls must not stay stuck hidden —
+    // this is the "returning from an iframe" recovery path.
+    const handleWindowFocus = () => {
+      const active = document.activeElement;
+      if (active instanceof HTMLIFrameElement && playerRoot?.contains(active)) revealControls();
+    };
     document.addEventListener('fullscreenchange', handleFullscreen);
     window.addEventListener('keydown', handleKeydown);
     window.addEventListener('blur', handleWindowBlur);
+    window.addEventListener('focus', handleWindowFocus);
     document.addEventListener('focusin', handleFocusIn);
     playerRoot?.addEventListener('pointermove', showControls, { passive: true });
     playerRoot?.addEventListener('pointerdown', showControls, { passive: true });
@@ -588,6 +603,7 @@
       detachPictureInPictureListeners();
       window.removeEventListener('keydown', handleKeydown);
       window.removeEventListener('blur', handleWindowBlur);
+      window.removeEventListener('focus', handleWindowFocus);
       document.removeEventListener('focusin', handleFocusIn);
       playerRoot?.removeEventListener('pointermove', showControls);
       playerRoot?.removeEventListener('pointerdown', showControls);
@@ -882,51 +898,14 @@
   }
 
   /**
-   * Player redesign: landscape-first entry — ONE best-effort fullscreen +
-   * orientation-lock attempt when the shell mounts on a portrait mobile/
-   * tablet-class device (see onMount). Silent-fail by design: every decline
-   * (expired user activation, iOS, desktop, TV) leaves the player in its
-   * current orientation with the Landscape control available. Shares the
-   * rapid-toggle guard with toggleLandscape and reuses the SAME orientation
-   * controller — no competing orientation system.
-   *
-   * MAVP-2: when the Play CLICK already initiated the presentation
-   * (requestLandscapeFirstPresentation — documentElement fullscreen +
-   * orientation lock at the point of freshest user activation), this function
-   * ADOPTS the running presentation instead of issuing duplicate fullscreen
-   * or orientation requests: landscapeMode is set from the live fullscreen
-   * state and the lock is only (re)requested when the device is somehow not
-   * already landscape. The intent marker is consumed exactly once.
+   * MAVP-3 Issue 1: `enterLandscapePresentation()` was REMOVED together with
+   * the automatic landscape-first presentation. No code path requests
+   * fullscreen or an orientation lock without an explicit user action:
+   *   * toggleLandscape()     — the manual Landscape control (all sources);
+   *   * toggleFullscreen()    — the F-key fullscreen (all sources);
+   *   * exitMaveroFullscreen — keyboard/manual exit (unlock only).
+   * Playback startup never rotates or locks the device.
    */
-  async function enterLandscapePresentation() {
-    if (landscapeToggleInFlight) return;
-    landscapeToggleInFlight = true;
-    try {
-      if (document.fullscreenElement && consumeLandscapeFirstIntent()) {
-        // Presentation entered at Play-click time — adopt it, no new requests.
-        landscapeMode = true;
-        try {
-          if (!String(screen.orientation?.type ?? '').startsWith('landscape')) {
-            await orientationController()?.lock?.('landscape');
-          }
-        } catch { /* device/browser declined; fullscreen layout remains active */ }
-        revealControls();
-        return;
-      }
-      consumeLandscapeFirstIntent(); // stale marker — never leaks to a later entry
-      await playerRoot?.requestFullscreen?.();
-      try { await orientationController()?.lock?.('landscape'); } catch { /* device/browser declined; fullscreen layout remains active */ }
-      landscapeMode = true;
-      revealControls();
-    } catch {
-      // Graceful fallback — the portrait presentation stays; no error is
-      // raised for an optional presentation preference.
-      landscapeMode = false;
-    } finally {
-      landscapeToggleInFlight = false;
-    }
-  }
-
   async function toggleLandscape() {
     if (landscapeToggleInFlight) return;
     const entering = !landscapeMode;
@@ -1063,13 +1042,46 @@
     const embedSessionArms = source?.type === 'embed'
       && state === 'playing'
       && (!embedEverPlayed || embedPlaying);
-    if ((playing || embedPlaying || embedSessionArms) && !sourceMenuOpen && !episodeMenuOpen) {
+    // MAVP-3 Issue 4: a calibration session holds the controls visible — the
+    // hide timer is simply never armed while `calibrationMode` is set, so
+    // admin calibration/inspection cannot be interrupted by the 5s auto-hide.
+    // Normal playback (no calibration session) arms exactly as before.
+    if ((playing || embedPlaying || embedSessionArms) && !sourceMenuOpen && !episodeMenuOpen && !calibrationMode) {
       hideTimer = setTimeout(() => {
         if (!sourceMenuOpen && !episodeMenuOpen && !focusWithinMaveroControls()) {
           controlsVisible = false;
+          // MAVP-3 Issue 2 (the reported "controls permanently hidden" bug):
+          // the ONLY parent-observable signal for activity inside a
+          // cross-origin embed is the focus TRANSITION into the iframe
+          // (window `blur` + `focusin` with the iframe as activeElement).
+          // Once the iframe HOLDS focus — the normal state after the user
+          // presses Play inside the provider, which happens while the
+          // controls are still visible — later taps inside the embed emit NO
+          // parent-observable events, so the one-shot signal could never fire
+          // again and touch/mouse users had no way to reveal hidden controls
+          // (the full-viewport iframe swallows every tap; keyboard input goes
+          // to the iframe too). Releasing focus back to the parent at hide
+          // time makes the signal RECURRING: the user's NEXT tap inside the
+          // embed re-enters focus → handleWindowBlur/handleFocusIn →
+          // revealControls. blur() acts on the parent-owned iframe ELEMENT —
+          // the provider's DOM is never touched; playback is unaffected
+          // (focus is not required for video playback). The bounded trade-off
+          // (an in-iframe text field loses focus at hide time) is strictly
+          // better than permanently inaccessible controls.
+          releaseEmbedFocusForRecovery();
         }
       }, 5_000);
     }
+  }
+
+  /**
+   * MAVP-3 Issue 2: make the iframe-focus reveal signal recurring. See the
+   * hide-timer comment above for the full root-cause analysis. No-op unless
+   * the provider iframe currently holds document focus.
+   */
+  function releaseEmbedFocusForRecovery() {
+    if (!iframeElement || document.activeElement !== iframeElement) return;
+    try { iframeElement.blur(); } catch { /* focus already gone */ }
   }
 
   /**
@@ -1518,8 +1530,11 @@
   <!-- Immersive redesign: Back FAB — top-left overlay, translucent, safe-area aware.
        MAVP-2 Phase 4/5: per-source Back-button placement (Admin "Player
        Controls Position" → Back control, independent portrait/landscape
-       profiles). Empty inline style = stylesheet default (top-left). -->
-  <button class="back-fab" class:custom-position={Boolean(backControlStyle)} type="button" aria-label="Close player" style={backControlStyle} onclick={onClose}>
+       profiles). Empty inline style = stylesheet default (top-left).
+       MAVP-3 Issue 5: the same inline style may carry the per-source Back
+       SIZE (--back-fab-size); the custom-size class applies it on top of the
+       stylesheet default without touching the placement. -->
+  <button class="back-fab" class:custom-position={Boolean(backControlStyle)} class:custom-size={backSizePx !== null} type="button" aria-label="Close player" style={backControlStyle} onclick={onClose}>
     <ArrowLeft size={20} />
   </button>
 
@@ -1546,8 +1561,11 @@
     <!-- MAVP-2 Phase 7: the placement style lives ONLY on the group — the
          previous duplicate inline style on this inner button double-applied
          the center-anchor transform (button shifted -50% twice) and forced
-         an extra style recomputation on every placement change. -->
-    <button class="control-fab landscape-fab" type="button" aria-label={landscapeMode ? 'Exit landscape player' : 'Enter landscape player'} aria-pressed={landscapeMode} onclick={() => { void toggleLandscape(); }}>
+         an extra style recomputation on every placement change.
+         MAVP-3 Issue 5: the group style may also carry the per-source
+         Landscape-button size (--landscape-fab-size); the custom-size class
+         applies it to the FAB ONLY (the Episodes pill keeps its own size). -->
+    <button class="control-fab landscape-fab" class:custom-size={landscapeSizePx !== null} type="button" aria-label={landscapeMode ? 'Exit landscape player' : 'Enter landscape player'} aria-pressed={landscapeMode} onclick={() => { void toggleLandscape(); }}>
       {#if landscapeMode}<Minimize2 size={22} />{:else}<Maximize2 size={22} />{/if}
     </button>
   </div>
@@ -1616,6 +1634,14 @@
   .back-fab { position: absolute; z-index: 12; top: max(12px, env(safe-area-inset-top)); left: max(12px, env(safe-area-inset-left)); display: grid; place-items: center; width: 44px; height: 44px; border: 1px solid var(--line-strong); border-radius: 50%; color: #fff; background: rgba(0,0,0,.55); cursor: pointer; backdrop-filter: blur(12px); visibility: visible; transition: opacity var(--motion-normal) var(--ease-out), transform var(--motion-normal) var(--ease-out), background var(--motion-fast) var(--ease-out), visibility 0s linear 0s; }
   .back-fab:hover, .back-fab:focus-visible { background: rgba(0,0,0,.75); border-color: var(--accent); }
   .back-fab:active { transform: scale(.94); }
+  /* MAVP-3 Issue 5: per-source Back-button SIZE (Admin "Player Controls
+     Position" → size, px). The custom-size class is applied ONLY when the
+     active source configures a size, so sources without custom sizing keep
+     the stylesheet defaults byte-identically (including the compact
+     landscape-phone media query below). The icon scales proportionally
+     (20/44 = the shipped default ratio). */
+  .back-fab.custom-size { width: var(--back-fab-size, 44px); height: var(--back-fab-size, 44px); }
+  .back-fab.custom-size :global(svg) { width: calc(var(--back-fab-size, 44px) * 0.4545); height: calc(var(--back-fab-size, 44px) * 0.4545); }
   /* FAB auto-hide: hidden state is opacity:0 + visibility:hidden + pointer-events:none.
      The visibility transition has a delay matching the opacity fade so the FAB
      stays visible during the fade-out, then becomes invisible + non-interactive
@@ -1641,6 +1667,11 @@
   .control-fab { display: grid; place-items: center; width: 48px; height: 48px; border: 1px solid var(--line-strong); border-radius: 50%; color: #fff; background: rgba(0,0,0,.65); cursor: pointer; backdrop-filter: blur(12px); box-shadow: 0 4px 16px rgba(0,0,0,.4); transition: background var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
   .control-fab:hover, .control-fab:focus-visible { background: rgba(0,0,0,.85); border-color: var(--accent); }
   .control-fab:active { transform: scale(.93); }
+  /* MAVP-3 Issue 5: per-source Landscape-button SIZE (px). Same pattern as
+     the Back FAB — applied only when configured (22/48 = the shipped icon
+     ratio); the Episodes pill in the same group is never resized. */
+  .control-fab.custom-size { width: var(--landscape-fab-size, 48px); height: var(--landscape-fab-size, 48px); }
+  .control-fab.custom-size :global(svg) { width: calc(var(--landscape-fab-size, 48px) * 0.4583); height: calc(var(--landscape-fab-size, 48px) * 0.4583); }
 
   /* Source chip — slim vertical control attached to the right edge around the
      vertical centre (Rivestream reference). MAVP-2 Phase 2: the CLOSED chip
@@ -1655,11 +1686,11 @@
      the chip NEVER blocks provider controls — it hugs the edge and hides
      with the other Mavero controls. */
   .source-chip { position: absolute; z-index: 12; top: 50%; right: 0; transform: translateY(-50%); display: flex; align-items: center; justify-content: flex-end; min-width: 44px; min-height: 64px; padding: 0; border: 0; background: transparent; cursor: pointer; visibility: visible; transition: opacity var(--motion-normal) var(--ease-out), visibility 0s linear 0s; }
-  .source-chip-bar { flex: 0 0 auto; width: 5px; height: 56px; border-radius: 999px 0 0 999px; background: rgba(0,0,0,.55); box-shadow: inset 0 0 0 1px var(--line-strong); backdrop-filter: blur(12px); transition: background var(--motion-fast) var(--ease-out), box-shadow var(--motion-fast) var(--ease-out); }
-  .source-chip-label { overflow: hidden; max-width: 0; opacity: 0; white-space: nowrap; text-overflow: ellipsis; font: inherit; font-size: .6rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-soft); background: rgba(0,0,0,.55); border: 1px solid var(--line-strong); border-right: 0; border-radius: 10px 0 0 10px; padding: 0 0 0 0; backdrop-filter: blur(12px); transition: max-width var(--motion-fast) var(--ease-out), opacity var(--motion-fast) var(--ease-out), padding var(--motion-fast) var(--ease-out); }
-  .source-chip:hover .source-chip-bar, .source-chip:focus-visible .source-chip-bar { background: rgba(0,0,0,.8); box-shadow: inset 0 0 0 1px var(--accent); }
+  .source-chip-bar { flex: 0 0 auto; width: 5px; height: 56px; border-radius: 999px 0 0 999px; background: var(--accent); box-shadow: inset 0 0 0 1px var(--accent-strong); backdrop-filter: blur(12px); transition: background var(--motion-fast) var(--ease-out), box-shadow var(--motion-fast) var(--ease-out); }
+  .source-chip-label { overflow: hidden; max-width: 0; opacity: 0; white-space: nowrap; text-overflow: ellipsis; font: inherit; font-size: .6rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); background: var(--accent-soft); border: 1px solid var(--accent-soft); border-right: 0; border-radius: 10px 0 0 10px; padding: 0 0 0 0; backdrop-filter: blur(12px); transition: max-width var(--motion-fast) var(--ease-out), opacity var(--motion-fast) var(--ease-out), padding var(--motion-fast) var(--ease-out); }
+  .source-chip:hover .source-chip-bar, .source-chip:focus-visible .source-chip-bar { background: var(--accent-strong); box-shadow: inset 0 0 0 1px var(--accent); }
   .source-chip:hover .source-chip-label, .source-chip:focus-visible .source-chip-label { max-width: min(42vw, 220px); opacity: 1; padding: 12px 0 12px 14px; margin-right: 6px; }
-  .source-chip:active .source-chip-bar { background: rgba(0,0,0,.9); }
+  .source-chip:active .source-chip-bar { background: var(--accent-strong); }
   .player-shell.controls-hidden .source-chip { opacity: 0; visibility: hidden; pointer-events: none; transition: opacity var(--motion-normal) var(--ease-out), visibility 0s linear var(--motion-normal); }
 
   /* Menu items — staggered unfold animation. */

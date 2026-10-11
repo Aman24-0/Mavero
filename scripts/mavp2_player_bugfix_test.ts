@@ -2,16 +2,26 @@
  * MAVP-2 — Player Orientation, Controls Auto-Hide, Responsive Positioning &
  * Admin Calibration Bug Fixes. Regression suite for each audited root cause.
  *
+ * MAVP-3 supersession (2026-10-11): §A was REWRITTEN for the MAVP-3 Issue 1
+ * contract — the automatic landscape-first presentation (MAVP-2's click-time
+ * request + shell mount adoption) was REMOVED; §A now asserts that NO
+ * automatic orientation lock is reachable from ANY playback entry path while
+ * the manual Landscape control stays intact. §C3 was updated for the MAVP-3
+ * Issue 3 accent-token chip bar; §D22 for the composed placement+size inline
+ * style (MAVP-3 Issue 5). The MAVP-3-dedicated suite lives in
+ * `mavp3_player_bugfix_test.ts`.
+ *
  * Sections:
- *   §A  Landscape-first playback for EVERY entry point — click-time
- *       presentation (freshest user activation) + shell adoption; no
- *       duplicate/competing orientation requests; no iframe reload; no
- *       resolver involvement.
+ *   §A  NO automatic landscape on ANY playback entry path (MAVP-3) — the
+ *       landscape-first module is deleted, no entry imports/calls it, the
+ *       shell never auto-requests fullscreen/orientation, orientation lock
+ *       survives ONLY inside the manual controllers; no iframe reload; no
+ *       resolver involvement; resume chain intact.
  *   §B  Five-second auto-hide for ALL THREE controls — embed-session arming
  *       (the audited root cause: black-box embeds never armed the timer),
  *       embed-load arming, keyboard/TV activity signal, state resets, cleanup.
- *   §C  Source chip compact sizing — bar-carried surface, transparent hit
- *       area, content-aware truncated label, no layout shift/overlap.
+ *   §C  Source chip compact sizing — accent surface (theme tokens), compact
+ *       hit area, content-aware truncated label, no layout shift/overlap.
  *   §D  Per-source Back-button positioning + independent portrait/landscape
  *       profiles — parser truth table, control/orientation isolation,
  *       renderer contract, Admin draft/reset structure.
@@ -26,6 +36,7 @@
  * the real network, never the real DB, never a real provider.
  */
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
 import { readFileSync } from 'node:fs';
 
 import {
@@ -50,10 +61,25 @@ const detailPage = read('../src/lib/components/DetailPage.svelte');
 const mediaCard = read('../src/lib/components/MediaCard.svelte');
 const spotlight = read('../src/lib/components/SpotlightCarousel.svelte');
 const seasonEpisodes = read('../src/lib/components/SeasonEpisodes.svelte');
-const landscapeFirstModule = read('../src/lib/client/player/landscape-first.ts');
 const adminPage = read('../src/routes/admin/system/api-sources/+page.svelte');
 const validation = read('../src/lib/server/streaming/validation.ts');
 const manager = read('../src/lib/client/player/PlaybackManager.ts');
+
+/** Strip JS/Svelte/CSS comments so negative assertions test CODE, not docs. */
+function codeOnly(source: string): string {
+  return source
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .split('\n')
+    .filter((line) => !line.trim().startsWith('//'))
+    .join('\n');
+}
+/** Extract the balanced-brace body that follows a `signature(...)` marker. */
+function functionBody(source: string, marker: string, nextMarker: string): string {
+  const start = source.indexOf(marker);
+  const end = nextMarker ? source.indexOf(nextMarker, start + marker.length) : source.length;
+  return start === -1 ? '' : source.slice(start, end === -1 ? source.length : end);
+}
 
 let section = '';
 function section_ok(name: string) { section = name; }
@@ -70,60 +96,75 @@ function form(...entries: [string, string][]): FormData {
 }
 
 // ============================================================================
-// §A Landscape-first playback for every entry point
+// §A NO automatic landscape on any playback entry path (MAVP-3 Issue 1 —
+//    supersedes the MAVP-2 landscape-first contract, which was removed)
 // ============================================================================
-section_ok('§A landscape-first');
+section_ok('§A no automatic landscape');
 
-// A1. The shared helper exists and gates on the server-derived device class
-//     + portrait + coarse pointer — the SAME eligibility as the shell's
-//     mount fallback (one eligibility definition, no divergent rules).
-ok(/export function landscapeFirstEligible\(/.test(landscapeFirstModule), 'A1. shared eligibility helper exported');
-ok(/deviceType !== 'mobile' && deviceType !== 'tablet'/.test(landscapeFirstModule), 'A2. desktop/TV devices are never eligible');
-ok(/matchMedia\('\(orientation: portrait\)'\)/.test(landscapeFirstModule) && /matchMedia\('\(pointer: coarse\)'\)/.test(landscapeFirstModule), 'A3. eligibility requires portrait + coarse pointer');
-okEq(landscapeFirstEligible('mobile'), false, 'A4. non-browser context (SSR/test) is never eligible — no crash');
-okEq(landscapeFirstEligible('desktop'), false, 'A5. desktop class rejected');
-okEq(landscapeFirstEligible(undefined), false, 'A6. missing device class rejected');
+const shellCode = codeOnly(shell);
+const detailCode = codeOnly(detailPage);
+const cardCode = codeOnly(mediaCard);
+const spotlightCode = codeOnly(spotlight);
+const episodesCode = codeOnly(seasonEpisodes);
+const watchCode = codeOnly(watchPage);
 
-// A7. The presentation is initiated at PLAY-CLICK time on EVERY entry point —
-//     detail page, content cards, spotlight hero, and episode links. This is
-//     the root-cause fix: the click handler holds the freshest transient
-//     user activation, which previously expired during slow watch-route
-//     loads (most often from cards, which have no hover-preloaded data).
-ok(/requestLandscapeFirstPresentation\(page\.data\.deviceType\)/.test(detailPage), 'A7. Detail page Play initiates the presentation at click time');
-ok(/requestLandscapeFirstPresentation\(page\.data\.deviceType\)/.test(mediaCard), 'A8. Content-card Play initiates the presentation at click time');
-ok(/requestLandscapeFirstPresentation\(page\.data\.deviceType\)/.test(spotlight), 'A9. Spotlight hero Play initiates the presentation at click time');
-ok(/requestLandscapeFirstPresentation\(page\.data\.deviceType\)/.test(seasonEpisodes), 'A10. Episode-link Play initiates the presentation at click time');
-ok(/onclick=\{\(e\) => \{ e\.stopPropagation\(\); requestLandscapeFirstPresentation/.test(mediaCard), 'A11. card play handler stays non-navigating (stopPropagation preserved)');
-ok(/markPlayerMilestone\('mavero:play'\); requestLandscapeFirstPresentation/.test(detailPage), 'A12. detail play handler keeps the startup milestone');
+// A1. The MAVP-2 landscape-first helper module is DELETED — the automatic
+//     rotation entry point cannot be reached because the code no longer
+//     exists (the module carried requestLandscapeFirstPresentation, the
+//     eligibility gate, and the sessionStorage intent marker).
+ok(!existsSync(new URL('../src/lib/client/player/landscape-first.ts', import.meta.url)), 'A1. landscape-first module deleted (automatic rotation removed at the root)');
 
-// A13. The helper never navigates and never blocks the Play click: the
-//      fullscreen/lock chain is fire-and-forget with silent catches
-//      (orientation rejection cannot block or error the navigation).
-ok(/\.catch\(\(\) => \{ \/\* declined/.test(landscapeFirstModule), 'A13. orientation/fullscreen rejection is swallowed (playback never blocked)');
-ok(!/goto|href|location\.assign|location\.replace/.test(landscapeFirstModule), 'A14. the helper performs no navigation of its own');
+// A2-A5. NO playback entry point imports or calls the removed helper —
+//     detail page, content cards, spotlight hero, and episode links all open
+//     playback in the device's EXISTING orientation.
+ok(!/from '\$lib\/client\/player\/landscape-first'/.test(detailCode) && !/requestLandscapeFirstPresentation\(/.test(detailCode), 'A2. Detail page Play no longer requests a landscape presentation');
+ok(!/from '\$lib\/client\/player\/landscape-first'/.test(cardCode) && !/requestLandscapeFirstPresentation\(/.test(cardCode), 'A3. Content-card Play no longer requests a landscape presentation');
+ok(!/from '\$lib\/client\/player\/landscape-first'/.test(spotlightCode) && !/requestLandscapeFirstPresentation\(/.test(spotlightCode), 'A4. Spotlight hero Play no longer requests a landscape presentation');
+ok(!/from '\$lib\/client\/player\/landscape-first'/.test(episodesCode) && !/requestLandscapeFirstPresentation\(/.test(episodesCode), 'A5. Episode-link Play no longer requests a landscape presentation');
 
-// A15. The shell ADOPTS the click-time presentation instead of issuing
-//      duplicate fullscreen/orientation requests (root-cause guard:
-//      "avoid duplicate or competing orientation requests").
-ok(/document\.fullscreenElement && consumeLandscapeFirstIntent\(\)/.test(shell), 'A15. shell adopts the click-time presentation when it is already active');
-const adoptBranch = shell.split('async function enterLandscapePresentation')[1]?.split('async function toggleLandscape')[0] ?? '';
-ok(!/playerRoot\?\.requestFullscreen/.test(adoptBranch.split('await playerRoot?.requestFullscreen')[0] ?? ''), 'A16. adopt branch runs BEFORE any new requestFullscreen (no duplicate request)');
-ok(/!String\(screen\.orientation\?\.type \?\? ''\)\.startsWith\('landscape'\)/.test(adoptBranch), 'A17. orientation lock only (re)requested when the device is not already landscape');
-ok(/consumeLandscapeFirstIntent\(\); \/\/ stale marker/.test(shell), 'A18. stale intent markers are consumed exactly once (never leak into a later entry)');
-ok(/if \(landscapeFirstEligible\) void enterLandscapePresentation\(\);/.test(shell), 'A19. mount-time attempt remains as the fallback (entries without a click gesture)');
+// A6. The shell never auto-requests the presentation: no mount-time attempt,
+//     no adoption path, no device-class eligibility gate, no intent marker.
+ok(!/enterLandscapePresentation/.test(shellCode), 'A6. enterLandscapePresentation is gone from the shell');
+ok(!/consumeLandscapeFirstIntent/.test(shellCode), 'A7. the landscape-first intent adoption path is gone');
+ok(!/landscapeFirstEligible/.test(shellCode), 'A8. the device-class landscape eligibility gate is gone');
+ok(!/export let deviceType/.test(shellCode) && !/deviceType=\{page\.data\.deviceType\}/.test(watchCode), 'A9. the deviceType prop (auto-landscape plumbing) is removed from the shell and the watch route');
 
-// A20. Orientation changes never reload the iframe or touch the resolver —
-//      the iframe key is source/url/sandbox only, and the landscape-first
-//      module never resolves sources or mutates manager state.
-ok(/iframeKey = `\$\{source\?\.sourceId \?\? 'empty'\}:\$\{source\?\.url \?\? ''\}:\$\{effectiveSandbox\}`/.test(viewport), 'A20. iframe key excludes orientation/position/visibility (no remount on orientation changes)');
-ok(!/iframe\.src\s*=/.test(shell) && !/location\.reload/.test(shell), 'A21. shell never reassigns the iframe src or reloads');
-ok(!/loadSource|\/api\/playback|resolveSource/.test(landscapeFirstModule), 'A22. landscape-first never triggers source resolution');
-ok(!/manager\.|dispatchViewportEvent/.test(landscapeFirstModule), 'A23. landscape-first never touches the PlaybackManager (no duplicate resolver requests possible)');
+// A10. THE CORE CONTRACT: orientation locks survive ONLY inside the MANUAL
+//      controllers (toggleLandscape — the Landscape control; toggleFullscreen
+//      — the F-key). No `lock('landscape')` call is reachable from playback
+//      startup, route loading, or iframe mounting.
+const toggleLandscapeBody = functionBody(shellCode, 'async function toggleLandscape()', 'async function toggleFullscreen()');
+const toggleFullscreenBody = functionBody(shellCode, 'async function toggleFullscreen()', 'async function exitMaveroFullscreen');
+const shellCodeWithoutManualControllers = shellCode.replace(toggleLandscapeBody, '').replace(toggleFullscreenBody, '');
+ok(/lock\?\.\('landscape'\)/.test(toggleLandscapeBody), 'A10. the manual Landscape control still locks orientation (user-initiated only)');
+ok(/orientationController\(\)\?\.lock\?\.\('landscape'\)/.test(toggleFullscreenBody), 'A11. the manual F-key fullscreen still locks orientation (user-initiated only)');
+ok(!/lock\?\.\('landscape'\)/.test(shellCodeWithoutManualControllers), 'A12. NO orientation lock is reachable outside the two manual controllers (no automatic landscape anywhere)');
+// A13. No PLAY entry path or watch-route code touches the orientation API.
+//      (The detail page's OWN inline-trailer fullscreen lock — a separate,
+//      user-initiated MAV-24 handler — is unrelated behavior and preserved;
+//      this assertion pins it to that trailer function so a future entry-path
+//      lock cannot hide behind it.)
+ok(!/orientation\.lock|screen\.orientation/.test(cardCode + spotlightCode + episodesCode + watchCode), 'A13a. card/spotlight/episode entries and the watch route never touch the orientation API');
+ok(!/orientation\.lock|screen\.orientation|requestFullscreen/.test(functionBody(detailPage, '<a class="play-btn"', '</a>\n')), 'A13b. the detail-page Play handler never requests fullscreen or orientation');
+ok(/screen\.orientation/.test(functionBody(detailPage, 'async function enterTrailerFullscreen', 'async function exitTrailerFullscreen')), 'A13c-1. the trailer-fullscreen handler is the known user-initiated orientation user (preserved)');
+const detailOrientationUses = [...detailCode.matchAll(/screen\.orientation/g)].map((match) => match.index ?? 0);
+ok(detailOrientationUses.length > 0 && detailOrientationUses.every((idx) => idx > detailCode.indexOf('async function enterTrailerFullscreen')), 'A13c-2. ALL detail-page orientation use sits INSIDE the user-initiated trailer-fullscreen handlers (no playback-entry orientation code)');
 
-// A24. Resume/selection dependencies byte-preserved (Phase 9 contract): the
+// A14. The manual Landscape control itself is fully preserved (FAB markup,
+//      enter/exit, aria state) — only the AUTOMATIC behaviour was removed.
+ok(/class="control-fab landscape-fab"/.test(shell) && /aria-label=\{landscapeMode \? 'Exit landscape player' : 'Enter landscape player'\}/.test(shell), 'A14. the manual Landscape control remains available in the player');
+ok(/async function toggleLandscape\(\)/.test(shellCode) && /orientation\?\.unlock\?\.\(\)/.test(toggleLandscapeBody), 'A15. return-to-portrait (unlock) preserved in the manual controller');
+
+// A16. Orientation changes never reload the iframe or touch the resolver —
+//      the iframe key is source/url/sandbox only.
+ok(/iframeKey = `\$\{source\?\.sourceId \?\? 'empty'\}:\$\{source\?\.url \?\? ''\}:\$\{effectiveSandbox\}`/.test(viewport), 'A16. iframe key excludes orientation/position/visibility (no remount on orientation changes)');
+ok(!/iframe\.src\s*=/.test(shell) && !/location\.reload/.test(shell), 'A17. shell never reassigns the iframe src or reloads');
+ok(!/loadSource|\/api\/playback|resolveSource/.test(functionBody(shellCode, 'async function toggleLandscape()', 'async function toggleFullscreen()')), 'A18. the manual orientation controller never triggers source resolution');
+
+// A19. Resume/selection dependencies byte-preserved (Phase 9 contract): the
 //      orientation work cannot skip or reorder the progress chain.
-ok(/progressReady && !selectedSourceId && sourceOptions\.length/.test(watchPage), 'A24. source selection still waits for the saved progress record');
-ok(/progressReady && selectedSourceId && resolutionState === 'idle'/.test(watchPage), 'A25. resolver still starts exactly once per selected source');
+ok(/progressReady && !selectedSourceId && sourceOptions\.length/.test(watchPage), 'A19. source selection still waits for the saved progress record');
+ok(/progressReady && selectedSourceId && resolutionState === 'idle'/.test(watchPage), 'A20. resolver still starts exactly once per selected source');
 
 // ============================================================================
 // §B Five-second auto-hide for all three floating controls
@@ -190,7 +231,9 @@ section_ok('§C source chip');
 
 ok(/\.source-chip \{[^}]*background: transparent/.test(shell), 'C1. closed chip paints NO wide translucent slab (button surface transparent)');
 ok(/\.source-chip-bar \{[^}]*width: 5px/.test(shell), 'C2. visible affordance stays the ~5px bar (reference: 4-6px)');
-ok(/\.source-chip-bar \{[^}]*background: rgba\(0,0,0,\.55\)/.test(shell) && /\.source-chip-bar \{[^}]*backdrop-filter: blur\(12px\)/.test(shell), 'C3. dark translucent surface carried by the bar itself');
+ok(/\.source-chip-bar \{[^}]*background: var\(--accent\)/.test(shell) && /\.source-chip-bar \{[^}]*backdrop-filter: blur\(12px\)/.test(shell), 'C3. accent surface carried by the bar itself (MAVP-3 Issue 3: theme tokens, no hardcoded dark slab)');
+ok(!/\.source-chip-bar \{[^}]*rgba\(0,0,0/.test(shell), 'C3b. the chip bar no longer hardcodes a black slab (MAVP-3 Issue 3: accent tokens only)');
+ok(/\.source-chip-label \{[^}]*color: var\(--accent\)/.test(shell) && /\.source-chip-label \{[^}]*background: var\(--accent-soft\)/.test(shell), 'C3c. the hover label uses the accent palette tokens (MAVP-3 Issue 3)');
 ok(/\.source-chip \{[^}]*min-width: 44px/.test(shell) && /\.source-chip \{[^}]*min-height: 64px/.test(shell), 'C4. touch target preserved (>=44x64 hit area without visual bulk)');
 ok(/\.source-chip \{[^}]*position: absolute/.test(shell) && /\.source-chip \{[^}]*top: 50%/.test(shell) && /\.source-chip \{[^}]*right: 0/.test(shell), 'C5. absolutely positioned at the right edge — expansion cannot shift layout or push controls off-screen');
 ok(/\.source-chip-label \{[^}]*text-overflow: ellipsis/.test(shell) && /\.source-chip-label \{[^}]*max-width: min\(42vw, 220px\)/.test(shell), 'C6. label ellipsis-truncated at a bounded max-width (long source names cannot expand the chip)');
@@ -269,7 +312,7 @@ ok(controlsPlacementInlineStyle({ horizontal: { anchor: 'center', offsetPercent:
 
 // D21. The shell wires BOTH controls to the REAL viewport orientation.
 ok(/orientationMediaQuery = window\.matchMedia\('\(orientation: landscape\)'\)/.test(shell) && /playerOrientation = e\.matches \? 'landscape' : 'portrait'/.test(shell), 'D21. position profiles follow the REAL viewport orientation (immediate on rotation)');
-ok(/\$: backControlStyle = controlsPlacementInlineStyle\(resolveControlPlacement\(activeSourceOption\?\.controlsPosition \?\? null, 'back', playerOrientation\)\)/.test(shell), 'D22. back FAB placement derived from the ACTIVE source per orientation');
+ok(/\$: backControlStyle = \[/.test(shell) && /controlsSizeInlineStyle\(activeSourceOption\?\.controlsPosition \?\? null, 'back', '--back-fab-size'\)/.test(shell), 'D22. back FAB placement + size derived from the ACTIVE source per orientation (MAVP-3: composed inline style)');
 ok(/<button class="back-fab"[^>]*style=\{backControlStyle\}/.test(shell), 'D23. back FAB carries its per-source placement style');
 ok(!/style=\{landscapeControlStyle\} type="button" aria-label=\{landscapeMode/.test(shell), 'D24. landscape FAB carries NO duplicate inline style');
 
@@ -408,10 +451,10 @@ ok(/event\.key === 'f' \|\| event\.key === 'F'/.test(shell) && /event\.key === '
 ok(/if \(event\.repeat\) return;/.test(shell), 'F7. key-repeat guard preserved');
 ok(!shell.includes('documentPictureInPicture.requestWindow'), 'F8. Document PiP still never offered as a playback surface');
 
-console.log('MAVP-2 player bug-fix regression tests passed:');
-console.log('  §A landscape-first: 25 checks (click-time presentation on all four entry points, shell adoption, no duplicate orientation requests, no iframe reload, resume chain intact)');
+console.log('MAVP-2 player bug-fix regression tests passed (MAVP-3-superseded sections updated in place):');
+console.log('  §A no automatic landscape: 20 checks (module deleted, all four entry points clean, locks only in manual controllers, resume chain intact)');
 console.log('  §B auto-hide: 18 checks (embed-session arming root cause, embed-load arming, TV/keyboard activity, deadline protected from media events, full cleanup)');
-console.log('  §C source chip: 11 checks (bar-carried surface, transparent hit area, content-aware truncated label, no layout shift)');
+console.log('  §C source chip: 13 checks (accent token surface, transparent hit area, content-aware truncated label, no layout shift)');
 console.log('  §D positioning profiles: 31 checks (parser totals, control/orientation/axis isolation, renderer contract, Admin draft + resets)');
 console.log('  §E admin validation: 18 checks (exact reported error reproduced + fixed via JSON contract, strict server gate, legacy compatibility, store/reload round-trip)');
 console.log('  §F protected behavior: 8 checks (sandbox pipeline, resolver guards, PiP, keyboard contract)');

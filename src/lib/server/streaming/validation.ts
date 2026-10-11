@@ -164,7 +164,8 @@ export function parseProviderForm(form: FormData) {
 // Form fields:
 //   controls_position_json (MAVP-2, preferred): ONE field carrying the full
 //     JSON document in the EXACT stored shape ({ mode, portrait?,
-//     landscape?, back? } with axis objects { anchor, offsetPercent }). A
+//     landscape?, back?, sizes? } with axis objects { anchor, offsetPercent }
+//     and the MAVP-3 sizes object { back?, landscape? } in integer px). A
 //     single structured payload eliminates the reported bug class for good:
 //     individual text fields could arrive with an offset but a missing
 //     anchor (the Admin sheet always rendered the four override offset
@@ -186,6 +187,13 @@ export function parseProviderForm(form: FormData) {
 
 const CONTROLS_POSITION_H_ANCHORS = ['left', 'right', 'center'] as const;
 const CONTROLS_POSITION_V_ANCHORS = ['top', 'bottom', 'center'] as const;
+
+// MAVP-3 size bounds — mirrored from $lib/shared/player-controls-position.ts
+// (the module cannot be imported here because this file is the server gate
+// and must stay dependency-light; the shared parser re-normalises on read,
+// and the contract tests assert BOTH gates agree).
+const CONTROLS_POSITION_SIZE_MIN_PX = 28;
+const CONTROLS_POSITION_SIZE_MAX_PX = 96;
 
 type ControlsPositionAxisJson = { anchor: string; offsetPercent: number };
 type ControlsPositionOverrideJson = { horizontal?: ControlsPositionAxisJson; vertical?: ControlsPositionAxisJson };
@@ -222,6 +230,39 @@ function controlsPositionOverrideJson(value: unknown, label: string): ControlsPo
   const vertical = controlsPositionAxisJson(record.vertical, `${label} vertical`, CONTROLS_POSITION_V_ANCHORS);
   if (!horizontal && !vertical) return null;
   return { ...(horizontal ? { horizontal } : {}), ...(vertical ? { vertical } : {}) };
+}
+
+/**
+ * MAVP-3: STRICT per-control size validation for the JSON payload. Sizes are
+ * integer CSS pixels within [CONTROLS_POSITION_SIZE_MIN_PX .. _MAX_PX] —
+ * the documented safe range that prevents invisible, unusably small, or
+ * viewport-dominating controls. Malformed types, non-finite numbers and
+ * out-of-range values are REJECTED with a clear admin-facing message
+ * (server validation stays authoritative). Valid values normalise to
+ * integers; absent/null entries are omitted (default size).
+ */
+function controlsPositionSizeJson(value: unknown, label: string): number | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new StreamingValidationError(`Player Controls Position ${label} size must be a number of pixels.`);
+  }
+  const rounded = Math.round(value);
+  if (rounded < CONTROLS_POSITION_SIZE_MIN_PX || rounded > CONTROLS_POSITION_SIZE_MAX_PX) {
+    throw new StreamingValidationError(`Player Controls Position ${label} size must be between ${CONTROLS_POSITION_SIZE_MIN_PX} and ${CONTROLS_POSITION_SIZE_MAX_PX} pixels.`);
+  }
+  return rounded;
+}
+
+function controlsPositionSizesJson(value: unknown): { back?: number; landscape?: number } | null {
+  if (value === undefined || value === null) return null;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new StreamingValidationError('Player Controls Position sizes section must be an object.');
+  }
+  const record = value as Record<string, unknown>;
+  const back = controlsPositionSizeJson(record.back, 'back button');
+  const landscape = controlsPositionSizeJson(record.landscape, 'landscape button');
+  if (back === null && landscape === null) return null;
+  return { ...(back !== null ? { back } : {}), ...(landscape !== null ? { landscape } : {}) };
 }
 
 /**
@@ -262,7 +303,11 @@ function playerControlsPositionFromJson(raw: string): JsonObject | null {
     const backLandscape = controlsPositionOverrideJson(backRecord.landscape, 'back landscape');
     if (backPortrait || backLandscape) back = { ...(backPortrait ? { portrait: backPortrait } : {}), ...(backLandscape ? { landscape: backLandscape } : {}) };
   }
-  if (!horizontal && !vertical && !portrait && !landscape && !back) {
+  // MAVP-3: independent per-control sizes (Back button, Landscape button).
+  const sizes = controlsPositionSizesJson(record.sizes);
+  // A custom payload needs at least one anchor OR at least one size — a
+  // sizes-only save (resize without repositioning) is valid.
+  if (!horizontal && !vertical && !portrait && !landscape && !back && !sizes) {
     throw new StreamingValidationError('Custom Player Controls Position needs at least one anchor (horizontal or vertical).');
   }
   return {
@@ -272,6 +317,7 @@ function playerControlsPositionFromJson(raw: string): JsonObject | null {
     ...(portrait ? { portrait } : {}),
     ...(landscape ? { landscape } : {}),
     ...(back ? { back } : {}),
+    ...(sizes ? { sizes } : {}),
   };
 }
 

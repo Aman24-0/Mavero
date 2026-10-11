@@ -32,8 +32,21 @@
  *   "back": {
  *     "portrait":  { "horizontal": axis|null, "vertical": axis|null },  // optional
  *     "landscape": { "horizontal": axis|null, "vertical": axis|null }   // optional
- *   }
+ *   },
+ *   "sizes": { "back": 44, "landscape": 48 }   // MAVP-3 — optional, integers, px
  * }
+ *
+ * Size contract (MAVP-3): `sizes` carries an INDEPENDENT size per control
+ * (Back button, Landscape button) in CSS pixels, orientation-independent
+ * (the task specifies exactly one size setting per control per source).
+ * Bounds [CONTROLS_SIZE_MIN_PX .. CONTROLS_SIZE_MAX_PX] prevent invisible,
+ * unusably small, or viewport-dominating controls. A null/absent entry (or
+ * a config without the `sizes` key at all) keeps the control's DEFAULT
+ * stylesheet size — existing sources and legacy configurations are
+ * byte-compatible. Sizes are fully independent of the placement axes:
+ * changing a size never mutates any anchor/offset and vice versa, and the
+ * two controls' sizes never affect each other.
+ *
  *
  * Coordinate convention: offsets are VIEWPORT-RELATIVE PERCENTAGES measured
  * FROM THE ANCHOR EDGE TOWARD THE VIEWPORT INTERIOR. anchor right + offset
@@ -52,6 +65,16 @@
  */
 
 export const PLAYER_CONTROLS_POSITION_CAPABILITY_KEY = 'player_controls_position';
+
+// ----- MAVP-3 size contract -------------------------------------------------
+// Defaults mirror the player stylesheet EXACTLY (.back-fab 44px,
+// .control-fab 48px) so a source without custom sizing renders identically
+// to the pre-MAVP-3 design. Bounds keep controls visible, usable and never
+// viewport-dominating (documented safe range; enforced server-side too).
+export const BACK_CONTROL_DEFAULT_SIZE_PX = 44;
+export const LANDSCAPE_CONTROL_DEFAULT_SIZE_PX = 48;
+export const CONTROLS_SIZE_MIN_PX = 28;
+export const CONTROLS_SIZE_MAX_PX = 96;
 
 export type ControlsPositionAnchor = 'left' | 'right' | 'top' | 'bottom' | 'center';
 
@@ -74,6 +97,9 @@ export type PlayerControlsPosition = {
     portrait: { horizontal: ControlsAxisPosition | null; vertical: ControlsAxisPosition | null } | null;
     landscape: { horizontal: ControlsAxisPosition | null; vertical: ControlsAxisPosition | null } | null;
   } | null;
+  /** MAVP-3: independent per-control size overrides in px (optional).
+   *  null entry / absent section = the control's default stylesheet size. */
+  sizes: { back: number | null; landscape: number | null } | null;
 };
 
 /** The two floating controls that can be positioned per source. */
@@ -135,6 +161,33 @@ function parseBackSection(value: unknown): PlayerControlsPosition['back'] {
 }
 
 /**
+ * MAVP-3: TOTAL per-control size parse. Only finite integers within the
+ * documented bounds are accepted; anything else (absent, null, wrong type,
+ * non-finite, out of bounds) degrades to null = the control's default size.
+ * Values are normalised to integers (px).
+ */
+function parseControlSize(value: unknown): number | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  const rounded = Math.round(value);
+  if (rounded < CONTROLS_SIZE_MIN_PX || rounded > CONTROLS_SIZE_MAX_PX) return null;
+  return rounded;
+}
+
+/**
+ * MAVP-3: the `sizes` section — independent per-control sizes. Returns null
+ * when the section is absent, not an object, or carries no usable value
+ * (legacy configs and sizes-less custom configs keep `sizes: null`).
+ */
+function parseSizesSection(value: unknown): PlayerControlsPosition['sizes'] {
+  if (!isRecord(value)) return null;
+  const back = parseControlSize(value.back);
+  const landscape = parseControlSize(value.landscape);
+  if (back === null && landscape === null) return null;
+  return { back, landscape };
+}
+
+/**
  * Parse the raw capability value. Returns null when absent or malformed —
  * the caller MUST fall back to the default (bottom-right) positioning.
  */
@@ -142,7 +195,7 @@ export function parsePlayerControlsPosition(value: unknown): PlayerControlsPosit
   if (!isRecord(value)) return null;
   const mode = value.mode;
   if (mode === 'default') {
-    return { mode: 'default', horizontal: null, vertical: null, portrait: null, landscape: null, back: null };
+    return { mode: 'default', horizontal: null, vertical: null, portrait: null, landscape: null, back: null, sizes: null };
   }
   if (mode !== 'custom') return null;
   const position: PlayerControlsPosition = {
@@ -152,13 +205,17 @@ export function parsePlayerControlsPosition(value: unknown): PlayerControlsPosit
     portrait: value.portrait === undefined ? null : parseOrientationOverride(value.portrait),
     landscape: value.landscape === undefined ? null : parseOrientationOverride(value.landscape),
     back: value.back === undefined ? null : parseBackSection(value.back),
+    sizes: value.sizes === undefined ? null : parseSizesSection(value.sizes),
   };
-  // A custom config with NO usable axis is treated as malformed — the admin
-  // most likely saved a half-empty config; default positioning is safer.
+  // A custom config with NO usable axis and NO usable size is treated as
+  // malformed — the admin most likely saved a half-empty config; default
+  // positioning/sizing is safer. A sizes-only config is VALID (the admin may
+  // only want to resize the controls without moving them).
   if (
     !position.horizontal && !position.vertical
     && !hasUsableAxis(position.portrait) && !hasUsableAxis(position.landscape)
     && !hasUsableAxis(position.back?.portrait ?? null) && !hasUsableAxis(position.back?.landscape ?? null)
+    && !position.sizes
   ) return null;
   return position;
 }
@@ -222,6 +279,34 @@ export function resolveControlPlacement(
     horizontal: override?.horizontal ?? position.horizontal,
     vertical: override?.vertical ?? position.vertical,
   };
+}
+
+/**
+ * MAVP-3: resolve a control's configured size for a source. Returns null
+ * when the source has no custom size for that control (the caller keeps the
+ * control's default stylesheet size). Pure — never mutates the config.
+ */
+export function resolveControlSize(
+  position: PlayerControlsPosition | null,
+  control: ControlsControlId,
+): number | null {
+  if (!position || position.mode !== 'custom') return null;
+  return position.sizes?.[control] ?? null;
+}
+
+/**
+ * MAVP-3: build the inline CSS for a control's configured size. Emits a
+ * single CSS custom property declaration (e.g. `--back-fab-size: 56px`)
+ * consumed by the player stylesheet; empty string when the control keeps
+ * its default size — placement styles and size styles never overlap keys.
+ */
+export function controlsSizeInlineStyle(
+  position: PlayerControlsPosition | null,
+  control: ControlsControlId,
+  cssVariable: string,
+): string {
+  const size = resolveControlSize(position, control);
+  return size === null ? '' : `${cssVariable}:${size}px`;
 }
 
 /**

@@ -4157,3 +4157,43 @@ No TMDB/Supabase credentials in this environment — browser QA ran against the 
 No real Android/TV hardware — real-device orientation-lock behaviour, cutout safe-areas and provider fullscreen interactions remain UNVERIFIED on hardware (all orientation paths are best-effort with silent fallback). No admin credentials — the authenticated Admin save/reload workflow was not browser-driven (server validation, round-trip persistence and the save-path contract are test-verified). The fixture explorer feed rendered no MediaCard chips — the card entry path is verified by the shared-helper contract + the identical helper verified end-to-end from the detail page. NO production deployment was performed.
 
 **No migration** (capabilities JSONB already carries the key). **Commit:** `5f15349` on `origin/main` (pushed: `81675a8..5f15349 HEAD -> main`).
+
+---
+
+# MAVP-3 — Targeted Player Bug Fixes, Admin Control Resizing & Production Hardening
+
+**Date:** 2026-10-11
+**Baseline:** `e51d302` (origin/main, MAVP-2 final) — clean git worktree (`/home/z/my-project/mavero-mavp2`; the pre-existing `/home/z/my-project/mavero` checkout carries unrelated local modifications that were never touched). **Follow-up audit doc:** `MAVP3_PLAYER_BUGFIX_AUDIT.md` (committed) — exact root causes, size contract, tests, gates, limitations. **Test mode: source tracing + deterministic automated tests ONLY — NO browser testing was performed (explicitly out of scope).**
+
+## Verified root causes (all fixed at the root)
+
+1. **RC-1 automatic landscape on entry:** the MAVP-2 landscape-first presentation fired from TWO automatic paths — click-time `requestLandscapeFirstPresentation()` (documentElement fullscreen + orientation lock BEFORE the player route mounted — the reported "app rotates before the player appears") and the shell's mount-time `enterLandscapePresentation()` fallback. Landscape-vs-portrait was a race artifact, hence the inconsistent entries. **Fix = removal:** `landscape-first.ts` DELETED, all four entry-point calls removed, mount attempt + eligibility gate + adoption path + `deviceType` prop removed from shell and watch route. Orientation locks survive ONLY inside the user-initiated `toggleLandscape` (FAB) and `toggleFullscreen` (F key); the detail page's own inline-trailer fullscreen lock (separate MAV-24 user-initiated feature) preserved untouched.
+2. **RC-2 controls permanently hidden:** the MAVP-2 iframe-tap recovery signal (window blur + focusin with activeElement===iframe) is a ONE-SHOT focus-TRANSITION signal — after the user presses Play inside the provider the iframe HOLDS focus, so every later in-iframe tap emits NO parent-observable event; hidden controls (pointer-events:none) + full-viewport iframe + keyboard-to-iframe = no reveal path left. **Fix:** the hide path now releases iframe focus back to the parent (`iframeElement.blur()` — parent-owned element, provider DOM untouched, playback unaffected) so the NEXT in-iframe tap re-fires the signal — the reveal is RECURRING; plus a window-focus listener reveals on returning to the document while the embed holds focus. Arming conditions/sheet/focus guards/single 5s timer/media-progress immunity byte-unchanged; new listeners cleaned up on destroy.
+3. **RC-3 chip colors off-theme:** the chip bar/label painted hardcoded dark slabs. **Fix (colors only):** `var(--accent)` bar + `var(--accent-strong)` ring; hover/active deepen to `var(--accent-strong)`; label text `var(--accent)` on `var(--accent-soft)`. Dimensions/hit area/typography/animation/position/behaviour byte-identical (style-contract tested).
+4. **RC-4 calibration inspection unreliable:** the Admin calibration preview is Admin-local static markup sharing NO state/CSS with the player (audit finding — pinned by test); the real gap was verifying calibrations in the RUNNING player where the (correct) 5s auto-hide hid the controls mid-inspection. **Fix:** explicit opt-in calibration session — the watch route reads `?controls=calibrate` and PlayerShell skips arming the hide timer while the session is open; every normal playback keeps the exact 5s contract (the gate is the ONLY arming-condition change); never global, never permanent; documented in the Admin editor hint.
+5. **RC-5 no per-control sizing (feature):** added an optional `sizes: { back?, landscape? }` section (integer px, documented bounds 28–96) inside the existing `player_controls_position` capability — one INDEPENDENT size per control per source, orientation-independent, fully disjoint from placement (payload keys, CSS keys, draft state, per-control "Reset size", reset-all). Defaults 44/48 mirror the stylesheet exactly (sources without sizing render byte-identically — the `custom-size` class + CSS var apply only when configured; icons scale at the shipped ratios). Strict server validation (finite, bounded, integer-normalised, admin-facing errors); sizes-only custom saves are valid (the at-least-one rule EXTENDED, not weakened); total shared parser degrades malformed values to defaults; forward/backward compatible both ways; NO migration.
+
+## Implementation
+
+- Issue 1: four entry handlers cleaned (detail keeps the startup milestone; card keeps stopPropagation; episode link keeps its resume-marking flow); `landscape-first.ts` deleted.
+- Issue 2: `releaseEmbedFocusForRecovery()` in the hide callback (after `controlsVisible = false`) + `window focus` reveal listener; registration + removal in onMount cleanup.
+- Issue 3: chip CSS token swap only (bar, hover, active, label).
+- Issue 4: `calibrationMode` prop + arming gate in PlayerShell; `?controls=calibrate` in the watch route; Admin hint text.
+- Issue 5: `player-controls-position.ts` (constants, `sizes` type/parser, `resolveControlSize`, `controlsSizeInlineStyle`); `validation.ts` (strict size gate, sizes-only rule); Admin sheet (size drafts, prefill, resets, inputs with bounds, preview markers + caption with effective sizes, payload serialization); PlayerShell (composed placement+size inline styles, `custom-size` classes, proportional icon CSS).
+
+## Tests
+
+- NEW `scripts/mavp3_player_bugfix_test.ts` — 92 checks (§1 no-automatic-landscape 12, §2 recurring auto-hide reveal 18, §3 chip accent 12, §4 calibration visibility 9, §5 per-control sizes 41 incl. behavioral parser/resolver truth tables, strict server gate, store→reload round-trip through the REAL parser, Admin draft/reset/preview, renderer + defaults). Registered in the `pnpm test` chain (246 commands).
+- Updated with documented MAVP-3 supersession rationale (no assertion weakened below the new contract): `mavp2_player_bugfix_test` (§A rewritten to the no-automatic-landscape contract, §C accent tokens, §D22 composed style), `mavp_player_redesign_test` (§F manual-only landscape, B14 accent bar, B5b class directive).
+- `player_fab_autohide_test`, `phase2_player_lifecycle_test`, `phase5_player_ui_test`, `phase6_player_apis_test`, `phase8_reliability_test`, `phase9_landscape_test`, `landscape_player_contract_test`, `phase9_landscape_drawer_position_test` all stayed green UNCHANGED.
+
+## Gates (executed, not claimed)
+
+- Baseline (pristine `e51d302`): `pnpm check` 0/0; focused player suites green.
+- MAVP-3 tree: `pnpm check` **0 errors / 0 warnings** · `pnpm test` **exit 0 (246 commands — run as the exact chain; every suite incl. the new MAVP-3 suite green)** · `pnpm build` **PASS** (vite + adapter-netlify + executor bundle).
+
+## Environment limitations (documented)
+
+**NO browser testing was performed** (explicitly excluded by the task) — all verification is source tracing + deterministic automated tests; real-device behaviour (touch reveal cadence, provider iframe focus quirks) remains unverified on hardware. No authenticated Admin browser pass (no credentials — same as all prior phases). The `?controls=calibrate` affordance is documented in the editor hint, not a UI button. NO production deployment was performed.
+
+**No migration** (capabilities JSONB already carries the key). **Commit:** on `origin/main` (13 files modified + 1 deleted + 2 new; the unrelated WIP in `/home/z/my-project/mavero` was never staged).
