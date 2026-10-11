@@ -237,7 +237,16 @@ before the next starts; a failure aborts the run) — every one of the 247 regis
 green on the final tree, including the updated suites above. Baseline focused suites were also run
 on the unmodified tree before any change (all green).
 
-## 9. Known limitations
+## 9. Commit
+
+Implementation commit **`f93d42b`** ("fix(player): MAVP-4 — eliminate embed boot-screen flash,
+explicit portrait viewport contracts, shared Admin preview geometry, restored rich source icons +
+extensible badges") on `origin/main` (fast-forward from `6e9acf4`), followed by a docs commit
+recording this SHA (MAVP-2/MAVP-3 convention). Contains exactly the files in §5.
+No production deployment was performed. No unrelated user changes were staged (the unrelated WIP in
+the `/home/z/my-project/mavero` checkout was never touched).
+
+## 10. Known limitations
 
 (see §2 footer above — unchanged; the key honest caveats: no browser/device verification was
 performed, provider boot surfaces are provider-internal and only coverable, the Admin preview models
@@ -246,7 +255,16 @@ per-source copies by design — reuse flows through the harvested picker rather 
 table, which keeps rename/delete semantics corruption-free without a schema addition beyond the two
 CHECK widenings.)
 
-## 9. Known limitations
+## 9. Commit
+
+Implementation commit **`f93d42b`** ("fix(player): MAVP-4 — eliminate embed boot-screen flash,
+explicit portrait viewport contracts, shared Admin preview geometry, restored rich source icons +
+extensible badges") on `origin/main` (fast-forward from `6e9acf4`), followed by a docs commit
+recording this SHA (MAVP-2/MAVP-3 convention). Contains exactly the files in §5.
+No production deployment was performed. No unrelated user changes were staged (the unrelated WIP in
+the `/home/z/my-project/mavero` checkout was never touched).
+
+## 10. Known limitations
 
 - **Browser testing was NOT performed** (explicitly out of scope): real-device rendering — the
   provider boot surfaces, safe-area insets on hardware, container-query scaling in the Admin sheet
