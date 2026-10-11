@@ -334,17 +334,15 @@
   // so the element still gets ONE style write per orientation/profile change.
   $: backSizePx = resolveControlSize(activeSourceOption?.controlsPosition ?? null, 'back');
   $: landscapeSizePx = resolveControlSize(activeSourceOption?.controlsPosition ?? null, 'landscape');
-  // MAVP-5 (Issue 4): the Episodes chip resolves through its OWN position
-  // contract (position.episodes + sizes.episodes) — fully independent from
-  // the Back and Landscape controls. Default (unset axes): attached to the
-  // LEFT edge at the vertical centre, mirroring the source chip on the
-  // right edge. Styles follow the exact same inline-style pipeline as the
-  // other controls (placement axes + a disjoint size custom property).
-  $: episodesSizePx = resolveControlSize(activeSourceOption?.controlsPosition ?? null, 'episodes');
-  $: episodesControlStyle = [
-    controlsPlacementInlineStyle(resolveControlPlacement(activeSourceOption?.controlsPosition ?? null, 'episodes', playerOrientation)),
-    controlsSizeInlineStyle(activeSourceOption?.controlsPosition ?? null, 'episodes', '--episodes-chip-size'),
-  ].filter(Boolean).join(';');
+  // MAVP-6 (Issues 2+3): the EPISODES CHIP IS FIXED — it consumes NO
+  // per-source position/size. The source chip (right edge) is anchored to
+  // the vertical centre by the player stylesheet; the episode chip (left
+  // edge) follows the SAME fixed vertical reference (identical selectors'
+  // mechanics: top:50% + translateY(-50%), 64px hit area, 56px bar), so the
+  // two edge chips are vertically aligned BY CONSTRUCTION in both
+  // orientations and for every source. Legacy stored `episodes` /
+  // `sizes.episodes` capability keys are dropped by the total parser (see
+  // player-controls-position.ts) and can never move the chip.
   // The chip's hover label mirrors the source chip's content-aware label:
   // it shows the CURRENT episode ("S2 · E08"), or simply "Episodes" when no
   // specific episode is active.
@@ -1850,13 +1848,14 @@
   <!-- MAVP-5 (Issue 4): dedicated LEFT-edge episode chip — the exact mirror
        of the source chip (bar + hover label + ≥44px touch target), rendered
        ONLY when the current content supports episode selection (movies never
-       render it — the episodes list is empty there). Its position is the
-       chip's OWN per-source contract (position.episodes + sizes.episodes) —
-       it can never overwrite or share the source chip's or the Landscape
-       control's configured position. Opens the EXISTING episode sheet,
-       which now slides in from the LEFT. -->
+       render it — the episodes list is empty there).
+       MAVP-6 (Issues 2+3): the chip is FIXED like the source chip — no
+       per-source placement/size style is applied, so both edge chips share
+       the identical stylesheet vertical reference (top:50% +
+       translateY(-50%)) and are vertically aligned by construction.
+       Opens the EXISTING episode sheet, which slides in from the LEFT. -->
   {#if episodes.length}
-    <button class="episode-chip" class:visible={controlsVisible} class:custom-position={Boolean(episodesControlStyle)} class:custom-size={episodesSizePx !== null} type="button" aria-label="Choose episode" aria-haspopup="dialog" style={episodesControlStyle} onclick={(event) => openEpisodeSheet(event.currentTarget instanceof HTMLElement ? event.currentTarget : playerRoot)}>
+    <button class="episode-chip" class:visible={controlsVisible} type="button" aria-label="Choose episode" aria-haspopup="dialog" onclick={(event) => openEpisodeSheet(event.currentTarget instanceof HTMLElement ? event.currentTarget : playerRoot)}>
       <span class="episode-chip-bar" aria-hidden="true"></span>
       <span class="episode-chip-label" aria-hidden="true">{episodeChipLabel}</span>
     </button>
@@ -2001,12 +2000,14 @@
      area, same auto-hide participation, same z-index layering). Attached to
      the LEFT edge at the vertical centre; the hover label expands RIGHTWARD
      (bounded max-width, ellipsis) so it can never push other controls or
-     overflow the viewport. A per-source position config overrides the
-     placement via the same inline-style pipeline as the other controls; the
-     per-source SIZE (--episodes-chip-size) applies to the chip's hit area
-     height only when configured. Movies never render it (no episodes). */
-  .episode-chip { position: absolute; z-index: 12; top: 50%; left: 0; transform: translateY(-50%); display: flex; align-items: center; justify-content: flex-start; min-width: 44px; min-height: var(--episodes-chip-size, 64px); padding: 0; border: 0; background: transparent; cursor: pointer; visibility: visible; transition: opacity var(--motion-normal) var(--ease-out), visibility 0s linear 0s; }
-  .episode-chip.custom-size { min-height: var(--episodes-chip-size, 64px); }
+     overflow the viewport.
+     MAVP-6 (Issues 2+3): the chip is FIXED like the source chip — no
+     per-source position config or size override exists anymore; both edge
+     chips share the identical vertical reference (top:50% +
+     translateY(-50%), 64px hit area, 56px bar) and are vertically aligned
+     BY CONSTRUCTION in both orientations. Movies never render it (no
+     episodes). */
+  .episode-chip { position: absolute; z-index: 12; top: 50%; left: 0; transform: translateY(-50%); display: flex; align-items: center; justify-content: flex-start; min-width: 44px; min-height: 64px; padding: 0; border: 0; background: transparent; cursor: pointer; visibility: visible; transition: opacity var(--motion-normal) var(--ease-out), visibility 0s linear 0s; }
   .episode-chip-bar { flex: 0 0 auto; width: 5px; height: 56px; border-radius: 0 999px 999px 0; background: var(--accent); box-shadow: inset 0 0 0 1px var(--accent-strong); backdrop-filter: blur(12px); transition: background var(--motion-fast) var(--ease-out), box-shadow var(--motion-fast) var(--ease-out); }
   .episode-chip-label { overflow: hidden; max-width: 0; opacity: 0; white-space: nowrap; text-overflow: ellipsis; font: inherit; font-size: .6rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); background: var(--accent-soft); border: 1px solid var(--accent-soft); border-left: 0; border-radius: 0 10px 10px 0; padding: 0 0 0 0; backdrop-filter: blur(12px); transition: max-width var(--motion-fast) var(--ease-out), opacity var(--motion-fast) var(--ease-out), padding var(--motion-fast) var(--ease-out); }
   .episode-chip:hover .episode-chip-bar, .episode-chip:focus-visible .episode-chip-bar { background: var(--accent-strong); box-shadow: inset 0 0 0 1px var(--accent); }

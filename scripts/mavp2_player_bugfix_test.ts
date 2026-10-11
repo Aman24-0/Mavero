@@ -334,8 +334,12 @@ ok(!/style=\{landscapeControlStyle\} type="button" aria-label=\{landscapeMode/.t
 //      per-orientation resets, reset-all, JSON payload contract.
 ok(/type ControlsControlDraft = \{ portrait: ControlsProfileDraft; landscape: ControlsProfileDraft \}/.test(adminPage), 'D25. Admin draft model has independent portrait/landscape profiles');
 ok(/landscapeControl: emptyControlDraft\(\),\s*back: emptyControlDraft\(\)/.test(adminPage), 'D26. Admin draft covers BOTH controls independently');
-// MAVP-5 Issue 4 supersession: the reset union now includes the dedicated 'episodes' control.
-ok(/function resetControlProfile\(control: 'landscapeControl' \| 'back' \| 'episodes', orientation: 'portrait' \| 'landscape'\)/.test(adminPage), 'D27. per-control per-orientation reset exists (incl. the MAVP-5 episodes chip)');
+// MAVP-6 (Issues 2+3) supersession of the MAVP-5 'episodes' reset union: the
+// episode-chip position editor was REMOVED from the Admin source editor (the
+// chip is fixed like the source chip), so the reset union covers EXACTLY the
+// two positionable controls — the stricter shape.
+ok(/function resetControlProfile\(control: 'landscapeControl' \| 'back', orientation: 'portrait' \| 'landscape'\)/.test(adminPage) && !/'episodes'/.test(codeOnly(adminPage).match(/function resetControlProfile[\s\S]{0,80}/)?.[0] ?? ''),
+  'D27. per-control per-orientation reset exists (MAVP-6: exactly the two positionable controls)');
 ok(/positionDraft\[control\]\[orientation\] = emptyProfileDraft\(\)/.test(adminPage), 'D28. resetting one profile touches ONLY that profile');
 ok(/function resetAllControlsPosition\(\)/.test(adminPage), 'D29. reset-all exists');
 ok(/readLegacyAxis\(custom\?\.back\?\.portrait\?\.horizontal/.test(adminPage) && !/custom\?\.back\?\.portrait\?\.horizontal \?\? custom\?\.horizontal/.test(adminPage), 'D30. back control NEVER prefills from the landscape control legacy base');

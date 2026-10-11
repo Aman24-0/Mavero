@@ -12,9 +12,10 @@ import { requireAdmin } from '$lib/server/streaming/admin-auth';
 import {
   listAdminCategories, listAdminSources, listSourceCategories,
   createCategory, updateCategory, deleteCategory,
+  assignSourceToCategory, deleteSourceCategory, reorderCategorySources,
 } from '$lib/server/streaming/admin-service';
 import { classifyAdminMutationError } from '$lib/server/streaming/mutation-result';
-import { parseCategoryForm, parseId } from '$lib/server/streaming/validation';
+import { parseCategoryForm, parseId, parseSourceAssignmentForm, parseCategoryReorderForm } from '$lib/server/streaming/validation';
 import { StreamingValidationError } from '$lib/server/streaming/validation';
 
 const VALID_TABS = new Set(['categories', 'features']);
@@ -96,12 +97,67 @@ export const actions: Actions = {
       return fail(400, { message: messageFrom(error, 'Unable to delete category.') });
     }
   },
-  // FINDING-008 fix: removed dead `assignSource`, `removeSource`, and
-  // `reorderSources` actions. These server actions existed but were
-  // never invoked from any UI — no source-assignment interface was
-  // built for the Categories tab. Leaving dead actions in the codebase
-  // is a maintenance burden (they import helpers, parse forms, and
-  // could be accidentally triggered by a crafted POST). If a
-  // source-assignment UI is needed in the future, the actions can be
-  // re-added with a corresponding UI.
+  // --- Source assignment management (MAVP-6 Issue 4) ---
+  //
+  // FINDING-008 history: these three actions were removed because the
+  // Categories tab shipped without a source-assignment UI. MAVP-6 restores
+  // the COMPLETE workflow: the category editor now carries the source
+  // management section (assign / remove / reorder), so every action below
+  // has a real UI caller. The contracts are the EXISTING service-layer
+  // methods (assignSourceToCategory / deleteSourceCategory /
+  // reorderCategorySources) over the authoritative
+  // streaming_source_categories mapping — no competing data model.
+  //
+  // Security/integrity contract (unchanged from the pre-removal design and
+  // re-verified against the service layer):
+  //   * requireAdmin on EVERY mutation (same gate as category CRUD).
+  //   * All submitted IDs are strictly parsed/validated server-side
+  //     (parseSourceAssignmentForm / parseCategoryReorderForm — UUID shapes,
+  //     bounded text, positive integer positions).
+  //   * Assignment appends densely (service), is idempotent for an
+  //     already-assigned source, and never touches source metadata.
+  //   * Removal deletes ONLY the mapping row (the source itself is never
+  //     deleted) and re-normalizes the category's ordering.
+  //   * Reordering is scoped to ONE category (the service validates the
+  //     submitted set against the category's real assignments, rejects
+  //     duplicates, and uses the atomic RPC / constraint-safe fallback).
+  assignSource: async ({ request, locals }) => {
+    await requireAdmin(locals, { redirectTo: '/admin/system/content-rules' });
+    try {
+      const { source_id, category_id } = parseSourceAssignmentForm(await request.formData());
+      await assignSourceToCategory(locals.supabase, source_id, category_id);
+      throw redirect(303, `/admin/system/content-rules?tab=categories&notice=Source%20assigned.`);
+    } catch (error) {
+      if (isRedirect(error)) throw error;
+      return fail(400, { message: messageFrom(error, 'Unable to assign source.') });
+    }
+  },
+  removeSource: async ({ request, locals }) => {
+    await requireAdmin(locals, { redirectTo: '/admin/system/content-rules' });
+    try {
+      const { source_id, category_id } = parseSourceAssignmentForm(await request.formData());
+      await deleteSourceCategory(locals.supabase, source_id, category_id);
+      throw redirect(303, `/admin/system/content-rules?tab=categories&notice=Source%20removed.`);
+    } catch (error) {
+      if (isRedirect(error)) throw error;
+      return fail(400, { message: messageFrom(error, 'Unable to remove source.') });
+    }
+  },
+  reorderSources: async ({ request, locals }) => {
+    await requireAdmin(locals, { redirectTo: '/admin/system/content-rules' });
+    try {
+      const { categoryId, positions } = parseCategoryReorderForm(await request.formData());
+      // Deterministic: the submitted 1-based positions define the order —
+      // sorted explicitly here so the payload's field order can never
+      // influence the outcome. The service then validates the set against
+      // the category's real assignments (duplicates / stale / deleted
+      // records are rejected with an admin-facing error, never half-applied).
+      const orderedSourceIds = [...positions].sort((a, b) => a.position - b.position).map((p) => p.sourceId);
+      await reorderCategorySources(locals.supabase, categoryId, orderedSourceIds);
+      throw redirect(303, `/admin/system/content-rules?tab=categories&notice=Sources%20reordered.`);
+    } catch (error) {
+      if (isRedirect(error)) throw error;
+      return fail(400, { message: messageFrom(error, 'Unable to reorder sources.') });
+    }
+  },
 };

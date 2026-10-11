@@ -265,13 +265,15 @@ section_ok('§5 per-control sizes');
 
 // 5.1 Behavioral parser truth table (shared contract, TOTAL).
 okEq(parsePlayerControlsPosition({ mode: 'custom', sizes: { back: 56 } }), {
-  mode: 'custom', horizontal: null, vertical: null, portrait: null, landscape: null, back: null, episodes: null,
-  // MAVP-5 Issue 4 supersession: the sizes section carries the additive
-  // `episodes` entry (null = the chip's default size) alongside the
-  // original two — a strict superset of the MAVP-3 contract.
-  sizes: { back: 56, landscape: null, episodes: null },
+  mode: 'custom', horizontal: null, vertical: null, portrait: null, landscape: null, back: null,
+  // MAVP-6 (Issues 2+3) supersession of the MAVP-5 additive `episodes`
+  // entry: the episode chip is FIXED (64px, matching the source chip) and no
+  // longer per-source sizeable — the sizes section carries ONLY the two
+  // Admin-configurable controls, which is the STRICTER contract (a legacy
+  // sizes.episodes value is dropped by the total parser instead of parsed).
+  sizes: { back: 56, landscape: null },
 }, '5.1a a sizes-only custom config parses (resize without repositioning is valid)');
-okEq(parsePlayerControlsPosition({ mode: 'custom', sizes: { back: 56.4, landscape: 61.9 } })?.sizes, { back: 56, landscape: 62, episodes: null }, '5.1b sizes normalise to integer px (MAVP-5: + additive episodes entry)');
+okEq(parsePlayerControlsPosition({ mode: 'custom', sizes: { back: 56.4, landscape: 61.9 } })?.sizes, { back: 56, landscape: 62 }, '5.1b sizes normalise to integer px (MAVP-6: episodes entry removed — fixed chip size)');
 okEq(parsePlayerControlsPosition({ mode: 'custom', sizes: { back: 150 } })?.sizes ?? null, null, '5.1c out-of-bounds size → null (total parser, default size)');
 okEq(parsePlayerControlsPosition({ mode: 'custom', sizes: { back: 4 } })?.sizes ?? null, null, '5.1d unusably small size → null');
 okEq(parsePlayerControlsPosition({ mode: 'custom', sizes: { back: Number.NaN } })?.sizes ?? null, null, '5.1e NaN size → null');
@@ -284,7 +286,7 @@ okEq(parsePlayerControlsPosition({ mode: 'default', sizes: { back: 56 } })?.size
 okEq(parsePlayerControlsPosition({ mode: 'custom', horizontal: { anchor: 'left', offsetPercent: 5 } })?.sizes ?? null, null, '5.1l legacy configs (no sizes key) keep sizes null (backward compatible)');
 const sizeIsolationSource = { mode: 'custom', sizes: { back: 64, landscape: 36 }, back: { portrait: { horizontal: { anchor: 'left', offsetPercent: 3 } } } };
 const sizeIsolation = parsePlayerControlsPosition(sizeIsolationSource);
-okEq(sizeIsolation?.sizes, { back: 64, landscape: 36, episodes: null }, '5.1m sizes parse alongside placement profiles (MAVP-5: + additive episodes entry)');
+okEq(sizeIsolation?.sizes, { back: 64, landscape: 36 }, '5.1m sizes parse alongside placement profiles (MAVP-6: episodes entry removed)');
 if (sizeIsolation?.sizes) sizeIsolation.sizes.back = 1;
 okEq((sizeIsolationSource.sizes as { back: number }).back, 64, '5.1n parser deep-copies — mutating a parsed size never mutates the source config');
 okEq(sizeIsolation?.back?.portrait?.horizontal, { anchor: 'left', offsetPercent: 3 }, '5.1o sizes do not disturb placement profiles');
@@ -343,11 +345,16 @@ ok(/must be between \$\{CONTROLS_POSITION_SIZE_MIN_PX\} and \$\{CONTROLS_POSITIO
 ok(/CONTROLS_POSITION_SIZE_MIN_PX = 28;/.test(serverSizeGate) && /CONTROLS_POSITION_SIZE_MAX_PX = 96;/.test(serverSizeGate), '5.4j server bounds match the shared contract constants');
 
 // 5.5 Admin editor: draft state, load, reset isolation, serialization.
-ok(/let controlsSizesDraft = \$state<\{ back: string; landscape: string; episodes: string \}>\(\{ back: '', landscape: '', episodes: '' \}\);/.test(adminPage), '5.5a independent per-control size drafts (empty = default; MAVP-5: + episodes draft)');
-ok(/back: readSizeDraft\(storedSizes\?\.back\),\s*landscape: readSizeDraft\(storedSizes\?\.landscape\),\s*episodes: readSizeDraft\(storedSizes\?\.episodes\),/.test(adminPage), '5.5b saved sizes prefill on edit (bounded values only; MAVP-5: + episodes)');
-ok(/function resetControlSize\(control: 'back' \| 'landscape' \| 'episodes'\) \{\s*controlsSizesDraft = \{ \.\.\.controlsSizesDraft, \[control\]: '' \};/.test(adminPage), '5.5c resetting ONE control\'s size leaves the other controls\' sizes untouched (MAVP-5: + episodes)');
-ok(/positionDraft = \{ landscapeControl: emptyControlDraft\(\), back: emptyControlDraft\(\), episodes: emptyControlDraft\(\) \};\s*controlsSizesDraft = \{ back: '', landscape: '', episodes: '' \};\s*controlsPositionMode = 'default';/.test(adminPage), '5.5d reset-all clears sizes AND placements together (explicit; MAVP-5: + episodes)');
-ok(/const episodesSize = serializeSizeDraft\(controlsSizesDraft\.episodes\);/.test(adminPage) && /episodesSize !== null \? \{ episodes: episodesSize \} : \{\}/.test(adminPage), '5.5e sizes serialize independently into the JSON payload (unset entries omitted; MAVP-5: + episodes entry)');
+// MAVP-6 (Issues 2+3) supersession: the episode-chip position/size editor was
+// REMOVED from the Admin source editor (the chip is fixed like the source
+// chip; the alignment is structural). The assertions below check the
+// STRONGER two-control shape — legacy stored sizes.episodes values are never
+// prefilled or serialized anymore.
+ok(/let controlsSizesDraft = \$state<\{ back: string; landscape: string \}>\(\{ back: '', landscape: '' \}\);/.test(adminPage), '5.5a independent per-control size drafts (empty = default; MAVP-6: episodes draft removed — fixed chip)');
+ok(/back: readSizeDraft\(storedSizes\?\.back\),\s*landscape: readSizeDraft\(storedSizes\?\.landscape\),\s*\};/.test(adminPage), '5.5b saved sizes prefill on edit (bounded values only; MAVP-6: legacy sizes.episodes never prefilled)');
+ok(/function resetControlSize\(control: 'back' \| 'landscape'\) \{\s*controlsSizesDraft = \{ \.\.\.controlsSizesDraft, \[control\]: '' \};/.test(adminPage), '5.5c resetting ONE control\'s size leaves the other controls\' sizes untouched (MAVP-6: two controls remain)');
+ok(/positionDraft = \{ landscapeControl: emptyControlDraft\(\), back: emptyControlDraft\(\) \};\s*controlsSizesDraft = \{ back: '', landscape: '' \};\s*controlsPositionMode = 'default';/.test(adminPage), '5.5d reset-all clears sizes AND placements together (explicit; MAVP-6: no episodes entries)');
+ok(!/serializeSizeDraft\(controlsSizesDraft\.episodes\)/.test(adminPage) && !/episodes: episodesSize/.test(adminPage), '5.5e sizes serialize independently into the JSON payload (MAVP-6: no episodes entry is ever serialized)');
 ok(/type="number" min=\{CONTROLS_SIZE_MIN_PX\} max=\{CONTROLS_SIZE_MAX_PX\} step="1"/.test(adminPage), '5.5f size inputs carry the documented bounds');
 ok(/Control size \(both orientations\)/.test(adminPage), '5.5g the size block is clearly separated from the per-orientation placement profiles');
 ok(/Reset size/.test(adminPage), '5.5h per-control size reset exists in the editor');

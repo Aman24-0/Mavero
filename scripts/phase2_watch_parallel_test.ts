@@ -85,7 +85,10 @@ ok(!/hasStreamEligibleAddons/.test(watch), '5b. hasStreamEligibleAddons is no lo
 // 6. Episode fetch is still optional (failure is silently absorbed).
 // ============================================================
 ok(/getSeriesSeason\(params\.id, seasonNumber\)/.test(watch), '6a. season fetch is called when series-like');
-ok(/\.catch\(\(\)\s*=>\s*null\)/.test(watch), '6b. season fetch failure returns null (silently absorbed)');
+// MAVP-6 (Issue 1) supersession: the season boundary now LOGS a stage-tagged
+// failure line before returning the SAME null — the absorption contract is
+// unchanged; the assertion checks the stronger shape (log + null outcome).
+ok(/getSeriesSeason\(params\.id, seasonNumber\)[\s\S]*?logWatchLoadStageFailure\(logger, 'watch:season'[\s\S]*?return null;/.test(watch), '6b. season fetch failure returns null (silently absorbed; MAVP-6: stage-logged)');
 
 // ============================================================
 // 7. SECURITY: the season fetch starts AFTER the adult gate clears.

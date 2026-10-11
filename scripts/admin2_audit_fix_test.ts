@@ -256,12 +256,23 @@ const contentRulesPage = read('src/routes/admin/system/content-rules/+page.svelt
 assert.doesNotMatch(contentRulesPage, /name="icon".*Icon \(emoji\)/, 'W1. Content rules icon input removed');
 ok('FINDING-007: dead icon field removed from content rules');
 
-// FINDING-008: dead source-assignment actions removed
+// FINDING-008 — MAVP-6 (Issue 4) SUPERSESSION: the three source-assignment
+// actions were originally removed because NO UI invoked them. MAVP-6 restores
+// the complete workflow — the category editor now carries the source
+// management section (assign/remove/reorder), so the actions are no longer
+// dead code. The replacement assertions check the STRONGER contract: every
+// restored action requires admin authorization, validates its input
+// server-side, and reuses the existing service-layer methods over the
+// authoritative mapping table.
 const contentRulesServer = read('src/routes/admin/system/content-rules/+page.server.ts');
-assert.doesNotMatch(contentRulesServer, /assignSource:/, 'X1. assignSource action removed');
-assert.doesNotMatch(contentRulesServer, /removeSource:/, 'X2. removeSource action removed');
-assert.doesNotMatch(contentRulesServer, /reorderSources:/, 'X3. reorderSources action removed');
-ok('FINDING-008: dead source-assignment actions removed');
+for (const action of ['assignSource', 'removeSource', 'reorderSources'] as const) {
+  const body = contentRulesServer.slice(contentRulesServer.indexOf(`${action}: async`), contentRulesServer.indexOf(`${action}: async`) + 1400);
+  assert.match(contentRulesServer, new RegExp(`\\s{2}${action}: async \\(`), `X1. ${action} action restored (MAVP-6: the category editor now invokes it)`);
+  assert.match(body, /requireAdmin\(locals/, `X1. ${action} requires admin authorization`);
+  assert.match(body, /parse(SourceAssignment|CategoryReorder)Form|parseCategoryReorderForm/, `X1. ${action} validates its input server-side`);
+  assert.match(body, /assignSourceToCategory|deleteSourceCategory|reorderCategorySources/, `X1. ${action} reuses the existing service-layer method`);
+}
+ok('FINDING-008 (superseded by MAVP-6 Issue 4): the source-assignment actions are restored WITH a real UI caller (the dead-code rationale no longer applies)');
 
 // FINDING-009: confirm() pattern fixed
 assert.doesNotMatch(downloadsPage, /onsubmit=\{\(\) => confirm\(/, 'Y1. Downloads confirm fixed');

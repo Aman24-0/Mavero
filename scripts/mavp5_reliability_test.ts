@@ -62,13 +62,9 @@ import { readFileSync } from 'node:fs';
 import {
   BACK_CONTROL_DEFAULT_SIZE_PX,
   LANDSCAPE_CONTROL_DEFAULT_SIZE_PX,
-  EPISODES_CONTROL_DEFAULT_SIZE_PX,
-  EPISODES_CONTROL_DEFAULT_EDGE_PX,
   parsePlayerControlsPosition,
   resolveControlPlacement,
   resolveControlSize,
-  controlsPlacementInlineStyle,
-  controlsSizeInlineStyle,
   controlsPreviewMarkerStyle,
 } from '$lib/shared/player-controls-position';
 import { applyOrderedDefaultSourceOrdering, applyDefaultSourceOrdering } from '$lib/server/resolver/default-source';
@@ -188,10 +184,17 @@ ok(/if \(detailVerdict\(item\.tags\) === 'adult'\)\s*\{[^}]*canAccessAdultConten
 // The rest of the load's guarded shape is unchanged (detail→404, config→empty, season→null).
 ok(watchServerCode.includes(".catch(() => {\n    // Fail-closed: an unresolvable title (including a failed classification\n    // fetch) is a 404 — never an unclassified watch page.\n    throw error(404, 'Title not found');\n  })") || /getDetail\(params\.type, params\.id\)\.catch/.test(watchServerCode),
   'RC-2: the getDetail→404 guard is unchanged');
-ok(watchServerCode.includes('.catch(() => EMPTY_STREAMING_CONFIG)'),
-  'RC-2: the streaming-config degradation is unchanged');
-ok(/getSeriesSeason\(params\.id, seasonNumber\)[\s\S]*?\.catch\(\(\) => null\)/.test(watchServerCode),
-  'RC-2: the optional season fetch absorption is unchanged');
+// MAVP-6 (Issue 1): the degradation boundary now LOGS (stage-tagged) before
+// returning the SAME EMPTY config — the outcome contract is unchanged; the
+// assertion is updated to the stronger shape (log + same typed outcome).
+ok(watchServerCode.includes('logWatchLoadStageFailure(logger, \'watch:streaming-config\'')
+  && watchServerCode.includes('return EMPTY_STREAMING_CONFIG;'),
+  'RC-2: the streaming-config degradation outcome is unchanged (now stage-logged)');
+// MAVP-6 (Issue 1): the season boundary now LOGS (stage-tagged) before
+// returning the SAME null — the absorption contract is unchanged; the
+// assertion is updated to the stronger shape (log + same typed outcome).
+ok(/getSeriesSeason\(params\.id, seasonNumber\)[\s\S]*?logWatchLoadStageFailure\(logger, 'watch:season'[\s\S]*?return null;/.test(watchServerCode),
+  'RC-2: the optional season fetch absorption is unchanged (now stage-logged)');
 section('Issue 2 — The Gentlemen card-play 500');
 
 // ---------------------------------------------------------------------------
@@ -252,64 +255,57 @@ ok(shellCode.includes('{#if episodes.length}') && /episodes\.length\}[\s\S]*?epi
   'RC-4: the chip renders ONLY when episode selection is supported (movies never show it)');
 ok(shellCode.includes('openEpisodeSheet(event.currentTarget instanceof HTMLElement'),
   'RC-4: the chip opens the EXISTING focus-managed episode sheet');
-// The chip's position contract is its OWN (episodes section + sizes.episodes).
-ok(shellCode.includes("resolveControlPlacement(activeSourceOption?.controlsPosition ?? null, 'episodes', playerOrientation)"),
-  'RC-4: the chip placement resolves through its OWN episodes contract');
-ok(shellCode.includes("controlsSizeInlineStyle(activeSourceOption?.controlsPosition ?? null, 'episodes', '--episodes-chip-size')"),
-  'RC-4: the chip size resolves through its OWN sizes.episodes entry');
-// Contract: episodes placement NEVER inherits back/landscape axes.
-const episodesOnlyConfig = parsePlayerControlsPosition({
+// MAVP-6 (Issues 2+3) SUPERSESSION of the MAVP-5 episode-chip position
+// contract: the per-source `episodes`/`sizes.episodes` configuration was
+// REMOVED end-to-end (Admin editor, shared contract, server validation,
+// preview) because the source chip is intentionally NOT positionable and the
+// configurable episode profile was the sole cause of the reported vertical
+// misalignment between the two edge chips. The replacements below are
+// STRICTLY STRONGER: (a) the chip consumes NO per-source placement at all,
+// (b) both edge chips share the IDENTICAL stylesheet vertical reference, and
+// (c) legacy stored episode sections are dropped by the total parser while
+// the Back/Landscape semantics stay byte-identical.
+ok(!shellCode.includes("resolveControlPlacement(activeSourceOption?.controlsPosition ?? null, 'episodes'")
+  && !shellCode.includes("controlsSizeInlineStyle(activeSourceOption?.controlsPosition ?? null, 'episodes'")
+  && !shellCode.includes('--episodes-chip-size'),
+  'RC-4 (superseded by MAVP-6): the chip consumes NO per-source placement/size — stronger than the old own-contract resolution');
+// (c) Behavioral: a legacy stored config (episodes section + sizes.episodes)
+// parses with those keys DROPPED and the back/landscape semantics intact.
+const legacyEpisodesConfig = parsePlayerControlsPosition({
   mode: 'custom',
   back: { portrait: { horizontal: { anchor: 'right', offsetPercent: 20 }, vertical: { anchor: 'top', offsetPercent: 10 } } },
-  portrait: { horizontal: { anchor: 'right', offsetPercent: 30 }, vertical: { anchor: 'bottom', offsetPercent: 8 } },
-});
-ok(resolveControlPlacement(episodesOnlyConfig, 'episodes', 'portrait').horizontal === null
-  && resolveControlPlacement(episodesOnlyConfig, 'episodes', 'portrait').vertical === null,
-  'RC-4: an episodes-less config resolves NO episodes placement (no leakage from back/landscape)');
-const episodesConfigured = parsePlayerControlsPosition({
-  mode: 'custom',
-  back: { portrait: { horizontal: { anchor: 'right', offsetPercent: 20 }, vertical: { anchor: 'top', offsetPercent: 10 } } },
-  portrait: { horizontal: { anchor: 'right', offsetPercent: 30 }, vertical: { anchor: 'bottom', offsetPercent: 8 } },
   episodes: { portrait: { horizontal: { anchor: 'left', offsetPercent: 4 }, vertical: { anchor: 'center', offsetPercent: 50 } } },
   sizes: { back: 50, landscape: 52, episodes: 72 },
 });
-const episodesPlacement = resolveControlPlacement(episodesConfigured, 'episodes', 'portrait');
-ok(episodesPlacement.horizontal?.anchor === 'left' && episodesPlacement.horizontal?.offsetPercent === 4,
-  'RC-4: configured episodes anchors resolve exactly (independent of every other control)');
-ok(episodesPlacement.vertical?.anchor === 'center',
-  'RC-4: the center vertical anchor resolves for the chip');
-ok(resolveControlSize(episodesConfigured, 'episodes') === 72,
-  'RC-4: the episodes size resolves independently');
-ok(resolveControlSize(episodesConfigured, 'back') === 50 && resolveControlSize(episodesConfigured, 'landscape') === 52,
-  'RC-4: the other controls\u2019 sizes are unaffected by the episodes size');
-ok(resolveControlPlacement(episodesConfigured, 'back', 'portrait').horizontal?.anchor === 'right'
-  && resolveControlPlacement(episodesConfigured, 'landscape', 'portrait').horizontal?.anchor === 'right',
-  'RC-4: configuring episodes never moves the back/landscape controls');
-// Landscape orientation isolation.
-const episodesLandscapeOnly = resolveControlPlacement(episodesConfigured, 'episodes', 'landscape');
-ok(episodesLandscapeOnly.horizontal === null && episodesLandscapeOnly.vertical === null,
-  'RC-4: a portrait-only episodes profile does not leak into landscape');
-// Inline style pipeline.
-ok(controlsPlacementInlineStyle(episodesPlacement).includes('left:4%') && controlsPlacementInlineStyle(episodesPlacement).includes('transform:translateY(-50%)'),
-  'RC-4: the chip inline placement style carries the anchor + center transform');
-ok(controlsSizeInlineStyle(episodesConfigured, 'episodes', '--episodes-chip-size') === '--episodes-chip-size:72px',
-  'RC-4: the chip size style emits the disjoint custom property');
-ok(controlsSizeInlineStyle(null, 'episodes', '--episodes-chip-size') === '',
-  'RC-4: a source without custom sizing emits NO size style (byte-identical defaults)');
-// Malformed values degrade totally.
+ok(legacyEpisodesConfig !== null && !('episodes' in legacyEpisodesConfig)
+  && JSON.stringify((legacyEpisodesConfig as any)?.sizes) === JSON.stringify({ back: 50, landscape: 52 }),
+  'RC-4 (superseded by MAVP-6): legacy episodes sections/entries are DROPPED by the total parser (legacy configs never break playback)');
+ok(resolveControlPlacement(legacyEpisodesConfig, 'back', 'portrait').horizontal?.anchor === 'right'
+  && resolveControlSize(legacyEpisodesConfig, 'back') === 50 && resolveControlSize(legacyEpisodesConfig, 'landscape') === 52,
+  'RC-4 (superseded by MAVP-6): the Back/Landscape placement+size semantics are byte-identical after the removal');
+// (b) The alignment contract: both edge chips share the identical vertical
+// reference (extracted value-by-value from the stylesheet — no prose claim).
+const chipVertical = (selector: string) => {
+  const rule = shellCode.match(new RegExp(`\\.${selector}\\s*\\{([^}]*)\\}`))?.[1] ?? '';
+  return ['top', 'transform', 'min-height'].map((prop) => rule.match(new RegExp(`${prop}:\\s*([^;]+);`))?.[1]?.trim());
+};
+ok(JSON.stringify(chipVertical('episode-chip')) === JSON.stringify(chipVertical('source-chip'))
+  && chipVertical('episode-chip').join('|') === '50%|translateY(-50%)|64px',
+  'RC-4 (superseded by MAVP-6): BOTH edge chips share the identical top:50% + translateY(-50%) + 64px vertical reference (alignment by construction, both orientations)');
+// (b) Total-parser honesty retained: a config with ONLY the (now-unknown)
+// episodes keys carries no usable axis/size and still degrades to default.
 ok(parsePlayerControlsPosition({ mode: 'custom', episodes: { portrait: { horizontal: { anchor: 'up', offsetPercent: 5 } } } }) === null,
-  'RC-4: an invalid anchor in the episodes section alone is treated as malformed (total parser)');
+  'RC-4 (superseded by MAVP-6): an episodes-only custom config degrades to the default (total parser, unknown-key tolerance)');
 ok(parsePlayerControlsPosition({ mode: 'custom', sizes: { episodes: 999 } }) === null,
-  'RC-4: an out-of-bounds episodes size alone is treated as malformed');
-// The preview marker for episodes uses the same shared resolver.
-const markerDefault = controlsPreviewMarkerStyle(null, 'episodes', 'portrait');
-ok(markerDefault.includes('left:') && markerDefault.includes('top:50%') && markerDefault.includes('translateY(-50%)'),
-  'RC-4: the preview renders the chip at its default left-edge/centre corner in BOTH orientations');
-const markerConfigured = controlsPreviewMarkerStyle(episodesConfigured, 'episodes', 'portrait');
-ok(markerConfigured.includes('left:4%') && markerConfigured.includes('width:'),
-  'RC-4: configured chip anchors/offsets and scaled sizes render through the shared preview resolver');
-ok(EPISODES_CONTROL_DEFAULT_SIZE_PX === 64 && EPISODES_CONTROL_DEFAULT_EDGE_PX === 0,
-  'RC-4: the documented chip defaults (64px hit area, edge-attached) match the runtime stylesheet');
+  'RC-4 (superseded by MAVP-6): an out-of-bounds legacy episodes size alone degrades to the default (total parser)');
+// The shared preview resolver still serves the two REMAINING markers with
+// their documented defaults (the episode marker itself was removed —
+// asserted by the MAVP-6 suite).
+ok(controlsPreviewMarkerStyle(null, 'back', 'portrait').includes('left:')
+  && controlsPreviewMarkerStyle(null, 'landscape', 'portrait').includes('right:'),
+  'RC-4 (superseded by MAVP-6): the Back/Landscape preview markers render through the shared resolver unchanged');
+ok(BACK_CONTROL_DEFAULT_SIZE_PX === 44 && LANDSCAPE_CONTROL_DEFAULT_SIZE_PX === 48,
+  'RC-4 (superseded by MAVP-6): the Back/Landscape default sizes are unchanged');
 // The episode sheet opens from the LEFT at every viewport.
 ok(/\.episode-sheet\s*\{[^}]*top:\s*0;\s*bottom:\s*0;\s*left:\s*0;/.test(shellCode),
   'RC-4: the episode sheet is a full-height LEFT drawer');

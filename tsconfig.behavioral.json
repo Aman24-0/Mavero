@@ -9,6 +9,9 @@
       "$env/dynamic/private": [
         "scripts/stubs/env-dynamic-private.ts"
       ],
+      "$app/environment": [
+        "scripts/stubs/app-environment.ts"
+      ],
       "$data/*": [
         "src/lib/data/*"
       ]

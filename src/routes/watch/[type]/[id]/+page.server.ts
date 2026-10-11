@@ -5,6 +5,7 @@ import { toMediaItem } from '$lib/server/content/presenter';
 import { isContentType, type Episode } from '$lib/server/content/types';
 import { canAccessAdultContent } from '$lib/server/content/adult-policy';
 import { detailVerdict } from '$lib/server/content/search-classify';
+import { logWatchLoadStageFailure } from '$lib/server/content/watch-load-diagnostics';
 import { logger } from '$lib/server/http/log';
 import type { PageServerLoad } from './$types';
 
@@ -98,13 +99,24 @@ export const load: PageServerLoad = async ({ params, locals, cookies, url }) => 
   // Kick off the INDEPENDENT work in parallel. Detail must resolve first
   // (the adult gate depends on item.tags), but the streaming config is
   // fully independent and can run concurrently with detail.
-  const detailPromise = getDetail(params.type, params.id).catch(() => {
+  // MAVP-6 (Issue 1): every degradation boundary now logs a SAFE,
+  // STAGE-TAGGED failure line (stage + class + code only — never the title,
+  // URL, message or stack) before producing its typed outcome. A transient
+  // upstream/config failure is therefore distinguishable from a genuinely
+  // missing title in operator diagnostics — the previous silent boundaries
+  // made the next production occurrence unidentifiable. The typed outcomes
+  // (404 / empty config / null) are unchanged byte-for-byte.
+  const detailPromise = getDetail(params.type, params.id).catch((detailError) => {
+    logWatchLoadStageFailure(logger, 'watch:detail', detailError);
     // Fail-closed: an unresolvable title (including a failed classification
     // fetch) is a 404 — never an unclassified watch page.
     throw error(404, 'Title not found');
   });
   const streamingConfigPromise = getPublicStreamingConfig(locals.supabase)
-    .catch(() => EMPTY_STREAMING_CONFIG);
+    .catch((configError) => {
+      logWatchLoadStageFailure(logger, 'watch:streaming-config', configError);
+      return EMPTY_STREAMING_CONFIG;
+    });
 
   // Await detail first — the adult gate depends on item.tags.
   const item = await detailPromise;
@@ -158,7 +170,10 @@ export const load: PageServerLoad = async ({ params, locals, cookies, url }) => 
   const seasonPromise: Promise<Episode[] | null> = isSeriesLike
     ? getSeriesSeason(params.id, seasonNumber)
         .then((season): Episode[] => (season.episodes as Episode[]) ?? [])
-        .catch(() => null)
+        .catch((seasonError) => {
+          logWatchLoadStageFailure(logger, 'watch:season', seasonError);
+          return null;
+        })
     : Promise.resolve(null);
 
   try {
@@ -176,7 +191,8 @@ export const load: PageServerLoad = async ({ params, locals, cookies, url }) => 
       : fallbackEpisodes;
 
     return { item: toMediaItem(item), streamingConfig, episodes };
-  } catch {
+  } catch (assemblyError) {
+    logWatchLoadStageFailure(logger, 'watch:assembly', assemblyError);
     throw error(404, 'Title not found');
   }
 };

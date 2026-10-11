@@ -42,11 +42,73 @@
 
   // --- Category edit/create sheet ---
   let categorySheetOpen = $state(false);
-  let editingCategory: any = $state(null);
+  // MAVP-6 (Issue 4): the sheet tracks the CATEGORY ID, and the live category
+  // object is derived from data — after an assign/remove/reorder action the
+  // load reruns and the sheet's source-management section reflects the fresh
+  // mapping rows without closing or going stale.
+  let editingCategoryId: string | null = $state(null);
+  const editingCategory = $derived(
+    editingCategoryId ? ((data.categories as any[]).find((candidate) => candidate.id === editingCategoryId) ?? null) : null,
+  );
 
-  function openCreateCategory(event?: Event) { editingCategory = null; categorySheetOpen = true; }
-  function openEditCategory(cat: any, event?: Event) { editingCategory = cat; categorySheetOpen = true; }
-  function closeCategorySheet() { categorySheetOpen = false; editingCategory = null; }
+  function openCreateCategory(event?: Event) { editingCategoryId = null; categorySheetOpen = true; }
+  function openEditCategory(cat: any, event?: Event) { editingCategoryId = cat?.id ?? null; categorySheetOpen = true; }
+  function closeCategorySheet() { categorySheetOpen = false; editingCategoryId = null; }
+
+  // --- MAVP-6 (Issue 4): category source management ---
+  // The authoritative data is the EXISTING load payload (sources +
+  // sourceCategories mapping rows) — no second data model. A mapping row
+  // whose source no longer exists (stale/deleted) renders as 'Unknown
+  // source' and can still be removed (the remove form carries the mapping's
+  // own source_id).
+  type AssignedSourceRow = { sourceId: string; name: string; status: string | null; enabled: boolean | null; position: number };
+
+  function assignedSourcesForCategory(categoryId: string): AssignedSourceRow[] {
+    const rows = (data.sourceCategories as any[])
+      .filter((sc) => sc.category_id === categoryId)
+      .slice()
+      .sort((a, b) => (a.ordering ?? 0) - (b.ordering ?? 0));
+    return rows.map((mapping, index) => {
+      const source = (data.sources as any[]).find((candidate) => candidate.id === mapping.source_id) ?? null;
+      return {
+        sourceId: mapping.source_id,
+        name: source?.name ?? 'Unknown source',
+        status: source?.status ?? null,
+        enabled: source?.enabled ?? null,
+        position: index + 1,
+      };
+    });
+  }
+
+  /** Sources that can be assigned to this category: everything that exists
+   *  and is not already assigned (the service layer re-validates
+   *  authoritatively; duplicates are a safe no-op there). */
+  function assignableSourcesForCategory(categoryId: string): any[] {
+    const assigned = new Set((data.sourceCategories as any[]).filter((sc) => sc.category_id === categoryId).map((sc) => sc.source_id));
+    return (data.sources as any[]).filter((candidate) => !assigned.has(candidate.id));
+  }
+
+  /** The category's assigned source ids in the CURRENT display order. */
+  function assignedIds(categoryId: string): string[] {
+    return assignedSourcesForCategory(categoryId).map((row) => row.sourceId);
+  }
+
+  /** A copy of the order with the entry at `index` moved by `delta` — the
+   *  deterministic input for the reorder form's position fields. */
+  function reorderedIds(ids: string[], index: number, delta: -1 | 1): string[] {
+    const next = ids.slice();
+    const target = index + delta;
+    if (target < 0 || target >= next.length) return next;
+    const [moved] = next.splice(index, 1);
+    next.splice(target, 0, moved);
+    return next;
+  }
+
+  function statusTone(status: string | null): 'good' | 'warn' | 'bad' | 'neutral' {
+    if (status === 'active' || status === 'experimental') return 'good';
+    if (status === 'maintenance') return 'warn';
+    return 'neutral';
+  }
 
   // --- Feature Control ---
   let adultPolicy = $state<{ allowLoggedIn: boolean; allowGuest: boolean } | null>(null);
@@ -202,24 +264,92 @@
 <!-- Category create/edit sheet -->
 {#if categorySheetOpen}
   <AdminSheet open={categorySheetOpen} title={editingCategory ? `Edit ${editingCategory.name}` : 'Add Category'} onClose={closeCategorySheet}>
-    <form method="POST" action={editingCategory ? '?/updateCategory' : '?/createCategory'} class="a2-crud-form">
-      {#if editingCategory}<input type="hidden" name="id" value={editingCategory.id} />{/if}
-      <AdminFormSection heading="Identity">
-        <label class="a2-field"><span>Name</span><input name="name" required value={editingCategory?.name ?? ''} /></label>
-        <label class="a2-field"><span>Slug</span><input name="slug" required value={editingCategory?.slug ?? ''} /></label>
-        <!-- FINDING-007 fix: removed dead Icon emoji input. streaming_categories has no icon column. -->
+    <div class="a2-crud-form">
+      <form method="POST" action={editingCategory ? '?/updateCategory' : '?/createCategory'}>
+        {#if editingCategory}<input type="hidden" name="id" value={editingCategory.id} />{/if}
+        <AdminFormSection heading="Identity">
+          <label class="a2-field"><span>Name</span><input name="name" required value={editingCategory?.name ?? ''} /></label>
+          <label class="a2-field"><span>Slug</span><input name="slug" required value={editingCategory?.slug ?? ''} /></label>
+          <!-- FINDING-007 fix: removed dead Icon emoji input. streaming_categories has no icon column. -->
 
-        <label class="a2-field"><span>Ordering</span><input type="number" name="ordering" value={editingCategory?.ordering ?? 0} /></label>
-        <label class="a2-field"><span>Enabled</span><input type="checkbox" name="enabled" value="true" checked={editingCategory ? editingCategory.enabled : true} /></label>
-      </AdminFormSection>
-      <AdminFormSection heading="Metadata">
-        <label class="a2-field"><span>Description</span><input name="description" value={editingCategory?.description ?? ''} /></label>
-      </AdminFormSection>
-      <div class="a2-form-actions">
-        <button type="submit" class="a2-btn-primary">{editingCategory ? 'Save' : 'Create'}</button>
-        <button type="button" class="a2-btn-secondary" onclick={closeCategorySheet}>Cancel</button>
-      </div>
-    </form>
+          <label class="a2-field"><span>Ordering</span><input type="number" name="ordering" value={editingCategory?.ordering ?? 0} /></label>
+          <label class="a2-field"><span>Enabled</span><input type="checkbox" name="enabled" value="true" checked={editingCategory ? editingCategory.enabled : true} /></label>
+        </AdminFormSection>
+        <AdminFormSection heading="Metadata">
+          <label class="a2-field"><span>Description</span><input name="description" value={editingCategory?.description ?? ''} /></label>
+        </AdminFormSection>
+        <div class="a2-form-actions">
+          <button type="submit" class="a2-btn-primary">{editingCategory ? 'Save' : 'Create'}</button>
+          <button type="button" class="a2-btn-secondary" onclick={closeCategorySheet}>Cancel</button>
+        </div>
+      </form>
+
+      {#if editingCategory}
+        <!-- MAVP-6 (Issue 4): category source management — a SEPARATE section
+             with its own forms (never nested inside the category form, so a
+             source mutation can never submit category fields and category
+             CRUD can never overwrite source metadata/capabilities). The
+             service layer (assignSourceToCategory / deleteSourceCategory /
+             reorderCategorySources) remains the sole authority over the
+             streaming_source_categories mapping. -->
+        <AdminFormSection heading="Sources in this category">
+          <p class="a2-field-hint">Assign existing sources to this category and control their resolver order. Assigning appends to the end; removing never deletes the source itself.</p>
+          {#if assignedSourcesForCategory(editingCategory.id).length === 0}
+            <p class="a2-sources-empty" role="status">No sources assigned to this category yet.</p>
+          {:else}
+            <div class="a2-assigned-list">
+              {#each assignedSourcesForCategory(editingCategory.id) as row, i (row.sourceId)}
+                <div class="a2-assigned-row">
+                  <span class="a2-assigned-pos">{row.position}</span>
+                  <span class="a2-assigned-name">{row.name}</span>
+                  <AdminStatusBadge label={row.status ?? 'unknown'} tone={statusTone(row.status)} />
+                  {#if row.enabled === false}
+                    <AdminStatusBadge label="Disabled" tone="neutral" />
+                  {/if}
+                  <span class="a2-assigned-spacer"></span>
+                  <form method="POST" action="?/reorderSources" class="a2-inline-form">
+                    <input type="hidden" name="category_id" value={editingCategory.id} />
+                    {#each reorderedIds(assignedIds(editingCategory.id), i, -1) as sid, idx (sid)}
+                      <input type="hidden" name={`position_${sid}`} value={idx + 1} />
+                    {/each}
+                    <button type="submit" class="a2-icon-btn" title="Move up" disabled={i === 0} aria-label={`Move ${row.name} up`}>↑</button>
+                  </form>
+                  <form method="POST" action="?/reorderSources" class="a2-inline-form">
+                    <input type="hidden" name="category_id" value={editingCategory.id} />
+                    {#each reorderedIds(assignedIds(editingCategory.id), i, 1) as sid, idx (sid)}
+                      <input type="hidden" name={`position_${sid}`} value={idx + 1} />
+                    {/each}
+                    <button type="submit" class="a2-icon-btn" title="Move down" disabled={i === assignedSourcesForCategory(editingCategory.id).length - 1} aria-label={`Move ${row.name} down`}>↓</button>
+                  </form>
+                  <form method="POST" action="?/removeSource" class="a2-inline-form" onsubmit={(e) => { if (!confirm(`Remove ${row.name} from this category? The source itself is not deleted.`)) e.preventDefault(); }}>
+                    <input type="hidden" name="category_id" value={editingCategory.id} />
+                    <input type="hidden" name="source_id" value={row.sourceId} />
+                    <button type="submit" class="a2-icon-btn a2-icon-btn-danger" title="Remove from category" aria-label={`Remove ${row.name} from this category`}><Trash2 size={14} /></button>
+                  </form>
+                </div>
+              {/each}
+            </div>
+          {/if}
+          {#if assignableSourcesForCategory(editingCategory.id).length === 0}
+            <p class="a2-sources-empty" role="status">Every existing source is already assigned to this category.</p>
+          {:else}
+            <form method="POST" action="?/assignSource" class="a2-assign-row">
+              <input type="hidden" name="category_id" value={editingCategory.id} />
+              <label class="a2-field a2-assign-select"><span>Assign a source</span>
+                <select name="source_id" required>
+                  {#each assignableSourcesForCategory(editingCategory.id) as candidate (candidate.id)}
+                    <option value={candidate.id}>{candidate.name} — {candidate.status ?? 'unknown'}</option>
+                  {/each}
+                </select>
+              </label>
+              <button type="submit" class="a2-btn-secondary"><Plus size={13} /> Assign</button>
+            </form>
+          {/if}
+        </AdminFormSection>
+      {:else}
+        <p class="a2-field-hint">Source assignment becomes available once the category is created — edit it afterwards to manage its sources and resolver order.</p>
+      {/if}
+    </div>
   </AdminSheet>
 {/if}
 
@@ -256,6 +386,20 @@
   .a2-toggle.is-on { color: var(--a2-green); }
   .a2-toggle:disabled { opacity: 0.5; }
   .a2-crud-form { display: flex; flex-direction: column; gap: var(--a2-space-4); }
+  /* MAVP-6 (Issue 4): category source-management section */
+  .a2-field-hint { margin: 0; font-size: var(--a2-text-2xs); color: var(--a2-text-muted); }
+  .a2-sources-empty { margin: 0; padding: var(--a2-space-2) var(--a2-space-3); background: var(--a2-surface-2); border: 1px dashed var(--a2-border); border-radius: var(--a2-radius-sm); color: var(--a2-text-muted); font-size: var(--a2-text-xs); }
+  .a2-assigned-list { display: flex; flex-direction: column; gap: var(--a2-space-1); }
+  .a2-assigned-row { display: flex; align-items: center; gap: var(--a2-space-2); padding: var(--a2-space-1) var(--a2-space-2); background: var(--a2-surface-2); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); flex-wrap: wrap; }
+  .a2-assigned-pos { display: inline-flex; align-items: center; justify-content: center; min-width: 22px; height: 22px; border-radius: 999px; background: var(--a2-surface-3); color: var(--a2-text-dim); font-size: var(--a2-text-2xs); font-weight: 700; }
+  .a2-assigned-name { font-size: var(--a2-text-sm); font-weight: 600; color: var(--a2-text-bright); }
+  .a2-assigned-spacer { flex: 1 1 auto; }
+  .a2-inline-form { display: inline-flex; }
+  .a2-assign-row { display: flex; align-items: flex-end; gap: var(--a2-space-2); flex-wrap: wrap; }
+  .a2-assign-select { flex: 1 1 220px; }
+  .a2-assign-row select { background: var(--a2-surface-3); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); color: var(--a2-text); font-size: var(--a2-text-sm); padding: 8px 10px; min-height: 44px; }
+  .a2-assign-row select:focus { outline: none; border-color: var(--a2-cyan); }
+  .a2-assign-row .a2-btn-secondary { display: inline-flex; align-items: center; gap: var(--a2-space-1); }
   .a2-field { display: flex; flex-direction: column; gap: 2px; }
   .a2-field span { font-size: var(--a2-text-2xs); color: var(--a2-text-dim); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; }
   .a2-field input { background: var(--a2-surface-3); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); color: var(--a2-text); font-size: var(--a2-text-sm); padding: 6px 10px; }

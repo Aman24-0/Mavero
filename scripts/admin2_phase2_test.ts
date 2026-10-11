@@ -77,7 +77,13 @@ const legacyAddonsServer = read('src/routes/admin/addons/+page.server.ts');
 // 5 non-reactive state warnings: editingProvider, editingSource, editingCategory, editing, detailAddon
 assert.match(apiSourcesPage, /let editingProvider: any = \$state\(null\)/, 'api-sources: editingProvider is $state-reactive');
 assert.match(apiSourcesPage, /let editingSource: any = \$state\(null\)/, 'api-sources: editingSource is $state-reactive');
-assert.match(contentRulesPage, /let editingCategory: any = \$state\(null\)/, 'content-rules: editingCategory is $state-reactive');
+// MAVP-6 (Issue 4) supersession: the content-rules sheet selection became
+// `editingCategoryId` ($state) + a `$derived` live `editingCategory` from the
+// load payload, so the sheet's source-management section reflects assign/
+// remove/reorder results without going stale — the reactivity contract is
+// preserved and STRONGER (previously the snapshot object went stale).
+assert.match(contentRulesPage, /let editingCategoryId: string \| null = \$state\(null\)/, 'content-rules: editingCategoryId is $state-reactive');
+assert.match(contentRulesPage, /const editingCategory = \$derived\(/, 'content-rules: editingCategory is $derived from the live load payload');
 assert.match(downloadsPage, /let editing: any = \$state\(null\)/, 'downloads: editing is $state-reactive');
 assert.match(integrationsPage, /let detailAddon: any = \$state\(null\)/, 'integrations: detailAddon is $state-reactive');
 ok('A1. All 5 Phase 1 non-reactive state warnings fixed (variables now use $state)');
