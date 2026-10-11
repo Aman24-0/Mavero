@@ -173,7 +173,9 @@ const VALID_DRAFT = {
   passed += 1;
   ok(provider.slug === 'fixture-provider', 'provider form contract unchanged');
 
-  const source = parseSourceForm(form({ provider_id: '3e7181a3-3999-4844-92bf-4f0afbc5b70f', name: 'Fixture Source', slug: 'fixture-source', identifier_mode: 'tmdb_id', status: 'experimental', visibility: 'public', ordering: '2' }));
+  // MAVP-4 supersession (documented, Issue 4): parseSourceForm is now ASYNC
+  // (multipart icon-file processing) — the field contract is unchanged.
+  const source = await parseSourceForm(form({ provider_id: '3e7181a3-3999-4844-92bf-4f0afbc5b70f', name: 'Fixture Source', slug: 'fixture-source', identifier_mode: 'tmdb_id', status: 'experimental', visibility: 'public', ordering: '2' }));
   ok(source.identifier_mode === 'tmdb_id', 'source form contract unchanged');
   throwsStreamingValidation(() => parseProviderForm(form({ name: 'Bad', slug: 'BAD_SLUG', status: 'experimental', integration_type: 'template' })), 'provider slug contract unchanged');
 

@@ -1,6 +1,6 @@
 export type PlayerSourceType = 'direct' | 'embed' | 'unavailable' | 'error';
 import type { SandboxPolicy, SandboxPolicyRuntime } from './sandbox-policy';
-import type { SourceBadge } from './source-presentation';
+import type { SourceBadge, SourceBadgeConfig } from './source-presentation';
 import type { PlayerControlsPosition } from './player-controls-position';
 
 export type PlayerProtocol = 'hls' | 'dash' | 'mp4' | 'file' | 'unknown';
@@ -163,6 +163,14 @@ export type PlayerSourceOption = {
    * shared/source-presentation.ts (never stored in PlayerShell).
    */
   badge?: SourceBadge;
+  /**
+   * MAVP-4 Issue 4: the source's EXTENSIBLE badge configurations (up to 3,
+   * each with a controlled style variant), parsed from the stored badge
+   * value (legacy enum mapped to its config; JSON array validated by the
+   * total shared parser). Rendering uses label/variant only — the raw
+   * stored value never reaches the component.
+   */
+  badges?: SourceBadgeConfig[];
   /**
    * Task 13: safe icon KEY (allowlist in shared/source-presentation.ts),
    * copied from the public streaming config. Rendering maps the key to a

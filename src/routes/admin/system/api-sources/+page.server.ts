@@ -130,7 +130,7 @@ export const actions: Actions = {
   createSource: async ({ request, locals }) => {
     await requireAdmin(locals, { redirectTo: '/admin/system/api-sources' });
     try {
-      const source = await createSource(locals.supabase, parseSourceForm(await request.formData()));
+      const source = await createSource(locals.supabase, await parseSourceForm(await request.formData()));
       throw redirect(303, `/admin/system/api-sources?tab=sources&notice=${encodeURIComponent(`Created ${source.name}.`)}`);
     } catch (error) {
       if (isRedirect(error)) throw error;
@@ -143,7 +143,7 @@ export const actions: Actions = {
     try {
       const form = await request.formData();
       const id = parseId(form, 'Source');
-      const parsed = parseSourceForm(form);
+      const parsed = await parseSourceForm(form);
 
       // FINDING-006 fix: MERGE capabilities with existing instead of
       // wiping. parseSourceForm() reads `capabilities` from the form,

@@ -216,7 +216,10 @@ ok(/window\.removeEventListener\('keydown', handleKeydown\)/.test(cleanupBody) &
 // takes focus → the parent window fires `blur` with the iframe as
 // activeElement — the only honest cross-origin-safe tap signal. Non-iframe
 // blurs (tab switches) are filtered; the iframe DOM is never touched.
-ok(/const handleWindowBlur = \(\) => \{\s*const active = document\.activeElement;\s*if \(active instanceof HTMLIFrameElement && playerRoot\?\.contains\(active\)\) revealControls\(\);/.test(shell), 'B16b. iframe-tap (window blur + activeElement iframe) reveals the controls — touch recovery path for embeds');
+// MAVP-4 supersession (documented): the SAME handler now ALSO dismisses the
+// embed presentation gate (revealEmbedSurface) — the revealControls contract
+// asserted here is UNCHANGED, only extended.
+ok(/const handleWindowBlur = \(\) => \{\s*const active = document\.activeElement;\s*if \(active instanceof HTMLIFrameElement && playerRoot\?\.contains\(active\)\) \{\s*revealEmbedSurface\(\);\s*revealControls\(\);/.test(shell), 'B16b. iframe-tap (window blur + activeElement iframe) reveals the controls — touch recovery path for embeds (+ MAVP-4: dismisses the presentation gate)');
 ok(/window\.addEventListener\('blur', handleWindowBlur\)/.test(shell), 'B16c. blur activity signal registered once in onMount');
 ok(!shell.includes('contentWindow.addEventListener') && !shell.includes('iframe.contentDocument'), 'B16d. the blur path never touches the cross-origin iframe DOM');
 

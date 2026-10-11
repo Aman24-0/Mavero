@@ -1,7 +1,10 @@
 import { identifierModes, integrationTypes, providerStatuses, sourceVisibilities, type IdentifierMode, type IntegrationType, type JsonObject, type ProviderStatus, type SourceVisibility } from './types';
-import { isSourceBadge, isSourceIconKey, type SourceBadge, type SourceIconKey } from '$lib/shared/source-presentation';
+import { isSourceBadge, isSourceIconKey, parseSourceBadgesStrict, serializeSourceBadges, type SourceBadge, type SourceBadgeConfig, type SourceIconKey } from '$lib/shared/source-presentation';
 import { withSandboxPolicy, sandboxPolicies, type SandboxPolicy } from '$lib/shared/sandbox-policy';
 import { validateIconUrl, IconValidationError } from '$lib/shared/icon-url';
+// MAVP-4 Issue 4: SVG sanitization (established sanitizer pattern on the
+// existing cheerio parser) + PNG upload normalization for source icons.
+import { sanitizeSourceSvgMarkup, svgMarkupToDataUrl, SvgValidationError, pngUploadToDataUrl } from './svg-sanitizer';
 
 const slugPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const adapterPattern = /^[a-z0-9]+(?:[-_.][a-z0-9]+)*$/;
@@ -73,27 +76,116 @@ function template(value: FormDataEntryValue | null, label: string): string | nul
 }
 
 /**
- * Task 13: parses the constrained user-facing badge. '' / 'none' / missing
- * → NULL (no badge rendered). Any other value is REJECTED — arbitrary
- * text, HTML or markup can never enter the column.
+ * Task 13 / MAVP-4: parses the user-facing badge. '' / 'none' / missing
+ * → NULL (no badge rendered). Legacy enum values stay byte-compatible;
+ * the extensible JSON-array shape (MAVP-4) is validated STRICTLY —
+ * arbitrary text, HTML or markup can never enter the column.
  */
-function badgeValue(value: FormDataEntryValue | null): SourceBadge | null {
+function badgeValue(value: FormDataEntryValue | null): SourceBadge | string | null {
   const normalized = String(value ?? '').trim();
   if (!normalized || normalized === 'none') return null;
-  if (!isSourceBadge(normalized)) throw new StreamingValidationError('User tag is invalid.');
-  return normalized;
+  // MAVP-4 Issue 4: legacy single-enum values stay byte-compatible; the
+  // extensible JSON-array shape is validated STRICTLY (bounded labels,
+  // controlled variants, count cap, unique ids) and stored canonically.
+  if (isSourceBadge(normalized)) return normalized;
+  const badges = parseSourceBadgesStrict(normalized);
+  if (!badges.length) return null;
+  return serializeSourceBadges(badges);
 }
 
 /**
- * Task 13: parses the safe icon KEY. '' / missing → NULL (default icon
- * rendered). Only allowlisted keys are accepted — SVG/HTML/arbitrary text
- * is rejected here, by the DB format CHECK, and again at render time.
+ * MAVP-4 Issue 4: rich source icon values. Accepted stored shapes:
+ *   - legacy safe key (Task 13 allowlist) — byte-compatible;
+ *   - data:image/png;base64 (uploaded PNG — bounded, magic-byte verified);
+ *   - data:image/svg+xml;base64 (pasted SVG — SANITIZED before storing;
+ *     scripts/handlers/external refs are REJECTED, never silently kept);
+ *   - http(s) image URL (validated by the established icon-url contract).
+ * Anything else rejects with a clear admin-facing message.
  */
-function iconValue(value: FormDataEntryValue | null): SourceIconKey | null {
+function iconValue(value: FormDataEntryValue | null): SourceIconKey | string | null {
   const normalized = String(value ?? '').trim();
   if (!normalized || normalized === 'none') return null;
-  if (!isSourceIconKey(normalized)) throw new StreamingValidationError('Source icon is invalid.');
-  return normalized;
+  if (isSourceIconKey(normalized)) return normalized;
+  // PNG data URL — strict shape + bounded size (the base64 of a ≤64KB PNG).
+  const pngMatch = /^data:image\/png;base64,([A-Za-z0-9+/]+={0,2})$/.exec(normalized);
+  if (pngMatch) {
+    if (normalized.length > 100_000) throw new StreamingValidationError('Uploaded PNG icons must be 64 KB or smaller.');
+    try {
+      const bytes = Buffer.from(pngMatch[1], 'base64');
+      const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+      if (!bytes.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)) {
+        throw new StreamingValidationError('Uploaded icon is not a valid PNG image.');
+      }
+    } catch (error) {
+      if (error instanceof StreamingValidationError) throw error;
+      throw new StreamingValidationError('Uploaded icon is not a valid PNG image.');
+    }
+    return normalized;
+  }
+  // SVG data URL — the markup must survive sanitization; the STORED value is
+  // the canonical re-encoding of the SANITIZED markup (the submitted markup
+  // itself is never persisted).
+  const svgMatch = /^data:image\/svg\+xml;base64,([A-Za-z0-9+/]+={0,2})$/.exec(normalized);
+  if (svgMatch) {
+    let markup: string;
+    try {
+      markup = Buffer.from(svgMatch[1], 'base64').toString('utf8');
+    } catch {
+      throw new StreamingValidationError('SVG icon could not be decoded.');
+    }
+    try {
+      const sanitized = sanitizeSourceSvgMarkup(markup);
+      return svgMarkupToDataUrl(sanitized);
+    } catch (error) {
+      if (error instanceof SvgValidationError) throw new StreamingValidationError(error.message);
+      throw error;
+    }
+  }
+  // Raw pasted SVG markup (the Admin editor may submit markup directly).
+  if (normalized.startsWith('<svg') || normalized.startsWith('<?xml')) {
+    try {
+      const sanitized = sanitizeSourceSvgMarkup(normalized);
+      return svgMarkupToDataUrl(sanitized);
+    } catch (error) {
+      if (error instanceof SvgValidationError) throw new StreamingValidationError(error.message);
+      throw error;
+    }
+  }
+  // Remote image URL — the established icon-url contract (http/https only,
+  // bounded length). Rendering is <img>-based, so SVG URLs are inert.
+  if (/^https?:\/\//.test(normalized)) {
+    try {
+      return validateIconUrl(normalized);
+    } catch (error) {
+      if (error instanceof IconValidationError) throw new StreamingValidationError(error.message);
+      throw error;
+    }
+  }
+  throw new StreamingValidationError('Source icon is invalid. Use a built-in icon key, a PNG/SVG upload, sanitized SVG markup, or an https image URL.');
+}
+
+/**
+ * MAVP-4 Issue 4: process an uploaded icon FILE (multipart form field
+ * `icon_file`). PNG uploads are magic-byte verified; SVG uploads are
+ * sanitized exactly like pasted markup. Returns the canonical data URL.
+ */
+async function iconFileValue(form: FormData): Promise<string | null> {
+  const entry = form.get('icon_file');
+  if (!entry || typeof entry === 'string') return null;
+  const file = entry as File;
+  if (!file.size) return null;
+  try {
+    if (file.type === 'image/svg+xml' || file.name.toLowerCase().endsWith('.svg')) {
+      if (file.size > 48_000) throw new StreamingValidationError('Uploaded SVG icons must be 48 KB or smaller.');
+      const markup = await file.text();
+      const sanitized = sanitizeSourceSvgMarkup(markup);
+      return svgMarkupToDataUrl(sanitized);
+    }
+    return await pngUploadToDataUrl(file);
+  } catch (error) {
+    if (error instanceof SvgValidationError) throw new StreamingValidationError(error.message);
+    throw error;
+  }
 }
 
 function positiveInteger(value: FormDataEntryValue | null, label: string): number {
@@ -397,7 +489,14 @@ function withPlayerControlsPosition(capabilities: JsonObject, position: JsonObje
   return { ...capabilities, player_controls_position: position };
 }
 
-export function parseSourceForm(form: FormData) {
+/**
+ * MAVP-4 Issue 4: parseSourceForm is ASYNC — an uploaded icon file
+ * (`icon_file`, multipart) is validated and normalized (PNG magic bytes /
+ * SVG sanitization) before it becomes the stored data-URL value. When a
+ * file is present it takes precedence over the `icon` field; without one
+ * the `icon` field carries a legacy key, data URL, pasted markup or URL.
+ */
+export async function parseSourceForm(form: FormData) {
   const providerId = requiredText(form.get('provider_id'), 'Provider', 80);
   if (!/^[0-9a-f-]{36}$/i.test(providerId)) throw new StreamingValidationError('Provider is invalid.');
   return {
@@ -405,10 +504,11 @@ export function parseSourceForm(form: FormData) {
     name: requiredText(form.get('name'), 'Source name', 120),
     slug: validateSlug(requiredText(form.get('slug'), 'Source slug', 120), 'Source slug'),
     description: text(form.get('description'), 'Description', 500),
-    // Task 13: presentation metadata (badge + icon) — constrained values
-    // only, parsed by badgeValue/iconValue above.
+    // Task 13 / MAVP-4: presentation metadata — constrained values only,
+    // parsed by badgeValue/iconValue/iconFileValue above. The uploaded file
+    // (when present) wins over the icon field.
     badge: badgeValue(form.get('badge')),
-    icon: iconValue(form.get('icon')),
+    icon: (await iconFileValue(form)) ?? iconValue(form.get('icon')),
     enabled: booleanValue(form.get('enabled')),
     visibility: enumValue(form.get('visibility'), 'Visibility', sourceVisibilities, 'public') as SourceVisibility,
     status: enumValue(form.get('status'), 'Source status', providerStatuses, 'experimental') as ProviderStatus,

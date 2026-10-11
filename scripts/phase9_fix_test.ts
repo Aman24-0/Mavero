@@ -178,7 +178,9 @@ const shell = readFileSync(new URL('../src/lib/components/player/PlayerShell.sve
 
 // Test 15: Landscape is an immersive full-viewport shell driven by the same
 // FAB control group (no separate overlay needed).
-assert.match(shell, /\.player-shell\.landscape-mode \{ height: 100dvh; \}/, 'Test 15: landscape shell is full-viewport');
+// MAVP-4 supersession (documented, Issue 2): the landscape shell height gained the
+// explicit 100vh fallback line before 100dvh — the full-viewport contract is unchanged.
+assert.match(shell, /\.player-shell\.landscape-mode \{ height: 100vh; height: 100dvh; \}/, 'Test 15: landscape shell is full-viewport');
 assert.match(shell, /class="control-fab-group"/, 'Test 15: unified FAB control group present');
 
 // Test 16 — UPDATED (player redesign): the landscape toggle is the DEDICATED

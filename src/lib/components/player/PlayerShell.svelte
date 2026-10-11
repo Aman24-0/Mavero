@@ -52,7 +52,10 @@
   // driven ONLY by these normalized events (never by iframe DOM load), so
   // black-box embed providers that never post play/pause events never
   // acquire a wake lock — which is correct (iframe load ≠ actual playback).
-  export let embedPlaybackEvent: { type: 'play' | 'pause' | 'ended'; _seq?: number; sourceId?: string } | null = null;
+  // MAVP-4 Issue 1: the forward also carries 'timeupdate'/'ready' — the
+  // presentation signals for the embed presentation gate (see
+  // handleEmbedPlaybackEvent).
+  export let embedPlaybackEvent: { type: 'play' | 'pause' | 'ended' | 'timeupdate' | 'ready'; _seq?: number; sourceId?: string } | null = null;
   export let resolving = false;
   // MAVP-3 Issue 4: explicit control-position CALIBRATION session. The watch
   // route sets this when the player was opened with `?controls=calibrate` —
@@ -174,6 +177,28 @@
   // handleEmbedPlaybackEvent.
   let embedPlaybackSourceId = '';
 
+  // MAVP-4 Issue 1: EMBED PRESENTATION GATE. The iframe's document `load`
+  // event means the provider document finished loading — NOT that the
+  // provider's player is ready to be presented. The previous behaviour
+  // flipped the shell to 'playing' at `load`, which unmounted the loading
+  // card and exposed the provider's own boot surface (green/brand-coloured
+  // on several providers) for another 1–2 s. The presentation is now gated:
+  // the loading card + an opaque veil stay mounted until the embed is
+  // genuinely presenting (first provider playback signal / user tap into
+  // the embed), with a bounded fail-open for silent black-box embeds.
+  // The fail-open is a documented policy bound (like the 18 s load timeout
+  // and the 5 s auto-hide) — the LAST resort for embeds that never signal;
+  // signal-capable providers always reveal earlier, event-driven.
+  const EMBED_PRESENT_FAIL_OPEN_MS = 3000;
+  let embedPresentFailOpenTimer: ReturnType<typeof setTimeout> | undefined;
+  // True once the CURRENT embed surface is presenting (revealed). Reset on
+  // every embed surface identity change (source switch OR same-source URL
+  // change — e.g. an episode switch remounts the iframe with a new URL).
+  let embedSurfacePresenting = false;
+  // Composite identity of the embed surface currently being waited on:
+  // `${sourceId}:${url}` — the iframe remounts exactly when this changes.
+  let embedSurfaceIdentity = '';
+
   // Phase 6: Media Session state — direct playback only.
   let mediaSessionSupported = false;
   let mediaSessionActive = false;
@@ -286,6 +311,16 @@
     controlsSizeInlineStyle(activeSourceOption?.controlsPosition ?? null, 'landscape', '--landscape-fab-size'),
   ].filter(Boolean).join(';');
   $: effectiveState = resolving ? 'switching-source' : resolutionError ? resolutionKind : state;
+  // MAVP-4 Issue 1: the veil covers the stage (below the message/loading
+  // cards, above the iframe) while an embed is mounted but not yet
+  // presenting. It unmounts together with the loading card at the reveal —
+  // ONE coherent loading→player transition, no second loading state.
+  $: embedVeilActive = Boolean(
+    source?.type === 'embed' && source.url
+    && !embedSurfacePresenting
+    && !resolutionError && !errorMessage
+    && state !== 'completed'
+  );
   $: embedReady = Boolean(source?.type === 'embed' && isEmbedOriginAllowed(source) && !sourceIsExpired(source));
   // Phase 11 (GOAL D): the runtime applies the EFFECTIVE policy resolved
   // SERVER-side (source override → provider default → system default) and
@@ -332,6 +367,11 @@
     // for embed sources. Direct sources don't need this — the <video> element
     // fires `error` on failure.
     clearEmbedLoadTimeout();
+    // MAVP-4 Issue 1: every new embed source session restarts the
+    // presentation gate (the new provider surface has not presented yet).
+    clearEmbedPresentFailOpen();
+    embedSurfacePresenting = false;
+    embedSurfaceIdentity = source.type === 'embed' ? `${source.sourceId}:${source.url ?? ''}` : '';
     if (source.type === 'embed') startEmbedLoadTimeout(source.sourceId);
     // Phase 6 audit fix 2: reset embed playback state on source switch. The
     // new source's embedPlaying will be set only if a reliable normalized
@@ -350,6 +390,33 @@
     // prevents the PiP window from showing stale video after a source switch.
     if (document.pictureInPictureElement === videoElement) exitPipQuietly();
   }
+  // MAVP-4 Issue 1: same-source URL change (episode switch — the resolver
+  // rebuilds the embed URL for the new episode while sourceId stays equal).
+  // The sourceId watcher above does NOT fire in this case, but the iframe
+  // REMOUNTS (PlayerViewport's iframeKey includes the URL), so the shell
+  // must restart the presentation gate exactly like a fresh source session:
+  // back to 'embed-loading', veiled, with a fresh load timeout.
+  $: if (source?.type === 'embed' && source.url && source.sourceId && source.sourceId === sourceIdentity) {
+    const identity = `${source.sourceId}:${source.url}`;
+    if (identity !== embedSurfaceIdentity) {
+      embedSurfaceIdentity = identity;
+      // Phase 9: re-stamp the pending seek for the NEW surface — the old
+      // capture can never land on the remounted iframe.
+      capturePendingSeek(pendingSeekState, currentTime, Date.now());
+      errorMessage = '';
+      playing = false;
+      state = 'embed-loading';
+      embedPlaying = false;
+      embedEverPlayed = false;
+      embedPlaybackSourceId = source.sourceId;
+      void releaseWakeLock();
+      clearMediaSession();
+      clearEmbedLoadTimeout();
+      clearEmbedPresentFailOpen();
+      embedSurfacePresenting = false;
+      startEmbedLoadTimeout(source.sourceId);
+    }
+  }
   // Phase 6: episode switch cleanup. PlayerShell stays mounted across episode
   // changes (only props change), so we must release wake lock + clear Media
   // Session + exit PiP here. The new episode's source will re-acquire them.
@@ -358,6 +425,9 @@
     // Phase 8: clear embed load timeout on episode switch — the new episode
     // will start its own timeout when its source loads.
     clearEmbedLoadTimeout();
+    // MAVP-4 Issue 1: a pending presentation fail-open belongs to the
+    // previous embed surface — it must never fire across an episode switch.
+    clearEmbedPresentFailOpen();
     // Phase 6 audit fix 2: reset embed playback state on episode switch.
     embedPlaying = false;
     embedEverPlayed = false;
@@ -429,6 +499,15 @@
     // are DEV-only logged; marks remain inspectable in production.
     markPlayerMilestone('mavero:shell');
     measurePlayerStartup();
+    // MAVP-4 Issue 2: explicit document scroll lock for the player route —
+    // the watch page renders bare (no AppShell) and the shell is exactly
+    // 100dvh, but the document kept its default scroll behaviour, so browser
+    // UI transitions and overscroll could scroll the page behind the player.
+    // The project's established convention is an html data-attribute
+    // (html[data-admin-sheet-open], html[data-a2-sheet-open] → body
+    // overflow: hidden in app.css); the player follows the same pattern.
+    // Set on mount, removed on destroy — never a global change.
+    document.documentElement.setAttribute('data-player-open', '');
     pictureInPictureSupported = Boolean(document.pictureInPictureEnabled && videoElement && 'requestPictureInPicture' in videoElement);
     // Immersive redesign: responsive viewport detection for source sheet placement.
     // compact (portrait) → bottom sheet; wide (landscape/desktop/TV) → right drawer.
@@ -564,17 +643,27 @@
     // inside a cross-origin iframe are unobservable — documented limitation).
     // Non-iframe blurs (tab switches, address bar) are filtered out; the
     // listener never touches the iframe's DOM or contentWindow.
+    // MAVP-4 Issue 1: the same signal is a presentation reveal — a tap into
+    // the embed (e.g. pressing the provider's play button) proves the
+    // provider surface is interactive, so the loading card + veil unmount.
     const handleWindowBlur = () => {
       const active = document.activeElement;
-      if (active instanceof HTMLIFrameElement && playerRoot?.contains(active)) revealControls();
+      if (active instanceof HTMLIFrameElement && playerRoot?.contains(active)) {
+        revealEmbedSurface();
+        revealControls();
+      }
     };
     // MAVP-3 Issue 2: reveal when the user RETURNS to this document while the
     // embed holds focus (tab/app switch back). Returning to a playing embed
     // is genuine user activity and the controls must not stay stuck hidden —
     // this is the "returning from an iframe" recovery path.
+    // MAVP-4 Issue 1: also a presentation reveal (same reasoning as blur).
     const handleWindowFocus = () => {
       const active = document.activeElement;
-      if (active instanceof HTMLIFrameElement && playerRoot?.contains(active)) revealControls();
+      if (active instanceof HTMLIFrameElement && playerRoot?.contains(active)) {
+        revealEmbedSurface();
+        revealControls();
+      }
     };
     document.addEventListener('fullscreenchange', handleFullscreen);
     window.addEventListener('keydown', handleKeydown);
@@ -586,8 +675,12 @@
     playerRoot?.addEventListener('touchstart', showControls, { passive: true });
     return () => {
       if (hideTimer) clearTimeout(hideTimer);
+      // MAVP-4 Issue 2: release the document scroll lock with the shell.
+      document.documentElement.removeAttribute('data-player-open');
       // Phase 8: clear embed load timeout on destroy.
       clearEmbedLoadTimeout();
+      // MAVP-4 Issue 1: clear the presentation fail-open timer on destroy.
+      clearEmbedPresentFailOpen();
       // Phase 2-I (PLR-02): remove the viewport MediaQueryList listener —
       // matches the addEventListener call above. Without this, each
       // mount cycle leaked a listener on the MediaQueryList.
@@ -753,21 +846,72 @@
     releaseWakeLock();
     syncMediaSessionPlaybackState('paused');
   }
-  function handleEmbedLoad() {
+  // ----- MAVP-4 Issue 1: embed presentation gate -----
+  //
+  // The iframe `load` event is NOT the presentation moment: it says the
+  // provider document finished loading, while the provider's player usually
+  // boots for another 1–2 s (several providers render a green/brand-coloured
+  // boot surface during that window). The shell therefore keeps the loading
+  // card + veil mounted until the embed is genuinely presenting.
+  //
+  // Reveal conditions (whichever arrives first):
+  //   1. First provider playback signal — normalized 'play' (VidRift,
+  //      VidSrc, VidLink, VidY, CineSrc) or 'timeupdate'/'ready' (the
+  //      timeupdate-only adapters: VidStuck, Viduki, MoviesNexus,
+  //      VidApiQzz). Fully event-driven; no timer decides the reveal.
+  //   2. An observable tap into the embed (the cross-origin-safe window
+  //      blur/focus signal) — the user interacting with the provider UI
+  //      (e.g. pressing its play button when autoplay is blocked).
+  //   3. A bounded fail-open (EMBED_PRESENT_FAIL_OPEN_MS after `load`) —
+  //      the documented last resort for silent black-box embeds, so the
+  //      loading card can never conceal a live provider surface.
+  // The reveal keeps ONE loading owner (the shell's single card) and does
+  // not delay the iframe: the veil is pointer-transparent and the iframe
+  // mounts and loads eagerly exactly as before.
+  function revealEmbedSurface() {
+    if (embedSurfacePresenting) return;
+    if (source?.type !== 'embed' || !source.url) return;
+    clearEmbedPresentFailOpen();
+    embedSurfacePresenting = true;
     state = 'playing';
     errorMessage = '';
-    // MAVP-2 Phase 3 fix (auto-hide root cause): the old implementation never
-    // armed the countdown here and its arming condition never matched embed
-    // sessions (`playing` is the direct-video flag; `embedPlaying` needs
-    // provider postMessage events that black-box providers never send), so
-    // the floating controls never auto-hid on real devices. Arming here (the
-    // gate lives inside revealControls) starts the 5s countdown at embed
-    // load; provider activity inside the cross-origin iframe remains
-    // unobservable (documented limitation) and does NOT reset the deadline.
+    // The 5s auto-hide countdown arms at the PRESENTATION reveal (the same
+    // gate lives inside revealControls) — provider activity inside the
+    // cross-origin iframe remains unobservable (documented limitation) and
+    // does NOT reset the deadline.
     revealControls();
+    // Media Session sync moved here from the old load-time transition: it
+    // now reflects the embed surface being presented, not merely loaded.
+    syncMediaSessionPlaybackState('playing');
+  }
+
+  function startEmbedPresentFailOpen() {
+    clearEmbedPresentFailOpen();
+    embedPresentFailOpenTimer = setTimeout(() => {
+      embedPresentFailOpenTimer = undefined;
+      revealEmbedSurface();
+    }, EMBED_PRESENT_FAIL_OPEN_MS);
+  }
+
+  function clearEmbedPresentFailOpen() {
+    if (embedPresentFailOpenTimer) {
+      clearTimeout(embedPresentFailOpenTimer);
+      embedPresentFailOpenTimer = undefined;
+    }
+  }
+
+  function handleEmbedLoad() {
+    errorMessage = '';
+    // MAVP-4 Issue 1: `load` no longer flips the shell to 'playing' — the
+    // presentation gate decides when the loading card unmounts (see
+    // revealEmbedSurface). The rest of the load bookkeeping is unchanged.
     // Phase 8: the iframe loaded successfully — clear the load timeout so
-    // it cannot fire and override the 'playing' state.
+    // it cannot fire and override the state.
     clearEmbedLoadTimeout();
+    // Bounded fail-open: if no provider signal and no user tap revealed the
+    // embed within the policy window, reveal it anyway (silent black-box
+    // embeds must never be hidden behind the loading card indefinitely).
+    if (!embedSurfacePresenting) startEmbedPresentFailOpen();
     // Phase 3 fix: forward the iframe element ref to the watch route so
     // provider adapters (CineSrc) can post commands to
     // iframe.contentWindow.postMessage(payload, origin) — the documented
@@ -795,7 +939,13 @@
   // no wake lock is acquired. Also maintains the `embedPlaying` state which
   // the visibility handler uses to decide whether to re-acquire the wake lock
   // when the document becomes visible again.
-  function handleEmbedPlaybackEvent(event: { type: 'play' | 'pause' | 'ended'; sourceId?: string }) {
+  // Phase 6 audit fix: handle normalized embed playback events forwarded by
+  // the watch route from the PlaybackManager. 'play'/'pause'/'ended' drive
+  // the wake lock + completion mirroring as before. MAVP-4 Issue 1: the
+  // forward now also carries 'timeupdate'/'ready' (emitted by the
+  // timeupdate-only adapters — VidStuck, Viduki, MoviesNexus, VidApiQzz),
+  // which are presentation signals for the embed presentation gate.
+  function handleEmbedPlaybackEvent(event: { type: 'play' | 'pause' | 'ended' | 'timeupdate' | 'ready'; sourceId?: string }) {
     if (source?.type !== 'embed') return;
     // Phase 6 audit fix 2: reject stale events from an old source. The watch
     // route stamps the sourceId at emit time. If a source switch happened
@@ -804,6 +954,10 @@
     // — the PlaybackManager already has session guards — but it prevents a
     // stale postMessage from activating the wake lock for the wrong source.
     if (event.sourceId && embedPlaybackSourceId && event.sourceId !== embedPlaybackSourceId) return;
+    // MAVP-4 Issue 1: any provider playback signal proves the embed surface
+    // is presenting — reveal it (no-op once presenting). Runs for 'play' AND
+    // for the timeupdate/ready-only adapters.
+    if (event.type === 'play' || event.type === 'timeupdate' || event.type === 'ready') revealEmbedSurface();
     if (event.type === 'play') {
       embedPlaying = true;
       embedEverPlayed = true;
@@ -1111,6 +1265,10 @@
     errorMessage = '';
     // Phase 8: clear any pending embed load timeout before retrying.
     clearEmbedLoadTimeout();
+    // MAVP-4 Issue 1: a retry restarts the presentation gate — the provider
+    // surface has to present again (fresh signal / tap / fail-open).
+    clearEmbedPresentFailOpen();
+    embedSurfacePresenting = false;
     if (source?.sourceId) {
       state = 'switching-source';
       onSourceChange(source.sourceId);
@@ -1514,6 +1672,18 @@
   <section class="stage-wrap" aria-label="Player viewport">
     <PlayerViewport bind:this={viewport} bind:videoElement bind:iframeElement {source} {mediaUrl} sandboxEnabled={effectiveSandboxEnabled} sandboxPolicy={effectiveSandboxPolicy} poster={content.backdrop ?? content.poster ?? ''} title={content.title} state={effectiveState} subtitles={effectiveSubtitles} on:loadedmetadata={handleLoadedMetadata} on:timeupdate={handleTimeUpdate} on:play={handlePlay} on:pause={handlePause} on:waiting={handleWaiting} on:playing={handlePlaying} on:seeking={handleSeeking} on:seeked={handleSeeked} on:ended={handleEnded} on:error={handleMediaError} on:embedload={handleEmbedLoad} on:enginequality={handleEngineQuality} on:durationchange={handleSeekOpportunity} on:loadeddata={handleSeekOpportunity} on:canplay={handleSeekOpportunity} on:progress={handleSeekOpportunity} />
 
+    <!-- MAVP-4 Issue 1: embed presentation veil. While the provider iframe is
+         mounted but not yet presenting, this opaque layer covers the stage
+         (below the message/loading cards, above the iframe) so the
+         provider's boot surface can never flash through. It is
+         pointer-transparent (taps reach the provider — the cross-origin
+         focus signal is the user-interaction reveal) and unmounts together
+         with the loading card at the reveal: ONE coherent loading→player
+         transition, no blank frames, no competing loading overlays. -->
+    {#if embedVeilActive}
+      <div class="embed-veil" aria-hidden="true"></div>
+    {/if}
+
     {#if resolutionError || errorMessage || effectiveState === 'error' || effectiveState === 'provider-error' || effectiveState === 'source-unavailable' || effectiveState === 'unsupported-format' || effectiveState === 'embed-unavailable'}
       <div class="message-card" role="alert">
         <div class="message-icon"><AlertTriangle size={17} /></div>
@@ -1597,7 +1767,7 @@
     <div class="source-sheet" role="dialog" aria-modal="true" aria-label="Available playback sources">
       <div class="sheet-handle" aria-hidden="true"></div>
       <div class="sheet-head"><span class="eyebrow">Source</span><button class="close-button" type="button" aria-label="Close source list" onclick={() => closeSourceSheet()}><X size={17} /></button></div>
-      <div class="sheet-list">{#each groupedSourceOptions as group}{#if groupedSourceOptions.length > 1 || group.name !== 'Other'}<div class="sheet-group-label" aria-hidden="true">{group.name}</div>{/if}{#each group.options as option}<div class="sheet-option-row"><button class="sheet-option" class:active={option.id === source?.sourceId && (!option.variants || option.variants.length === 0 || option.variants.includes(source?.metadata?.selectedVariant ?? ''))} type="button" onclick={() => chooseSource(option.id)}><span class="option-mark" class:selected={option.id === source?.sourceId}>{#if option.id === source?.sourceId}<Check size={14} />{:else}<SourceIcon icon={option.icon} size={15} />{/if}</span><span class="option-copy"><strong class="option-title"><span class="option-name">{option.name}</span>{#if option.badge}<span class="source-badge" data-badge={option.badge}>{sourceBadgeLabel(option.badge)}</span>{/if}</strong><small>{option.status ?? 'available'}{#if option.integrationType} · {option.integrationType}{/if}</small></span></button>{#if option.variants && option.variants.length > 0}<div class="variant-row" role="group" aria-label={`${option.name} variants`}>{#each option.variants as variant}<button class="variant-button" class:active={option.id === source?.sourceId && source?.metadata?.selectedVariant === variant} type="button" aria-pressed={option.id === source?.sourceId && source?.metadata?.selectedVariant === variant} onclick={(e) => { e.stopPropagation(); chooseSource(option.id, variant); }}>{variant === 'sub' ? 'SUB' : variant === 'dub' ? 'DUB' : variant.toUpperCase()}</button>{/each}</div>{/if}</div>{/each}{/each}
+      <div class="sheet-list">{#each groupedSourceOptions as group}{#if groupedSourceOptions.length > 1 || group.name !== 'Other'}<div class="sheet-group-label" aria-hidden="true">{group.name}</div>{/if}{#each group.options as option}<div class="sheet-option-row"><button class="sheet-option" class:active={option.id === source?.sourceId && (!option.variants || option.variants.length === 0 || option.variants.includes(source?.metadata?.selectedVariant ?? ''))} type="button" onclick={() => chooseSource(option.id)}><span class="option-mark" class:selected={option.id === source?.sourceId}>{#if option.id === source?.sourceId}<Check size={14} />{:else}<SourceIcon icon={option.icon} size={15} />{/if}</span><span class="option-copy"><strong class="option-title"><span class="option-name">{option.name}</span>{#each option.badges ?? [] as badgeConfig (badgeConfig.id)}<span class="source-badge" data-variant={badgeConfig.variant}>{badgeConfig.label}</span>{/each}{#if option.badge && !(option.badges ?? []).length}<span class="source-badge" data-badge={option.badge}>{sourceBadgeLabel(option.badge)}</span>{/if}</strong><small>{option.status ?? 'available'}{#if option.integrationType} · {option.integrationType}{/if}</small></span></button>{#if option.variants && option.variants.length > 0}<div class="variant-row" role="group" aria-label={`${option.name} variants`}>{#each option.variants as variant}<button class="variant-button" class:active={option.id === source?.sourceId && source?.metadata?.selectedVariant === variant} type="button" aria-pressed={option.id === source?.sourceId && source?.metadata?.selectedVariant === variant} onclick={(e) => { e.stopPropagation(); chooseSource(option.id, variant); }}>{variant === 'sub' ? 'SUB' : variant === 'dub' ? 'DUB' : variant.toUpperCase()}</button>{/each}</div>{/if}</div>{/each}{/each}
       </div>
     </div>
   {/if}
@@ -1615,15 +1785,39 @@
 
 <style>
   /* Immersive redesign: player owns the ENTIRE viewport.
-     No persistent header/footer — controls are overlays. */
-  .player-shell { --player-bg: var(--base); position: relative; width: 100%; height: 100dvh; min-height: 100svh; min-height: 100dvh; overflow: hidden; color: var(--ink); background: var(--player-bg); }
-  .player-shell.landscape-mode { height: 100dvh; }
+     No persistent header/footer — controls are overlays.
+     MAVP-4 Issue 2: explicit viewport contract — 100vh first (compatible
+     fallback for browsers without dynamic viewport units), then 100dvh
+     (tracks mobile browser UI); min-height mirrors the same chain. The
+     scroll lock itself is the html[data-player-open] convention (app.css). */
+  .player-shell { --player-bg: var(--base); position: relative; width: 100%; height: 100vh; height: 100dvh; min-height: 100vh; min-height: 100svh; min-height: 100dvh; overflow: hidden; color: var(--ink); background: var(--player-bg); }
+  .player-shell.landscape-mode { height: 100vh; height: 100dvh; }
 
-  /* Stage: fills the ENTIRE shell — no header/footer space consumed. */
+  /* Stage: fills the ENTIRE shell — no header/footer space consumed.
+     MAVP-4 Issue 2: the viewport inside the stage gets a DEFINITE grid
+     (minmax(0,1fr) tracks) so the iframe/video `height: 100%` always
+     resolves against a definite grid area — the legacy in-flow
+     `aspect-ratio: 16/9` embed rule (PlayerViewport) can no longer win
+     during intrinsic sizing and collapse the embed into a letterboxed box
+     with shell-painted bands around it (the reported portrait black
+     space). The provider keeps its OWN presentation inside the full-viewport
+     iframe (no stretch, no crop, object-fit untouched). */
   .stage-wrap { position: absolute; inset: 0; display: grid; place-items: center; overflow: hidden; }
-  .stage-wrap :global(.viewport) { width: 100%; height: 100%; min-height: 0; max-height: none; border-radius: 0; box-shadow: none; }
+  .stage-wrap :global(.viewport) { width: 100%; height: 100%; min-height: 0; max-height: none; border-radius: 0; box-shadow: none; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
   .stage-wrap :global(.viewport.embed) { width: 100%; }
   .stage-wrap :global(.viewport iframe), .stage-wrap :global(.viewport video) { width: 100%; height: 100%; }
+  /* MAVP-4 Issue 2: inside the fullscreen shell the embed iframe is an
+     explicit full-viewport surface — the legacy detail-page-era
+     `aspect-ratio: 16/9` (PlayerViewport) is neutralized HERE so the
+     sizing model is explicit and order-independent, and the provider's own
+     aspect handling is preserved inside the iframe. */
+  .stage-wrap :global(.viewport.embed iframe) { aspect-ratio: auto; height: 100%; min-height: 0; }
+
+  /* MAVP-4 Issue 1: embed presentation veil — opaque shell-background layer
+     covering the stage while the embed loads/boots. z-index sits BETWEEN the
+     iframe (z-1) and the message/loading cards (z-7); pointer-events:none
+     keeps the provider interactable (tap = reveal signal). */
+  .embed-veil { position: absolute; z-index: 6; inset: 0; background: var(--player-bg, var(--base)); pointer-events: none; }
 
   /* Back FAB — top-left overlay, translucent, safe-area aware.
      MAVP-2 Phase 4/5: a per-source Back-button placement (Admin "Player
@@ -1751,6 +1945,13 @@
   .source-badge { flex: 0 0 auto; border: 1px solid var(--line-strong); border-radius: 999px; padding: 1px 7px; color: var(--muted); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .48rem; font-weight: 700; letter-spacing: .08em; line-height: 1.5; text-transform: uppercase; }
   .source-badge[data-badge='ads'] { color: #ffb020; border-color: rgba(255, 176, 32, .35); }
   .source-badge[data-badge='ad-free'] { color: var(--accent); border-color: var(--accent-soft); }
+  /* MAVP-4 Issue 4: extensible badge VARIANTS — theme tokens only (accent
+     renders on the secondary accent so 4K/Ad-Free/Ads stay visually distinct;
+     the legacy single-badge rules above are kept for backward compatibility). */
+  .source-badge[data-variant='accent'] { color: var(--accent-2); border-color: var(--accent-2-soft); }
+  .source-badge[data-variant='positive'] { color: var(--success); border-color: var(--accent-soft); }
+  .source-badge[data-variant='warning'] { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 35%, transparent); }
+  .source-badge[data-variant='neutral'] { color: var(--muted); border-color: var(--line-strong); }
   .episode-number { flex: 0 0 28px; color: var(--accent); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .65rem; }
   @keyframes spin { to { transform: rotate(360deg); } }
   @keyframes sheet-up { from { transform: translateY(100%); } to { transform: translateY(0); } }

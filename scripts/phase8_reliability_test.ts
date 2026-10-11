@@ -39,7 +39,11 @@ assert.match(shell, /function startEmbedLoadTimeout\(sourceId: string\)/, 'start
 assert.match(shell, /function clearEmbedLoadTimeout\(\)/, 'clearEmbedLoadTimeout function exists');
 
 // 1e. Timeout is started on embed source switch.
-assert.match(shell, /clearEmbedLoadTimeout\(\);\s*if \(source\.type === 'embed'\) startEmbedLoadTimeout\(source\.sourceId\)/, 'timeout started for embed sources on source switch');
+// MAVP-4 supersession (documented, Issue 1): the presentation-gate resets
+// (clearEmbedPresentFailOpen / embedSurfacePresenting / embedSurfaceIdentity)
+// sit between the timeout clear and the re-arm — the contract (the 18s load
+// timeout is armed for every embed source switch) is unchanged.
+assert.match(shell, /clearEmbedLoadTimeout\(\);[\s\S]{0,400}if \(source\.type === 'embed'\) startEmbedLoadTimeout\(source\.sourceId\)/, 'timeout started for embed sources on source switch');
 
 // 1f. Timeout is cleared on successful embed load.
 // MAVP-2 supersession: handleEmbedLoad now arms the auto-hide countdown
@@ -48,13 +52,18 @@ assert.match(shell, /clearEmbedLoadTimeout\(\);\s*if \(source\.type === 'embed'\
 assert.match(shell, /function handleEmbedLoad\(\)[\s\S]{0,950}clearEmbedLoadTimeout\(\)/, 'timeout cleared in handleEmbedLoad');
 
 // 1g. Timeout is cleared on source switch (before starting new).
-assert.match(shell, /clearEmbedLoadTimeout\(\);\s*if \(source\.type === 'embed'\)/, 'timeout cleared before starting new one on source switch');
+// MAVP-4 supersession (documented, Issue 1): the presentation-gate resets sit
+// between the clear and the arm — the clear-before-arm contract is unchanged.
+assert.match(shell, /clearEmbedLoadTimeout\(\);[\s\S]{0,400}if \(source\.type === 'embed'\)/, 'timeout cleared before starting new one on source switch');
 
 // 1h. Timeout is cleared on episode switch.
 assert.match(shell, /episodeIdentity[\s\S]{0,200}clearEmbedLoadTimeout\(\)/, 'timeout cleared on episode switch');
 
 // 1i. Timeout is cleared on destroy (in onMount cleanup return).
-assert.match(shell, /return \(\) => \{[\s\S]{0,200}clearEmbedLoadTimeout\(\)/, 'timeout cleared on component destroy');
+// MAVP-4 supersession (documented): the destroy cleanup also releases the
+// scroll-lock attribute and clears the presentation fail-open timer before
+// the load-timeout clear — all cleanup, contract unchanged.
+assert.match(shell, /return \(\) => \{[\s\S]{0,420}clearEmbedLoadTimeout\(\)/, 'timeout cleared on component destroy');
 
 // 1j. Timeout is cleared on retry.
 assert.match(shell, /function retry\(\)[\s\S]{0,100}clearEmbedLoadTimeout\(\)/, 'timeout cleared on retry');

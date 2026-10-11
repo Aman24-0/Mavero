@@ -352,3 +352,120 @@ export function landscapeControlInlineStyle(placement: LandscapeControlPlacement
   if (transforms.length) decls.push(`transform:${transforms.join(' ')}`);
   return decls.join(';');
 }
+
+// ---------------------------------------------------------------------------
+// MAVP-4 Issue 3: SHARED preview geometry.
+//
+// The Admin calibration preview must interpret a configuration EXACTLY like
+// the real player. The runtime resolves placements through
+// `resolveControlPlacement` + `resolveControlSize` (above); the preview now
+// runs the SAME resolvers over the SAME payload shape (the serialized
+// `controls_position_json`, parsed by the total `parsePlayerControlsPosition`)
+// and maps the result onto a SCALED stage with a documented, deterministic
+// coordinate model:
+//
+//   * Reference viewports — the preview models a concrete runtime viewport
+//     per orientation (portrait 390×844, landscape 844×390). The stage keeps
+//     the SAME aspect ratio, so viewport-relative percentages map 1:1.
+//   * Percent axes — configured anchors/offsets are viewport-relative
+//     percentages at runtime; on the stage they are the same percentages of
+//     the stage box (uniform scale — no preview-pixel/runtime-pixel mixing).
+//   * Unset axes — the runtime keeps the stylesheet default corner
+//     (Back = top-left at 12px, Landscape = bottom-right at 16px, both
+//     safe-area aware). The preview renders those defaults scaled by
+//     container-query units (cqw/cqh) so they shrink/grow with the stage.
+//   * Sizes — a configured px size renders as (size / reference width) ×
+//     100cqw; the default size when unset. Both orientations scale the SAME
+//     way (the stage height factor equals its width factor because the stage
+//     keeps the reference aspect ratio).
+//
+// Device safe-area insets (env(safe-area-inset-*)) are device-specific and
+// deliberately NOT represented — the preview shows the no-inset default
+// corner; the runtime shifts it by the device's real insets.
+// ---------------------------------------------------------------------------
+
+/** Documented reference viewport the portrait preview models. */
+export const CONTROLS_PREVIEW_REFERENCE_PORTRAIT = { width: 390, height: 844 } as const;
+/** Documented reference viewport the landscape preview models. */
+export const CONTROLS_PREVIEW_REFERENCE_LANDSCAPE = { width: 844, height: 390 } as const;
+
+/**
+ * Runtime stylesheet default corner offsets (px), mirrored here so the
+ * preview renders the same defaults the player stylesheet paints
+ * (.back-fab top/left 12px; .control-fab-group bottom/right 16px).
+ */
+export const BACK_CONTROL_DEFAULT_EDGE_PX = 12;
+export const LANDSCAPE_CONTROL_DEFAULT_EDGE_PX = 16;
+
+/** Runtime stylesheet default sizes (px) — the same values the renderer uses. */
+function defaultSizeFor(control: ControlsControlId): number {
+  return control === 'back' ? BACK_CONTROL_DEFAULT_SIZE_PX : LANDSCAPE_CONTROL_DEFAULT_SIZE_PX;
+}
+
+/**
+ * Build the inline CSS for ONE preview marker (Back square / Landscape dot)
+ * from the shared resolvers. Pure — the preview component only supplies the
+ * parsed configuration and the orientation; every decision (inheritance,
+ * defaults, sizes, scaling) happens here so the preview can never diverge
+ * from the runtime interpretation.
+ */
+export function controlsPreviewMarkerStyle(
+  position: PlayerControlsPosition | null,
+  control: ControlsControlId,
+  orientation: ControlsOrientation,
+): string {
+  const reference = orientation === 'portrait' ? CONTROLS_PREVIEW_REFERENCE_PORTRAIT : CONTROLS_PREVIEW_REFERENCE_LANDSCAPE;
+  const placement = resolveControlPlacement(position, control, orientation);
+  const sizePx = resolveControlSize(position, control) ?? defaultSizeFor(control);
+  const defaultEdge = control === 'back' ? BACK_CONTROL_DEFAULT_EDGE_PX : LANDSCAPE_CONTROL_DEFAULT_EDGE_PX;
+  const decls: string[] = [];
+  const transforms: string[] = [];
+  // Horizontal axis: configured anchor wins; null → the control's default
+  // corner edge (Back hugs the left, Landscape hugs the right), scaled.
+  if (placement.horizontal) {
+    if (placement.horizontal.anchor === 'center') {
+      decls.push('left:50%', 'right:auto');
+      transforms.push('translateX(-50%)');
+    } else if (placement.horizontal.anchor === 'left') {
+      decls.push(`left:${placement.horizontal.offsetPercent}%`, 'right:auto');
+    } else {
+      decls.push(`right:${placement.horizontal.offsetPercent}%`, 'left:auto');
+    }
+  } else if (control === 'back') {
+    decls.push(`left:${cqw(defaultEdge, reference.width)}`, 'right:auto');
+  } else {
+    decls.push(`right:${cqw(defaultEdge, reference.width)}`, 'left:auto');
+  }
+  // Vertical axis: same contract (Back defaults to the top edge, Landscape
+  // to the bottom edge); vertical scale uses cqh against the reference height.
+  if (placement.vertical) {
+    if (placement.vertical.anchor === 'center') {
+      decls.push('top:50%', 'bottom:auto');
+      transforms.push('translateY(-50%)');
+    } else if (placement.vertical.anchor === 'top') {
+      decls.push(`top:${placement.vertical.offsetPercent}%`, 'bottom:auto');
+    } else {
+      decls.push(`bottom:${placement.vertical.offsetPercent}%`, 'top:auto');
+    }
+  } else if (control === 'back') {
+    decls.push(`top:${cqh(BACK_CONTROL_DEFAULT_EDGE_PX, reference.height)}`, 'bottom:auto');
+  } else {
+    decls.push(`bottom:${cqh(LANDSCAPE_CONTROL_DEFAULT_EDGE_PX, reference.height)}`, 'top:auto');
+  }
+  // Configured (or default) control size, scaled uniformly by the reference
+  // width (the stage's height factor is identical — same aspect ratio).
+  const scaled = cqw(sizePx, reference.width);
+  decls.push(`width:${scaled}`, `height:${scaled}`);
+  if (transforms.length) decls.push(`transform:${transforms.join(' ')}`);
+  return decls.join(';');
+}
+
+/** px → container-query width units at a given reference viewport width. */
+function cqw(px: number, referenceWidth: number): string {
+  return `calc(${px} / ${referenceWidth} * 100cqw)`;
+}
+
+/** px → container-query height units at a given reference viewport height. */
+function cqh(px: number, referenceHeight: number): string {
+  return `calc(${px} / ${referenceHeight} * 100cqh)`;
+}

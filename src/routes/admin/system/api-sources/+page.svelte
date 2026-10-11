@@ -20,13 +20,22 @@
   import AdminStatusBadge from '$lib/components/admin/AdminStatusBadge.svelte';
   import AdminAddButton from '$lib/components/admin/AdminAddButton.svelte';
   import { SlidersHorizontal, X, Check, Server, HardDrive, Edit3, Trash2, Power } from 'lucide-svelte';
+  import SourceIcon from '$lib/components/source/SourceIcon.svelte';
   import { CAPABILITY_FIELDS, CAPABILITY_LABELS } from '$lib/shared/player-capabilities';
   import { sandboxPolicyFromCapabilities, sandboxPolicies } from '$lib/shared/sandbox-policy';
   import { integrationTypes, providerStatuses } from '$lib/shared/streaming';
+  // Task 13 / MAVP-4 Issue 4: source presentation metadata contracts — safe
+  // icon keys, rich icon values (PNG/SVG data URLs, https image URLs) and
+  // extensible badge configs (built-ins + per-source definitions).
+  import { sourceIconKeys, sourceIconLabels, DEFAULT_SOURCE_ICON, BUILTIN_SOURCE_BADGES, sourceBadgeVariants, parseSourceBadges, serializeSourceBadges, classifySourceIconValue, type SourceBadgeConfig, type SourceBadgeVariant } from '$lib/shared/source-presentation';
   // MAVP-3 Issue 5: documented size bounds + defaults for the per-control
   // Back/Landscape size settings (shared contract with the server gate and
   // the player renderer).
-  import { CONTROLS_SIZE_MIN_PX, CONTROLS_SIZE_MAX_PX, BACK_CONTROL_DEFAULT_SIZE_PX, LANDSCAPE_CONTROL_DEFAULT_SIZE_PX } from '$lib/shared/player-controls-position';
+  // MAVP-4 Issue 3: the preview resolves through the SAME shared contract as
+  // the runtime player — the serialized payload is parsed by the real total
+  // parser and mapped by the shared preview geometry helper, so the preview
+  // can never diverge from the runtime interpretation.
+  import { CONTROLS_SIZE_MIN_PX, CONTROLS_SIZE_MAX_PX, BACK_CONTROL_DEFAULT_SIZE_PX, LANDSCAPE_CONTROL_DEFAULT_SIZE_PX, parsePlayerControlsPosition, controlsPreviewMarkerStyle, CONTROLS_PREVIEW_REFERENCE_PORTRAIT, CONTROLS_PREVIEW_REFERENCE_LANDSCAPE } from '$lib/shared/player-controls-position';
   import type { PageData, ActionData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -77,6 +86,167 @@
   let sourceSheetOpen = $state(false);
   let editingSource: any = $state(null);
   let sourceSheetTrigger: HTMLElement | null = null;
+
+  // --- MAVP-4 Issue 4: source ICON editor (restored pickers + rich inputs) ---
+  // The Admin 2.0 migration had degraded the Task 13 pickers to plain text
+  // inputs. The icon editor now offers the four supported input methods:
+  //   * key    — the Task 13 safe-key grid with live SourceIcon previews;
+  //   * upload — a PNG/SVG FILE (multipart `icon_file`; server validates the
+  //     PNG magic bytes / sanitizes the SVG before storing the data URL);
+  //   * svg    — pasted SVG markup (server-side sanitized before storing);
+  //   * url    — an https image URL (server validates via the icon-url
+  //     contract).
+  // The submitted `icon` field always carries the RAW chosen value; the
+  // server parses/sanitizes/normalizes it into the stored contract. The
+  // client-side preview renders through <img> (script-inert for SVG) or the
+  // SourceIcon component — untrusted markup never reaches {@html}.
+  type IconMode = 'key' | 'upload' | 'svg' | 'url';
+  let iconMode = $state<IconMode>('key');
+  let iconKeyDraft = $state<string>(DEFAULT_SOURCE_ICON);
+  let iconSvgDraft = $state('');
+  let iconUrlDraft = $state('');
+  let iconFileName = $state('');
+  // Client-side preview source (upload: the picked file as a data URL; svg:
+  // a data URL of the CURRENT draft — both script-inert <img> surfaces).
+  let iconPreviewDataUrl = $state('');
+  let iconPreviewFailed = $state(false);
+
+  const iconSubmitValue = $derived.by(() => {
+    if (iconMode === 'key') return iconKeyDraft.trim();
+    if (iconMode === 'upload') return ''; // the file posts via `icon_file`
+    if (iconMode === 'svg') return iconSvgDraft.trim();
+    return iconUrlDraft.trim();
+  });
+
+  /** Script-inert SVG preview URL for the paste editor (never {@html}). */
+  const iconSvgPreviewUrl = $derived(iconSvgDraft.trim() ? `data:image/svg+xml;utf8,${encodeURIComponent(iconSvgDraft)}` : '');
+
+  function handleIconFileChange(event: Event) {
+    const input = event.currentTarget instanceof HTMLInputElement ? event.currentTarget : null;
+    const file = input?.files?.[0];
+    iconPreviewFailed = false;
+    if (!file) {
+      iconFileName = '';
+      iconPreviewDataUrl = '';
+      return;
+    }
+    iconFileName = file.name;
+    const reader = new FileReader();
+    reader.onload = () => {
+      iconPreviewDataUrl = typeof reader.result === 'string' ? reader.result : '';
+    };
+    reader.readAsDataURL(file);
+  }
+
+  /** Client-side decode of a stored sanitized-SVG data URL (re-edit prefill). */
+  function decodeSvgDataUrl(value: string): string {
+    const match = /^data:image\/svg\+xml;base64,([A-Za-z0-9+/]+={0,2})$/.exec(value.trim());
+    if (!match) return '';
+    try {
+      const markup = atob(match[1]);
+      return markup.startsWith('<svg') ? markup : '';
+    } catch {
+      return '';
+    }
+  }
+
+  // --- MAVP-4 Issue 4: EXTENSIBLE BADGE editor ---
+  // Badge definitions are per-source copies ({id,label,variant}); the picker
+  // offers the built-ins (Ad-Free / Ads / 4K) plus every definition already
+  // used by ANY configured source (harvested for reuse) plus the current
+  // drafts. Creating/renaming/deleting on one source never touches another.
+  let badgeDrafts = $state<SourceBadgeConfig[]>([]);
+  let newBadgeLabel = $state('');
+  let newBadgeVariant = $state<SourceBadgeVariant>('accent');
+  let badgeEditorHint = $state('');
+
+  const badgeSubmitValue = $derived(badgeDrafts.length ? serializeSourceBadges(badgeDrafts) : '');
+
+  const knownBadgeDefinitions = $derived.by(() => {
+    const byId = new Map<string, SourceBadgeConfig>();
+    for (const badge of BUILTIN_SOURCE_BADGES) byId.set(badge.id, badge);
+    for (const source of data.sources as any[]) {
+      for (const badge of parseSourceBadges(source?.badge)) {
+        if (!byId.has(badge.id)) byId.set(badge.id, badge);
+      }
+    }
+    for (const badge of badgeDrafts) byId.set(badge.id, badge);
+    return [...byId.values()];
+  });
+
+  function toggleBadgeDefinition(definition: SourceBadgeConfig) {
+    badgeEditorHint = '';
+    if (badgeDrafts.some((badge) => badge.id === definition.id)) {
+      badgeDrafts = badgeDrafts.filter((badge) => badge.id !== definition.id);
+      return;
+    }
+    if (badgeDrafts.length >= 3) {
+      badgeEditorHint = 'A source can carry at most 3 badges.';
+      return;
+    }
+    badgeDrafts = [...badgeDrafts, definition];
+  }
+
+  function removeBadgeDraft(id: string) {
+    badgeDrafts = badgeDrafts.filter((badge) => badge.id !== id);
+    badgeEditorHint = '';
+  }
+
+  function createBadgeDefinition() {
+    const label = newBadgeLabel.trim();
+    if (!label) return;
+    const id = label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32);
+    if (!id) {
+      badgeEditorHint = 'Use letters or numbers in the badge label.';
+      return;
+    }
+    if (badgeDrafts.some((badge) => badge.id === id)) {
+      badgeEditorHint = 'That badge is already assigned to this source.';
+      return;
+    }
+    if (badgeDrafts.length >= 3) {
+      badgeEditorHint = 'A source can carry at most 3 badges.';
+      return;
+    }
+    const existing = knownBadgeDefinitions.find((badge) => badge.id === id);
+    badgeDrafts = [...badgeDrafts, existing ?? { id, label, variant: newBadgeVariant }];
+    newBadgeLabel = '';
+    badgeEditorHint = '';
+  }
+
+  /** Prefill the icon + badge drafts from a stored source row (TOTAL reads). */
+  function loadIconBadgeState(source: any) {
+    const storedIcon = typeof source?.icon === 'string' ? source.icon : '';
+    const kind = classifySourceIconValue(storedIcon);
+    iconPreviewFailed = false;
+    iconFileName = '';
+    iconSvgDraft = '';
+    iconUrlDraft = '';
+    iconPreviewDataUrl = '';
+    if (kind === 'svg-data') {
+      iconMode = 'svg';
+      iconSvgDraft = decodeSvgDataUrl(storedIcon);
+      iconPreviewDataUrl = iconSvgDraft ? `data:image/svg+xml;utf8,${encodeURIComponent(iconSvgDraft)}` : '';
+    } else if (kind === 'png-data') {
+      iconMode = 'upload';
+      iconFileName = 'uploaded PNG';
+      iconPreviewDataUrl = storedIcon;
+    } else if (kind === 'remote-url') {
+      iconMode = 'url';
+      iconUrlDraft = storedIcon;
+    } else {
+      iconMode = 'key';
+      iconKeyDraft = isKeyDraft(storedIcon) ? storedIcon : DEFAULT_SOURCE_ICON;
+    }
+    badgeDrafts = parseSourceBadges(source?.badge ?? null);
+    newBadgeLabel = '';
+    newBadgeVariant = 'accent';
+    badgeEditorHint = '';
+  }
+
+  function isKeyDraft(value: string): boolean {
+    return Boolean(value) && (sourceIconKeys as readonly string[]).includes(value);
+  }
 
   // --- Player Controls Position (per-source floating-control placement) ---
   // MAVP-2 contract: the Admin sheet edits TWO independent controls
@@ -267,31 +437,29 @@
   });
 
   /**
-   * Effective preview style for one control profile — mirrors the runtime
-   * resolution in $lib/shared/player-controls-position.ts (bounded,
-   * viewport-relative %; unset axes fall back to the control's stylesheet
-   * default corner). Pure string composition for the preview stage.
+   * MAVP-4 Issue 3: the preview interprets the configuration EXACTLY like the
+   * runtime player. The serialized draft payload (the same string the form
+   * submits) is parsed by the REAL shared total parser
+   * (`parsePlayerControlsPosition`) and both markers are styled by the
+   * SHARED `controlsPreviewMarkerStyle` resolver — inheritance (per-
+   * orientation overrides falling back to prefill), unset axes (the
+   * control's stylesheet default corner, scaled), configured sizes, and
+   * resets all render through ONE code path with the runtime.
+   * Malformed values degrade to the default positioning through the parser
+   * (never a plausible-looking but wrong preview — an unparseable payload
+   * simply shows the default corners).
    */
-  function previewProfileStyle(profile: ControlsProfileDraft, defaultH: string, defaultV: string): string {
-    const h = serializeAxisDraft(profile.h, ['left', 'right', 'center']);
-    const v = serializeAxisDraft(profile.v, ['top', 'bottom', 'center']);
-    const parts: string[] = [];
-    const transforms: string[] = [];
-    if (h) {
-      if (h.anchor === 'center') { parts.push('left:50%'); transforms.push('translateX(-50%)'); }
-      else parts.push(h.anchor === 'left' ? `left:${h.offsetPercent}%` : `right:${h.offsetPercent}%`);
-    } else {
-      parts.push(defaultH);
+  const previewPosition = $derived.by(() => {
+    try {
+      return parsePlayerControlsPosition(JSON.parse(controlsPositionJson));
+    } catch {
+      return null;
     }
-    if (v) {
-      if (v.anchor === 'center') { parts.push('top:50%'); transforms.push('translateY(-50%)'); }
-      else parts.push(v.anchor === 'top' ? `top:${v.offsetPercent}%` : `bottom:${v.offsetPercent}%`);
-    } else {
-      parts.push(defaultV);
-    }
-    if (transforms.length) parts.push(`transform:${transforms.join(' ')}`);
-    return parts.join(';');
-  }
+  });
+
+  /** Shared-resolver inline styles for the two preview markers. */
+  const previewBackStyle = $derived(controlsPreviewMarkerStyle(previewPosition, 'back', positionPreviewOrientation));
+  const previewLandscapeStyle = $derived(controlsPreviewMarkerStyle(previewPosition, 'landscape', positionPreviewOrientation));
 
   // Section template loops (typed so the per-control reset + bindings stay
   // literal-union safe).
@@ -305,12 +473,14 @@
     if (event) sourceSheetTrigger = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
     editingSource = null;
     loadControlsPositionState(null);
+    loadIconBadgeState(null);
     sourceSheetOpen = true;
   }
   function openEditSource(source: any, event?: Event) {
     if (event) sourceSheetTrigger = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
     editingSource = source;
     loadControlsPositionState(source);
+    loadIconBadgeState(source);
     sourceSheetOpen = true;
   }
   function closeSourceSheet() {
@@ -465,9 +635,12 @@
             {@const provider = providerForSource(source)}
             <div class="a2-source-row" data-enabled={source.enabled}>
               <div class="a2-source-row-main">
-                <span class="a2-source-row-icon">{source.icon ?? '📦'}</span>
+                <!-- MAVP-4 Issue 4: real icon rendering (rich values via <img>,
+                     keys via SourceIcon) + badge chips — the raw text fallback
+                     that made values show as plain text is gone. -->
+                <span class="a2-source-row-icon"><SourceIcon icon={source.icon ?? null} size={20} /></span>
                 <div class="a2-source-row-info">
-                  <div class="a2-source-row-name">{source.name}</div>
+                  <div class="a2-source-row-name">{source.name}{#each parseSourceBadges(source.badge) as badgeConfig (badgeConfig.id)}<span class="source-badge-mini" data-variant={badgeConfig.variant}>{badgeConfig.label}</span>{/each}</div>
                   <div class="a2-source-row-meta">
                     <span>{provider?.name ?? '—'}</span>
                     <span>·</span>
@@ -598,7 +771,7 @@
 <!-- Source create/edit sheet -->
 {#if sourceSheetOpen}
   <AdminSheet open={sourceSheetOpen} title={editingSource ? `Edit ${editingSource.name}` : 'Add Source'} onClose={closeSourceSheet}>
-    <form method="POST" action={editingSource ? '?/updateSource' : '?/createSource'} class="a2-crud-form">
+    <form method="POST" action={editingSource ? '?/updateSource' : '?/createSource'} class="a2-crud-form" enctype="multipart/form-data">
       {#if editingSource}
         <input type="hidden" name="id" value={editingSource.id} />
       {/if}
@@ -622,8 +795,49 @@
           </select>
         </label>
       </AdminFormSection>
-      <AdminFormSection heading="Configuration">
-        <label class="a2-field"><span>Icon</span><input name="icon" value={editingSource?.icon ?? ''} /></label>
+      <AdminFormSection heading="Presentation">
+        <!-- MAVP-4 Issue 4: RESTORED icon picker + rich icon inputs. The
+             hidden `icon` field carries the raw chosen value (key / pasted
+             SVG markup / URL); uploads travel as `icon_file` (multipart)
+             and take precedence server-side. The server sanitizes SVG and
+             validates PNG/URL values into the stored contract. -->
+        <div class="a2-field">
+          <span>Icon</span>
+          <input type="hidden" name="icon" value={iconSubmitValue} />
+          <div class="a2-icon-editor">
+            <div class="a2-icon-preview" aria-hidden="true">
+              {#if iconMode === 'key' || (iconMode === 'svg' && !iconSvgPreviewUrl) || (iconMode === 'upload' && !iconPreviewDataUrl) || (iconMode === 'url' && !iconUrlDraft.trim())}
+                <SourceIcon icon={iconMode === 'key' ? iconKeyDraft : null} size={22} />
+              {:else if iconMode === 'svg'}
+                {#if !iconPreviewFailed}<img src={iconSvgPreviewUrl} alt="" width="22" height="22" onerror={() => (iconPreviewFailed = true)} />{:else}<SourceIcon icon={null} size={22} />{/if}
+              {:else if iconMode === 'upload'}
+                {#if !iconPreviewFailed}<img src={iconPreviewDataUrl} alt="" width="22" height="22" onerror={() => (iconPreviewFailed = true)} />{:else}<SourceIcon icon={null} size={22} />{/if}
+              {:else}
+                {#if !iconPreviewFailed}<img src={iconUrlDraft} alt="" width="22" height="22" onerror={() => (iconPreviewFailed = true)} />{:else}<SourceIcon icon={null} size={22} />{/if}
+              {/if}
+            </div>
+            <select bind:value={iconMode} aria-label="Icon input method">
+              <option value="key">Built-in icon</option>
+              <option value="upload">Upload PNG / SVG file</option>
+              <option value="svg">Paste SVG markup</option>
+              <option value="url">Image URL</option>
+            </select>
+          </div>
+          {#if iconMode === 'key'}
+            <div class="a2-icon-key-grid" role="group" aria-label="Built-in icon keys">
+              {#each sourceIconKeys as iconKey (iconKey)}
+                <button type="button" class="a2-icon-key" class:active={iconKeyDraft === iconKey} aria-pressed={iconKeyDraft === iconKey} title={sourceIconLabels[iconKey]} onclick={() => { iconKeyDraft = iconKey; iconPreviewFailed = false; }}><SourceIcon icon={iconKey} size={16} /></button>
+              {/each}
+            </div>
+          {:else if iconMode === 'upload'}
+            <label class="a2-field"><span>Icon file (PNG ≤ 64 KB or SVG ≤ 48 KB)</span><input type="file" name="icon_file" accept="image/png,image/svg+xml" onchange={handleIconFileChange} /></label>
+            {#if iconFileName}<small class="a2-field-hint">Selected: {iconFileName}{iconMode === 'upload' && iconFileName === 'uploaded PNG' ? ' — choose a file to replace it' : ''}</small>{/if}
+          {:else if iconMode === 'svg'}
+            <label class="a2-field"><span>SVG markup (sanitized on save — scripts, event handlers and external references are rejected)</span><textarea rows="5" bind:value={iconSvgDraft} aria-label="SVG markup" spellcheck="false"></textarea></label>
+          {:else}
+            <label class="a2-field"><span>Image URL (https)</span><input type="url" bind:value={iconUrlDraft} placeholder="https://example.com/icon.png" oninput={() => (iconPreviewFailed = false)} /></label>
+          {/if}
+        </div>
         <label class="a2-field"><span>Visibility</span>
           <select name="visibility">
             <option value="public" selected={editingSource?.visibility === 'public'}>Public</option>
@@ -642,7 +856,29 @@
           </select>
         </label>
         <label class="a2-field"><span>Language</span><input name="language" value={editingSource?.language ?? ''} /></label>
-        <label class="a2-field"><span>Badge</span><input name="badge" value={editingSource?.badge ?? ''} /></label>
+        <!-- MAVP-4 Issue 4: EXTENSIBLE badge picker — built-in chips
+             (Ad-Free / Ads / 4K) + previously used definitions (harvested
+             from the configured sources for reuse) + create-new with a
+             controlled style variant. The hidden `badge` field serializes
+             the canonical JSON-array contract; the server validates it
+             strictly. Legacy single-badge values keep rendering unchanged. -->
+        <div class="a2-field">
+          <span>Badges (up to 3)</span>
+          <input type="hidden" name="badge" value={badgeSubmitValue} />
+          <div class="a2-badge-picker">
+            {#each knownBadgeDefinitions as definition (definition.id)}
+              <button type="button" class="a2-badge-chip" class:selected={badgeDrafts.some((badge) => badge.id === definition.id)} data-variant={definition.variant} aria-pressed={badgeDrafts.some((badge) => badge.id === definition.id)} onclick={() => toggleBadgeDefinition(definition)}>{definition.label}</button>
+            {/each}
+          </div>
+          {#if badgeEditorHint}<small class="a2-field-hint" role="status">{badgeEditorHint}</small>{/if}
+          <div class="a2-badge-new">
+            <input type="text" bind:value={newBadgeLabel} placeholder="New badge label" maxlength={24} aria-label="New badge label" />
+            <select bind:value={newBadgeVariant} aria-label="New badge style">
+              {#each sourceBadgeVariants as variant}<option value={variant}>{variant}</option>{/each}
+            </select>
+            <button type="button" class="a2-btn-mini" onclick={createBadgeDefinition} disabled={!newBadgeLabel.trim()}>Create</button>
+          </div>
+        </div>
         <label class="a2-field"><span>Enabled</span><input type="checkbox" name="enabled" value="true" checked={editingSource ? editingSource.enabled : true} /></label>
       </AdminFormSection>
       <AdminFormSection heading="Templates">
@@ -730,20 +966,26 @@
               </div>
             {/each}
           </div>
-          <!-- Calibration preview: the orientation toggle switches the stage
-               between a 16:9 landscape and a 9:16 portrait viewport; the
-               square marker is the Back button, the round dot the Landscape
-               control group, the dashed corner marker the provider's typical
-               fullscreen control position for reference. -->
+          <!-- Calibration preview (MAVP-4 Issue 3): the orientation toggle
+               switches the stage between the two documented REFERENCE
+               viewports (landscape 844×390, portrait 390×844 — the same
+               shapes the runtime viewport takes). Both markers are styled by
+               the SHARED resolver (player-controls-position.ts) over the
+               exact payload the form submits, so configured anchors,
+               offsets, inheritance, defaults, resets and SIZES render
+               identically (scaled) to the real player. The square marker is
+               the Back button, the round dot the Landscape control group,
+               the dashed corner marker the provider's typical fullscreen
+               control position for reference. -->
           <div class="a2-position-preview-orientation" role="group" aria-label="Preview orientation">
             <button type="button" class:active={positionPreviewOrientation === 'landscape'} onclick={() => (positionPreviewOrientation = 'landscape')}>Landscape preview</button>
             <button type="button" class:active={positionPreviewOrientation === 'portrait'} onclick={() => (positionPreviewOrientation = 'portrait')}>Portrait preview</button>
           </div>
           <div class="a2-position-preview" class:portrait={positionPreviewOrientation === 'portrait'} role="img" aria-label={`Preview of the floating-control placement in ${positionPreviewOrientation} orientation`}>
             <span class="a2-position-preview-provider" aria-hidden="true"></span>
-            <span class="a2-position-preview-back" aria-hidden="true" style={[previewProfileStyle(positionDraft.back[positionPreviewOrientation], 'left:16px', 'top:16px'), previewMarkerSize('back') ? `width:${previewMarkerSize('back')}px;height:${previewMarkerSize('back')}px` : ''].filter(Boolean).join(';')}></span>
-            <span class="a2-position-preview-dot" aria-hidden="true" style={[previewProfileStyle(positionDraft.landscapeControl[positionPreviewOrientation], 'right:16px', 'bottom:16px'), previewMarkerSize('landscape') ? `width:${previewMarkerSize('landscape')}px;height:${previewMarkerSize('landscape')}px` : ''].filter(Boolean).join(';')}></span>
-            <span class="a2-position-preview-caption" aria-hidden="true">{positionPreviewOrientation} preview · back (square, {previewMarkerSize('back') ?? BACK_CONTROL_DEFAULT_SIZE_PX}px) · landscape control (dot, {previewMarkerSize('landscape') ?? LANDSCAPE_CONTROL_DEFAULT_SIZE_PX}px)</span>
+            <span class="a2-position-preview-back" aria-hidden="true" style={previewBackStyle}></span>
+            <span class="a2-position-preview-dot" aria-hidden="true" style={previewLandscapeStyle}></span>
+            <span class="a2-position-preview-caption" aria-hidden="true">{positionPreviewOrientation} preview · back {previewMarkerSize('back') ?? BACK_CONTROL_DEFAULT_SIZE_PX}px · landscape {previewMarkerSize('landscape') ?? LANDSCAPE_CONTROL_DEFAULT_SIZE_PX}px · scaled from {positionPreviewOrientation === 'portrait' ? `${CONTROLS_PREVIEW_REFERENCE_PORTRAIT.width}×${CONTROLS_PREVIEW_REFERENCE_PORTRAIT.height}` : `${CONTROLS_PREVIEW_REFERENCE_LANDSCAPE.width}×${CONTROLS_PREVIEW_REFERENCE_LANDSCAPE.height}`} reference</span>
           </div>
           <button type="button" class="a2-btn-secondary" onclick={resetAllControlsPosition}>Reset all positioning</button>
         {/if}
@@ -806,6 +1048,30 @@
 
   .mono { font-family: var(--a2-font-mono); font-size: var(--a2-text-2xs); }
 
+  /* MAVP-4 Issue 4: icon editor (restored picker + rich inputs) and the
+     extensible badge picker. Admin tokens only. */
+  .a2-icon-editor { display: flex; align-items: center; gap: var(--a2-space-2); }
+  .a2-icon-editor select { flex: 1; }
+  .a2-icon-preview { display: grid; place-items: center; width: 40px; height: 40px; flex: 0 0 40px; border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); background: var(--a2-surface-3); color: var(--a2-text); }
+  .a2-icon-preview img { border-radius: 4px; }
+  .a2-icon-key-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(38px, 1fr)); gap: var(--a2-space-1); }
+  .a2-icon-key { display: grid; place-items: center; width: 38px; height: 38px; border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); background: var(--a2-surface-3); color: var(--a2-text-muted); cursor: pointer; }
+  .a2-icon-key:hover { color: var(--a2-cyan); border-color: var(--a2-cyan-border); }
+  .a2-icon-key.active { color: var(--a2-cyan); border-color: var(--a2-cyan); background: var(--a2-cyan-soft); }
+  .a2-field textarea { background: var(--a2-surface-3); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); color: var(--a2-text); font-size: var(--a2-text-xs); font-family: var(--a2-font-mono); padding: 8px 10px; resize: vertical; }
+  .a2-field textarea:focus { outline: none; border-color: var(--a2-cyan); }
+  .a2-badge-picker { display: flex; flex-wrap: wrap; gap: var(--a2-space-1); }
+  .a2-badge-chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--a2-border-strong); border-radius: 999px; padding: 4px 10px; background: var(--a2-surface-3); color: var(--a2-text-muted); font-size: var(--a2-text-2xs); font-weight: 700; letter-spacing: .06em; text-transform: uppercase; cursor: pointer; }
+  .a2-badge-chip:hover { color: var(--a2-cyan); border-color: var(--a2-cyan-border); }
+  .a2-badge-chip.selected { color: var(--a2-cyan); border-color: var(--a2-cyan); background: var(--a2-cyan-soft); }
+  .a2-badge-new { display: flex; gap: var(--a2-space-1); align-items: center; }
+  .a2-badge-new input { flex: 1; }
+  .a2-badge-new select { width: auto; }
+  .source-badge-mini { display: inline-flex; align-items: center; margin-left: 6px; border: 1px solid var(--a2-border-strong); border-radius: 999px; padding: 0 6px; font-size: 9px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--a2-text-muted); vertical-align: middle; }
+  .source-badge-mini[data-variant='accent'] { color: var(--a2-cyan); border-color: var(--a2-cyan-border); }
+  .source-badge-mini[data-variant='positive'] { color: var(--a2-green, #7ee2a8); border-color: var(--a2-green-soft, rgba(126,226,168,.3)); }
+  .source-badge-mini[data-variant='warning'] { color: var(--a2-amber, #ffc247); border-color: var(--a2-amber-soft, rgba(255,194,71,.3)); }
+
   /* Player Controls Position section (player redesign; MAVP-2 per-control,
      per-orientation profiles). */
   .a2-field-hint { margin: 0; font-size: var(--a2-text-2xs); color: var(--a2-text-muted); line-height: 1.5; }
@@ -820,11 +1086,19 @@
   .a2-position-preview-orientation { display: inline-flex; gap: 6px; }
   .a2-position-preview-orientation button { padding: 6px 12px; background: var(--a2-surface-3); border: 1px solid var(--a2-border-strong); border-radius: var(--a2-radius-sm); color: var(--a2-text-muted); font-size: var(--a2-text-2xs); font-weight: 600; cursor: pointer; }
   .a2-position-preview-orientation button.active { color: var(--a2-cyan); border-color: var(--a2-cyan-border); background: var(--a2-cyan-soft); }
-  .a2-position-preview { position: relative; aspect-ratio: 16 / 9; border: 1px solid var(--a2-border-strong); border-radius: var(--a2-radius-sm); background: linear-gradient(160deg, #0c0c14, #16161f); overflow: hidden; }
-  .a2-position-preview.portrait { aspect-ratio: 9 / 16; max-width: 220px; margin: 0 auto; }
+  /* MAVP-4 Issue 3: the preview stages are SCALED REFERENCE VIEWPORTS —
+     portrait 390×844, landscape 844×390 (the shared contract's documented
+     references, same aspect ratio as the modelled runtime viewport so
+     viewport-relative % map 1:1). `container-type: size` makes the stage a
+     query container so marker sizes/defaults render in cqw/cqh — uniformly
+     scaled by the shared geometry helper instead of treating preview pixels
+     as runtime pixels. Both markers are ALWAYS explicitly positioned by the
+     shared resolver (no auto-position pile-up in either orientation). */
+  .a2-position-preview { position: relative; container-type: size; aspect-ratio: 844 / 390; border: 1px solid var(--a2-border-strong); border-radius: var(--a2-radius-sm); background: linear-gradient(160deg, #0c0c14, #16161f); overflow: hidden; }
+  .a2-position-preview.portrait { aspect-ratio: 390 / 844; max-width: 220px; margin: 0 auto; }
   .a2-position-preview-provider { position: absolute; right: 8%; bottom: 10%; width: 18px; height: 10px; border: 1px dashed rgba(255,255,255,.35); border-radius: 2px; }
-  .a2-position-preview-dot { position: absolute; width: 14px; height: 14px; border-radius: 50%; background: var(--a2-cyan); box-shadow: 0 0 0 4px rgba(0,0,0,.35), 0 0 10px var(--a2-cyan); }
-  .a2-position-preview-back { position: absolute; width: 12px; height: 12px; border-radius: 4px; background: var(--a2-green, #7ee2a8); box-shadow: 0 0 0 4px rgba(0,0,0,.35), 0 0 10px var(--a2-green, #7ee2a8); }
+  .a2-position-preview-dot { position: absolute; border-radius: 50%; background: var(--a2-cyan); box-shadow: 0 0 0 4px rgba(0,0,0,.35), 0 0 10px var(--a2-cyan); }
+  .a2-position-preview-back { position: absolute; border-radius: 4px; background: var(--a2-green, #7ee2a8); box-shadow: 0 0 0 4px rgba(0,0,0,.35), 0 0 10px var(--a2-green, #7ee2a8); }
   .a2-position-preview-caption { position: absolute; left: 8px; top: 6px; font-size: 9px; letter-spacing: .08em; text-transform: uppercase; color: rgba(255,255,255,.45); }
 
   @media (max-width: 768px) {

@@ -138,14 +138,21 @@ assert.match(shell, /function handlePlay\(\)[\s\S]{0,500}acquireWakeLock\(\)/, '
 assert.doesNotMatch(shell, /function handleEmbedLoad\(\)[\s\S]{0,500}acquireWakeLock/, 'wake lock NOT acquired on embedload (conservative)');
 // Embed playback events drive wake lock via handleEmbedPlaybackEvent.
 // Phase 6 audit fix 2: signature includes sourceId for stale-event rejection.
-assert.match(shell, /function handleEmbedPlaybackEvent\(event: \{ type: 'play' \| 'pause' \| 'ended'; sourceId\?: string \}\)/, 'handleEmbedPlaybackEvent function exists with sourceId');
+// MAVP-4 supersession (documented, Issue 1): the signature intentionally
+// widens to ALSO carry 'timeupdate' | 'ready' — the presentation signals for
+// the embed presentation gate. The sourceId stale-rejection contract and the
+// play-branch wake-lock contract are unchanged.
+assert.match(shell, /function handleEmbedPlaybackEvent\(event: \{ type: 'play' \| 'pause' \| 'ended' \| 'timeupdate' \| 'ready'; sourceId\?: string \}\)/, 'handleEmbedPlaybackEvent function exists with sourceId (+ MAVP-4 presentation signals)');
 // MAVP-2 supersession: the play branch also stamps `embedEverPlayed = true`
 // (auto-hide distinguishes event-posting providers from black-box ones) —
 // the window widens accordingly; the wake-lock contract is unchanged.
 assert.match(shell, /if \(event\.type === 'play'\) \{[\s\S]{0,110}embedPlaying = true[\s\S]{0,40}acquireWakeLock/, 'embed play sets embedPlaying + acquires wake lock');
 assert.match(shell, /event\.type === 'pause' \|\| event\.type === 'ended'[\s\S]{0,80}embedPlaying = false[\s\S]{0,30}releaseWakeLock/, 'embed pause/ended clears embedPlaying + releases wake lock');
 assert.match(shell, /if \(event\.sourceId && embedPlaybackSourceId && event\.sourceId !== embedPlaybackSourceId\) return/, 'stale source events rejected');
-assert.match(shell, /export let embedPlaybackEvent: \{ type: 'play' \| 'pause' \| 'ended'; _seq\?: number; sourceId\?: string \} \| null = null/, 'embedPlaybackEvent prop declared with sourceId');
+// MAVP-4 supersession (documented, Issue 1): the prop type intentionally
+// widens to carry the presentation signals ('timeupdate' | 'ready') — the
+// sourceId field and the reactive-watcher contract are unchanged.
+assert.match(shell, /export let embedPlaybackEvent: \{ type: 'play' \| 'pause' \| 'ended' \| 'timeupdate' \| 'ready'; _seq\?: number; sourceId\?: string \} \| null = null/, 'embedPlaybackEvent prop declared with sourceId (+ MAVP-4 presentation signals)');
 assert.match(shell, /\$: if \(embedPlaybackEvent\?\._seq && embedPlaybackEvent\._seq !== lastEmbedPlaybackSeq\)/, 'reactive watcher for embed playback events');
 assert.match(shell, /let embedPlaying = false/, 'embedPlaying state declared');
 assert.match(shell, /let embedPlaybackSourceId = ''/, 'embedPlaybackSourceId state declared');
@@ -267,7 +274,10 @@ assert.doesNotMatch(shell, /data-landscape-controls-toggle/, 'data-landscape-con
 // Phase 9: PanelTopClose/PanelTopOpen removed (landscape-controls-toggle button removed).
 assert.doesNotMatch(shell, /PanelTopClose/, 'PanelTopClose removed');
 assert.doesNotMatch(shell, /PanelTopOpen/, 'PanelTopOpen removed');
-assert.match(shell, /\.player-shell\.landscape-mode \{ height: 100dvh/, 'landscape CSS preserved (immersive redesign)');
+// MAVP-4 supersession (documented, Issue 2): the shell height gained an
+// explicit 100vh fallback line before 100dvh — the effective dvh height and
+// the landscape-mode presentation are unchanged.
+assert.match(shell, /\.player-shell\.landscape-mode \{ height: 100vh; height: 100dvh/, 'landscape CSS preserved (immersive redesign; MAVP-4 vh fallback chain)');
 assert.doesNotMatch(shell, /\.player-shell\.landscape-mode \.orientation-button[^}]*margin-right: 38px/, 'orientation-button margin-right removed (Phase 9)');
 assert.doesNotMatch(shell, /\.player-shell\.landscape-mode \.header-actions[^}]*margin-right: 38px/, 'dead .header-actions CSS still absent');
 assert.match(shell, /100svh/, '100svh preserved');

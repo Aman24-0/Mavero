@@ -1166,14 +1166,18 @@ function pristineFile(relative: string): string | null {
   // registry table) is sanctioned per the VidRift integration directive.
   const addedMigrations = [...migrationFiles].filter((name) => !pristineMigrations.includes(name));
   const removedMigrations = pristineMigrations.filter((name) => !migrationFiles.includes(name));
+  // MAVP-4 (sanctioned): source icon/badge contract widening — additive
+  // CHECK widening on streaming_sources.icon/badge only (rich icons +
+  // extensible badges). No cloudstream/registry/download tables touched.
   ok(
-    addedMigrations.length === 5
+    addedMigrations.length === 6
       && addedMigrations.includes('20261004000000_unified_downloader_global_order.sql')
       && addedMigrations.includes('20261102000000_adapter_build_lifecycle.sql')
       && addedMigrations.includes('20261103000000_live_tv_analytics_events.sql')
       && addedMigrations.includes('20261104000000_live_tv_fallback_embed_event.sql')
-      && addedMigrations.includes('20261105000000_vidrift_provider.sql'),
-    `F3: the ONLY added migrations are the FINAL TASK unified-order + build-lifecycle + LT-5-analytics + LT-15-fallback-event + VidRift-provider migrations (${addedMigrations.join(', ') || 'none'})`,
+      && addedMigrations.includes('20261105000000_vidrift_provider.sql')
+      && addedMigrations.includes('20261106000000_source_icon_badge_contracts.sql'),
+    `F3: the ONLY added migrations are the FINAL TASK unified-order + build-lifecycle + LT-5-analytics + LT-15-fallback-event + VidRift-provider + MAVP-4-icon-badge migrations (${addedMigrations.join(', ') || 'none'})`,
   );
   ok(removedMigrations.length === 0, 'F3: no migration was removed');
 

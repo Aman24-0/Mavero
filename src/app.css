@@ -386,6 +386,17 @@ html[data-account-sheet-open] body { overflow: hidden; }
 html[data-account-sheet-open] body { touch-action: none; }
 
 /* ============================================================
+   Player route scroll lock (MAVP-4 Issue 2) — same pattern as
+   the admin/account sheet locks. The player shell toggles this
+   attribute on <html> while it is mounted: the watch page
+   renders bare (no AppShell) and the player owns the entire
+   viewport, so the document must not scroll behind it (browser
+   UI transitions and overscroll used to scroll the player page).
+   Set on mount, removed on destroy — never a global change.
+   ============================================================ */
+html[data-player-open] body { overflow: hidden; }
+
+/* ============================================================
    ADMIN 2.0 — NEON NOIR CONTROL SYSTEM
    Phase A: Design Foundation
    ============================================================

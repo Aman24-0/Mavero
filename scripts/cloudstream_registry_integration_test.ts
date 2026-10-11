@@ -228,6 +228,10 @@ function section_registry(): void {
   const liveTvAnalyticsMigration = '20261103000000_live_tv_analytics_events.sql';
   const liveTvFallbackMigration = '20261104000000_live_tv_fallback_embed_event.sql';
   const vidriftProviderMigration = '20261105000000_vidrift_provider.sql';
+  // MAVP-4 (sanctioned): source icon/badge contract widening — additive
+  // CHECK-constraint widening on streaming_sources.icon/badge only (rich
+  // icons + extensible badges). No registry/download_provider tables touched.
+  const mavp4IconBadgeMigration = '20261106000000_source_icon_badge_contracts.sql';
   const added = migrations.filter((name) => !pristineMigrations.includes(name));
   const phase2Sql = read(`supabase/migrations/${phase2Migration}`);
   const phase2SqlNoComments = phase2Sql.replace(/--[^\n]*/g, '');
@@ -236,7 +240,7 @@ function section_registry(): void {
   const unifiedSql = read(`supabase/migrations/${unifiedMigration}`);
   const unifiedSqlNoComments = unifiedSql.replace(/--[^\n]*/g, '');
   ok(
-    added.length === 8
+    added.length === 9
       && added.includes(migrationName)
       && added.includes(phase2Migration)
       && added.includes(phase3Migration)
@@ -244,8 +248,9 @@ function section_registry(): void {
       && added.includes(lifecycleMigration)
       && added.includes(liveTvAnalyticsMigration)
       && added.includes(liveTvFallbackMigration)
-      && added.includes(vidriftProviderMigration),
-    `§A10: exactly the CS-5 + Phase 2 + Phase 3 + FINAL TASK + build-lifecycle + LT-5-analytics + LT-15-fallback-event + VidRift-provider migrations were added (${added.join(', ') || 'none'})`,
+      && added.includes(vidriftProviderMigration)
+      && added.includes(mavp4IconBadgeMigration),
+    `§A10: exactly the CS-5 + Phase 2 + Phase 3 + FINAL TASK + build-lifecycle + LT-5-analytics + LT-15-fallback-event + VidRift-provider + MAVP-4-icon-badge migrations were added (${added.join(', ') || 'none'})`,
   );
   // VIDRIFT (sanctioned): insert-only registration — no destructive verbs,
   // no download_providers / registry-table references.

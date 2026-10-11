@@ -14,7 +14,7 @@
   import type { PlaybackContext } from '$lib/client/progress/types';
   import { PlaybackManager, type ResolutionState } from '$lib/client/player/PlaybackManager';
   import { nextEpisodeTarget } from '$lib/shared/player-state';
-  import { isSourceBadge } from '$lib/shared/source-presentation';
+  import { isSourceBadge, parseSourceBadges } from '$lib/shared/source-presentation';
   import { track as trackAnalytics } from '$lib/client/analytics/dispatcher';
   import { markPlayerMilestone } from '$lib/client/player/player-timing';
 
@@ -121,6 +121,10 @@
         // Guarded copy: only the constrained enum values ever reach the
         // option — unknown/legacy badge values render no badge.
         badge: isSourceBadge(source.badge) ? source.badge : undefined,
+        // MAVP-4 Issue 4: the extensible badge configs (legacy enum mapped;
+        // JSON-array values parsed by the total shared parser — invalid
+        // values render no badges). Rendering never sees the raw value.
+        badges: parseSourceBadges(source.badge),
         icon: source.icon ?? undefined,
         // Player redesign: per-source Landscape-control placement, parsed +
         // bounded ONCE here (malformed capability values → null → the shell
@@ -222,7 +226,9 @@
   // after a source switch — the PlaybackManager has its own session guards,
   // but a stale postMessage could still arrive between the source switch and
   // the adapter destroy. Including selectedSourceId here is a safety net.
-  let embedPlaybackEvent: { type: 'play' | 'pause' | 'ended'; _seq: number; sourceId?: string } | null = null;
+  // MAVP-4 Issue 1: 'timeupdate'/'ready' are also forwarded (presentation
+  // signals for the shell's embed presentation gate).
+  let embedPlaybackEvent: { type: 'play' | 'pause' | 'ended' | 'timeupdate' | 'ready'; _seq: number; sourceId?: string } | null = null;
   let embedPlaybackSeq = 0;
 
   // Subscribe to manager state so the route's reactive locals mirror the
@@ -283,7 +289,13 @@
     // The _seq counter forces Svelte to re-trigger the reactive block even if
     // the same event type fires twice in a row. The sourceId field lets
     // PlayerShell reject stale events from an old source after a source switch.
-    if (event.type === 'play' || event.type === 'pause' || event.type === 'ended') {
+    // MAVP-4 Issue 1: 'timeupdate' and 'ready' are forwarded as PRESENTATION
+    // signals for the embed presentation gate — the timeupdate-only adapters
+    // (VidStuck, Viduki, MoviesNexus, VidApiQzz) never emit play/pause, so
+    // their first progress/ready event is the earliest reliable proof that
+    // the provider surface is presenting. Direct sources never emit manager
+    // events, so everything forwarded here is embed-only by construction.
+    if (event.type === 'play' || event.type === 'pause' || event.type === 'ended' || event.type === 'timeupdate' || event.type === 'ready') {
       embedPlaybackSeq++;
       embedPlaybackEvent = { type: event.type, _seq: embedPlaybackSeq, sourceId: resolvedSource?.sourceId ?? selectedSourceId };
     }

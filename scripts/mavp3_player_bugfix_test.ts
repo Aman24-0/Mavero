@@ -152,8 +152,12 @@ ok(!shell.includes('contentWindow.addEventListener') && !shell.includes('iframe.
 
 // 2.4 All THREE parent-observable activity signals route to revealControls,
 //     including the NEW window-focus return path.
-ok(/const handleWindowBlur = \(\) => \{\s*const active = document\.activeElement;\s*if \(active instanceof HTMLIFrameElement && playerRoot\?\.contains\(active\)\) revealControls\(\);/.test(shellCode), '2.4a tapping into the iframe (window blur + iframe activeElement) reveals the controls');
-ok(/const handleWindowFocus = \(\) => \{\s*const active = document\.activeElement;\s*if \(active instanceof HTMLIFrameElement && playerRoot\?\.contains\(active\)\) revealControls\(\);/.test(shellCode), '2.4b RETURNING to the document while the embed holds focus reveals the controls (window focus path)');
+//     MAVP-4 supersession (documented): the SAME handlers now ALSO dismiss
+//     the embed presentation gate (revealEmbedSurface) — a tap into a
+//     still-loading embed proves the provider surface is interactive. The
+//     revealControls contract asserted here is UNCHANGED, only extended.
+ok(/const handleWindowBlur = \(\) => \{\s*const active = document\.activeElement;\s*if \(active instanceof HTMLIFrameElement && playerRoot\?\.contains\(active\)\) \{\s*revealEmbedSurface\(\);\s*revealControls\(\);/.test(shellCode), '2.4a tapping into the iframe (window blur + iframe activeElement) reveals the controls (+ MAVP-4: dismisses the presentation gate)');
+ok(/const handleWindowFocus = \(\) => \{\s*const active = document\.activeElement;\s*if \(active instanceof HTMLIFrameElement && playerRoot\?\.contains\(active\)\) \{\s*revealEmbedSurface\(\);\s*revealControls\(\);/.test(shellCode), '2.4b RETURNING to the document while the embed holds focus reveals the controls (window focus path)');
 ok(/document\.addEventListener\('focusin', handleFocusIn\)/.test(shellCode), '2.4c keyboard focus entering any Mavero-owned surface reveals the controls');
 ok(/window\.addEventListener\('keydown', handleKeydown\)/.test(shellCode) && /revealControls\(\);/.test(functionBody(shellCode, 'const handleKeydown = (event: KeyboardEvent) => {', 'const showControls')), '2.4d ANY keypress outside editable surfaces reveals the controls (TV remotes)');
 ok(/playerRoot\?\.addEventListener\('pointermove', showControls[\s\S]*playerRoot\?\.addEventListener\('pointerdown', showControls[\s\S]*playerRoot\?\.addEventListener\('touchstart', showControls/.test(shellCode), '2.4e pointer move/down + touch reveal the controls');
@@ -326,8 +330,14 @@ ok(/if \(backSize !== null \|\| landscapeSize !== null\) payload\.sizes = \{ \.\
 ok(/type="number" min=\{CONTROLS_SIZE_MIN_PX\} max=\{CONTROLS_SIZE_MAX_PX\} step="1"/.test(adminPage), '5.5f size inputs carry the documented bounds');
 ok(/Control size \(both orientations\)/.test(adminPage), '5.5g the size block is clearly separated from the per-orientation placement profiles');
 ok(/Reset size/.test(adminPage), '5.5h per-control size reset exists in the editor');
-ok(/previewMarkerSize\('back'\) \? `width:\$\{previewMarkerSize\('back'\)\}px;height:\$\{previewMarkerSize\('back'\)\}px`/.test(adminPage) && /previewMarkerSize\('landscape'\)/.test(adminPage), '5.5i the calibration preview shows the configured sizes');
-ok(/back \(square, \{previewMarkerSize\('back'\) \?\? BACK_CONTROL_DEFAULT_SIZE_PX\}px\) · landscape control \(dot, \{previewMarkerSize\('landscape'\) \?\? LANDSCAPE_CONTROL_DEFAULT_SIZE_PX\}px\)/.test(adminPage), '5.5j the preview caption names the effective size (default fallback)');
+// MAVP-4 supersession (documented, Issue 3): the calibration preview no
+// longer paints raw px sizes on the stage — BOTH markers are styled by the
+// SHARED resolver (controlsPreviewMarkerStyle) over the exact submitted
+// payload, with the configured (or default) size rendered SCALED via the
+// documented reference-viewport model. The contract here is intentionally
+// strengthened: the preview now interprets sizes identically to the runtime.
+ok(adminPage.includes("previewBackStyle") && adminPage.includes("previewLandscapeStyle") && adminPage.includes('controlsPreviewMarkerStyle(previewPosition, '), '5.5i the calibration preview shows the configured sizes through the SHARED resolver (MAVP-4 scaled contract)');
+ok(/previewMarkerSize\('back'\) \?\? BACK_CONTROL_DEFAULT_SIZE_PX}px/.test(adminPage) && /previewMarkerSize\('landscape'\) \?\? LANDSCAPE_CONTROL_DEFAULT_SIZE_PX}px/.test(adminPage), '5.5j the preview caption names the effective size (default fallback)');
 
 // 5.6 Player renderer: sizes ride the composed inline style; defaults are
 //     untouched for sources without custom sizing.
