@@ -6,6 +6,7 @@ import type { IntegrationType } from '$lib/server/streaming/types';
 import { vidsrcProviderAdapter } from './vidsrc';
 import { vidlinkProviderAdapter } from './vidlink';
 import { createMaveroHostedAdapter, MAVERO_HOSTED_ADAPTER_ID_VIDARA, MAVERO_HOSTED_ADAPTER_ID_ABYSS } from './mavero-hosted';
+import { blueVelvetProviderAdapter, BLUEVELVET_ADAPTER_ID } from './bluevelvet';
 import type { Json } from '$lib/server/supabase/database.types';
 
 function resultTypeFromCapabilities(context: ResolverContext): 'direct' | 'embed' {
@@ -110,6 +111,12 @@ export function createDefaultAdapterIds(): Record<string, ProviderAdapter> {
     [vidlinkProviderAdapter.adapterId ?? 'vidlink-embed']: vidlinkProviderAdapter,
     [MAVERO_HOSTED_ADAPTER_ID_VIDARA]: createMaveroHostedAdapter(MAVERO_HOSTED_ADAPTER_ID_VIDARA),
     [MAVERO_HOSTED_ADAPTER_ID_ABYSS]: createMaveroHostedAdapter(MAVERO_HOSTED_ADAPTER_ID_ABYSS),
+    // Blue Velvet (2026-10): API-resolved direct HLS source. Registered
+    // under the same adapter_id the provider migration sets on
+    // streaming_providers.adapter_id — the resolver's adapterFor(config)
+    // dispatches here. The source is seeded DISABLED until upstream CORS
+    // allowlisting is verified (see bluevelvet.ts module doc).
+    [BLUEVELVET_ADAPTER_ID]: blueVelvetProviderAdapter,
   };
 }
 

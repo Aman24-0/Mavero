@@ -243,6 +243,13 @@ function section_registry(): void {
   // the assignment mapping table is touched (no registry/download_provider/
   // cloudstream tables) — see MAVP7_PRODUCTION_FIX_AUDIT.md §4.
   const mavp7UniqueAssignmentMigration = '20261012000000_source_category_unique_assignment.sql';
+  // BLUE VELVET PROVIDER (20261112000000, sanctioned): API-resolved direct
+  // HLS provider registration — insert-only streaming_providers +
+  // streaming_sources rows (provider AND source seeded DISABLED until
+  // upstream CORS allowlisting is verified). Never touches
+  // download_providers or any registry/cloudstream table — see
+  // BLUEVELVET_INTEGRATION_REPORT.md.
+  const blueVelvetProviderMigration = '20261112000000_blue_velvet_provider.sql';
   const added = migrations.filter((name) => !pristineMigrations.includes(name));
   const phase2Sql = read(`supabase/migrations/${phase2Migration}`);
   const phase2SqlNoComments = phase2Sql.replace(/--[^\n]*/g, '');
@@ -251,7 +258,7 @@ function section_registry(): void {
   const unifiedSql = read(`supabase/migrations/${unifiedMigration}`);
   const unifiedSqlNoComments = unifiedSql.replace(/--[^\n]*/g, '');
   ok(
-    added.length === 11
+    added.length === 12
       && added.includes(migrationName)
       && added.includes(phase2Migration)
       && added.includes(phase3Migration)
@@ -262,8 +269,9 @@ function section_registry(): void {
       && added.includes(vidriftProviderMigration)
       && added.includes(mavp4IconBadgeMigration)
       && added.includes(mavp5DefaultSlotsMigration)
-      && added.includes(mavp7UniqueAssignmentMigration),
-    `§A10: exactly the CS-5 + Phase 2 + Phase 3 + FINAL TASK + build-lifecycle + LT-5-analytics + LT-15-fallback-event + VidRift-provider + MAVP-4-icon-badge + MAVP-5-default-slots + MAVP-7-unique-assignment migrations were added (${added.join(', ') || 'none'})`,
+      && added.includes(mavp7UniqueAssignmentMigration)
+      && added.includes(blueVelvetProviderMigration),
+    `§A10: exactly the CS-5 + Phase 2 + Phase 3 + FINAL TASK + build-lifecycle + LT-5-analytics + LT-15-fallback-event + VidRift-provider + MAVP-4-icon-badge + MAVP-5-default-slots + MAVP-7-unique-assignment + BlueVelvet-provider migrations were added (${added.join(', ') || 'none'})`,
   );
   // VIDRIFT (sanctioned): insert-only registration — no destructive verbs,
   // no download_providers / registry-table references.

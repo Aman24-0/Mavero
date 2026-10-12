@@ -537,6 +537,12 @@ export const PROVIDER_CAPABILITY_MAP: Record<string, ProviderPlaybackCapabilitie
   'moviesnexus': MOVIESNEXUS_CAPABILITIES,
   'vidstuck': VIDSTUCK_CAPABILITIES,
   'vidrift': VIDRIFT_CAPABILITIES,
+  // Blue Velvet (2026-10): API-resolved DIRECT HLS source — direct playback
+  // is fully observable by Mavero's own player (the generic direct contract:
+  // every capability true except nextEpisode/postMessage, which are
+  // provider-side concepts direct playback does not use). Seeded source is
+  // DISABLED until upstream CORS allowlisting is verified.
+  'blue-velvet': DIRECT_PLAYBACK_CAPABILITIES,
 };
 
 /**
