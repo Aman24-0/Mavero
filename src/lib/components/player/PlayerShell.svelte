@@ -21,11 +21,13 @@
   // (left −10 s / right +10 s) and press-and-hold 2× with exact restore.
   import { brightnessDimOpacity, clampBrightness, createPlayerGestureController, createPlayerTapGestureController, gestureIndicatorPercent, type GestureKind, type PlayerGestureController, type PlayerTapGestureController, type TapSeekDirection } from '$lib/client/player/touch/gestures';
   // Player UI V2 (Part 1, Phase 3A): external (VDRK) subtitle lists — same-origin
-  // proxy tracks, bounded TTL cache, validated entries.
-  import { createExternalSubtitleController, mergeSubtitleTracks, type ExternalSubtitleRequest, type ExternalSubtitleTrack } from '$lib/client/player/subtitles/external-subtitles';
+  // proxy tracks, bounded TTL cache, validated entries. The request-key
+  // helper aliases the controller's OWN key space — the shell's stale guards
+  // must compare results against it (see loadExternalSubtitles below).
+  import { createExternalSubtitleController, externalSubtitlesKey as externalSubtitleRequestKey, mergeSubtitleTracks, type ExternalSubtitleRequest, type ExternalSubtitleTrack } from '$lib/client/player/subtitles/external-subtitles';
   // Player UI V2 (Part 1, Phase 3B): TheIntroDB Skip Intro lookup — read-only,
   // optional-by-design, validated segments in SECONDS for the player seek API.
-  import { createIntroLookup, type IntroMediaRequest, type IntroSegment } from '$lib/client/player/intro/intro-client';
+  import { createIntroLookup, introRequestKey, type IntroMediaRequest, type IntroSegment } from '$lib/client/player/intro/intro-client';
   // Player UI V2 (Part 2, Phase 4): Google Cast (Web Sender) for eligible
   // direct-media sources — static eligibility gates + CORS probe + CAF SDK
   // controller (lazy, once per page; remote state mirrored into the shell).
@@ -831,26 +833,63 @@
   /** TMDB ids: the same canonical shape the server-side adapters validate. */
   const TMDB_ID_PATTERN = /^[1-9][0-9]{0,15}$/;
 
+  /**
+   * Player V2 remaining fixes (2026-10): resolves the item's NUMERIC TMDB id
+   * for the optional external lookups (VDRK subtitles / TheIntroDB).
+   *
+   * ROOT CAUSE FIXED HERE: production catalog ids are PREFIXED
+   * (`movie-24428`, `series-236235` — the TMDB adapter's normalized shape),
+   * so the previous bare-numeric gate rejected EVERY production title and
+   * both lookups died silently ("No subtitles available" with no request
+   * ever issued; no Skip Intro). Resolution order:
+   *   1. `content.tmdbId` — the authoritative external id the watch route
+   *      forwards from `item.externalIds.tmdb`;
+   *   2. a BARE numeric catalog id (legacy fixtures) — unchanged behavior;
+   *   3. the codebase-standard prefix strip (`^(movie|series)-`) — the same
+   *      defensive shape the TMDB adapter itself uses for its own lookups.
+   * Returns null when no trustworthy TMDB id exists (fixture/non-TMDB
+   * content) — the lookups then honestly report "no data" (never a
+   * fabricated request).
+   */
+  function resolveContentTmdbId(): number | null {
+    const explicit = String(content.tmdbId ?? '').trim();
+    if (TMDB_ID_PATTERN.test(explicit)) return Number.parseInt(explicit, 10);
+    const raw = String(content.id ?? '');
+    if (TMDB_ID_PATTERN.test(raw)) return Number.parseInt(raw, 10);
+    const stripped = raw.replace(/^(movie|series|anime)-/, '');
+    if (stripped !== raw && TMDB_ID_PATTERN.test(stripped)) return Number.parseInt(stripped, 10);
+    return null;
+  }
+
   async function loadExternalSubtitles(key: string) {
     // The TMDB id is the content id on the TMDB pipeline; a non-TMDB id (or a
     // movie context for a series route) silently disables the feature.
-    const tmdbRaw = String(content.id ?? '');
-    if (!TMDB_ID_PATTERN.test(tmdbRaw)) {
+    const tmdbId = resolveContentTmdbId();
+    if (tmdbId === null) {
       externalSubtitleStatus = 'empty';
       externalSubtitleNotice = 'No subtitles available';
       externalSubtitleError = null;
       return;
     }
     const kind: 'movie' | 'tv' = content.type === 'movie' ? 'movie' : 'tv';
-    const tmdbId = Number.parseInt(tmdbRaw, 10);
     const request: ExternalSubtitleRequest = kind === 'tv'
       ? { kind, tmdbId, season: currentEpisode?.season, episode: currentEpisode?.episode }
       : { kind, tmdbId };
     externalSubtitleStatus = 'loading';
     externalSubtitleNotice = 'Checking subtitles…';
-    const result = await externalSubtitleController.load(request, key);
+    // Player V2 remaining fixes (2026-10): the stale guard must compare in
+    // the CONTROLLER's key space. The shell previously passed its
+    // `mediaLookupKey` (`movie:24428::` / `series:236235:2:1`) while the
+    // controller computes `movie:24428` / `tv:236235:2:1` — the two never
+    // matched, so `result.superseded` was TRUE for every response and every
+    // validated track list was dropped before it could attach (the menu
+    // stayed on "Checking subtitles…" forever). The controller key for the
+    // CURRENT request is now the caller key; staleness across title/episode
+    // switches stays owned by the shell's own mediaLookupKey guard below.
+    const requestKey = externalSubtitleRequestKey(request);
+    const result = await externalSubtitleController.load(request, requestKey);
     // Stale-response guard: only the CURRENT media's result may attach.
-    if (key !== externalSubtitlesKey || result.key !== key || result.superseded) return;
+    if (key !== externalSubtitlesKey || result.key !== requestKey || result.superseded) return;
     externalSubtitles = result.tracks;
     externalSubtitleError = result.error;
     if (result.error === null) {
@@ -868,21 +907,30 @@
   }
 
   async function loadIntro(key: string) {
-    const tmdbRaw = String(content.id ?? '');
-    if (!TMDB_ID_PATTERN.test(tmdbRaw)) {
+    // Same TMDB-id resolution as the subtitle lookup (see resolveContentTmdbId
+    // — the prefixed production catalog id previously killed this lookup at
+    // the gate for every title).
+    const tmdbId = resolveContentTmdbId();
+    if (tmdbId === null) {
       introStatus = 'no-data';
       introErrorKind = null;
       return;
     }
     const kind: 'movie' | 'tv' = content.type === 'movie' ? 'movie' : 'tv';
-    const tmdbId = Number.parseInt(tmdbRaw, 10);
     const durationSec = duration > 0 ? duration : null;
     const request: IntroMediaRequest = kind === 'tv'
       ? { kind, tmdbId, season: currentEpisode?.season, episode: currentEpisode?.episode, durationSec }
       : { kind, tmdbId, durationSec };
     introStatus = 'loading';
-    const result = await introLookup.getIntroSegments(request, key);
-    if (key !== introKey || result.superseded) return;
+    // Player V2 remaining fixes (2026-10): stale guard in the CONTROLLER's
+    // key space (see loadExternalSubtitles) — the shell's mediaLookupKey
+    // (`series:236235:2:1`) could never equal the controller's `tv:…` key,
+    // so every intro result was superseded+dropped and Skip Intro could
+    // never render. Staleness across episode switches stays with the
+    // shell's own mediaLookupKey guard.
+    const requestKey = introRequestKey(request);
+    const result = await introLookup.getIntroSegments(request, requestKey);
+    if (key !== introKey || result.key !== requestKey || result.superseded) return;
     introSegments = result.segments;
     introErrorKind = result.errorKind;
     introStatus = result.segments.length ? 'available' : result.errorKind ? 'unavailable' : 'no-data';

@@ -70,6 +70,7 @@
   //   data-related starts in onMount (existing Mavero page pattern).
   import { onDestroy, onMount } from 'svelte';
   import { page as appPage } from '$app/state';
+  import { PRODUCTION_ORIGIN } from '$lib/shared/seo';
   import { Search, X, Radio, RefreshCw, LoaderCircle, SlidersHorizontal, BookOpen } from 'lucide-svelte';
   import ScrollToTop from '$components/ScrollToTop.svelte';
   import ErrorState from '$components/ErrorState.svelte';
@@ -496,7 +497,7 @@
 <svelte:head>
   <title>Live TV — Mavero</title>
   <meta name="description" content="Browse and watch live TV channels in Mavero." />
-  <link rel="canonical" href={`${appPage.url.origin}${appPage.url.pathname}`} />
+  <link rel="canonical" href={`${PRODUCTION_ORIGIN}${appPage.url.pathname}`} /><!-- SEO: fixed production host -->
   <meta property="og:title" content="Live TV — Mavero" />
   <meta property="og:description" content="Browse and watch live TV channels in Mavero." />
   <meta property="og:url" content={`${appPage.url.origin}${appPage.url.pathname}`} />

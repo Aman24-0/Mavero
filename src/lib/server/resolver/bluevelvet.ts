@@ -192,6 +192,170 @@ export function validateBlueVelvetMediaUrl(raw: string): string {
 
 type BlueVelvetResponse = { ready?: unknown; url?: unknown; status?: unknown; error?: unknown };
 
+// ---------------------------------------------------------------------------
+// Blue Velvet master-playlist variant discovery (Player V2 remaining fixes,
+// 2026-10 — Issue: the HLS quality selector never appears for Blue Velvet).
+//
+// VERIFIED ROOT CAUSE (live probes 2026-10-13): the CDN returns the master
+// playlist with NO `access-control-allow-origin` for Mavero's deployment
+// origin, so the browser-side hls.js engine CANNOT read the manifest (its
+// XHR is CORS-bound) and the engine — the only surface that exposes quality
+// levels — never engages. Chromium-family browsers (including the user's
+// Android device) report `canPlayType(HLS)='maybe'`, so playback runs on the
+// NATIVE media-element path (no-cors — works), which exposes no level API
+// and rendered NO quality selector at all.
+//
+// THE FIX within the existing architecture (no proxy, no engine replacement):
+// the SERVER resolves the same master URL the browser would play and parses
+// its `#EXT-X-STREAM-INF` variants into `SourceResult.qualities` — the
+// EXISTING per-source quality list contract. The player's existing
+// `qualities` selector then renders Auto (= the master, native ABR) + the
+// real variants, and selection swaps the media URL with position
+// preservation (the existing `setQuality` pending-seek path). Media-element
+// loads stay no-cors exactly like today — nothing new is exposed to the
+// browser, and the strict URL contract below keeps every variant URL on the
+// SAME tokenized /play/{token}/ prefix of the SAME trusted origin.
+//
+// Degradation: ANY failure (timeout, HTTP error, non-playlist body, parse
+// miss, validation rejection) yields NO qualities — resolution and playback
+// continue exactly as before. Discovery never fabricates entries.
+// ---------------------------------------------------------------------------
+
+/** The master fetch must never delay resolution meaningfully. */
+const BLUEVELVET_MASTER_FETCH_TIMEOUT_MS = 3_000;
+/** A master playlist is tiny; the parse input is hard-capped anyway. */
+const BLUEVELVET_MASTER_MAX_CHARS = 65_536;
+/** Upper bound on advertised variants (the observed streams carry ≤ 6). */
+const BLUEVELVET_MAX_VARIANTS = 16;
+
+/**
+ * One variant playlist path segment under the master's token prefix.
+ * Observed shape: `/play/{token}/v{N}/index.m3u8` — every segment is
+ * conservative `application/x-mpegURL`-safe text with no separators, no
+ * traversal and no percent-encoding.
+ */
+const VARIANT_SEGMENT_PATTERN = /^[A-Za-z0-9._-]+$/;
+
+/** One parsed `#EXT-X-STREAM-INF` attribute line + its URI line. */
+type MasterVariantEntry = { url: URL; height?: number; bitrate?: number };
+
+/**
+ * Parses + validates the master playlist's variant entries. Pure; unit-tested
+ * truth table. Every returned URL: HTTPS, the EXACT Blue Velvet origin, the
+ * SAME `/play/{token}/` prefix as the master (a variant can never point at a
+ * different token or resource class), safe path segments only, `.m3u8`, no
+ * query/hash.
+ */
+export function parseBlueVelvetVariants(masterUrl: string, body: string): MasterVariantEntry[] {
+  let master: URL;
+  try {
+    master = new URL(masterUrl);
+  } catch {
+    return [];
+  }
+  if (master.protocol !== 'https:' || master.origin.toLowerCase() !== BLUEVELVET_ORIGIN) return [];
+  if (!MASTER_PLAYLIST_PATH.test(master.pathname)) return [];
+  // The token prefix everything must stay under, e.g. "/play/{token}/".
+  const tokenPrefix = master.pathname.slice(0, master.pathname.lastIndexOf('/') + 1);
+
+  const lines = body.slice(0, BLUEVELVET_MASTER_MAX_CHARS).split(/\r?\n/);
+  const variants: MasterVariantEntry[] = [];
+  const seen = new Set<string>();
+  let pending: { resolution?: string; bandwidth?: number } | null = null;
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    if (line.startsWith('#EXT-X-STREAM-INF:')) {
+      pending = {};
+      // An attribute may sit right after the STREAM-INF colon (observed:
+      // `#EXT-X-STREAM-INF:BANDWIDTH=…`) or after any comma.
+      const resolution = /(?:^|[:,])\s*RESOLUTION=([0-9]+x[0-9]+)/i.exec(line);
+      if (resolution) pending.resolution = resolution[1];
+      const bandwidth = /(?:^|[:,])\s*BANDWIDTH=([0-9]+)/i.exec(line);
+      if (bandwidth) pending.bandwidth = Number.parseInt(bandwidth[1], 10);
+      continue;
+    }
+    if (line.startsWith('#')) {
+      // Other tags (EXT-X-MEDIA, EXT-X-VERSION, …) never carry the next URI.
+      continue;
+    }
+    // A URI line consumes the preceding STREAM-INF (if any).
+    const attrs = pending;
+    pending = null;
+    if (!attrs) continue;
+    if (variants.length >= BLUEVELVET_MAX_VARIANTS) break;
+    let resolved: URL;
+    try {
+      resolved = new URL(line, master);
+    } catch {
+      continue;
+    }
+    if (resolved.protocol !== 'https:') continue;
+    if (resolved.origin.toLowerCase() !== BLUEVELVET_ORIGIN) continue;
+    if (resolved.search || resolved.hash) continue;
+    // Same token prefix + safe segments + .m3u8 suffix.
+    if (!resolved.pathname.startsWith(tokenPrefix)) continue;
+    const suffix = resolved.pathname.slice(tokenPrefix.length);
+    const segments = suffix.split('/');
+    if (segments.length === 0 || !segments[segments.length - 1].endsWith('.m3u8')) continue;
+    if (segments.some((segment) => segment.length === 0 || !VARIANT_SEGMENT_PATTERN.test(segment))) continue;
+    const key = resolved.toString();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    let height: number | undefined;
+    if (attrs.resolution) {
+      const heightPart = Number.parseInt(attrs.resolution.split('x')[1] ?? '', 10);
+      if (Number.isSafeInteger(heightPart) && heightPart > 0) height = heightPart;
+    }
+    variants.push({ url: resolved, ...(height !== undefined ? { height } : {}), ...(Number.isFinite(attrs.bandwidth) ? { bitrate: attrs.bandwidth } : {}) });
+  }
+  return variants;
+}
+
+/** Maps one parsed variant onto the shared QualitySource shape (safe label). */
+function variantToQualitySource(entry: MasterVariantEntry): { url: string; label?: string; height?: number; bitrate?: number } {
+  const url = entry.url.toString();
+  // Label derivation mirrors the player's own safe engine labels: the
+  // manifest RESOLUTION height is the honest presentation value (the
+  // verified stream's "3840x2160" variant is "2160p" — never the coded
+  // frame height); bitrate is the fallback. Neither → no label.
+  if (typeof entry.height === 'number' && entry.height > 0) {
+    return { url, label: `${entry.height}p`, height: entry.height, ...(Number.isFinite(entry.bitrate) ? { bitrate: entry.bitrate } : {}) };
+  }
+  if (typeof entry.bitrate === 'number' && Number.isFinite(entry.bitrate) && entry.bitrate > 0) {
+    const kbps = Math.round(entry.bitrate / 1000);
+    const label = kbps >= 1000 ? `${Number.isInteger(kbps / 1000) ? kbps / 1000 : Number((kbps / 1000).toFixed(1))} Mbps` : `${kbps} kbps`;
+    return { url, label, bitrate: entry.bitrate };
+  }
+  return { url };
+}
+
+/**
+ * Fetches + parses the master playlist into the shared quality list.
+ * Exported for focused tests; the adapter calls this fire-and-degrade.
+ * ANY failure resolves to an EMPTY list — resolution never fails because
+ * variant discovery did.
+ */
+export async function discoverBlueVelvetVariants(masterUrl: string, fetchImpl: typeof fetch = fetch): Promise<ReturnType<typeof variantToQualitySource>[]> {
+  try {
+    const response = await fetchImpl(masterUrl, {
+      signal: AbortSignal.timeout(BLUEVELVET_MASTER_FETCH_TIMEOUT_MS),
+      headers: { accept: 'application/vnd.apple.mpegurl' },
+      redirect: 'error',
+    });
+    if (!response.ok) return [];
+    const contentType = (response.headers.get('content-type') ?? '').toLowerCase();
+    if (contentType && !contentType.includes('mpegurl')) return [];
+    const body = await response.text();
+    if (!body.includes('#EXTM3U')) return [];
+    return parseBlueVelvetVariants(masterUrl, body)
+      .map(variantToQualitySource)
+      .sort((a, b) => (b.bitrate ?? 0) - (a.bitrate ?? 0));
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Performs the upstream JSON API call and validates the response against
  * the observed contract. Exported for focused tests; production callers go
@@ -259,6 +423,12 @@ export const blueVelvetProviderAdapter: ProviderAdapter = {
 
     const safeUrl = await requestBlueVelvetMedia(endpoint);
 
+    // Player V2 remaining fixes (2026-10): discover the master playlist's
+    // REAL variants for the player's per-source quality list (see the block
+    // comment above `parseBlueVelvetVariants`). Fire-and-degrade: any
+    // failure leaves `qualities` absent and playback exactly as before.
+    const qualities = await discoverBlueVelvetVariants(safeUrl);
+
     // Normal direct HLS result — the existing HLS engine owns playback,
     // quality selection and audio-track discovery from the manifest.
     // protocol: 'hls' is guaranteed by construction (the path regex
@@ -275,6 +445,10 @@ export const blueVelvetProviderAdapter: ProviderAdapter = {
         sourceName: context.config.source.name,
         protocol: 'hls',
       },
+      // Only attached when the manifest genuinely exposed variants — the
+      // player's selector renders nothing for an empty list (never a
+      // fabricated Auto-only menu).
+      ...(qualities.length > 0 ? { qualities } : {}),
     };
   },
 };

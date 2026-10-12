@@ -119,12 +119,18 @@ const realFetch = globalThis.fetch;
 let currentFetch: typeof globalThis.fetch;
 globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => currentFetch(input, init)) as typeof fetch;
 let lastEndpoint = '';
+// Remaining fixes (2026-10): the adapter ALSO fetches the resolved master
+// playlist (variant discovery) — record every fetch in order so endpoint
+// assertions can address the API call specifically (fetch #1) instead of
+// "the last fetch seen" (now the master).
+const fetchLog: string[] = [];
 let lastInit: RequestInit | undefined;
 
 /** Installs a fetch stub returning the given responses; records the request. */
 function useFetch(handler: (endpoint: string, init?: RequestInit) => Response | Promise<Response>): void {
   currentFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     lastEndpoint = String(input instanceof URL ? input : input);
+    fetchLog.push(lastEndpoint);
     lastInit = init;
     return handler(lastEndpoint, init);
   }) as typeof fetch;
@@ -333,13 +339,19 @@ const tv = await resolveSourceFromConfig(
 );
 ok(tv.type === 'direct' && tv.url === MASTER_URL, '§4 tv episode resolves as direct');
 ok(
-  lastEndpoint === `${BLUEVELVET_ORIGIN}/cdn?tmdb=1399&type=tv&season=1&episode=3`,
-  '§4 tv resolution used the episode endpoint (type=tv&season&episode)',
+  fetchLog[fetchLog.length - 2] === `${BLUEVELVET_ORIGIN}/cdn?tmdb=1399&type=tv&season=1&episode=3`,
+  '§4 tv resolution used the episode endpoint (type=tv&season&episode) — fetch #1; fetch #2 is the variant-discovery master fetch',
 );
 {
-  const movieEndpointProbe = new URL(lastEndpoint);
+  const movieEndpointProbe = new URL(fetchLog[fetchLog.length - 2]);
   ok(movieEndpointProbe.searchParams.get('type') === 'tv', '§4 endpoint type param reflects the requested media type');
 }
+// Remaining fixes (2026-10): the master fetch happened and DEGRADED to no
+// qualities (this stub answers JSON for every URL → not a playlist → []).
+ok(
+  fetchLog[fetchLog.length - 1] === MASTER_URL,
+  '§4 variant discovery fetched the validated master URL (degrades to no qualities on non-playlist bodies)',
+);
 
 // Identifier discipline: missing TMDB id and missing season/episode are
 // rejected BEFORE any upstream call (upstream would silently serve episode 1).

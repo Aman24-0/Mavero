@@ -6,6 +6,7 @@
   import ScrollToTop from '$components/ScrollToTop.svelte';
   import { getRecentSearches, recordRecentSearch, removeRecentSearch } from '$lib/client/recent-searches';
   import type { PageData } from './$types';
+  import { PRODUCTION_ORIGIN } from '$lib/shared/seo';
   import type { MediaItem } from '$data/content';
 
   // BUG 3 FIX: MediaCard is lazily imported only when results exist.
@@ -236,7 +237,7 @@
 <svelte:head>
   <title>Search — Mavero</title>
   <meta name="description" content="Search movies and series across the Mavero catalog." />
-  <link rel="canonical" href={`${page.url.origin}${page.url.pathname}`} />
+  <link rel="canonical" href={`${PRODUCTION_ORIGIN}${page.url.pathname}`} /><!-- SEO: fixed production host; the request can never self-canonicalize -->
   <meta property="og:title" content="Search — Mavero" />
   <meta property="og:description" content="Search movies and series across the Mavero catalog." />
   <meta property="og:url" content={`${page.url.origin}${page.url.pathname}`} />

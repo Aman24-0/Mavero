@@ -232,6 +232,18 @@ export type PlayerContentContext = {
   title: string;
   poster?: string;
   backdrop?: string;
+  /**
+   * Player V2 remaining fixes (2026-10): the item's authoritative NUMERIC
+   * TMDB id (from `externalIds.tmdb`), when the content is TMDB-backed.
+   *
+   * REQUIRED for the optional player lookups (VDRK subtitles, TheIntroDB):
+   * production catalog ids are PREFIXED (`movie-24428`, `series-1399` — the
+   * TMDB adapter's normalized shape), and the lookups' strict TMDB-id
+   * validation rejected every production title at the gate ("No subtitles
+   * available" with no request ever issued). The catalog `id` stays the
+   * routing/progress identity; this field carries the external identity.
+   */
+  tmdbId?: string;
 };
 
 export type PlayerProgressEvent = {

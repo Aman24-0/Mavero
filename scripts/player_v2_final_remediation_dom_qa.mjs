@@ -7,8 +7,9 @@
 //   * portrait 360/390/430 — the secondary controls fit ONE row (fullscreen
 //     NOT wrapped onto its own row), the subtitle selector is compact (its
 //     width serves the label, not a blank reservation), quality is present.
-//   * landscape 844×390 — the row is ONE left-aligned group with fullscreen
-//     inside it (not stretched to the far edge).
+//   * landscape 844×390 — the row is ONE RIGHT-aligned group with fullscreen
+//     inside it (remaining fixes 2026-10: the approved landscape alignment is
+//     RIGHT; superseded the earlier left-aligned contract).
 //   * single-level quality — the honest disabled control with the REAL label.
 // This is the actual-DOM verification the audit demanded for Issue 1:
 // flex-wrap behavior + native-select sizing cannot be proven from source.
@@ -90,9 +91,9 @@ try {
       check(`${viewport.name}: the row stays inside the viewport`, geo.rowLeft >= 0 && geo.rowRight <= geo.viewportWidth, `row ${geo.rowLeft}..${geo.rowRight} of ${geo.viewportWidth}`);
     } else {
       check(`${viewport.name}: all secondary controls in ONE non-wrapping row`, geo.rowCount === 1, `distinct row tops: ${geo.rowCount}`);
-      check(`${viewport.name}: the group hugs the LEFT edge (landscape left-alignment)`, geo.rowLeft <= 20, `group left: ${geo.rowLeft}px`);
+      check(`${viewport.name}: the group hugs the RIGHT edge (landscape right-alignment, remaining-fix contract)`, geo.viewportWidth - geo.rowRight <= 20, `group right gap: ${geo.viewportWidth - geo.rowRight}px`);
       check(`${viewport.name}: fullscreen remains INSIDE the group`, geo.fullscreenOnFirstRow);
-      check(`${viewport.name}: the group does not stretch across the viewport`, geo.rowRight < geo.viewportWidth - 60, `group right: ${geo.rowRight} of ${geo.viewportWidth}`);
+      check(`${viewport.name}: the group does not stretch across the viewport (starts clear of the left edge)`, geo.rowLeft > 60, `group left: ${geo.rowLeft} of ${geo.viewportWidth}`);
       check(`${viewport.name}: quality control present in landscape`, geo.qualityPresent);
     }
     await page.close();

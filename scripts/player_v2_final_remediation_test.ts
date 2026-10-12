@@ -4,9 +4,10 @@
  * Covers the six reported issues, each traced to a verified root cause:
  *   1. Portrait secondary row: wasted horizontal space, blank subtitle
  *      selector, fullscreen wrapping to its own row.
- *   2. Landscape: secondary controls must form ONE left-aligned group with
- *      fullscreen inside it; the Back FAB must sit closer to the left
- *      corner (safe-area respected).
+ *   2. Landscape: secondary controls form ONE compact group with fullscreen
+ *      inside it; the Back FAB sits closer to the left corner (safe-area
+ *      respected). SUPERSEDED 2026-10 (remaining fixes): the approved
+ *      landscape alignment is now RIGHT (flex-end) — portrait stays left.
  *   3. Resume: the shell mounted before progress loaded and consumed
  *      `initialProgress` only at init — the async prop update reached
  *      nothing and playback started at 00:00 (and the first zero-position
@@ -96,12 +97,19 @@ console.log('\nISSUE 1 — portrait secondary row');
 }
 
 // ===========================================================================
-// ISSUE 2 — landscape: one left-aligned group + Back closer to the corner.
+// ISSUE 2 — landscape grouping + Back placement.
+// SUPERSESSION (Player V2 remaining fixes, 2026-10): the user's APPROVED
+// landscape layout changed direction — secondary controls now align to the
+// RIGHT edge (the previous contract pinned them LEFT-aligned). The base
+// (portrait) row stays left-aligned; the landscape media query pins
+// `justify-content: flex-end` + a non-flexing subtitle select so the whole
+// group packs right. Old contract: landscape row left-aligned; new contract:
+// landscape row right-aligned, same one-row/nowrap grouping.
 // ===========================================================================
 console.log('\nISSUE 2 — landscape grouping + Back placement');
 {
-  ok(/\.secondary-row \{ display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-start; gap: 6px; \}/.test(controls), '2a. the secondary row is explicitly LEFT-ALIGNED (both orientations)');
-  ok(/@media \(orientation: landscape\) and \(max-height: 500px\) \{\s*\.secondary-row \{ flex-wrap: nowrap; gap: 5px; \}/.test(controls), '2b. landscape phone: the secondary row is ONE non-wrapping group');
+  ok(/\.secondary-row \{ display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-start; gap: 6px; \}/.test(controls), '2a. the secondary row base rule stays LEFT-aligned (portrait semantics preserved)');
+  ok(/@media \(orientation: landscape\) and \(max-height: 500px\) \{\s*\.secondary-row \{ flex-wrap: nowrap; gap: 5px; justify-content: flex-end; \}\s*\.select-control\.subtitles \{ flex: 0 1 auto; \}/.test(controls), '2b. landscape phone: the secondary row is ONE non-wrapping RIGHT-aligned group (superseded contract: was left-aligned)');
   ok(/\.back-fab \{ width: 40px; height: 40px; top: max\(6px, env\(safe-area-inset-top\)\); left: max\(6px, env\(safe-area-inset-left\)\); \}/.test(shell), '2c. landscape-phone Back FAB sits at a 6px corner floor (was 8px)');
   ok(/\.back-fab \{ position: absolute; z-index: 12; top: max\(12px, env\(safe-area-inset-top\)\); left: max\(12px, env\(safe-area-inset-left\)\);/.test(shell), '2d. portrait Back FAB default placement is untouched (12px safe-area floor)');
   ok(/class:custom-position=\{Boolean\(backControlStyle\)\}/.test(shell) && shell.indexOf('landscapeControlInlineStyle') > 0, '2e. per-source Admin placement overrides still resolve and apply');

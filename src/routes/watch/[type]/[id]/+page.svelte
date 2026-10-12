@@ -163,7 +163,7 @@
       .map((entry) => entry.option);
   })();
   $: episodes = data.episodes.map((candidate) => ({ id: candidate.id, number: candidate.number, season: candidate.season, title: candidate.title, overview: candidate.overview, runtime: candidate.runtime, still: candidate.still })) satisfies PlayerEpisode[];
-  $: playerContent = ({ id: item.id, type: contentType, title: item.title, poster: item.poster, backdrop: item.backdrop });
+  $: playerContent = ({ id: item.id, tmdbId: item.externalIds?.tmdb, type: contentType, title: item.title, poster: item.poster, backdrop: item.backdrop });
 
   // ----- Phase 1: PlaybackManager owns source resolution + adapter lifecycle -----
   //

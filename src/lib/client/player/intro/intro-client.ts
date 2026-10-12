@@ -85,6 +85,20 @@ function introCacheKey(request: IntroMediaRequest): string {
     : `movie:${request.tmdbId}`;
 }
 
+/**
+ * Player V2 remaining fixes (2026-10): public key helper so the SHELL can
+ * compare results against the CONTROLLER's key space. The shell previously
+ * passed its `mediaLookupKey` (`series:236235:2:1` / `movie:24428::`) as the
+ * caller's current key while the controller computes `tv:…` / `movie:…` —
+ * the two never matched, so EVERY result was treated as superseded and
+ * dropped (Skip Intro could never appear). The shell now passes
+ * `introRequestKey(request)` and keeps its own mediaLookupKey guard for
+ * staleness across title/episode switches.
+ */
+export function introRequestKey(request: IntroMediaRequest): string {
+  return introCacheKey(request);
+}
+
 const LOOKUP_TIMEOUT_MS = 8_000;
 const CACHE_MAX_KEYS = 24;
 const CACHE_TTL_MS = 30 * 60 * 1000;

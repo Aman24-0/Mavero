@@ -301,13 +301,19 @@
     .cluster-button.play { width: 62px; height: 62px; }
     .cluster-button.seek { width: 50px; height: 50px; }
   }
-  /* Landscape phone (final remediation, Issue 2): the secondary row is ONE
-     left-aligned group — no stretching, fullscreen stays INSIDE the group,
-     and the row cannot collide with the timeline above it (the grid gap +
-     the bottom-zone padding hold the separation). Portrait keeps the same
-     group semantics (this rule only tightens landscape spacing). */
+  /* Landscape phone (Player V2 remaining fixes, 2026-10): the secondary row
+     is ONE RIGHT-aligned compact group — the user's approved landscape
+     layout puts the secondary controls on the RIGHT edge (the center cluster
+     and the top-left Back FAB are untouched). fullscreen stays INSIDE the
+     group and the row cannot collide with the timeline above it (the grid
+     gap + the bottom-zone padding hold the separation). The subtitle select
+     stops flexing in landscape (flex: 0 1 auto) so the leftover row width is
+     NOT absorbed by the group — the whole group packs to the right edge.
+     Portrait keeps the same left-aligned group semantics (the base rule
+     above is untouched; this block only tightens landscape). */
   @media (orientation: landscape) and (max-height: 500px) {
-    .secondary-row { flex-wrap: nowrap; gap: 5px; }
+    .secondary-row { flex-wrap: nowrap; gap: 5px; justify-content: flex-end; }
+    .select-control.subtitles { flex: 0 1 auto; }
   }
   /* Landscape phone: keep the cluster clear of the bottom zone. */
   @media (orientation: landscape) and (max-height: 500px) {

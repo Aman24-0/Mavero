@@ -1,6 +1,9 @@
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte';
   import { page } from '$app/state';
+  // Technical SEO remediation: canonical host = the FIXED production origin
+  // (the request can never self-canonicalize at a forged/deployment host).
+  import { PRODUCTION_ORIGIN } from '$lib/shared/seo';
   import { goto } from '$app/navigation';
   // MAVP-3 Issue 1: the MAVP-2 click-time landscape-first presentation was
   // REMOVED — playback must open in the device's existing orientation; the
@@ -124,10 +127,25 @@
   let clientRecommendations = $state<MediaItem[]>([]);
   const recommendations = $derived(recommendationItems.length ? recommendationItems : clientRecommendations);
   const statusSheetOptions = $derived(watchlistStatus ? statusOptions : statusOptions.filter((option) => option.key !== 'remove'));
-  const canonicalUrl = $derived(`${page.url.origin}/${type}/${item.id}`);
+  const canonicalUrl = $derived(`${PRODUCTION_ORIGIN}/${type}/${item.id}`);
   const watchPath = $derived(type === 'movie' ? `/watch/${type}/${item.id}` : `/watch/${type}/${item.id}?season=${resumeEpisode?.season ?? 1}&episode=${resumeEpisode?.episode ?? 1}`);
   const watchHref = $derived(appendReturnTo(watchPath, `${page.url.pathname}${page.url.search}${page.url.hash}`));
-  const structuredData = $derived(JSON.stringify({ '@context': 'https://schema.org', '@type': type === 'movie' ? 'Movie' : 'TVSeries', name: item.title, description: item.description, image: item.backdrop || item.poster, dateCreated: String(item.year), aggregateRating: { '@type': 'AggregateRating', ratingValue: item.rating, bestRating: 10, ratingCount: 1 } }));
+  // Technical SEO remediation: the JSON-LD AggregateRating previously
+  // hard-coded `ratingCount: 1` — a fabricated count (the TMDB pipeline
+  // carries the real vote count on item.voteCount). The rating block is now
+  // emitted ONLY when the real vote count is known, so the structured data
+  // never asserts an invented aggregate.
+  const structuredData = $derived(JSON.stringify({
+    '@context': 'https://schema.org',
+    '@type': type === 'movie' ? 'Movie' : 'TVSeries',
+    name: item.title,
+    description: item.description,
+    image: item.backdrop || item.poster,
+    dateCreated: String(item.year),
+    ...(Number.isFinite(item.voteCount) && (item.voteCount ?? 0) > 0
+      ? { aggregateRating: { '@type': 'AggregateRating', ratingValue: item.rating, bestRating: 10, ratingCount: item.voteCount } }
+      : {}),
+  }));
   const trailerKey = $derived(item.trailerKey ?? '');
   const hasTrailer = $derived(Boolean(trailerKey));
   const castMembers = $derived(item.cast ?? []);

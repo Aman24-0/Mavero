@@ -5,6 +5,13 @@
   import { continueWatchingRecords } from '$lib/shared/progress-merge';
   import { progressToMedia } from '$lib/client/progress/presenter';
   import { page } from '$app/state';
+  // Technical SEO remediation: the canonical host is the FIXED production
+  // origin — never the request's origin (forged Host headers / deployment
+  // subdomains must not self-canonicalize). `/` and `/discover` render the
+  // same experience and BOTH canonicalize to the bare production origin
+  // (the deliberate duplicate policy — /discover is excluded from the
+  // sitemap and never redirected).
+  import { PRODUCTION_ORIGIN } from '$lib/shared/seo';
   import { ArrowLeft, ArrowRight, Info, ListPlus, Play } from 'lucide-svelte';
   import type { MediaItem } from '$lib/data/content';
   import ContentRail from '$components/ContentRail.svelte';
@@ -716,10 +723,10 @@
 <svelte:head>
   <title>Mavero — Movies, TV shows &amp; anime, all in one place</title>
   <meta name="description" content="Stream movies, TV shows, and anime on MAVERO." />
-  <link rel="canonical" href={page.url.origin} />
+  <link rel="canonical" href={PRODUCTION_ORIGIN} />
   <meta property="og:title" content="Mavero — Movies, TV shows & anime, all in one place" />
   <meta property="og:description" content="A fast, modern home for your next watch." />
-  <meta property="og:url" content={page.url.origin} />
+  <meta property="og:url" content={PRODUCTION_ORIGIN} />
   <meta property="og:type" content="website" />
   <meta name="twitter:card" content="summary" />
 </svelte:head>

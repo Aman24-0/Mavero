@@ -1,0 +1,25 @@
+<!doctype html>
+<html>
+  <head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>html, body { margin: 0; padding: 0; background: #000; }</style>
+    <script>
+      // Record every fetch call BEFORE any module evaluates. The shell's
+      // lookups (VDRK list + TheIntroDB) must appear here when they fire.
+      window.__fetches = [];
+      window.__fetchErrors = [];
+      (() => {
+        const of = window.fetch.bind(window);
+        window.fetch = (...args) => {
+          const url = typeof args[0] === 'string' ? args[0] : (args[0]?.url ?? String(args[0]));
+          window.__fetches.push(url.slice(0, 160));
+          const p = of(...args).catch((e) => { window.__fetchErrors.push(url.slice(0, 120) + ' :: ' + (e?.message ?? e)); throw e; });
+          return p;
+        };
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="host" style="position: relative; width: 100vw; height: 100vh; background: #000;"></div>
+    <script type="module" src="./shell-main.js"></script>
+  </body>
+</html>

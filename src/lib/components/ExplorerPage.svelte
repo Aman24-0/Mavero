@@ -34,6 +34,8 @@
   import { Check, LoaderCircle, RotateCw } from 'lucide-svelte';
   import type { ContentType } from '$data/content';
   import { DESTINATION_LABELS } from '$lib/shared/content-labels';
+  // Technical SEO remediation: canonical helper (fixed production origin).
+  import { canonicalHref } from '$lib/shared/seo';
   import { EXPLORER_GENRES, EXPLORER_LANGUAGES, EXPLORER_SORT_TITLES, type ExplorerSort } from '$lib/shared/explorer-taxonomy';
   import ContentRail from '$components/ContentRail.svelte';
   import SpotlightCarousel from '$components/SpotlightCarousel.svelte';
@@ -410,7 +412,13 @@
 <svelte:head>
   <title>{labels.plural} — Mavero</title>
   <meta name="description" content={`Explore MAVERO's ${labels.prose}: spotlight picks, popular and top rated titles, and filters by genre and language.`} />
-  <link rel="canonical" href={`/`} />
+  <!-- Technical SEO remediation: self-canonical at the FIXED production
+       origin + this page's own pathname. The previous relative `/` made
+       every collection page (/movies, /tv-shows, /anime) declare itself a
+       duplicate of the homepage while the sitemap listed them — conflicting
+       signals. The request contributes the pathname only; the host is the
+       shared constant (never page.url.origin). -->
+  <link rel="canonical" href={canonicalHref(page.url.pathname)} />
   <meta property="og:title" content={`${labels.plural} — Mavero`} />
   <meta property="og:description" content={`Explore MAVERO's ${labels.prose}: spotlight picks, popular and top rated titles, and filters by genre and language.`} />
   <meta name="twitter:card" content="summary" />
