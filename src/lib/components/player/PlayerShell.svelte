@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
-  import { AlertTriangle, ArrowLeft, Check, Maximize2, Minimize2, RotateCcw, Settings2, X } from 'lucide-svelte';
+  import { browser } from '$app/environment';
+  import { onDestroy, onMount, tick } from 'svelte';
+  import { AlertTriangle, ArrowLeft, Check, LockOpen, Maximize2, Minimize2, RotateCcw, Settings2, Sun, Volume2, X } from 'lucide-svelte';
   // Task 13: safe source icon renderer + centralized badge labels for the
   // source selector (presentation metadata from the public streaming config).
   import SourceIcon from '$lib/components/source/SourceIcon.svelte';
@@ -8,12 +9,21 @@
   import PlayerControls from './PlayerControls.svelte';
   import PlayerViewport from './PlayerViewport.svelte';
   import type { PlayerContentContext, PlayerEpisode, PlayerEpisodeTarget, PlayerInternalQualityOption, PlayerPlaybackState, PlayerProgressEvent, PlayerQualityOption, PlayerSource, PlayerSourceOption } from '$lib/shared/player';
-  import { PLAYER_AUTO_QUALITY_ID } from '$lib/shared/player';
+  import { isBlueVelvetProvider, PLAYER_AUTO_QUALITY_ID } from '$lib/shared/player';
   import { sourceIsExpired, isEmbedOriginAllowed, isPlayablePlayerSource } from '$lib/shared/player-guards';
   import { adjacentEpisode, adjacentSource, clampSeek } from '$lib/shared/player-state';
   // Phase 9: robust pending-seek state machine (streaming VOD seeking) — pure,
   // unit-tested; the shell feeds it media snapshots and applies the result.
   import { applyPendingSeek, capturePendingSeek, createPendingSeek, type PendingSeekState } from '$lib/client/player/pending-seek';
+  // Player UI V2 (Part 1, Phase 2): touch gestures (left = simulated
+  // brightness overlay, right = volume) + the pure helpers for the indicator.
+  import { brightnessDimOpacity, clampBrightness, createPlayerGestureController, gestureIndicatorPercent, type GestureKind, type PlayerGestureController } from '$lib/client/player/touch/gestures';
+  // Player UI V2 (Part 1, Phase 3A): external (VDRK) subtitle lists — same-origin
+  // proxy tracks, bounded TTL cache, validated entries.
+  import { createExternalSubtitleController, mergeSubtitleTracks, type ExternalSubtitleRequest, type ExternalSubtitleTrack } from '$lib/client/player/subtitles/external-subtitles';
+  // Player UI V2 (Part 1, Phase 3B): TheIntroDB Skip Intro lookup — read-only,
+  // optional-by-design, validated segments in SECONDS for the player seek API.
+  import { createIntroLookup, type IntroMediaRequest, type IntroSegment } from '$lib/client/player/intro/intro-client';
   // Phase 10 (GOAL 18): audio-track display — a LOCAL structural type so the
   // shell stays engine-library-name-free (same pattern as WakeLockSentinelHandle).
   type AudioTrackHandle = { id: number; lang?: string; name?: string; default?: boolean };
@@ -72,7 +82,14 @@
   // mobile behave identically at startup (the device's current orientation).
   export let resolutionError = '';
   export let resolutionMessage = '';
-  export let resolutionKind: 'provider-error' | 'unsupported' | 'unavailable' = 'provider-error';
+  // Player UI V2 (Part 1, Phase 1C): 'title-unavailable' is forwarded when the
+  // resolver CONFIRMED the title does not exist on the selected source
+  // (TITLE_NOT_AVAILABLE). The card then shows the title-unavailable heading
+  // with the failing source's display name + a source-switch action.
+  export let resolutionKind: 'provider-error' | 'unsupported' | 'unavailable' | 'title-unavailable' = 'provider-error';
+  // Player UI V2 (Part 1, Phase 1C): display name of the source the user last
+  // requested (watch route); used only by the title-unavailable heading.
+  export let resolutionSourceName = '';
   let viewport: PlayerViewport;
   let videoElement: HTMLVideoElement | undefined;
   let iframeElement: HTMLIFrameElement | undefined;
@@ -141,6 +158,32 @@
   let episodeMenuOpen = false;
   let controlsVisible = true;
   let hideTimer: ReturnType<typeof setTimeout> | undefined;
+  // Player UI V2 (Part 1, Phase 2C): touch lock. When locked, taps and swipes
+  // are ignored (the gesture controller's enabled() gate + the reveal gate
+  // below), the control row stays hidden, and ONE persistent unlock FAB stays
+  // visible (top-right, safe-area aware) so the player can never strand the
+  // user. The Back FAB remains reachable while locked (essential navigation is
+  // never blocked); deliberate keyboard shortcuts are disabled while locked.
+  let touchLocked = false;
+  // Player UI V2 (Part 1, Phase 2A): simulated player-video brightness
+  // (Mavero-rendered black overlay — never a system/display brightness API).
+  let brightness = 1;
+  // Player UI V2 (Part 1, Phase 2A/2B): the transient gesture indicator.
+  let gestureIndicator: GestureKind | null = null;
+  let gestureIndicatorHideTimer: ReturnType<typeof setTimeout> | undefined;
+  // The polite live announcement fired ONCE per completed gesture.
+  let gestureAnnouncement = '';
+  // Player UI V2 (Part 1, Phase 3A): external (VDRK) subtitle tracks for the
+  // CURRENT media — same-origin proxy URLs, validated, media-scoped (they
+  // survive source switches and reload per title/episode).
+  let externalSubtitles: ExternalSubtitleTrack[] = [];
+  let externalSubtitlesKey = '';
+  // Player UI V2 (Part 1, Phase 3B): validated intro segments (SECONDS) for
+  // the current media + the active Skip Intro target derived from the playhead.
+  let introSegments: IntroSegment[] = [];
+  let introKey = '';
+  // The attached gesture controller (created in onMount; destroyed in cleanup).
+  let gestureController: PlayerGestureController | null = null;
   // Player controls redesign: the menu FAB was replaced by dedicated controls
   // (bottom-right Landscape FAB, Episodes pill, right-edge source chip) — no
   // menu state remains.
@@ -314,6 +357,17 @@
   // Phase 9: per-stream subtitle tracks — the SELECTED stream's addon-
   // provided tracks win, the aggregate source's tracks are the fallback.
   $: effectiveSubtitles = selectedQualityOption?.subtitles?.length ? selectedQualityOption.subtitles : source?.subtitles ?? [];
+  // Player UI V2 (Part 1, Phase 3A): the subtitle menu + <track> list = the
+  // source's NATIVE tracks (unchanged, first) + the validated external VDRK
+  // tracks (same-origin proxy URLs), deduped by URL. Distinct variants stay
+  // individually selectable (keyed by their own file URL).
+  $: mergedSubtitles = mergeSubtitleTracks(effectiveSubtitles, externalSubtitles);
+  // Selection cleanup: a selected track that is no longer in the merged list
+  // (episode change rebuilt the native list, external list superseded, source
+  // switch) is cleared so no stale/dangling selection can survive.
+  $: if (selectedSubtitle && mergedSubtitles.length && !mergedSubtitles.some((track) => track.url === selectedSubtitle)) {
+    selectedSubtitle = '';
+  }
   $: sourceReady = Boolean(source && isPlayablePlayerSource(source) && !sourceIsExpired(source));
   $: sourceIndex = source ? sourceOptions.findIndex((option) => option.id === source.sourceId) : -1;
   $: previousSourceId = adjacentSource(sourceOptions, source?.sourceId, -1);
@@ -356,6 +410,29 @@
     controlsSizeInlineStyle(activeSourceOption?.controlsPosition ?? null, 'landscape', '--landscape-fab-size'),
   ].filter(Boolean).join(';');
   $: effectiveState = resolving ? 'switching-source' : resolutionError ? resolutionKind : state;
+  // Player UI V2 (Part 1, Phase 1B): Blue Velvet detection via the STABLE
+  // provider slug carried on the source option (streaming_providers.slug —
+  // unique, admin-pinned; never a display-name match). When Blue Velvet is
+  // the ACTIVE provider the shell renders Back/Fullscreen INSIDE the direct
+  // control row and hides its floating Back/Landscape FABs; every other
+  // provider keeps the existing FAB layout exactly.
+  $: blueVelvetActive = isBlueVelvetProvider(activeSourceOption?.providerSlug);
+  // Player UI V2 (Part 1, Phase 3A/3B): the media identity both optional
+  // lookups key on — content type + TMDB id + season/episode. Source switches
+  // do NOT change it (subtitles/intro belong to the MEDIA); episode switches
+  // reload both.
+  $: mediaLookupKey = `${content.type}:${content.id}:${currentEpisode?.season ?? ''}:${currentEpisode?.episode ?? ''}`;
+  // Player UI V2 (Part 1, Phase 3B): the Skip Intro action targets the
+  // verified segment containing the playhead (position-based, playing or
+  // paused); the button renders only for it.
+  $: activeSkipSegment = introSegments.find((segment) => currentTime >= segment.startSec && currentTime < segment.endSec - 0.25) ?? null;
+  // Player UI V2 (Part 1, Phase 2A/2B): live indicator percentage for the
+  // active gesture (effective volume shows 0 while muted).
+  $: gesturePercent = gestureIndicator === 'brightness'
+    ? gestureIndicatorPercent(brightness)
+    : gestureIndicator === 'volume'
+      ? gestureIndicatorPercent(muted ? 0 : volume)
+      : 0;
   // MAVP-4 Issue 1: the veil covers the stage (below the message/loading
   // cards, above the iframe) while an embed is mounted but not yet
   // presenting. It unmounts together with the loading card at the reveal —
@@ -588,6 +665,93 @@
     }
   }
 
+  // ----- Player UI V2 (Part 1): optional lookups + touch gestures -----
+  //
+  // External subtitles (3A) and intro timestamps (3B) are strictly OPTIONAL
+  // lookups: both are fire-and-forget (playback never awaits them), both
+  // discard stale results by media key, and both degrade to "feature off"
+  // without any user-visible error. The gesture controller (2A/2B/2C) owns
+  // the left/right vertical swipes and is gated per-touch by enabled() so the
+  // touch lock, embed ownership and open sheets always take effect instantly.
+
+  const externalSubtitleController = createExternalSubtitleController();
+  const introLookup = createIntroLookup();
+
+  /** TMDB ids: the same canonical shape the server-side adapters validate. */
+  const TMDB_ID_PATTERN = /^[1-9][0-9]{0,15}$/;
+
+  async function loadExternalSubtitles(key: string) {
+    // The TMDB id is the content id on the TMDB pipeline; a non-TMDB id (or a
+    // movie context for a series route) silently disables the feature.
+    const tmdbRaw = String(content.id ?? '');
+    if (!TMDB_ID_PATTERN.test(tmdbRaw)) return;
+    const kind: 'movie' | 'tv' = content.type === 'movie' ? 'movie' : 'tv';
+    const tmdbId = Number.parseInt(tmdbRaw, 10);
+    const request: ExternalSubtitleRequest = kind === 'tv'
+      ? { kind, tmdbId, season: currentEpisode?.season, episode: currentEpisode?.episode }
+      : { kind, tmdbId };
+    const result = await externalSubtitleController.load(request, key);
+    // Stale-response guard: only the CURRENT media's result may attach.
+    if (key !== externalSubtitlesKey || result.key !== key || result.superseded) return;
+    externalSubtitles = result.tracks;
+  }
+
+  async function loadIntro(key: string) {
+    const tmdbRaw = String(content.id ?? '');
+    if (!TMDB_ID_PATTERN.test(tmdbRaw)) return;
+    const kind: 'movie' | 'tv' = content.type === 'movie' ? 'movie' : 'tv';
+    const tmdbId = Number.parseInt(tmdbRaw, 10);
+    const durationSec = duration > 0 ? duration : null;
+    const request: IntroMediaRequest = kind === 'tv'
+      ? { kind, tmdbId, season: currentEpisode?.season, episode: currentEpisode?.episode, durationSec }
+      : { kind, tmdbId, durationSec };
+    const result = await introLookup.getIntroSegments(request, key);
+    if (key !== introKey || result.superseded) return;
+    introSegments = result.segments;
+  }
+
+  $: if (browser && mediaLookupKey !== externalSubtitlesKey) {
+    externalSubtitlesKey = mediaLookupKey;
+    externalSubtitles = [];
+    void loadExternalSubtitles(mediaLookupKey);
+  }
+  // Intro lookup waits for a trustworthy ACTUAL playback duration (the media
+  // element's duration — the catalog runtime is never substituted).
+  $: if (browser && duration > 0 && mediaLookupKey !== introKey) {
+    introKey = mediaLookupKey;
+    introSegments = [];
+    void loadIntro(mediaLookupKey);
+  }
+
+  function handleGestureStart(gesture: GestureKind) {
+    if (gestureIndicatorHideTimer) clearTimeout(gestureIndicatorHideTimer);
+    gestureIndicatorHideTimer = undefined;
+    gestureIndicator = gesture;
+  }
+
+  function handleGestureEnd(gesture: GestureKind, _totalDelta: number) {
+    // One polite announcement per completed gesture (visual indicator hides
+    // shortly after; the visual itself is aria-hidden).
+    gestureAnnouncement = gesture === 'brightness' ? `Brightness ${gestureIndicatorPercent(brightness)}%` : `Volume ${gestureIndicatorPercent(muted ? 0 : volume)}%`;
+    if (gestureIndicatorHideTimer) clearTimeout(gestureIndicatorHideTimer);
+    gestureIndicatorHideTimer = setTimeout(() => {
+      gestureIndicatorHideTimer = undefined;
+      gestureIndicator = null;
+    }, 600);
+  }
+
+  function toggleTouchLock() {
+    touchLocked = !touchLocked;
+    if (touchLocked) {
+      // Locked: controls stay hidden; taps/swipes are inert (the gesture
+      // controller's enabled() gate + the reveal gate below).
+      controlsVisible = false;
+      if (hideTimer) clearTimeout(hideTimer);
+    } else {
+      revealControls();
+    }
+  }
+
   onMount(() => {
     // Player startup instrumentation: the shell is visible. Measured spans
     // are DEV-only logged; marks remain inspectable in production.
@@ -602,6 +766,18 @@
     // overflow: hidden in app.css); the player follows the same pattern.
     // Set on mount, removed on destroy — never a global change.
     document.documentElement.setAttribute('data-player-open', '');
+    // Player UI V2 (Part 1, Phase 2): touch gestures over the player surface.
+    // The controller is created ONCE per mount and destroyed in cleanup (no
+    // duplicate listeners across mount cycles); per-touch gating below makes
+    // the lock, embed ownership and sheets take effect without re-attaching.
+    gestureController = createPlayerGestureController({
+      surface: playerRoot,
+      enabled: () => !touchLocked && source?.type === 'direct' && !sourceMenuOpen && !episodeMenuOpen && sourceReady,
+      onBrightnessDelta: (delta) => { brightness = clampBrightness(brightness + delta); },
+      onVolumeDelta: (delta) => { setVolume(volume + delta); },
+      onGestureStart: handleGestureStart,
+      onGestureEnd: handleGestureEnd,
+    });
     pictureInPictureSupported = Boolean(document.pictureInPictureEnabled && videoElement && 'requestPictureInPicture' in videoElement);
     // Immersive redesign: responsive viewport detection for source sheet placement.
     // compact (portrait) → bottom sheet; wide (landscape/desktop/TV) → right drawer.
@@ -661,6 +837,18 @@
       // Never intercept shortcuts while typing in form fields or editable
       // surfaces (input/textarea/select/contenteditable).
       if (target?.matches('input, select, textarea, [contenteditable="true"]')) return;
+      // Player UI V2 (Part 1, Phase 2C): the touch lock disables Mavero's
+      // keyboard shortcuts as well — the lock means "no further input into
+      // the player". Escape keeps its fullscreen-exit semantics, the unlock
+      // FAB stays visible/clickable, and the Back FAB is never blocked
+      // (essential navigation is never trapped).
+      if (touchLocked) {
+        if (event.key === 'Escape' && document.fullscreenElement === playerRoot) {
+          event.preventDefault();
+          void exitMaveroFullscreen();
+        }
+        return;
+      }
       // MAVP-2 Phase 3: ANY key press outside editable surfaces is user
       // activity — TV remotes and keyboard users navigate with keys that are
       // NOT Mavero shortcuts (channel/volume/scroll keys); all of them must
@@ -760,6 +948,10 @@
       document.documentElement.removeAttribute('data-player-open');
       // Phase 8: clear embed load timeout on destroy.
       clearEmbedLoadTimeout();
+      // Player UI V2 (Phase 2) teardown:
+      gestureController?.destroy();
+      gestureController = null;
+      if (gestureIndicatorHideTimer) clearTimeout(gestureIndicatorHideTimer);
       // MAVP-4 Issue 1: clear the presentation fail-open timer on destroy.
       clearEmbedPresentFailOpen();
       // Phase 2-I (PLR-02): remove the viewport MediaQueryList listener —
@@ -1251,6 +1443,10 @@
   }
 
   function revealControls() {
+    // Player UI V2 (Part 1, Phase 2C): while touch-locked, activity cannot
+    // reveal the controls — the persistent unlock FAB (and the Back FAB) stay
+    // the only reachable surfaces. Unlocking calls revealControls() itself.
+    if (touchLocked) return;
     controlsVisible = true;
     if (hideTimer) clearTimeout(hideTimer);
     // Player redesign: FIVE-second auto-hide, applies in all modes (portrait +
@@ -1340,13 +1536,13 @@
     if (!playerRoot) return false;
     const active = document.activeElement;
     if (!(active instanceof HTMLElement) || !playerRoot.contains(active)) return false;
-    return Boolean(active.closest('.back-fab, .control-fab-group, .source-chip, .episode-chip, .direct-controls-overlay, .source-sheet, .episode-sheet'));
+    return Boolean(active.closest('.back-fab, .control-fab-group, .source-chip, .episode-chip, .direct-controls-overlay, .source-sheet, .episode-sheet, .unlock-fab, .skip-intro-button'));
   }
 
-  /** Open the source sheet from the bottom-right controls (focus returns there). */
-  function openSourceSheetFromControl() {
-    openSourceSheet(playerRoot ?? document.activeElement as HTMLElement);
-  }
+  // Player UI V2 (Part 1, Phase 1A): the former in-row source-sheet opener
+  // helper was removed together with the redundant control-row source button —
+  // the persistent right-edge source chip is the single opener (it passes
+  // itself as the focus-restore trigger) and source switching is unchanged.
 
   // MAVP-5 (Issue 4): the old openEpisodeSheetFromControl helper was removed
   // together with the bottom-right Episodes pill — the dedicated left-edge
@@ -1758,11 +1954,11 @@
 
 <svelte:window onbeforeunload={() => emitProgress('close')} onvisibilitychange={() => { if (document.hidden) emitProgress('visibility'); handleVisibilityChangeForWakeLock(); }} />
 
-  <div bind:this={playerRoot} class="player-shell" class:landscape-mode={landscapeMode} class:controls-hidden={!controlsVisible} role="application" aria-label="MAVERO video player">
+  <div bind:this={playerRoot} class="player-shell" class:landscape-mode={landscapeMode} class:controls-hidden={!controlsVisible} class:touch-locked={touchLocked} role="application" aria-label="MAVERO video player">
 
   <!-- Immersive redesign: stage fills the ENTIRE viewport — no header/footer consuming space. -->
   <section class="stage-wrap" aria-label="Player viewport">
-    <PlayerViewport bind:this={viewport} bind:videoElement bind:iframeElement {source} {mediaUrl} sandboxEnabled={effectiveSandboxEnabled} sandboxPolicy={effectiveSandboxPolicy} poster={content.backdrop ?? content.poster ?? ''} title={content.title} state={effectiveState} subtitles={effectiveSubtitles} on:loadedmetadata={handleLoadedMetadata} on:timeupdate={handleTimeUpdate} on:play={handlePlay} on:pause={handlePause} on:waiting={handleWaiting} on:playing={handlePlaying} on:seeking={handleSeeking} on:seeked={handleSeeked} on:ended={handleEnded} on:error={handleMediaError} on:embedload={handleEmbedLoad} on:enginequality={handleEngineQuality} on:durationchange={handleSeekOpportunity} on:loadeddata={handleSeekOpportunity} on:canplay={handleSeekOpportunity} on:progress={handleSeekOpportunity} />
+    <PlayerViewport bind:this={viewport} bind:videoElement bind:iframeElement {source} {mediaUrl} sandboxEnabled={effectiveSandboxEnabled} sandboxPolicy={effectiveSandboxPolicy} poster={content.backdrop ?? content.poster ?? ''} title={content.title} state={effectiveState} subtitles={mergedSubtitles} on:loadedmetadata={handleLoadedMetadata} on:timeupdate={handleTimeUpdate} on:play={handlePlay} on:pause={handlePause} on:waiting={handleWaiting} on:playing={handlePlaying} on:seeking={handleSeeking} on:seeked={handleSeeked} on:ended={handleEnded} on:error={handleMediaError} on:embedload={handleEmbedLoad} on:enginequality={handleEngineQuality} on:durationchange={handleSeekOpportunity} on:loadeddata={handleSeekOpportunity} on:canplay={handleSeekOpportunity} on:progress={handleSeekOpportunity} />
 
     <!-- MAVP-4 Issue 1: embed presentation veil. While the provider iframe is
          mounted but not yet presenting, this opaque layer covers the stage
@@ -1776,16 +1972,65 @@
       <div class="embed-veil" aria-hidden="true"></div>
     {/if}
 
-    {#if resolutionError || errorMessage || effectiveState === 'error' || effectiveState === 'provider-error' || effectiveState === 'source-unavailable' || effectiveState === 'unsupported-format' || effectiveState === 'embed-unavailable'}
+    {#if resolutionError || errorMessage || effectiveState === 'error' || effectiveState === 'provider-error' || effectiveState === 'source-unavailable' || effectiveState === 'unsupported-format' || effectiveState === 'embed-unavailable' || effectiveState === 'title-unavailable'}
       <div class="message-card" role="alert">
         <div class="message-icon"><AlertTriangle size={17} /></div>
-        <div><strong>This source isn't available.</strong><p>{resolutionError || errorMessage || 'Choose another source or try again.'}</p></div>
-        <div class="message-actions"><button class="small-button" type="button" aria-label="Try again" onclick={retry}><RotateCcw size={14} /> Try again</button>{#if sourceOptions.length}<button class="small-button secondary" type="button" aria-label="Switch source" onclick={(event) => openSourceSheet(event.currentTarget instanceof HTMLElement ? event.currentTarget : playerRoot)}><Settings2 size={14} /> Switch source</button>{/if}</div>
+        <div>
+          {#if resolutionKind === 'title-unavailable'}
+            <!-- Player UI V2 (Part 1, Phase 1C): the resolver CONFIRMED the title
+                 does not exist on the selected source (TITLE_NOT_AVAILABLE — a
+                 verified missing-title contract, NEVER a generic HTTP/empty/
+                 unknown failure). The heading names the source and the primary
+                 action is choosing another one. Retry stays available but
+                 secondary — retry behavior is preserved, not removed. -->
+            <strong>Title not available on {resolutionSourceName || 'this source'}.</strong>
+            <p>{resolutionError || errorMessage || 'Choose another source to keep watching.'}</p>
+          {:else}
+            <strong>This source isn't available.</strong>
+            <p>{resolutionError || errorMessage || 'Choose another source or try again.'}</p>
+          {/if}
+        </div>
+        <div class="message-actions">
+          {#if resolutionKind === 'title-unavailable'}
+            {#if sourceOptions.length}<button class="small-button" type="button" aria-label="Switch source" onclick={(event) => openSourceSheet(event.currentTarget instanceof HTMLElement ? event.currentTarget : playerRoot)}><Settings2 size={14} /> Switch source</button>{/if}
+            <button class="small-button secondary" type="button" aria-label="Try again" onclick={retry}><RotateCcw size={14} /> Try again</button>
+          {:else}
+            <button class="small-button" type="button" aria-label="Try again" onclick={retry}><RotateCcw size={14} /> Try again</button>{#if sourceOptions.length}<button class="small-button secondary" type="button" aria-label="Switch source" onclick={(event) => openSourceSheet(event.currentTarget instanceof HTMLElement ? event.currentTarget : playerRoot)}><Settings2 size={14} /> Switch source</button>{/if}
+          {/if}
+        </div>
       </div>
     {:else if state === 'completed'}
       <div class="completion-card" role="status"><Check size={18} /><span>Episode complete</span></div>
     {:else if effectiveState === 'preparing' || effectiveState === 'resolving' || effectiveState === 'switching-source' || effectiveState === 'embed-loading'}
       <div class="loading-card" role="status"><span class="loading-ring" aria-hidden="true"><span></span></span><span class="loading-copy"><strong>{effectiveState === 'switching-source' ? 'Switching source…' : effectiveState === 'embed-loading' ? 'Starting your stream…' : 'Loading player…'}</strong><small>{resolutionMessage || (effectiveState === 'embed-loading' ? 'Loading provider embed…' : 'Preparing playback…')}</small></span></div>
+    {/if}
+    <!-- Player UI V2 (Part 1, Phase 2A): simulated BRIGHTNESS overlay — a
+         Mavero-rendered black layer whose opacity follows the left-zone
+         vertical swipe. Pointer-transparent, covers only the stage (below
+         the message cards and controls), and never claims to change system
+         display brightness. -->
+    {#if source?.type === 'direct'}
+      <div class="brightness-overlay" style={`opacity: ${brightnessDimOpacity(brightness)}`} aria-hidden="true"></div>
+    {/if}
+
+    <!-- Player UI V2 (Part 1, Phase 2A/2B): compact transient gesture
+         indicator (brightness / volume). Visual layer is aria-hidden — the
+         completed gesture announces once through the polite live region. -->
+    {#if gestureIndicator}
+      <div class="gesture-indicator" aria-hidden="true">
+        {#if gestureIndicator === 'brightness'}<Sun size={14} />{:else}<Volume2 size={14} />{/if}
+        <span class="gesture-indicator-bar"><span style={`width: ${gesturePercent}%`}></span></span>
+        <span class="gesture-indicator-value">{gesturePercent}%</span>
+      </div>
+    {/if}
+    <div class="gesture-announcement" role="status" aria-live="polite">{gestureAnnouncement}</div>
+
+    <!-- Player UI V2 (Part 1, Phase 3B): Skip Intro — rendered ONLY while the
+         playhead is inside a VERIFIED intro segment of the CURRENT media
+         (stale/invalid/missing data never render a button). Seeking uses the
+         existing shell seek() so resume/progress behavior is preserved. -->
+    {#if activeSkipSegment && source?.type === 'direct' && !touchLocked}
+      <button class="skip-intro-button" type="button" aria-label={`Skip intro, seek to ${Math.round(activeSkipSegment.endSec)} seconds`} onclick={() => activeSkipSegment && seek(activeSkipSegment.endSec)}>Skip Intro</button>
     {/if}
   </section>
 
@@ -1795,15 +2040,24 @@
        profiles). Empty inline style = stylesheet default (top-left).
        MAVP-3 Issue 5: the same inline style may carry the per-source Back
        SIZE (--back-fab-size); the custom-size class applies it on top of the
-       stylesheet default without touching the placement. -->
-  <button class="back-fab" class:custom-position={Boolean(backControlStyle)} class:custom-size={backSizePx !== null} type="button" aria-label="Close player" style={backControlStyle} onclick={onClose}>
-    <ArrowLeft size={20} />
-  </button>
+       stylesheet default without touching the placement.
+       Player UI V2 (Part 1, Phase 1B): hidden while Blue Velvet is ACTIVE and
+       unlocked (its Back lives inside the control row) — every other provider
+       keeps this FAB exactly. While touch-locked the FAB returns (for Blue
+       Velvet too) so the Back action is never blocked. -->
+  {#if !(blueVelvetActive && !touchLocked)}
+    <button class="back-fab" class:custom-position={Boolean(backControlStyle)} class:custom-size={backSizePx !== null} type="button" aria-label="Close player" style={backControlStyle} onclick={onClose}>
+      <ArrowLeft size={20} />
+    </button>
+  {/if}
 
-  <!-- Immersive redesign: Direct source playback controls as an overlay (auto-hiding). -->
+  <!-- Immersive redesign: Direct source playback controls as an overlay (auto-hiding).
+       Player UI V2 (Part 1, Phase 1B/2C): Blue Velvet-only in-row Back/
+       Fullscreen, subtitle menu receives native + external tracks, the lock
+       control lives in the right group. -->
   {#if source?.type === 'direct'}
     <div class="direct-controls-overlay" class:visible={controlsVisible}>
-      <PlayerControls playing={playing} {muted} {volume} {currentTime} {duration} {buffered} {playbackRate} {pictureInPictureSupported} {pictureInPicture} subtitles={subtitles} selectedSubtitle={selectedSubtitle} qualities={qualities} selectedQuality={selectedQuality} internalQualities={engineQuality?.options ?? []} selectedInternalQuality={engineQuality?.selected ?? PLAYER_AUTO_QUALITY_ID} sourceCount={sourceOptions.length} onTogglePlay={togglePlay} onSeek={seek} onVolume={setVolume} onToggleMute={toggleMute} onPlaybackRate={setPlaybackRate} onSubtitle={setSubtitle} onQuality={setQuality} onInternalQuality={setInternalQuality} onPictureInPicture={togglePictureInPicture} onStep={seekBy} onSources={openSourceSheetFromControl} />
+      <PlayerControls playing={playing} {muted} {volume} {currentTime} {duration} {buffered} {playbackRate} {pictureInPictureSupported} {pictureInPicture} showBack={blueVelvetActive} showFullscreen={blueVelvetActive} fullscreenActive={fullscreen} locked={touchLocked} onToggleLock={toggleTouchLock} onBack={onClose} onFullscreen={() => { void toggleFullscreen(); }} subtitles={mergedSubtitles} selectedSubtitle={selectedSubtitle} qualities={qualities} selectedQuality={selectedQuality} internalQualities={engineQuality?.options ?? []} selectedInternalQuality={engineQuality?.selected ?? PLAYER_AUTO_QUALITY_ID} onTogglePlay={togglePlay} onSeek={seek} onVolume={setVolume} onToggleMute={toggleMute} onPlaybackRate={setPlaybackRate} onSubtitle={setSubtitle} onQuality={setQuality} onInternalQuality={setInternalQuality} onPictureInPicture={togglePictureInPicture} onStep={seekBy} />
     </div>
   {/if}
 
@@ -1812,7 +2066,11 @@
        fullscreen states (fullscreen state is mirrored by the browser-synced
        `fullscreen` flag + orientation lock attempt in toggleLandscape).
        Positioning is overridable per source via the Admin
-       "Player Controls Position" config (CSS vars below). -->
+       "Player Controls Position" config (CSS vars below).
+       Player UI V2 (Part 1, Phase 1B): the floating group is hidden while
+       Blue Velvet is ACTIVE — its Fullscreen lives inside the control row
+       (the same toggleFullscreen controller). -->
+  {#if !blueVelvetActive}
   <div class="control-fab-group" class:visible={controlsVisible} style={landscapeControlStyle}>
     <!-- MAVP-5 (Issue 4): the Episodes entry point moved OUT of the
          Landscape control group into the dedicated left-edge episode chip
@@ -1823,6 +2081,17 @@
       {#if landscapeMode}<Minimize2 size={22} />{:else}<Maximize2 size={22} />{/if}
     </button>
   </div>
+  {/if}
+
+  <!-- Player UI V2 (Part 1, Phase 2C): persistent unlock FAB. Rendered ONLY
+       while touch-locked and INDEPENDENT of the auto-hide cycle — the player
+       can never strand the user without controls. Tapping it unlocks and
+       immediately reveals the controls. -->
+  {#if touchLocked}
+    <button class="unlock-fab" type="button" aria-label="Unlock player controls" onclick={toggleTouchLock}>
+      <LockOpen size={20} />
+    </button>
+  {/if}
 
   <!-- Player redesign: slim vertical source chip on the right edge, attached
        around the vertical centre of the viewport (Rivestream reference).
@@ -2019,6 +2288,40 @@
      removed together with the Episodes pill (its entry point is now the
      dedicated left-edge episode chip above). */
 
+  /* Player UI V2 (Part 1, Phase 2A): simulated brightness overlay. Covers the
+     stage only (z between the viewport and the message cards), pointer-
+     transparent, and its opacity is driven inline from the gesture state. */
+  .brightness-overlay { position: absolute; z-index: 5; inset: 0; background: #000; pointer-events: none; transition: opacity 80ms linear; }
+
+  /* Player UI V2 (Part 1, Phase 2A/2B): compact transient gesture indicator —
+     top-center pill, icon + bounded progress bar + percent. aria-hidden (the
+     polite announcement lives in the sr-only live region below). */
+  .gesture-indicator { position: absolute; z-index: 8; top: max(18px, env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; min-height: 34px; padding: 0 12px; border: 1px solid var(--line); border-radius: 999px; color: var(--ink); background: rgba(13,13,13,.88); box-shadow: var(--shadow-lg); backdrop-filter: blur(18px); pointer-events: none; }
+  .gesture-indicator-bar { position: relative; overflow: hidden; width: 96px; height: 4px; border-radius: 999px; background: rgba(255,255,255,.18); }
+  .gesture-indicator-bar > span { position: absolute; inset: 0 auto 0 0; border-radius: inherit; background: var(--accent); transition: width 60ms linear; }
+  .gesture-indicator-value { min-width: 34px; color: var(--ink-soft); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .6rem; text-align: right; font-variant-numeric: tabular-nums; }
+  .gesture-announcement { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
+
+  /* Player UI V2 (Part 1, Phase 3B): compact Skip Intro action — bottom-right,
+     above the control row, visually quiet. Rendered only while the playhead
+     is inside a verified intro segment. */
+  .skip-intro-button { position: absolute; z-index: 11; right: max(18px, env(safe-area-inset-right)); bottom: 92px; min-height: 38px; padding: 0 16px; border: 1px solid var(--line-strong); border-radius: 999px; color: var(--ink); background: rgba(13,13,13,.85); cursor: pointer; font: inherit; font-size: .66rem; font-weight: 600; letter-spacing: .02em; box-shadow: var(--shadow-lg); backdrop-filter: blur(18px); transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
+  .skip-intro-button:hover, .skip-intro-button:focus-visible { border-color: var(--accent); background: var(--accent-soft); }
+  .skip-intro-button:active { transform: scale(.97); }
+
+  /* Player UI V2 (Part 1, Phase 2C): persistent unlock FAB — top-right,
+     safe-area aware, always visible while locked (independent of the
+     auto-hide cycle). */
+  .unlock-fab { position: absolute; z-index: 12; top: max(12px, env(safe-area-inset-top)); right: max(12px, env(safe-area-inset-right)); display: grid; place-items: center; width: 44px; height: 44px; border: 1px solid var(--line-strong); border-radius: 50%; color: #fff; background: rgba(0,0,0,.55); cursor: pointer; backdrop-filter: blur(12px); transition: background var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
+  .unlock-fab:hover, .unlock-fab:focus-visible { background: rgba(0,0,0,.75); border-color: var(--accent); }
+  .unlock-fab:active { transform: scale(.94); }
+
+  /* Player UI V2 (Part 1, Phase 2C): while touch-locked the Back FAB stays
+     reachable (essential navigation is never blocked) even though the rest of
+     the controls are suppressed. Rule placed after the controls-hidden rule
+     so it wins the cascade. */
+  .player-shell.touch-locked .back-fab { opacity: 1; visibility: visible; pointer-events: auto; }
+
   /* Overlay cards (error/loading/completion) — centered in viewport. */
   .message-card, .completion-card, .loading-card { position: absolute; z-index: 7; right: 50%; bottom: 50%; display: flex; align-items: center; gap: 12px; max-width: min(590px, calc(100% - 36px)); transform: translate(50%, 50%); border: 1px solid var(--line); border-radius: var(--radius-md); padding: 15px 16px; color: var(--ink); background: rgba(13,13,13,.92); box-shadow: var(--shadow-lg); backdrop-filter: blur(22px); }
   .message-card strong { display: block; font-size: .75rem; }
@@ -2120,5 +2423,8 @@
     .loading-ring, :global(.spin) { animation: none; }
     .back-fab, .control-fab, .control-fab-group, .direct-controls-overlay, .source-chip, .source-chip-label, .episode-chip, .episode-chip-label { transition: none; }
     .source-sheet, .episode-sheet { animation: none; }
+    /* Player UI V2 (Part 1, Phase 2/3): new gesture/skip surfaces follow the
+       same reduced-motion contract. */
+    .brightness-overlay, .gesture-indicator-bar > span, .skip-intro-button, .unlock-fab { transition: none; }
   }
 </style>

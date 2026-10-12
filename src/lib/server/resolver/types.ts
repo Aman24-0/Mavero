@@ -122,7 +122,18 @@ export type ResolverErrorCode =
   | 'SOURCE_EXPIRED'
   | 'RESOLUTION_UNAVAILABLE'
   | 'RESOLUTION_TIMEOUT'
-  | 'INTERNAL_RESOLUTION_ERROR';
+  | 'INTERNAL_RESOLUTION_ERROR'
+  /**
+   * Player UI V2 (Part 1, Phase 1C): the upstream API contract CONFIRMED the
+   * title/content does not exist on this source. Reserved — adapters may
+   * emit it ONLY when verified response semantics support the conclusion
+   * (never for generic HTTP errors, empty responses or unknown shapes).
+   * Blue Velvet's adapter deliberately does NOT emit it today: live probes
+   * (2026-10-12) showed nonexistent titles are indistinguishable from
+   * content being prepared (both return 202 queued/building), so a
+   * conservative classification applies there (see bluevelvet.ts).
+   */
+  | 'TITLE_NOT_AVAILABLE';
 
 export type ResolverErrorShape = {
   code: ResolverErrorCode;

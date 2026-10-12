@@ -193,7 +193,11 @@ assert.match(controls, /aria-label=\{pictureInPicture \? 'Exit Picture-in-Pictur
 //     source chip both route through the focus-managed sheet openers with a
 //     focus-restore trigger (playerRoot fallback; the chip passes its own
 //     currentTarget).
-assert.match(shell, /function openSourceSheetFromControl\(\) \{[\s\S]*?openSourceSheet\(playerRoot \?\? document\.activeElement as HTMLElement\)/, 'source control entry passes a focus-restore trigger');
+//     Player UI V2 (Part 1, Phase 1A) supersession: the in-row source entry
+//     (openSourceSheetFromControl) was REMOVED with the redundant control-row
+//     source button — the right-edge source chip is the single opener and
+//     keeps its self-passing focus-restore trigger (asserted below).
+assert.doesNotMatch(shell, /openSourceSheetFromControl/, 'UIV2 supersession: the in-row source entry helper is gone');
 assert.match(shell, /onclick=\{\(event\) => openSourceSheet\(event\.currentTarget instanceof HTMLElement \? event\.currentTarget : playerRoot\)\}/, 'source chip passes itself as the focus-restore trigger');
 
 // 9b. Episode control entry routes through the focus-managed opener.

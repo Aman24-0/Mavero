@@ -150,6 +150,15 @@ export type PlayerSourceOption = {
   integrationType?: string;
   sandboxPolicy?: SandboxPolicy;
   /**
+   * Player UI V2 (Part 1, Phase 1B): the source's PROVIDER slug — the
+   * stable, admin-pinned identifier from the streaming registry (unique per
+   * provider). Populated by the watch route from the public config's
+   * provider row. Player layout changes scoped to one provider (Blue
+   * Velvet Back/Fullscreen controls) compare THIS value, never the display
+   * name. Absent when the provider row is unavailable.
+   */
+  providerSlug?: string;
+  /**
    * Optional category name for grouping in the source selector.
    * Populated from the public streaming config's category assignments.
    * Sources without a category get categoryName = undefined and appear
@@ -250,7 +259,29 @@ export type PlayerPlaybackState =
   | 'provider-error'
   | 'unsupported'
   | 'unavailable'
-  | 'offline';
+  | 'offline'
+  /**
+   * Player UI V2 (Part 1, Phase 1C): the resolver CONFIRMED that this title
+   * does not exist on the selected source (typed TITLE_NOT_AVAILABLE error —
+   * emitted ONLY by adapters whose verified upstream contract supports the
+   * conclusion). Distinct from 'unavailable' (provider outage / content not
+   * yet prepared), which keeps the provider-availability messaging.
+   */
+  | 'title-unavailable';
+
+/**
+ * Player UI V2 (Part 1, Phase 1B): the STABLE provider identifier for Blue
+ * Velvet — the provider row's unique `slug` (migration
+ * 20261112000000_blue_velvet_provider.sql, unique constraint on
+ * streaming_providers.slug). Player-shell layout changes scoped to Blue
+ * Velvet key on THIS value — never on a display-name string.
+ */
+export const BLUEVELVET_PROVIDER_SLUG = 'blue-velvet' as const;
+
+/** True when the given stable provider slug identifies Blue Velvet. */
+export function isBlueVelvetProvider(providerSlug: string | null | undefined): boolean {
+  return providerSlug === BLUEVELVET_PROVIDER_SLUG;
+}
 
 export const playbackSpeeds = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2] as const;
 

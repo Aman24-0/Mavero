@@ -215,8 +215,12 @@ ok(!/handleTimeUpdate\(\)[\s\S]{0,200}revealControls/.test(shell.slice(shell.ind
 ok(/embedEverPlayed = false;/.test(shell.split('// Phase 6 audit fix 2: reset embed playback state on source switch')[1]?.split('embedPlaybackSourceId = source.sourceId;')[0] ?? '') && /embedEverPlayed = false;/.test(shell.split('// Phase 6 audit fix 2: reset embed playback state on episode switch')[1]?.split('if (source?.sourceId) embedPlaybackSourceId')[0] ?? ''), 'B13. embed playback state resets on source AND episode switch (stale session cannot pin the timer)');
 
 // B14. Full cleanup on route change / destroy (timers + listeners).
+// Player UI V2 (Part 1, Phase 2) supersession: the cleanup body legitimately
+// grew (gesture-controller + gesture-indicator teardown) — the scan window
+// widens 1600 → 2000 chars. The asserted contract is unchanged: every timer
+// and listener added in onMount is removed in the SAME cleanup.
 const cleanupStart = shell.indexOf('return () => {', shell.indexOf('window.addEventListener(\'blur\', handleWindowBlur);'));
-const cleanupBody = shell.slice(cleanupStart, cleanupStart + 1600);
+const cleanupBody = shell.slice(cleanupStart, cleanupStart + 2000);
 ok(/if \(hideTimer\) clearTimeout\(hideTimer\)/.test(cleanupBody), 'B14. inactivity timer cleared on destroy');
 ok(/orientationMediaQuery\.removeEventListener\('change', handleOrientationChange\)/.test(cleanupBody), 'B15. orientation profile listener removed on destroy (no leak across watch-route mounts)');
 ok(/window\.removeEventListener\('keydown', handleKeydown\)/.test(cleanupBody) && /window\.removeEventListener\('blur', handleWindowBlur\)/.test(cleanupBody) && /document\.removeEventListener\('focusin', handleFocusIn\)/.test(cleanupBody), 'B16. keydown + iframe-blur + focusin listeners removed on destroy');

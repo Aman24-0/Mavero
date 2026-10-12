@@ -111,6 +111,11 @@
         name: source.name,
         status: source.status,
         integrationType: source.integration_type ?? undefined,
+        // Player UI V2 (Part 1, Phase 1B): the PROVIDER's stable slug from
+        // the public config — the identifier provider-scoped player layout
+        // changes (Blue Velvet Back/Fullscreen controls) compare. Never a
+        // display-name match.
+        providerSlug: provider?.slug,
         // Phase 11 (GOAL D): the option carries the EFFECTIVE policy resolved
         // server-side from the public config (source override → provider
         // default → system default). `resolveSandboxRuntime` exposes the
@@ -915,6 +920,12 @@
     const destination = appendReturnTo(`/${contentType}/${item.id}`, returnTo && !isDetailPath(returnTo) ? returnTo : '/discover');
     void goto(destination, { replaceState: true, keepFocus: true });
   }
+  $: resolutionErrorForwarded = resolutionState === 'provider-error' || resolutionState === 'unsupported' || resolutionState === 'unavailable' || resolutionState === 'network-error' || resolutionState === 'title-unavailable' ? resolutionMessage : '';
+  // Player UI V2 (Part 1, Phase 1C): the DISPLAY name of the source the user
+  // last requested (the failing resolution's context). Used only by the
+  // title-unavailable card heading ("Title not available on {name}"); empty
+  // for every other state.
+  $: resolutionSourceName = resolutionState === 'title-unavailable' ? sourceOptions.find((option) => option.id === selectedSourceId)?.name ?? '' : '';
 </script>
 
 <svelte:head><title>Watching {item.title} — Mavero</title></svelte:head>
@@ -926,4 +937,4 @@
      progress record (Phase 9 contract — resume correctness), and resolution
      starts the moment the selected source is known. The obsolete red
      full-screen loading screen and its duplicate transitions are removed. -->
-<PlayerShell source={resolvedSource} content={playerContent} initialProgress={resumeTime} sourceOptions={sourceOptions} {episodes} currentEpisode={currentEpisode ? { season: currentEpisode.season, episode: currentEpisode.number, title: currentEpisode.title } : null} resolving={resolutionState === 'resolving'} calibrationMode={calibrationMode} resolutionError={resolutionState === 'provider-error' || resolutionState === 'unsupported' || resolutionState === 'unavailable' || resolutionState === 'network-error' ? resolutionMessage : ''} resolutionKind={resolutionState === 'unsupported' ? 'unsupported' : resolutionState === 'unavailable' ? 'unavailable' : 'provider-error'} resolutionMessage={resolutionState === 'resolving' ? resolutionMessage : ''} onProgress={handlePlayerProgress} onSourceChange={handleSourceChange} onEpisodeChange={handleEpisodeChange} onClose={closePlayer} onDetails={openDetails} onIframeReady={(iframe) => manager.setIframe(iframe)} {embedPlaybackEvent} />
+<PlayerShell source={resolvedSource} content={playerContent} initialProgress={resumeTime} sourceOptions={sourceOptions} {episodes} currentEpisode={currentEpisode ? { season: currentEpisode.season, episode: currentEpisode.number, title: currentEpisode.title } : null} resolving={resolutionState === 'resolving'} calibrationMode={calibrationMode} resolutionError={resolutionErrorForwarded} resolutionKind={resolutionState === 'unsupported' ? 'unsupported' : resolutionState === 'unavailable' ? 'unavailable' : resolutionState === 'title-unavailable' ? 'title-unavailable' : 'provider-error'} resolutionSourceName={resolutionSourceName} resolutionMessage={resolutionState === 'resolving' ? resolutionMessage : ''} onProgress={handlePlayerProgress} onSourceChange={handleSourceChange} onEpisodeChange={handleEpisodeChange} onClose={closePlayer} onDetails={openDetails} onIframeReady={(iframe) => manager.setIframe(iframe)} {embedPlaybackEvent} />

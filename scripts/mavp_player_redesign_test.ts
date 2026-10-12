@@ -169,7 +169,14 @@ ok(/\.stage-wrap :global\(\.viewport iframe\)[^}]*z-index: 1|\.viewport iframe \
 ok(/class="episode-chip"/.test(shell) && /aria-label="Choose episode"/.test(shell), 'B21. Episodes entry preserved (dedicated left-edge episode chip, MAVP-5)');
 ok(!/class="fab-item"/.test(shell), 'B21-MAVP5 the old Episodes pill is fully replaced (no duplicate entry point)');
 ok(!/aria-label="Open episode list"/.test(shell) && shell.includes('openEpisodeSheet('), 'B21-MAVP5 the chip opens the SAME focus-managed episode sheet');
-ok(/openSourceSheetFromControl/.test(shell), 'B22. the source control keeps its focus-managed opener (PlayerControls entry)');
+// Player UI V2 (Part 1, Phase 1A) supersession: B22 originally pinned the
+// PlayerControls in-row source entry (openSourceSheetFromControl). The
+// redundant in-row source button was REMOVED by the approved control-row
+// redesign — the persistent right-edge source chip is the single opener and
+// source switching is unchanged. The suite now pins the superseding contract:
+// no in-row source entry remains, and the chip keeps its focus-managed opener.
+ok(!/openSourceSheetFromControl/.test(shell), 'B22-UIV2 the redundant in-row source entry is removed (right-edge chip is the single opener)');
+ok(!/onSources=/.test(shell), 'B22-UIV2 PlayerControls no longer receives an in-row source opener');
 // MAVP-5 Issue 4 supersession: the episode opener helper
 // (openEpisodeSheetFromControl) was removed WITH the Episodes pill it
 // served — the episode chip opens the same focus-managed sheet directly

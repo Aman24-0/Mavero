@@ -17,6 +17,7 @@ const publicMessages: Record<ResolverErrorCode, string> = {
   RESOLUTION_UNAVAILABLE: 'This source is not available yet.',
   RESOLUTION_TIMEOUT: 'This source is taking too long to respond. Please try again.',
   INTERNAL_RESOLUTION_ERROR: 'Playback resolution failed temporarily.',
+  TITLE_NOT_AVAILABLE: 'This title is not available on this source.',
 };
 
 const statusByCode: Record<ResolverErrorCode, number> = {
@@ -36,6 +37,7 @@ const statusByCode: Record<ResolverErrorCode, number> = {
   RESOLUTION_UNAVAILABLE: 503,
   RESOLUTION_TIMEOUT: 504,
   INTERNAL_RESOLUTION_ERROR: 500,
+  TITLE_NOT_AVAILABLE: 404,
 };
 
 export class ResolverError extends Error {

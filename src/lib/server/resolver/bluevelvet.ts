@@ -67,6 +67,31 @@
  *         foreign host / http / bad path / creds     → INVALID_SOURCE_URL
  *         bad identifiers                            → MISSING_IDENTIFIER
  *
+ * Title-unavailable classification (Player UI V2 Part 1, Phase 1C —
+ * CONSERVATIVE, evidence-based; verified live 2026-10-12):
+ *
+ *   The Blue Velvet API has NO confirmed "title not available" response.
+ *   Probes (read-only GET, /cdn):
+ *     * fake TMDB id 999999999 (movie)  → 202 {"ready":false,"status":"queued"}
+ *       — re-probed for >4 minutes, never leaves queued;
+ *     * real show + nonexistent episode
+ *       (tmdb 1399 S99E99)              → 202 {"ready":false,"status":"building"}
+ *       cycling with "queued" across 30 s;
+ *     * real available titles           → 200 {"ready":true,"url":…};
+ *     * missing parameters              → 400 {"error":"need tmdb"}.
+ *   Nonexistent content is therefore INDISTINGUISHABLE from content still
+ *   being prepared — the CDN queues every requested id regardless of whether
+ *   it will ever be served. The ONLY honest mapping is:
+ *     * ready:false (queued/building) → RESOLUTION_UNAVAILABLE (retryable,
+ *       falls through the bounded fallback walk to the next source — the
+ *       existing, documented behavior; NEVER re-classified as a confirmed
+ *       missing title);
+ *     * everything else unchanged (outage/timeout/invalid/URL guards).
+ *   The TITLE_NOT_AVAILABLE code exists in the shared resolver vocabulary
+ *   for adapters whose verified contract DOES confirm a missing title; this
+ *   adapter deliberately never emits it. Inventing a missing-title semantic
+ *   from queued/building would contradict the verified API behavior.
+ *
  * No playback URLs or tokens are logged anywhere in this adapter.
  */
 

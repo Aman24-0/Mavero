@@ -185,7 +185,12 @@ ok(/playerRoot\?\.addEventListener\('pointermove', showControls[\s\S]*playerRoot
 //     repeated hide/reveal cycles work for the whole session.
 ok(/embedSessionArms = source\?\.type === 'embed'\s*&& state === 'playing'\s*&& \(!embedEverPlayed \|\| embedPlaying\)/.test(shellCode), '2.5a the arming condition (embed session state) is unchanged — every reveal re-arms under the same rule');
 ok((revealBody.match(/setTimeout/g) ?? []).length === 1 && revealBody.includes('5_000'), '2.5b exactly ONE 5s timer per reveal (no competing inactivity timers)');
-ok((shellCode.match(/controlsVisible = false/g) ?? []).length === 1, '2.5c exactly ONE hide mutation in the shell (single authoritative hide path)');
+// 2.5c supersession (Player UI V2 Part 1, Phase 2C): the shell now carries a
+// SECOND deliberate hide mutation — the touch lock's IMMEDIATE
+// `controlsVisible = false` at lock time. It is not a competing timer body
+// (2.5b's single-5s-timer assertion is untouched); the auto-hide path itself
+// remains the single authoritative timer-driven hide.
+ok((shellCode.match(/controlsVisible = false/g) ?? []).length === 2, '2.5c exactly TWO hide mutations (single authoritative auto-hide path + the deliberate touch-lock hide)');
 
 // 2.6 Source switching while hidden: the new session resets the embed
 //     playback state and re-reveals via embed load / play events.

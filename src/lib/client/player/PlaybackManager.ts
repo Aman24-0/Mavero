@@ -95,6 +95,13 @@ export type ResolutionState =
   | 'provider-error'
   | 'unsupported'
   | 'unavailable'
+  /**
+   * Player UI V2 (Part 1, Phase 1C): the resolver CONFIRMED the title does
+   * not exist on the selected source (TITLE_NOT_AVAILABLE only — emitted by
+   * adapters with a verified upstream missing-title contract). The shell
+   * renders the title-unavailable card (distinct from provider outages).
+   */
+  | 'title-unavailable'
   | 'network-error';
 
 export type PlaybackManagerSnapshot = Readonly<PlaybackManagerState>;
@@ -467,12 +474,18 @@ export class PlaybackManager {
         // Resolver returned an error payload with a known code.
         errorCode = error.code;
         message = error.message;
-        resolutionState = errorCode === 'UNSUPPORTED_MEDIA_TYPE'
+        // Player UI V2 (Part 1, Phase 1C): TITLE_NOT_AVAILABLE is the ONLY
+        // code that maps to the confirmed title-unavailable state — every
+        // other failure keeps its existing provider/availability/network
+        // classification (never conflated with a missing title).
+        resolutionState = errorCode === 'TITLE_NOT_AVAILABLE'
+          ? 'title-unavailable'
+          : errorCode === 'UNSUPPORTED_MEDIA_TYPE'
           ? 'unsupported'
           : errorCode === 'SOURCE_DISABLED' || errorCode === 'PROVIDER_DISABLED' || errorCode === 'SOURCE_MAINTENANCE' || errorCode === 'RESOLUTION_UNAVAILABLE'
             ? 'unavailable'
             : 'provider-error';
-        playbackState = resolutionState === 'unsupported' ? 'unsupported' : resolutionState === 'unavailable' ? 'unavailable' : 'provider-error';
+        playbackState = resolutionState === 'unsupported' ? 'unsupported' : resolutionState === 'title-unavailable' ? 'title-unavailable' : resolutionState === 'unavailable' ? 'unavailable' : 'provider-error';
       } else {
         // Network-layer failure (fetch threw, server unreachable, etc.).
         // Distinguished from a resolver-returned error: this is a transport

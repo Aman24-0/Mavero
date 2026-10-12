@@ -205,10 +205,14 @@ assert.match(enteringBlock, /revealControls\(\)/, 'entering branch calls revealC
 const hideTimerSetMatches = shell.match(/hideTimer = setTimeout/g) ?? [];
 assert.equal(hideTimerSetMatches.length, 1, 'exactly ONE hideTimer = setTimeout assignment (single authoritative timer)');
 
-// Count occurrences of `controlsVisible = false` — should be exactly ONE
-// (inside revealControls timer callback).
+// Count occurrences of `controlsVisible = false` — exactly ONE auto-hide
+// mutation (inside revealControls timer callback) plus the Player UI V2
+// (Part 1, Phase 2C) touch-lock hide. Supersession note: the lock's
+// `controlsVisible = false` is a deliberate IMMEDIATE hide at lock time —
+// it is NOT a competing timer body (§12's single-hideTimer assertion above
+// still holds); unlocking routes through revealControls like any other path.
 const controlsHiddenMatches = shell.match(/controlsVisible = false/g) ?? [];
-assert.equal(controlsHiddenMatches.length, 1, 'exactly ONE controlsVisible = false mutation (single hide path)');
+assert.equal(controlsHiddenMatches.length, 2, 'exactly TWO controlsVisible = false mutations (single auto-hide path + the deliberate touch-lock hide)');
 
 // ============================================================
 // 13. Back FAB + Control FAB + Episodes preserved (regression guard)
