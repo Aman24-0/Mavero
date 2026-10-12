@@ -620,8 +620,13 @@ export function createProgressWriter(base: Omit<SaveProgressInput, 'currentTime'
       // Phase 20 fix: preserve the last known valid duration. A later update()
       // call with duration=0/undefined must NOT overwrite a previously received
       // valid duration. This is the root cause of the Viduki progress bug.
-      const effectiveDuration = duration && duration > 0 ? duration : lastKnownDuration;
-      if (duration && duration > 0) lastKnownDuration = duration;
+      // Player UI V2 (Part 2, Phase 5): the guard must also reject Infinity
+      // (live/unbounded media) — `duration > 0` alone admits Infinity, which
+      // would poison lastKnownDuration and later zero out the record at the
+      // save-time clamp. Only a FINITE positive duration is a VOD duration.
+      const hasValidDuration = typeof duration === 'number' && Number.isFinite(duration) && duration > 0;
+      const effectiveDuration = hasValidDuration ? duration : lastKnownDuration;
+      if (hasValidDuration) lastKnownDuration = duration;
       if (effectiveDuration > 0 && base.selectedSourceId) {
         sourceRuntimes[base.selectedSourceId] = { duration: effectiveDuration, updatedAt: Date.now() };
       }
@@ -659,7 +664,10 @@ export function createProgressWriter(base: Omit<SaveProgressInput, 'currentTime'
       // position-advancing so saveProgress stamps positionUpdatedAt = now.
       positionAdvanced = true;
       // Phase 20 fix: use effectiveDuration to preserve the last known duration.
-      const effectiveDuration = duration && duration > 0 ? duration : lastKnownDuration;
+      // Player UI V2 (Part 2, Phase 5): Infinity/NaN rejected — same finite
+      // contract as update().
+      const completeHasValid = typeof duration === 'number' && Number.isFinite(duration) && duration > 0;
+      const effectiveDuration = completeHasValid ? duration : lastKnownDuration;
       latest = { ...base, currentTime, duration: effectiveDuration, completed: true, sourceRuntimes: { ...sourceRuntimes } };
       return flush();
     },

@@ -404,6 +404,11 @@
     watchingSavedForSession = false;
     resumeApplied = false;
     currentPlaybackTime = 0;
+    // Player UI V2 (Part 2, Phase 5): the previous episode's stream duration
+    // must never leak into the new episode's progress writes — the writer is
+    // re-created from the NEW episode's record (initialDuration) and the new
+    // media re-reports its own duration; until then duration stays unknown.
+    duration = 0;
     // Phase 4: clear savedSourceId so the new episode's progress record
     // is loaded fresh (different episode = different progressKey).
     savedSourceId = undefined;

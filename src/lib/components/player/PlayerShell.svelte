@@ -24,6 +24,16 @@
   // Player UI V2 (Part 1, Phase 3B): TheIntroDB Skip Intro lookup — read-only,
   // optional-by-design, validated segments in SECONDS for the player seek API.
   import { createIntroLookup, type IntroMediaRequest, type IntroSegment } from '$lib/client/player/intro/intro-client';
+  // Player UI V2 (Part 2, Phase 4): Google Cast (Web Sender) for eligible
+  // direct-media sources — static eligibility gates + CORS probe + CAF SDK
+  // controller (lazy, once per page; remote state mirrored into the shell).
+  import {
+    createCastController,
+    evaluateCastEligibility,
+    probeMediaCastability,
+    type CastControllerState,
+    type CastEligibility,
+  } from '$lib/client/player/cast/cast-client';
   // Phase 10 (GOAL 18): audio-track display — a LOCAL structural type so the
   // shell stays engine-library-name-free (same pattern as WakeLockSentinelHandle).
   type AudioTrackHandle = { id: number; lang?: string; name?: string; default?: boolean };
@@ -184,6 +194,22 @@
   let introKey = '';
   // The attached gesture controller (created in onMount; destroyed in cleanup).
   let gestureController: PlayerGestureController | null = null;
+  // Player UI V2 (Part 2, Phase 4): Google Cast state. The controller is
+  // created lazily (browser only) and destroyed in cleanup. `castReady` is
+  // true only when the ACTIVE source passed every eligibility gate (direct,
+  // no header binding, known receiver-compatible format, unexpired) AND the
+  // CORS probe verified the media URL is receiver-accessible AND the CAF SDK
+  // reported availability. While connected, remote media state is mirrored
+  // into the shell's normal timeline/progress pipeline.
+  let castController: ReturnType<typeof createCastController> | null = null;
+  let castEligibility: CastEligibility | null = null;
+  let castState: CastControllerState | null = null;
+  let castProbeDoneFor = '';
+  let castConnected = false;
+  let castReady = false;
+  // Progress throttling while casting (mirrors the local 5 s gate).
+  let castLastProgressReport = 0;
+  let castEndedEmitted = false;
   // Player controls redesign: the menu FAB was replaced by dedicated controls
   // (bottom-right Landscape FAB, Episodes pill, right-edge source chip) — no
   // menu state remains.
@@ -723,6 +749,142 @@
     void loadIntro(mediaLookupKey);
   }
 
+  // ----- Player UI V2 (Part 2, Phase 4): Google Cast wiring -----
+  //
+  // The Cast action appears ONLY when every gate passes for the ACTIVE
+  // source: static eligibility (direct, no header binding, known
+  // receiver-compatible format, unexpired URL) + a CORS probe of the actual
+  // media URL (the receiver fetches the media itself — CORS is required for
+  // adaptive streaming per the official docs) + SDK availability. Anything
+  // that fails any gate simply never shows a Cast button — playback and
+  // source selection are untouched (Cast unavailable = current behavior).
+
+  function ensureCastController() {
+    if (!browser || castController) return castController;
+    castController = createCastController({
+      onStateChange: (next) => {
+        castState = next;
+        castConnected = next.connection === 'connected';
+        if (next.connection === 'connected' && next.media) mirrorRemoteMedia(next.media);
+        if ((next.connection === 'disconnected' || next.connection === 'error') && castWasConnected) handleCastSessionEnded();
+        if (next.connection === 'connected') castWasConnected = true;
+      },
+    });
+    return castController;
+  }
+
+  // Handles the connected→disconnected transition exactly once.
+  let castWasConnected = false;
+
+  /** Mirrors remote media state into the shell's existing timeline/progress pipeline. */
+  function mirrorRemoteMedia(media: { currentTime: number; duration: number; playing: boolean; playerState: string }) {
+    currentTime = media.currentTime;
+    // Phase 5: remote duration must be finite+positive too (live receivers
+    // report Infinity — never adopt it as a VOD duration).
+    if (Number.isFinite(media.duration) && media.duration > 0) duration = media.duration;
+    playing = media.playing;
+    if (media.playing) state = 'playing';
+    else if (state === 'playing') state = 'paused';
+    // Remote 'ended' detection: the receiver reports IDLE once the media
+    // finished (currentTime reached the duration). Emit ONE completion.
+    if (media.playerState === 'IDLE' && media.duration > 0 && media.currentTime >= media.duration - 0.5 && !castEndedEmitted) {
+      castEndedEmitted = true;
+      playing = false;
+      state = 'completed';
+      emitProgress('ended');
+    } else if (media.playing && currentTime - castLastProgressReport >= 5) {
+      castLastProgressReport = currentTime;
+      emitProgress('progress');
+    }
+  }
+
+  /** Local teardown of the cast mirror when the session goes away. */
+  function handleCastSessionEnded() {
+    castWasConnected = false;
+    castConnected = false;
+    castEndedEmitted = false;
+    castLastProgressReport = 0;
+    playing = false;
+    if (state === 'playing') state = 'paused';
+    // Return the local timeline to the last position the receiver reported
+    // (already mirrored into `currentTime`). Apply it to the paused local
+    // element so resuming locally continues where casting left off.
+    if (videoElement && Number.isFinite(currentTime) && currentTime > 0) {
+      try { videoElement.currentTime = clampSeek(currentTime, videoElement.duration || duration); } catch { /* teardown race — pending-seek machinery still applies */ }
+    }
+    emitProgress('pause');
+    revealControls();
+  }
+
+  /** The Cast button: starts a session (device picker) or stops casting. */
+  async function handleCastAction() {
+    const controller = ensureCastController();
+    if (!controller) return;
+    if (castConnected) {
+      controller.stopCasting();
+      return;
+    }
+    if (!castEligibility?.eligible || !sourceReady) return;
+    // No duplicate local+remote playback: pause the local element first.
+    if (videoElement && !videoElement.paused) {
+      videoElement.pause();
+      playing = false;
+    }
+    releaseWakeLock();
+    try {
+      await controller.initialize();
+      await controller.requestCast({
+        url: castEligibility.url,
+        contentType: castEligibility.contentType,
+        title: content.title,
+        currentTime,
+      });
+    } catch {
+      // Picker cancelled / no device / load failure — restore the idle UI.
+      // Local playback stays PAUSED at the pre-cast position (honest state).
+      castConnected = false;
+      if (state === 'playing') state = 'paused';
+      errorMessage = 'Casting did not start. The local player stays paused.';
+    }
+  }
+
+  // Reactive: re-evaluate eligibility + probe + SDK whenever the ACTIVE
+  // source changes. Any gate failure keeps castReady false (button hidden).
+  $: if (browser) {
+    const evaluation = evaluateCastEligibility(source);
+    castEligibility = evaluation;
+    if (!evaluation.eligible) {
+      castReady = false;
+      castProbeDoneFor = '';
+    } else if (castProbeDoneFor !== evaluation.url) {
+      castProbeDoneFor = evaluation.url;
+      castReady = false;
+      const controller = ensureCastController();
+      void (async () => {
+        if (!controller) return;
+        const [probeOk] = await Promise.all([probeMediaCastability(evaluation.url), controller.initialize()]);
+        // Guard: the source may have changed while probing.
+        if (castEligibility?.eligible && castEligibility.url === evaluation.url) castReady = probeOk;
+      })();
+    }
+    if (!evaluation.eligible && castConnected) castController?.stopCasting();
+  }
+
+  // A source or episode switch while casting would leave the receiver playing
+  // the OLD media with no controlling session — end the session immediately
+  // (the media keeps playing on the TV until the session ends; the local
+  // player then resumes normal control). First run is ignored.
+  let castSwitchKey = '';
+  $: {
+    const switchKey = `${source?.sourceId ?? ''}|${mediaLookupKey}`;
+    if (castSwitchKey === '') {
+      castSwitchKey = switchKey;
+    } else if (castSwitchKey !== switchKey) {
+      castSwitchKey = switchKey;
+      if (castConnected && castController) castController.stopCasting();
+    }
+  }
+
   function handleGestureStart(gesture: GestureKind) {
     if (gestureIndicatorHideTimer) clearTimeout(gestureIndicatorHideTimer);
     gestureIndicatorHideTimer = undefined;
@@ -772,7 +934,10 @@
     // the lock, embed ownership and sheets take effect without re-attaching.
     gestureController = createPlayerGestureController({
       surface: playerRoot,
-      enabled: () => !touchLocked && source?.type === 'direct' && !sourceMenuOpen && !episodeMenuOpen && sourceReady,
+      // Phase 4: while casting, the local surface is a paused mirror of the
+      // receiver — swipes would adjust local-only brightness/volume, so the
+      // gestures gate off entirely until the session ends.
+      enabled: () => !touchLocked && source?.type === 'direct' && !sourceMenuOpen && !episodeMenuOpen && sourceReady && !castConnected,
       onBrightnessDelta: (delta) => { brightness = clampBrightness(brightness + delta); },
       onVolumeDelta: (delta) => { setVolume(volume + delta); },
       onGestureStart: handleGestureStart,
@@ -974,6 +1139,10 @@
       playerRoot?.removeEventListener('pointermove', showControls);
       playerRoot?.removeEventListener('pointerdown', showControls);
       playerRoot?.removeEventListener('touchstart', showControls);
+      // Phase 4: release the Cast controller (removes its SDK listeners; the
+      // receiver session itself is intentionally left running — documented).
+      castController?.destroy();
+      castController = null;
       // Phase 6: explicit teardown of shell-level playback features. The browser
       // auto-exits fullscreen/PiP when playerRoot leaves the DOM, but explicit
       // calls are deterministic and prevent stale state across SPA navigation.
@@ -996,6 +1165,12 @@
     if (!sourceReady || source?.type !== 'direct' || !videoElement) {
       errorMessage = source?.type === 'embed' ? 'This source uses its own provider controls.' : 'Choose an available source to begin playback.';
       state = source?.type === 'embed' ? 'embed-loading' : 'source-unavailable';
+      return;
+    }
+    // Phase 4: while casting, play/pause targets the RECEIVER (RemotePlayer
+    // contract) — the local element stays paused to avoid duplicate playback.
+    if (castConnected && castController) {
+      castController.toggleRemotePlay();
       return;
     }
     try {
@@ -1061,7 +1236,12 @@
 
   function handleTimeUpdate(event: CustomEvent<{ currentTime: number; duration: number }>) {
     currentTime = event.detail.currentTime;
-    duration = event.detail.duration || duration;
+    // Player UI V2 (Part 2, Phase 5): the shell duration is the ACTUAL media
+    // duration only — finite and positive. A 0/NaN/Infinity report (source
+    // still probing, live/unbounded media) must NOT overwrite a previously
+    // received valid duration (and Infinity is never treated as a VOD
+    // duration — the timeline stays on the last known finite value).
+    if (Number.isFinite(event.detail.duration) && event.detail.duration > 0) duration = event.detail.duration;
     if (videoElement?.buffered.length) buffered = videoElement.buffered.end(videoElement.buffered.length - 1);
     if (currentTime - lastProgressReport >= 5) {
       lastProgressReport = currentTime;
@@ -1259,6 +1439,14 @@
   // Admin provider form remains the single place where sandbox policy changes.
 
   function seek(time: number) {
+    // Phase 4: while casting, the timeline and ±10 s controls seek the
+    // RECEIVER (RemotePlayer.currentTime + RemotePlayerController.seek).
+    if (castConnected && castController) {
+      castController.remoteSeek(Number.isFinite(time) ? clampSeek(time, duration) : 0);
+      currentTime = clampSeek(time, duration);
+      emitProgress('progress');
+      return;
+    }
     if (!videoElement || !Number.isFinite(time)) return;
     currentTime = clampSeek(time, duration);
     videoElement.currentTime = currentTime;
@@ -2029,7 +2217,7 @@
          playhead is inside a VERIFIED intro segment of the CURRENT media
          (stale/invalid/missing data never render a button). Seeking uses the
          existing shell seek() so resume/progress behavior is preserved. -->
-    {#if activeSkipSegment && source?.type === 'direct' && !touchLocked}
+    {#if activeSkipSegment && source?.type === 'direct' && !touchLocked && !castConnected}
       <button class="skip-intro-button" type="button" aria-label={`Skip intro, seek to ${Math.round(activeSkipSegment.endSec)} seconds`} onclick={() => activeSkipSegment && seek(activeSkipSegment.endSec)}>Skip Intro</button>
     {/if}
   </section>
@@ -2057,7 +2245,7 @@
        control lives in the right group. -->
   {#if source?.type === 'direct'}
     <div class="direct-controls-overlay" class:visible={controlsVisible}>
-      <PlayerControls playing={playing} {muted} {volume} {currentTime} {duration} {buffered} {playbackRate} {pictureInPictureSupported} {pictureInPicture} showBack={blueVelvetActive} showFullscreen={blueVelvetActive} fullscreenActive={fullscreen} locked={touchLocked} onToggleLock={toggleTouchLock} onBack={onClose} onFullscreen={() => { void toggleFullscreen(); }} subtitles={mergedSubtitles} selectedSubtitle={selectedSubtitle} qualities={qualities} selectedQuality={selectedQuality} internalQualities={engineQuality?.options ?? []} selectedInternalQuality={engineQuality?.selected ?? PLAYER_AUTO_QUALITY_ID} onTogglePlay={togglePlay} onSeek={seek} onVolume={setVolume} onToggleMute={toggleMute} onPlaybackRate={setPlaybackRate} onSubtitle={setSubtitle} onQuality={setQuality} onInternalQuality={setInternalQuality} onPictureInPicture={togglePictureInPicture} onStep={seekBy} />
+      <PlayerControls playing={playing} {muted} {volume} {currentTime} {duration} {buffered} {playbackRate} {pictureInPictureSupported} {pictureInPicture} showBack={blueVelvetActive} showFullscreen={blueVelvetActive} fullscreenActive={fullscreen} locked={touchLocked} onToggleLock={toggleTouchLock} onBack={onClose} onFullscreen={() => { void toggleFullscreen(); }} subtitles={mergedSubtitles} selectedSubtitle={selectedSubtitle} qualities={qualities} selectedQuality={selectedQuality} internalQualities={engineQuality?.options ?? []} selectedInternalQuality={engineQuality?.selected ?? PLAYER_AUTO_QUALITY_ID} castAvailable={castReady && Boolean(castEligibility?.eligible)} castActive={castConnected} onCast={() => { void handleCastAction(); }} onTogglePlay={togglePlay} onSeek={seek} onVolume={setVolume} onToggleMute={toggleMute} onPlaybackRate={setPlaybackRate} onSubtitle={setSubtitle} onQuality={setQuality} onInternalQuality={setInternalQuality} onPictureInPicture={togglePictureInPicture} onStep={seekBy} />
     </div>
   {/if}
 

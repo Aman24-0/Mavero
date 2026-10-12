@@ -393,7 +393,12 @@ section_ok('§G pip');
 ok(/export function requestPictureInPicture\(\)/.test(viewport), 'G1. native direct-video PiP preserved (viewport controller)');
 ok(/viewport\.requestPictureInPicture\(\)/.test(shell), 'G2. shell PiP entry preserved');
 ok(/enterpictureinpicture/.test(shell) && /leavepictureinpicture/.test(shell), 'G3. PiP enter/exit listeners preserved');
-ok(/\{#if pictureInPictureSupported\}<button class="control-button optional"[^>]*aria-label=\{pictureInPicture \? 'Exit Picture-in-Picture' : 'Enter Picture-in-Picture'\}/.test(read('../src/lib/components/player/PlayerControls.svelte')), 'G4. PiP button is capability-driven (renders only when supported)');
+// Player UI V2 Part 2 SUPERSESSION (Phase 4): the PiP button is capability-
+// driven AND additionally hidden while a Cast session is active (PiP of the
+// paused local element while the receiver plays would be misleading UI).
+// The capability gate itself is unchanged — now asserted together with the
+// cast gate as one stronger behavior-level assertion.
+ok(/\{#if !castActive && pictureInPictureSupported\}<button class="control-button optional"[^>]*aria-label=\{pictureInPicture \? 'Exit Picture-in-Picture' : 'Enter Picture-in-Picture'\}/.test(read('../src/lib/components/player/PlayerControls.svelte')), 'G4. PiP button is capability-driven AND hidden while casting (renders only when supported + no active cast session)');
 ok(/allow="autoplay; fullscreen; picture-in-picture; encrypted-media"/.test(viewport), 'G5. embedded-provider PiP stays provider-owned via the iframe allow list');
 ok(detectDocumentPipApi(undefined) === false, 'G6. Document PiP detector safe without a browser context');
 ok(detectDocumentPipApi({}) === false, 'G7. Document PiP detector returns false when the API is absent');

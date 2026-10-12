@@ -14,7 +14,10 @@
  *   * Validation: label = non-empty bounded string; file = HTTPS on the exact
  *     VDRK VTT origin with the exact observed path shapes (movie:
  *     /v1/vtt/movie/{tmdb}/{label}.vtt; tv: /v1/vtt/tv/{tmdb}/{s}/{e}/{label}.vtt).
- *     Anything else is DROPPED — no fabricated tracks, no unvalidated URLs.
+ *     The file-path label is decoded and validated with the canonical shared
+ *     pattern (Part A: spaces/parentheses accepted; separators, `%`, control
+ *     characters, malformed escapes rejected). Anything else is DROPPED — no
+ *     fabricated tracks, no unvalidated URLs.
  *   * Variants stay individual: entries are keyed by their own file URL, so
  *     "English" / "English2" / "English3" remain separately selectable.
  *   * Dedup by rewritten proxy URL (identical files collapse, distinct
@@ -32,9 +35,21 @@ export const VDRK_LIST_ORIGIN = 'https://sub.vdrk.site';
 /** The verified VDRK VTT origin (subtitle FILES — only reachable same-origin via the proxy). */
 export const VDRK_VTT_ORIGIN = 'https://cache.vdrk.site';
 
-/** Observed list path shapes: /v1/movie/{tmdb} and /v1/tv/{tmdb}/{s}/{e}. */
-const VTT_MOVIE_PATH = /^\/v1\/vtt\/movie\/([1-9][0-9]{0,15})\/([A-Za-z0-9][A-Za-z0-9._-]{0,63})\.vtt$/;
-const VTT_TV_PATH = /^\/v1\/vtt\/tv\/([1-9][0-9]{0,15})\/([1-9][0-9]{0,7})\/([1-9][0-9]{0,7})\/([A-Za-z0-9][A-Za-z0-9._-]{0,63})\.vtt$/;
+import { validateSubtitleLabel, sanitizeSubtitleDisplayLabel } from '$lib/shared/subtitles';
+
+/**
+ * Pathname label segment AFTER WHATWG URL normalization (Part A): spaces
+ * arrive as `%20` escapes, parentheses stay literal, and the upstream may
+ * also pre-encode other characters — so the segment grammar is
+ * "path-safe literals OR %XX escapes". The RAW segment is never trusted:
+ * `vdrkFileToProxyPath` decodes it and re-validates it with the canonical
+ * shared label pattern before it may touch a proxy URL. The 192-char raw
+ * cap is the worst case for a 64-char decoded label that is fully
+ * percent-encoded (64 × 3) — every label the shared validator accepts fits.
+ */
+const LABEL_SEGMENT = String.raw`((?:[A-Za-z0-9._()-]|%[0-9A-Fa-f]{2}){1,192})`;
+const VTT_MOVIE_PATH = new RegExp(`^/v1/vtt/movie/([1-9][0-9]{0,15})/${LABEL_SEGMENT}\\.vtt$`);
+const VTT_TV_PATH = new RegExp(`^/v1/vtt/tv/([1-9][0-9]{0,15})/([1-9][0-9]{0,7})/([1-9][0-9]{0,7})/${LABEL_SEGMENT}\\.vtt$`);
 
 export type ExternalSubtitleTrack = {
   /** Same-origin proxy URL for the <track> element. */
@@ -81,6 +96,13 @@ export type ExternalSubtitleResult = {
  * path. Returns null for anything that is not an HTTPS URL on the exact VDRK
  * VTT origin with the exact observed path shape — the caller drops those
  * entries (no fabricated tracks, no arbitrary URL forwarding).
+ *
+ * Part A: the label segment is DECODED and validated with the canonical
+ * shared pattern (spaces/parentheses are legitimate; separators, `%`,
+ * control characters and malformed escapes are not), then re-encoded with
+ * `encodeURIComponent` for the proxy path. A `%2F`-style encoded separator
+ * decodes to `/`, fails validation, and drops the entry — it can never
+ * alter the proxy route structure.
  */
 export function vdrkFileToProxyPath(fileUrl: string): string | null {
   let parsed: URL;
@@ -93,13 +115,28 @@ export function vdrkFileToProxyPath(fileUrl: string): string | null {
   if (parsed.search || parsed.hash) return null;
   const movieMatch = VTT_MOVIE_PATH.exec(parsed.pathname);
   if (movieMatch) {
-    return `/api/content/subtitles/vtt/movie/${movieMatch[1]}/${movieMatch[2]}`;
+    const label = decodeAndValidateLabelSegment(movieMatch[2]);
+    if (label === null) return null;
+    return `/api/content/subtitles/vtt/movie/${movieMatch[1]}/${encodeURIComponent(label)}`;
   }
   const tvMatch = VTT_TV_PATH.exec(parsed.pathname);
   if (tvMatch) {
-    return `/api/content/subtitles/vtt/tv/${tvMatch[1]}/${tvMatch[2]}/${tvMatch[3]}/${tvMatch[4]}`;
+    const label = decodeAndValidateLabelSegment(tvMatch[4]);
+    if (label === null) return null;
+    return `/api/content/subtitles/vtt/tv/${tvMatch[1]}/${tvMatch[2]}/${tvMatch[3]}/${encodeURIComponent(label)}`;
   }
   return null;
+}
+
+/** Decodes a raw pathname label segment and validates it as a LABEL. */
+function decodeAndValidateLabelSegment(rawSegment: string): string | null {
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(rawSegment);
+  } catch {
+    return null; // malformed percent-encoding
+  }
+  return validateSubtitleLabel(decoded);
 }
 
 export type VdrkListEntry = { label: string; file: string };
@@ -116,9 +153,12 @@ export function parseVdrkEntries(raw: unknown): ExternalSubtitleTrack[] {
   for (const entry of raw) {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
     const candidate = entry as { label?: unknown; file?: unknown };
-    const label = typeof candidate.label === 'string' ? candidate.label.trim() : '';
+    // Part A: the API label is DISPLAY-only (menu text) — it never enters a
+    // URL. Control characters are stripped and absurd labels dropped; spaces
+    // and parentheses ("Portuguese (BR)2") are preserved verbatim.
+    const label = typeof candidate.label === 'string' ? sanitizeSubtitleDisplayLabel(candidate.label) : '';
     const file = typeof candidate.file === 'string' ? candidate.file.trim() : '';
-    if (!label || label.length > 80) continue;
+    if (!label) continue;
     if (!file) continue;
     const proxyPath = vdrkFileToProxyPath(file);
     if (!proxyPath) continue;

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ArrowLeft, Captions, ChevronLeft, ChevronRight, Lock, LockOpen, Maximize2, Minimize2, Pause, PictureInPicture2, Play, Settings2, Volume1, Volume2, VolumeX } from 'lucide-svelte';
+  import { ArrowLeft, Captions, Cast, ChevronLeft, ChevronRight, Lock, LockOpen, Maximize2, Minimize2, Pause, PictureInPicture2, Play, Settings2, Volume1, Volume2, VolumeX } from 'lucide-svelte';
   import type { PlayerInternalQualityOption, PlayerQualityOption, PlayerSubtitleTrack } from '$lib/shared/player';
   import { formatPlayerTime, playbackSpeeds, PLAYER_AUTO_QUALITY_ID } from '$lib/shared/player';
 
@@ -58,6 +58,19 @@
   export let onPictureInPicture: () => void = () => {};
   // Phase 9: onFullscreen removed — handled by PlayerShell header.
   export let onStep: (delta: number) => void = () => {};
+  // Player UI V2 (Part 2, Phase 4): Cast control. The button renders ONLY
+  // when `castAvailable` is true — the shell sets this only when the ACTIVE
+  // source passed every eligibility gate (direct, no header binding, known
+  // receiver-compatible format, unexpired URL), the CORS probe verified the
+  // media URL is receiver-accessible, and the CAF SDK reported availability.
+  // While `castActive` (a session is connected) the controls that only make
+  // sense for LOCAL playback are hidden (volume, subtitles, quality, speed,
+  // PiP — the platform cast dialog owns receiver volume/tracks); play/pause,
+  // the timeline, ±10 s seek and the lock keep working (they route to the
+  // receiver via the shell).
+  export let castAvailable = false;
+  export let castActive = false;
+  export let onCast: () => void = () => {};
   // Player UI V2 (Part 1, Phase 1A): `sourceCount` / `onSources` were removed
   // together with the redundant in-row source button — the persistent
   // right-edge source chip (PlayerShell `.source-chip`) remains the single
@@ -114,6 +127,7 @@
     </div>
 
     <div class="control-group right">
+      {#if !castActive}
       <div class="volume-control">
         <button class="control-button" type="button" aria-label={muted ? 'Unmute' : 'Mute'} onclick={onToggleMute}>
           {#if volumeIcon === 'muted'}<VolumeX size={17} />{:else if volumeIcon === 'low'}<Volume1 size={17} />{:else}<Volume2 size={17} />{/if}
@@ -133,7 +147,14 @@
            (setPlaybackRate → video.playbackRate + Media Session re-sync) is
            byte-unchanged. -->
       <label class="select-control speed" aria-label="Playback speed"><select value={playbackRate} onchange={(event) => onPlaybackRate(Number((event.currentTarget as HTMLSelectElement).value))}>{#each playbackSpeeds as speed}<option value={speed}>{speed}×</option>{/each}</select></label>
-      {#if pictureInPictureSupported}<button class="control-button optional" type="button" aria-label={pictureInPicture ? 'Exit Picture-in-Picture' : 'Enter Picture-in-Picture'} aria-pressed={pictureInPicture} onclick={onPictureInPicture}><PictureInPicture2 size={16} /></button>{/if}
+      {/if}
+      {#if castAvailable}
+        <!-- Player UI V2 (Part 2, Phase 4): Cast — rendered only when the
+             active source + browser + CORS gates all pass. aria-pressed
+             mirrors the session; the label names both actions explicitly. -->
+        <button class="control-button cast-button" class:casting={castActive} type="button" aria-label={castActive ? 'Disconnect cast session' : 'Cast to a device'} aria-pressed={castActive} onclick={onCast}><Cast size={16} /></button>
+      {/if}
+      {#if !castActive && pictureInPictureSupported}<button class="control-button optional" type="button" aria-label={pictureInPicture ? 'Exit Picture-in-Picture' : 'Enter Picture-in-Picture'} aria-pressed={pictureInPicture} onclick={onPictureInPicture}><PictureInPicture2 size={16} /></button>{/if}
       {#if showFullscreen}
         <!-- Player UI V2 (Part 1, Phase 1B): Blue Velvet-only in-row Fullscreen —
              the SAME Mavero fullscreen/orientation controller as the F-key and
@@ -183,6 +204,10 @@
   .select-control select { max-width: 90px; border: 0; outline: 0; color: inherit; background: transparent; font: inherit; cursor: pointer; }
   .select-control option { color: #181822; background: #f5f6fa; }
   .select-control.speed select { width: 44px; }
+  /* Player UI V2 (Part 2, Phase 4): connected Cast state tinted with the
+     accent so the active session is legible at a glance (compact 38px —
+     never oversized). */
+  .cast-button.casting { color: var(--accent); border-color: var(--line-strong); }
   @media (max-width: 840px) { .volume-input, .quality { display: none; } .control-row { gap: 8px; } .control-group.right { gap: 2px; } }
   @media (max-width: 640px) { .controls { width: calc(100% - 24px); margin-top: -65px; padding-bottom: 11px; } .control-row { gap: 5px; } .control-button { min-width: 40px; min-height: 40px; } .time-label { padding: 0 3px; font-size: .56rem; } .select-control.speed { min-width: 40px; padding: 0 4px; } }
   @media (prefers-reduced-motion: reduce) { .control-button { transition: none; } }

@@ -19,9 +19,11 @@
  *       movie → https://cache.vdrk.site/v1/vtt/movie/{tmdb}/{label}.vtt
  *       tv    → https://cache.vdrk.site/v1/vtt/tv/{tmdb}/{season}/{episode}/{label}.vtt
  *   * TMDB ids are 1–16 digit positive integers without leading zeros;
- *     season/episode are positive integers; labels are short alphanumeric
- *     tokens (dots/dashes/underscores allowed, never empty, never a
- *     traversal — the pattern rejects `/` and `%` outright).
+ *     season/episode are positive integers; labels are short ASCII tokens
+ *     (Part A: spaces and parentheses ARE legitimate — "Portuguese (BR)2",
+ *     "English Hi3" — and are validated via the shared canonical pattern,
+ *     which still rejects `/`, `\\`, `%`, control characters and overlong
+ *     values outright).
  *   * Upstream responses are forwarded only with a text/vtt content-type,
  *     under an 8-second timeout and a hard 2 MB size cap (streamed read —
  *     oversized upstreams are aborted mid-body).
@@ -29,6 +31,8 @@
  *     TTL; a small in-process TTL cache (bounded entries) absorbs repeat
  *     selections without unbounded growth.
  */
+
+import { validateSubtitleLabel } from '$lib/shared/subtitles';
 
 export const VDRK_VTT_ORIGIN = 'https://cache.vdrk.site';
 
@@ -40,9 +44,6 @@ const CACHE_TTL_MS = 30 * 60 * 1000;
 
 /** TMDB ids: positive decimal integers, no leading zeros (canonical form). */
 const TMDB_ID_PATTERN = /^[1-9][0-9]{0,15}$/;
-
-/** Subtitle label tokens observed from the API ("English2", "Brazilian4"). */
-const LABEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 export function validateTmdbIdParam(raw: string): number | null {
   if (!TMDB_ID_PATTERN.test(raw)) return null;
@@ -56,8 +57,15 @@ export function validatePositiveIntParam(raw: string): number | null {
   return Number.isSafeInteger(value) && value > 0 ? value : null;
 }
 
+/**
+ * Validates the DECODED route label param (Part A: SvelteKit delivers the
+ * param percent-decoded — "Portuguese%20(BR)2" arrives as
+ * "Portuguese (BR)2" — so validation sees the real label and a `%` in it
+ * always means double-encoding/malformed input, which the whitelist
+ * rejects). Delegates to the canonical shared pattern.
+ */
 export function validateLabelParam(raw: string): string | null {
-  return LABEL_PATTERN.test(raw) ? raw : null;
+  return validateSubtitleLabel(raw);
 }
 
 /** Builds the ONLY upstream URL shape this module ever fetches. */
