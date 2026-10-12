@@ -594,6 +594,15 @@ ok(blueVelvetConfig().source.integration_type === 'api', '§8 source integration
     ok(mediaSrc?.includes('https://zcdn.bluevelvet.space') === true, '§10 media-src allows the fixed Blue Velvet origin');
     const connectSrc = directive('connect-src');
     ok(connectSrc?.includes('https://zcdn.bluevelvet.space') === true, '§10 connect-src allows the fixed Blue Velvet origin (hls.js XHR route)');
+    // Player V2 final remediation (2026-10-13): the browser-direct optional
+    // lookups — VDRK subtitle LISTS (files ride the same-origin proxy) and
+    // TheIntroDB — were missing from connect-src, so the deployed CSP
+    // rejected both fetches before they left the page (the reported "no
+    // usable subtitles / no Skip Intro" on every title). The origins are
+    // the clients' fixed HTTPS constants; pinned here so a future CSP edit
+    // cannot silently break the lookups again.
+    ok(connectSrc?.includes('https://sub.vdrk.site') === true, '§10 connect-src allows the fixed VDRK subtitle-list origin (browser-direct list fetch)');
+    ok(connectSrc?.includes('https://api.theintrodb.org') === true, '§10 connect-src allows the fixed TheIntroDB origin (browser-direct intro lookup)');
     // Security regressions guarded while the playback entries are added.
     ok(directive('default-src')?.includes("'self'") === true, '§10 default-src remains self');
     ok(directive('frame-ancestors')?.includes("'none'") === true, '§10 frame-ancestors none unchanged');

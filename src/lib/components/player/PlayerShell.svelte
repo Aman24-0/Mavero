@@ -620,6 +620,24 @@
   // Session + exit PiP here. The new episode's source will re-acquire them.
   $: if (currentEpisode && `${currentEpisode.season}:${currentEpisode.episode}` !== episodeIdentity) {
     episodeIdentity = `${currentEpisode.season}:${currentEpisode.episode}`;
+    // Player V2 final remediation (Issue 5): the PREVIOUS episode's media
+    // duration must not survive the switch. The intro lookup is gated on
+    // `duration > 0` + a changed mediaLookupKey — with the stale duration
+    // still set, the NEW episode's lookup fired immediately against the OLD
+    // episode's duration (wrong durationMs hint to TheIntroDB + wrong
+    // validation bound) and, because introKey then equaled mediaLookupKey,
+    // NEVER re-ran when the real duration arrived (permanently suppressing
+    // or corrupting Skip Intro for the new episode). Resetting the duration
+    // makes the lookup wait for the NEW episode's actual metadata. The
+    // buffered watermark resets with it (the old buffer is meaningless for
+    // the new timeline).
+    duration = 0;
+    buffered = 0;
+    // Player V2 final remediation (Issue 3): the new episode gets a fresh
+    // auto-resume window (a user seek in the PREVIOUS episode must not
+    // cancel the new episode's resume) and a fresh user-seek marker.
+    resumeDecidedForKey = '';
+    userSeekedBeforeResume = false;
     // Phase 8: clear embed load timeout on episode switch — the new episode
     // will start its own timeout when its source loads.
     clearEmbedLoadTimeout();
@@ -637,6 +655,67 @@
     clearMediaSession();
     if (document.pictureInPictureElement === videoElement) exitPipQuietly();
   }
+
+  // ----- Player V2 final remediation (Issue 3): DELAYED RESUME APPLICATION -----
+  //
+  // The watch route renders this shell IMMEDIATELY (player startup redesign)
+  // while the saved progress record is still loading asynchronously
+  // (IndexedDB + cloud sync in setupProgressContext). The `initialProgress`
+  // prop therefore arrives as 0 and is updated to the saved position AFTER
+  // mount — but both consumers of that value were one-time initializations
+  // (`let currentTime = initialProgress` and
+  // `createPendingSeek(initialProgress)`), so the updated prop reached
+  // NOTHING and every direct playback session started at 00:00 (the
+  // reported regression; the empty pending seek also let the new session's
+  // near-zero timeupdate events overwrite the saved record through the
+  // progress writer).
+  //
+  // This reactive gate propagates the LATE prop value through the exact
+  // existing resume machinery (no new seek path):
+  //   * ONE decision per media identity (mediaLookupKey = type:id:s:e) —
+  //     no reactive loop (the block depends on initialProgress, writes
+  //     only currentTime/pendingSeekState), and a title/episode switch
+  //     reopens the gate for the NEW media (the route resets resumeTime to
+  //     0 on episode change, so the block stays dormant until the new
+  //     episode's real position arrives).
+  //   * `0` never captures (createPendingSeek/capturePendingSeek contract)
+  //     — mounting with initialProgress=0 cannot seek to zero.
+  //   * User-safety guard: if the playhead has ALREADY moved past the saved
+  //     position by the time a late response lands, the saved position is
+  //     stale for this session — it is marked decided WITHOUT seeking (no
+  //     yanking the user backwards). A position still ahead of the playhead
+  //     applies normally (the user cannot have legitimately passed a
+  //     position they have not reached).
+  //   * The pending-seek state machine retains the target until the media
+  //     is actually seekable (HLS VOD readiness) and applies it through the
+  //     bounded retry chain (applyPendingSeekToElement below) — the same
+  //     proven Phase 9 path used by source switches.
+  let resumeDecidedForKey = '';
+  // Any deliberate user position change (timeline, ±10 s, keyboard,
+  // double-tap) cancels the pending auto-resume for the CURRENT media —
+  // once the user has chosen a position themselves, a late-arriving saved
+  // position must never yank them elsewhere. Reset per media (episode
+  // switch block) so the next episode's resume still applies.
+  let userSeekedBeforeResume = false;
+
+  function applyDelayedResume(saved: number) {
+    if (!Number.isFinite(saved) || saved <= 0) return; // 0 = no record yet — never seek
+    const key = mediaLookupKey;
+    if (resumeDecidedForKey === key) return; // one resume decision per media
+    resumeDecidedForKey = key;
+    // The user already picked a position themselves → their choice wins.
+    if (userSeekedBeforeResume) return;
+    // The playhead already moved meaningfully past the saved position →
+    // the record is stale for this session; never seek back over the user.
+    if (currentTime > 30 && currentTime >= saved - 1) return;
+    capturePendingSeek(pendingSeekState, saved, Date.now());
+    currentTime = saved;
+    // The element may already be ready (progress raced the metadata): apply
+    // immediately; otherwise the lifecycle retry chain applies it as soon
+    // as the stream is seekable.
+    applyPendingSeekToElement();
+  }
+  $: if (initialProgress > 0) applyDelayedResume(initialProgress);
 
   // Phase 6 audit fix: PiP events fire on the HTMLVideoElement, NOT on
   // document. The handler and listener attachment are at the top level of the
@@ -1599,6 +1678,10 @@
   // Admin provider form remains the single place where sandbox policy changes.
 
   function seek(time: number) {
+    // Player V2 final remediation (Issue 3): a deliberate user seek closes
+    // the pending auto-resume window for the current media (their choice of
+    // position always wins over the late-arriving saved position).
+    userSeekedBeforeResume = true;
     // Phase 4: while casting, the timeline and ±10 s controls seek the
     // RECEIVER (RemotePlayer.currentTime + RemotePlayerController.seek).
     if (castConnected && castController) {
@@ -2802,9 +2885,14 @@
     .message-actions { width: 100%; margin-left: 46px; }
   }
 
-  /* Landscape phone — compact control positioning. */
+  /* Landscape phone — compact control positioning.
+     Final remediation (Issue 2): the Back FAB sits closer to the landscape
+     viewport's left corner (6px floor instead of 8px, still under the
+     max() contract so a REAL device safe-area inset always wins). Portrait
+     placement is untouched; per-source Admin overrides (inline styles)
+     keep winning over both defaults. */
   @media (orientation: landscape) and (max-height: 500px) {
-    .back-fab { width: 40px; height: 40px; top: max(8px, env(safe-area-inset-top)); left: max(8px, env(safe-area-inset-left)); }
+    .back-fab { width: 40px; height: 40px; top: max(6px, env(safe-area-inset-top)); left: max(6px, env(safe-area-inset-left)); }
     .control-fab { width: 46px; height: 46px; }
     .source-chip { min-height: 56px; }
     .source-chip-bar { height: 48px; }

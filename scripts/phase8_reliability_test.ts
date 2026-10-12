@@ -57,7 +57,13 @@ assert.match(shell, /function handleEmbedLoad\(\)[\s\S]{0,950}clearEmbedLoadTime
 assert.match(shell, /clearEmbedLoadTimeout\(\);[\s\S]{0,400}if \(source\.type === 'embed'\)/, 'timeout cleared before starting new one on source switch');
 
 // 1h. Timeout is cleared on episode switch.
-assert.match(shell, /episodeIdentity[\s\S]{0,200}clearEmbedLoadTimeout\(\)/, 'timeout cleared on episode switch');
+// Player V2 final remediation supersession (documented, 2026-10-13): the
+// episode-switch block now ALSO resets duration/buffered and reopens the
+// auto-resume window (Issue 3 + Issue 5 fixes) between the episodeIdentity
+// stamp and the embed-timeout clear — the contract itself (an episode
+// switch clears the pending embed load timeout) is unchanged; the window
+// widens to cover the additional, order-independent cleanup.
+assert.match(shell, /episodeIdentity[\s\S]{0,1400}clearEmbedLoadTimeout\(\)/, 'timeout cleared on episode switch');
 
 // 1i. Timeout is cleared on destroy (in onMount cleanup return).
 // MAVP-4 supersession (documented): the destroy cleanup also releases the

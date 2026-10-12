@@ -146,6 +146,12 @@
       <span class="time-label" aria-live="off">{formatPlayerTime(safeDuration)}</span>
     </div>
 
+    <!-- Player V2 final remediation (Issue 1+2): ONE compact row, no
+         flexible spacer. Fullscreen sits at the END of the control group in
+         BOTH orientations (portrait: order below; landscape: the row is
+         explicitly left-aligned). The subtitle select flexes to absorb the
+         row's leftover width for its own LABEL (min 0 + ellipsis) — it can
+         no longer reserve blank space for a long disabled notice. -->
     <div class="secondary-row">
       {#if !castActive}
         <div class="volume-control">
@@ -157,7 +163,13 @@
         <!-- Subtitles: ALWAYS rendered (approved corrections spec — the user
              must be able to see that no tracks exist; a missing menu must
              never be mistaken for a working feature). -->
-        <label class="select-control" aria-label="Subtitles">
+  <!-- Player V2 final remediation (Issue 1): the subtitle select is the
+        FLEXIBLE member of the row (flex 1 1 56px, min-width 0): it absorbs
+        the row's leftover width for its own label and shrinks with
+        ellipsis when the row is tight — it can never reserve blank space
+        for a long disabled notice and never forces fullscreen to wrap by
+        itself. Explicit widths below for the fixed selectors. -->
+        <label class="select-control subtitles" aria-label="Subtitles">
           <Captions size={16} aria-hidden="true" />
           <select value={selectedSubtitle} onchange={(event) => onSubtitle((event.currentTarget as HTMLSelectElement).value)}>
             <option value="">Off</option>
@@ -168,6 +180,14 @@
         {#if internalQualities.length > 1}
           <!-- Engine-driven HLS quality: AUTO + the manifest's REAL levels. -->
           <label class="select-control quality" aria-label="Playback quality"><Settings2 size={15} aria-hidden="true" /><select value={selectedInternalQuality} onchange={(event) => onInternalQuality((event.currentTarget as HTMLSelectElement).value)}><option value={PLAYER_AUTO_QUALITY_ID}>Auto</option>{#each internalQualities as option}<option value={option.id}>{option.label}</option>{/each}</select></label>
+        {:else if internalQualities.length === 1}
+          <!-- Player V2 final remediation (Issue 6): a manifest with exactly
+               ONE level cannot offer a selection — the truthful state is a
+               DISABLED control showing the REAL level label (never a
+               fabricated Auto/quality list, never a silently missing
+               control). MP4/native-HLS surfaces (0 levels) still render
+               nothing at all. -->
+        <label class="select-control quality" aria-label={`Playback quality: ${internalQualities[0].label} (single available quality)`}><Settings2 size={15} aria-hidden="true" /><select disabled aria-disabled="true" title={`Quality ${internalQualities[0].label} (no other qualities available)`}>{#each internalQualities as option}<option selected>{option.label}</option>{/each}</select></label>
         {:else if qualities.length > 1}
           <label class="select-control quality" aria-label="Quality"><Settings2 size={15} aria-hidden="true" /><select value={selectedQuality} onchange={(event) => onQuality((event.currentTarget as HTMLSelectElement).value)}><option value="">Auto</option>{#each qualities as quality}<option value={quality.url}>{qualityLabel(quality)}</option>{/each}</select></label>
         {/if}
@@ -178,10 +198,12 @@
         <!-- Speed: the selected speed renders ONCE (the select itself). -->
         <label class="select-control speed" aria-label="Playback speed"><select value={playbackRate} onchange={(event) => onPlaybackRate(Number((event.currentTarget as HTMLSelectElement).value))}>{#each playbackSpeeds as speed}<option value={speed}>{speed}×</option>{/each}</select></label>
       {/if}
-      <span class="secondary-spacer" aria-hidden="true"></span>
       <!-- Fullscreen/landscape: the SAME Mavero fullscreen + orientation
            controller for every provider (the floating Landscape FAB remains
-           only for embed sources, which have no Mavero control surface). -->
+           only for embed sources, which have no Mavero control surface).
+           Final remediation: part of the left-aligned control group — the
+           former flexible spacer (which pushed it to the far edge and
+           forced it onto its own wrapped row on phones) is REMOVED. -->
       <button class="control-button" type="button" aria-label={fullscreenActive ? 'Exit fullscreen' : 'Enter fullscreen'} aria-pressed={fullscreenActive} onclick={onFullscreen}>{#if fullscreenActive}<Minimize2 size={17} />{:else}<Maximize2 size={17} />{/if}</button>
     </div>
   </div>
@@ -222,10 +244,13 @@
   .timeline-input::-moz-range-track { height: 4px; background: transparent; }
   .timeline-input::-moz-range-thumb { width: 11px; height: 11px; border: 2px solid var(--ink); border-radius: 50%; background: var(--accent); }
 
-  /* Secondary row: flex-wrap gives narrow portrait a second compact row
-     instead of overlap; the fullscreen button keeps its place at the end. */
-  .secondary-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
-  .secondary-spacer { flex: 1 1 0; min-width: 0; }
+  /* Secondary row: ONE compact left-aligned control group in BOTH
+     orientations (final remediation). flex-wrap remains only as the
+     deliberate narrow-viewport fallback — it can no longer produce the
+     reported "fullscreen on its own row" result, because nothing in the
+     row stretches anymore (the former flex-grow spacer is REMOVED) and the
+     subtitle select shrinks before anything wraps. */
+  .secondary-row { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-start; gap: 6px; }
   .control-button { display: inline-grid; place-items: center; min-width: 40px; min-height: 40px; border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--ink-soft); background: rgba(0,0,0,.5); cursor: pointer; transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
   .control-button:hover, .control-button:focus-visible { border-color: var(--line-strong); background: var(--accent-soft); }
   .control-button:active { transform: scale(.97); }
@@ -233,29 +258,56 @@
   .volume-input { width: 78px; accent-color: var(--accent); }
   .select-control { display: inline-flex; align-items: center; gap: 4px; min-height: 40px; padding: 0 7px; border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--ink-soft); background: rgba(0,0,0,.5); font-size: .62rem; }
   .select-control:hover, .select-control:focus-within { border-color: var(--line-strong); }
-  .select-control select { max-width: 110px; border: 0; outline: 0; color: inherit; background: transparent; font: inherit; cursor: pointer; }
+  /* Final remediation (Issue 1): native selects are sized by their LONGEST
+     option (on Android the subtitle menu's disabled notice), which reserved
+     a wide blank area next to short labels like "Off". Every select now
+     carries min-width:0 + overflow/ellipsis and an explicit compact width;
+     the subtitle select additionally flexes to absorb leftover row space
+     (bounded by max-width) so the width is always USEFUL label room. */
+  .select-control select { min-width: 0; border: 0; outline: 0; color: inherit; background: transparent; font: inherit; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .select-control option { color: #181822; background: #f5f6fa; }
+  .select-control.subtitles { flex: 1 1 56px; min-width: 56px; max-width: 110px; }
+  .select-control.subtitles select { flex: 1 1 auto; width: 100%; }
   .select-control.speed select { width: 44px; }
   .select-control.display-mode select { width: 58px; }
+  .select-control.quality select { width: 64px; }
   /* Player V2 corrections: connected Cast state tinted with the accent. */
   .cast-button.casting { color: var(--accent); border-color: var(--line-strong); }
 
   /* Compact viewports: the volume slider folds away (the mute button and the
      right-zone volume swipe remain); every OTHER control — subtitles, quality,
      display mode, speed, fullscreen — stays reachable (the reported
-     "no quality selector on phones" regression). */
+     "no quality selector on phones" regression). Narrow phones tighten the
+     fixed selector widths (the subtitle select keeps flexing down to its
+     56px floor with ellipsis before anything may wrap). */
   @media (max-width: 840px) {
     .volume-input { display: none; }
-    .select-control select { max-width: 88px; }
+    .select-control.quality select { width: 56px; }
   }
   @media (max-width: 640px) {
-    .bottom-zone { padding: 8px 10px calc(10px + env(safe-area-inset-bottom)); }
-    .secondary-row { gap: 4px; }
+    .bottom-zone { padding: 8px 8px calc(10px + env(safe-area-inset-bottom)); }
+    .secondary-row { gap: 3px; }
     .time-label { font-size: .56rem; }
-    .select-control { padding: 0 4px; }
+    .select-control { padding: 0 3px; }
+    .select-control.subtitles { min-width: 48px; }
+    .select-control.speed select { width: 36px; }
+    .select-control.display-mode { gap: 0; }
+    /* The display-mode icon is decorative — on narrow phones it folds away
+       so Fit/Fill/Stretch keeps its readable labels and the row stays ONE
+       line down to 360px (deliberate compact fallback budget). */
+    .select-control.display-mode :global(svg) { display: none; }
+    .select-control.quality select { width: 48px; }
     .center-cluster { gap: 20px; }
     .cluster-button.play { width: 62px; height: 62px; }
     .cluster-button.seek { width: 50px; height: 50px; }
+  }
+  /* Landscape phone (final remediation, Issue 2): the secondary row is ONE
+     left-aligned group — no stretching, fullscreen stays INSIDE the group,
+     and the row cannot collide with the timeline above it (the grid gap +
+     the bottom-zone padding hold the separation). Portrait keeps the same
+     group semantics (this rule only tightens landscape spacing). */
+  @media (orientation: landscape) and (max-height: 500px) {
+    .secondary-row { flex-wrap: nowrap; gap: 5px; }
   }
   /* Landscape phone: keep the cluster clear of the bottom zone. */
   @media (orientation: landscape) and (max-height: 500px) {

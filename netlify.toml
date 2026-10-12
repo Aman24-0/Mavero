@@ -79,7 +79,24 @@
     # `connect-src 'self' https://*.supabase.co` — the wildcard covers all
     # hosted Supabase projects (the common case). Self-hosted Supabase
     # deployments would need to add their URL here.
-    Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://image.tmdb.org; media-src 'self' https://zcdn.bluevelvet.space; font-src 'self'; connect-src 'self' https://*.supabase.co https://image.tmdb.org https://zcdn.bluevelvet.space; frame-src *; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'"
+    #
+    # NOTE on the player's optional lookups (Player V2 final remediation,
+    # 2026-10-13): the external-subtitle LIST fetch (external-subtitles.ts)
+    # and the TheIntroDB lookup (intro-client.ts) are BROWSER-DIRECT fetches
+    # to fixed HTTPS origins:
+    #   * https://sub.vdrk.site   — VDRK subtitle lists (the VTT FILES go
+    #     through the same-origin /api/content/subtitles/vtt proxy and need
+    #     no entry here);
+    #   * https://api.theintrodb.org — TheIntroDB public read-only API.
+    # Both were MISSING from connect-src, so the deployed CSP rejected the
+    # requests before they left the page ("Refused to connect … violates
+    # content security directive: connect-src") — every title showed
+    # "No subtitles available"/"Subtitles unavailable" and Skip Intro could
+    # never load, regardless of the upstream data (verified live 2026-10-13:
+    # the VDRK upstreams are populated for the reported titles). The origins
+    # are the adapters' fixed HTTPS constants (never user input) and carry
+    # no credentials — adding them reveals nothing new.
+    Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://image.tmdb.org; media-src 'self' https://zcdn.bluevelvet.space; font-src 'self'; connect-src 'self' https://*.supabase.co https://image.tmdb.org https://zcdn.bluevelvet.space https://sub.vdrk.site https://api.theintrodb.org; frame-src *; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'"
 
 [[headers]]
   for = "/sw.js"

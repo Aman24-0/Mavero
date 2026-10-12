@@ -763,7 +763,17 @@
     const isEmbedPlayback = resolvedSource?.type === 'embed';
     const position = isEmbedPlayback ? currentPlaybackTime : event.currentTime;
     if (!isEmbedPlayback) currentPlaybackTime = event.currentTime;
-    writer?.update(position, duration, event.completed);
+    // Player V2 final remediation (Issue 3): an INITIAL zero-position event
+    // must never erase a saved position before the pending resume seek has
+    // been applied. Before the delayed resume lands (or while the seek
+    // waits for a seekable range), the media reports near-zero positions —
+    // writing them through update() (which has no zero guard by design and
+    // stamps positionUpdatedAt=now) would downgrade a valid 1h29m record to
+    // 0:00 in one flush. Once the position advances past the pre-resume
+    // floor, updates flow exactly as before. Completion (ended) is never
+    // filtered — an ended event is an explicit user/completion fact.
+    const preResumeZeroEvent = resumeTime > 0 && position < 1 && event.reason !== 'ended';
+    if (!preResumeZeroEvent) writer?.update(position, duration, event.completed);
     if (event.reason === 'pause' || event.reason === 'source-change' || event.reason === 'close' || event.reason === 'visibility') void writer?.pause();
     if (event.reason === 'ended') void writer?.complete(position, duration);
     if (page.data.user && !startedHistory && position > 0) {
