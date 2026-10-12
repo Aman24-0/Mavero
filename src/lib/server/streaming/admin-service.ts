@@ -207,14 +207,28 @@ export async function deleteCategory(client: StreamingClient, id: string) {
  * client-supplied-ordering upsert had.
  */
 export async function assignSourceToCategory(client: StreamingClient, sourceId: string, categoryId: string): Promise<void> {
+  // MAVP-7 (Issue 3): GLOBAL assignment uniqueness. A source may live in AT
+  // MOST ONE category, so the eligibility check is not pair-scoped anymore:
+  // a source assigned to ANY category (this one or another) is rejected with
+  // an admin-facing error. The UI picker lists only zero-assignment sources;
+  // this server-side check catches stale forms and direct submissions. The
+  // authoritative concurrency backstop is the DB-level
+  // unique(source_id) constraint (migration
+  // 20261012000000_source_category_unique_assignment.sql): two concurrent
+  // assigns can never both commit — the loser's insert fails with 23505,
+  // translated below into the same admin-facing message (never a raw
+  // Postgres error page).
   const { data: existing, error: checkError } = await client
     .from('streaming_source_categories')
-    .select('source_id')
+    .select('category_id')
     .eq('source_id', sourceId)
-    .eq('category_id', categoryId)
     .maybeSingle();
   if (checkError) throwRegistryError('Check source assignment', checkError);
-  if (existing) return; // already assigned — keep the current position
+  if (existing) {
+    throw new Error(existing.category_id === categoryId
+      ? 'Source is already assigned to this category.'
+      : 'Source is already assigned to a category.');
+  }
   const { data: maxRow, error: maxError } = await client
     .from('streaming_source_categories')
     .select('ordering')
@@ -227,7 +241,14 @@ export async function assignSourceToCategory(client: StreamingClient, sourceId: 
   const { error } = await client
     .from('streaming_source_categories')
     .insert({ source_id: sourceId, category_id: categoryId, ordering });
-  if (error) throwRegistryError('Assign source category', error);
+  if (error) {
+    // Concurrent-assign race: the pre-check above saw no mapping, but a
+    // parallel request committed first and the unique(source_id) constraint
+    // rejected THIS insert. Same admin-facing contract as the pre-check —
+    // never a silent success, never a raw 23505.
+    if (error.code === '23505') throw new Error('Source is already assigned to a category.');
+    throwRegistryError('Assign source category', error);
+  }
   invalidatePublicStreamingConfig();
 }
 

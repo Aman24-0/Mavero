@@ -412,12 +412,50 @@ function rejectingSupabaseClient(): any {
     okEq(db.mappings.find((row) => row.source_id === B)?.ordering, 1, 'I4: the assignment APPENDS at max(ordering) + 1 (dense)');
     ok([...db.tablesTouched].every((table) => table === 'streaming_source_categories'), 'I4: assignment touches ONLY the mapping table');
   }
-  // --- assignSourceToCategory: re-assigning is a safe no-op preserving position.
+  // --- assignSourceToCategory: re-assigning is REJECTED (MAVP-7 Issue 3 —
+  //     global assignment uniqueness; the previous idempotent no-op let a
+  //     stale client list or a direct POST silently keep a source in two
+  //     categories).
   {
     const db = { mappings: [{ source_id: A, category_id: CAT, ordering: 0 }, { source_id: B, category_id: CAT, ordering: 1 }] as MappingRow[], tablesTouched: new Set<string>() };
-    await service.assignSourceToCategory(fakeClient(db) as never, A, CAT);
-    okEq(db.mappings.length, 2, 'I4: re-assigning an assigned source inserts NOTHING (duplicate-proof)');
-    okEq(db.mappings.find((row) => row.source_id === A)?.ordering, 0, 'I4: re-assigning preserves the existing position');
+    let message = '';
+    try { await service.assignSourceToCategory(fakeClient(db) as never, A, CAT); } catch (e) { message = (e as Error).message; }
+    ok(/already assigned to this category/.test(message), 'I4 (superseded MAVP-7): re-assigning a source that is already in THIS category is REJECTED with a clear error (was: idempotent no-op)');
+    okEq(db.mappings.length, 2, 'I4 (superseded MAVP-7): the rejected re-assignment inserts NOTHING');
+    // Cross-category rejection: the eligibility rule is GLOBAL, not pair-scoped.
+    const otherCat = '44444444-4444-4444-4444-444444444444';
+    message = '';
+    try { await service.assignSourceToCategory(fakeClient(db) as never, A, otherCat); } catch (e) { message = (e as Error).message; }
+    ok(/already assigned to a category/.test(message), 'I4 (superseded MAVP-7): a source assigned to ANOTHER category is rejected for this category too (global uniqueness)');
+    okEq(db.mappings.filter((row) => row.category_id === otherCat).length, 0, 'I4 (superseded MAVP-7): the cross-category rejection inserts NOTHING');
+  }
+  // --- assignSourceToCategory: a concurrent-assign race (the DB unique
+  //     constraint rejects the losing insert with 23505) surfaces the same
+  //     admin-facing message — never a raw Postgres error.
+  {
+    const db = { mappings: [] as MappingRow[], tablesTouched: new Set<string>() };
+    const raceClient = fakeClient(db) as any;
+    const originalFrom = raceClient.from.bind(raceClient);
+    raceClient.from = (table: string) => {
+      const builder = originalFrom(table);
+      const originalInsert = builder.insert.bind(builder);
+      builder.insert = (payload: unknown) => {
+        const next = originalInsert(payload);
+        const originalThen = next.then.bind(next);
+        next.then = (resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) =>
+          originalThen((value: unknown) => resolve({ data: null, error: { code: '23505', message: 'duplicate key value violates unique constraint "streaming_source_categories_source_unique"' } }), reject);
+        return next;
+      };
+      return builder;
+    };
+    let message = '';
+    try { await service.assignSourceToCategory(raceClient as never, B, CAT); } catch (e) { message = (e as Error).message; }
+    ok(/already assigned to a category/.test(message), 'I4 (superseded MAVP-7): a lost concurrent-assign race (23505) is translated into the same admin-facing error');
+    // NOTE: the fake store still records the optimistic push (a fake
+    // artifact — the chain resolves the error AFTER the push). The real
+    // database writes nothing on a failed insert; the CONTRACT under test is
+    // the translated admin-facing error, never a raw 23505 and never a
+    // silent success.
   }
   // --- deleteSourceCategory: removes ONLY the mapping, normalizes ordering.
   {
@@ -512,18 +550,24 @@ function rejectingSupabaseClient(): any {
     const actionsBody = server.slice(server.indexOf('assignSource:'), server.indexOf('reorderSources:') + 1200);
     ok((actionsBody.match(/requireAdmin\(locals/g) ?? []).length >= 3, 'I4: every restored action requires admin authorization');
     ok(server.includes('parseSourceAssignmentForm') && server.includes('parseCategoryReorderForm'), 'I4: every restored action parses + validates its input server-side');
-    ok(server.includes('.sort((a, b) => a.position - b.position)'), 'I4: the reorder action sorts the submitted positions deterministically (field order can never influence the outcome)');
-    ok(server.includes('assignSourceToCategory') && server.includes('deleteSourceCategory') && server.includes('reorderCategorySources'), 'I4: the actions reuse the EXISTING service-layer methods (no competing data model)');
+    // MAVP-7 supersession: the reorder action no longer sorts a client-supplied
+    // full ordering — it derives the final order SERVER-SIDE from the
+    // database's current assignments (numeric position workflow).
+    ok(server.includes('applyCategorySourcePositions(locals.supabase, categoryId, positions)'), 'I4 (superseded MAVP-7): the reorder action derives the order server-side via applyCategorySourcePositions (numeric position workflow)');
+    ok(!server.includes('reorderCategorySources'), 'I4 (superseded MAVP-7): the action no longer trusts a client-assembled full ordering (reorderCategorySources import removed)');
+    ok(server.includes('assignSourceToCategory') && server.includes('deleteSourceCategory'), 'I4: the assign/remove actions reuse the EXISTING service-layer methods (no competing data model)');
 
     const page = read('../src/routes/admin/system/content-rules/+page.svelte');
     const pageCode = codeOnly(page);
     ok(pageCode.includes('action="?/assignSource"'), 'I4: the category editor renders the assign form');
     ok(pageCode.includes('action="?/removeSource"'), 'I4: the category editor renders the remove form');
     ok(pageCode.includes('action="?/reorderSources"'), 'I4: the category editor renders the reorder forms');
-    ok(pageCode.includes('name={`position_${sid}`}') || pageCode.includes('position_${sid}'), 'I4: the reorder forms submit the documented position_<sourceId> fields');
+    // MAVP-7 supersession: the numeric position workflow submits ONE
+    // position_<sourceId> target per row (the server derives the rest).
+    ok(pageCode.includes('name={`position_${row.sourceId}`}') || pageCode.includes('position_${row.sourceId}'), 'I4 (superseded MAVP-7): the reorder form submits the documented position_<sourceId> target field');
     ok(pageCode.includes('Sources in this category'), 'I4: the source-management section has a clear heading');
     ok(pageCode.includes('No sources assigned to this category yet.'), 'I4: the section shows a clear EMPTY state');
-    ok(pageCode.includes('Every existing source is already assigned to this category.'), 'I4: the assign select shows its exhausted state');
+    ok(pageCode.includes('No unassigned sources remain'), 'I4 (superseded MAVP-7): the assign select shows its exhausted state (global-uniqueness wording)');
     ok(pageCode.includes("assignedSourcesForCategory(editingCategory.id)"), 'I4: the assigned list derives from the LIVE load payload (no second data model)');
     ok(pageCode.includes("Unknown source"), 'I4: a stale mapping (deleted source) renders safely and stays removable');
     // Category CRUD stays SEPARATE from source CRUD: the category form and

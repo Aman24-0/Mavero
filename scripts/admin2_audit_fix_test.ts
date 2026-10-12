@@ -265,12 +265,24 @@ ok('FINDING-007: dead icon field removed from content rules');
 // server-side, and reuses the existing service-layer methods over the
 // authoritative mapping table.
 const contentRulesServer = read('src/routes/admin/system/content-rules/+page.server.ts');
+// MAVP-7 SUPERSESSION (stronger): each action must call its EXACT service-layer
+// method — assignSource→assignSourceToCategory, removeSource→
+// deleteSourceCategory, reorderSources→applyCategorySourcePositions (the
+// numeric-position service, which itself persists through
+// reorderCategorySources internally — the shared service layer remains the
+// sole authority over the mapping table; the action no longer assembles a
+// client-side ordering itself).
+const ACTION_SERVICE_METHOD = {
+  assignSource: /assignSourceToCategory/,
+  removeSource: /deleteSourceCategory/,
+  reorderSources: /applyCategorySourcePositions/,
+} as const;
 for (const action of ['assignSource', 'removeSource', 'reorderSources'] as const) {
   const body = contentRulesServer.slice(contentRulesServer.indexOf(`${action}: async`), contentRulesServer.indexOf(`${action}: async`) + 1400);
   assert.match(contentRulesServer, new RegExp(`\\s{2}${action}: async \\(`), `X1. ${action} action restored (MAVP-6: the category editor now invokes it)`);
   assert.match(body, /requireAdmin\(locals/, `X1. ${action} requires admin authorization`);
   assert.match(body, /parse(SourceAssignment|CategoryReorder)Form|parseCategoryReorderForm/, `X1. ${action} validates its input server-side`);
-  assert.match(body, /assignSourceToCategory|deleteSourceCategory|reorderCategorySources/, `X1. ${action} reuses the existing service-layer method`);
+  assert.match(body, ACTION_SERVICE_METHOD[action], `X1. ${action} reuses its exact existing service-layer method`);
 }
 ok('FINDING-008 (superseded by MAVP-6 Issue 4): the source-assignment actions are restored WITH a real UI caller (the dead-code rationale no longer applies)');
 

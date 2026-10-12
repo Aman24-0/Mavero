@@ -80,29 +80,29 @@
     });
   }
 
-  /** Sources that can be assigned to this category: everything that exists
-   *  and is not already assigned (the service layer re-validates
-   *  authoritatively; duplicates are a safe no-op there). */
+  /** MAVP-7 (Issue 3): a source may live in AT MOST ONE category. The assign
+   *  picker therefore offers ONLY sources with ZERO category assignments
+   *  anywhere — a source assigned to ANOTHER category is just as unavailable
+   *  as one assigned to the category being edited. The service layer
+   *  re-validates authoritatively (rejects any already-assigned source, and
+   *  the DB-level unique(source_id) constraint closes the concurrent-assign
+   *  race), so a stale client list can never produce a double assignment. */
   function assignableSourcesForCategory(categoryId: string): any[] {
-    const assigned = new Set((data.sourceCategories as any[]).filter((sc) => sc.category_id === categoryId).map((sc) => sc.source_id));
-    return (data.sources as any[]).filter((candidate) => !assigned.has(candidate.id));
+    void categoryId; // the rule is GLOBAL — kept for call-site symmetry
+    const assignedAnywhere = new Set((data.sourceCategories as any[]).map((sc) => sc.source_id));
+    return (data.sources as any[]).filter((candidate) => !assignedAnywhere.has(candidate.id));
   }
 
-  /** The category's assigned source ids in the CURRENT display order. */
-  function assignedIds(categoryId: string): string[] {
-    return assignedSourcesForCategory(categoryId).map((row) => row.sourceId);
-  }
-
-  /** A copy of the order with the entry at `index` moved by `delta` — the
-   *  deterministic input for the reorder form's position fields. */
-  function reorderedIds(ids: string[], index: number, delta: -1 | 1): string[] {
-    const next = ids.slice();
-    const target = index + delta;
-    if (target < 0 || target >= next.length) return next;
-    const [moved] = next.splice(index, 1);
-    next.splice(target, 0, moved);
-    return next;
-  }
+  // MAVP-7 (Issue 2): the Up/Down reorder controls were REPLACED by a numeric
+  // position workflow. Each row carries ONE numeric input + an explicit Apply
+  // button that submits `position_<sourceId>` for that source only. The FINAL
+  // order is derived SERVER-SIDE from the database's current assignments
+  // (applyCategorySourcePositions → shared applyPositionEdits move semantics:
+  // move-to-position-N, shift everything in between, dense 1..N). The client
+  // can never inject an arbitrary ordering, out-of-range targets are rejected
+  // with "Positions run from 1 to N.", and nothing is persisted until the
+  // administrator presses Apply. No-JS fallback: the plain form POST works
+  // without any client script.
 
   function statusTone(status: string | null): 'good' | 'warn' | 'bad' | 'neutral' {
     if (status === 'active' || status === 'experimental') return 'good';
@@ -293,12 +293,13 @@
              reorderCategorySources) remains the sole authority over the
              streaming_source_categories mapping. -->
         <AdminFormSection heading="Sources in this category">
-          <p class="a2-field-hint">Assign existing sources to this category and control their resolver order. Assigning appends to the end; removing never deletes the source itself.</p>
+          <p class="a2-field-hint">Assign an unassigned source to this category and set each source's numeric position (1 = first). Nothing is persisted until you press Apply; removing never deletes the source itself.</p>
           {#if assignedSourcesForCategory(editingCategory.id).length === 0}
             <p class="a2-sources-empty" role="status">No sources assigned to this category yet.</p>
           {:else}
             <div class="a2-assigned-list">
               {#each assignedSourcesForCategory(editingCategory.id) as row, i (row.sourceId)}
+                {@const listLength = assignedSourcesForCategory(editingCategory.id).length}
                 <div class="a2-assigned-row">
                   <span class="a2-assigned-pos">{row.position}</span>
                   <span class="a2-assigned-name">{row.name}</span>
@@ -307,19 +308,20 @@
                     <AdminStatusBadge label="Disabled" tone="neutral" />
                   {/if}
                   <span class="a2-assigned-spacer"></span>
-                  <form method="POST" action="?/reorderSources" class="a2-inline-form">
+                  <!-- MAVP-7 (Issue 2): numeric position — ONE edit per row,
+                       applied only when the administrator presses Apply. The
+                       server derives the final order from the database's
+                       current assignments; positions below 1 or above the
+                       list length are rejected server-side. The native
+                       min/max attributes give an instant no-JS hint while
+                       the server stays the authority. -->
+                  <form method="POST" action="?/reorderSources" class="a2-position-form">
                     <input type="hidden" name="category_id" value={editingCategory.id} />
-                    {#each reorderedIds(assignedIds(editingCategory.id), i, -1) as sid, idx (sid)}
-                      <input type="hidden" name={`position_${sid}`} value={idx + 1} />
-                    {/each}
-                    <button type="submit" class="a2-icon-btn" title="Move up" disabled={i === 0} aria-label={`Move ${row.name} up`}>↑</button>
-                  </form>
-                  <form method="POST" action="?/reorderSources" class="a2-inline-form">
-                    <input type="hidden" name="category_id" value={editingCategory.id} />
-                    {#each reorderedIds(assignedIds(editingCategory.id), i, 1) as sid, idx (sid)}
-                      <input type="hidden" name={`position_${sid}`} value={idx + 1} />
-                    {/each}
-                    <button type="submit" class="a2-icon-btn" title="Move down" disabled={i === assignedSourcesForCategory(editingCategory.id).length - 1} aria-label={`Move ${row.name} down`}>↓</button>
+                    <label class="a2-position-field">
+                      <span>Position</span>
+                      <input type="number" name={`position_${row.sourceId}`} value={row.position} min="1" max={listLength} step="1" inputmode="numeric" aria-label={`Position for ${row.name}`} />
+                    </label>
+                    <button type="submit" class="a2-btn-secondary a2-position-apply" aria-label={`Apply new position for ${row.name}`}>Apply</button>
                   </form>
                   <form method="POST" action="?/removeSource" class="a2-inline-form" onsubmit={(e) => { if (!confirm(`Remove ${row.name} from this category? The source itself is not deleted.`)) e.preventDefault(); }}>
                     <input type="hidden" name="category_id" value={editingCategory.id} />
@@ -331,7 +333,7 @@
             </div>
           {/if}
           {#if assignableSourcesForCategory(editingCategory.id).length === 0}
-            <p class="a2-sources-empty" role="status">Every existing source is already assigned to this category.</p>
+            <p class="a2-sources-empty" role="status">No unassigned sources remain — every existing source already belongs to a category.</p>
           {:else}
             <form method="POST" action="?/assignSource" class="a2-assign-row">
               <input type="hidden" name="category_id" value={editingCategory.id} />
@@ -395,6 +397,14 @@
   .a2-assigned-name { font-size: var(--a2-text-sm); font-weight: 600; color: var(--a2-text-bright); }
   .a2-assigned-spacer { flex: 1 1 auto; }
   .a2-inline-form { display: inline-flex; }
+  /* MAVP-7 (Issue 2): numeric position control — compact, mobile-friendly
+     (44px touch target, wraps under the row on narrow screens). */
+  .a2-position-form { display: inline-flex; align-items: flex-end; gap: var(--a2-space-1); flex-wrap: wrap; }
+  .a2-position-field { display: flex; flex-direction: column; gap: 2px; }
+  .a2-position-field span { font-size: var(--a2-text-2xs); color: var(--a2-text-dim); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; }
+  .a2-position-field input { width: 4.5rem; min-height: 44px; padding: 6px 8px; background: var(--a2-surface-3); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); color: var(--a2-text); font-size: var(--a2-text-sm); text-align: center; }
+  .a2-position-field input:focus { outline: none; border-color: var(--a2-cyan); }
+  .a2-position-apply { min-height: 44px; padding: 8px 12px; font-size: var(--a2-text-xs); }
   .a2-assign-row { display: flex; align-items: flex-end; gap: var(--a2-space-2); flex-wrap: wrap; }
   .a2-assign-select { flex: 1 1 220px; }
   .a2-assign-row select { background: var(--a2-surface-3); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); color: var(--a2-text); font-size: var(--a2-text-sm); padding: 8px 10px; min-height: 44px; }

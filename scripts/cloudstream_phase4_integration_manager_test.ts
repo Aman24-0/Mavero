@@ -1172,16 +1172,20 @@ function pristineFile(relative: string): string | null {
   // MAVP-5 (sanctioned): ordered default-source slots — additive NEW table
   // + idempotent backfill; never touches any CloudStream/downloader/registry
   // table; the legacy single-default table is unchanged.
+  // MAVP-7 (sanctioned): global source→category assignment uniqueness —
+  // deterministic dedup + guarded UNIQUE(source_id) on the assignment
+  // mapping table only (no cloudstream/downloader/registry tables).
   ok(
-    addedMigrations.length === 7
+    addedMigrations.length === 8
       && addedMigrations.includes('20261004000000_unified_downloader_global_order.sql')
       && addedMigrations.includes('20261102000000_adapter_build_lifecycle.sql')
       && addedMigrations.includes('20261103000000_live_tv_analytics_events.sql')
       && addedMigrations.includes('20261104000000_live_tv_fallback_embed_event.sql')
       && addedMigrations.includes('20261105000000_vidrift_provider.sql')
       && addedMigrations.includes('20261106000000_source_icon_badge_contracts.sql')
-      && addedMigrations.includes('20261107000000_default_source_slots.sql'),
-    `F3: the ONLY added migrations are the FINAL TASK unified-order + build-lifecycle + LT-5-analytics + LT-15-fallback-event + VidRift-provider + MAVP-4-icon-badge + MAVP-5-default-slots migrations (${addedMigrations.join(', ') || 'none'})`,
+      && addedMigrations.includes('20261107000000_default_source_slots.sql')
+      && addedMigrations.includes('20261012000000_source_category_unique_assignment.sql'),
+    `F3: the ONLY added migrations are the FINAL TASK unified-order + build-lifecycle + LT-5-analytics + LT-15-fallback-event + VidRift-provider + MAVP-4-icon-badge + MAVP-5-default-slots + MAVP-7-unique-assignment migrations (${addedMigrations.join(', ') || 'none'})`,
   );
   ok(removedMigrations.length === 0, 'F3: no migration was removed');
 

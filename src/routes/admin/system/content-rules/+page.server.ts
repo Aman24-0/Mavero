@@ -12,7 +12,7 @@ import { requireAdmin } from '$lib/server/streaming/admin-auth';
 import {
   listAdminCategories, listAdminSources, listSourceCategories,
   createCategory, updateCategory, deleteCategory,
-  assignSourceToCategory, deleteSourceCategory, reorderCategorySources,
+  assignSourceToCategory, deleteSourceCategory, applyCategorySourcePositions,
 } from '$lib/server/streaming/admin-service';
 import { classifyAdminMutationError } from '$lib/server/streaming/mutation-result';
 import { parseCategoryForm, parseId, parseSourceAssignmentForm, parseCategoryReorderForm } from '$lib/server/streaming/validation';
@@ -97,25 +97,36 @@ export const actions: Actions = {
       return fail(400, { message: messageFrom(error, 'Unable to delete category.') });
     }
   },
-  // --- Source assignment management (MAVP-6 Issue 4) ---
+  // --- Source assignment management (MAVP-6 Issue 4; numeric positions MAVP-7) ---
   //
-  // FINDING-008 history: these three actions were removed because the
+  // FINDING-008 history: these actions were removed because the
   // Categories tab shipped without a source-assignment UI. MAVP-6 restores
   // the COMPLETE workflow: the category editor now carries the source
   // management section (assign / remove / reorder), so every action below
   // has a real UI caller. The contracts are the EXISTING service-layer
-  // methods (assignSourceToCategory / deleteSourceCategory /
-  // reorderCategorySources) over the authoritative
-  // streaming_source_categories mapping — no competing data model.
+  // methods over the authoritative streaming_source_categories mapping — no
+  // competing data model.
   //
-  // Security/integrity contract (unchanged from the pre-removal design and
-  // re-verified against the service layer):
+  // MAVP-7 changes (both driven by production feedback on this editor):
+  //   * reorderSources now uses the numeric-position contract: the admin
+  //     edits ONE source's target position per row and the FINAL order is
+  //     derived SERVER-SIDE from the database's current assignments
+  //     (applyCategorySourcePositions → shared applyPositionEdits "move to
+  //     position N, shift the rest" semantics, dense 1..N). The client can
+  //     never inject an arbitrary ordering; positions below 1 are rejected
+  //     by the parser, positions above the list length are rejected by the
+  //     service ("Positions run from 1 to N.").
+  //   * assignSource enforces GLOBAL assignment uniqueness: a source may
+  //     live in at most ONE category (the service rejects any
+  //     already-assigned source and the unique(source_id) DB constraint
+  //     closes the concurrent-assign race).
+  //
+  // Security/integrity contract (re-verified against the service layer):
   //   * requireAdmin on EVERY mutation (same gate as category CRUD).
   //   * All submitted IDs are strictly parsed/validated server-side
   //     (parseSourceAssignmentForm / parseCategoryReorderForm — UUID shapes,
   //     bounded text, positive integer positions).
-  //   * Assignment appends densely (service), is idempotent for an
-  //     already-assigned source, and never touches source metadata.
+  //   * Assignment appends densely (service) and never touches source metadata.
   //   * Removal deletes ONLY the mapping row (the source itself is never
   //     deleted) and re-normalizes the category's ordering.
   //   * Reordering is scoped to ONE category (the service validates the
@@ -147,13 +158,14 @@ export const actions: Actions = {
     await requireAdmin(locals, { redirectTo: '/admin/system/content-rules' });
     try {
       const { categoryId, positions } = parseCategoryReorderForm(await request.formData());
-      // Deterministic: the submitted 1-based positions define the order —
-      // sorted explicitly here so the payload's field order can never
-      // influence the outcome. The service then validates the set against
-      // the category's real assignments (duplicates / stale / deleted
-      // records are rejected with an admin-facing error, never half-applied).
-      const orderedSourceIds = [...positions].sort((a, b) => a.position - b.position).map((p) => p.sourceId);
-      await reorderCategorySources(locals.supabase, categoryId, orderedSourceIds);
+      // MAVP-7 (Issue 2): numeric-position contract. The submitted fields are
+      // PER-SOURCE TARGETS (`position_<source_id>` — typically exactly one,
+      // the row the admin edited). The final order is derived SERVER-SIDE
+      // from the database's current assignments (move-to-position-N, shift
+      // the rest, dense 1..N) — the client can never inject an arbitrary
+      // ordering, and out-of-range/malformed targets are rejected with an
+      // admin-facing error before any write.
+      await applyCategorySourcePositions(locals.supabase, categoryId, positions);
       throw redirect(303, `/admin/system/content-rules?tab=categories&notice=Sources%20reordered.`);
     } catch (error) {
       if (isRedirect(error)) throw error;

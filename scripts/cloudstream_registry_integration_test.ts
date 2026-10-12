@@ -237,6 +237,12 @@ function section_registry(): void {
   // download_provider / cloudstream tables touched; the legacy single-default
   // table is unchanged.
   const mavp5DefaultSlotsMigration = '20261107000000_default_source_slots.sql';
+  // MAVP-7 (sanctioned): global source→category assignment uniqueness — a
+  // deterministic dedup of streaming_source_categories (keeping the runtime
+  // primary-assignment row) + a guarded UNIQUE (source_id) constraint. Only
+  // the assignment mapping table is touched (no registry/download_provider/
+  // cloudstream tables) — see MAVP7_PRODUCTION_FIX_AUDIT.md §4.
+  const mavp7UniqueAssignmentMigration = '20261012000000_source_category_unique_assignment.sql';
   const added = migrations.filter((name) => !pristineMigrations.includes(name));
   const phase2Sql = read(`supabase/migrations/${phase2Migration}`);
   const phase2SqlNoComments = phase2Sql.replace(/--[^\n]*/g, '');
@@ -245,7 +251,7 @@ function section_registry(): void {
   const unifiedSql = read(`supabase/migrations/${unifiedMigration}`);
   const unifiedSqlNoComments = unifiedSql.replace(/--[^\n]*/g, '');
   ok(
-    added.length === 10
+    added.length === 11
       && added.includes(migrationName)
       && added.includes(phase2Migration)
       && added.includes(phase3Migration)
@@ -255,8 +261,9 @@ function section_registry(): void {
       && added.includes(liveTvFallbackMigration)
       && added.includes(vidriftProviderMigration)
       && added.includes(mavp4IconBadgeMigration)
-      && added.includes(mavp5DefaultSlotsMigration),
-    `§A10: exactly the CS-5 + Phase 2 + Phase 3 + FINAL TASK + build-lifecycle + LT-5-analytics + LT-15-fallback-event + VidRift-provider + MAVP-4-icon-badge + MAVP-5-default-slots migrations were added (${added.join(', ') || 'none'})`,
+      && added.includes(mavp5DefaultSlotsMigration)
+      && added.includes(mavp7UniqueAssignmentMigration),
+    `§A10: exactly the CS-5 + Phase 2 + Phase 3 + FINAL TASK + build-lifecycle + LT-5-analytics + LT-15-fallback-event + VidRift-provider + MAVP-4-icon-badge + MAVP-5-default-slots + MAVP-7-unique-assignment migrations were added (${added.join(', ') || 'none'})`,
   );
   // VIDRIFT (sanctioned): insert-only registration — no destructive verbs,
   // no download_providers / registry-table references.

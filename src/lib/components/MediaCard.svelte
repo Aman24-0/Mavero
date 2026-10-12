@@ -220,7 +220,27 @@
       <span class="mc-type">{badges.primary}</span>
       {#if badges.secondary}<span class="mc-type mc-type-secondary">{badges.secondary}</span>{/if}
       {#if item.rating > 0}<span class="mc-rating"><Star size={9} fill="currentColor" strokeWidth={0} /> {item.rating.toFixed(1)}</span>{/if}
-      <a class="mc-play" href={watchHref} aria-label={item.resumeHref ? `Resume ${item.title}` : `Play ${item.title}`} onclick={(e) => { e.stopPropagation(); }}>
+      <!-- MAVP-7 (watch-page 500): this anchor carries NO click handler on
+           purpose. The previous `onclick={(e) => e.stopPropagation()}` blocked
+           the click from ever reaching SvelteKit's delegated navigation
+           listener (installed on a container ancestor — @sveltejs/kit 2.70.3
+           client.js: `container.addEventListener('click', ...)`), so EVERY
+           Play press fell back to a NATIVE full-page navigation: the heaviest
+           server pipeline in the app (hooks auth + layout + watch load) ran
+           from scratch on every Play click, while SPA browsing reused cached
+           layout data (`uses: {}`). Play was therefore the only action that
+           always executed the full SSR chain — concentrating transient
+           instance/upstream failures on exactly this button and surfacing
+           them as the branded MAVERO/500 "The signal dropped." page. With the
+           handler removed, Play navigates through the SAME client router as
+           the poster/title links (SPA `__data.json` request, back/forward
+           preserved, `resumeHref` + `returnTo` semantics unchanged). The
+           router ignores clicks whose default was already prevented, so no
+           `preventDefault()` is added here either. The parent card has NO
+           click handler (anchors are siblings, and the selectable-mode
+           backdrop is pointer-events:none), so the bubbling click cannot
+           trigger any card action. -->
+      <a class="mc-play" href={watchHref} aria-label={item.resumeHref ? `Resume ${item.title}` : `Play ${item.title}`}>
         <Play size={12} fill="currentColor" strokeWidth={0} />
       </a>
       {#if item.progress}
