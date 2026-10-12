@@ -136,18 +136,33 @@ No user-facing UI code changed: the source selector derives its label from
 | Baseline `pnpm check` (pre-change tree) | PASS — 0 errors / 0 warnings |
 | Focused `bluevelvet_provider_test` | PASS — 113 checks |
 | `pnpm check` (implementation tree) | PASS — 0 errors / 0 warnings |
+| Full `pnpm test` chain (250/250 commands, includes the Blue Velvet suite at position 78) | PASS — every command green; two stale sanctioned-migration pins superseded during the run (see below) |
+| `pnpm build` | PASS (vite + adapter-netlify + executor bundle) |
 | `git diff --check` | CLEAN |
-| Full `pnpm test` chain (251 commands) | see final run record below |
-| `pnpm build` | see final run record below |
-| Full-diff review | reviewed — 3 modified files (+14 lines) + 3 new files; no unrelated changes |
+| Full-diff review | reviewed — 5 modified files (+33/−7 lines) + 4 new files; no unrelated changes |
+
+Superseded stale assertions (documented convention used by every prior integration):
+`cloudstream_registry_integration_test.ts` §A10 and
+`cloudstream_phase4_integration_manager_test.ts` F3 pin the EXACT set of migrations added since
+their pristine baselines; both lists were extended with
+`20261112000000_blue_velvet_provider.sql` (12th / 9th sanctioned addition respectively).
 
 ## 6. Environment / deployment verification status
 
-* Deployment: NOT performed (no Netlify credentials in this environment; the task forbids deploying
-  before checks pass, and upstream CORS blocks browser playback regardless).
-* Migration application to the production Supabase database: NOT performed (no DB credentials;
-  application happens through the project's normal migration process). The migration is
-  conflict-safe and idempotent, so application timing does not affect existing records.
+* Commit: `8d30c4f` — pushed fast-forward to `origin/main` (verified via `git ls-remote`:
+  `refs/heads/main` = `8d30c4fd28d6dfd05ba7505780876460bb804f5d`).
+* Netlify deployment: UNVERIFIED. No Netlify token in this environment; read-only probing of
+  https://mavero1.netlify.app shows the site healthy (HTTP 200; watch route 200; resolve API
+  validates input, 400 on an empty POST) and the deployed client entry bundle is
+  `app.B9qDKhaL.js` — different from the MAVP-6-era recorded bundle (`app.Crz7zonR.js`) and from
+  a local build of this tree (`app.WXqoHQDN.js`; bundle names embed content hashes and inlined
+  env, so they are not cross-environment proof). Whether the Netlify build picked up `8d30c4f`
+  specifically CANNOT be established without the Netlify dashboard/API.
+* Production impact of this change is neutral until BOTH of the following happen outside this
+  environment: (1) the migration is applied to the production Supabase database (conflict-safe,
+  idempotent — safe to apply at any time), and (2) an admin enables the provider + source after
+  the upstream CORS allowlisting is verified. The seeded rows are DISABLED, so even an immediate
+  deploy cannot surface Blue Velvet to users.
 * Admin/browser QA: NOT performed in this environment (no admin credentials, no browser device
   testing for this task). Admin CRUD compatibility is asserted structurally: the seeded rows use
   the same schema values/constraints the generic Admin forms parse and render (integration type
