@@ -30,10 +30,27 @@
     #     component styles are inlined.
     #   * img-src 'self' data: https://image.tmdb.org — TMDB poster/backdrop
     #     images. `data:` for inline SVG placeholders.
+    #   * media-src 'self' https://zcdn.bluevelvet.space — direct HLS media
+    #     elements (<video src>) for the Blue Velvet direct source (MAV-BV-
+    #     PLAYBACK, 2026-10-12). Without an explicit media-src the directive
+    #     falls back to default-src 'self', which REJECTS the provider's
+    #     cross-origin media URLs before the browser ever attempts the load
+    #     (verified live: "Loading media from 'https://zcdn.bluevelvet.space/…'
+    #     violates … default-src 'self'"). Native-HLS browsers (Safari/iOS,
+    #     Android Chromium) load media elements WITHOUT CORS, so this single
+    #     directive is what makes the source playable there once the resolver
+    #     gates permit it. The origin is the adapter's fixed HTTPS constant,
+    #     never user input.
     #   * font-src 'self' — no external font CDN.
     #   * connect-src 'self' — the SvelteKit app talks to itself + the
     #     Supabase URL (which is on the SAME origin when proxied, or
     #     configured via PUBLIC_SUPABASE_URL — see note below).
+    #     https://zcdn.bluevelvet.space is REQUIRED for the Blue Velvet direct
+    #     HLS source on browsers WITHOUT native HLS (desktop Chrome/Firefox):
+    #     hls.js loads manifests/segments via XHR/fetch, which is governed by
+    #     connect-src (verified live: "Connecting to 'https://zcdn.bluevelvet
+    #     .space/…' violates … connect-src"). Media elements on native-HLS
+    #     browsers are governed by media-src above, not connect-src.
     #   * frame-src * — provider embeds (vidsrc, vidlink, cineverse, etc.)
     #     are ADMIN-CONFIGURED. A static allowlist would break playback
     #     every time an admin adds a new provider. The permissive frame-src
@@ -62,7 +79,7 @@
     # `connect-src 'self' https://*.supabase.co` — the wildcard covers all
     # hosted Supabase projects (the common case). Self-hosted Supabase
     # deployments would need to add their URL here.
-    Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://image.tmdb.org; font-src 'self'; connect-src 'self' https://*.supabase.co https://image.tmdb.org; frame-src *; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'"
+    Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://image.tmdb.org; media-src 'self' https://zcdn.bluevelvet.space; font-src 'self'; connect-src 'self' https://*.supabase.co https://image.tmdb.org https://zcdn.bluevelvet.space; frame-src *; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'"
 
 [[headers]]
   for = "/sw.js"

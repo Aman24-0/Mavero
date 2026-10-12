@@ -497,6 +497,112 @@ ok(blueVelvetConfig().source.visibility === 'public', '§8 source visibility pub
 ok(blueVelvetConfig().source.integration_type === 'api', '§8 source integration type api (matches provider)');
 
 // ============================================================
+// §9 — Experimental-status eligibility gates (MAV-BV-PLAYBACK,
+//      2026-10-12 live verification)
+//
+// The PRODUCTION rows were found in an "enabled but ineligible" shape:
+//   provider + source: enabled=true, status='experimental',
+//   capabilities.allow_experimental_playback=false (both)
+// resolveSourceFromConfig rejects that shape at the provider-status gate
+// (core.ts providerStatusAllowsPlayback: status must be 'active' OR
+// experimental WITH allow_experimental_playback) BEFORE the adapter is
+// called — verified live against the deployed /api/playback/resolve
+// (HTTP 409 PROVIDER_DISABLED for the blue-velvet-hls source). These
+// checks pin that gate behavior so the lifecycle can never silently drift:
+// the repo convention for playable experimental sources (abyss, vidara,
+// vidzee) is provider-level allow_experimental_playback=true.
+// ============================================================
+
+{
+  const liveShapedConfig = blueVelvetConfig({ providerEnabled: true, sourceEnabled: true });
+  useFetch(() => {
+    throw new Error('§9 upstream must never be reached while the experimental gate rejects the rows');
+  });
+  await expectError(
+    resolveSourceFromConfig({ sourceId, contentId: 'live-1', mediaType: 'movie' }, liveShapedConfig, content('movie', '27205')),
+    'PROVIDER_DISABLED',
+    '§9 live row shape (experimental + no allow_experimental_playback on either) gated as PROVIDER_DISABLED before the adapter',
+  );
+
+  // Repo convention for playable experimental sources: provider-level
+  // allow_experimental_playback=true (abyss/vidara/vidzee production shape).
+  const providerAllowedConfig = blueVelvetConfig({ providerEnabled: true, sourceEnabled: true });
+  providerAllowedConfig.provider.capabilities = { ...capabilities, allow_experimental_playback: true };
+  useFetch(() => jsonResponse({ ready: true, url: MASTER_URL }));
+  const providerAllowed = await resolveSourceFromConfig(
+    { sourceId, contentId: 'live-2', mediaType: 'movie' },
+    providerAllowedConfig,
+    content('movie', '27205'),
+  );
+  ok(providerAllowed.type === 'direct' && providerAllowed.url === MASTER_URL, '§9 provider-level allow_experimental_playback=true passes the gate (repo convention)');
+
+  // Source-level allowance also satisfies the gate (either side may grant it).
+  const sourceAllowedConfig = blueVelvetConfig({ providerEnabled: true, sourceEnabled: true });
+  sourceAllowedConfig.source.capabilities = { ...capabilities, allow_experimental_playback: true };
+  useFetch(() => jsonResponse({ ready: true, url: MASTER_URL }));
+  const sourceAllowed = await resolveSourceFromConfig(
+    { sourceId, contentId: 'live-3', mediaType: 'movie' },
+    sourceAllowedConfig,
+    content('movie', '27205'),
+  );
+  ok(sourceAllowed.type === 'direct' && sourceAllowed.url === MASTER_URL, '§9 source-level allow_experimental_playback=true passes the gate');
+
+  // Either-side allowance semantics: with the provider-level grant present,
+  // a maintenance source passes the source-status gate as well (core.ts
+  // experimentalPlaybackAllowed ORs provider and source capabilities) — the
+  // grant is a lifecycle decision, not a per-row accident.
+  const maintenanceConfig = blueVelvetConfig({ providerEnabled: true, sourceEnabled: true });
+  maintenanceConfig.provider.capabilities = { ...capabilities, allow_experimental_playback: true };
+  maintenanceConfig.source.status = 'maintenance';
+  useFetch(() => jsonResponse({ ready: true, url: MASTER_URL }));
+  const maintenance = await resolveSourceFromConfig(
+    { sourceId, contentId: 'live-4', mediaType: 'movie' },
+    maintenanceConfig,
+    content('movie', '27205'),
+  );
+  ok(maintenance.type === 'direct' && maintenance.url === MASTER_URL, '§9 provider-level grant also covers a maintenance source (either-side OR semantics)');
+}
+
+// ============================================================
+// §10 — Deployment CSP contract for the Blue Velvet media origin
+//       (MAV-BV-PLAYBACK, 2026-10-12)
+//
+// Verified live with a real Chromium against the EXACT deployed CSP:
+//   * media element loads (<video src>) were rejected because media-src was
+//     absent (falls back to default-src 'self');
+//   * hls.js XHR/fetch loads were rejected by connect-src.
+// The fix adds media-src + connect-src entries for the FIXED adapter origin.
+// These checks pin the deployment header so a CSP edit can never again
+// silently break direct HLS playback.
+// ============================================================
+
+{
+  const netlifyToml = readFileSync(resolve('netlify.toml'), 'utf-8');
+  const cspMatch = netlifyToml.match(/Content-Security-Policy\s*=\s*"([^"]+)"/);
+  ok(cspMatch !== null, '§10 netlify.toml carries a Content-Security-Policy header');
+  if (cspMatch) {
+    const csp = cspMatch[1];
+    const directive = (name: string) => {
+      const m = csp.match(new RegExp(`(?:^|;)\\s*${name}\\s+([^;]*)`, 'i'));
+      return m ? m[1].trim().split(/\s+/) : null;
+    };
+    // media-src MUST exist explicitly: when absent it falls back to
+    // default-src 'self', which rejects the cross-origin media element load
+    // (native-HLS browsers) — verified live.
+    const mediaSrc = directive('media-src');
+    ok(mediaSrc !== null, '§10 media-src directive present (native-HLS media elements)');
+    ok(mediaSrc?.includes('https://zcdn.bluevelvet.space') === true, '§10 media-src allows the fixed Blue Velvet origin');
+    const connectSrc = directive('connect-src');
+    ok(connectSrc?.includes('https://zcdn.bluevelvet.space') === true, '§10 connect-src allows the fixed Blue Velvet origin (hls.js XHR route)');
+    // Security regressions guarded while the playback entries are added.
+    ok(directive('default-src')?.includes("'self'") === true, '§10 default-src remains self');
+    ok(directive('frame-ancestors')?.includes("'none'") === true, '§10 frame-ancestors none unchanged');
+    ok(!mediaSrc?.includes('*') && !connectSrc?.includes('*'), '§10 no wildcard relaxation introduced in media-src/connect-src');
+    ok(!/http:\/\//.test(mediaSrc?.join(' ') ?? '') && !/http:\/\//.test(connectSrc?.join(' ') ?? ''), '§10 no plaintext (non-HTTPS) origins added to media-src/connect-src');
+  }
+}
+
+// ============================================================
 // Summary
 // ============================================================
 

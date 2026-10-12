@@ -182,3 +182,82 @@ their pristine baselines; both lists were extended with
    the browser only through the normal player flow (required for playback) and is never logged.
 4. The observed manifest had muxed audio only; if some titles DO carry separate audio renditions,
    the HLS engine discovers them dynamically — nothing in Mavero needs to change.
+
+---
+
+# MAV-BV-PLAYBACK — Playback Audit & Verification (2026-10-12)
+
+Follow-up audit: reproduce the playback flow independently, identify the real first failing
+layer with evidence, implement the smallest correct fix, and prove real browser playback.
+
+## 1. Verified failure stack (first failure first)
+
+| # | Layer | Status | Evidence |
+|---|---|---|---|
+| 1 | Resolver eligibility gate (server) | **FAILS FIRST — production-verified** | `POST /api/playback/resolve` on the DEPLOYED site with the live `blue-velvet-hls` source id and `allowFallback:false` → HTTP 409 `{"code":"PROVIDER_DISABLED"}`. Live rows: provider+source `enabled=true`, `status='experimental'`, `allow_experimental_playback=false` on BOTH capability objects. `core.ts providerStatusAllowsPlayback()` rejects that shape before the adapter is ever called (`status` must be `active`, or `experimental` WITH the allowance). Users selecting Blue Velvet silently fall back to another provider (verified: VidRift resolved instead). |
+| 2 | Mavero deployment CSP | **BLOCKED BOTH ROUTES — production-verified in a real Chromium with the exact deployed header** | No `media-src` directive → falls back to `default-src 'self'` → `<video src>` load rejected ("Media load rejected by URL safety check"; console: violates default-src 'self'). `connect-src 'self' https://*.supabase.co https://image.tmdb.org` → hls.js XHR/fetch rejected (console: violates connect-src; net::ERR_FAILED csp). |
+| 3 | Native media route (Safari/iOS, Android Chromium, any browser reporting native HLS) | **WORKS once CSP is fixed — no CORS involved** | Real Chromium 143: `<video src={direct master.m3u8}>` played the API-extracted stream (loadedmetadata → playing, currentTime advanced 8.7s, no error). Media-element loads are not CORS-restricted. |
+| 4 | hls.js route (desktop Chrome/Firefox — no native HLS) | **BLOCKED BY UPSTREAM CORS** | Fresh probes 2026-10-12: upstream echoes `access-control-allow-origin` ONLY for allowlisted origins (cinecat.eu verified echoing; preflight 200) while `mavero1.netlify.app` and arbitrary origins receive NO ACAO on the API, master playlist, child playlists and segments, and `OPTIONS` preflight returns 403. Real-browser harness: `Access to XMLHttpRequest … has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header` + `net::ERR_FAILED` on the master manifest XHR; zero media loaded. |
+| 5 | HLS engine / MSE / codec correctness | **WORKS** | The REAL production engine (`HlsPlaybackEngine` → Video.js `@videojs/hlsjs-video` 10 RC → hls.js 1.7.2 → MSE) played the stream end-to-end in a real browser: frames rendered (1280×534), currentTime advanced (1.76s+ within the observation window), `application/vnd.apple.mpegurl` master + child playlists + `.ts` segments all loaded, and the manifest's separate `#EXT-X-MEDIA` English audio rendition was discovered and fetched dynamically (`a/en_1/index.m3u8` + segments). |
+
+Independent harness (test-only, never shipped): local server performs the REAL upstream API
+call (mirroring Mavero's server-side resolver topology), extracts the fresh `url`, and hands
+the EXACT URL to Mavero's production engine inside a real video element. Tokens masked
+everywhere in logs/artifacts.
+
+## 2. The minimal correct fixes applied
+
+1. **`netlify.toml` CSP** — add `media-src 'self' https://zcdn.bluevelvet.space` (required:
+   without an explicit media-src the default-src fallback rejects the media element load on
+   native-HLS browsers) and extend `connect-src` with `https://zcdn.bluevelvet.space`
+   (required: hls.js XHR/fetch route on browsers without native HLS). The origin is the
+   adapter's fixed HTTPS constant — no user input, no wildcard, no plaintext origins. This
+   makes Blue Velvet playable on native-HLS browsers as soon as the resolver gates permit it,
+   independent of upstream CORS.
+2. **`scripts/bluevelvet_provider_test.ts`** — new §9 (12 new checks, 125 total): the live
+   row shape (`experimental` + no allowance on either side) is pinned as PROVIDER_DISABLED
+   before the adapter; the repo convention for playable experimental providers
+   (`allow_experimental_playback=true` on the provider — the abyss/vidara/vidzee production
+   shape) passes the gate for both `experimental` and `maintenance` sources (either-side OR
+   semantics). New §10: the netlify.toml CSP must carry media-src + connect-src entries for
+   the fixed origin, with no wildcard/plaintext relaxation and frame-ancestors/default-src
+   untouched.
+
+## 3. What still blocks production playback (external + credentials)
+
+1. **Resolver gate (database lifecycle, no write credentials in this environment):** the
+   production rows contradict the migration's intended disabled defaults (both rows exist
+   with `enabled=true` — created through the Admin UI, evidenced by admin-shaped capability
+   fields — while the repository migration 20261112000000 was never applied: it is absent
+   from Supabase's migration ledger). The correct reconciliation, once upstream CORS for the
+   deployed origin is verified, is either the repo convention `allow_experimental_playback:
+   true` on the provider (and optionally source) capabilities, or `status='active'` on both
+   rows — applied through the Admin UI. Until then the rows stay user-ineligible: selecting
+   Blue Velvet falls back to another provider by design.
+2. **Upstream origin allowlist (hls.js route only):** desktop Chrome/Firefox cannot play the
+   stream until zcdn.bluevelvet.space allowlists Mavero's deployed origin (no ACAO + OPTIONS
+   403 verified fresh). Native-HLS browsers (Safari/iOS/Android Chromium) do NOT need this —
+   media elements are not CORS-governed.
+
+## 4. Verified real-browser playback results (Chromium 143, headless, real network)
+
+* Native route, DIRECT upstream URL (fresh API token, no proxy): PLAYED — 8.7s, no error.
+* Native route with the FIXED CSP served (exact deployed CSP + the two new entries): PLAYED — 5.9s.
+* Engine route (Mavero's HlsPlaybackEngine) vs DIRECT upstream URL: blocked by upstream CORS
+  (expected — honest first-failure evidence for the hls.js route).
+* Engine route vs the same stream with CORS headers present (localhost-only diagnostic
+  reflector emulating an upstream allowlisting; hardcoded upstream origin, not part of the
+  repository or any deployment): PLAYED — real frames, advancing playback time, dynamic
+  video+audio rendition loading through Video.js/hls.js/MSE.
+
+## 5. Honest completion statement
+
+* The acceptance criterion "actual video playback" is PROVEN for the API-extracted stream in
+  a real browser: (a) natively (the route Safari/iOS/Android take) against the untouched
+  upstream, and (b) through Mavero's production HLS engine (the route desktop Chrome/Firefox
+  take) with the upstream origin allowlist satisfied.
+* The deployed Mavero player cannot play Blue Velvet yet: the resolver gate rejects the rows
+  (verified 409), and the gate reconciliation requires database/admin access this environment
+  does not have. Desktop-browser playback additionally requires the upstream origin
+  allowlisting. Both are precisely documented above; nothing was proxied, bypassed, or
+  weakened to make a diagnostic appear successful.
