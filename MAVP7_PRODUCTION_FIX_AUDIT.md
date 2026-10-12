@@ -230,6 +230,16 @@ only HOW the navigation is performed (SPA vs native), not WHAT is navigated to.
    the exact server-side failure of the reported occurrence remain unverified. The
    deployed bundle was dated via client-bundle markers (includes MAVP-6) and the
    CURRENT production responses were probed read-only (both watch modes → 200).
+   **Post-push deployment check**: commit `23c9d5a` was pushed to `origin/main` and
+   verified present on the remote; the connected Netlify site "mavero1" was polled
+   for over one hour afterwards (entry-bundle hash + edge headers, all read-only).
+   Production continued serving the PRE-MAVP-7 build (`app.Crz7zonR.js`, whose
+   content-rules chunk still carries the MAVP-6-era strings) throughout the window,
+   and no Netlify build/deploy state was observable without credentials. **Whether
+   Netlify built and published `23c9d5a` could NOT be verified from this
+   environment** — the deployment outcome (build success, publish, live behavior)
+   remains open and requires the Netlify dashboard/API. The watch route stayed
+   healthy (200 for The Gentlemen) during the entire window.
 2. **No browser/device verification was performed** (out of scope). Visual playback
    behavior of The Gentlemen in production is NOT verified by this task.
 3. **The live 500 is not claimed as definitively resolved** — see §2.3.
