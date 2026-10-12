@@ -255,7 +255,7 @@ assert.match(controls, /export let pictureInPicture = false/, 'pictureInPicture 
 // `!castActive && pictureInPictureSupported` — PiP is additionally hidden
 // while a Cast session is active (PiP of the paused local element while the
 // receiver plays would be misleading). Capability semantics unchanged.
-assert.match(controls, /\{#if !castActive && pictureInPictureSupported\}<button[^>]*aria-label=\{pictureInPicture \? 'Exit Picture-in-Picture' : 'Enter Picture-in-Picture'\}/, 'PiP button gated on supported flag + no active cast + dynamic aria-label');
+assert.match(controls, /\{#if !castActive && pictureInPictureSupported\}\s*<button[^>]*aria-label=\{pictureInPicture \? 'Exit Picture-in-Picture' : 'Enter Picture-in-Picture'\}/, 'PiP button gated on supported flag + no active cast + dynamic aria-label (Player V2 corrections moved it to the top-right utility zone — gate unchanged)');
 assert.match(controls, /aria-pressed=\{pictureInPicture\}/, 'PiP button has aria-pressed reflecting active state');
 // Fullscreen button label reflects active state (unchanged from Phase 5, but verify).
 // Phase 9: fullscreen button removed from PlayerControls — handled by header.

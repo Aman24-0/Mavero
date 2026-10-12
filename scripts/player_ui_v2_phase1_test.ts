@@ -7,17 +7,26 @@ import type { ResolverContext } from '$lib/server/resolver/types';
 
 // Player UI V2 — Part 1, PHASE 1 regression suite.
 //
-// Covers the three Phase 1 deliverables:
-//   §1  Compact control-row contract (center play/pause + adjacent ±10s,
-//       single speed display, in-row source button removal) — PlayerControls
-//       source contracts.
-//   §2  Blue Velvet-only Back/Fullscreen — stable provider-slug detection,
-//       in-row controls wired ONLY for Blue Velvet, floating FABs preserved
-//       for every other provider, no duplicate controls.
+// §1/§2 SUPERSEDED (Player V2 corrections, approved real-device layout): the
+// Part 1 compact 3-group BOTTOM control row and the Blue Velvet-only in-row
+// Back/Fullscreen exceptions were replaced by the approved three-zone layout
+// — top-right utility zone (Cast/PiP/Lock), a DOMINANT center cluster
+// (−10 s / Play/Pause / +10 s) centered on the VIDEO VIEWPORT, and a bottom
+// zone (time + timeline + subtitles + quality + display mode + speed +
+// fullscreen). Back is the shell's top-left FAB for EVERY provider; the
+// floating Landscape FAB remains only for embed sources. Every superseded
+// assertion below preserves the ORIGINAL INTENT (centered cluster, ±10 s
+// adjacency, single speed display, no mobile hiding, one Back/one fullscreen)
+// and strengthens it with the approved placement contract.
+//
+// Covers:
+//   §1  Approved three-zone control layout — PlayerControls source contracts.
+//   §2  Approved Back/Fullscreen placement — shell contracts.
 //   §3  Resolver-to-UI error classification — TITLE_NOT_AVAILABLE vocabulary,
 //       the client mapping (title-unavailable state), the Blue Velvet
 //       adapter's CONSERVATIVE classification (live-probe evidence), and the
-//       shell's distinct title-unavailable card.
+//       shell's distinct title-unavailable card. (UNCHANGED by the layout
+//       corrections.)
 
 const shell = readFileSync(resolve('src/lib/components/player/PlayerShell.svelte'), 'utf-8');
 const controls = readFileSync(resolve('src/lib/components/player/PlayerControls.svelte'), 'utf-8');
@@ -35,21 +44,21 @@ function ok(condition: boolean, label: string) {
 }
 
 // ============================================================
-// §1 — Compact, modern control row (Phase 1A)
+// §1 — APPROVED three-zone layout (Player V2 corrections)
 // ============================================================
 
-// 1a. Three-group grid row with the play/pause CENTER group.
-ok(/grid-template-columns: minmax\(0, 1fr\) auto minmax\(0, 1fr\)/.test(controls), '1a. control-row is a 3-group grid (fluid / center / fluid)');
-ok(/class="control-group center"/.test(controls), '1a. a dedicated center control group exists');
-// Center group order: skip-back BEFORE play BEFORE skip-fwd.
-const centerGroup = controls.slice(controls.indexOf('class="control-group center"'), controls.indexOf('class="control-group right"'));
-ok(centerGroup.indexOf('Seek backward 10 seconds') < centerGroup.indexOf('aria-label={playing ? \'Pause\' : \'Play\'}'), '1a. −10s sits immediately LEFT of play/pause');
-ok(centerGroup.indexOf('aria-label={playing ? \'Pause\' : \'Play\'}') < centerGroup.indexOf('Seek forward 10 seconds'), '1a. +10s sits immediately RIGHT of play/pause');
-// 1b. Compact controls — the shared 38px control-button sizing (no oversized circles).
-ok(/\.control-button \{ display: inline-grid; place-items: center; min-width: 38px; min-height: 38px;/.test(controls), '1b. controls keep the compact 38px sizing (no oversized circular buttons)');
-ok(!/width: 64px|width: 72px/.test(controls), '1b. no oversized control dimensions introduced');
-// 1c. The ±10s skip buttons are NOT hidden on mobile anymore (they are part of the contract).
-ok(!/\.skip \{ display: none !important; \}/.test(controls), '1c. skip controls are no longer display:none on compact viewports');
+// 1a. The center cluster is its own overlay zone, centered on the viewport.
+ok(/class="center-cluster"/.test(controls), '1a. a dedicated center playback cluster exists (video-viewport overlay, not a bottom-row group)');
+ok(/\.center-cluster \{ position: absolute; z-index: 1; top: 50%; left: 50%; transform: translate\(-50%, -50%\)/.test(controls), '1a. the cluster is centered on the actual video/player viewport (absolute 50%/50%)');
+// Center cluster order: skip-back BEFORE play BEFORE skip-fwd.
+const centerCluster = controls.slice(controls.indexOf('class="center-cluster"'), controls.indexOf('class="bottom-zone"'));
+ok(centerCluster.indexOf('Seek backward 10 seconds') < centerCluster.indexOf("aria-label={playing ? 'Pause' : 'Play'}"), '1a. −10s sits immediately LEFT of play/pause');
+ok(centerCluster.indexOf("aria-label={playing ? 'Pause' : 'Play'}") < centerCluster.indexOf('Seek forward 10 seconds'), '1a. +10s sits immediately RIGHT of play/pause');
+// 1b. Play/Pause is the visually DOMINANT control (68px vs 54px seek buttons).
+ok(/\.cluster-button\.play \{ width: 68px; height: 68px;/.test(controls), '1b. Play/Pause is the dominant central control (68px)');
+ok(/\.cluster-button\.seek \{ width: 54px; height: 54px;/.test(controls), '1b. the ±10 s controls are subordinate to Play/Pause (54px)');
+// 1c. The ±10s controls are NOT hidden on mobile (they are part of the contract).
+ok(!/\.skip \{ display: none !important; \}/.test(controls), '1c. skip controls are not display:none on compact viewports');
 // 1d. Single speed display — the duplicated `{playbackRate}×` label span is gone;
 //     the select remains the one renderer of the selected speed.
 ok(!/<span>\{playbackRate\}×<\/span>/.test(controls), '1d. the duplicated speed label span is removed (fixes "1× 1×")');
@@ -60,37 +69,62 @@ ok(!/source-button/.test(controls), '1e. the in-row source button is removed fro
 ok(!/export let sourceCount|export let onSources/.test(controls), '1e. sourceCount/onSources props are removed from PlayerControls');
 ok(/class="source-chip"/.test(shell) && /aria-label="Choose source"/.test(shell), '1e. the right-edge source chip is preserved in the shell');
 ok(/chooseSource\(option\.id\)/.test(shell), '1e. source switching (chooseSource) is preserved');
-// 1f. Retained controls: timeline, time label, volume, subtitles, quality (internal + per-stream), PiP.
+// 1f. Retained controls: timeline, time labels, volume, subtitles, quality (internal + per-stream), PiP.
 ok(/class="timeline-input" type="range"/.test(controls), '1f. progress timeline retained');
-ok(/aria-live="off">\{formatPlayerTime\(currentTime\)\} <i>\/<\/i> \{formatPlayerTime\(safeDuration\)\}/.test(controls), '1f. current time / duration label retained');
+ok(/class="time-label" aria-live="off">\{formatPlayerTime\(currentTime\)\}<\/span>/.test(controls), '1f. current time label retained (bottom zone)');
+ok(/class="time-label" aria-live="off">\{formatPlayerTime\(safeDuration\)\}<\/span>/.test(controls), '1f. total duration label retained (finite-guarded safeDuration)');
 ok(/class="volume-input" type="range"/.test(controls), '1f. volume control retained');
 ok(/aria-label="Subtitles"/.test(controls), '1f. subtitles control retained');
 ok(/aria-label="Playback quality"/.test(controls) && /internalQualities\.length > 1/.test(controls), '1f. quality selection (engine internal + per-stream fallback) retained');
 ok(/Enter Picture-in-Picture/.test(controls), '1f. Picture-in-Picture retained');
+// 1g. APPROVED LAYOUT: top-right utility zone = Cast, PiP, Lock — never the
+//     center cluster or the bottom bar.
+ok(/class="utility-zone"/.test(controls), '1g. a dedicated top-right utility zone exists');
+const utilityZone = controls.slice(controls.indexOf('class="utility-zone"'), controls.indexOf('class="center-cluster"'));
+ok(utilityZone.indexOf('Cast to a device') > -1 && utilityZone.indexOf('Enter Picture-in-Picture') > -1 && utilityZone.indexOf('Lock player controls') > -1, '1g. Cast/PiP/Lock are ALL in the utility zone (never pushed into the cluster or bottom bar)');
+ok(/aria-pressed=\{castActive\}/.test(utilityZone) && utilityZone.indexOf('Disconnect cast session') > -1, '1g. the Cast control mirrors the session state (aria-pressed + distinct labels)');
+// 1h. APPROVED LAYOUT: bottom zone = time + timeline + secondary row.
+ok(/class="bottom-zone"/.test(controls) && /class="timeline-row"/.test(controls) && /class="secondary-row"/.test(controls), '1h. the bottom zone carries the timeline row and the secondary control row');
+ok(/\.secondary-row \{ display: flex; align-items: center; flex-wrap: wrap;/.test(controls), '1h. the secondary row wraps to a compact second row instead of overlapping on narrow portrait');
+// 1i. APPROVED LAYOUT: display mode (Fit/Fill/Stretch) select.
+ok(/aria-label="Display mode"/.test(controls), '1i. a display-mode control exists');
+ok(/<option value="fit">Fit<\/option><option value="fill">Fill<\/option><option value="stretch">Stretch<\/option>/.test(controls), '1i. Fit/Fill/Stretch are the three display modes');
+ok(/if \(value === 'fit' \|\| value === 'fill' \|\| value === 'stretch'\) onDisplayMode\(value\);/.test(controls), '1i. the display-mode select drives onDisplayMode with the typed mode');
+// 1j. APPROVED LAYOUT: the quality control is NEVER hidden on phones (the
+//     reported "no usable quality selector" regression).
+ok(!/\.quality \{ display: none/.test(controls), '1j. the quality control is not display:none on any viewport');
+ok(!/max-width: 840px[^}]*\.quality/.test(controls), '1j. no compact-viewport rule hides the quality control');
+// 1k. APPROVED LAYOUT: seek icons are the recognizable rotate-square pair
+//     with the 10-second count (replaces the ambiguous chevrons).
+ok(/RotateCcwSquare size=\{30\}/.test(controls) && /RotateCwSquare size=\{30\}/.test(controls), '1k. backward/forward use RotateCcwSquare/RotateCwSquare (correctly oriented seek icons)');
+ok(!/ChevronLeft|ChevronRight/.test(controls), '1k. the ambiguous chevron seek icons are gone');
+ok(/class="seek-count" aria-hidden="true">10<\/span>/.test(controls), '1k. the 10-second indication is overlaid on the seek icons');
 
 // ============================================================
-// §2 — Blue Velvet-only Back / Fullscreen (Phase 1B)
+// §2 — Approved Back / Fullscreen placement (Player V2 corrections)
 // ============================================================
 
 // 2a. Stable identifier — the provider SLUG constant, never a display-name match.
 ok(/export const BLUEVELVET_PROVIDER_SLUG = 'blue-velvet' as const;/.test(sharedPlayer), '2a. BLUEVELVET_PROVIDER_SLUG is the stable identifier constant');
 ok(/export function isBlueVelvetProvider/.test(sharedPlayer) && /providerSlug === BLUEVELVET_PROVIDER_SLUG/.test(sharedPlayer), '2a. detection compares the stable slug, never a display name');
 ok(/providerSlug: provider\?\.slug/.test(watchPage), '2a. the watch route threads the provider slug onto every source option');
-ok(!/activeSourceOption\?\.name[^\n]*blue/i.test(shell.slice(shell.indexOf('blueVelvetActive'), shell.indexOf('blueVelvetActive') + 400)), '2a. the gating expression does not match display names');
-ok(/\$: blueVelvetActive = isBlueVelvetProvider\(activeSourceOption\?\.providerSlug\);/.test(shell), '2a. shell gates Blue Velvet layout on the active option slug');
-// 2b. In-row Back/Fullscreen props exist and are Blue Velvet-scoped.
-ok(/showBack=\{blueVelvetActive\}/.test(shell) && /showFullscreen=\{blueVelvetActive\}/.test(shell), '2b. in-row Back/Fullscreen render ONLY while Blue Velvet is active');
-ok(/onBack=\{onClose\}/.test(shell), '2b. in-row Back uses the SAME close action as the Back FAB (no second navigation system)');
-ok(/onFullscreen=\{\(\) => \{ void toggleFullscreen\(\); \}\}/.test(shell), '2b. in-row Fullscreen uses the SAME Mavero fullscreen/orientation controller');
-ok(/fullscreenActive=\{fullscreen\}/.test(shell), '2b. the in-row fullscreen icon mirrors the browser-synced fullscreen state');
-// 2c. The floating Back FAB + Landscape FAB group are hidden while Blue Velvet is active.
-ok(/\{#if \!\(blueVelvetActive && !touchLocked\)\}/.test(shell), '2c. the Back FAB is suppressed while Blue Velvet is active (returns while touch-locked)');
-ok(/\{#if !blueVelvetActive\}[\s\S]*?class="control-fab-group"/.test(shell), '2c. the floating Landscape FAB group is suppressed while Blue Velvet is active');
-// 2d. Other providers keep the floating controls.
-ok(/class="back-fab"/.test(shell) && /class="control-fab landscape-fab"/.test(shell), '2d. non-Blue Velvet providers keep the Back FAB + Landscape FAB');
-// 2e. No duplicates: exactly one Back and one Fullscreen render per provider state.
-ok((shell.match(/onBack=\{onClose\}/g) ?? []).length === 1, '2e. exactly one in-row Back binding (no duplicate Back surfaces)');
-ok((shell.match(/void toggleFullscreen\(\); \}\}/g) ?? []).length === 1, '2e. exactly one in-row fullscreen binding (F key + FAB remain the non-BV path)');
+ok(!/blueVelvetActive/.test(shell), '2a. SUPERSEDED: the shell no longer branches on a Blue Velvet layout exception (one approved layout for every provider)');
+// 2b. In-row Back/Fullscreen props are RETIRED; fullscreen uses the same controller.
+ok(!/showBack=|showFullscreen=/.test(shell), '2b. SUPERSEDED: the in-row Back/Fullscreen props are gone from the shell invocation');
+ok(!/export let showBack|export let showFullscreen/.test(controls), '2b. SUPERSEDED: PlayerControls no longer carries the in-row Back/Fullscreen props');
+ok(!/onBack=/.test(shell), '2b. the shell Back FAB is the single Back surface (no in-row Back binding remains)');
+ok(/onFullscreen=\{\(\) => \{ void toggleFullscreen\(\); \}\}/.test(shell), '2b. the fullscreen control uses the SAME Mavero fullscreen/orientation controller');
+ok(/fullscreenActive=\{fullscreen\}/.test(shell), '2b. the fullscreen icon mirrors the browser-synced fullscreen state');
+// 2c. Approved placement: Back FAB unconditional; Landscape FAB embed-only.
+ok(/aria-label="Close player"/.test(shell) && !/\{#if \!\(blueVelvetActive && !touchLocked\)\}/.test(shell), '2c. the Back FAB renders for EVERY provider (approved top-left placement, no BV suppression)');
+ok(/\{#if source\?\.type === 'embed'\}[\s\S]*?class="control-fab-group"/.test(shell), '2c. the floating Landscape FAB group renders ONLY for embed sources');
+// 2d. The floating controls still exist (embed path) + the bottom-row fullscreen exists.
+ok(/class="back-fab"/.test(shell) && /class="control-fab landscape-fab"/.test(shell), '2d. the Back FAB + Landscape FAB remain (Back always; Landscape for embeds)');
+ok(/aria-label=\{fullscreenActive \? 'Exit fullscreen' : 'Enter fullscreen'\}/.test(controls), '2d. direct sources carry fullscreen in the bottom secondary row');
+// 2e. No duplicates: exactly one Back and one fullscreen render per surface.
+ok((shell.match(/aria-label="Close player"/g) ?? []).length === 1, '2e. exactly ONE Back control exists (the shell FAB)');
+ok((shell.match(/void toggleFullscreen\(\); \}\}/g) ?? []).length === 1, '2e. exactly one fullscreen binding in the shell (F key remains the keyboard path)');
+ok((controls.match(/'Exit fullscreen' : 'Enter fullscreen'/g) ?? []).length === 1, '2e. exactly ONE fullscreen button in PlayerControls');
 
 // ============================================================
 // §3 — Resolver-to-UI error classification (Phase 1C)

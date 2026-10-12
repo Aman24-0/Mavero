@@ -25,6 +25,15 @@
   // unchanged (their sources never populate per-stream subtitles).
   export let subtitles: PlayerSubtitleTrack[] = [];
   $: activeSubtitles = subtitles.length ? subtitles : source?.subtitles ?? [];
+  // Player V2 corrections (real-device feedback): display mode for DIRECT
+  // video — Fit preserves aspect (letterbox allowed, the historical default),
+  // Fill preserves aspect and crops, Stretch fills both axes (distortion
+  // allowed). CSS-only object-fit on the <video>: switching modes never
+  // restarts the stream, never resets the playhead, and never touches the
+  // engine. Embed sources do not receive this prop — Mavero cannot control a
+  // third-party iframe's internal video element, so the control is not even
+  // rendered for them (honest unavailability).
+  export let displayMode: 'fit' | 'fill' | 'stretch' = 'fit';
   // Phase 11 (GOAL D): the iframe sandbox attribute is rendered from the
   // EFFECTIVE policy — never from a client-side guess. The shell passes the
   // server-resolved policy (`sandboxRuntime.effectiveSandboxPolicy`, falling
@@ -293,6 +302,8 @@
   {#if source?.type === 'direct' && mediaUrl}
     <video
       bind:this={videoElement}
+      class:display-fill={displayMode === 'fill'}
+      class:display-stretch={displayMode === 'stretch'}
       src={hlsEngineActive ? undefined : mediaUrl}
       poster={poster || undefined}
       preload="metadata"
@@ -351,6 +362,11 @@
 <style>
   .viewport { position: relative; display: grid; min-height: clamp(220px, 56vw, 690px); overflow: hidden; background: var(--base); isolation: isolate; }
   .viewport video, .viewport iframe { position: relative; z-index: 1; width: 100%; height: 100%; min-height: inherit; border: 0; object-fit: contain; background: var(--base); }
+  /* Player V2 corrections: display modes (direct video only). Default (no
+     class) = Fit → object-fit: contain; Fill → cover (aspect preserved,
+     crop allowed); Stretch → fill (both axes, distortion allowed). */
+  .viewport video.display-fill { object-fit: cover; }
+  .viewport video.display-stretch { object-fit: fill; }
   .viewport iframe { display: block; }
   .viewport.embed { min-height: 0; }
   .viewport.embed iframe { aspect-ratio: 16 / 9; }

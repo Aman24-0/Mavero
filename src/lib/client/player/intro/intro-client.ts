@@ -107,6 +107,14 @@ export type IntroLookupResult = {
   superseded: boolean;
   /** True when no data existed (distinct from a failed lookup for tests). */
   empty: boolean;
+  /**
+   * Player V2 corrections (Phase 2C): typed failure kind for honest
+   * diagnostics — a title WITHOUT intro data ('no-data') must be
+   * distinguishable from a request that FAILED (api/timeout/invalid/network).
+   * Null on cached/negative-backoff/success paths that carry segments or
+   * verified emptiness.
+   */
+  errorKind: 'api' | 'timeout' | 'invalid' | 'network' | null;
 };
 
 export type IntroLookup = {
@@ -159,19 +167,27 @@ export function createIntroLookup(fetchImpl: typeof fetch = fetch): IntroLookup 
         { signal: controller.signal },
       );
       const segments = validateIntroSegments(record?.intro, request.durationSec ?? null);
-      return { segments, key, empty: segments.length === 0 };
+      return { segments, key, empty: segments.length === 0, errorKind: null };
     } catch (error) {
       // All failure classes degrade to "no skip button" — never an error UI:
       //   * TheIntroDbValidationError / ResponseValidationError → malformed
-      //     input or response;
+      //     input or response → 'invalid';
       //   * TheIntroDbApiError (with parsed rateLimit metadata when present)
-      //     → non-2xx incl. 429;
-      //   * AbortError → the 8s timeout;
-      //   * anything else → network-layer failure.
+      //     → non-2xx incl. 429 → 'api';
+      //   * AbortError → the 8s timeout → 'timeout';
+      //   * anything else → network-layer failure → 'network'.
+      // The typed kind feeds the shell's honest feature-state diagnostics.
+      const errorKind: NonNullable<IntroLookupResult['errorKind']> = error instanceof Error && error.name === 'AbortError'
+        ? 'timeout'
+        : error instanceof TheIntroDbApiError
+          ? 'api'
+          : error instanceof TheIntroDbResponseValidationError || error instanceof TheIntroDbValidationError
+            ? 'invalid'
+            : 'network';
       void TheIntroDbApiError;
       void TheIntroDbResponseValidationError;
       void TheIntroDbValidationError;
-      return { segments: [], key, empty: true };
+      return { segments: [], key, empty: true, errorKind };
     } finally {
       clearTimeout(timeout);
     }
@@ -182,7 +198,7 @@ export function createIntroLookup(fetchImpl: typeof fetch = fetch): IntroLookup 
       const key = introCacheKey(request);
       const negative = negativeUntil.get(key);
       if (negative && negative > Date.now()) {
-        return { segments: [], key, superseded: key !== currentKey, empty: true };
+        return { segments: [], key, superseded: key !== currentKey, empty: true, errorKind: null };
       }
       const cached = cacheGet(key);
       if (cached) {
@@ -198,7 +214,7 @@ export function createIntroLookup(fetchImpl: typeof fetch = fetch): IntroLookup 
           cached.refetchCount += 1;
           cached.requestedDurationMs = requestedDurationMs;
         } else {
-          return { segments: cached.segments, key, superseded: key !== currentKey, empty: cached.segments.length === 0 };
+          return { segments: cached.segments, key, superseded: key !== currentKey, empty: cached.segments.length === 0, errorKind: null };
         }
       }
       let pending = inFlight.get(key);

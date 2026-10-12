@@ -63,7 +63,11 @@ assert.match(shell, /episodeIdentity[\s\S]{0,200}clearEmbedLoadTimeout\(\)/, 'ti
 // MAVP-4 supersession (documented): the destroy cleanup also releases the
 // scroll-lock attribute and clears the presentation fail-open timer before
 // the load-timeout clear — all cleanup, contract unchanged.
-assert.match(shell, /return \(\) => \{[\s\S]{0,420}clearEmbedLoadTimeout\(\)/, 'timeout cleared on component destroy');
+// Player V2 corrections supersession (documented): the cleanup now also
+// restores the pre-hold 2× speed and clears the seek-feedback timer before
+// the load-timeout clear — the window widens accordingly; the contract
+// (cleared exactly once on destroy) is unchanged.
+assert.match(shell, /return \(\) => \{[\s\S]{0,760}clearEmbedLoadTimeout\(\)/, 'timeout cleared on component destroy');
 
 // 1j. Timeout is cleared on retry.
 assert.match(shell, /function retry\(\)[\s\S]{0,100}clearEmbedLoadTimeout\(\)/, 'timeout cleared on retry');

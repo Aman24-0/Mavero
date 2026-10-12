@@ -151,7 +151,7 @@ assert.match(shell, /role="application"/, 'role=application preserved');
 //     replaced by the PlayerControls bar — aria-label="Playback controls" —
 //     plus the shell's FAB overlay control group. Same AT exposure, new
 //     structure; the assertion tracks the CURRENT contract.
-assert.match(controls, /<div class="controls" aria-label="Playback controls">/, 'playback controls surface exposed to AT (redesigned controls bar)');
+assert.match(controls, /<div class="controls"[^>]*aria-label="Playback controls">/, 'playback controls surface exposed to AT (redesigned controls bar; Player V2 corrections add the casting state class) ');
 assert.match(shell, /<div class="control-fab-group"/, 'FAB overlay control group present in shell');
 
 // 8c. role="alert" on error card.

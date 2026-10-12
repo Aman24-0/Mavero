@@ -244,3 +244,203 @@ export function createPlayerGestureController(options: GestureControllerOptions)
     },
   };
 }
+
+// ---------------------------------------------------------------------------
+// Player V2 corrections (real-device feedback) — TAP gestures over the video
+// surface: double-tap seek (left half = −10 s, right half = +10 s) and
+// press-and-hold 2× playback.
+//
+// Arbitration contract (all unit-tested via the pure helpers):
+//   * Taps on interactive surfaces (buttons, sliders, selects, sheets, the
+//     seekbar, message cards) never trigger a tap gesture — the shared
+//     interactive-target exclusion plus the tap-specific surfaces below.
+//   * A touch that moves beyond the tap slop is a DRAG — it dies quietly
+//     (the vertical-swipe controller owns it; no preventDefault, no fight).
+//   * A hold activates only after HOLD_ACTIVATE_MS of stillness; any second
+//     finger, movement, or the touch ending before activation cancels it.
+//   * A double-tap requires two taps within DOUBLE_TAP_WINDOW_MS on the SAME
+//     half; opposite-side taps never seek.
+//   * The hold always restores the previous speed through onHoldEnd — on
+//     release, cancel, second finger, touchcancel and destroy. The shell
+//     additionally restores on lock/cast/source/episode switch/teardown.
+//   * Single taps have NO action here (the shell's reveal listeners handle
+//     them) — a double-tap can therefore never toggle show/hide twice.
+// ---------------------------------------------------------------------------
+
+/** Two taps within this window (ms) on the same half form a double-tap. */
+export const DOUBLE_TAP_WINDOW_MS = 300;
+/** Stillness duration (ms) before a press-and-hold activates 2×. */
+export const HOLD_ACTIVATE_MS = 500;
+/** Max movement (px) from the start point for a touch to remain a tap. */
+export const TAP_SLOP_PX = 12;
+
+export type TapSide = 'left' | 'right';
+export type TapSeekDirection = 'backward' | 'forward';
+
+/** Pure: which half of the surface the tap STARTED on (start-point rule). */
+export function tapSideForX(startX: number, surfaceWidth: number): TapSide | null {
+  if (!Number.isFinite(startX) || !Number.isFinite(surfaceWidth) || surfaceWidth <= 0) return null;
+  return startX < surfaceWidth / 2 ? 'left' : 'right';
+}
+
+/** Pure: true while the touch has stayed within the tap slop (a tap, not a drag). */
+export function withinTapSlop(dx: number, dy: number, slopPx = TAP_SLOP_PX): boolean {
+  if (!Number.isFinite(dx) || !Number.isFinite(dy) || !Number.isFinite(slopPx) || slopPx < 0) return false;
+  return Math.abs(dx) <= slopPx && Math.abs(dy) <= slopPx;
+}
+
+/** Interactive surfaces a tap gesture must never own (superset of the swipe rule). */
+const TAP_EXCLUDE_SELECTOR = `${INTERACTIVE_SELECTOR}, .sheet-overlay, .message-card, .completion-card, .loading-card, .gesture-indicator, .seek-feedback, .skip-intro-button, .unlock-fab, .back-fab, .source-chip, .episode-chip`;
+
+export type TapGestureControllerOptions = {
+  /** The surface the listeners attach to (the player root). */
+  surface: HTMLElement;
+  /**
+   * Consulted on EVERY touchstart — when false the event is ignored (touch
+   * lock, embed ownership, open sheets, casting). State changes take effect
+   * without re-attaching listeners.
+   */
+  enabled: () => boolean;
+  /** A double-tap was recognized (side determines the seek direction). */
+  onDoubleTap: (direction: TapSeekDirection) => void;
+  /** The press-and-hold activated (shell switches to 2×). */
+  onHoldStart: () => void;
+  /** The hold ended (shell restores the exact previous speed). */
+  onHoldEnd: () => void;
+  /** Wall clock (overridable for tests). */
+  now?: () => number;
+  /** Surface width provider (overridable for tests). */
+  surfaceWidth?: () => number;
+};
+
+export type PlayerTapGestureController = {
+  /**
+   * Force-cancel any pending tap candidate / active hold. The hold's
+   * onHoldEnd fires (speed restored) — safe to call at any time.
+   */
+  cancel: () => void;
+  /** Removes every listener and cancels any pending gesture. */
+  destroy: () => void;
+};
+
+/**
+ * Attach the tap-gesture controller to a surface. Idempotent per instance:
+ * destroy() removes exactly what was added and cancels pending state.
+ */
+export function createPlayerTapGestureController(options: TapGestureControllerOptions): PlayerTapGestureController {
+  const { surface, enabled, onDoubleTap, onHoldStart, onHoldEnd } = options;
+  const surfaceWidth = options.surfaceWidth ?? (() => surface.clientWidth || (typeof window !== 'undefined' ? window.innerWidth : 0));
+  const now = options.now ?? (() => Date.now());
+
+  let activeTouchId: number | null = null;
+  let startX = 0;
+  let startY = 0;
+  let startWidth = 0;
+  let holdTimer: ReturnType<typeof setTimeout> | undefined;
+  let holdActive = false;
+  let lastTapAt = 0;
+  let lastTapSide: TapSide | null = null;
+
+  function clearHoldTimer() {
+    if (holdTimer) {
+      clearTimeout(holdTimer);
+      holdTimer = undefined;
+    }
+  }
+
+  function endHold() {
+    if (!holdActive) return;
+    holdActive = false;
+    onHoldEnd();
+  }
+
+  function cancel() {
+    clearHoldTimer();
+    endHold();
+    activeTouchId = null;
+  }
+
+  function handleTouchStart(event: TouchEvent) {
+    if (!enabled()) return;
+    if (activeTouchId !== null) {
+      // A second finger cancels everything (one gesture at a time — and a
+      // hold must never survive a multi-touch interruption).
+      cancel();
+      return;
+    }
+    const touch = event.changedTouches[0];
+    if (!touch) return;
+    const target = event.target;
+    if (typeof Element !== 'undefined' && target instanceof Element && target.closest(TAP_EXCLUDE_SELECTOR)) return;
+    activeTouchId = touch.identifier;
+    startX = touch.clientX;
+    startY = touch.clientY;
+    startWidth = surfaceWidth();
+    clearHoldTimer();
+    holdTimer = setTimeout(() => {
+      holdTimer = undefined;
+      if (activeTouchId === null) return; // touch already ended — never a hold
+      holdActive = true;
+      onHoldStart();
+    }, HOLD_ACTIVATE_MS);
+  }
+
+  function handleTouchMove(event: TouchEvent) {
+    if (activeTouchId === null) return;
+    const touch = Array.from(event.changedTouches).find((candidate) => candidate.identifier === activeTouchId);
+    if (!touch) return;
+    if (!withinTapSlop(touch.clientX - startX, touch.clientY - startY)) {
+      // The touch became a drag/swipe — the vertical-swipe controller owns
+      // it. The pending tap/hold dies quietly; no event is claimed.
+      cancel();
+    }
+  }
+
+  function handleTouchEnd(event: TouchEvent) {
+    if (activeTouchId === null) return;
+    const touch = Array.from(event.changedTouches).find((candidate) => candidate.identifier === activeTouchId);
+    if (!touch) return;
+    const wasHold = holdActive;
+    activeTouchId = null;
+    clearHoldTimer();
+    if (wasHold) {
+      endHold();
+      return;
+    }
+    // A tap (never moved beyond the slop): double-tap detection on the SAME
+    // half within the window; opposite sides never combine.
+    const side = tapSideForX(startX, startWidth);
+    if (!side) return;
+    const timestamp = now();
+    if (lastTapSide === side && timestamp - lastTapAt <= DOUBLE_TAP_WINDOW_MS) {
+      lastTapAt = 0;
+      lastTapSide = null;
+      onDoubleTap(side === 'left' ? 'backward' : 'forward');
+      return;
+    }
+    lastTapAt = timestamp;
+    lastTapSide = side;
+  }
+
+  function handleTouchCancel() {
+    // The OS interrupted the touch (incoming call, gesture navigation) —
+    // never leave a pending tap or an engaged 2× hold behind.
+    cancel();
+  }
+
+  surface.addEventListener('touchstart', handleTouchStart, { passive: true });
+  surface.addEventListener('touchmove', handleTouchMove, { passive: true });
+  surface.addEventListener('touchend', handleTouchEnd, { passive: true });
+  surface.addEventListener('touchcancel', handleTouchCancel, { passive: true });
+
+  return {
+    cancel,
+    destroy() {
+      cancel();
+      surface.removeEventListener('touchstart', handleTouchStart);
+      surface.removeEventListener('touchmove', handleTouchMove);
+      surface.removeEventListener('touchend', handleTouchEnd);
+      surface.removeEventListener('touchcancel', handleTouchCancel);
+    },
+  };
+}

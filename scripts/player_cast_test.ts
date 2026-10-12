@@ -372,6 +372,6 @@ ok(/!castConnected/.test(shell.match(/\{#if activeSkipSegment[\s\S]*?\}/)?.[0] ?
 ok(/cast-button/.test(controls) && /aria-pressed=\{castActive\}/.test(controls), '5f. the Cast button is an aria-pressed toggle with distinct connect/disconnect labels');
 ok(/'Disconnect cast session'/.test(controls) && /'Cast to a device'/.test(controls), '5f. both cast actions have explicit accessible names');
 ok(/\{#if !castActive\}/.test(controls), '5g. local-only controls (volume/subtitles/quality/speed/PiP) are hidden while casting');
-ok(/Cast size=\{16\}/.test(controls), '5g. the Cast icon uses the same compact 16px sizing as every other control');
+ok(/Cast size=\{17\}/.test(controls), '5g. the Cast icon uses the same compact sizing as every other control (Player V2 corrections supersession: it moved to the top-right utility zone where the whole control set is 17px)');
 
 console.log(`player_cast_test: ${checks} checks passed`);

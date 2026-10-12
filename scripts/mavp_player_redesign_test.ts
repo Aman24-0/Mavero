@@ -398,7 +398,7 @@ ok(/enterpictureinpicture/.test(shell) && /leavepictureinpicture/.test(shell), '
 // paused local element while the receiver plays would be misleading UI).
 // The capability gate itself is unchanged — now asserted together with the
 // cast gate as one stronger behavior-level assertion.
-ok(/\{#if !castActive && pictureInPictureSupported\}<button class="control-button optional"[^>]*aria-label=\{pictureInPicture \? 'Exit Picture-in-Picture' : 'Enter Picture-in-Picture'\}/.test(read('../src/lib/components/player/PlayerControls.svelte')), 'G4. PiP button is capability-driven AND hidden while casting (renders only when supported + no active cast session)');
+ok(/\{#if !castActive && pictureInPictureSupported\}\s*<button class="control-button"[^>]*aria-label=\{pictureInPicture \? 'Exit Picture-in-Picture' : 'Enter Picture-in-Picture'\}/.test(read('../src/lib/components/player/PlayerControls.svelte')), 'G4. PiP button is capability-driven AND hidden while casting (renders only when supported + no active cast session; Player V2 corrections moved it to the top-right utility zone — class list updated, gate unchanged)');
 ok(/allow="autoplay; fullscreen; picture-in-picture; encrypted-media"/.test(viewport), 'G5. embedded-provider PiP stays provider-owned via the iframe allow list');
 ok(detectDocumentPipApi(undefined) === false, 'G6. Document PiP detector safe without a browser context');
 ok(detectDocumentPipApi({}) === false, 'G7. Document PiP detector returns false when the API is absent');

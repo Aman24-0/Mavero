@@ -219,8 +219,13 @@ ok(/embedEverPlayed = false;/.test(shell.split('// Phase 6 audit fix 2: reset em
 // grew (gesture-controller + gesture-indicator teardown) — the scan window
 // widens 1600 → 2000 chars. The asserted contract is unchanged: every timer
 // and listener added in onMount is removed in the SAME cleanup.
+// Player V2 corrections supersession (documented): the cleanup now also
+// restores the pre-hold 2× speed, clears the seek-feedback timer, destroys
+// the tap-gesture controller and STOPS the media session (the background-
+// audio fix) — the window widens 2000 → 2400 chars; the contract (every
+// timer and listener removed in the SAME cleanup) is unchanged.
 const cleanupStart = shell.indexOf('return () => {', shell.indexOf('window.addEventListener(\'blur\', handleWindowBlur);'));
-const cleanupBody = shell.slice(cleanupStart, cleanupStart + 2000);
+const cleanupBody = shell.slice(cleanupStart, cleanupStart + 2400);
 ok(/if \(hideTimer\) clearTimeout\(hideTimer\)/.test(cleanupBody), 'B14. inactivity timer cleared on destroy');
 ok(/orientationMediaQuery\.removeEventListener\('change', handleOrientationChange\)/.test(cleanupBody), 'B15. orientation profile listener removed on destroy (no leak across watch-route mounts)');
 ok(/window\.removeEventListener\('keydown', handleKeydown\)/.test(cleanupBody) && /window\.removeEventListener\('blur', handleWindowBlur\)/.test(cleanupBody) && /document\.removeEventListener\('focusin', handleFocusIn\)/.test(cleanupBody), 'B16. keydown + iframe-blur + focusin listeners removed on destroy');
