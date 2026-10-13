@@ -182,7 +182,11 @@ console.log('\n§8 — listUnlinkedProviderFiles excludes terminal deleted/faile
   const assetsSrc = readCode('src/lib/components/admin2/AdminHostingAssets.svelte');
   ok(/function\s+isFileLinkable/.test(assetsSrc), '8c. AdminHostingAssets defines isFileLinkable()');
   ok(/lifecycleState\s*===\s*['"]deleted['"]\s*\|\|\s*file\.lifecycleState\s*===\s*['"]failed['"]/.test(assetsSrc), '8d. isFileLinkable() excludes terminal deleted/failed files');
-  ok(/linkedToMediaItemId\s*&&\s*file\.linkedToMediaItemId\s*!==\s*['"]<deleted>['"]\s*&&\s*file\.linkedToMediaItemId\s*!==\s*linkSelectedMediaItemId/.test(assetsSrc), '8e. isFileLinkable() excludes files linked to a DIFFERENT media_item (preserves idempotent relink to the same item)');
+  ok(/linkedToMediaItemId\s*&&\s*file\.linkedToMediaItemId\s*!==\s*linkSelectedMediaItemId/.test(assetsSrc), '8e. isFileLinkable() excludes files linked to a DIFFERENT media_item (preserves idempotent relink to the same item)');
+  // MAV-FOCUSED fix (behavioral audit): a file whose DB row is
+  // terminal-deleted (linkedToMediaItemId === '<deleted>') must also
+  // be excluded — linkAsset case (d) would reject with ASSET_DELETED.
+  ok(/file\.linkedToMediaItemId\s*===\s*['"]<deleted>['"]/.test(assetsSrc), '8f. isFileLinkable() excludes files whose DB row is terminal-deleted (server would reject with ASSET_DELETED)');
 }
 
 console.log(`\nmav_focused_vidara_abyss_test: ${passed} passed, ${failed} failed`);

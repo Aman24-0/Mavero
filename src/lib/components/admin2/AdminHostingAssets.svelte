@@ -727,11 +727,15 @@
   //   * it is NOT already linked to a DIFFERENT media_item (the
   //     server-side linkAsset() guard would reject it; we surface the
   //     state here so the UI can disable the row + show the reason).
+  //   * its DB row is NOT terminal-deleted (linkedToMediaItemId ===
+  //     '<deleted>' means the media_assets row has status='deleted' —
+  //     linkAsset case (d) will reject with ASSET_DELETED).
   // A file linked to the SAME media_item IS linkable (idempotent relink
   // — linkAsset returns success without modifying the DB).
   function isFileLinkable(file: { lifecycleState: string; linkedToMediaItemId: string | null }): boolean {
     if (file.lifecycleState === 'deleted' || file.lifecycleState === 'failed') return false;
-    if (file.linkedToMediaItemId && file.linkedToMediaItemId !== '<deleted>' && file.linkedToMediaItemId !== linkSelectedMediaItemId) return false;
+    if (file.linkedToMediaItemId === '<deleted>') return false;
+    if (file.linkedToMediaItemId && file.linkedToMediaItemId !== linkSelectedMediaItemId) return false;
     return true;
   }
 
