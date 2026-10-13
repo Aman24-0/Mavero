@@ -34,18 +34,21 @@
    *   - "Configure" dropdown surfaces Defaults + Feature Control
    *     without polluting the primary SYSTEM nav.
    *   - Workspace transition (fade-in) on route change.
-   *   - Mobile "More" sheet shows all groups + configuration.
+   *
+   * MAV-FOCUSED (2026-10): the mobile "More" sheet + the "More" bottom-
+   * nav item were removed. Every route is reachable through the desktop
+   * sidebar (≥1024px) OR the Overview quick-action cards + System Status
+   * metric cards (mobile). No duplicate navigation surface remains.
    */
 
   import { onMount, onDestroy } from 'svelte';
   import { page } from '$app/state';
-  import { tick } from 'svelte';
   import type { Snippet } from 'svelte';
   import {
     LayoutGrid, Library, Upload, AlertCircle, Server, HardDrive, RefreshCw,
     Activity, History, TriangleAlert, Settings, Layers, Download, Puzzle,
-    BarChart3, PanelLeftClose, PanelLeft, X, ArrowLeft, MoreHorizontal,
-    ChevronRight, Search, Command, ArrowRight
+    BarChart3, PanelLeftClose, PanelLeft, ArrowLeft,
+    Search, Command, ArrowRight
   } from 'lucide-svelte';
   import AdminCommandMenu from './AdminCommandMenu.svelte';
 
@@ -142,16 +145,16 @@
   // Configure dropdown and the mobile "Configuration" section are removed
   // (no longer render an empty affordance).
 
-  // Mobile bottom nav: 5 primary destinations.
-  // Phase 2C consolidation: Upload removed from top-level nav (route
-  // still works for deep links). Media Library is now the primary
-  // content entry point. Hosting + Operations consolidated under Hosting.
+  // Mobile bottom nav: 4 primary destinations (MAV-FOCUSED, 2026-10).
+  // The "More" item + its sheet were removed — every route is reachable
+  // through the Overview quick-action cards or the System Status metric
+  // cards. The desktop sidebar (≥1024px) still carries the full navGroups
+  // set, so no destination is lost.
   const mobileNav: NavItem[] = [
     { id: 'overview', label: 'Home', href: '/admin', icon: LayoutGrid },
     { id: 'media-library', label: 'Media', href: '/admin/media/library', icon: Library, matchPrefix: '/admin/media/library' },
     { id: 'hosting', label: 'Hosting', href: '/admin/hosting', icon: Server, matchPrefix: '/admin/hosting' },
     { id: 'analytics', label: 'Analytics', href: '/admin/analytics', icon: BarChart3, matchPrefix: '/admin/analytics' },
-    { id: 'more', label: 'More', href: '#more', icon: MoreHorizontal },
   ];
 
   // ============================================================
@@ -208,9 +211,6 @@
 
   const STORAGE_KEY = 'mavero:a2-sidebar-collapsed';
   let sidebarCollapsed = $state(false);
-  let mobileMoreOpen = $state(false);
-  let mobileMoreTrigger: HTMLElement | null = null;
-  let mobileMoreEl = $state<HTMLElement | undefined>(undefined);
   let commandOpen = $state(false);
   let commandTrigger: HTMLElement | null = null;
 
@@ -223,7 +223,6 @@
   });
 
   onDestroy(() => {
-    unlockBodyScroll();
     if (typeof window !== 'undefined') {
       window.removeEventListener('keydown', handleGlobalKeydown);
     }
@@ -251,62 +250,6 @@
   });
 
   // ============================================================
-  // BODY SCROLL LOCK for mobile "More" sheet
-  // ============================================================
-
-  function lockBodyScroll() {
-    if (typeof document !== 'undefined') {
-      document.documentElement.setAttribute('data-a2-drawer-open', '');
-    }
-  }
-
-  function unlockBodyScroll() {
-    if (typeof document !== 'undefined') {
-      document.documentElement.removeAttribute('data-a2-drawer-open');
-    }
-  }
-
-  function openMobileMore(event: Event) {
-    if (mobileNav[4]?.id === 'more') {
-      event.preventDefault();
-    }
-    mobileMoreTrigger = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
-    mobileMoreOpen = true;
-    lockBodyScroll();
-    void tick().then(() => {
-      mobileMoreEl?.querySelector<HTMLElement>('.a2-more-close')?.focus();
-    });
-  }
-
-  function closeMobileMore() {
-    mobileMoreOpen = false;
-    unlockBodyScroll();
-    mobileMoreTrigger?.focus();
-    mobileMoreTrigger = null;
-  }
-
-  function handleMoreKeydown(event: KeyboardEvent) {
-    if (!mobileMoreOpen) return;
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      closeMobileMore();
-      return;
-    }
-    if (event.key !== 'Tab' || !mobileMoreEl) return;
-    const focusable = [...mobileMoreEl.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])')];
-    if (!focusable.length) return;
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault();
-      first.focus();
-    }
-  }
-
-  // ============================================================
   // COMMAND PALETTE (⌘K)
   // ============================================================
 
@@ -320,7 +263,7 @@
   }
 
   // ============================================================
-  // ROUTE-CHANGE EFFECTS — close overlays + workspace transition
+  // ROUTE-CHANGE EFFECTS — workspace transition
   // ============================================================
 
   let lastPathname = typeof location !== 'undefined' ? location.pathname : '';
@@ -330,11 +273,6 @@
     const current = page.url.pathname;
     if (current !== lastPathname) {
       lastPathname = current;
-      if (mobileMoreOpen) {
-        mobileMoreOpen = false;
-        unlockBodyScroll();
-        mobileMoreTrigger = null;
-      }
       // Bump key to retrigger workspace fade-in transition.
       workspaceKey += 1;
     }
@@ -453,57 +391,15 @@
   </header>
 
   <!-- ============================================================
-       MOBILE "MORE" SHEET
+       MOBILE "MORE" SHEET — REMOVED (MAV-FOCUSED, 2026-10).
+       The More sheet duplicated the desktop sidebar's navGroups. The
+       mobile bottom-nav now carries 4 primary destinations (Home, Media,
+       Hosting, Analytics) and the remaining routes (Missing Media, API &
+       Sources, Content Rules, Downloads, Integrations) are surfaced as
+       quick-action cards on the Overview page — so every route is still
+       reachable on mobile, with no duplicate navigation surface. The
+       desktop sidebar is unchanged.
        ============================================================ -->
-  {#if mobileMoreOpen}
-    <div class="a2-more-overlay" onclick={closeMobileMore} aria-hidden="true"></div>
-    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div
-      class="a2-more-sheet a2-scroll"
-      bind:this={mobileMoreEl}
-      role="dialog"
-      aria-modal="true"
-      aria-label="More navigation"
-      tabindex="-1"
-      onkeydown={handleMoreKeydown}
-    >
-      <div class="a2-more-head">
-        <span class="a2-more-title">All Navigation</span>
-        <button class="a2-more-close" type="button" onclick={closeMobileMore} aria-label="Close navigation">
-          <X size={18} />
-        </button>
-      </div>
-      <nav class="a2-more-nav" aria-label="All admin navigation">
-        {#each navGroups as group}
-          <div class="a2-more-group">
-            <div class="a2-nav-label">{group.label}</div>
-            {#each group.items as item}
-              {@const Icon = item.icon}
-              <a
-                class="a2-more-link"
-                class:active={activeItemId === item.id}
-                href={item.href}
-                aria-current={activeItemId === item.id ? 'page' : undefined}
-                onclick={closeMobileMore}
-              >
-                <span class="a2-nav-icon"><Icon size={16} /></span>
-                <span class="a2-more-link-text">{item.label}</span>
-                {#if item.phase}
-                  <span class="a2-nav-phase">{item.phase}</span>
-                {/if}
-                <span class="a2-more-chevron"><ChevronRight size={14} /></span>
-              </a>
-            {/each}
-          </div>
-        {/each}
-
-        <!-- Phase 2: empty Configuration group removed — configItems is
-             empty after Phase 1 consolidated Defaults + Feature Control
-             into the System workspaces. No dead section rendered. -->
-      </nav>
-    </div>
-  {/if}
 
   <!-- ============================================================
        MAIN WORKSPACE
@@ -515,33 +411,23 @@
   </main>
 
   <!-- ============================================================
-       MOBILE BOTTOM NAVIGATION (<1024px)
+       MOBILE BOTTOM NAVIGATION (<1024px) — 4 primary destinations.
+       The "More" item + its sheet were removed (MAV-FOCUSED, 2026-10).
+       Every route that was in the More sheet is reachable through the
+       Overview quick-action cards or the System Status metric cards.
        ============================================================ -->
   <nav class="a2-bottom-nav" aria-label="Mobile navigation">
     {#each mobileNav as item}
       {@const Icon = item.icon}
-      {#if item.id === 'more'}
-        <button
-          class="a2-bottom-item"
-          class:active={mobileMoreOpen}
-          onclick={openMobileMore}
-          aria-label="More navigation"
-          aria-expanded={mobileMoreOpen}
-        >
-          <span class="a2-bottom-icon"><Icon size={20} /></span>
-          <span class="a2-bottom-label">{item.label}</span>
-        </button>
-      {:else}
-        <a
-          class="a2-bottom-item"
-          class:active={activeItemId === item.id || (item.id === 'overview' && activeItemId === '')}
-          href={item.href}
-          aria-current={activeItemId === item.id || (item.id === 'overview' && activeItemId === '') ? 'page' : undefined}
-        >
-          <span class="a2-bottom-icon"><Icon size={20} /></span>
-          <span class="a2-bottom-label">{item.label}</span>
-        </a>
-      {/if}
+      <a
+        class="a2-bottom-item"
+        class:active={activeItemId === item.id || (item.id === 'overview' && activeItemId === '')}
+        href={item.href}
+        aria-current={activeItemId === item.id || (item.id === 'overview' && activeItemId === '') ? 'page' : undefined}
+      >
+        <span class="a2-bottom-icon"><Icon size={20} /></span>
+        <span class="a2-bottom-label">{item.label}</span>
+      </a>
     {/each}
   </nav>
 
@@ -902,90 +788,12 @@
   }
 
   /* ============================================================
-     MOBILE "MORE" SHEET
+     MOBILE "MORE" SHEET — REMOVED (MAV-FOCUSED, 2026-10).
+     The .a2-more-* CSS rules + the @keyframes a2-fade-in / a2-slide-up
+     animations were retired with the sheet. The mobile bottom-nav now
+     carries 4 destinations; every other route is reachable through the
+     Overview quick-action cards or the System Status metric cards.
      ============================================================ */
-  .a2-more-overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 90;
-    background: rgba(0, 0, 0, 0.6);
-    backdrop-filter: blur(4px);
-    animation: a2-fade-in var(--a2-motion-fast) var(--a2-ease-out);
-  }
-  .a2-more-sheet {
-    position: fixed;
-    bottom: 0; left: 0; right: 0;
-    z-index: 91;
-    max-height: 75dvh;
-    overflow-y: auto;
-    background: var(--a2-surface-2);
-    border-top: 1px solid var(--a2-border-strong);
-    border-radius: var(--a2-radius-xl) var(--a2-radius-xl) 0 0;
-    padding: var(--a2-space-5) var(--a2-space-4) calc(var(--a2-space-8) + env(safe-area-inset-bottom, 0px));
-    animation: a2-slide-up var(--a2-motion-slow) var(--a2-ease-out);
-  }
-  @keyframes a2-fade-in {
-    from { opacity: 0; }
-    to { opacity: 1; }
-  }
-  @keyframes a2-slide-up {
-    from { transform: translateY(100%); }
-    to { transform: translateY(0); }
-  }
-
-  .a2-more-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: var(--a2-space-5);
-  }
-  .a2-more-title {
-    font-family: var(--a2-font-sans);
-    font-weight: 700;
-    font-size: var(--a2-text-lg);
-    color: var(--a2-text-bright);
-  }
-  .a2-more-close {
-    display: grid;
-    place-items: center;
-    width: 44px;
-    height: 44px;
-    border: none;
-    border-radius: var(--a2-radius-md);
-    background: var(--a2-surface-3);
-    color: var(--a2-text-muted);
-    cursor: pointer;
-  }
-
-  .a2-more-group {
-    margin-bottom: var(--a2-space-4);
-  }
-  .a2-more-link {
-    display: flex;
-    align-items: center;
-    gap: var(--a2-space-3);
-    padding: var(--a2-space-3) var(--a2-space-2);
-    border-radius: var(--a2-radius-sm);
-    color: var(--a2-text-muted);
-    text-decoration: none;
-    font-size: var(--a2-text-base);
-    font-weight: 500;
-  }
-  .a2-more-link.active {
-    color: var(--a2-cyan);
-    background: var(--a2-cyan-soft);
-  }
-  .a2-more-link:focus-visible {
-    outline: 2px solid var(--a2-cyan);
-    outline-offset: -2px;
-  }
-  .a2-more-link-text {
-    flex: 1;
-  }
-  .a2-more-chevron {
-    margin-left: auto;
-    opacity: 0.4;
-  }
 
   /* ============================================================
      MAIN WORKSPACE
@@ -1102,8 +910,6 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .a2-more-sheet,
-    .a2-more-overlay,
     .a2-workspace { animation: none; }
     .a2-status-dot { animation: none; }
     .a2-sidebar, .a2-topbar, .a2-main { transition: none; }
