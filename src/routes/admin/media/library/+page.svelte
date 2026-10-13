@@ -22,14 +22,31 @@
    * Deleted files are excluded from the active inventory.
    * Canonical media identities (media_items) are preserved for
    * Missing Media, demand tracking, and future re-upload.
+   *
+   * MAV-FOCUSED (2026-10): the header now carries TWO primary actions —
+   * "Upload / Import" (existing) and "Link media" (new). "Link media"
+   * uses the `registerLinkTrigger` callback so AdminHostingAssets can
+   * register its internal startLinkExistingFlow function with the
+   * parent — ONE implementation, no duplication. (Svelte 5 runes mode
+   * does not expose internal functions through `bind:this` directly;
+   * the callback registration pattern is the idiomatic equivalent.)
    */
-  import { Upload } from 'lucide-svelte';
+  import { Upload, Link2 } from 'lucide-svelte';
   import AdminAppShell from '$lib/components/admin2/AdminAppShell.svelte';
   import AdminPage from '$lib/components/admin2/AdminPage.svelte';
   import AdminHostingAssets from '$lib/components/admin2/AdminHostingAssets.svelte';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
+
+  // The link-trigger callback. AdminHostingAssets registers its internal
+  // startLinkExistingFlow here on mount, so the header "Link media"
+  // button and the in-table button share ONE implementation.
+  let linkTrigger: (() => void) | null = $state(null);
+
+  function registerLinkTrigger(fn: (() => void) | null) {
+    linkTrigger = fn;
+  }
 </script>
 
 <svelte:head>
@@ -51,9 +68,18 @@
       <a class="library-action" href="/admin/media/upload">
         <Upload size={13} /> Upload / Import
       </a>
+      <!-- MAV-FOCUSED (2026-10): "Link media" immediately to the right of
+           Upload. Triggers the AdminHostingAssets link flow (media-item
+           search → provider tabs with per-provider search → link). The
+           file is NOT re-uploaded — Mavero records the link to the
+           existing provider file. -->
+      <button type="button" class="library-action library-action-link" onclick={() => linkTrigger?.()} disabled={!linkTrigger}>
+        <Link2 size={13} /> Link media
+      </button>
     {/snippet}
 
     <AdminHostingAssets
+      {registerLinkTrigger}
       initialFilters={data.initialFilters}
       providers={data.hostingSources
         ?.filter((s: any) => s.adapterId && s.capabilities)
@@ -76,11 +102,25 @@
     font-size: var(--a2-text-sm);
     font-weight: 600;
     text-decoration: none;
+    cursor: pointer;
     transition: background var(--a2-motion-micro) var(--a2-ease-out),
                 border-color var(--a2-motion-micro) var(--a2-ease-out);
   }
   .library-action:hover {
     background: var(--a2-surface-3);
     border-color: var(--a2-cyan);
+  }
+  .library-action:disabled { opacity: 0.5; cursor: not-allowed; }
+  .library-action-link {
+    /* Same shape as the Upload action; distinct border tint to signal
+       the secondary "link existing file" semantic. */
+    border-color: var(--a2-border-strong);
+    background: var(--a2-surface-3);
+    color: var(--a2-text);
+  }
+  .library-action-link:hover {
+    background: var(--a2-cyan-soft);
+    border-color: var(--a2-cyan);
+    color: var(--a2-cyan);
   }
 </style>

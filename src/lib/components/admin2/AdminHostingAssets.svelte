@@ -59,10 +59,18 @@
     initialFilters = {} as Partial<HostingAssetQuery>,
     providers = [] as Array<{ adapterId: string; name: string; capabilities: ProviderCapabilities }>,
     onopenprovider = (() => {}) as (adapterId: string) => void,
+    // MAV-FOCUSED (2026-10): the parent (Media Library page) registers a
+    // callback here so its header "Link media" button can trigger the
+    // same link flow as the in-table button. The component calls
+    // `registerLinkTrigger(startLinkExistingFlow)` on mount and
+    // `registerLinkTrigger(null)` on destroy. ONE implementation, no
+    // duplication.
+    registerLinkTrigger = (() => {}) as (fn: (() => void) | null) => void,
   }: {
     initialFilters?: Partial<HostingAssetQuery>;
     providers?: Array<{ adapterId: string; name: string; capabilities: ProviderCapabilities }>;
     onopenprovider?: (adapterId: string) => void;
+    registerLinkTrigger?: (fn: (() => void) | null) => void;
   } = $props();
 
   // ============================================================
@@ -232,10 +240,17 @@
 
   onMount(() => {
     void loadAssets().then(() => syncUrl());
+    // MAV-FOCUSED (2026-10): register the link-flow trigger with the
+    // parent so the header "Link media" button can call the same
+    // startLinkExistingFlow as the in-table button.
+    registerLinkTrigger(() => { void startLinkExistingFlow(); });
   });
 
   onDestroy(() => {
     if (searchDebounce) clearTimeout(searchDebounce);
+    // Deregister the link trigger so a stale closure is never called
+    // after the component is gone.
+    registerLinkTrigger(null);
   });
 
   // ============================================================
@@ -469,115 +484,215 @@
   }
 
   // ============================================================
-  // Link Existing File — header-level action for GENUINE provider-side
-  // files that have NO media_assets row (uploaded out-of-band via the
-  // Vidara/Abyss dashboard and discovered by provider sync). The old
-  // drawer-based variant was gated on mediaItem===null, which is an
-  // impossible state under the NOT NULL media_item_id constraint (dead
-  // path) — it has been removed.
-  //
-  // Flow: pick a provider file (from
-  // /api/admin/hosting/providers/[adapterId]/files — files NOT in
-  // media_assets), then search for and select the canonical media_item,
-  // then call POST /api/admin/media/assets/link with
-  // { mediaItemId, providerSourceId, providerAssetId } — which INSERTs
-  // a new media_assets row with current provider metadata.
+  // Link Media — provider-agnostic existing-file linking (MAV-FOCUSED
+  // redesign, 2026-10). The flow is:
+  //   1. Click "Link media" → modal opens.
+  //   2. Step 1: search for a movie/series/anime title. Select one.
+  //   3. Step 2: a provider tab strip appears (Vidara / Abyss / …). Each
+  //      tab has isolated state — inventory list, search query, loading,
+  //      error, and selection. The active provider's inventory is
+  //      fetched lazily (only when its tab is first activated) and
+  //      cached. A search box directly below the tabs searches ONLY the
+  //      active provider's inventory (by filename/title/provider file
+  //      ID). Terminal deleted/failed files are excluded from the
+  //      linkable list. Files already linked to ANOTHER media_item are
+  //      shown with a "Linked to <item>" badge and disabled.
+  //   4. Click "Link" → POST /api/admin/media/assets/link with
+  //      { mediaItemId, providerSourceId, providerAssetId }. The
+  //      existing linkAsset() server-side handler deduplicates,
+  //      handles idempotent relinking, and rejects conflicting links.
+  //   5. On success: refresh the asset list so the linked asset appears.
   // ============================================================
   let linkModalOpen = $state(false);
-  let linkFilesLoading = $state(false);
-  let linkFilesError = $state<string | null>(null);
-  // Untracked provider files available for linking, keyed by adapter.
-  let linkProviderFiles = $state<Array<{ providerAdapterId: string; providerAssetId: string; title: string | null; filename: string | null; status: string }>>([]);
-  let linkSelectedFile = $state<{ providerAdapterId: string; providerAssetId: string; title: string | null; filename: string | null } | null>(null);
+  // Step 1: media-item search.
   let linkSearchQuery = $state('');
   let linkSearchLoading = $state(false);
   let linkSearchResults = $state<Array<{ id: string; title: string; content_type: string; year: number | null; tmdb_id: string; canonical_key: string }>>([]);
   let linkSelectedMediaItemId = $state<string | null>(null);
+  let linkSelectedMediaItem = $state<{ id: string; title: string; content_type: string; year: number | null; tmdb_id: string } | null>(null);
   let linkSearchDebounce: ReturnType<typeof setTimeout> | null = null;
-  // providerSourceId for the selected provider file (resolved during load).
+  // Step 2: provider-tab state. Each tab carries its OWN inventory list,
+  // search query, loading/error state, and selected file — so switching
+  // tabs never loses search context (the Issue spec: "Each tab has
+  // isolated provider state, search results, pagination, loading state,
+  // and errors").
+  type LinkProviderTabState = {
+    adapterId: string;
+    name: string;
+    inventory: Array<{
+      providerAssetId: string;
+      title: string | null;
+      filename: string | null;
+      sizeBytes: number | null;
+      durationSeconds: number | null;
+      status: string;          // provider's own status string
+      lifecycleState: string;   // canonical Mavero AssetLifecycleState
+      linkedToMediaItemId: string | null;
+    }>;
+    inventoryLoading: boolean;
+    inventoryError: string | null;
+    searchQuery: string;
+    searchDebounce: ReturnType<typeof setTimeout> | null;
+    selectedFile: { providerAssetId: string; title: string | null; filename: string | null } | null;
+    loaded: boolean;
+  };
+  let linkProviderTabs = $state<LinkProviderTabState[]>([]);
+  let linkActiveTabId = $state<string | null>(null);
+  let linkFilesError = $state<string | null>(null);
+  // providerSourceId for each adapter (resolved once when the modal opens).
   let linkSourceIdByAdapter = $state<Record<string, string>>({});
+
+  function getActiveTab(): LinkProviderTabState | null {
+    return linkProviderTabs.find((t) => t.adapterId === linkActiveTabId) ?? null;
+  }
+
+  function getFilteredInventory(tab: LinkProviderTabState) {
+    const q = tab.searchQuery.trim().toLowerCase();
+    if (!q) return tab.inventory;
+    return tab.inventory.filter((f) => {
+      const title = (f.title ?? '').toLowerCase();
+      const filename = (f.filename ?? '').toLowerCase();
+      const id = (f.providerAssetId ?? '').toLowerCase();
+      return title.includes(q) || filename.includes(q) || id.includes(q);
+    });
+  }
 
   async function startLinkExistingFlow() {
     linkModalOpen = true;
-    linkSelectedFile = null;
     linkSearchQuery = '';
     linkSearchResults = [];
     linkSelectedMediaItemId = null;
+    linkSelectedMediaItem = null;
     linkFilesError = null;
-    await loadProviderFilesForLink();
+    // Build the provider tabs from the page's `providers` prop (Vidara,
+    // Abyss, …). Each tab starts empty; inventory is fetched lazily when
+    // the tab is first activated (so opening the modal does not fire N
+    // provider API calls upfront).
+    linkProviderTabs = providers.map((p: any) => ({
+      adapterId: p.adapterId,
+      name: p.name ?? p.adapterId,
+      inventory: [],
+      inventoryLoading: false,
+      inventoryError: null,
+      searchQuery: '',
+      searchDebounce: null,
+      selectedFile: null,
+      loaded: false,
+    }));
+    linkActiveTabId = linkProviderTabs[0]?.adapterId ?? null;
+    // Resolve providerSourceId for each adapter (used by confirmLink).
+    try {
+      const res = await fetch('/api/admin/hosting/providers?skipHealth=1');
+      const data = await res.json();
+      if (data.ok && Array.isArray(data.providers)) {
+        const map: Record<string, string> = {};
+        for (const p of data.providers) {
+          if (p.adapterId && p.sourceId) map[p.adapterId] = p.sourceId;
+        }
+        linkSourceIdByAdapter = map;
+      }
+    } catch {
+      // Non-fatal — confirmLink validates and surfaces a precise error.
+    }
     // Trigger an initial empty search to show some items.
     void searchMediaItems('');
+    // Lazily load the first tab's inventory.
+    if (linkActiveTabId) await loadProviderInventory(linkActiveTabId);
   }
 
-  async function loadProviderFilesForLink() {
-    linkFilesLoading = true;
-    linkFilesError = null;
-    linkProviderFiles = [];
+  async function loadProviderInventory(adapterId: string) {
+    const tab = linkProviderTabs.find((t) => t.adapterId === adapterId);
+    if (!tab || tab.loaded || tab.inventoryLoading) return;
+    tab.inventoryLoading = true;
+    tab.inventoryError = null;
     try {
-      // Resolve the provider sources (for providerSourceId) via the
-      // canonical resolver-backed sources already loaded by the page —
-      // fall back to the hosting providers API.
-      const files: typeof linkProviderFiles = [];
-      const sourceMap: Record<string, string> = {};
-      for (const p of providers) {
-        try {
-          const res = await fetch(`/api/admin/hosting/providers/${encodeURIComponent(p.adapterId)}/files`);
-          const data = await res.json();
-          if (data.ok && Array.isArray(data.files)) {
-            for (const f of data.files) {
-              files.push({
-                providerAdapterId: p.adapterId,
-                providerAssetId: f.providerAssetId,
-                title: f.title ?? null,
-                filename: f.filename ?? null,
-                status: f.status,
-              });
-            }
-          }
-        } catch {
-          // Per-provider failure is non-fatal — other providers still load.
-        }
-      }
-      // providerSourceId per adapter comes from the page's hostingSources
-      // (passed as `providers` — we need the source ids though). We fetch
-      // them from the providers overview endpoint, which includes sourceId.
-      try {
-        const res = await fetch('/api/admin/hosting/providers?skipHealth=1');
-        const data = await res.json();
-        if (data.ok && Array.isArray(data.providers)) {
-          for (const p of data.providers) {
-            if (p.adapterId && p.sourceId) sourceMap[p.adapterId] = p.sourceId;
-          }
-        }
-      } catch {
-        // Non-fatal — confirmLink validates and surfaces a precise error.
-      }
-      linkSourceIdByAdapter = sourceMap;
-      linkProviderFiles = files;
-      if (files.length === 0) {
-        linkFilesError = 'No untracked provider files found. Run a provider sync (Hosting Control → Sync) to discover files uploaded outside Mavero.';
+      const res = await fetch(`/api/admin/hosting/providers/${encodeURIComponent(adapterId)}/files`);
+      const data = await res.json();
+      if (data.ok && Array.isArray(data.files)) {
+        tab.inventory = data.files.map((f: any) => ({
+          providerAssetId: f.providerAssetId,
+          title: f.title ?? null,
+          filename: f.filename ?? null,
+          sizeBytes: f.sizeBytes ?? null,
+          durationSeconds: f.durationSeconds ?? null,
+          status: f.status ?? 'unknown',
+          lifecycleState: f.lifecycleState ?? f.status ?? 'unknown',
+          linkedToMediaItemId: f.linkedToMediaItemId ?? null,
+        }));
+      } else {
+        tab.inventoryError = data.error?.message ?? 'Failed to load provider inventory.';
+        tab.inventory = [];
       }
     } catch (err) {
-      linkFilesError = err instanceof Error ? err.message : 'Failed to load provider files.';
+      tab.inventoryError = err instanceof Error ? err.message : 'Failed to load provider inventory.';
+      tab.inventory = [];
     } finally {
-      linkFilesLoading = false;
+      tab.inventoryLoading = false;
+      tab.loaded = true;
+      linkProviderTabs = [...linkProviderTabs]; // trigger reactivity
     }
+  }
+
+  function selectLinkTab(adapterId: string) {
+    if (linkActiveTabId === adapterId) return;
+    linkActiveTabId = adapterId;
+    // Lazy-load the inventory when the tab is first activated.
+    const tab = linkProviderTabs.find((t) => t.adapterId === adapterId);
+    if (tab && !tab.loaded) {
+      void loadProviderInventory(adapterId);
+    }
+  }
+
+  function onProviderSearchInput(adapterId: string) {
+    const tab = linkProviderTabs.find((t) => t.adapterId === adapterId);
+    if (!tab) return;
+    if (tab.searchDebounce) clearTimeout(tab.searchDebounce);
+    tab.searchDebounce = setTimeout(() => {
+      // The search is purely client-side (filter the already-loaded
+      // inventory). No network call — the Issue spec says "searches ONLY
+      // the active provider's inventory, by filename/title or provider
+      // file ID". Debounce is for UX smoothness, not network protection.
+      linkProviderTabs = [...linkProviderTabs]; // trigger reactivity
+    }, 200);
   }
 
   function closeLinkModal() {
     linkModalOpen = false;
-    linkSelectedFile = null;
     linkSearchQuery = '';
     linkSearchResults = [];
     linkSelectedMediaItemId = null;
+    linkSelectedMediaItem = null;
     if (linkSearchDebounce) { clearTimeout(linkSearchDebounce); linkSearchDebounce = null; }
+    // Clear per-tab search debounces + selected files (isolation: the
+    // next open starts fresh).
+    for (const tab of linkProviderTabs) {
+      if (tab.searchDebounce) { clearTimeout(tab.searchDebounce); tab.searchDebounce = null; }
+      tab.selectedFile = null;
+      tab.searchQuery = '';
+    }
+    linkProviderTabs = [];
+    linkActiveTabId = null;
+    linkFilesError = null;
   }
 
-  function onLinkSearchInput() {
+  function onMediaSearchInput() {
     if (linkSearchDebounce) clearTimeout(linkSearchDebounce);
     linkSearchDebounce = setTimeout(() => {
       void searchMediaItems(linkSearchQuery);
     }, 300);
+  }
+
+  function selectMediaItem(item: { id: string; title: string; content_type: string; year: number | null; tmdb_id: string }) {
+    linkSelectedMediaItemId = item.id;
+    linkSelectedMediaItem = item;
+    // Reset provider-tab selections when a new media item is selected
+    // (the linkable-files check is per-media-item: a file linked to the
+    // SAME item is idempotent-relink, a file linked to ANOTHER item is
+    // a conflict).
+    for (const tab of linkProviderTabs) {
+      tab.selectedFile = null;
+    }
+    linkProviderTabs = [...linkProviderTabs]; // trigger reactivity
   }
 
   async function searchMediaItems(q: string) {
@@ -607,17 +722,36 @@
     }
   }
 
+  // A file is linkable when:
+  //   * it is NOT in a terminal deleted/failed state (per Issue spec).
+  //   * it is NOT already linked to a DIFFERENT media_item (the
+  //     server-side linkAsset() guard would reject it; we surface the
+  //     state here so the UI can disable the row + show the reason).
+  //   * its DB row is NOT terminal-deleted (linkedToMediaItemId ===
+  //     '<deleted>' means the media_assets row has status='deleted' —
+  //     linkAsset case (d) will reject with ASSET_DELETED).
+  // A file linked to the SAME media_item IS linkable (idempotent relink
+  // — linkAsset returns success without modifying the DB).
+  function isFileLinkable(file: { lifecycleState: string; linkedToMediaItemId: string | null }): boolean {
+    if (file.lifecycleState === 'deleted' || file.lifecycleState === 'failed') return false;
+    if (file.linkedToMediaItemId === '<deleted>') return false;
+    if (file.linkedToMediaItemId && file.linkedToMediaItemId !== linkSelectedMediaItemId) return false;
+    return true;
+  }
+
   async function confirmLink() {
-    if (!linkSelectedFile || !linkSelectedMediaItemId) return;
-    const file = linkSelectedFile;
-    const providerSourceId = linkSourceIdByAdapter[file.providerAdapterId];
+    const tab = getActiveTab();
+    if (!tab || !tab.selectedFile || !linkSelectedMediaItemId) return;
+    const file = tab.selectedFile;
+    const providerSourceId = linkSourceIdByAdapter[tab.adapterId];
     if (!providerSourceId) {
-      linkFilesError = `Could not resolve the Mavero source for provider "${file.providerAdapterId}". Check the provider configuration and retry.`;
+      linkFilesError = `Could not resolve the Mavero source for provider "${tab.adapterId}". Check the provider configuration and retry.`;
       return;
     }
     actionInProgress = 'link';
     actionError = null;
     actionSuccess = null;
+    linkFilesError = null;
     try {
       const res = await fetch('/api/admin/media/assets/link', {
         method: 'POST',
@@ -630,7 +764,7 @@
       });
       const data = await res.json();
       if (data.ok) {
-        actionSuccess = `Provider file ${file.providerAssetId} linked to the selected media item.`;
+        actionSuccess = `Provider file ${file.providerAssetId} linked to "${linkSelectedMediaItem?.title ?? 'the selected media item'}".`;
         closeLinkModal();
         await loadAssets();
         const sel = selectedAsset;
@@ -770,10 +904,13 @@
           <X size={11} /> Clear ({activeFilterCount})
         </button>
       {/if}
-      <!-- Link Existing File — for provider-side files NOT yet tracked in
-           media_assets (out-of-band uploads discovered by sync). -->
+      <!-- Link Media — provider-agnostic existing-file linking (MAV-FOCUSED
+           redesign, 2026-10). Opens a modal: Step 1 search for a media
+           item, Step 2 pick a provider file from a tabbed Vidara/Abyss
+           inventory with per-provider search. The file is NOT re-uploaded —
+           Mavero records the link to the existing provider file. -->
       <button type="button" class="a2-assets-link-existing" onclick={startLinkExistingFlow} disabled={actionInProgress !== null}>
-        <Link2 size={12} /> Link Existing File
+        <Link2 size={12} /> Link media
       </button>
     </div>
   </div>
@@ -1285,116 +1422,203 @@
     {/if}
   </AdminConfirmDialog>
 
-  <!-- Link Existing File modal — pick an UNTRACKED provider-side file (no
-       media_assets row; discovered via the provider files API) and a
-       canonical media_item, then link them via
-       POST /api/admin/media/assets/link (which INSERTs the row). -->
+  <!-- Link Media modal (MAV-FOCUSED redesign, 2026-10):
+       Step 1 — search for a movie / series / anime title.
+       Step 2 — provider tabs (Vidara / Abyss / …) with isolated state
+       + a per-provider search box that searches ONLY the active
+       provider's inventory (by filename / title / provider file ID).
+       Terminal deleted/failed files are excluded; files already linked
+       to ANOTHER media_item are shown with a "Linked elsewhere" badge
+       and disabled. confirmLink POSTs to
+       /api/admin/media/assets/link which uses the existing
+       ManagementService.linkAsset() (dedup + idempotent relink + conflict
+       guard). -->
   {#if linkModalOpen}
     <div class="a2-asset-modal-overlay" onclick={() => closeLinkModal()} role="presentation">
       <!-- svelte-ignore a11y_click_events_have_key_events -->
       <div class="a2-asset-modal a2-asset-modal-wide" role="dialog" aria-modal="true" aria-labelledby="a2-asset-link-title" tabindex="-1" onclick={(e) => e.stopPropagation()}>
-        <h2 id="a2-asset-link-title" class="a2-asset-modal-title"><Link2 size={16} /> Link existing provider file</h2>
+        <h2 id="a2-asset-link-title" class="a2-asset-modal-title"><Link2 size={16} /> Link media</h2>
         <p class="a2-asset-modal-desc">
-          Link a provider-side file that is NOT yet tracked by Mavero (uploaded out-of-band,
-          discovered via provider sync) to a canonical media item. This creates the
-          media_assets link and resolves any open demand.
+          Search for a movie, series, or anime title, then pick a provider file to link.
+          The file is not re-uploaded — Mavero records the link to the existing provider file.
         </p>
 
-        {#if linkFilesLoading}
-          <div class="a2-asset-link-search" role="status">
-            <Loader2 size={14} style="animation: a2-spin 1s linear infinite; color: var(--a2-cyan);" />
-            <span>Loading provider files…</span>
-          </div>
-        {:else}
-          {#if linkFilesError}
-            <div class="a2-asset-action-error-box" role="alert" style="margin-bottom: 10px;">
-              <AlertCircle size={14} />
-              <div><p>{linkFilesError}</p></div>
-            </div>
-          {/if}
-
-          <h3 class="a2-asset-modal-step">1. Provider file</h3>
-          <div class="a2-asset-link-results" style="max-height: 180px;">
-            {#if linkProviderFiles.length === 0 && !linkFilesLoading}
-              <div class="a2-asset-link-empty">No untracked provider files available.</div>
-            {/if}
-            {#each linkProviderFiles as file (file.providerAdapterId + ':' + file.providerAssetId)}
-              <button
-                type="button"
-                class="a2-asset-link-result"
-                class:selected={linkSelectedFile?.providerAssetId === file.providerAssetId && linkSelectedFile?.providerAdapterId === file.providerAdapterId}
-                onclick={() => { linkSelectedFile = file; }}
-              >
-                <div class="a2-asset-link-result-icon">
-                  <FileVideo size={14} />
-                </div>
-                <div class="a2-asset-link-result-info">
-                  <div class="a2-asset-link-result-title">{file.filename ?? file.title ?? file.providerAssetId}</div>
-                  <div class="a2-asset-link-result-meta">
-                    <span>{file.providerAdapterId}</span>
-                    <span>· {file.providerAssetId}</span>
-                    <span>· {file.status}</span>
-                  </div>
-                </div>
-                {#if linkSelectedFile?.providerAssetId === file.providerAssetId && linkSelectedFile?.providerAdapterId === file.providerAdapterId}
-                  <span class="a2-asset-link-result-check"><Check size={14} /></span>
-                {/if}
-              </button>
-            {/each}
-          </div>
-
-          <h3 class="a2-asset-modal-step">2. Media item</h3>
-          <div class="a2-asset-link-search">
-            <input
-              type="text"
-              class="a2-asset-modal-input"
-              placeholder="Search by title, TMDB ID, IMDb ID, or canonical key…"
-              bind:value={linkSearchQuery}
-              oninput={onLinkSearchInput}
-              autocomplete="off"
-            />
-            {#if linkSearchLoading}
-              <Loader2 size={14} style="animation: a2-spin 1s linear infinite; color: var(--a2-text-dim);" />
-            {/if}
-          </div>
-          <div class="a2-asset-link-results">
-            {#if linkSearchResults.length === 0 && !linkSearchLoading}
-              <div class="a2-asset-link-empty">
-                {#if linkSearchQuery.trim()}
-                  No media items match "{linkSearchQuery}".
-                {:else}
-                  Start typing to search, or browse the list below.
-                {/if}
-              </div>
-            {/if}
-            {#each linkSearchResults as item (item.id)}
-              <button
-                type="button"
-                class="a2-asset-link-result"
-                class:selected={linkSelectedMediaItemId === item.id}
-                onclick={() => { linkSelectedMediaItemId = item.id; }}
-              >
-                <div class="a2-asset-link-result-icon">
-                  {#if item.content_type === 'movie'}<Film size={14} />{:else if item.content_type === 'anime'}<Sparkles size={14} />{:else}<Tv size={14} />{/if}
-                </div>
-                <div class="a2-asset-link-result-info">
-                  <div class="a2-asset-link-result-title">{item.title}</div>
-                  <div class="a2-asset-link-result-meta">
-                    <span>{item.content_type}</span>
-                    {#if item.year}<span>· {item.year}</span>{/if}
-                    <span>· TMDB {item.tmdb_id}</span>
-                  </div>
-                </div>
-                {#if linkSelectedMediaItemId === item.id}
-                  <span class="a2-asset-link-result-check"><Check size={14} /></span>
-                {/if}
-              </button>
-            {/each}
+        {#if linkFilesError}
+          <div class="a2-asset-action-error-box" role="alert" style="margin-bottom: 10px;">
+            <AlertCircle size={14} />
+            <div><p>{linkFilesError}</p></div>
           </div>
         {/if}
+
+        <!-- STEP 1 — Media item search -->
+        <h3 class="a2-asset-modal-step">1. Media item</h3>
+        <div class="a2-asset-link-search">
+          <input
+            type="text"
+            class="a2-asset-modal-input"
+            placeholder="Search by title, TMDB ID, IMDb ID, or canonical key…"
+            bind:value={linkSearchQuery}
+            oninput={onMediaSearchInput}
+            autocomplete="off"
+          />
+          {#if linkSearchLoading}
+            <Loader2 size={14} style="animation: a2-spin 1s linear infinite; color: var(--a2-text-dim);" />
+          {/if}
+        </div>
+        <div class="a2-asset-link-results" style="max-height: 200px;">
+          {#if linkSearchResults.length === 0 && !linkSearchLoading}
+            <div class="a2-asset-link-empty">
+              {#if linkSearchQuery.trim()}
+                No media items match "{linkSearchQuery}".
+              {:else}
+                Start typing to search, or browse the list below.
+              {/if}
+            </div>
+          {/if}
+          {#each linkSearchResults as item (item.id)}
+            <button
+              type="button"
+              class="a2-asset-link-result"
+              class:selected={linkSelectedMediaItemId === item.id}
+              onclick={() => selectMediaItem(item)}
+            >
+              <div class="a2-asset-link-result-icon">
+                {#if item.content_type === 'movie'}<Film size={14} />{:else if item.content_type === 'anime'}<Sparkles size={14} />{:else}<Tv size={14} />{/if}
+              </div>
+              <div class="a2-asset-link-result-info">
+                <div class="a2-asset-link-result-title">{item.title}</div>
+                <div class="a2-asset-link-result-meta">
+                  <span>{item.content_type}</span>
+                  {#if item.year}<span>· {item.year}</span>{/if}
+                  <span>· TMDB {item.tmdb_id}</span>
+                </div>
+              </div>
+              {#if linkSelectedMediaItemId === item.id}
+                <span class="a2-asset-link-result-check"><Check size={14} /></span>
+              {/if}
+            </button>
+          {/each}
+        </div>
+
+        <!-- STEP 2 — Provider tabs with isolated state + per-provider search.
+             Only shown after a media item is selected. -->
+        {#if linkSelectedMediaItemId}
+          <h3 class="a2-asset-modal-step">2. Provider file</h3>
+
+          {#if linkProviderTabs.length === 0}
+            <div class="a2-asset-link-empty">
+              No hosting providers are configured. Register a provider in the database and refresh.
+            </div>
+          {:else}
+            <!-- Provider tab strip -->
+            <div class="a2-link-tabs" role="tablist" aria-label="Provider">
+              {#each linkProviderTabs as tab (tab.adapterId)}
+                <button
+                  type="button"
+                  class="a2-link-tab"
+                  class:active={linkActiveTabId === tab.adapterId}
+                  role="tab"
+                  aria-selected={linkActiveTabId === tab.adapterId}
+                  aria-controls={`a2-link-tabpanel-${tab.adapterId}`}
+                  id={`a2-link-tabbtn-${tab.adapterId}`}
+                  onclick={() => selectLinkTab(tab.adapterId)}
+                >
+                  {tab.name}
+                  {#if tab.loaded && !tab.inventoryLoading}
+                    <span class="a2-link-tab-count">{tab.inventory.length}</span>
+                  {/if}
+                </button>
+              {/each}
+            </div>
+
+            {#each linkProviderTabs as tab (tab.adapterId)}
+              <div
+                id={`a2-link-tabpanel-${tab.adapterId}`}
+                role="tabpanel"
+                aria-labelledby={`a2-link-tabbtn-${tab.adapterId}`}
+                hidden={linkActiveTabId !== tab.adapterId}
+                class="a2-link-tabpanel"
+              >
+                {#if tab.inventoryLoading}
+                  <div class="a2-asset-link-search" role="status">
+                    <Loader2 size={14} style="animation: a2-spin 1s linear infinite; color: var(--a2-cyan);" />
+                    <span>Loading {tab.name} inventory…</span>
+                  </div>
+                {:else if tab.inventoryError}
+                  <div class="a2-asset-action-error-box" role="alert">
+                    <AlertCircle size={14} />
+                    <div><p>{tab.inventoryError}</p></div>
+                  </div>
+                {:else}
+                  <!-- Per-provider search box — searches ONLY this tab's inventory. -->
+                  <div class="a2-asset-link-search">
+                    <input
+                      type="text"
+                      class="a2-asset-modal-input"
+                      placeholder={`Search ${tab.name} files by filename, title, or file ID…`}
+                      bind:value={tab.searchQuery}
+                      oninput={() => onProviderSearchInput(tab.adapterId)}
+                      autocomplete="off"
+                    />
+                  </div>
+                  <div class="a2-asset-link-results" style="max-height: 280px;">
+                    {#if getFilteredInventory(tab).length === 0}
+                      <div class="a2-asset-link-empty">
+                        {#if tab.searchQuery.trim()}
+                          No {tab.name} files match "{tab.searchQuery}".
+                        {:else}
+                          No untracked {tab.name} files available. Run a provider sync (Hosting Control → Sync) to discover files uploaded outside Mavero.
+                        {/if}
+                      </div>
+                    {/if}
+                    {#each getFilteredInventory(tab) as file (file.providerAssetId)}
+                      {@const linkable = isFileLinkable(file)}
+                      <button
+                        type="button"
+                        class="a2-asset-link-result"
+                        class:selected={tab.selectedFile?.providerAssetId === file.providerAssetId}
+                        class:disabled={!linkable}
+                        disabled={!linkable}
+                        onclick={() => { tab.selectedFile = { providerAssetId: file.providerAssetId, title: file.title, filename: file.filename }; linkProviderTabs = [...linkProviderTabs]; }}
+                        aria-disabled={!linkable}
+                      >
+                        <div class="a2-asset-link-result-icon">
+                          <FileVideo size={14} />
+                        </div>
+                        <div class="a2-asset-link-result-info">
+                          <div class="a2-asset-link-result-title">{file.filename ?? file.title ?? file.providerAssetId}</div>
+                          <div class="a2-asset-link-result-meta">
+                            <span>{tab.adapterId}</span>
+                            <span>· {file.providerAssetId}</span>
+                            <span>· {file.status}</span>
+                            {#if file.durationSeconds}<span>· {Math.floor(file.durationSeconds / 60)}m {file.durationSeconds % 60}s</span>{/if}
+                          </div>
+                        </div>
+                        {#if !linkable}
+                          <span class="a2-asset-link-result-badge">
+                            {#if file.lifecycleState === 'deleted' || file.lifecycleState === 'failed'}
+                              {file.lifecycleState}
+                            {:else if file.linkedToMediaItemId === '<deleted>'}
+                              deleted
+                            {:else}
+                              linked elsewhere
+                            {/if}
+                          </span>
+                        {:else if tab.selectedFile?.providerAssetId === file.providerAssetId}
+                          <span class="a2-asset-link-result-check"><Check size={14} /></span>
+                        {/if}
+                      </button>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
+            {/each}
+          {/if}
+        {/if}
+
         <footer class="a2-asset-modal-actions">
           <button type="button" class="a2-asset-modal-btn a2-asset-modal-cancel" onclick={closeLinkModal}>Cancel</button>
-          <button type="button" class="a2-asset-modal-btn a2-asset-modal-confirm" onclick={confirmLink} disabled={!linkSelectedFile || !linkSelectedMediaItemId || actionInProgress !== null}>
+          <button type="button" class="a2-asset-modal-btn a2-asset-modal-confirm" onclick={confirmLink} disabled={!getActiveTab()?.selectedFile || !linkSelectedMediaItemId || actionInProgress !== null}>
             {#if actionInProgress === 'link'}<Loader2 size={12} style="animation: a2-spin 1s linear infinite;" /> Linking…{:else}<Link2 size={12} /> Link file to media item{/if}
           </button>
         </footer>
@@ -1948,6 +2172,43 @@
   .a2-asset-link-result-title { font-size: var(--a2-text-sm); color: var(--a2-text-bright); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .a2-asset-link-result-meta { display: flex; gap: 4px; font-size: var(--a2-text-2xs); color: var(--a2-text-dim); text-transform: uppercase; letter-spacing: 0.04em; }
   .a2-asset-link-result-check { color: var(--a2-cyan); flex-shrink: 0; }
+  /* MAV-FOCUSED Link Media redesign (2026-10): provider tab strip +
+     per-tab panel + disabled (linked-elsewhere/deleted/failed) rows. */
+  .a2-link-tabs { display: flex; gap: 4px; margin-bottom: var(--a2-space-2); border-bottom: 1px solid var(--a2-border); }
+  .a2-link-tab {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 12px;
+    background: transparent; border: 0; border-bottom: 2px solid transparent;
+    color: var(--a2-text-muted);
+    font: inherit; font-size: var(--a2-text-xs); font-weight: 600;
+    cursor: pointer;
+    transition: color var(--a2-motion-micro) var(--a2-ease-out), border-color var(--a2-motion-micro) var(--a2-ease-out);
+  }
+  .a2-link-tab:hover { color: var(--a2-text); }
+  .a2-link-tab.active { color: var(--a2-cyan); border-bottom-color: var(--a2-cyan); }
+  .a2-link-tab-count {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 18px; height: 16px; padding: 0 5px;
+    border-radius: 999px;
+    background: var(--a2-surface-3);
+    color: var(--a2-text-dim);
+    font-size: 10px; font-weight: 700;
+  }
+  .a2-link-tab.active .a2-link-tab-count { background: var(--a2-cyan-soft); color: var(--a2-cyan); }
+  .a2-link-tabpanel { display: flex; flex-direction: column; gap: var(--a2-space-2); }
+  .a2-asset-link-result.disabled { opacity: 0.5; cursor: not-allowed; }
+  .a2-asset-link-result.disabled:hover { border-color: var(--a2-border); }
+  .a2-asset-link-result-badge {
+    display: inline-flex; align-items: center;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--a2-red-soft);
+    color: var(--a2-red);
+    border: 1px solid var(--a2-red-border);
+    font-size: 10px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.04em;
+    flex-shrink: 0;
+  }
 
   .a2-asset-confirm-body {
     display: flex; flex-direction: column; gap: var(--a2-space-2);

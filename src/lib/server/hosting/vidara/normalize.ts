@@ -21,6 +21,7 @@ import type {
   AssetLifecycleState,
 } from '../types';
 import { HostingProviderError } from '../errors';
+import { parseDurationSeconds } from '../media/duration';
 import type {
   VidaraAccountResponse,
   VidaraFile,
@@ -76,13 +77,24 @@ const VIDARA_EMBED_URL_BASE = 'https://vidara.to/e/';
  *              admin sees an actionable terminal state instead of an
  *              eternal "processing".
  *
- * NOTE: the file-info status is the FILE lifecycle, NOT encoding progress.
- * The authoritative source for ACTIVE encoding is GET /v1/video/status
- * (see normalizeVidaraEncodingList + VidaraAdapter.getProcessingStatus).
- * (Other values default to 'processing' as conservative.)
+ * MAV-FOCUSED fix (2026-10, Vidara/Abyss audit): the previous mapper did
+ * NOT recognize `"deleted"` or `"inactive"` — both fell through to the
+ * default `'processing'` branch. A Vidara file deleted at the provider
+ * dashboard but still returned by `/v1/video/list` with `status="deleted"`
+ * (or `"inactive"`) would be flipped from a previously-terminal
+ * `'deleted'` state back to `'processing'` on the next sync — reviving
+ * deleted inventory and breaking the terminal-state contract enforced by
+ * SyncService + ManagementService. The Abyss mapper handles both
+ * (`abyss/normalize.ts` line ~78); Vidara now mirrors that contract.
  */
 export function vidaraStatusMapper(status: number | string | undefined): AssetLifecycleState {
   const s = typeof status === 'string' ? status.toLowerCase() : status;
+  // MAV-FOCUSED fix: 'deleted' and 'inactive' map to the terminal
+  // 'deleted' state — mirroring the Abyss mapper contract. A Vidara file
+  // that has been deleted at the provider dashboard but still appears
+  // in /v1/video/list with status="deleted" or "inactive" must NOT be
+  // revived as 'processing' on the next sync.
+  if (s === 'deleted' || s === 'inactive') return 'deleted';
   if (s === 0 || s === '0' || s === 'pending' || s === 'queued') return 'queued';
   if (s === 1 || s === '1' || s === 'active' || s === 'ready') return 'ready';
   if (s === 2 || s === '2' || s === 'encoding' || s === 'processing') return 'processing';
@@ -148,7 +160,18 @@ export function normalizeVidaraFile(file: VidaraFile): ProviderAssetInfo {
     playbackUrl: filecode ? `${VIDARA_EMBED_URL_BASE}${filecode}` : null,
     thumbnailUrl: file.player_img ?? file.single_img ?? file.thumb ?? file.thumbnail ?? file.splash ?? null,
     sizeBytes: coerceNumber(file.size),
-    durationSeconds: coerceNumber(file.length ?? file.duration ?? file.video_length),
+    // MAV-FOCUSED fix (2026-10): the previous `coerceNumber(file.length ??
+    // file.duration ?? file.video_length)` used `parseInt()`, which
+    // returns 0 for the documented `"00:01:30"` `video_length` shape.
+    // The 0 then violated the DB CHECK constraint
+    // `media_assets_duration_seconds_check CHECK (duration_seconds > 0)`
+    // on every sync + every linkAsset insert — the reported
+    // "media_assets_duration_seconds_check" failure when linking Black
+    // Clover episodes. Now uses the typed `parseDurationSeconds` helper
+    // that understands `HH:MM:SS` / `MM:SS` / numeric-seconds shapes
+    // and returns `null` for unknown/invalid/zero/negative values
+    // (which the DB CHECK accepts).
+    durationSeconds: parseDurationSeconds(file.length ?? file.duration ?? file.video_length),
     sourceQuality: file.quality ?? null,
     availableQualities: file.quality ? [String(file.quality)] : [],
     audioLanguages: normalizeAudioLanguages(file.audio),

@@ -30,6 +30,7 @@ import type {
   AssetLifecycleState,
 } from '../types';
 import { HostingProviderError } from '../errors';
+import { parseDurationSeconds } from '../media/duration';
 import type {
   AbyssAboutResponse,
   AbyssFile,
@@ -127,7 +128,13 @@ export function normalizeAbyssFile(file: AbyssFile): ProviderAssetInfo {
     playbackUrl: slug ? (file.player_url ?? `${ABYSS_PLAYBACK_URL_BASE}${slug}`) : (file.player_url ?? null),
     thumbnailUrl: file.thumbnail ?? file.thumb ?? null,
     sizeBytes: coerceNumber(file.size),
-    durationSeconds: coerceNumber(file.duration),
+    // MAV-FOCUSED fix (2026-10): use the typed parseDurationSeconds helper
+    // so Abyss's `duration` field is parsed safely (HH:MM:SS / MM:SS /
+    // numeric seconds). The previous `coerceNumber(file.duration)` used
+    // `parseInt()` which returns 0 for any non-numeric prefix — violating
+    // the DB CHECK `duration_seconds > 0` on sync + linkAsset. Returns
+    // `null` for unknown/zero/negative/over-cap values (DB-safe).
+    durationSeconds: parseDurationSeconds(file.duration),
     sourceQuality: file.quality ?? null,
     availableQualities: qualities,
     audioLanguages: normalizeAudioLanguages(file.audio_lang ?? file.audio_language),

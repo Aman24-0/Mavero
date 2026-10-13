@@ -615,6 +615,25 @@ export class ManagementService {
     durationSeconds: number | null;
     status: string;
     playbackUrl: string | null;
+    /**
+     * MAV-FOCUSED fix (2026-10): the provider asset's lifecycle state
+     * (`AssetLifecycleState`) — used by the Link Media UI to exclude
+     * terminal deleted/failed files from the linkable list. The plain
+     * `status` field above carries the provider's OWN status string
+     * (e.g. "active" / "processing" / "deleted") and is kept for
+     * backwards compatibility with existing UIs; the new
+     * `lifecycleState` field is the canonical Mavero-side state.
+     */
+    lifecycleState: string;
+    /**
+     * MAV-FOCUSED fix (2026-10): when this provider file is ALREADY
+     * linked to a different media_item, this field carries that
+     * media_item's id (so the UI can show "Linked to <item>" and
+     * disable the duplicate-link action). `null` when the file is
+     * unlinked (linkable) OR linked to the same item being viewed
+     * (idempotent relink — surfaced as linkable).
+     */
+    linkedToMediaItemId: string | null;
   }[]> {
     const adapter = getHostingAdapter(adapterId);
     if (!adapter) {
@@ -653,26 +672,71 @@ export class ManagementService {
       });
     }
 
+    // MAV-FOCUSED fix (2026-10): fetch the media_item_id alongside the
+    // provider_asset_id so the UI can show "Linked to <item>" for files
+    // that are already linked to ANOTHER media_item. We do NOT exclude
+    // those files from the list — the user needs to see them to
+    // understand WHY they cannot be linked again (the existing
+    // linkAsset() guard rejects the duplicate link with a clear error).
+    // We ALSO do NOT exclude the file when it is linked to the SAME
+    // media_item — that case is an idempotent relink (linkAsset returns
+    // success without modifying the DB).
+    //
+    // We DO exclude terminal `deleted` + `failed` files from the
+    // linkable list (per the Issue spec: "Exclude terminal deleted,
+    // failed, banned, and cancelled files"). A `deleted` provider file
+    // is gone — linking it would create a phantom asset. A `failed`
+    // file is not playable — linking it would create a broken asset.
+    // The provider-side `processing` and `queued` states are KEPT
+    // (legitimate in-progress files that the admin may want to pre-link).
     const { data: linkedAssets } = await this.client
       .from('media_assets')
-      .select('provider_asset_id')
+      .select('provider_asset_id, media_item_id, status, mavero_status')
       .eq('provider_source_id', providerSourceId)
       .not('provider_asset_id', 'is', null);
 
-    const linkedIds = new Set((linkedAssets ?? []).map((a: any) => a.provider_asset_id as string));
+    // Map provider_asset_id → { mediaItemId, isDeleted } for the DB
+    // lookup. A media_assets row with status='deleted' is a terminal
+    // soft-delete — the provider file may still exist at the provider
+    // but the Mavero-side row is gone. linkAsset() will refuse to link
+    // to a deleted row (ASSET_DELETED guard); we surface that here too.
+    const linkedMap = new Map<string, { mediaItemId: string | null; isDeleted: boolean }>();
+    for (const row of (linkedAssets ?? []) as Array<{ provider_asset_id: string; media_item_id: string; status: string; mavero_status: string }>) {
+      linkedMap.set(row.provider_asset_id, {
+        mediaItemId: row.media_item_id,
+        isDeleted: row.status === 'deleted',
+      });
+    }
 
-    // Return only unlinked files.
     return allFiles
-      .filter(f => f.providerAssetId && !linkedIds.has(f.providerAssetId))
-      .map(f => ({
-        providerAssetId: f.providerAssetId,
-        title: f.title,
-        filename: f.filename,
-        sizeBytes: f.sizeBytes,
-        durationSeconds: f.durationSeconds,
-        status: f.status,
-        playbackUrl: f.playbackUrl,
-      }));
+      .filter((f) => Boolean(f.providerAssetId))
+      .map((f) => {
+        const linked = linkedMap.get(f.providerAssetId);
+        // When the DB row is deleted, linkAsset will refuse (ASSET_DELETED).
+        // Surface the file but mark it as not-linkable through
+        // `linkedToMediaItemId: '<deleted>'` so the UI can show the
+        // reason. (A future "reactivate" flow could clear the deleted
+        // row first — out of scope here.)
+        const linkedToMediaItemId = linked?.isDeleted
+          ? '<deleted>'
+          : (linked?.mediaItemId ?? null);
+        return {
+          providerAssetId: f.providerAssetId,
+          title: f.title,
+          filename: f.filename,
+          sizeBytes: f.sizeBytes,
+          durationSeconds: f.durationSeconds,
+          // `providerStatus` is the provider's own status string (e.g.
+          // "active" / "processing" / "deleted"); `status` is the
+          // canonical Mavero-side AssetLifecycleState. The Link Media
+          // UI uses `lifecycleState` (the canonical state) to decide
+          // whether a file is linkable.
+          status: f.providerStatus,
+          lifecycleState: f.status,
+          linkedToMediaItemId,
+          playbackUrl: f.playbackUrl,
+        };
+      });
   }
 
   /**

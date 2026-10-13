@@ -15,7 +15,7 @@
    *   - HOSTING & MEDIA — quick links to media/hosting management
    *   - INTEGRATIONS — secondary metric cards
    */
-  import { Database, Download, Layers3, Puzzle, ShieldCheck, Wifi } from 'lucide-svelte';
+  import { AlertCircle, Database, Download, Film, Layers3, Puzzle, Server, ShieldCheck, Wifi } from 'lucide-svelte';
   import AdminAppShell from '$lib/components/admin2/AdminAppShell.svelte';
   import AdminPage from '$lib/components/admin2/AdminPage.svelte';
   import AdminStatus from '$lib/components/admin2/AdminStatus.svelte';
@@ -71,6 +71,45 @@
           <div class="a2-metric-label">Config Version</div>
           <div class="a2-metric-status">Invalidates on mutation</div>
         </div>
+      </div>
+    </section>
+
+    <!-- ============================================================
+         QUICK ACTIONS (MAV-FOCUSED, 2026-10): surfaced the destinations
+         that the mobile bottom-nav no longer carries directly (the More
+         sheet was removed). Every route that was in the More sheet is
+         reachable here OR through the System Status metric cards above
+         (API & Sources, Content Rules, Downloads, Integrations). This
+         section adds the remaining items: Media Library, Missing Media,
+         Hosting Control. Desktop already has the full sidebar — these
+         cards are the mobile-equivalent affordance.
+         ============================================================ -->
+    <section class="a2-section">
+      <div class="a2-section-head">
+        <h2 class="a2-section-title">Quick actions</h2>
+      </div>
+      <div class="a2-quick-grid">
+        <a class="a2-quick-card" href="/admin/media/library">
+          <div class="a2-quick-icon"><Film size={16} /></div>
+          <div class="a2-quick-copy">
+            <strong>Media Library</strong>
+            <small>Search and manage hosted files</small>
+          </div>
+        </a>
+        <a class="a2-quick-card" href="/admin/media/missing">
+          <div class="a2-quick-icon"><AlertCircle size={16} /></div>
+          <div class="a2-quick-copy">
+            <strong>Missing Media</strong>
+            <small>Demand awaiting a provider file</small>
+          </div>
+        </a>
+        <a class="a2-quick-card" href="/admin/hosting">
+          <div class="a2-quick-icon"><Server size={16} /></div>
+          <div class="a2-quick-copy">
+            <strong>Hosting Control</strong>
+            <small>Providers, sync, and inventory</small>
+          </div>
+        </a>
       </div>
     </section>
 
@@ -194,14 +233,57 @@
     margin-top: var(--a2-space-1);
   }
 
+  /* MAV-FOCUSED (2026-10): Quick-action cards for the destinations the
+     mobile bottom-nav no longer carries (the More sheet was removed).
+     Same surface as the metric cards but compact (icon + label + desc). */
+  .a2-quick-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--a2-space-3);
+  }
+  .a2-quick-card {
+    display: flex;
+    align-items: center;
+    gap: var(--a2-space-3);
+    padding: var(--a2-space-3) var(--a2-space-4);
+    background: var(--a2-surface-3);
+    border: 1px solid var(--a2-border);
+    border-radius: var(--a2-radius-md);
+    text-decoration: none;
+    color: inherit;
+    transition: background var(--a2-motion-micro) var(--a2-ease-out),
+                border-color var(--a2-motion-micro) var(--a2-ease-out),
+                transform var(--a2-motion-micro) var(--a2-ease-out);
+  }
+  a.a2-quick-card:hover {
+    background: var(--a2-surface-4);
+    border-color: var(--a2-border-strong);
+    transform: translateY(-1px);
+  }
+  .a2-quick-icon {
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    border-radius: var(--a2-radius-sm);
+    background: var(--a2-cyan-soft);
+    color: var(--a2-cyan);
+    flex-shrink: 0;
+  }
+  .a2-quick-copy { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .a2-quick-copy strong { font-size: var(--a2-text-sm); color: var(--a2-text-bright); font-weight: 600; }
+  .a2-quick-copy small { font-size: var(--a2-text-2xs); color: var(--a2-text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
   /* Responsive */
   @media (max-width: 1024px) {
     .a2-metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .a2-quick-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
 
   @media (max-width: 640px) {
     .a2-metric-grid,
     .a2-metric-grid.a2-secondary { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--a2-space-2); }
+    .a2-quick-grid { grid-template-columns: 1fr; gap: var(--a2-space-2); }
     .a2-section { margin-bottom: var(--a2-space-6); }
   }
 
