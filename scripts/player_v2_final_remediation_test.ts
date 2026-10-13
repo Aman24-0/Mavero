@@ -53,6 +53,7 @@ function ok(condition: unknown, label: string): void {
 
 const controls = read('src/lib/components/player/PlayerControls.svelte');
 const shell = read('src/lib/components/player/PlayerShell.svelte');
+const subtitleSheet = read('src/lib/components/player/PlayerSubtitleSheet.svelte');
 const route = read('src/routes/watch/[type]/[id]/+page.svelte');
 const netlifyToml = read('netlify.toml');
 const viewport = read('src/lib/components/player/PlayerViewport.svelte');
@@ -67,18 +68,23 @@ console.log('\nISSUE 1 — portrait secondary row');
   // The subtitle select is the flexible member: absorbs leftover width for
   // its own label, bounded, with an explicit floor + ellipsis.
   ok(/\.select-control\.subtitles \{ flex: 1 1 56px; min-width: 56px; max-width: 110px; \}/.test(controls), '1b. the subtitle selector flexes (floor 56px, cap 110px) instead of reserving blank space');
-  ok(/\.select-control\.subtitles select \{ flex: 1 1 auto; width: 100%; \}/.test(controls), '1c. the subtitle select fills its label and can never size to its longest option');
-  ok(/\.select-control select \{ min-width: 0;.*text-overflow: ellipsis/s.test(controls), '1d. every select carries min-width:0 + ellipsis (native longest-option sizing defeated)');
-  ok(/\.select-control\.speed select \{ width: 44px; \}/.test(controls) && /\.select-control\.display-mode select \{ width: 58px; \}/.test(controls) && /\.select-control\.quality select \{ width: 64px; \}/.test(controls), '1e. explicit compact widths for the fixed selectors (speed/display/quality)');
-  // Deliberate narrow-phone fallback: tighter widths, subtitle floor lowered.
+  // CONTRACT CHANGE (focused fixes, Issue 3 — native <select> popups replaced
+  // with Mavero selection sheets): the compactness guarantees moved from the
+  // old `select` element rules to the new BUTTON + `.control-label` rules —
+  // same intent (labels truncate; nothing sizes to its longest option).
+  ok(/\.select-control\.subtitles \.control-label \{ flex: 1 1 auto; text-align: left; \}/.test(controls), '1c. the subtitle control’s label fills the flexible control (button contract)');
+  ok(/\.select-control \.control-label \{ min-width: 0;[\s\S]*?text-overflow: ellipsis; white-space: nowrap; \}/.test(controls), '1d. every sheet-trigger label carries min-width:0 + ellipsis (long track names can never expand the row)');
+  ok(/\.select-control\.quality \.control-label \{ max-width: 64px; \}/.test(controls) && /\.select-control\.display-mode \.control-label \{ max-width: 58px; \}/.test(controls) && /\.select-control\.speed \.control-label \{ max-width: 44px; \}/.test(controls), '1e. explicit compact label widths for the fixed controls (speed/display/quality)');
+  // Deliberate narrow-phone fallback: tighter paddings, subtitle floor lowered.
   ok(/@media \(max-width: 640px\) \{[\s\S]*?\.select-control\.subtitles \{ min-width: 48px; \}/.test(controls), '1f. ≤640px fallback lowers the subtitle floor (deliberate compact treatment)');
-  ok(/@media \(max-width: 640px\) \{[\s\S]*?\.select-control\.speed select \{ width: 36px; \}/.test(controls) && /@media \(max-width: 640px\) \{[\s\S]*?\.select-control\.quality select \{ width: 48px; \}/.test(controls), '1g. ≤640px fallback tightens the fixed selector widths (speed/quality)');
+  ok(/@media \(max-width: 640px\) \{[\s\S]*?\.select-control \{ padding: 0 5px; \}/.test(controls), '1g. ≤640px fallback tightens the control paddings (compact treatment; label widths are fluid since the sheet contract)');
   ok(/@media \(max-width: 640px\) \{[\s\S]*?\.select-control\.display-mode :global\(svg\) \{ display: none; \}/.test(controls), '1g2. ≤640px folds the decorative display-mode icon so the labels + row fit (deliberate budget)');
   // Target order: Volume · Subtitles · Quality · Display · Speed · Fullscreen.
+  // (Issue 3 contract: the markers moved to the sheet-trigger buttons.)
   const secondaryStart = controls.indexOf('class="secondary-row"');
-  const secondaryEnd = controls.indexOf('</div>\n  </div>\n</div>', secondaryStart);
-  const secondary = controls.slice(secondaryStart, secondaryEnd);
-  const order = ['volume-control', 'aria-label="Subtitles"', 'quality', 'aria-label="Display mode"', 'aria-label="Playback speed"', "'Enter fullscreen'"];
+  const secondaryEnd = controls.indexOf('<!-- In-player selection sheets', secondaryStart);
+  const secondary = controls.slice(secondaryStart, secondaryEnd > secondaryStart ? secondaryEnd : undefined);
+  const order = ['volume-control', 'aria-label={`Subtitles:', 'select-control quality', 'aria-label={`Display mode', 'aria-label={`Playback speed', "'Enter fullscreen'"];
   let cursor = 0;
   let orderOk = true;
   for (const marker of order) {
@@ -88,10 +94,11 @@ console.log('\nISSUE 1 — portrait secondary row');
   }
   ok(orderOk, '1h. target order Volume · Subtitles · Quality · Display · Speed · Fullscreen (fullscreen INSIDE the group)');
   ok((secondary.match(/'Exit fullscreen' : 'Enter fullscreen'/g) ?? []).length === 1, '1i. exactly one fullscreen button in the secondary row');
-  // "Off" must stay the first, enabled option; the honest notice is a
-  // separate disabled entry (never a duplicate Off, never obscuring it).
-  const subtitleSelect = secondary.slice(secondary.indexOf('aria-label="Subtitles"'), secondary.indexOf('</select>', secondary.indexOf('aria-label="Subtitles"')));
-  ok(/<option value="">Off<\/option>/.test(subtitleSelect) && subtitleSelect.indexOf('<option value="">Off</option>') < subtitleSelect.indexOf('disabled'), '1j. Off remains the first enabled subtitle option; the notice is a separate disabled entry');
+  // "Off" must stay the FIRST entry of the subtitle sheet's track list; the
+  // honest notice renders as a separate non-selectable status row only when
+  // there are no tracks (Issue 3 contract: the sheet replaced the <option>s).
+  ok(/class="track-row" class:selected=\{selectedSubtitle === ''\}[\s\S]{0,240}<strong>Off<\/strong>/.test(subtitleSheet) && subtitleSheet.indexOf("selectedSubtitle === ''") < subtitleSheet.indexOf('{#each tracks'), '1j. Off remains the FIRST entry of the subtitle sheet; the notice is a separate status row');
+  ok(/\{#if !tracks\.length && notice\}[\s\S]{0,120}class="notice-row"/.test(subtitleSheet), '1j2. the honest notice renders ONLY when no tracks exist (never obscuring Off)');
   // Hit targets unchanged.
   ok(/\.control-button \{ display: inline-grid; place-items: center; min-width: 40px; min-height: 40px;/.test(controls), '1k. control hit targets keep the 40px floor');
 }
@@ -249,13 +256,14 @@ console.log('\nISSUE 4+5 — subtitle/intro pipeline (CSP + wiring + LIVE)');
 // ===========================================================================
 console.log('\nISSUE 6 — HLS quality selector');
 {
-  ok(/internalQualities\.length > 1/.test(controls) && /PLAYER_AUTO_QUALITY_ID}>Auto<\/option>/.test(controls), '6a. multi-variant manifests keep Auto + the REAL level list');
+  // Issue 3 contract: the quality branches became a qualityMode decision +
+  // option arrays feeding the sheet (same honest states, no fabricated Auto).
+  ok(/qualityMode = internalQualities\.length > 1 \? 'internal' : qualities\.length > 1 \? 'stream' : 'none'/.test(controls) && /\{ id: PLAYER_AUTO_QUALITY_ID, label: 'Auto'/, '6a. multi-variant manifests keep Auto + the REAL level list');
   ok(/internalQualities\.length === 1/.test(controls), '6b. a single-level manifest gets the HONEST branch (was a silently missing control)');
-  const singleBranch = controls.slice(controls.indexOf('internalQualities.length === 1'), controls.indexOf('{:else if qualities.length > 1}'));
-  ok(/<select disabled aria-disabled="true"/.test(singleBranch) && !/Auto<\/option>/.test(singleBranch), '6c. the single-level control is DISABLED, shows the REAL level label, and fabricates NO Auto option');
-  ok(/\{:else if qualities\.length > 1\}/.test(controls), '6d. the per-stream fallback only renders for >1 stream variants');
+  ok(/type="button" disabled aria-disabled="true" title=\{`Quality \$\{singleQualityLabel\} \(no other qualities available\)`\}/.test(controls) && (controls.slice(controls.indexOf('singleQualityLabel} (no other'), controls.indexOf('{/if}', controls.indexOf('singleQualityLabel} (no other'))).includes('Auto') === false), '6c. the single-level control is DISABLED, shows the REAL level label, and fabricates NO Auto option');
+  ok(/qualities\.length > 1 \? 'stream'/.test(controls), '6d. the per-stream fallback only renders for >1 stream variants');
   // Zero levels (MP4 / native HLS) → no control at all (no fallthrough).
-  ok((controls.match(/\{:else if internalQualities\.length === 1\}/g) ?? []).length === 1, '6e. exactly one single-level branch (no accidental fallthrough for 0 levels)');
+  ok((controls.match(/internalQualities\.length === 1/g) ?? []).length === 1, '6e. exactly one single-level branch (no accidental fallthrough for 0 levels)');
   ok(!/\.quality \{ display: none/.test(controls), '6f. no viewport rule hides the quality control (portrait visibility preserved)');
 }
 

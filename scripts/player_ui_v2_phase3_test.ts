@@ -335,7 +335,16 @@ ok(/seek\(activeSkipSegment\.endSec\)/.test(shell), '4b. clicking seeks to the s
 // 4c. Subtitle selection cleanup + native preservation.
 ok(/mergedSubtitles = mergeSubtitleTracks\(effectiveSubtitles, externalSubtitles\)/.test(shell), '4c. native tracks lead the merged menu (stream-provided functionality preserved)');
 ok(/!mergedSubtitles\.some\(\(track\) => track\.url === selectedSubtitle\)[\s\S]*?selectedSubtitle = '';/.test(shell), '4c. stale selections are cleared when the merged list changes');
-ok(/setSubtitle\(url: string\)[\s\S]*?track\.mode = 'disabled'/.test(shell), '4c. track switching disables old tracks through the native engine APIs');
+// CONTRACT CHANGE (focused fixes, Issue 1): TextTrack MODE ownership moved
+// from the shell's setSubtitle into PlayerViewport (syncSubtitleTrackModes):
+// the selected track runs 'hidden' while the custom overlay paints (the
+// offset/appearance requirements), 'showing' while the OS paints (PiP /
+// native video fullscreen), everything else 'disabled' — exactly the old
+// disable-others contract, now with one authoritative writer.
+ok(/function setSubtitle\(url: string\) \{[\s\S]*?selectedSubtitle = url;\n  \}/.test(shell), '4c. the shell’s setSubtitle is URL-state only (single source of truth for selection)');
+const viewportSource = readFileSync(resolve('src/lib/components/player/PlayerViewport.svelte'), 'utf-8');
+ok(/function syncSubtitleTrackModes\(\)[\s\S]*?'disabled'/.test(viewportSource), '4c. track switching disables unselected tracks through the native engine APIs (viewport-owned)');
+ok(/subtitleOverlaySuppressed \? 'showing' : 'hidden'/.test(viewportSource), '4c. the selected track runs hidden (overlay paints) or showing (OS paints) — native engine APIs');
 // 4d. Untrusted content handling — no VTT text as HTML anywhere.
 ok(!/innerHTML/.test(shell), '4d. the shell never injects subtitle content as HTML (native <track> APIs only)');
 ok(/<track kind="captions"/.test(readFileSync(resolve('src/lib/components/player/PlayerViewport.svelte'), 'utf-8')), '4d. external VTT rides the native <track> mechanism');

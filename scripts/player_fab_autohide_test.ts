@@ -78,7 +78,7 @@ assert.doesNotMatch(onMountBlock, /controlsVisible = false/, 'NO controlsVisible
 assert.match(shell, /\(playing \|\| embedPlaying \|\| embedSessionArms\) && !sourceMenuOpen && !episodeMenuOpen/, 'revealControls gates timer start on playback (direct OR embed session) + all open states');
 assert.match(shell, /const embedSessionArms = source\?\.type === 'embed'\s*&& state === 'playing'\s*&& \(!embedEverPlayed \|\| embedPlaying\);/, 'embed session state participates in arming (black-box embeds arm from iframe load; event-posting embeds arm on provider play)');
 assert.match(shell, /function handleEmbedLoad\(\) \{[\s\S]*?revealControls\(\);/, 'embed load arms the countdown (no further user activity required)');
-assert.match(shell, /!sourceMenuOpen && !episodeMenuOpen && !focusWithinMaveroControls\(\)\) \{[^}]*controlsVisible = false/, 'timer callback re-checks open states + focus guard before hiding');
+assert.match(shell, /!sourceMenuOpen && !episodeMenuOpen && !controlsSheetsOpen && !focusWithinMaveroControls\(\)\) \{[^}]*controlsVisible = false/, 'timer callback re-checks open states + focus guard before hiding');
 assert.match(shell, /function focusWithinMaveroControls\(\): boolean/, 'keyboard-focus a11y guard exists (focused controls are never hidden)');
 
 // ============================================================

@@ -29,6 +29,7 @@ import { createIntroLookup } from '$lib/client/player/intro/intro-client';
 
 const shell = readFileSync(resolve('src/lib/components/player/PlayerShell.svelte'), 'utf-8');
 const controls = readFileSync(resolve('src/lib/components/player/PlayerControls.svelte'), 'utf-8');
+const subtitleSheet = readFileSync(resolve('src/lib/components/player/PlayerSubtitleSheet.svelte'), 'utf-8');
 const viewport = readFileSync(resolve('src/lib/components/player/PlayerViewport.svelte'), 'utf-8');
 const gestures = readFileSync(resolve('src/lib/client/player/touch/gestures.ts'), 'utf-8');
 const introClient = readFileSync(resolve('src/lib/client/player/intro/intro-client.ts'), 'utf-8');
@@ -354,7 +355,7 @@ ok(/onDoubleTap: handleDoubleTap,\s*\n\s*onHoldStart: handleHoldStart,\s*\n\s*on
 ok(/function handleDoubleTap\(direction: TapSeekDirection\) \{[\s\S]{0,200}seekBy\(direction === 'backward' \? -10 : 10\);/.test(shell), '3. double-tap seeks ±10 s through the existing clamped shell seek');
 ok(/function handleHoldStart\(\) \{[\s\S]{0,220}setPlaybackRate\(2\);/.test(shell), '3. the hold sets 2× through the EXISTING speed path (select stays correct, single label)');
 ok(/function handleHoldEnd\(\) \{[\s\S]{0,200}setPlaybackRate\(savedPlaybackRate\);/.test(shell), '3. release restores the EXACT pre-hold speed');
-ok(/enabled: \(\) => !touchLocked && source\?\.type === 'direct' && !sourceMenuOpen && !episodeMenuOpen && sourceReady && !castConnected,\s*\n\s*onDoubleTap/.test(shell), '3. the tap gate mirrors the swipe gate (lock / direct ownership / sheets / cast)');
+ok(/enabled: \(\) => !touchLocked && source\?\.type === 'direct' && !sourceMenuOpen && !episodeMenuOpen && !controlsSheetsOpen && sourceReady && !castConnected,\s*\n\s*onDoubleTap/.test(shell), '3. the tap gate mirrors the swipe gate (lock / direct ownership / sheets / cast)');
 
 // ============================================================
 // §4 — Honest subtitle/intro feature states
@@ -362,8 +363,12 @@ ok(/enabled: \(\) => !touchLocked && source\?\.type === 'direct' && !sourceMenuO
 
 // The subtitle menu ALWAYS renders (never hidden behind a tracks-length gate).
 ok(!/\{#if subtitles\.length\}<label class="select-control" aria-label="Subtitles">/.test(controls), '4. the subtitle control is NOT gated on the tracks list (always rendered)');
-ok(/aria-label="Subtitles"/.test(controls) && /<option value="">Off<\/option>/.test(controls), '4. the subtitle menu always offers Off');
-ok(/\{#if !subtitles\.length && subtitleNotice\}<option value="" disabled>\{subtitleNotice\}<\/option>\{\/if\}/.test(controls), '4. an empty/failed lookup shows the honest state notice INSIDE the menu (never a fake track)');
+// CONTRACT CHANGE (focused fixes, Issue 3): the subtitle <option> list became
+// the Mavero Subtitle Settings sheet — Off remains the FIRST selectable entry
+// and the honest notice renders as a non-selectable status row inside it.
+ok(/aria-label=\{`Subtitles: \$\{subtitleButtonLabel\}/.test(controls), '4. the subtitle menu always renders (sheet-trigger contract)');
+ok(/class="track-row" class:selected=\{selectedSubtitle === ''\}[\s\S]{0,240}<strong>Off<\/strong>/.test(subtitleSheet), '4. the subtitle menu always offers Off (first sheet entry)');
+ok(/\{#if !tracks\.length && notice\}[\s\S]{0,160}class="notice-row"[\s\S]{0,80}\{notice\}/.test(subtitleSheet), '4. an empty/failed lookup shows the honest state notice INSIDE the sheet (never a fake track)');
 ok(/externalSubtitleStatus: 'loading' \| 'ready' \| 'empty' \| 'failed' = 'loading'/.test(shell), '4. the shell carries the typed subtitle feature-state machine');
 ok(/externalSubtitleNotice = result\.tracks\.length \? '' : 'No subtitles available';/.test(shell), '4. empty API result → "No subtitles available" (distinguishable from success)');
 ok(/externalSubtitleStatus = 'failed';\s*\n\s*externalSubtitleNotice = 'Subtitles unavailable';/.test(shell), '4. a failed lookup → "Subtitles unavailable" (errors are never silently swallowed)');
@@ -430,7 +435,10 @@ ok(/function setDisplayMode\(mode: 'fit' \| 'fill' \| 'stretch'\) \{\s*\n\s*disp
 // ============================================================
 
 ok(!/\.quality \{ display: none/.test(controls) && !/\.volume-input, \.quality \{ display: none/.test(controls), '6. no rule hides the quality control on phones (the reported regression)');
-ok(/internalQualities\.length > 1/.test(controls) && /PLAYER_AUTO_QUALITY_ID}>Auto<\/option>/.test(controls), '6. engine HLS levels keep the AUTO option + real manifest levels');
+// CONTRACT CHANGE (focused fixes, Issue 3): the quality options moved from
+// <option> elements to the qualityMode option array feeding the sheet — the
+// AUTO option + the REAL manifest levels are unchanged in substance.
+ok(/qualityMode = internalQualities\.length > 1 \? 'internal' : qualities\.length > 1 \? 'stream' : 'none'/.test(controls) && /\{ id: PLAYER_AUTO_QUALITY_ID, label: 'Auto', selected: selectedInternalQuality === PLAYER_AUTO_QUALITY_ID \}/.test(controls), '6. engine HLS levels keep the AUTO option + real manifest levels (sheet option array)');
 ok(/ qualities\.length > 1/.test(controls), '6. the per-stream quality fallback is retained');
 
 // ============================================================

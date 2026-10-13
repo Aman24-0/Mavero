@@ -1,7 +1,7 @@
 // Player V2 corrections — production-build browser smoke:
 // the watch route renders the approved shell surfaces (Back FAB top-left,
 // no duplicate rows, no console errors) even without a resolvable source.
-import { chromium } from 'playwright';
+import { chromium } from '/home/z/.npm-global/lib/node_modules/playwright/index.mjs';
 
 const BASE = 'http://127.0.0.1:4173';
 let passed = 0, failed = 0;

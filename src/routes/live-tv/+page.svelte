@@ -500,7 +500,7 @@
   <link rel="canonical" href={`${PRODUCTION_ORIGIN}${appPage.url.pathname}`} /><!-- SEO: fixed production host -->
   <meta property="og:title" content="Live TV — Mavero" />
   <meta property="og:description" content="Browse and watch live TV channels in Mavero." />
-  <meta property="og:url" content={`${appPage.url.origin}${appPage.url.pathname}`} />
+  <meta property="og:url" content={`${PRODUCTION_ORIGIN}${appPage.url.pathname}`} /><!-- SEO follow-up: fixed production host -->
   <meta name="robots" content="noindex,follow" />
 </svelte:head>
 

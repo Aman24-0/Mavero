@@ -65,7 +65,10 @@ try {
       for (let index = 0; index < tops.length; index++) {
         if (index === 0 || tops[index] - tops[index - 1] > 4) rowCount += 1;
       }
-      const subtitle = document.querySelector('.select-control.subtitles select');
+      // Focused fixes (Issue 3) contract change: the subtitle control is a
+      // BUTTON that opens Mavero's subtitle sheet (no native <select>). The
+      // compactness contract now applies to the button itself.
+      const subtitle = document.querySelector('.select-control.subtitles');
       const subRect = subtitle?.getBoundingClientRect();
       const quality = document.querySelector('.select-control.quality');
       const baseTop = visible[0].top;
@@ -86,7 +89,7 @@ try {
     if (!isLandscape) {
       check(`${viewport.name}: all secondary controls in ONE row (fullscreen NOT wrapped)`, geo.rowCount === 1, `distinct row tops: ${geo.rowCount}`);
       check(`${viewport.name}: fullscreen is on the SAME row as the group`, geo.fullscreenOnFirstRow);
-      check(`${viewport.name}: subtitle select is compact (30..112px — no blank reservation, usable label)`, geo.subtitleWidth > 30 && geo.subtitleWidth <= 112, `select width: ${geo.subtitleWidth}px`);
+      check(`${viewport.name}: subtitle control is compact (30..112px — no blank reservation, usable label)`, geo.subtitleWidth > 30 && geo.subtitleWidth <= 112, `control width: ${geo.subtitleWidth}px`);
       check(`${viewport.name}: quality control present in portrait`, geo.qualityPresent);
       check(`${viewport.name}: the row stays inside the viewport`, geo.rowLeft >= 0 && geo.rowRight <= geo.viewportWidth, `row ${geo.rowLeft}..${geo.rowRight} of ${geo.viewportWidth}`);
     } else {
@@ -100,15 +103,17 @@ try {
   }
 
   // Honest single-level quality state (Issue 6).
+  // Focused fixes (Issue 3) contract change: the control is a DISABLED
+  // BUTTON carrying the REAL level label (the sheet is never opened).
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(`${BASE}/index.html`, { waitUntil: 'networkidle' });
   await page.evaluate(() => window.mountControls({ internalQualities: [{ id: '0', label: '720p' }] }));
   await page.waitForTimeout(120);
   const single = await page.evaluate(() => {
-    const select = document.querySelector('.select-control.quality select');
-    return { present: Boolean(select), disabled: select?.disabled === true, label: select?.options?.[select.selectedIndex]?.text ?? '', optionCount: select?.options?.length ?? 0 };
+    const button = document.querySelector('.select-control.quality');
+    return { present: Boolean(button), disabled: button?.disabled === true, label: button?.textContent?.trim() ?? '', opensSheet: button?.getAttribute('aria-haspopup') };
   });
-  check('single-level manifest: the HONEST disabled quality control renders with the REAL label', single.present && single.disabled && single.label === '720p' && single.optionCount === 1, JSON.stringify(single));
+  check('single-level manifest: the HONEST disabled quality control renders with the REAL label', single.present && single.disabled && single.label === '720p' && single.opensSheet === null, JSON.stringify(single));
   await page.evaluate(() => window.mountControls({ internalQualities: [] }));
   await page.waitForTimeout(120);
   const none = await page.evaluate(() => ({ quality: document.querySelector('.select-control.quality') ?? null }));

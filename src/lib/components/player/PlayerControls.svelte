@@ -17,9 +17,21 @@
   // Back stays the shell's top-left FAB for EVERY provider (the Part 1
   // Blue Velvet in-row exception is retired by the approved layout — one
   // Back, one place, for all sources).
-  import { Captions, Cast, Expand, Lock, LockOpen, Maximize2, Minimize2, Pause, PictureInPicture2, Play, RotateCcwSquare, RotateCwSquare, Settings2, Volume1, Volume2, VolumeX } from 'lucide-svelte';
+  //
+  // Focused player fixes (Issue 3, 2026-10): every browser-default select
+  // popup is REPLACED with Mavero's own in-player selection sheets — the
+  // shared PlayerOptionSheet chrome (dark translucent cinematic surface,
+  // safe-area aware, scrollable, focus-trapped, Escape/outside-click
+  // dismissal, accent selected-state). Subtitles additionally open the
+  // Subtitle Settings sheet (track list + sync offset + appearance —
+  // Issues 1+2). Only REAL values are ever offered: the tracks, quality
+  // levels and speeds of the ACTIVE source.
+  import { Captions, Cast, Check, Expand, Lock, LockOpen, Maximize2, Minimize2, Pause, PictureInPicture2, Play, RotateCcwSquare, RotateCwSquare, Settings2, Volume1, Volume2, VolumeX } from 'lucide-svelte';
   import type { PlayerInternalQualityOption, PlayerQualityOption, PlayerSubtitleTrack } from '$lib/shared/player';
   import { formatPlayerTime, playbackSpeeds, PLAYER_AUTO_QUALITY_ID } from '$lib/shared/player';
+  import PlayerOptionSheet from './PlayerOptionSheet.svelte';
+  import PlayerSubtitleSheet from './PlayerSubtitleSheet.svelte';
+  import { DEFAULT_SUBTITLE_PREFERENCES, type SubtitlePreferences } from '$lib/client/player/subtitles/subtitle-preferences';
 
   export let playing = false;
   export let muted = false;
@@ -42,7 +54,7 @@
   // Player V2 corrections: the subtitle menu ALWAYS renders. When the lookup
   // produced no usable tracks, `subtitleNotice` carries the honest state text
   // ('No subtitles available' / 'Subtitles unavailable' / 'Checking
-  // subtitles…') shown as a disabled menu entry next to Off.
+  // subtitles…') shown inside the sheet next to Off.
   export let subtitleNotice = '';
   export let qualities: PlayerQualityOption[] = [];
   export let selectedQuality = '';
@@ -52,6 +64,13 @@
   export let selectedInternalQuality: string = PLAYER_AUTO_QUALITY_ID;
   // Display mode (Fit/Fill/Stretch) — CSS object-fit on the video element.
   export let displayMode: 'fit' | 'fill' | 'stretch' = 'fit';
+  // Focused fixes (Issues 1+2): subtitle preference state + writer (the
+  // shell sanitizes + persists; this surface stays presentation-only).
+  export let subtitlePrefs: SubtitlePreferences = DEFAULT_SUBTITLE_PREFERENCES;
+  export let onSubtitlePreferences: (prefs: SubtitlePreferences) => void = () => {};
+  // Issue 3: the shell stands its shortcuts/gestures down while a controls
+  // sheet is open — one flag for the whole surface, driven by open/close.
+  export let onMenuOpenChange: (open: boolean) => void = () => {};
   export let onTogglePlay: () => void = () => {};
   export let onSeek: (time: number) => void = () => {};
   export let onVolume: (value: number) => void = () => {};
@@ -76,6 +95,21 @@
   export let castActive = false;
   export let onCast: () => void = () => {};
 
+  // ----- Sheet state (Issue 3) -----
+  // Exactly ONE sheet open at a time. openMenu/closeMenu are the SINGLE
+  // writers of the shell's open flag (deterministic — no mount/destroy
+  // ordering dependence).
+  let openSheet: 'subtitles' | 'quality' | 'speed' | 'display' | null = null;
+  function openMenu(kind: 'subtitles' | 'quality' | 'speed' | 'display') {
+    openSheet = kind;
+    onMenuOpenChange(true);
+  }
+  function closeMenu() {
+    if (openSheet === null) return;
+    openSheet = null;
+    onMenuOpenChange(false);
+  }
+
   $: safeDuration = Number.isFinite(duration) && duration > 0 ? duration : 0;
   $: progressPercent = safeDuration ? Math.min(100, Math.max(0, (currentTime / safeDuration) * 100)) : 0;
   $: bufferedPercent = safeDuration ? Math.min(100, Math.max(0, (buffered / safeDuration) * 100)) : 0;
@@ -91,14 +125,53 @@
     onVolume(Number(input.value));
   }
 
-  function handleDisplayMode(event: Event) {
-    const select = event.currentTarget as HTMLSelectElement;
-    const value = select.value;
-    if (value === 'fit' || value === 'fill' || value === 'stretch') onDisplayMode(value);
-  }
-
   function qualityLabel(option: PlayerQualityOption) {
     return option.label ?? (option.height ? `${option.height}p` : 'Source');
+  }
+
+  // Subtitle button label: the selected track's display label, or Off.
+  $: selectedSubtitleTrack = selectedSubtitle ? subtitles.find((track) => track.url === selectedSubtitle) : undefined;
+  $: subtitleButtonLabel = selectedSubtitleTrack ? (selectedSubtitleTrack.label ?? selectedSubtitleTrack.language ?? 'Subtitles') : 'Off';
+
+  // Quality menu: engine levels (AUTO + manifest levels) when present, the
+  // per-stream variant list otherwise. NEVER both; empty = no control.
+  $: qualityMode = internalQualities.length > 1 ? 'internal' : qualities.length > 1 ? 'stream' : 'none';
+  $: qualityOptions = qualityMode === 'internal'
+    ? [{ id: PLAYER_AUTO_QUALITY_ID, label: 'Auto', selected: selectedInternalQuality === PLAYER_AUTO_QUALITY_ID }, ...internalQualities.map((option) => ({ id: option.id, label: option.label, selected: option.id === selectedInternalQuality && option.id !== PLAYER_AUTO_QUALITY_ID }))]
+    : qualityMode === 'stream'
+      ? [{ id: '', label: 'Auto', selected: selectedQuality === '' }, ...qualities.map((option) => ({ id: option.url, label: qualityLabel(option), selected: option.url === selectedQuality }))]
+      : [];
+  $: qualityButtonLabel = qualityMode === 'internal'
+    ? (selectedInternalQuality === PLAYER_AUTO_QUALITY_ID ? 'Auto' : internalQualities.find((option) => option.id === selectedInternalQuality)?.label ?? 'Auto')
+    : qualityMode === 'stream'
+      ? (selectedQuality ? (qualities.find((option) => option.url === selectedQuality) ? qualityLabel(qualities.find((option) => option.url === selectedQuality)!) : 'Auto') : 'Auto')
+      : '';
+  $: singleQualityLabel = internalQualities.length === 1 ? internalQualities[0].label : '';
+
+  function chooseQuality(id: string) {
+    if (qualityMode === 'internal') {
+      if (id !== selectedInternalQuality) onInternalQuality(id);
+    } else if (qualityMode === 'stream') {
+      onQuality(id);
+    }
+    closeMenu();
+  }
+
+  $: speedOptions = playbackSpeeds.map((speed) => ({ id: String(speed), label: `${speed}×`, selected: speed === playbackRate }));
+  function chooseSpeed(id: string) {
+    const value = Number(id);
+    if (Number.isFinite(value)) onPlaybackRate(value);
+    closeMenu();
+  }
+
+  const displayOptions: ReadonlyArray<{ id: 'fit' | 'fill' | 'stretch'; label: string }> = [
+    { id: 'fit', label: 'Fit' },
+    { id: 'fill', label: 'Fill' },
+    { id: 'stretch', label: 'Stretch' },
+  ];
+  function chooseDisplay(id: string) {
+    if (id === 'fit' || id === 'fill' || id === 'stretch') onDisplayMode(id);
+    closeMenu();
   }
 </script>
 
@@ -146,12 +219,11 @@
       <span class="time-label" aria-live="off">{formatPlayerTime(safeDuration)}</span>
     </div>
 
-    <!-- Player V2 final remediation (Issue 1+2): ONE compact row, no
-         flexible spacer. Fullscreen sits at the END of the control group in
-         BOTH orientations (portrait: order below; landscape: the row is
-         explicitly left-aligned). The subtitle select flexes to absorb the
-         row's leftover width for its own LABEL (min 0 + ellipsis) — it can
-         no longer reserve blank space for a long disabled notice. -->
+    <!-- Secondary row: buttons open Mavero selection sheets (Issue 3 — no
+         browser-default select popups). Same row semantics as the
+         approved layout: portrait left-aligned group, landscape packs
+         right; the subtitle control flexes to absorb leftover width in
+         portrait and stops flexing in landscape. -->
     <div class="secondary-row">
       {#if !castActive}
         <div class="volume-control">
@@ -162,51 +234,88 @@
         </div>
         <!-- Subtitles: ALWAYS rendered (approved corrections spec — the user
              must be able to see that no tracks exist; a missing menu must
-             never be mistaken for a working feature). -->
-  <!-- Player V2 final remediation (Issue 1): the subtitle select is the
-        FLEXIBLE member of the row (flex 1 1 56px, min-width 0): it absorbs
-        the row's leftover width for its own label and shrinks with
-        ellipsis when the row is tight — it can never reserve blank space
-        for a long disabled notice and never forces fullscreen to wrap by
-        itself. Explicit widths below for the fixed selectors. -->
-        <label class="select-control subtitles" aria-label="Subtitles">
+             never be mistaken for a working feature). Opens the Subtitle
+             Settings sheet: track list + sync + appearance (Issues 1+2+3). -->
+        <button class="select-control subtitles sheet-trigger" type="button" aria-label={`Subtitles: ${subtitleButtonLabel}${subtitleNotice ? ` (${subtitleNotice})` : ''}`} aria-haspopup="dialog" title={subtitleNotice || undefined} onclick={() => openMenu('subtitles')}>
           <Captions size={16} aria-hidden="true" />
-          <select value={selectedSubtitle} onchange={(event) => onSubtitle((event.currentTarget as HTMLSelectElement).value)}>
-            <option value="">Off</option>
-            {#each subtitles as track, index}<option value={track.url}>{track.label ?? track.language ?? `Track ${index + 1}`}</option>{/each}
-            {#if !subtitles.length && subtitleNotice}<option value="" disabled>{subtitleNotice}</option>{/if}
-          </select>
-        </label>
-        {#if internalQualities.length > 1}
-          <!-- Engine-driven HLS quality: AUTO + the manifest's REAL levels. -->
-          <label class="select-control quality" aria-label="Playback quality"><Settings2 size={15} aria-hidden="true" /><select value={selectedInternalQuality} onchange={(event) => onInternalQuality((event.currentTarget as HTMLSelectElement).value)}><option value={PLAYER_AUTO_QUALITY_ID}>Auto</option>{#each internalQualities as option}<option value={option.id}>{option.label}</option>{/each}</select></label>
-        {:else if internalQualities.length === 1}
-          <!-- Player V2 final remediation (Issue 6): a manifest with exactly
-               ONE level cannot offer a selection — the truthful state is a
-               DISABLED control showing the REAL level label (never a
-               fabricated Auto/quality list, never a silently missing
-               control). MP4/native-HLS surfaces (0 levels) still render
-               nothing at all. -->
-        <label class="select-control quality" aria-label={`Playback quality: ${internalQualities[0].label} (single available quality)`}><Settings2 size={15} aria-hidden="true" /><select disabled aria-disabled="true" title={`Quality ${internalQualities[0].label} (no other qualities available)`}>{#each internalQualities as option}<option selected>{option.label}</option>{/each}</select></label>
-        {:else if qualities.length > 1}
-          <label class="select-control quality" aria-label="Quality"><Settings2 size={15} aria-hidden="true" /><select value={selectedQuality} onchange={(event) => onQuality((event.currentTarget as HTMLSelectElement).value)}><option value="">Auto</option>{#each qualities as quality}<option value={quality.url}>{qualityLabel(quality)}</option>{/each}</select></label>
+          <span class="control-label">{subtitleButtonLabel}</span>
+        </button>
+        {#if qualityMode !== 'none'}
+          <!-- Engine-driven HLS quality: AUTO + the manifest's REAL levels;
+               otherwise the stream's real variant list. -->
+          <button class="select-control quality sheet-trigger" type="button" aria-label={`Playback quality: ${qualityButtonLabel}`} aria-haspopup="dialog" onclick={() => openMenu('quality')}>
+            <Settings2 size={15} aria-hidden="true" />
+            <span class="control-label">{qualityButtonLabel}</span>
+          </button>
+        {:else if singleQualityLabel}
+          <!-- A manifest with exactly ONE level cannot offer a selection —
+               the truthful state is a DISABLED control showing the REAL
+               level label (never a fabricated Auto/quality list). -->
+          <button class="select-control quality sheet-trigger" type="button" disabled aria-disabled="true" title={`Quality ${singleQualityLabel} (no other qualities available)`} aria-label={`Playback quality: ${singleQualityLabel} (single available quality)`}>
+            <Settings2 size={15} aria-hidden="true" />
+            <span class="control-label">{singleQualityLabel}</span>
+          </button>
         {/if}
         <!-- Display mode: Fit preserves aspect with letterboxing, Fill
              preserves aspect and crops, Stretch fills both axes. CSS-only —
              switching never restarts the stream or moves the playhead. -->
-        <label class="select-control display-mode" aria-label="Display mode"><Expand size={15} aria-hidden="true" /><select value={displayMode} onchange={handleDisplayMode}><option value="fit">Fit</option><option value="fill">Fill</option><option value="stretch">Stretch</option></select></label>
-        <!-- Speed: the selected speed renders ONCE (the select itself). -->
-        <label class="select-control speed" aria-label="Playback speed"><select value={playbackRate} onchange={(event) => onPlaybackRate(Number((event.currentTarget as HTMLSelectElement).value))}>{#each playbackSpeeds as speed}<option value={speed}>{speed}×</option>{/each}</select></label>
+        <button class="select-control display-mode sheet-trigger" type="button" aria-label={`Display mode: ${displayMode}`} aria-haspopup="dialog" onclick={() => openMenu('display')}>
+          <Expand size={15} aria-hidden="true" />
+          <span class="control-label">{displayMode === 'fit' ? 'Fit' : displayMode === 'fill' ? 'Fill' : 'Stretch'}</span>
+        </button>
+        <!-- Speed: the selected speed renders ONCE (the button itself). -->
+        <button class="select-control speed sheet-trigger" type="button" aria-label={`Playback speed: ${playbackRate}×`} aria-haspopup="dialog" onclick={() => openMenu('speed')}>
+          <span class="control-label">{playbackRate}×</span>
+        </button>
       {/if}
       <!-- Fullscreen/landscape: the SAME Mavero fullscreen + orientation
            controller for every provider (the floating Landscape FAB remains
-           only for embed sources, which have no Mavero control surface).
-           Final remediation: part of the left-aligned control group — the
-           former flexible spacer (which pushed it to the far edge and
-           forced it onto its own wrapped row on phones) is REMOVED. -->
+           only for embed sources, which have no Mavero control surface). -->
       <button class="control-button" type="button" aria-label={fullscreenActive ? 'Exit fullscreen' : 'Enter fullscreen'} aria-pressed={fullscreenActive} onclick={onFullscreen}>{#if fullscreenActive}<Minimize2 size={17} />{:else}<Maximize2 size={17} />{/if}</button>
     </div>
   </div>
+
+  <!-- In-player selection sheets (Issue 3): Mavero surfaces, rendered inside
+       the control layer so they inherit its geometry (full-shell overlay). -->
+  {#if openSheet === 'subtitles'}
+    <PlayerSubtitleSheet tracks={subtitles} {selectedSubtitle} notice={subtitleNotice} prefs={subtitlePrefs} onSubtitle={(url) => { onSubtitle(url); closeMenu(); }} onPrefs={onSubtitlePreferences} onClose={closeMenu} />
+  {/if}
+  {#if openSheet === 'quality'}
+    <PlayerOptionSheet title="Quality" onClose={closeMenu}>
+      <div class="option-list" role="group" aria-label="Playback quality">
+        {#each qualityOptions as option (option.id)}
+          <button class="option-row" class:selected={option.selected} type="button" onclick={() => chooseQuality(option.id)}>
+            <span class="row-mark">{#if option.selected}<Check size={15} />{/if}</span>
+            <span class="row-copy"><strong>{option.label}</strong></span>
+          </button>
+        {/each}
+      </div>
+    </PlayerOptionSheet>
+  {/if}
+  {#if openSheet === 'display'}
+    <PlayerOptionSheet title="Display mode" onClose={closeMenu}>
+      <div class="option-list" role="group" aria-label="Display mode">
+        {#each displayOptions as option (option.id)}
+          <button class="option-row" class:selected={displayMode === option.id} type="button" onclick={() => chooseDisplay(option.id)}>
+            <span class="row-mark">{#if displayMode === option.id}<Check size={15} />{/if}</span>
+            <span class="row-copy"><strong>{option.label}</strong><small>{option.id === 'fit' ? 'Preserves aspect (letterbox allowed)' : option.id === 'fill' ? 'Preserves aspect (crops to fill)' : 'Fills both axes (distorts)'}</small></span>
+          </button>
+        {/each}
+      </div>
+    </PlayerOptionSheet>
+  {/if}
+  {#if openSheet === 'speed'}
+    <PlayerOptionSheet title="Playback speed" onClose={closeMenu}>
+      <div class="option-list" role="group" aria-label="Playback speed">
+        {#each speedOptions as option (option.id)}
+          <button class="option-row" class:selected={option.selected} type="button" onclick={() => chooseSpeed(option.id)}>
+            <span class="row-mark">{#if option.selected}<Check size={15} />{/if}</span>
+            <span class="row-copy"><strong>{option.label}</strong></span>
+          </button>
+        {/each}
+      </div>
+    </PlayerOptionSheet>
+  {/if}
 </div>
 
 <style>
@@ -249,54 +358,60 @@
      deliberate narrow-viewport fallback — it can no longer produce the
      reported "fullscreen on its own row" result, because nothing in the
      row stretches anymore (the former flex-grow spacer is REMOVED) and the
-     subtitle select shrinks before anything wraps. */
+     subtitle control shrinks before anything wraps. */
   .secondary-row { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-start; gap: 6px; }
   .control-button { display: inline-grid; place-items: center; min-width: 40px; min-height: 40px; border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--ink-soft); background: rgba(0,0,0,.5); cursor: pointer; transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
   .control-button:hover, .control-button:focus-visible { border-color: var(--line-strong); background: var(--accent-soft); }
   .control-button:active { transform: scale(.97); }
   .volume-control { display: flex; align-items: center; gap: 4px; }
   .volume-input { width: 78px; accent-color: var(--accent); }
-  .select-control { display: inline-flex; align-items: center; gap: 4px; min-height: 40px; padding: 0 7px; border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--ink-soft); background: rgba(0,0,0,.5); font-size: .62rem; }
-  .select-control:hover, .select-control:focus-within { border-color: var(--line-strong); }
-  /* Final remediation (Issue 1): native selects are sized by their LONGEST
-     option (on Android the subtitle menu's disabled notice), which reserved
-     a wide blank area next to short labels like "Off". Every select now
-     carries min-width:0 + overflow/ellipsis and an explicit compact width;
-     the subtitle select additionally flexes to absorb leftover row space
-     (bounded by max-width) so the width is always USEFUL label room. */
-  .select-control select { min-width: 0; border: 0; outline: 0; color: inherit; background: transparent; font: inherit; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .select-control option { color: #181822; background: #f5f6fa; }
+  /* Issue 3: the former native select popups are now BUTTONS that open
+     Mavero sheets. Same compact footprint; the label truncates with an
+     ellipsis so long track names can never expand the row. */
+  .select-control { display: inline-flex; align-items: center; gap: 4px; min-height: 40px; padding: 0 7px; border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--ink-soft); background: rgba(0,0,0,.5); font-size: .62rem; cursor: pointer; font: inherit; font-size: .62rem; }
+  .select-control:hover:not(:disabled), .select-control:focus-visible { border-color: var(--line-strong); background: var(--accent-soft); }
+  .select-control:disabled { opacity: .6; cursor: default; }
+  .select-control .control-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .select-control.subtitles { flex: 1 1 56px; min-width: 56px; max-width: 110px; }
-  .select-control.subtitles select { flex: 1 1 auto; width: 100%; }
-  .select-control.speed select { width: 44px; }
-  .select-control.display-mode select { width: 58px; }
-  .select-control.quality select { width: 64px; }
+  .select-control.subtitles .control-label { flex: 1 1 auto; text-align: left; }
+  .select-control.quality .control-label { max-width: 64px; }
+  .select-control.display-mode .control-label { max-width: 58px; }
+  .select-control.speed .control-label { max-width: 44px; }
+
+  /* In-player selection sheet option rows (shared shape across quality /
+     display / speed sheets; the subtitle sheet carries its own richer
+     controls). */
+  .option-list { display: grid; gap: 3px; }
+  .option-row { display: flex; align-items: center; gap: 11px; min-height: 46px; border: 1px solid transparent; border-radius: var(--radius-sm); padding: 7px 12px; color: var(--ink-soft); background: transparent; cursor: pointer; text-align: left; font: inherit; }
+  .option-row:hover, .option-row:focus-visible, .option-row.selected { border-color: var(--line-strong); background: var(--accent-soft); }
+  .option-row.selected { color: var(--ink); }
+  .row-mark { display: grid; flex: 0 0 22px; place-items: center; width: 22px; height: 22px; color: var(--muted); }
+  .option-row.selected .row-mark { border: 1px solid var(--line-strong); border-radius: 50%; color: var(--accent); }
+  .row-copy { min-width: 0; }
+  .row-copy strong { display: block; color: var(--ink); font-size: .72rem; overflow-wrap: anywhere; }
+  .row-copy small { display: block; margin-top: 2px; color: var(--muted); font-size: .55rem; }
+
   /* Player V2 corrections: connected Cast state tinted with the accent. */
   .cast-button.casting { color: var(--accent); border-color: var(--line-strong); }
 
   /* Compact viewports: the volume slider folds away (the mute button and the
-     right-zone volume swipe remain); every OTHER control — subtitles, quality,
-     display mode, speed, fullscreen — stays reachable (the reported
-     "no quality selector on phones" regression). Narrow phones tighten the
-     fixed selector widths (the subtitle select keeps flexing down to its
-     56px floor with ellipsis before anything may wrap). */
+     right-zone volume swipe remain); every OTHER control — subtitles,
+     quality, display mode, speed, fullscreen — stays reachable (the reported
+     "no quality selector on phones" regression). */
   @media (max-width: 840px) {
     .volume-input { display: none; }
-    .select-control.quality select { width: 56px; }
   }
   @media (max-width: 640px) {
     .bottom-zone { padding: 8px 8px calc(10px + env(safe-area-inset-bottom)); }
     .secondary-row { gap: 3px; }
     .time-label { font-size: .56rem; }
-    .select-control { padding: 0 3px; }
+    .select-control { padding: 0 5px; }
     .select-control.subtitles { min-width: 48px; }
-    .select-control.speed select { width: 36px; }
     .select-control.display-mode { gap: 0; }
     /* The display-mode icon is decorative — on narrow phones it folds away
        so Fit/Fill/Stretch keeps its readable labels and the row stays ONE
        line down to 360px (deliberate compact fallback budget). */
     .select-control.display-mode :global(svg) { display: none; }
-    .select-control.quality select { width: 48px; }
     .center-cluster { gap: 20px; }
     .cluster-button.play { width: 62px; height: 62px; }
     .cluster-button.seek { width: 50px; height: 50px; }
@@ -306,7 +421,7 @@
      layout puts the secondary controls on the RIGHT edge (the center cluster
      and the top-left Back FAB are untouched). fullscreen stays INSIDE the
      group and the row cannot collide with the timeline above it (the grid
-     gap + the bottom-zone padding hold the separation). The subtitle select
+     gap + the bottom-zone padding hold the separation). The subtitle control
      stops flexing in landscape (flex: 0 1 auto) so the leftover row width is
      NOT absorbed by the group — the whole group packs to the right edge.
      Portrait keeps the same left-aligned group semantics (the base rule

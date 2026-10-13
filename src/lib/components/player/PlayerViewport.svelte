@@ -1,11 +1,16 @@
 <script lang="ts">
-  import { createEventDispatcher, onDestroy } from 'svelte';
+  import { createEventDispatcher, onDestroy, afterUpdate } from 'svelte';
   import type { PlayerInternalQualityOption, PlayerPlaybackState, PlayerSource, PlayerSubtitleTrack } from '$lib/shared/player';
   import { PLAYER_AUTO_QUALITY_ID } from '$lib/shared/player';
   import { iframeSandboxAttribute, type SandboxPolicy } from '$lib/shared/sandbox-policy';
   import { urlPathIsM3u8 } from '$lib/shared/hls-detect';
   import { HlsPlaybackEngine, resolveDirectPlaybackMode, type HlsAudioTrackLike } from '$lib/client/player/hls-engine';
   import { markPlayerMilestone } from '$lib/client/player/player-timing';
+  // Focused player fixes (Issues 1+2): custom subtitle rendering — the
+  // overlay renders the SELECTED track's cues (browser keeps parsing the
+  // VTT through the hidden <track>) with the user's sync/appearance prefs.
+  import PlayerSubtitleOverlay from './PlayerSubtitleOverlay.svelte';
+  import { DEFAULT_SUBTITLE_PREFERENCES, type SubtitlePreferences } from '$lib/client/player/subtitles/subtitle-preferences';
 
   export let source: PlayerSource | null = null;
   export let mediaUrl: string | null = null;
@@ -25,6 +30,46 @@
   // unchanged (their sources never populate per-stream subtitles).
   export let subtitles: PlayerSubtitleTrack[] = [];
   $: activeSubtitles = subtitles.length ? subtitles : source?.subtitles ?? [];
+  // Focused player fixes (Issues 1+2): the shell forwards the SELECTED
+  // track URL ('' = Off), the sanitized preference object and the OS-
+  // suppression flag (PiP / native video fullscreen). The viewport owns
+  // the TextTrack MODES: selected = 'hidden' (custom overlay paints) or
+  // 'showing' while suppressed (the OS surface paints, preserving the
+  // previous PiP behaviour); everything else stays 'disabled'.
+  export let selectedSubtitleUrl = '';
+  export let subtitlePrefs: SubtitlePreferences = DEFAULT_SUBTITLE_PREFERENCES;
+  export let subtitleOverlaySuppressed = false;
+  let selectedTextTrack: TextTrack | null = null;
+  function syncSubtitleTrackModes() {
+    if (!videoElement) {
+      if (selectedTextTrack !== null) selectedTextTrack = null;
+      return;
+    }
+    const tracks = Array.from(videoElement.textTracks);
+    let index = -1;
+    if (selectedSubtitleUrl) {
+      const trackEls = Array.from(videoElement.querySelectorAll('track'));
+      index = trackEls.findIndex((el) => el.getAttribute('src') === selectedSubtitleUrl);
+      // Parity fallback with the legacy selector: label/language match.
+      if (index < 0) index = tracks.findIndex((candidate) => candidate.label === selectedSubtitleUrl || candidate.language === selectedSubtitleUrl);
+    }
+    const next = index >= 0 ? tracks[index] ?? null : null;
+    if (next !== selectedTextTrack) selectedTextTrack = next;
+    for (let i = 0; i < tracks.length; i += 1) {
+      const mode = i === index ? (subtitleOverlaySuppressed ? 'showing' : 'hidden') : 'disabled';
+      if (tracks[i].mode !== mode) tracks[i].mode = mode;
+    }
+  }
+  $: {
+    // Dependency markers: re-run the (argument-less, idempotent) sync when
+    // any input changes — track list rebuilds (episode switches), selection,
+    // video element identity and OS-suppression flips.
+    void selectedSubtitleUrl; void activeSubtitles; void videoElement; void subtitleOverlaySuppressed;
+    syncSubtitleTrackModes();
+  }
+  // Track elements render AFTER state flushes — re-sync post-update so an
+  // episode switch's rebuilt <track> list never leaves stale modes.
+  afterUpdate(syncSubtitleTrackModes);
   // Player V2 corrections (real-device feedback): display mode for DIRECT
   // video — Fit preserves aspect (letterbox allowed, the historical default),
   // Fill preserves aspect and crops, Stretch fills both axes (distortion
@@ -352,6 +397,13 @@
   {/if}
 
   {#if source?.type !== 'embed'}<div class="viewport-shade" aria-hidden="true"></div>{/if}
+  <!-- Focused player fixes (Issues 1+2): the custom subtitle overlay —
+       renders the selected track's cues with the user's sync offset and
+       appearance preferences (native <track> painting is disabled for
+       direct sources; PiP/native-fullscreen flips back to the OS painter). -->
+  {#if source?.type === 'direct'}
+    <PlayerSubtitleOverlay track={selectedTextTrack} video={videoElement} suppressed={subtitleOverlaySuppressed} offsetSeconds={subtitlePrefs.offsetSeconds} sizeScale={subtitlePrefs.sizeScale} position={subtitlePrefs.position} color={subtitlePrefs.color} borderStyle={subtitlePrefs.borderStyle} />
+  {/if}
   <!-- Player startup redesign: this corner label is now a PLAYBACK-status note
        only (buffering). Preparation/resolution/source-switch/embed-load states
        are shown exclusively by the shell's single lightweight loading card —

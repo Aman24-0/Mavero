@@ -240,7 +240,7 @@
   <link rel="canonical" href={`${PRODUCTION_ORIGIN}${page.url.pathname}`} /><!-- SEO: fixed production host; the request can never self-canonicalize -->
   <meta property="og:title" content="Search — Mavero" />
   <meta property="og:description" content="Search movies and series across the Mavero catalog." />
-  <meta property="og:url" content={`${page.url.origin}${page.url.pathname}`} />
+  <meta property="og:url" content={`${PRODUCTION_ORIGIN}${page.url.pathname}`} /><!-- SEO follow-up: fixed production host — the request can never self-reference -->
   <meta name="robots" content="noindex,follow" />
 </svelte:head>
 

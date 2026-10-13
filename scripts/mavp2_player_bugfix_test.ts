@@ -242,7 +242,7 @@ ok(/window\.addEventListener\('blur', handleWindowBlur\)/.test(shell), 'B16c. bl
 ok(!shell.includes('contentWindow.addEventListener') && !shell.includes('iframe.contentDocument'), 'B16d. the blur path never touches the cross-origin iframe DOM');
 
 // B17. Sheet/focus guards: an open sheet or focused control is never hidden.
-ok(/!sourceMenuOpen && !episodeMenuOpen && !focusWithinMaveroControls\(\)/.test(revealBody), 'B17. sheet-open + keyboard-focus guards inside the timer callback');
+ok(/!sourceMenuOpen && !episodeMenuOpen && !controlsSheetsOpen && !focusWithinMaveroControls\(\)/.test(revealBody), 'B17. sheet-open + keyboard-focus guards inside the timer callback');
 // MAVP-5 Issue 4 supersession: the focus guard now also covers the dedicated
 // episode chip (a Mavero-owned control surface that must never auto-hide).
 ok(/\.back-fab, \.control-fab-group, \.source-chip, \.episode-chip, \.direct-controls-overlay, \.source-sheet, \.episode-sheet/.test(shell), 'B18. focus guard covers every Mavero-owned control surface (incl. the MAVP-5 episode chip)');

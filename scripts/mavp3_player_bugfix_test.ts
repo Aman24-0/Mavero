@@ -199,7 +199,7 @@ ok(/function handleEmbedLoad\(\) \{[\s\S]*?revealControls\(\);/.test(shellCode),
 
 // 2.7 Sheet guards + focus guard preserved (a sheet or focused control is
 //     never hidden; opening/closing sheets does not flicker visibility).
-ok(/!sourceMenuOpen && !episodeMenuOpen && !focusWithinMaveroControls\(\)/.test(revealBody), '2.7a the timer callback re-checks sheet-open + focus guards before hiding');
+ok(/!sourceMenuOpen && !episodeMenuOpen && !controlsSheetsOpen && !focusWithinMaveroControls\(\)/.test(revealBody), '2.7a the timer callback re-checks sheet-open + focus guards before hiding');
 ok(/function closeSourceSheet\(\) \{[\s\S]*?revealControls\(\);/.test(shellCode) && /function closeEpisodeSheet\(\) \{[\s\S]*?revealControls\(\);/.test(shellCode), '2.7b closing a sheet reveals the controls and restarts the countdown');
 
 // 2.8 Full listener/timer cleanup on destroy (no stale callbacks).
@@ -242,12 +242,12 @@ section_ok('§4 calibration visibility');
 ok(/const calibrationMode = page\.url\.searchParams\.get\('controls'\) === 'calibrate';/.test(watchCode), '4.1 the watch route opens a calibration session only for ?controls=calibrate');
 ok(/calibrationMode=\{calibrationMode\}/.test(watchPage), '4.2 the watch route passes the calibration flag to the shell');
 ok(/export let calibrationMode = false;/.test(shellCode), '4.3 the shell accepts the calibration flag (default OFF — normal sessions unchanged)');
-ok(/&& !sourceMenuOpen && !episodeMenuOpen && !calibrationMode\)/.test(revealBody), '4.4 a calibration session never arms the 5s hide timer (controls stay inspectable)');
+ok(/&& !sourceMenuOpen && !episodeMenuOpen && !controlsSheetsOpen && !calibrationMode\)/.test(revealBody), '4.4 a calibration session never arms the 5s hide timer (controls stay inspectable)');
 
 // 4.5 Normal playback keeps the EXACT auto-hide contract — the calibration
 //     gate is the ONLY change to the arming condition.
 ok(revealBody.includes('5_000') && (revealBody.match(/setTimeout/g) ?? []).length === 1, '4.5a the 5s single timer is intact for normal sessions');
-ok(/\(playing \|\| embedPlaying \|\| embedSessionArms\) && !sourceMenuOpen && !episodeMenuOpen && !calibrationMode\)/.test(shellCode), '4.5b the arming condition is byte-identical except the calibration gate');
+ok(/\(playing \|\| embedPlaying \|\| embedSessionArms\) && !sourceMenuOpen && !episodeMenuOpen && !controlsSheetsOpen && !calibrationMode\)/.test(shellCode), '4.5b the arming condition is byte-identical except the calibration gate');
 ok(!/calibrationMode/.test(shellCode.replace(revealBody, '').replace('export let calibrationMode = false;', '').replace(/MAVP-3 Issue 4[^;]*;/g, '')) || true, '4.5c (doc anchor) the calibration flag touches ONLY the arming gate');
 ok(/function closeSourceSheet\(\)[\s\S]*?revealControls\(\);/.test(shellCode), '4.5d normal session behaviour (sheet close restarts the countdown) preserved');
 

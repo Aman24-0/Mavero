@@ -45,7 +45,7 @@ assert.match(shell, /5_000/, '5s auto-hide timer');
 // The retired streams sheet (0111d7f) no longer contributes a state; the
 // auto-hide guard still checks every live open state (both sheets) plus the
 // keyboard-focus a11y guard added by the player redesign.
-assert.match(shell, /!sourceMenuOpen && !episodeMenuOpen && !focusWithinMaveroControls\(\)/, 'auto-hide checks all open states + focus guard');
+assert.match(shell, /!sourceMenuOpen && !episodeMenuOpen && !controlsSheetsOpen && !focusWithinMaveroControls\(\)/, 'auto-hide checks all open states + focus guard');
 
 // ============================================================
 // 6. Source sheet: bottom on compact, right drawer on wide (media query)

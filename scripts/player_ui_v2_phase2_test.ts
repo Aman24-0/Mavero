@@ -264,7 +264,7 @@ const shell = readFileSync(resolve('src/lib/components/player/PlayerShell.svelte
 ok((shell.match(/createPlayerGestureController\(/g) ?? []).length === 1, '3a. the gesture controller is created exactly once (in onMount)');
 ok(/gestureController\?\.destroy\(\);/.test(shell), '3a. the controller is destroyed in the mount cleanup (no leak across mounts)');
 // 3b. The enabled() gate composition.
-ok(/enabled: \(\) => !touchLocked && source\?\.type === 'direct' && !sourceMenuOpen && !episodeMenuOpen && sourceReady/.test(shell), '3b. gestures are gated on the lock, DIRECT ownership, open sheets and source readiness');
+ok(/enabled: \(\) => !touchLocked && source\?\.type === 'direct' && !sourceMenuOpen && !episodeMenuOpen && !controlsSheetsOpen && sourceReady/.test(shell), '3b. gestures are gated on the lock, DIRECT ownership, open sheets and source readiness');
 // 3c. Brightness is a simulated overlay — never a system brightness API.
 ok(/class="brightness-overlay" style=\{`opacity: \$\{brightnessDimOpacity\(brightness\)\}`\} aria-hidden="true"/.test(shell), '3c. the brightness overlay is a shell-rendered, aria-hidden visual layer');
 ok(!/systemBrightness|display\.brightness|BrightnessAPI/i.test(shell), '3c. no system/display brightness API is referenced anywhere');

@@ -25,6 +25,9 @@
   // helper aliases the controller's OWN key space — the shell's stale guards
   // must compare results against it (see loadExternalSubtitles below).
   import { createExternalSubtitleController, externalSubtitlesKey as externalSubtitleRequestKey, mergeSubtitleTracks, type ExternalSubtitleRequest, type ExternalSubtitleTrack } from '$lib/client/player/subtitles/external-subtitles';
+  // Focused player fixes (Issues 1+2): versioned local subtitle preferences
+  // (size / position / sync offset / colour / border) — safe defaults, no DB.
+  import { DEFAULT_SUBTITLE_PREFERENCES, loadSubtitlePreferences, sanitizeSubtitlePreferences, saveSubtitlePreferences, type SubtitlePreferences } from '$lib/client/player/subtitles/subtitle-preferences';
   // Player UI V2 (Part 1, Phase 3B): TheIntroDB Skip Intro lookup — read-only,
   // optional-by-design, validated segments in SECONDS for the player seek API.
   import { createIntroLookup, introRequestKey, type IntroMediaRequest, type IntroSegment } from '$lib/client/player/intro/intro-client';
@@ -165,6 +168,12 @@
   let orientationMediaQuery: MediaQueryList | undefined;
   let pictureInPicture = false;
   let pictureInPictureSupported = false;
+  // Focused fixes (Issue 1): the custom subtitle overlay yields to the OS
+  // painter while the video surface alone is visible (PiP window, native
+  // VIDEO fullscreen — iOS path). Mavero fullscreen (playerRoot) keeps the
+  // overlay (it is part of the shell surface).
+  let nativeVideoFullscreen = false;
+  $: subtitleOverlaySuppressed = pictureInPicture || nativeVideoFullscreen;
   // Player startup redesign: the shell mounts BEFORE the source resolves —
   // the initial state is 'preparing' (single lightweight loading card), never
   // 'source-unavailable'. Real unavailability still arrives through explicit
@@ -174,8 +183,16 @@
   let errorMessage = '';
   let selectedQuality = '';
   let selectedSubtitle = '';
+  // Focused fixes (Issues 1+2): subtitle appearance + sync preferences.
+  // Loaded once on mount from the versioned local store; every change is
+  // sanitized and persisted (safe on SSR/private mode — session values only).
+  let subtitlePrefs: SubtitlePreferences = DEFAULT_SUBTITLE_PREFERENCES;
   let sourceMenuOpen = false;
   let episodeMenuOpen = false;
+  // Focused fixes (Issue 3): true while ANY PlayerControls selection sheet is
+  // open — the shell stands its keyboard shortcuts and touch gestures down
+  // (the sheets own Escape/Tab and every tap inside them).
+  let controlsSheetsOpen = false;
   let controlsVisible = true;
   let hideTimer: ReturnType<typeof setTimeout> | undefined;
   // Player UI V2 (Part 1, Phase 2C): touch lock. When locked, taps and swipes
@@ -778,6 +795,10 @@
 
   const handleFullscreen = () => {
     fullscreen = document.fullscreenElement === playerRoot;
+    // Focused fixes (Issue 1): native VIDEO fullscreen hands the surface to
+    // the OS — subtitles flip back to the native painter there (the overlay
+    // could never paint over a fullscreened <video> element).
+    nativeVideoFullscreen = document.fullscreenElement === videoElement;
     if (!fullscreen && landscapeMode) {
       // MAVP-5 (Issue 5): a fullscreen loss WITHIN the source-switch window
       // while the user's landscape intent is active is the switch-triggered
@@ -1166,6 +1187,9 @@
     // are DEV-only logged; marks remain inspectable in production.
     markPlayerMilestone('mavero:shell');
     measurePlayerStartup();
+    // Focused fixes (Issues 1+2): load the saved subtitle preferences once
+    // (safe defaults on SSR/private mode/corrupt payloads — never throws).
+    subtitlePrefs = loadSubtitlePreferences();
     // MAVP-4 Issue 2: explicit document scroll lock for the player route —
     // the watch page renders bare (no AppShell) and the shell is exactly
     // 100dvh, but the document kept its default scroll behaviour, so browser
@@ -1184,7 +1208,9 @@
       // Phase 4: while casting, the local surface is a paused mirror of the
       // receiver — swipes would adjust local-only brightness/volume, so the
       // gestures gate off entirely until the session ends.
-      enabled: () => !touchLocked && source?.type === 'direct' && !sourceMenuOpen && !episodeMenuOpen && sourceReady && !castConnected,
+      // Focused fixes (Issue 3): an open controls selection sheet also gates
+      // the gestures off (the sheet owns every tap inside it).
+      enabled: () => !touchLocked && source?.type === 'direct' && !sourceMenuOpen && !episodeMenuOpen && !controlsSheetsOpen && sourceReady && !castConnected,
       onBrightnessDelta: (delta) => { brightness = clampBrightness(brightness + delta); },
       onVolumeDelta: (delta) => { setVolume(volume + delta); },
       onGestureStart: handleGestureStart,
@@ -1197,7 +1223,7 @@
     // a double-tap or a 2× hold.
     tapGestureController = createPlayerTapGestureController({
       surface: playerRoot,
-      enabled: () => !touchLocked && source?.type === 'direct' && !sourceMenuOpen && !episodeMenuOpen && sourceReady && !castConnected,
+      enabled: () => !touchLocked && source?.type === 'direct' && !sourceMenuOpen && !episodeMenuOpen && !controlsSheetsOpen && sourceReady && !castConnected,
       onDoubleTap: handleDoubleTap,
       onHoldStart: handleHoldStart,
       onHoldEnd: handleHoldEnd,
@@ -1257,6 +1283,10 @@
         handleSheetKeydown(event);
         return;
       }
+      // Focused fixes (Issue 3): while a controls selection sheet is open, the
+      // sheet's own handler owns Escape/Tab (PlayerOptionSheet); Mavero player
+      // shortcuts and fullscreen keys stand down entirely.
+      if (controlsSheetsOpen) return;
       const target = event.target as HTMLElement | null;
       // Never intercept shortcuts while typing in form fields or editable
       // surfaces (input/textarea/select/contenteditable).
@@ -1378,6 +1408,8 @@
       seekFeedback = null;
       // Phase 8: clear embed load timeout on destroy.
       clearEmbedLoadTimeout();
+      // Focused fixes (Issue 4): clear the direct load timeout on destroy.
+      clearDirectLoadTimeout();
       // Player UI V2 (Phase 2) teardown:
       gestureController?.destroy();
       gestureController = null;
@@ -1764,13 +1796,22 @@
   }
 
   function setSubtitle(url: string) {
+    // Focused fixes (Issues 1+2): the selection is URL state ONLY. The
+    // viewport owns the TextTrack modes ('hidden' → the custom overlay
+    // paints; 'showing' while the OS surface owns painting). The old
+    // shell-side mode loop is GONE — it would fight the viewport's sync.
     selectedSubtitle = url;
-    if (!videoElement) return;
-    Array.from(videoElement.textTracks).forEach((track) => { track.mode = 'disabled'; });
-    if (!url) return;
-    const trackIndex = Array.from(videoElement.querySelectorAll('track')).findIndex((track) => track.getAttribute('src') === url);
-    const track = trackIndex >= 0 ? Array.from(videoElement.textTracks)[trackIndex] : Array.from(videoElement.textTracks).find((candidate) => candidate.label === url || candidate.language === url);
-    if (track) track.mode = 'showing';
+  }
+
+  /**
+   * Focused fixes (Issues 1+2): the single writer of subtitle preferences
+   * from the settings sheet. Sanitizes (bounded ranges, allowlisted
+   * colours/styles) and persists to the versioned local store — the custom
+   * overlay reflects the change on its very next animation frame.
+   */
+  function setSubtitlePreferences(next: SubtitlePreferences) {
+    subtitlePrefs = sanitizeSubtitlePreferences(next);
+    if (browser) saveSubtitlePreferences(subtitlePrefs);
   }
 
   function setQuality(url: string) {
@@ -1976,9 +2017,9 @@
     // hide timer is simply never armed while `calibrationMode` is set, so
     // admin calibration/inspection cannot be interrupted by the 5s auto-hide.
     // Normal playback (no calibration session) arms exactly as before.
-    if ((playing || embedPlaying || embedSessionArms) && !sourceMenuOpen && !episodeMenuOpen && !calibrationMode) {
+    if ((playing || embedPlaying || embedSessionArms) && !sourceMenuOpen && !episodeMenuOpen && !controlsSheetsOpen && !calibrationMode) {
       hideTimer = setTimeout(() => {
-        if (!sourceMenuOpen && !episodeMenuOpen && !focusWithinMaveroControls()) {
+        if (!sourceMenuOpen && !episodeMenuOpen && !controlsSheetsOpen && !focusWithinMaveroControls()) {
           controlsVisible = false;
           // MAVP-3 Issue 2 (the reported "controls permanently hidden" bug):
           // the ONLY parent-observable signal for activity inside a
@@ -2024,7 +2065,7 @@
     if (!playerRoot) return false;
     const active = document.activeElement;
     if (!(active instanceof HTMLElement) || !playerRoot.contains(active)) return false;
-    return Boolean(active.closest('.back-fab, .control-fab-group, .source-chip, .episode-chip, .direct-controls-overlay, .source-sheet, .episode-sheet, .unlock-fab, .skip-intro-button'));
+    return Boolean(active.closest('.back-fab, .control-fab-group, .source-chip, .episode-chip, .direct-controls-overlay, .source-sheet, .episode-sheet, .player-option-sheet, .unlock-fab, .skip-intro-button'));
   }
 
   // Player UI V2 (Part 1, Phase 1A): the former in-row source-sheet opener
@@ -2104,6 +2145,45 @@
     }
     embedLoadTimeoutSourceId = '';
   }
+
+  // ----- Focused fixes (Issue 4): direct-source load timeout -----
+  //
+  // A DIRECT stream that never reaches loadedmetadata AND never errors
+  // (hung origin, dead HLS publication) would leave the loading indicator
+  // up forever. The embed path already bounds this (EMBED_LOAD_TIMEOUT_MS);
+  // direct playback now gets the same contract: a bounded 20 s window per
+  // (sourceId, mediaUrl) prepare session, with the SAME captured-key guard
+  // — a stale timer from a previous source/stream can never error the
+  // current one, and a ready/error arrival always disarms it first.
+  const DIRECT_LOAD_TIMEOUT_MS = 20000;
+  let directLoadTimer: ReturnType<typeof setTimeout> | undefined;
+  let directLoadKey = '';
+  function startDirectLoadTimeout(key: string) {
+    clearDirectLoadTimeout();
+    directLoadKey = key;
+    directLoadTimer = setTimeout(() => {
+      directLoadTimer = undefined;
+      // Stale-key guard: only the session that ARMED this timer may act.
+      if (directLoadKey !== key) return;
+      // Only a genuine still-preparing session transitions — ready/error
+      // already flipped the state before firing.
+      if (state !== 'preparing') return;
+      state = 'error';
+      errorMessage = 'The video is taking too long to load. Try again or choose another source.';
+      revealControls();
+    }, DIRECT_LOAD_TIMEOUT_MS);
+  }
+  function clearDirectLoadTimeout() {
+    if (directLoadTimer) {
+      clearTimeout(directLoadTimer);
+      directLoadTimer = undefined;
+    }
+    directLoadKey = '';
+  }
+  // Arm exactly while a direct stream is PREPARING on a specific media URL;
+  // disarm the moment the state leaves 'preparing' (ready, error, switch).
+  $: if (source?.type === 'direct' && mediaUrl && state === 'preparing') startDirectLoadTimeout(`${source.sourceId}:${mediaUrl}`);
+  $: if (state !== 'preparing') clearDirectLoadTimeout();
 
   // ----- Phase 8: Focus management for source/episode sheets -----
   //
@@ -2446,7 +2526,7 @@
 
   <!-- Immersive redesign: stage fills the ENTIRE viewport — no header/footer consuming space. -->
   <section class="stage-wrap" aria-label="Player viewport">
-    <PlayerViewport bind:this={viewport} bind:videoElement bind:iframeElement {source} {mediaUrl} sandboxEnabled={effectiveSandboxEnabled} sandboxPolicy={effectiveSandboxPolicy} poster={content.backdrop ?? content.poster ?? ''} title={content.title} state={effectiveState} subtitles={mergedSubtitles} {displayMode} on:loadedmetadata={handleLoadedMetadata} on:timeupdate={handleTimeUpdate} on:play={handlePlay} on:pause={handlePause} on:waiting={handleWaiting} on:playing={handlePlaying} on:seeking={handleSeeking} on:seeked={handleSeeked} on:ended={handleEnded} on:error={handleMediaError} on:embedload={handleEmbedLoad} on:enginequality={handleEngineQuality} on:durationchange={handleSeekOpportunity} on:loadeddata={handleSeekOpportunity} on:canplay={handleSeekOpportunity} on:progress={handleSeekOpportunity} />
+    <PlayerViewport bind:this={viewport} bind:videoElement bind:iframeElement {source} {mediaUrl} sandboxEnabled={effectiveSandboxEnabled} sandboxPolicy={effectiveSandboxPolicy} poster={content.backdrop ?? content.poster ?? ''} title={content.title} state={effectiveState} subtitles={mergedSubtitles} {displayMode} selectedSubtitleUrl={selectedSubtitle} subtitlePrefs={subtitlePrefs} {subtitleOverlaySuppressed} on:loadedmetadata={handleLoadedMetadata} on:timeupdate={handleTimeUpdate} on:play={handlePlay} on:pause={handlePause} on:waiting={handleWaiting} on:playing={handlePlaying} on:seeking={handleSeeking} on:seeked={handleSeeked} on:ended={handleEnded} on:error={handleMediaError} on:embedload={handleEmbedLoad} on:enginequality={handleEngineQuality} on:durationchange={handleSeekOpportunity} on:loadeddata={handleSeekOpportunity} on:canplay={handleSeekOpportunity} on:progress={handleSeekOpportunity} />
 
     <!-- MAVP-4 Issue 1: embed presentation veil. While the provider iframe is
          mounted but not yet presenting, this opaque layer covers the stage
@@ -2562,7 +2642,7 @@
        Subtitle menu receives native + external tracks. -->
   {#if source?.type === 'direct'}
     <div class="direct-controls-overlay" class:visible={controlsVisible}>
-      <PlayerControls playing={playing} {muted} {volume} {currentTime} {duration} {buffered} {playbackRate} {pictureInPictureSupported} {pictureInPicture} fullscreenActive={fullscreen} onFullscreen={() => { void toggleFullscreen(); }} locked={touchLocked} onToggleLock={toggleTouchLock} subtitles={mergedSubtitles} selectedSubtitle={selectedSubtitle} subtitleNotice={externalSubtitleNotice} qualities={qualities} selectedQuality={selectedQuality} internalQualities={engineQuality?.options ?? []} selectedInternalQuality={engineQuality?.selected ?? PLAYER_AUTO_QUALITY_ID} {displayMode} onDisplayMode={setDisplayMode} castAvailable={castReady && Boolean(castEligibility?.eligible)} castActive={castConnected} onCast={() => { void handleCastAction(); }} onTogglePlay={togglePlay} onSeek={seek} onVolume={setVolume} onToggleMute={toggleMute} onPlaybackRate={setPlaybackRate} onSubtitle={setSubtitle} onQuality={setQuality} onInternalQuality={setInternalQuality} onPictureInPicture={togglePictureInPicture} onStep={seekBy} />
+      <PlayerControls playing={playing} {muted} {volume} {currentTime} {duration} {buffered} {playbackRate} {pictureInPictureSupported} {pictureInPicture} fullscreenActive={fullscreen} onFullscreen={() => { void toggleFullscreen(); }} locked={touchLocked} onToggleLock={toggleTouchLock} subtitles={mergedSubtitles} selectedSubtitle={selectedSubtitle} subtitleNotice={externalSubtitleNotice} subtitlePrefs={subtitlePrefs} onSubtitlePreferences={setSubtitlePreferences} onMenuOpenChange={(open) => { controlsSheetsOpen = open; }} qualities={qualities} selectedQuality={selectedQuality} internalQualities={engineQuality?.options ?? []} selectedInternalQuality={engineQuality?.selected ?? PLAYER_AUTO_QUALITY_ID} {displayMode} onDisplayMode={setDisplayMode} castAvailable={castReady && Boolean(castEligibility?.eligible)} castActive={castConnected} onCast={() => { void handleCastAction(); }} onTogglePlay={togglePlay} onSeek={seek} onVolume={setVolume} onToggleMute={toggleMute} onPlaybackRate={setPlaybackRate} onSubtitle={setSubtitle} onQuality={setQuality} onInternalQuality={setInternalQuality} onPictureInPicture={togglePictureInPicture} onStep={seekBy} />
     </div>
   {/if}
 
@@ -2846,8 +2926,12 @@
      so it wins the cascade. */
   .player-shell.touch-locked .back-fab { opacity: 1; visibility: visible; pointer-events: auto; }
 
-  /* Overlay cards (error/loading/completion) — centered in viewport. */
-  .message-card, .completion-card, .loading-card { position: absolute; z-index: 7; right: 50%; bottom: 50%; display: flex; align-items: center; gap: 12px; max-width: min(590px, calc(100% - 36px)); transform: translate(50%, 50%); border: 1px solid var(--line); border-radius: var(--radius-md); padding: 15px 16px; color: var(--ink); background: rgba(13,13,13,.92); box-shadow: var(--shadow-lg); backdrop-filter: blur(22px); }
+  /* Overlay cards (error/completion) — centered in viewport.
+     Focused fixes (Issue 4): the LOADING card is NOT part of this centered
+     group anymore — it is a dedicated top-center loading layer (its own
+     rule below) so it can never sit behind/under the CENTRAL Play/Pause
+     cluster (both were dead-center before: the reported overlap). */
+  .message-card, .completion-card { position: absolute; z-index: 7; right: 50%; bottom: 50%; display: flex; align-items: center; gap: 12px; max-width: min(590px, calc(100% - 36px)); transform: translate(50%, 50%); border: 1px solid var(--line); border-radius: var(--radius-md); padding: 15px 16px; color: var(--ink); background: rgba(13,13,13,.92); box-shadow: var(--shadow-lg); backdrop-filter: blur(22px); }
   .message-card strong { display: block; font-size: .75rem; }
   .message-card p { margin: 5px 0 0; color: var(--muted); font-size: .66rem; line-height: 1.45; }
   .message-icon { display: grid; flex: 0 0 34px; place-items: center; width: 34px; height: 34px; border-radius: var(--radius-sm); color: var(--ink-soft); background: var(--accent-soft); }
@@ -2855,6 +2939,14 @@
   .small-button { display: inline-flex; align-items: center; gap: 6px; min-height: 34px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); padding: 0 12px; color: var(--ink); background: var(--accent-soft); cursor: pointer; font: inherit; font-size: .62rem; white-space: nowrap; }
   .small-button.secondary { border-color: var(--line); background: rgba(255,255,255,.04); }
   .completion-card { color: var(--ink-soft); }
+  /* Focused fixes (Issue 4): the loading indicator is a DEDICATED layer
+     pinned to the TOP-CENTER — above the video, below the interactive
+     controls, clear of the Back FAB (top-left), the utility zone (top-right)
+     and the central Play/Pause cluster (center). It represents source
+     resolution / player initialization / stream start ONLY — active
+     buffering after playback already started is the viewport's corner
+     'Buffering…' note (no two overlapping loading indicators). */
+  .loading-card { position: absolute; z-index: 7; top: max(14px, env(safe-area-inset-top)); left: 50%; right: auto; bottom: auto; transform: translateX(-50%); display: flex; align-items: center; gap: 12px; max-width: min(420px, calc(100% - 24px)); border: 1px solid var(--line); border-radius: var(--radius-md); padding: 12px 14px; color: var(--ink); background: rgba(13,13,13,.92); box-shadow: var(--shadow-lg); backdrop-filter: blur(22px); }
   .loading-card { min-width: min(260px, calc(100% - 36px)); justify-content: center; color: var(--ink-soft); font-size: .68rem; }
   .loading-ring { display: grid; flex: 0 0 38px; place-items: center; width: 38px; height: 38px; border: 1px solid var(--line); border-radius: 50%; background: conic-gradient(from 0deg, transparent 0 24%, var(--ink-soft) 42%, var(--accent-soft) 72%, transparent 100%); animation: spin 1.2s linear infinite; }
   .loading-ring > span { width: 28px; height: 28px; border-radius: 50%; background: var(--surface); }

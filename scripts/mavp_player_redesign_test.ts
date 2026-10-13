@@ -206,7 +206,7 @@ ok((revealBody.match(/setTimeout/g) ?? []).length === 1, 'C4. single authoritati
 // MAVP-2 supersession: the arming condition now includes the shell-visible
 // embed session (black-box embeds never armed the old condition).
 ok(/\(playing \|\| embedPlaying \|\| embedSessionArms\) && !sourceMenuOpen && !episodeMenuOpen/.test(revealBody), 'C5. timer arms during direct AND embed playback (incl. shell-visible embed sessions), sheets prevent it');
-ok(/!sourceMenuOpen && !episodeMenuOpen && !focusWithinMaveroControls\(\)/.test(revealBody), 'C6. open sheets and focused controls are never hidden');
+ok(/!sourceMenuOpen && !episodeMenuOpen && !controlsSheetsOpen && !focusWithinMaveroControls\(\)/.test(revealBody), 'C6. open sheets and focused controls are never hidden');
 ok(/playerRoot\?\.addEventListener\('pointermove', showControls, \{ passive: true \}\)/.test(shell) && /playerRoot\?\.addEventListener\('pointerdown', showControls/.test(shell) && /playerRoot\?\.addEventListener\('touchstart', showControls/.test(shell), 'C7. touch + pointer activity signals registered (pointermove passive — MAVP-2 perf hardening)');
 ok(/document\.addEventListener\('focusin', handleFocusIn\)/.test(shell), 'C8. keyboard/TV focus activity signal registered');
 ok(/document\.removeEventListener\('focusin', handleFocusIn\)/.test(shell), 'C9. focusin listener cleaned up on unmount');

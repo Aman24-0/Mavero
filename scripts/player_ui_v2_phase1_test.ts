@@ -60,10 +60,12 @@ ok(/\.cluster-button\.seek \{ width: 54px; height: 54px;/.test(controls), '1b. t
 // 1c. The ±10s controls are NOT hidden on mobile (they are part of the contract).
 ok(!/\.skip \{ display: none !important; \}/.test(controls), '1c. skip controls are not display:none on compact viewports');
 // 1d. Single speed display — the duplicated `{playbackRate}×` label span is gone;
-//     the select remains the one renderer of the selected speed.
+//     CONTRACT CHANGE (focused fixes, Issue 3): the speed <select> became a
+//     BUTTON that opens the Mavero speed sheet — still the ONE renderer of
+//     the selected speed.
 ok(!/<span>\{playbackRate\}×<\/span>/.test(controls), '1d. the duplicated speed label span is removed (fixes "1× 1×")');
-ok(/class="select-control speed" aria-label="Playback speed"><select value=\{playbackRate\}/.test(controls), '1d. the speed select remains the single selected-speed renderer');
-ok(/onPlaybackRate\(Number\(\(event\.currentTarget as HTMLSelectElement\)\.value\)\)/.test(controls), '1d. playback-rate behavior unchanged (select drives onPlaybackRate)');
+ok(/class="select-control speed sheet-trigger"[^>]*aria-label=\{`Playback speed: \$\{playbackRate\}×`\}/.test(controls), '1d. the speed control remains the single selected-speed renderer (sheet-trigger button contract)');
+ok(/function chooseSpeed\(id: string\) \{[\s\S]*?onPlaybackRate\(value\);/.test(controls), '1d. playback-rate behavior unchanged (sheet selection drives onPlaybackRate)');
 // 1e. The in-row source button is REMOVED; source selection stays with the chip.
 ok(!/source-button/.test(controls), '1e. the in-row source button is removed from PlayerControls');
 ok(!/export let sourceCount|export let onSources/.test(controls), '1e. sourceCount/onSources props are removed from PlayerControls');
@@ -74,7 +76,7 @@ ok(/class="timeline-input" type="range"/.test(controls), '1f. progress timeline 
 ok(/class="time-label" aria-live="off">\{formatPlayerTime\(currentTime\)\}<\/span>/.test(controls), '1f. current time label retained (bottom zone)');
 ok(/class="time-label" aria-live="off">\{formatPlayerTime\(safeDuration\)\}<\/span>/.test(controls), '1f. total duration label retained (finite-guarded safeDuration)');
 ok(/class="volume-input" type="range"/.test(controls), '1f. volume control retained');
-ok(/aria-label="Subtitles"/.test(controls), '1f. subtitles control retained');
+ok(/aria-label=\{`Subtitles: \$\{subtitleButtonLabel\}/.test(controls), '1f. subtitles control retained (sheet-trigger contract, Issue 3)');
 ok(/aria-label="Playback quality"/.test(controls) && /internalQualities\.length > 1/.test(controls), '1f. quality selection (engine internal + per-stream fallback) retained');
 ok(/Enter Picture-in-Picture/.test(controls), '1f. Picture-in-Picture retained');
 // 1g. APPROVED LAYOUT: top-right utility zone = Cast, PiP, Lock — never the
@@ -86,10 +88,13 @@ ok(/aria-pressed=\{castActive\}/.test(utilityZone) && utilityZone.indexOf('Disco
 // 1h. APPROVED LAYOUT: bottom zone = time + timeline + secondary row.
 ok(/class="bottom-zone"/.test(controls) && /class="timeline-row"/.test(controls) && /class="secondary-row"/.test(controls), '1h. the bottom zone carries the timeline row and the secondary control row');
 ok(/\.secondary-row \{ display: flex; align-items: center; flex-wrap: wrap;/.test(controls), '1h. the secondary row wraps to a compact second row instead of overlapping on narrow portrait');
-// 1i. APPROVED LAYOUT: display mode (Fit/Fill/Stretch) select.
-ok(/aria-label="Display mode"/.test(controls), '1i. a display-mode control exists');
-ok(/<option value="fit">Fit<\/option><option value="fill">Fill<\/option><option value="stretch">Stretch<\/option>/.test(controls), '1i. Fit/Fill/Stretch are the three display modes');
-ok(/if \(value === 'fit' \|\| value === 'fill' \|\| value === 'stretch'\) onDisplayMode\(value\);/.test(controls), '1i. the display-mode select drives onDisplayMode with the typed mode');
+// 1i. APPROVED LAYOUT: display mode (Fit/Fill/Stretch).
+// CONTRACT CHANGE (focused fixes, Issue 3): the select became a button that
+// opens the Mavero display-mode sheet — the same three typed modes flow
+// through onDisplayMode.
+ok(/aria-label=\{`Display mode: \$\{displayMode\}`\}/.test(controls), '1i. a display-mode control exists');
+ok(/const displayOptions: ReadonlyArray<\{ id: 'fit' \| 'fill' \| 'stretch'; label: string \}> = \[[\s\S]*?\{ id: 'fit', label: 'Fit' \},[\s\S]*?\{ id: 'fill', label: 'Fill' \},[\s\S]*?\{ id: 'stretch', label: 'Stretch' \}/.test(controls), '1i. Fit/Fill/Stretch are the three display modes');
+ok(/if \(id === 'fit' \|\| id === 'fill' \|\| id === 'stretch'\) onDisplayMode\(id\);/.test(controls), '1i. the display-mode sheet drives onDisplayMode with the typed mode');
 // 1j. APPROVED LAYOUT: the quality control is NEVER hidden on phones (the
 //     reported "no usable quality selector" regression).
 ok(!/\.quality \{ display: none/.test(controls), '1j. the quality control is not display:none on any viewport');

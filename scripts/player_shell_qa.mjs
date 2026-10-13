@@ -80,14 +80,17 @@ console.log('buttons:', JSON.stringify(state.buttons));
 check('VDRK list fetch FIRED from the real shell', state.fetches.some((u) => u.includes('sub.vdrk.site/v1/movie/24428')));
 check('TheIntroDB lookup fired (needs duration>0 — may be pending without media)', true);
 
-// Wait longer — check whether the subtitle select gains the English option.
+// Wait longer — then open the Subtitle Settings sheet and verify the fetched
+// track is listed (Issue 3 contract: the sheet replaced the native <select>).
 await page.waitForTimeout(1500);
+await page.click('.select-control.subtitles');
+await page.waitForTimeout(500);
 const state2 = await page.evaluate(() => ({
-  selects: [...document.querySelectorAll('select')].map((s) => [...s.options].map((o) => o.textContent?.trim()).join('|')),
+  rows: [...document.querySelectorAll('.track-row strong')].map((el) => el.textContent?.trim()),
+  notice: document.querySelector('.notice-row')?.textContent?.trim() ?? '',
 }));
-console.log('selects after wait:', JSON.stringify(state2.selects));
-const subsSelect = state2.selects.find((t) => /Off/.test(t));
-check('subtitle select lists the fetched track (not stuck on notice)', Boolean(subsSelect && /English/.test(subsSelect)), JSON.stringify(subsSelect));
+console.log('subtitle sheet rows after wait:', JSON.stringify(state2));
+check('subtitle sheet lists the fetched track (not stuck on notice)', state2.rows.some((t) => /English/.test(t)), JSON.stringify(state2.rows));
 
 server.close();
 await browser.close();
