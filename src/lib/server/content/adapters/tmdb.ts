@@ -165,6 +165,40 @@ function extractTvNetworks(raw: TmdbTv): Array<{ id: number; name: string }> | u
   return mapped.length > 0 ? mapped : undefined;
 }
 
+/**
+ * MAV-FOCUSED Issue 4 (2026-10): extract the per-season metadata
+ * (season_number + air_date + episode_count + poster) from the TMDB TV
+ * detail response. The detail path (`/tv/{id}`) returns `seasons[]` with
+ * these fields embedded; list responses do NOT carry it. The result is
+ * consumed by the eligibility helpers in `$lib/shared/episode-eligibility.ts`
+ * to filter out announced / future seasons (e.g. The Gentlemen S3, Black
+ * Clover S2) from the season selector.
+ *
+ * Returns undefined for movies, for malformed responses, and when no
+ * season carries a positive season_number — the caller falls back to the
+ * existing count-based behavior in that case (no regression).
+ */
+function extractSeasonsData(raw: TmdbTv): Season[] | undefined {
+  if (!Array.isArray(raw.seasons) || raw.seasons.length === 0) return undefined;
+  const mapped: Season[] = [];
+  for (const season of raw.seasons) {
+    // Season 0 is the "Specials" season in TMDB — it is NOT a numbered
+    // season and is never shown as a tab. Skip it.
+    const seasonNumber = season.season_number;
+    if (typeof seasonNumber !== 'number' || !Number.isInteger(seasonNumber) || seasonNumber <= 0) continue;
+    mapped.push({
+      number: seasonNumber,
+      title: typeof season.name === 'string' && season.name.trim() ? season.name.trim() : `Season ${seasonNumber}`,
+      episodeCount: typeof season.episode_count === 'number' && season.episode_count > 0 ? season.episode_count : 0,
+      airDate: typeof season.air_date === 'string' && season.air_date.trim() ? season.air_date.trim() : undefined,
+      poster: season.poster_path ? image(season.poster_path, 'w500') : undefined
+    });
+  }
+  // Preserve TMDB's season order (ascending). The eligibility helper does
+  // NOT reorder — it only filters.
+  return mapped.length > 0 ? mapped : undefined;
+}
+
 function hasRequiredListMetadata(raw: TmdbMedia, type: Exclude<ContentType, 'anime'>) {
   const title = type === 'movie'
     ? (raw as TmdbMovie).title || (raw as TmdbMovie).original_title
@@ -181,6 +215,19 @@ function mapTmdb(raw: TmdbMedia, type: Exclude<ContentType, 'anime'>, tag?: stri
   const movie = raw as TmdbMovie;
   const seasons = isMovie ? undefined : tv.number_of_seasons ?? tv.seasons?.filter((season) => (season.season_number ?? 0) > 0).length;
   const episodes = isMovie ? undefined : tv.number_of_episodes ?? tv.seasons?.reduce((sum, season) => sum + (season.episode_count ?? 0), 0);
+  // MAV-FOCUSED Issue 4 (2026-10): capture the full seasonsData (per-season
+  // air_date + episode_count + season_number) so the eligibility helpers
+  // in `$lib/shared/episode-eligibility.ts` can decide whether a season
+  // has genuinely started airing BEFORE rendering its tab. The previous
+  // implementation only kept the COUNT (item.seasons) — TMDB's
+  // number_of_seasons includes announced / future seasons (e.g. The
+  // Gentlemen S3, Black Clover S2) which leaked into the season selector
+  // as empty placeholder tabs. seasonsData is the metadata that lets us
+  // filter them out honestly. Only populated for TV (and anime TV) detail
+  // paths — list responses carry no seasons[] array, so list items stay
+  // undefined and the caller (SeasonEpisodes) falls back to the existing
+  // count-based behavior.
+  const seasonsData = isMovie ? undefined : extractSeasonsData(tv);
   const rating = Math.round(asNumber(raw.vote_average) * 10) / 10;
   // Phase 7F+ (anime routing): detect anime via TMDB genre 'Animation' (16)
   // AND Japanese original_language ('ja'). This catches anime movies like
@@ -235,6 +282,7 @@ function mapTmdb(raw: TmdbMedia, type: Exclude<ContentType, 'anime'>, tag?: stri
     status: isMovie ? undefined : asString(tv.status),
     episodes,
     seasons,
+    seasonsData,
     networks: isMovie ? undefined : extractTvNetworks(tv),
     tags: tag ? [tag] : undefined,
     source: tmdbSource(String(raw.id)),

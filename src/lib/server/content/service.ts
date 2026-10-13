@@ -1,6 +1,7 @@
 import { getTmdbCollection, getTmdbDetail, getTmdbDiscover, getTmdbPopular, getTmdbTrendingMoviesByLanguage, searchTmdb, getTmdbSeason, getTmdbNowPlaying, getTmdbNewOnOtt, getTmdbNewOnOttTyped, getTmdbNewOnOttAnime, getTmdbPopularByLanguage, getTmdbTopRated, getTmdbGenreByLanguage, getTmdbTvGenreByLanguage, getTmdbAnimeMerged, getTmdbAdultShows, getTmdbAdultDiscover } from './adapters/tmdb';
 import { emptyAdultDiscoverResult, type AdultDiscoverFilters } from './adult-discover';
 import { media } from '$data/content';
+import { env } from '$env/dynamic/private';
 import type { CollectionFilters, ContentDetail, ContentList, ContentSearchResult, ContentType, DiscoverLanguage, DiscoverRailFilters, DiscoverSectionKey, NormalizedMediaItem, SearchFilters } from './types';
 import { ContentServiceError } from './types';
 
@@ -29,8 +30,22 @@ function isMissingConfig(error: unknown) {
   return error instanceof ContentServiceError && error.code === 'CONFIG_MISSING';
 }
 
+// MAV-FOCUSED Issue 1 (2026-10): fixtures are the local-dev / CI-without-
+// credentials fallback ONLY. The previous implementation also fell back on
+// UPSTREAM_ERROR / RATE_LIMITED / INVALID_RESPONSE — which meant a TMDB
+// hiccup in production would render the static demo catalog (afterlight,
+// emberline, …) on the Discover homepage, in collection searches, and in
+// the search results as if it were real catalog content. That is a fixture
+// leak into public-facing surfaces (the very class of leak Issue 1 requires
+// us to close).
+//
+// Production TMDB failures now propagate — the discover/collection/popular
+// rails render their existing empty/unavailable state and search returns an
+// empty result. CONFIG_MISSING still falls back so a developer without
+// TMDB credentials can exercise the rails/search UI from the fixture
+// catalog (the legitimate dev-only use of fixtures).
 function canFallback(error: unknown) {
-  return isMissingConfig(error) || (error instanceof ContentServiceError && ['UPSTREAM_ERROR', 'RATE_LIMITED', 'INVALID_RESPONSE'].includes(error.code));
+  return isMissingConfig(error);
 }
 
 function boundedLog(value: number | undefined, divisor: number) {
@@ -295,6 +310,18 @@ export async function getSeriesSeason(id: string, seasonNumber: number) {
   // are now TMDB TV series, so the same TMDB season endpoint serves both.
   const cleanId = id.replace(/^(series|anime)-/, '');
   if (/^\d+$/.test(cleanId)) return getTmdbSeason(cleanId, seasonNumber);
+  // MAV-FOCUSED Issue 1 (2026-10): the only non-numeric IDs that reach
+  // here are fixture slugs (e.g. `nocturne-city`, `atlas-9`). In
+  // production those detail pages now 404 at the `getDetail` gate (see
+  // above), so the season endpoint must agree — a fixture slug must not
+  // produce a fabricated season with placeholder episodes (that was the
+  // Issue 4 root cause: placeholder "Episode 3" / "Unknown" rows with
+  // active Play/Download buttons). The local-dev / CI-without-TMDB
+  // path keeps the previous fixture behavior so a developer can still
+  // exercise the season UI without credentials.
+  if (env.TMDB_READ_ACCESS_TOKEN || env.TMDB_API_KEY) {
+    throw new ContentServiceError('The TV season identifier is invalid.', { code: 'NOT_FOUND', status: 404 });
+  }
   const fixture = media.find((item) => item.type === 'series' && item.id === cleanId);
   const count = fixture?.episodes ?? 8;
   return {
@@ -321,8 +348,29 @@ export async function getDetail(type: ContentType, id: string): Promise<ContentD
     if (type === 'anime') return await getTmdbDetail('series', id.replace(/^(anime|series)-/, ''));
     return await getTmdbDetail(type, id.replace(/^(movie|series)-/, ''));
   } catch (error) {
-    const fixture = fixtureDetail(type, id);
-    if (fixture && (canFallback(error) || (error instanceof ContentServiceError && error.code === 'NOT_FOUND'))) return { ...fixture, source: { ...fixture.source, stale: true } };
+    // MAV-FOCUSED Issue 1 (2026-10): dummy detail URLs must 404.
+    //
+    // The previous NOT_FOUND → fixtureDetail fallback was the root cause
+    // of `/movie/afterlight`, `/series/nocturne-city`, `/anime/paper-moons`
+    // and every other fixture slug rendering a real-looking detail page
+    // (with cast, providers, recommendations) instead of the route's
+    // existing 404 handling. The production sitemap is already clean
+    // (sitemap.xml/+server.ts emits only the verified static public
+    // pages), but the dummy DETAIL PAGE was still accessible at its
+    // fixture URL because the service synthesised a ContentDetail from
+    // the static `$lib/data/content` fixture catalog whenever TMDB said
+    // NOT_FOUND.
+    //
+    // Fixtures are now used ONLY when TMDB credentials are missing
+    // (CONFIG_MISSING — the local-dev / CI-without-credentials path).
+    // Every other error — including NOT_FOUND — propagates so the route
+    // handler can return its existing 404 (the SSR `+page.server.ts` for
+    // movie/[id], series/[id], anime/[id] all `throw error(404, …)` on
+    // any thrown service error).
+    if (error instanceof ContentServiceError && error.code === 'CONFIG_MISSING') {
+      const fixture = fixtureDetail(type, id);
+      if (fixture) return { ...fixture, source: { ...fixture.source, stale: true } };
+    }
     throw error;
   }
 }

@@ -1,5 +1,5 @@
 <script lang="ts">
-  // Subtitle Settings sheet (focused player fixes 2026-10 — Issues 1+2+3).
+  // Subtitle Settings sheet — focused player fixes (Issues 1+2+3, 2026-10).
   //
   // ONE Mavero-styled surface combining:
   //   * track selection (Off + every REAL track — never fabricated options);
@@ -11,10 +11,18 @@
   //     (None/Outline/Shadow/Box);
   //   * Reset — restores the default appearance AND offset.
   //
-  // Every change dispatches through onPrefs/onSubtitle immediately — the
-  // overlay re-renders on the very next frame (live preview while watching).
-  // The parent (shell) sanitizes + persists; this component stays dumb.
-  import { Check, RotateCcw } from 'lucide-svelte';
+  // Focused-fix Issue 2 (2026-10): the sheet is now organised into TWO
+  // tabs — Languages (the default) and Settings — so the user reaches
+  // subtitle sync / appearance with ONE tap, regardless of how many
+  // subtitle tracks the source exposes (a source like Swapped ships
+  // 15+ languages and used to force a long scroll to reach sync). Tab
+  // state is pure local UI state — switching tabs NEVER resets the
+  // selected subtitle track or unsaved/current preferences; the parent
+  // shell stays the single source of truth for both. The existing
+  // PlayerOptionSheet chrome (dialog semantics, focus trap+restore,
+  // Escape/outside-click, safe-area, independent scroll) is reused
+  // unchanged.
+  import { Check, RotateCcw, Settings2, Languages } from 'lucide-svelte';
   import PlayerOptionSheet from './PlayerOptionSheet.svelte';
   import type { PlayerSubtitleTrack } from '$lib/shared/player';
   import {
@@ -39,6 +47,12 @@
   export let onSubtitle: (url: string) => void = () => {};
   export let onPrefs: (next: SubtitlePreferences) => void = () => {};
   export let onClose: () => void = () => {};
+
+  // Issue 2: tab state is purely local — switching tabs does NOT touch the
+  // selected track or does NOT re-render the parent's prefs. The default
+  // tab is Languages (the most common action).
+  type SubtitleTab = 'languages' | 'settings';
+  let activeTab: SubtitleTab = 'languages';
 
   function trackLabel(track: PlayerSubtitleTrack, index: number): string {
     return track.label ?? track.language ?? `Track ${index + 1}`;
@@ -65,80 +79,169 @@
 </script>
 
 <PlayerOptionSheet title="Subtitles" {onClose}>
-  <!-- Section 1: track selection (honest states included). -->
-  <div class="section-label" id="mav-sub-track-label">Subtitles</div>
-  <div class="track-list" role="group" aria-labelledby="mav-sub-track-label">
-    <button class="track-row" class:selected={selectedSubtitle === ''} type="button" onclick={() => onSubtitle('')}>
-      <span class="row-mark">{#if selectedSubtitle === ''}<Check size={15} />{/if}</span>
-      <span class="row-copy"><strong>Off</strong></span>
+  <!-- Issue 2: two-tab header — Languages (default) + Settings. The tabs sit
+       beneath the eyebrow title and above the active tab body. They are
+       pure presentational state — switching tabs does not call onSubtitle
+       or onPrefs, so the selected track and current preferences survive. -->
+  <div class="tab-row" role="tablist" aria-label="Subtitle sheet sections">
+    <button
+      class="tab"
+      class:active={activeTab === 'languages'}
+      role="tab"
+      aria-selected={activeTab === 'languages'}
+      aria-controls="mav-sub-tab-languages"
+      id="mav-sub-tabbtn-languages"
+      type="button"
+      onclick={() => { activeTab = 'languages'; }}
+    >
+      <Languages size={13} />
+      <span>Languages</span>
     </button>
-    {#each tracks as track, index}
-      <button class="track-row" class:selected={selectedSubtitle === track.url} type="button" onclick={() => onSubtitle(track.url)}>
-        <span class="row-mark">{#if selectedSubtitle === track.url}<Check size={15} />{/if}</span>
-        <span class="row-copy"><strong>{trackLabel(track, index)}</strong>{#if track.language}<small>{track.language}</small>{/if}</span>
-      </button>
-    {/each}
-    {#if !tracks.length && notice}
-      <div class="notice-row" role="status">{notice}</div>
-    {/if}
+    <button
+      class="tab"
+      class:active={activeTab === 'settings'}
+      role="tab"
+      aria-selected={activeTab === 'settings'}
+      aria-controls="mav-sub-tab-settings"
+      id="mav-sub-tabbtn-settings"
+      type="button"
+      onclick={() => { activeTab = 'settings'; }}
+    >
+      <Settings2 size={13} />
+      <span>Settings</span>
+    </button>
   </div>
 
-  <!-- Section 2: Subtitle Sync / Offset. Positive = LATER (the convention
-       is stated verbatim next to the control). -->
-  <div class="section-label" id="mav-sub-sync-label">Subtitle sync</div>
-  <div class="control-row">
-    <span class="control-copy" id="mav-sub-offset-label">Offset</span>
-    <div class="stepper" role="group" aria-labelledby="mav-sub-offset-label">
-      <button class="step-button" type="button" aria-label="Show subtitles 0.5 seconds earlier" disabled={offsetAtMin} onclick={() => onPrefs({ ...prefs, offsetSeconds: stepSubtitleOffset(prefs.offsetSeconds, -1) })}>&minus;0.5s</button>
-      <span class="step-value" aria-live="polite">{formatSubtitleOffset(prefs.offsetSeconds)}</span>
-      <button class="step-button" type="button" aria-label="Delay subtitles 0.5 seconds later" disabled={offsetAtMax} onclick={() => onPrefs({ ...prefs, offsetSeconds: stepSubtitleOffset(prefs.offsetSeconds, 1) })}>+0.5s</button>
-      <button class="mini-reset" type="button" aria-label="Reset subtitle offset to zero" disabled={prefs.offsetSeconds === 0} onclick={() => onPrefs({ ...prefs, offsetSeconds: 0 })}><RotateCcw size={13} /></button>
+  {#if activeTab === 'languages'}
+    <div id="mav-sub-tab-languages" role="tabpanel" aria-labelledby="mav-sub-tabbtn-languages" class="tab-panel">
+      <div class="section-label" id="mav-sub-track-label">Subtitles</div>
+      <div class="track-list" role="group" aria-labelledby="mav-sub-track-label">
+        <button class="track-row" class:selected={selectedSubtitle === ''} type="button" onclick={() => onSubtitle('')}>
+          <span class="row-mark">{#if selectedSubtitle === ''}<Check size={15} />{/if}</span>
+          <span class="row-copy"><strong>Off</strong></span>
+        </button>
+        {#each tracks as track, index}
+          <button class="track-row" class:selected={selectedSubtitle === track.url} type="button" onclick={() => onSubtitle(track.url)}>
+            <span class="row-mark">{#if selectedSubtitle === track.url}<Check size={15} />{/if}</span>
+            <span class="row-copy"><strong>{trackLabel(track, index)}</strong>{#if track.language}<small>{track.language}</small>{/if}</span>
+          </button>
+        {/each}
+        {#if !tracks.length && notice}
+          <div class="notice-row" role="status">{notice}</div>
+        {/if}
+      </div>
     </div>
-  </div>
-  <p class="hint">Positive delays subtitles &middot; negative shows them earlier</p>
+  {:else}
+    <div id="mav-sub-tab-settings" role="tabpanel" aria-labelledby="mav-sub-tabbtn-settings" class="tab-panel">
+      <!-- Section 2: Subtitle Sync / Offset. Positive = LATER (the convention
+           is stated verbatim next to the control). -->
+      <div class="section-label" id="mav-sub-sync-label">Subtitle sync</div>
+      <div class="control-row">
+        <span class="control-copy" id="mav-sub-offset-label">Offset</span>
+        <div class="stepper" role="group" aria-labelledby="mav-sub-offset-label">
+          <button class="step-button" type="button" aria-label="Show subtitles 0.5 seconds earlier" disabled={offsetAtMin} onclick={() => onPrefs({ ...prefs, offsetSeconds: stepSubtitleOffset(prefs.offsetSeconds, -1) })}>&minus;0.5s</button>
+          <span class="step-value" aria-live="polite">{formatSubtitleOffset(prefs.offsetSeconds)}</span>
+          <button class="step-button" type="button" aria-label="Delay subtitles 0.5 seconds later" disabled={offsetAtMax} onclick={() => onPrefs({ ...prefs, offsetSeconds: stepSubtitleOffset(prefs.offsetSeconds, 1) })}>+0.5s</button>
+          <button class="mini-reset" type="button" aria-label="Reset subtitle offset to zero" disabled={prefs.offsetSeconds === 0} onclick={() => onPrefs({ ...prefs, offsetSeconds: 0 })}><RotateCcw size={13} /></button>
+        </div>
+      </div>
+      <p class="hint">Positive delays subtitles &middot; negative shows them earlier</p>
 
-  <!-- Section 3: text size. -->
-  <div class="section-label" id="mav-sub-size-label">Text size</div>
-  <div class="control-row">
-    <span class="control-copy" id="mav-sub-size-value">{sizePercent}</span>
-    <div class="stepper" role="group" aria-labelledby="mav-sub-size-label">
-      <button class="step-button" type="button" aria-label="Decrease subtitle text size" disabled={sizeAtMin} onclick={() => onPrefs({ ...prefs, sizeScale: stepSubtitleSize(prefs.sizeScale, -1) })}>&minus;</button>
-      <div class="size-preview" aria-hidden="true" style={`font-size: calc(${prefs.sizeScale} * 0.82rem)`}>Aa</div>
-      <button class="step-button" type="button" aria-label="Increase subtitle text size" disabled={sizeAtMax} onclick={() => onPrefs({ ...prefs, sizeScale: stepSubtitleSize(prefs.sizeScale, 1) })}>+</button>
+      <!-- Section 3: text size. -->
+      <div class="section-label" id="mav-sub-size-label">Text size</div>
+      <div class="control-row">
+        <span class="control-copy" id="mav-sub-size-value">{sizePercent}</span>
+        <div class="stepper" role="group" aria-labelledby="mav-sub-size-label">
+          <button class="step-button" type="button" aria-label="Decrease subtitle text size" disabled={sizeAtMin} onclick={() => onPrefs({ ...prefs, sizeScale: stepSubtitleSize(prefs.sizeScale, -1) })}>&minus;</button>
+          <div class="size-preview" aria-hidden="true" style={`font-size: calc(${prefs.sizeScale} * 0.82rem)`}>Aa</div>
+          <button class="step-button" type="button" aria-label="Increase subtitle text size" disabled={sizeAtMax} onclick={() => onPrefs({ ...prefs, sizeScale: stepSubtitleSize(prefs.sizeScale, 1) })}>+</button>
+        </div>
+      </div>
+
+      <!-- Section 4: vertical position (clear bottom→top semantics). -->
+      <div class="section-label" id="mav-sub-pos-label">Vertical position</div>
+      <div class="control-row slider-row">
+        <span class="slider-bound">Bottom</span>
+        <input class="pos-slider" type="range" min={SUBTITLE_POSITION.min} max={SUBTITLE_POSITION.max} step={SUBTITLE_POSITION.step} value={prefs.position} aria-labelledby="mav-sub-pos-label" aria-valuetext={positionValueText(prefs.position)} oninput={(event) => onPrefs({ ...prefs, position: Number((event.currentTarget as HTMLInputElement).value) })} />
+        <span class="slider-bound">Top</span>
+      </div>
+
+      <!-- Section 5: text colour (fixed presets only). -->
+      <div class="section-label" id="mav-sub-color-label">Colour</div>
+      <div class="swatch-row" role="group" aria-labelledby="mav-sub-color-label">
+        {#each SUBTITLE_COLOR_PRESETS as preset (preset.key)}
+          <button class="swatch" class:selected={prefs.color === preset.key} type="button" style={`background: ${preset.hex}`} aria-label={`Subtitle colour ${preset.label}`} aria-pressed={prefs.color === preset.key} onclick={() => onPrefs({ ...prefs, color: preset.key as SubtitleColorKey })}>
+            {#if prefs.color === preset.key}<Check size={13} />{/if}
+          </button>
+        {/each}
+      </div>
+
+      <!-- Section 6: border style. -->
+      <div class="section-label" id="mav-sub-border-label">Border style</div>
+      <div class="segmented" role="group" aria-labelledby="mav-sub-border-label">
+        {#each BORDER_OPTIONS as option (option.key)}
+          <button class="segment" class:selected={prefs.borderStyle === option.key} type="button" aria-pressed={prefs.borderStyle === option.key} onclick={() => onPrefs({ ...prefs, borderStyle: option.key })}>{option.label}</button>
+        {/each}
+      </div>
+
+      <!-- Section 7: reset everything (appearance + offset). -->
+      <button class="reset-all" type="button" onclick={() => onPrefs({ ...DEFAULT_SUBTITLE_PREFERENCES })}><RotateCcw size={14} /> Reset subtitle settings</button>
     </div>
-  </div>
-
-  <!-- Section 4: vertical position (clear bottom→top semantics). -->
-  <div class="section-label" id="mav-sub-pos-label">Vertical position</div>
-  <div class="control-row slider-row">
-    <span class="slider-bound">Bottom</span>
-    <input class="pos-slider" type="range" min={SUBTITLE_POSITION.min} max={SUBTITLE_POSITION.max} step={SUBTITLE_POSITION.step} value={prefs.position} aria-labelledby="mav-sub-pos-label" aria-valuetext={positionValueText(prefs.position)} oninput={(event) => onPrefs({ ...prefs, position: Number((event.currentTarget as HTMLInputElement).value) })} />
-    <span class="slider-bound">Top</span>
-  </div>
-
-  <!-- Section 5: text colour (fixed presets only). -->
-  <div class="section-label" id="mav-sub-color-label">Colour</div>
-  <div class="swatch-row" role="group" aria-labelledby="mav-sub-color-label">
-    {#each SUBTITLE_COLOR_PRESETS as preset (preset.key)}
-      <button class="swatch" class:selected={prefs.color === preset.key} type="button" style={`background: ${preset.hex}`} aria-label={`Subtitle colour ${preset.label}`} aria-pressed={prefs.color === preset.key} onclick={() => onPrefs({ ...prefs, color: preset.key as SubtitleColorKey })}>
-        {#if prefs.color === preset.key}<Check size={13} />{/if}
-      </button>
-    {/each}
-  </div>
-
-  <!-- Section 6: border style. -->
-  <div class="section-label" id="mav-sub-border-label">Border style</div>
-  <div class="segmented" role="group" aria-labelledby="mav-sub-border-label">
-    {#each BORDER_OPTIONS as option (option.key)}
-      <button class="segment" class:selected={prefs.borderStyle === option.key} type="button" aria-pressed={prefs.borderStyle === option.key} onclick={() => onPrefs({ ...prefs, borderStyle: option.key })}>{option.label}</button>
-    {/each}
-  </div>
-
-  <!-- Section 7: reset everything (appearance + offset). -->
-  <button class="reset-all" type="button" onclick={() => onPrefs({ ...DEFAULT_SUBTITLE_PREFERENCES })}><RotateCcw size={14} /> Reset subtitle settings</button>
+  {/if}
 </PlayerOptionSheet>
 
 <style>
+  /* Issue 2: two-tab header. The tabs use the same Mavero dark/cinematic
+     surface as the rest of the sheet — no second unrelated modal, no
+     browser-default dropdown. They sit ABOVE the active tab body and
+     never reset the selected track or current prefs. */
+  .tab-row {
+    display: flex;
+    gap: 4px;
+    padding: 6px 6px 10px;
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 4px;
+  }
+  .tab {
+    flex: 1 1 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-height: 38px;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius-sm);
+    color: var(--ink-soft);
+    background: rgba(255, 255, 255, 0.03);
+    cursor: pointer;
+    font: inherit;
+    font-size: 0.6rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
+  }
+  .tab:hover, .tab:focus-visible {
+    border-color: var(--line-strong);
+    background: var(--accent-soft);
+    color: var(--ink);
+    outline: none;
+  }
+  .tab.active {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    color: var(--ink);
+    box-shadow: 0 0 0 1px var(--accent-soft);
+  }
+  .tab:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .tab-panel {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
   .section-label { color: var(--muted); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: 0.54rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; padding: 12px 6px 6px; border-top: 1px solid var(--line); margin-top: 8px; }
   .section-label:first-child { border-top: 0; margin-top: 0; padding-top: 4px; }
   .track-list { display: grid; gap: 3px; }

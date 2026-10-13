@@ -204,10 +204,26 @@ console.log('\n§3 — component source contracts');
   ok((subtitleSheet.match(/SUBTITLE_COLOR_PRESETS/g) ?? []).length >= 2, '3z8. colours come from the fixed preset list (no free-form values)');
   ok(/'none' \| 'outline' \| 'shadow' \| 'box'/.test(read('src/lib/client/player/subtitles/subtitle-preferences.ts')), '3z9. border styles: None/Outline/Shadow/Box');
 
-  // --- Issue 4: loading indicator. ---
+  // --- Issue 3: loading indicator (focused-fix redesign, 2026-10). ---
+  // The loading-card now rejoins the centered group: positioned relative to
+  // the actual playback viewport (top: 50%; left: 50%; translate(-50%, -50%))
+  // — NOT at an arbitrary top offset. The empty-orb in PlayerViewport is
+  // retired so the loading-card is the SINGLE coherent loading indicator.
+  // z-index 7 keeps it above the media surface (z-index 1) and below the
+  // actionable controls (z-index 10/12).
   ok(/\.message-card, \.completion-card \{ position: absolute; z-index: 7; right: 50%; bottom: 50%;/.test(shell), '3z10. error/completion cards stay centered (unchanged semantics)');
   const loadingRule = shell.slice(shell.indexOf('.loading-card { position: absolute'));
-  ok(/top: max\(14px, env\(safe-area-inset-top\)\); left: 50%;/.test(loadingRule) && !/translate\(50%, 50%\)/.test(loadingRule), '3z11. the loading layer is TOP-CENTER — out of the centered group (was: dead-center behind Play/Pause)');
+  ok(/top: 50%; left: 50%; right: auto; bottom: auto; transform: translate\(-50%, -50%\)/.test(loadingRule), '3z11. the loading layer is CENTERED in the playback viewport (was: top-center arbitrary offset; the empty-orb competing indicator is retired)');
+  ok(/z-index: 7;/.test(loadingRule), '3z11b. the loading layer z-index stays at 7 — above the media surface, below the actionable controls');
+  // The spinner is now a clean Material/iOS-style ring with the Mavero accent.
+  const loadingRingRule = shell.slice(shell.indexOf('.loading-ring {'));
+  ok(/border: 2\.5px solid rgba\(255, 255, 255, 0\.12\)/.test(loadingRingRule), '3z11c. the spinner uses a clean 2.5px border ring (no more oversized conic-gradient)');
+  ok(/border-top-color: var\(--accent/.test(loadingRingRule), '3z11d. the spinner leading edge uses the Mavero accent color (high contrast against the dark surface)');
+  ok(/width: 36px; height: 36px;/.test(loadingRingRule), '3z11e. the spinner has sensible dimensions (36px — not the previous 72px empty-orb)');
+  // The empty-orb MARKUP is retired — the loading-card is the SINGLE loading indicator.
+  // (The CSS rule for .empty-orb is also removed; only documentation references remain.)
+  ok(!/<span class="empty-orb"><\/span>/.test(viewport) && !/class="empty-orb"/.test(viewport), '3z11f. the empty-orb markup is retired in PlayerViewport (the loading-card is the single coherent loading indicator)');
+  ok(!/.empty-orb\s*{/.test(viewport), '3z11g. the dead .empty-orb CSS rule is removed (no orphan styles)');
   ok(/const DIRECT_LOAD_TIMEOUT_MS = 20000;/.test(shell), '3z12. a bounded direct-load timeout exists (the embed path\u2019s contract, now for direct too)');
   ok(/if \(directLoadKey !== key\) return;[\s\S]{0,240}if \(state !== 'preparing'\) return;/.test(shell), '3z13. the timeout carries the captured-key stale guard (a previous source can never error the current one)');
   ok(/\$: if \(source\?\.type === 'direct' && mediaUrl && state === 'preparing'\) startDirectLoadTimeout/.test(shell) && /\$: if \(state !== 'preparing'\) clearDirectLoadTimeout\(\);/.test(shell), '3z14. the timer arms ONLY during a real prepare session and disarms on ready/error/switch');

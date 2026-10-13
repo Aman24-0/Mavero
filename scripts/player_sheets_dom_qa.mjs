@@ -204,6 +204,13 @@ try {
     await page.click('.select-control.subtitles');
     await page.waitForTimeout(150);
 
+    // MAV-FOCUSED Issue 2 (2026-10): the subtitle sheet now opens on the
+    // Languages tab by default. Switch to the Settings tab before
+    // exercising the offset / size / colour / border controls.
+    const settingsTab = page.getByRole('tab', { name: /Settings/ });
+    await settingsTab.click();
+    await page.waitForTimeout(120);
+
     const offsetText = () => page.evaluate(() => document.querySelector('.step-value')?.textContent?.trim());
     check('C1. the offset displays the default exactly as "0.0s"', (await offsetText()) === '0.0s', await offsetText());
     await page.click('button[aria-label="Delay subtitles 0.5 seconds later"]');
@@ -326,8 +333,24 @@ try {
       };
     });
     check('E1. the loading indicator renders while the source prepares', geo.cardPresent && geo.clusterPresent, `card=${geo.cardPresent} cluster=${geo.clusterPresent}`);
-    check('E2. it is pinned TOP-CENTER (clear of Back FAB + utility zone)', geo.cardTop !== null && geo.cardTop <= 60 && Math.abs(geo.cardCenterX - geo.vw / 2) <= 8, `top ${geo.cardTop}, centerX ${geo.cardCenterX} of ${geo.vw}`);
-    check('E3. it NEVER intersects the central Play/Pause cluster', geo.overlap === false, `card bottom ${geo.cardBottom} vs cluster top ${geo.clusterTop}`);
+    // MAV-FOCUSED Issue 3 (2026-10): the loading card is now CENTERED in
+    // the playback viewport (top: 50%; left: 50%; translate(-50%, -50%)) —
+    // NOT at an arbitrary top offset. The previous top-center placement
+    // was the screenshot's "Loading player… near the top of the screen".
+    check('E2. it is CENTERED in the playback viewport (top: ~50%, centerX: ~50%)', geo.cardTop !== null && Math.abs(geo.cardTop - geo.clusterTop) <= 80 && Math.abs(geo.cardCenterX - geo.vw / 2) <= 8, `top ${geo.cardTop} (cluster top ${geo.clusterTop}), centerX ${geo.cardCenterX} of ${geo.vw}`);
+    // The loading card z-index (7) stays BELOW the actionable controls
+    // (back-fab z-index 12, unlock-fab z-index 12, the controls overlay
+    // z-index 10) — the loading card never covers the back button or the
+    // lock/subtitle/quality controls.
+    const layering = await page.evaluate(() => {
+      const card = document.querySelector('.loading-card');
+      const backFab = document.querySelector('.back-fab');
+      if (!card || !backFab) return null;
+      const cardZ = Number(getComputedStyle(card).zIndex || 0);
+      const backFabZ = Number(getComputedStyle(backFab).zIndex || 0);
+      return { cardZ, backFabZ, backFabOnTop: backFabZ > cardZ };
+    });
+    check('E3. the loading card z-index stays BELOW the back-fab (back button stays interactive on top)', layering !== null && layering.backFabOnTop, `card z=${layering?.cardZ} back-fab z=${layering?.backFabZ}`);
     check('E4. active buffering is a DIFFERENT surface (no two loading indicators)', geo.bufferingNote === false && /Loading player|Starting your stream|Switching source/.test(geo.copy), `buffering note: ${geo.bufferingNote}`);
 
     // Ready transition: loadedmetadata flips the shell to paused → card leaves.

@@ -7,6 +7,32 @@ export type CastMember = {
   photo?: string;
 };
 
+// MAV-FOCUSED Issue 4 (2026-10): per-season metadata used by the
+// SeasonEpisodes component to filter out announced / future seasons
+// from the season selector. Mirrors the server-side Season type
+// (src/lib/server/content/types.ts) — kept here so the client-side
+// MediaItem can carry the seasonsData field without depending on
+// server-only modules.
+export type Season = {
+  number: number;
+  title: string;
+  episodeCount: number;
+  airDate?: string;
+  poster?: string;
+  episodes?: Episode[];
+};
+
+export type Episode = {
+  id: string;
+  number: number;
+  season: number;
+  title: string;
+  overview?: string;
+  airDate?: string;
+  runtime?: string;
+  still?: string;
+};
+
 export type MediaItem = {
   id: string;
   title: string;
@@ -43,6 +69,16 @@ export type MediaItem = {
   status?: string;
   episodes?: number;
   seasons?: number;
+  /**
+   * MAV-FOCUSED Issue 4 (2026-10): per-season metadata from the TMDB TV
+   * detail response (season_number + air_date + episode_count + poster).
+   * Populated ONLY on the TV/anime-series detail path (list responses
+   * carry no seasons[]). Consumed by SeasonEpisodes to filter out
+   * announced / future seasons (e.g. The Gentlemen S3, Black Clover S2)
+   * from the season selector. Undefined for movies and for list items —
+   * the caller falls back to the existing count-based behavior.
+   */
+  seasonsData?: Season[];
   tags?: string[];
   trailerKey?: string;
   cast?: CastMember[];

@@ -1069,6 +1069,7 @@
       <SeasonEpisodes
         id={item.id}
         seasonCount={item.seasons ?? 1}
+        seasonsData={item.seasonsData}
         watchType={type === 'anime' ? 'anime' : 'series'}
         onDownload={openEpisodeDownloadSheet}
         contentSnapshot={{ title: item.title, poster: item.poster, backdrop: item.backdrop, year: item.year, runtime: typeof item.runtime === 'string' ? item.runtime : String(item.runtime), rating: item.rating, genres: item.genres, description: item.description }}

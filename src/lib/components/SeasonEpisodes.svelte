@@ -9,9 +9,12 @@
   import { AlertTriangle, ChevronRight, Download, LoaderCircle, Play } from 'lucide-svelte';
   import { appendReturnTo } from '$lib/shared/navigation';
   import { markEpisodeAsResumeTarget } from '$lib/client/progress/service';
-
-  type Episode = { id: string; number: number; season: number; title: string; overview?: string; airDate?: string; runtime?: string; still?: string };
-  type Season = { number: number; title: string; episodeCount: number; episodes?: Episode[] };
+  // MAV-FOCUSED Issue 4 (2026-10): pure eligibility helpers — hide
+  // Play/Download for unreleased episodes and hide season tabs for
+  // announced / unstarted seasons. The helpers are pure functions of
+  // (episode/season, now) — no DOM, no fetches, no side effects.
+  import { isEpisodeReleased, getEligibleSeasons, type EligibleSeason } from '$lib/shared/episode-eligibility';
+  import type { Season, Episode } from '$lib/data/content';
 
   // ============================================================
   // MAV-21 Workstream E — season response cache + request-race guard.
@@ -74,6 +77,14 @@
 
   export let id: string;
   export let seasonCount = 1;
+  // MAV-FOCUSED Issue 4 (2026-10): per-season metadata (season_number +
+  // air_date + episode_count) from the TMDB TV detail response. When
+  // present, SeasonEpisodes filters out announced / unstarted seasons
+  // from the season selector (e.g. The Gentlemen S3, Black Clover S2).
+  // When absent (older callers, list-shaped data, or local-dev fixtures),
+  // SeasonEpisodes falls back to the existing count-based behavior —
+  // every season from 1..seasonCount gets a tab.
+  export let seasonsData: Season[] | undefined = undefined;
   // Phase 7F+ (anime routing): the URL type segment for watch links.
   // Defaults to 'series'. For anime content loaded via /anime/ route,
   // pass 'anime' so episode links go to /watch/anime/{id}?season=1&episode=N.
@@ -99,6 +110,28 @@
   // sequence. A response is only allowed to render (and to populate
   // the cache) while it is still the NEWEST request for this mount.
   let requestSequence = 0;
+
+  // MAV-FOCUSED Issue 4 (2026-10): the eligibility-filtered season
+  // list. Computed once on mount (and re-evaluated if seasonsData ever
+  // changes). When seasonsData is absent, we fall back to the count-based
+  // behavior: every season from 1..seasonCount gets a tab. The
+  // eligibility helpers are PURE functions of (season, now) — the
+  // filtering is deterministic and tested in isolation by
+  // scripts/mav_focused_issue4_eligibility_test.ts.
+  $: eligibleSeasonNumbers = (() => {
+    if (seasonsData && seasonsData.length > 0) {
+      const eligible = getEligibleSeasons(seasonsData as EligibleSeason[]);
+      if (eligible.length > 0) return eligible.map((s) => s.number).sort((a, b) => a - b);
+      // seasonsData was supplied but no season has started airing yet.
+      // Fall back to season 1 so the user still sees SOMETHING — but
+      // only if seasonCount says there is at least one season. (This
+      // is the conservative path: a brand-new series with all seasons
+      // in the future shows S1's empty state, not a hidden selector.)
+      return seasonCount > 0 ? [1] : [];
+    }
+    // No seasonsData — fall back to the existing count-based behavior.
+    return Array.from({ length: Math.max(seasonCount, 1) }, (_, i) => i + 1);
+  })();
 
   async function loadSeason(number: number) {
     selectedSeason = number;
@@ -137,7 +170,28 @@
 
   $: returnTo = `${page.url.pathname}${page.url.search}${page.url.hash}`;
 
-  onMount(() => { void loadSeason(1); });
+  // MAV-FOCUSED Issue 4 (2026-10): on mount, pick the LATEST ELIGIBLE
+  // season as the default selection. The previous behavior always
+  // defaulted to S1 (the oldest season) — fine for completed shows, but
+  // for a currently-airing show the user typically wants the latest
+  // season. We still LOAD S1's data first if no seasonsData is present
+  // (preserving the existing behavior for backward compatibility).
+  onMount(() => {
+    const initialSeason = (eligibleSeasonNumbers.length > 0)
+      ? eligibleSeasonNumbers[eligibleSeasonNumbers.length - 1]
+      : 1;
+    void loadSeason(initialSeason);
+  });
+
+  // MAV-FOCUSED Issue 4 (2026-10): episode release-eligibility check.
+  // Pure wrapper around the shared helper. An episode with a future
+  // airDate is NOT released — its Play/Download buttons are hidden.
+  // Missing/invalid airDate falls back to the conservative default
+  // (released == true) so a real catalog episode with no air_date
+  // stays playable — the existing trusted-availability rules apply.
+  function episodeIsReleased(episode: Episode): boolean {
+    return isEpisodeReleased(episode, { hasConfirmedPlayableSource: true });
+  }
 
   // Episode-card Download click handler. Forwards the EXACT selected
   // season + clicked episode number to the parent. The parent owns the
@@ -156,10 +210,10 @@
       <div class="ep-eyebrow">MAVERO / Series guide</div>
       <h2 class="ep-title" id="ep-heading">Episodes</h2>
     </div>
-    {#if seasonCount > 1}
+    {#if eligibleSeasonNumbers.length > 1}
       <div class="season-tabs" role="group" aria-label="Select season">
-        {#each Array(Math.max(seasonCount, 1)) as _, index}
-          <button class:active={selectedSeason === index + 1} aria-pressed={selectedSeason === index + 1} onclick={() => loadSeason(index + 1)}>S{index + 1}</button>
+        {#each eligibleSeasonNumbers as seasonNumber}
+          <button class:active={selectedSeason === seasonNumber} aria-pressed={selectedSeason === seasonNumber} onclick={() => loadSeason(seasonNumber)}>S{seasonNumber}</button>
         {/each}
       </div>
     {/if}
@@ -191,41 +245,51 @@
             <p>{episode.overview || 'Episode details are not available yet.'}</p>
           </div>
           <div class="ep-actions">
-            <button
-              type="button"
-              class="ep-play"
-              aria-label={`Watch ${episode.title}`}
-              onclick={async (e) => {
-                // P3+P4: persist the episode as the latest resume target
-                // BEFORE navigation. This prevents the episode selection
-                // from being lost if the component is destroyed during
-                // navigation. Local IndexedDB write first; cloud sync
-                // happens asynchronously after.
-                e.preventDefault();
-                e.stopPropagation();
-                if (contentSnapshot) {
-                  try {
-                    await markEpisodeAsResumeTarget(
-                      { contentType: watchType, contentId: id, season: selectedSeason, episode: episode.number },
-                      contentSnapshot,
-                    );
-                  } catch { /* local persistence failure is non-fatal — navigation still proceeds */ }
-                }
-                void goto(appendReturnTo(`/watch/${watchType}/${id}?season=${selectedSeason}&episode=${episode.number}`, returnTo));
-              }}
-            >
-              <Play size={13} fill="currentColor" strokeWidth={0} />
-            </button>
-            {#if onDownload}
+            {#if episodeIsReleased(episode)}
               <button
                 type="button"
-                class="ep-download"
-                onclick={() => handleEpisodeDownload(episode)}
-                aria-label={`Download ${episode.title}`}
-                title={`Download ${episode.title}`}
+                class="ep-play"
+                aria-label={`Watch ${episode.title}`}
+                onclick={async (e) => {
+                  // P3+P4: persist the episode as the latest resume target
+                  // BEFORE navigation. This prevents the episode selection
+                  // from being lost if the component is destroyed during
+                  // navigation. Local IndexedDB write first; cloud sync
+                  // happens asynchronously after.
+                  e.preventDefault();
+                  e.stopPropagation();
+                  if (contentSnapshot) {
+                    try {
+                      await markEpisodeAsResumeTarget(
+                        { contentType: watchType, contentId: id, season: selectedSeason, episode: episode.number },
+                        contentSnapshot,
+                      );
+                    } catch { /* local persistence failure is non-fatal — navigation still proceeds */ }
+                  }
+                  void goto(appendReturnTo(`/watch/${watchType}/${id}?season=${selectedSeason}&episode=${episode.number}`, returnTo));
+                }}
               >
-                <Download size={12} />
+                <Play size={13} fill="currentColor" strokeWidth={0} />
               </button>
+              {#if onDownload}
+                <button
+                  type="button"
+                  class="ep-download"
+                  onclick={() => handleEpisodeDownload(episode)}
+                  aria-label={`Download ${episode.title}`}
+                  title={`Download ${episode.title}`}
+                >
+                  <Download size={12} />
+                </button>
+              {/if}
+            {:else}
+              <!-- MAV-FOCUSED Issue 4 (2026-10): the episode's release date
+                   is in the future. Play and Download are HIDDEN — no
+                   placeholder action buttons on unreleased content. The
+                   episode row stays visible (the airDate + overview render
+                   as-is) so the user can see what's coming, but no
+                   misleading actionable control is rendered. -->
+              <span class="ep-upcoming-badge" aria-label="Upcoming episode">Upcoming</span>
             {/if}
           </div>
         </article>
@@ -425,6 +489,30 @@
   }
   .ep-download:active { transform: scale(.94); }
   .ep-download:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+
+  /* MAV-FOCUSED Issue 4 (2026-10): the "Upcoming" badge rendered in
+     place of Play/Download for future-dated episodes. Visually subdued
+     (muted text + outline pill) so it reads as an informational label,
+     not as an actionable control. Same footprint as the Play/Download
+     pair so the row layout doesn't shift when an episode crosses its
+     release date. */
+  .ep-upcoming-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 30px;
+    padding: 0 12px;
+    border: 1px solid var(--color-border-strong);
+    border-radius: 999px;
+    color: var(--color-text-muted);
+    background: transparent;
+    font: inherit;
+    font-size: .58rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
 
   /* ---- TABLET ---- */
   @media (min-width: 641px) and (max-width: 1024px) {

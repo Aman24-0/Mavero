@@ -2570,7 +2570,7 @@
     {:else if state === 'completed'}
       <div class="completion-card" role="status"><Check size={18} /><span>Episode complete</span></div>
     {:else if effectiveState === 'preparing' || effectiveState === 'resolving' || effectiveState === 'switching-source' || effectiveState === 'embed-loading'}
-      <div class="loading-card" role="status"><span class="loading-ring" aria-hidden="true"><span></span></span><span class="loading-copy"><strong>{effectiveState === 'switching-source' ? 'Switching source…' : effectiveState === 'embed-loading' ? 'Starting your stream…' : 'Loading player…'}</strong><small>{resolutionMessage || (effectiveState === 'embed-loading' ? 'Loading provider embed…' : 'Preparing playback…')}</small></span></div>
+      <div class="loading-card" role="status"><span class="loading-ring" aria-hidden="true"></span><span class="loading-copy"><strong>{effectiveState === 'switching-source' ? 'Switching source…' : effectiveState === 'embed-loading' ? 'Starting your stream…' : 'Loading player…'}</strong><small>{resolutionMessage || (effectiveState === 'embed-loading' ? 'Loading provider embed…' : 'Preparing playback…')}</small></span></div>
     {/if}
     <!-- Player UI V2 (Part 1, Phase 2A): simulated BRIGHTNESS overlay — a
          Mavero-rendered black layer whose opacity follows the left-zone
@@ -2926,11 +2926,23 @@
      so it wins the cascade. */
   .player-shell.touch-locked .back-fab { opacity: 1; visibility: visible; pointer-events: auto; }
 
-  /* Overlay cards (error/completion) — centered in viewport.
-     Focused fixes (Issue 4): the LOADING card is NOT part of this centered
-     group anymore — it is a dedicated top-center loading layer (its own
-     rule below) so it can never sit behind/under the CENTRAL Play/Pause
-     cluster (both were dead-center before: the reported overlap). */
+  /* Overlay cards (error/completion/loading) — all centered in the
+     playback viewport (stage-wrap). Focused fixes Issue 3 (2026-10):
+     the LOADING card rejoins the centered group — it is now CENTERED
+     in the playback viewport (top: 50%; left: 50%; translate(-50%, -50%))
+     so it is positioned relative to the ACTUAL playback viewport, not
+     at an arbitrary top offset. The previous top-center placement
+     produced the screenshot's "Loading player…" card near the top of
+     the screen with a SEPARATE oversized dark empty-orb in the middle
+     of the empty viewport — two competing loading indicators. The
+     empty-orb is now retired in PlayerViewport; the loading card is
+     the SINGLE coherent loading presentation.
+
+     z-index 7 keeps the loading card ABOVE the media surface
+     (z-index 1) and BELOW the actionable player controls
+     (z-index 10/12 — back/lock/subtitle/quality/fullscreen). The
+     loading card therefore never covers those controls — it sits
+     beneath them in the cascade. */
   .message-card, .completion-card { position: absolute; z-index: 7; right: 50%; bottom: 50%; display: flex; align-items: center; gap: 12px; max-width: min(590px, calc(100% - 36px)); transform: translate(50%, 50%); border: 1px solid var(--line); border-radius: var(--radius-md); padding: 15px 16px; color: var(--ink); background: rgba(13,13,13,.92); box-shadow: var(--shadow-lg); backdrop-filter: blur(22px); }
   .message-card strong { display: block; font-size: .75rem; }
   .message-card p { margin: 5px 0 0; color: var(--muted); font-size: .66rem; line-height: 1.45; }
@@ -2939,17 +2951,26 @@
   .small-button { display: inline-flex; align-items: center; gap: 6px; min-height: 34px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); padding: 0 12px; color: var(--ink); background: var(--accent-soft); cursor: pointer; font: inherit; font-size: .62rem; white-space: nowrap; }
   .small-button.secondary { border-color: var(--line); background: rgba(255,255,255,.04); }
   .completion-card { color: var(--ink-soft); }
-  /* Focused fixes (Issue 4): the loading indicator is a DEDICATED layer
-     pinned to the TOP-CENTER — above the video, below the interactive
-     controls, clear of the Back FAB (top-left), the utility zone (top-right)
-     and the central Play/Pause cluster (center). It represents source
-     resolution / player initialization / stream start ONLY — active
-     buffering after playback already started is the viewport's corner
-     'Buffering…' note (no two overlapping loading indicators). */
-  .loading-card { position: absolute; z-index: 7; top: max(14px, env(safe-area-inset-top)); left: 50%; right: auto; bottom: auto; transform: translateX(-50%); display: flex; align-items: center; gap: 12px; max-width: min(420px, calc(100% - 24px)); border: 1px solid var(--line); border-radius: var(--radius-md); padding: 12px 14px; color: var(--ink); background: rgba(13,13,13,.92); box-shadow: var(--shadow-lg); backdrop-filter: blur(22px); }
+  /* Focused fixes Issue 3 (2026-10): the loading indicator is the
+     SINGLE coherent loading presentation — centered in the playback
+     viewport (stage-wrap). It represents source resolution / player
+     initialization / stream start ONLY — active buffering after
+     playback already started is the viewport's corner 'Buffering…'
+     note (no two overlapping loading indicators). The empty-orb that
+     used to render in PlayerViewport during the no-source state is
+     retired so the loading card alone owns the loading surface. */
+  .loading-card { position: absolute; z-index: 7; top: 50%; left: 50%; right: auto; bottom: auto; transform: translate(-50%, -50%); display: flex; align-items: center; gap: 12px; max-width: min(420px, calc(100% - 24px)); border: 1px solid var(--line); border-radius: var(--radius-md); padding: 14px 16px; color: var(--ink); background: rgba(13,13,13,.92); box-shadow: var(--shadow-lg); backdrop-filter: blur(22px); }
   .loading-card { min-width: min(260px, calc(100% - 36px)); justify-content: center; color: var(--ink-soft); font-size: .68rem; }
-  .loading-ring { display: grid; flex: 0 0 38px; place-items: center; width: 38px; height: 38px; border: 1px solid var(--line); border-radius: 50%; background: conic-gradient(from 0deg, transparent 0 24%, var(--ink-soft) 42%, var(--accent-soft) 72%, transparent 100%); animation: spin 1.2s linear infinite; }
-  .loading-ring > span { width: 28px; height: 28px; border-radius: 50%; background: var(--surface); }
+  /* Focused fixes Issue 3 (2026-10): clean, modern Material/iOS-style
+     spinner — a 2.5px ring with the Mavero accent on the leading edge.
+     Replaces the previous conic-gradient ring (which was nearly
+     invisible: --ink-soft on a dark surface, 38px diameter, with a
+     28px inner hole). The new ring is 36px, brighter, and uses the
+     accent color directly so it reads at a glance against any
+     backdrop. Sensible dimensions (not oversized), appropriate
+     contrast (accent green on dark with a 0.12 white track for the
+     remaining arc), and the existing `spin` animation is reused. */
+  .loading-ring { flex: 0 0 36px; width: 36px; height: 36px; border: 2.5px solid rgba(255, 255, 255, 0.12); border-top-color: var(--accent, #00d18a); border-radius: 50%; animation: spin 0.9s linear infinite; }
   .loading-copy { display: grid; gap: 4px; text-align: left; }
   .loading-copy strong { color: var(--ink); font-size: .72rem; }
   .loading-copy small { color: var(--muted); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .53rem; }

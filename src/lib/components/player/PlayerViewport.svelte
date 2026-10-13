@@ -393,7 +393,17 @@
       ></iframe>
     {/key}
   {:else}
-    <div class="empty-viewport" aria-hidden="true"><span class="empty-orb"></span></div>
+    <!-- Focused fixes Issue 3 (2026-10): the empty-orb (a 72px dark
+         ring with a low-contrast radial-gradient background) is RETIRED.
+         It was the screenshot's "oversized, dark circular spinner around
+         the middle of the empty black area" — a SECOND, disconnected
+         loading indicator competing with the shell's loading-card.
+         The shell's loading-card (now centered in the playback viewport
+         with a clean Mavero-accent spinner) is the SINGLE coherent
+         loading presentation; the empty-viewport div keeps its subtle
+         gradient backdrop so the stage still reads as a player surface
+         while the loading-card owns the loading affordance. -->
+    <div class="empty-viewport" aria-hidden="true"></div>
   {/if}
 
   {#if source?.type !== 'embed'}<div class="viewport-shade" aria-hidden="true"></div>{/if}
@@ -425,7 +435,5 @@
   .viewport-shade { position: absolute; z-index: 2; inset: auto 0 0; height: 38%; pointer-events: none; background: linear-gradient(0deg, rgba(0,0,0,.72), transparent); }
   .state-label { position: absolute; z-index: 3; top: 18px; left: 18px; color: var(--muted); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .58rem; letter-spacing: .08em; text-transform: uppercase; text-shadow: 0 1px 12px #000; }
   .empty-viewport { position: absolute; inset: 0; display: grid; place-items: center; background: radial-gradient(circle at 50% 43%, rgba(255,255,255,.06), transparent 26%), linear-gradient(145deg, var(--surface), var(--base) 70%); }
-  .empty-orb { width: 72px; height: 72px; border: 1px solid var(--line-strong); border-radius: 50%; box-shadow: 0 0 0 18px rgba(255,255,255,.02), 0 0 80px rgba(255,255,255,.08); }
   @media (max-width: 640px) { .viewport { min-height: 56.25vw; max-height: 76dvh; } .state-label { top: 12px; left: 12px; font-size: .51rem; } }
-  @media (prefers-reduced-motion: reduce) { .empty-orb { box-shadow: 0 0 0 18px rgba(255,255,255,.02); } }
 </style>

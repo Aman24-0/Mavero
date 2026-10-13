@@ -26,6 +26,14 @@ export function toMediaItem(item: NormalizedMediaItem): MediaItem {
     status: item.status,
     episodes: item.episodes,
     seasons: item.seasons,
+    // MAV-FOCUSED Issue 4 (2026-10): forward the per-season metadata
+    // (number + airDate + episodeCount) so SeasonEpisodes can filter
+    // out announced / future seasons from the season selector. Was
+    // previously dropped by the allowlist — the count alone was
+    // forwarded (item.seasons), which is what caused Black Clover S2
+    // and The Gentlemen S3 (announced but unreleased) to render as
+    // empty placeholder tabs with fake episode rows.
+    seasonsData: item.seasonsData,
     tags: item.tags,
     trailerKey: item.trailerKey,
     cast: item.cast,
