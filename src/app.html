@@ -19,6 +19,21 @@
          tag made EVERY page serve TWO meta descriptions (the duplicate-
          description defect). Pages without a route-specific description
          (error pages, noindex utility routes) intentionally carry none. -->
+    <!-- FAVICON policy (focused favicon audit fix, 2026-10):
+         Googlebot's standard favicon lookup is GET /favicon.ico at the
+         site root REGARDLESS of <link rel="icon"> tags elsewhere. Without
+         /favicon.ico returning a real image, Google Search renders a
+         generic globe icon for the site (verified live: production
+         returned the SvelteKit 404 page for /favicon.ico). A real
+         multi-resolution .ico (16/32/48) is now served at
+         static/favicon.ico (SvelteKit serves static/ at the site root),
+         and it is declared as the explicit primary favicon below. The
+         PNG favicons and apple-touch icon are preserved for the
+         higher-resolution + iOS paths. Order matters: the .ico is
+         listed FIRST so legacy crawlers that pick the first <link
+         rel="icon"> they find select the .ico (Google's documented
+         preference). -->
+    <link rel="icon" href="/favicon.ico" sizes="any" />
     <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
     <link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16.png" />
     <link rel="icon" type="image/png" sizes="192x192" href="/icons/mavero-192.png" />

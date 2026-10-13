@@ -108,3 +108,29 @@
   for = "/manifest.webmanifest"
   [headers.values]
     cache-control = "public, max-age=0, must-revalidate"
+    # Focused favicon audit fix (2026-10): the manifest MUST be served
+    # with the application/manifest+json content type. Without it,
+    # Netlify falls back to application/octet-stream (verified live),
+    # which some browsers/PWA validators reject as a malformed manifest
+    # — affecting installability + PWA detection. The MIME type is the
+    # IANA-registered value per RFC 9239.
+    content-type = "application/manifest+json"
+
+# Focused favicon audit fix (2026-10): the favicon assets (the new
+# /favicon.ico plus the existing /icons/* PNGs) are immutable brand
+# assets — they change only on a brand refresh. Cache them for a year
+# at the edge so the second visit is instant and Googlebot's repeat
+# crawls (which happen frequently during the favicon recrawl window)
+# return 304s. The .ico is multi-resolution (16/32/48) so every
+# crawler context (desktop browser tab, Android home screen, Google
+# Search result) gets the right size.
+[[headers]]
+  for = "/favicon.ico"
+  [headers.values]
+    cache-control = "public, max-age=31536000, immutable"
+    content-type = "image/x-icon"
+
+[[headers]]
+  for = "/icons/*"
+  [headers.values]
+    cache-control = "public, max-age=31536000, immutable"
