@@ -12,7 +12,8 @@
 //   * canonical links carry the production origin (prior remediation
 //     unregressed);
 //   * /robots.txt + /sitemap.xml still serve the production policy.
-import { chromium } from '/home/z/.npm-global/lib/node_modules/playwright/index.mjs';
+import { resolvePlaywright } from './mav_resolve_playwright.mjs';
+const { chromium } = await resolvePlaywright();
 
 const BASE = process.env.PREVIEW_BASE || 'http://127.0.0.1:4173';
 const ORIGIN = 'https://maveroweb.space';

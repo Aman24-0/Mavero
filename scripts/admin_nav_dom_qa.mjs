@@ -8,23 +8,54 @@
 //
 // Uses Playwright + the project's Vite build (same pattern as
 // scripts/player_sheets_dom_qa.mjs).
+//
+// PORTABILITY (MAV-FOCUSED fix, 2026-10): Playwright is resolved
+// through the shared mav_resolve_playwright.mjs helper — no hardcoded
+// machine-specific paths. Generated harness files + build output are
+// cleaned up in a try/finally block even when assertions fail. The HTTP
+// server binds to 127.0.0.1 on an ephemeral port and rejects path-
+// traversal attempts.
 
-import { chromium } from '/home/z/.npm-global/lib/node_modules/playwright/index.mjs';
+import { resolvePlaywright } from './mav_resolve_playwright.mjs';
 import { execSync } from 'node:child_process';
-import { resolve, dirname } from 'node:path';
-import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { resolve, dirname, join, normalize, sep, extname } from 'node:path';
+import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from 'node:fs';
+import { createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const distDir = '/tmp/mavero-admin-nav-qa-dist';
 
-// Build a minimal Vite harness that imports AdminAppShell + renders it.
+// Generated artifacts — cleaned up in the finally block.
 const harnessDir = resolve(root, 'scripts/harness-admin-nav');
-mkdirSync(harnessDir, { recursive: true });
-mkdirSync(distDir, { recursive: true });
+const distDir = resolve(root, '.cache/admin-nav-qa-dist');
 
-// The harness HTML.
-writeFileSync(resolve(harnessDir, 'index.html'), `<!doctype html>
+let browser = null;
+let httpServer = null;
+let passed = 0;
+let failed = 0;
+
+function ok(condition, label) {
+  if (condition) { passed += 1; console.log(`  ok ${passed} - ${label}`); }
+  else { failed += 1; console.log(`  FAIL - ${label}`); }
+}
+
+function cleanupArtifacts() {
+  // Remove ONLY the generated harness directory and build output.
+  // Never touch unrelated files.
+  try { rmSync(harnessDir, { recursive: true, force: true }); } catch { /* already gone */ }
+  try { rmSync(distDir, { recursive: true, force: true }); } catch { /* already gone */ }
+}
+
+async function main() {
+  // --- Resolve Playwright ---
+  const { chromium } = await resolvePlaywright();
+
+  // --- Generate harness files ---
+  mkdirSync(harnessDir, { recursive: true });
+  mkdirSync(resolve(harnessDir, 'stubs'), { recursive: true });
+  mkdirSync(distDir, { recursive: true });
+
+  writeFileSync(resolve(harnessDir, 'index.html'), `<!doctype html>
 <html>
 <head>
   <meta charset="utf-8" />
@@ -38,8 +69,7 @@ writeFileSync(resolve(harnessDir, 'index.html'), `<!doctype html>
 </html>
 `);
 
-// The harness entry — mount AdminAppShell with a snippet child.
-writeFileSync(resolve(harnessDir, 'main.ts'), `
+  writeFileSync(resolve(harnessDir, 'main.ts'), `
 import { mount } from 'svelte';
 import AdminAppShell from '../../src/lib/components/admin2/AdminAppShell.svelte';
 
@@ -52,13 +82,15 @@ mount(AdminAppShell, {
 });
 `);
 
-// Vite config for the harness build.
-writeFileSync(resolve(harnessDir, 'vite.config.mjs'), `
+  // Vite config — uses absolute paths injected via template strings.
+  // The harnessDir is under the repo's scripts/ directory (gitignored
+  // by the .gitignore pattern for scripts/harness-*).
+  writeFileSync(resolve(harnessDir, 'vite.config.mjs'), `
 import { defineConfig } from 'vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import { resolve } from 'path';
 
-const harnessDir = '${harnessDir}';
+const harnessDir = ${JSON.stringify(harnessDir)};
 
 export default defineConfig({
   root: harnessDir,
@@ -74,28 +106,24 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: '${distDir}',
+    outDir: ${JSON.stringify(distDir)},
     emptyOutDir: true,
   },
 });
 `);
 
-// Stub for $app/state (page.url).
-mkdirSync(resolve(harnessDir, 'stubs'), { recursive: true });
-writeFileSync(resolve(harnessDir, 'stubs/app-state.ts'), `
+  writeFileSync(resolve(harnessDir, 'stubs/app-state.ts'), `
 export const page = {
   url: new URL('http://localhost/admin'),
 };
 `);
 
-// Stub for $app/forms (enhance + applyAction).
-writeFileSync(resolve(harnessDir, 'stubs/app-forms.ts'), `
+  writeFileSync(resolve(harnessDir, 'stubs/app-forms.ts'), `
 export function enhance() { return () => {}; }
 export function applyAction() { return Promise.resolve(); }
 `);
 
-// Stub for $app/navigation.
-writeFileSync(resolve(harnessDir, 'stubs/app-navigation.ts'), `
+  writeFileSync(resolve(harnessDir, 'stubs/app-navigation.ts'), `
 export function goto() {}
 export function invalidate() { return Promise.resolve(); }
 export function invalidateAll() { return Promise.resolve(); }
@@ -105,134 +133,140 @@ export function afterNavigate() {}
 export function onNavigate() {}
 `);
 
-// Stub for $app/environment.
-writeFileSync(resolve(harnessDir, 'stubs/app-environment.ts'), `
+  writeFileSync(resolve(harnessDir, 'stubs/app-environment.ts'), `
 export const browser = true;
 `);
 
-// Build.
-console.log('Building admin nav harness…');
-try {
+  // --- Build ---
+  console.log('Building admin nav harness…');
   execSync(`./node_modules/.bin/vite build --config ${resolve(harnessDir, 'vite.config.mjs')}`, {
     cwd: root,
     stdio: 'pipe',
     timeout: 60000,
   });
-} catch (err) {
-  console.error('Vite build failed:', err.stderr?.toString() ?? err.message);
-  process.exit(1);
-}
 
-// Playwright smoke test.
-const browser = await chromium.launch();
-let passed = 0;
-let failed = 0;
-function ok(condition, label) {
-  if (condition) { passed += 1; console.log(`  ok ${passed} - ${label}`); }
-  else { failed += 1; console.log(`  FAIL - ${label}`); }
-}
+  // --- Launch browser ---
+  browser = await chromium.launch();
 
-// Serve the built files over HTTP (file:// is blocked by CORS for
-// module scripts). Use a simple inline HTTP server.
-import { createServer } from 'node:http';
-import { readFileSync, existsSync } from 'node:fs';
-import { extname } from 'node:path';
+  // --- HTTP server (loopback, ephemeral port, path-traversal-safe) ---
+  const MIME = {
+    '.html': 'text/html',
+    '.js': 'text/javascript',
+    '.css': 'text/css',
+    '.json': 'application/json',
+    '.svg': 'image/svg+xml',
+  };
 
-const MIME = {
-  '.html': 'text/html',
-  '.js': 'text/javascript',
-  '.css': 'text/css',
-  '.json': 'application/json',
-  '.svg': 'image/svg+xml',
-};
+  httpServer = createServer((req, res) => {
+    // Strip query string + decode.
+    const urlPath = decodeURIComponent((req.url ?? '/').split('?')[0]);
+    // Normalize to prevent path traversal (e.g. /../../etc/passwd).
+    const requestedPath = normalize(join(distDir, urlPath === '/' ? 'index.html' : urlPath));
+    // Verify the resolved path is still within distDir.
+    if (!requestedPath.startsWith(distDir + sep)) {
+      res.writeHead(403);
+      res.end('Forbidden');
+      return;
+    }
+    if (!existsSync(requestedPath)) {
+      res.writeHead(404);
+      res.end('Not found');
+      return;
+    }
+    const mime = MIME[extname(requestedPath)] ?? 'application/octet-stream';
+    res.writeHead(200, { 'content-type': mime });
+    res.end(readFileSync(requestedPath));
+  });
 
-const httpServer = createServer((req, res) => {
-  let filePath = req.url === '/' ? '/index.html' : req.url;
-  const fullPath = resolve(distDir, filePath.slice(1));
-  if (!existsSync(fullPath)) {
-    res.writeHead(404);
-    res.end('Not found');
-    return;
+  await new Promise((r) => httpServer.listen(0, '127.0.0.1', r));
+  const baseUrl = `http://127.0.0.1:${httpServer.address().port}`;
+
+  // --- §1: Desktop sidebar carries every route ---
+  console.log('\n§1 — Desktop sidebar carries every route');
+  {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await page.goto(`${baseUrl}/`, { waitUntil: 'networkidle' });
+    await page.waitForTimeout(200);
+
+    const sidebarLinks = await page.evaluate(() => {
+      return [...document.querySelectorAll('.a2-sidebar a[href]')].map((a) => a.getAttribute('href'));
+    });
+    ok(sidebarLinks.includes('/admin'), '1a. sidebar includes Overview (/admin)');
+    ok(sidebarLinks.includes('/admin/media/library'), '1b. sidebar includes Media Library');
+    ok(sidebarLinks.includes('/admin/media/missing'), '1c. sidebar includes Missing Media');
+    ok(sidebarLinks.includes('/admin/hosting'), '1d. sidebar includes Hosting Control');
+    ok(sidebarLinks.includes('/admin/system/api-sources'), '1e. sidebar includes API & Sources');
+    ok(sidebarLinks.includes('/admin/system/content-rules'), '1f. sidebar includes Content Rules');
+    ok(sidebarLinks.includes('/admin/system/downloads'), '1g. sidebar includes Downloads');
+    ok(sidebarLinks.includes('/admin/system/integrations'), '1h. sidebar includes Integrations');
+    ok(sidebarLinks.includes('/admin/analytics'), '1i. sidebar includes Analytics');
+    await page.close();
   }
-  const mime = MIME[extname(fullPath)] ?? 'application/octet-stream';
-  res.writeHead(200, { 'content-type': mime });
-  res.end(readFileSync(fullPath));
-});
-await new Promise((r) => httpServer.listen(0, r));
-const httpPort = httpServer.address().port;
-const baseUrl = `http://localhost:${httpPort}`;
 
-console.log('\n§1 — Desktop sidebar carries every route');
-{
-  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
-  await page.goto(`${baseUrl}/`, { waitUntil: 'networkidle' });
-  await page.waitForTimeout(200);
+  // --- §2: Mobile bottom-nav has NO "More" item ---
+  console.log('\n§2 — Mobile bottom-nav has NO "More" item');
+  {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    await page.goto(`${baseUrl}/`, { waitUntil: 'networkidle' });
+    await page.waitForTimeout(200);
 
-  const sidebarLinks = await page.evaluate(() => {
-    return [...document.querySelectorAll('.a2-sidebar a[href]')].map((a) => a.getAttribute('href'));
-  });
-  ok(sidebarLinks.includes('/admin'), '1a. sidebar includes Overview (/admin)');
-  ok(sidebarLinks.includes('/admin/media/library'), '1b. sidebar includes Media Library');
-  ok(sidebarLinks.includes('/admin/media/missing'), '1c. sidebar includes Missing Media');
-  ok(sidebarLinks.includes('/admin/hosting'), '1d. sidebar includes Hosting Control');
-  ok(sidebarLinks.includes('/admin/system/api-sources'), '1e. sidebar includes API & Sources');
-  ok(sidebarLinks.includes('/admin/system/content-rules'), '1f. sidebar includes Content Rules');
-  ok(sidebarLinks.includes('/admin/system/downloads'), '1g. sidebar includes Downloads');
-  ok(sidebarLinks.includes('/admin/system/integrations'), '1h. sidebar includes Integrations');
-  ok(sidebarLinks.includes('/admin/analytics'), '1i. sidebar includes Analytics');
-  await page.close();
+    const bottomNavItems = await page.evaluate(() => {
+      return [...document.querySelectorAll('.a2-bottom-nav .a2-bottom-item')].map((el) => ({
+        label: el.querySelector('.a2-bottom-label')?.textContent?.trim() ?? '',
+        href: el.getAttribute('href') ?? '',
+        tagName: el.tagName.toLowerCase(),
+      }));
+    });
+    ok(bottomNavItems.length === 4, `2a. bottom-nav has exactly 4 items — got ${bottomNavItems.length}`);
+    ok(!bottomNavItems.some((i) => i.label.toLowerCase() === 'more'), '2b. no item labelled "More"');
+    ok(!bottomNavItems.some((i) => i.href === '#more'), '2c. no item with href="#more"');
+    ok(bottomNavItems.some((i) => i.label === 'Home'), '2d. Home item present');
+    ok(bottomNavItems.some((i) => i.label === 'Media'), '2e. Media item present');
+    ok(bottomNavItems.some((i) => i.label === 'Hosting'), '2f. Hosting item present');
+    ok(bottomNavItems.some((i) => i.label === 'Analytics'), '2g. Analytics item present');
+
+    const moreSheet = await page.evaluate(() => document.querySelector('.a2-more-sheet'));
+    ok(moreSheet === null, '2h. no .a2-more-sheet in the DOM');
+    const moreOverlay = await page.evaluate(() => document.querySelector('.a2-more-overlay'));
+    ok(moreOverlay === null, '2i. no .a2-more-overlay in the DOM');
+
+    await page.close();
+  }
+
+  // --- §3: Command palette (⌘K) still works ---
+  console.log('\n§3 — Command palette (⌘K) still works');
+  {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await page.goto(`${baseUrl}/`, { waitUntil: 'networkidle' });
+    await page.waitForTimeout(200);
+
+    await page.keyboard.down('Meta');
+    await page.keyboard.press('k');
+    await page.keyboard.up('Meta');
+    await page.waitForTimeout(200);
+
+    const commandOpen = await page.evaluate(() => {
+      const dialog = document.querySelector('[role="dialog"]');
+      return dialog !== null;
+    });
+    ok(commandOpen, '3a. ⌘K opens a dialog (command palette)');
+
+    await page.close();
+  }
 }
 
-console.log('\n§2 — Mobile bottom-nav has NO "More" item');
-{
-  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
-  await page.goto(`${baseUrl}/`, { waitUntil: 'networkidle' });
-  await page.waitForTimeout(200);
-
-  const bottomNavItems = await page.evaluate(() => {
-    return [...document.querySelectorAll('.a2-bottom-nav .a2-bottom-item')].map((el) => ({
-      label: el.querySelector('.a2-bottom-label')?.textContent?.trim() ?? '',
-      href: el.getAttribute('href') ?? '',
-      tagName: el.tagName.toLowerCase(),
-    }));
-  });
-  ok(bottomNavItems.length === 4, `2a. bottom-nav has exactly 4 items — got ${bottomNavItems.length}`);
-  ok(!bottomNavItems.some((i) => i.label.toLowerCase() === 'more'), '2b. no item labelled "More"');
-  ok(!bottomNavItems.some((i) => i.href === '#more'), '2c. no item with href="#more"');
-  ok(bottomNavItems.some((i) => i.label === 'Home'), '2d. Home item present');
-  ok(bottomNavItems.some((i) => i.label === 'Media'), '2e. Media item present');
-  ok(bottomNavItems.some((i) => i.label === 'Hosting'), '2f. Hosting item present');
-  ok(bottomNavItems.some((i) => i.label === 'Analytics'), '2g. Analytics item present');
-
-  // No More sheet overlay/sheet in the DOM.
-  const moreSheet = await page.evaluate(() => document.querySelector('.a2-more-sheet'));
-  ok(moreSheet === null, '2h. no .a2-more-sheet in the DOM');
-  const moreOverlay = await page.evaluate(() => document.querySelector('.a2-more-overlay'));
-  ok(moreOverlay === null, '2i. no .a2-more-overlay in the DOM');
-
-  await page.close();
+try {
+  await main();
+} finally {
+  // Deterministic cleanup — runs even on assertion failure or build error.
+  if (browser) {
+    try { await browser.close(); } catch { /* already closed */ }
+  }
+  if (httpServer) {
+    try { httpServer.close(); } catch { /* already closed */ }
+  }
+  cleanupArtifacts();
 }
 
-console.log('\n§3 — Command palette (⌘K) still works');
-{
-  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
-  await page.goto(`${baseUrl}/`, { waitUntil: 'networkidle' });
-  await page.waitForTimeout(200);
-
-  await page.keyboard.down('Meta');
-  await page.keyboard.press('k');
-  await page.keyboard.up('Meta');
-  await page.waitForTimeout(200);
-
-  const commandOpen = await page.evaluate(() => {
-    const dialog = document.querySelector('[role="dialog"]');
-    return dialog !== null;
-  });
-  ok(commandOpen, '3a. ⌘K opens a dialog (command palette)');
-
-  await page.close();
-}
-
-await browser.close();
 console.log(`\nadmin_nav_dom_qa: ${passed} passed, ${failed} failed`);
-process.exit(failed ? 1 : 0);
+if (failed > 0) process.exitCode = 1;

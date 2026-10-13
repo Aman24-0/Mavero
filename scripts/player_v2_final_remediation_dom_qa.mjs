@@ -13,7 +13,8 @@
 //   * single-level quality — the honest disabled control with the REAL label.
 // This is the actual-DOM verification the audit demanded for Issue 1:
 // flex-wrap behavior + native-select sizing cannot be proven from source.
-import { chromium } from '/home/z/.npm-global/lib/node_modules/playwright/index.mjs';
+import { resolvePlaywright } from './mav_resolve_playwright.mjs';
+const { chromium } = await resolvePlaywright();
 import { execSync } from 'node:child_process';
 import { resolve, dirname } from 'node:path';
 import { readFileSync } from 'node:fs';

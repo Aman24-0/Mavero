@@ -13,7 +13,8 @@
 //        ineligible/absent source (eligibility gate holds in-browser)
 //      * no console errors from the cast/subtitle modules
 // ============================================================================
-import { chromium } from '/home/z/.npm-global/lib/node_modules/playwright/index.mjs';
+import { resolvePlaywright } from './mav_resolve_playwright.mjs';
+const { chromium } = await resolvePlaywright();
 
 const BASE = 'http://127.0.0.1:4173';
 let passed = 0;

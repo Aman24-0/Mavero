@@ -17,11 +17,13 @@
 //     and never intersects the central Play/Pause cluster (Issue 4), leaves
 //     on the ready (loadedmetadata) and error transitions, and never renders
 //     together with the buffering corner note.
-import { chromium } from '/home/z/.npm-global/lib/node_modules/playwright/index.mjs';
+import { resolvePlaywright } from './mav_resolve_playwright.mjs';
 import { execSync } from 'node:child_process';
-import { resolve, dirname } from 'node:path';
+import { resolve, dirname, normalize, join, sep } from 'node:path';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+
+const { chromium } = await resolvePlaywright();
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const controlsDist = '/tmp/mavero-controls-qa-dist';
@@ -39,10 +41,17 @@ const check = (name, condition, detail = '') => {
 const browser = await chromium.launch({ args: ['--no-sandbox', '--disable-dev-shm-usage'] });
 const { createServer } = await import('node:http');
 const staticServer = (distDir, port, indexFile) => createServer((req, res) => {
-  const path = req.url === '/' ? `/${indexFile}` : req.url.split('?')[0];
+  const rawPath = (req.url ?? '/').split('?')[0];
+  const requestedFile = rawPath === '/' ? `/${indexFile}` : rawPath;
+  // Normalize + verify the resolved path is within distDir (path-traversal guard).
+  const fullPath = normalize(join(distDir, decodeURIComponent(requestedFile).slice(1)));
+  if (!fullPath.startsWith(distDir + sep)) {
+    res.writeHead(403); res.end('Forbidden');
+    return;
+  }
   try {
-    const body = readFileSync(resolve(distDir, path.slice(1)));
-    res.writeHead(200, { 'content-type': path.endsWith('.html') ? 'text/html' : path.endsWith('.css') ? 'text/css' : 'text/javascript' });
+    const body = readFileSync(fullPath);
+    res.writeHead(200, { 'content-type': fullPath.endsWith('.html') ? 'text/html' : fullPath.endsWith('.css') ? 'text/css' : 'text/javascript' });
     res.end(body);
   } catch {
     res.writeHead(404); res.end('nope');

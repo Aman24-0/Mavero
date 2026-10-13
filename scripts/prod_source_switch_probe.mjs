@@ -1,6 +1,7 @@
 // Probe the REAL user flow: open watch page -> choose source -> select Blue Velvet
 // -> observe VDRK subtitle fetch, video element, quality/subtitle selects.
-import { chromium } from '/home/z/.npm-global/lib/node_modules/playwright/index.mjs';
+import { resolvePlaywright } from './mav_resolve_playwright.mjs';
+const { chromium } = await resolvePlaywright();
 const INIT = `
 window.__consoleLog = [];
 (() => {

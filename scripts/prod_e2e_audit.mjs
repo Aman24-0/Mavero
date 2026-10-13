@@ -8,7 +8,8 @@
 //     cannot fire → the document survives
 //   * the app's own diagnostics ([mavero:subtitles] / [mavero:intro]) are
 //     still captured — into window.__consoleLog
-import { chromium } from '/home/z/.npm-global/lib/node_modules/playwright/index.mjs';
+import { resolvePlaywright } from './mav_resolve_playwright.mjs';
+const { chromium } = await resolvePlaywright();
 
 const PROD = 'https://maveroweb.space';
 let passed = 0, failed = 0;

@@ -2,7 +2,8 @@
 // subtitle-list fetch and the TheIntroDB lookup, and do their results reach
 // state? Runs the REAL component (project Vite+Svelte build) in headless
 // Chromium with an intercepting fetch (no live requests leave the page).
-import { chromium } from '/home/z/.npm-global/lib/node_modules/playwright/index.mjs';
+import { resolvePlaywright } from './mav_resolve_playwright.mjs';
+const { chromium } = await resolvePlaywright();
 import { execSync } from 'node:child_process';
 import { resolve, dirname } from 'node:path';
 import { readFileSync } from 'node:fs';
