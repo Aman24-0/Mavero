@@ -2,6 +2,7 @@
   import { page } from '$app/state';
   import { ArrowRight, Mail, LockKeyhole, Eye, EyeOff, ShieldCheck, AlertCircle, CheckCircle2, QrCode } from 'lucide-svelte';
   import AuthShell from '$components/AuthShell.svelte';
+  import GoogleOAuthButton from '$components/auth/GoogleOAuthButton.svelte';
   import { isBigScreen } from '$lib/shared/device-class';
 
   type AuthForm = { message?: string; email?: string; success?: boolean };
@@ -10,7 +11,11 @@
     ? 'That confirmation link could not be completed. Please try signing in again.'
     : page.url.searchParams.get('error') === 'missing_confirmation'
       ? 'That confirmation link is incomplete. Please request a new one.'
-      : '';
+      : page.url.searchParams.get('error') === 'google_cancelled'
+        ? 'Google sign-in was cancelled. You can try again or sign in with email.'
+        : page.url.searchParams.get('error') === 'google_failed'
+          ? 'Google sign-in could not be completed. Please try again or use email.'
+          : '';
   const nextPath = page.url.searchParams.get('next') ?? '/settings';
 
   // Newtask §8/§27 — the QR-DISPLAY login option is only offered on
@@ -95,6 +100,13 @@
         <span>Sign in</span> <ArrowRight size={14} />
       </button>
     </form>
+
+    <!-- MAVERO Google OAuth (focused implementation, 2026-10):
+         "Continue with Google" — a primary alternative to email/password.
+         Posts to ?/google which signs the OAuth state token (intent=sign-in
+         + safe next) and redirects to Google's authorization screen. The
+         QR-login option (below) remains available on big screens. -->
+    <GoogleOAuthButton action="?/google" next={nextPath} label="Continue with Google" />
 
     <!-- Newtask §8 — big-screen QR login. Navigates to the existing
          canonical big-screen QR route (/tv-login); NO pairing logic is

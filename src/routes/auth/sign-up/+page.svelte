@@ -1,6 +1,7 @@
 <script lang="ts">
   import { ArrowRight, Mail, LockKeyhole, UserRound, Eye, EyeOff, ShieldCheck, AlertCircle, CheckCircle2 } from 'lucide-svelte';
   import AuthShell from '$components/AuthShell.svelte';
+  import GoogleOAuthButton from '$components/auth/GoogleOAuthButton.svelte';
 
   type AuthForm = { message?: string; success?: boolean; displayName?: string; email?: string };
   let { form }: { form?: AuthForm } = $props();
@@ -79,6 +80,15 @@
         <span>Create account</span> <ArrowRight size={14} />
       </button>
     </form>
+
+    <!-- MAVERO Google OAuth (focused implementation, 2026-10):
+         "Continue with Google" — a primary alternative to email/password
+         sign-up. Posts to ?/google which signs the OAuth state token
+         (intent=sign-up + safe next) and redirects to Google's
+         authorization screen. Supabase Auth creates a new user when no
+         matching Google identity exists, or signs in an existing one when
+         it does — no duplicate account is created. -->
+    <GoogleOAuthButton action="?/google" next="/settings" label="Continue with Google" />
 
     {#if !resendOpen}
       <button type="button" class="inline-link" onclick={() => (resendOpen = true)}>

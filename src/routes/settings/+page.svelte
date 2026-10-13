@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import { enhance, applyAction } from '$app/forms';
+  import { page } from '$app/state';
   import { Check, LockKeyhole, LogIn, LogOut, Mail, Monitor, ShieldCheck, Smartphone, Sparkles, Trash2, Tv, UserRound, Laptop, LoaderCircle, QrCode } from 'lucide-svelte';
-  import type { PageData } from './$types';
+  import type { ActionData, PageData } from './$types';
   import ConfirmDialog from '$components/ConfirmDialog.svelte';
   import AppFooter from '$components/AppFooter.svelte';
   import ScrollToTop from '$components/ScrollToTop.svelte';
@@ -11,7 +13,7 @@
   import { haptic } from '$lib/client/haptics';
   import { showSuccessToast, showErrorToast } from '$lib/client/toast.svelte';
 
-  let { data, form }: { data: PageData; form?: { section?: string; success?: boolean; message?: string } } = $props();
+  let { data, form }: { data: PageData; form?: ActionData } = $props();
 
   // ── Identity ────────────────────────────────────────────────
   // The layout payload is a projection — no full Supabase User object
@@ -109,6 +111,23 @@
 
   // ── Password disclosure (compact UX) ────────────────────────────
   let passwordOpen = $state(false);
+
+  // ── Connected accounts (Google OAuth) ───────────────────────────
+  // googleBusy prevents a double-click from starting two OAuth flows
+  // (the form is disabled while the action is in flight). The
+  // disconnectGoogleOpen state toggles the confirm/cancel UI for the
+  // Disconnect Google action.
+  let googleBusy = $state(false);
+  let disconnectGoogleOpen = $state(false);
+  // The callback writes ?google=linked|conflict|error|cancelled to the
+  // URL — we read it once on render and surface the matching message.
+  const googleResult = $derived(
+    page.url.searchParams.get('google') === 'linked' ? 'linked'
+    : page.url.searchParams.get('google') === 'conflict' ? 'conflict'
+    : page.url.searchParams.get('google') === 'error' ? 'error'
+    : page.url.searchParams.get('google') === 'cancelled' ? 'cancelled'
+    : null
+  );
 
   function togglePassword() {
     passwordOpen = !passwordOpen;
@@ -543,6 +562,118 @@
           {/if}
         </div>
       </section>
+
+      <!-- MAVERO Google OAuth (focused implementation, 2026-10):
+           Connected accounts — shows the user's current identity state
+           (email present? google connected?) and provides link/disconnect
+           actions for Google. Sensitive operations live in the server
+           action handlers (?/linkGoogle, ?/unlinkGoogle); the client only
+           reflects the server-side state. The disconnect action is gated
+           behind the last-identity lockout guard (a user with ONLY Google
+           linked cannot disconnect — they must add a password first).
+           The Google OAuth state token binds the link flow to
+           locals.user.id; the callback verifies the post-exchange user
+           matches before honoring the link. -->
+      <section class="settings-section" aria-labelledby="connected-accounts-title">
+        <div class="section-title-row">
+          <span class="section-icon" aria-hidden="true"><ShieldCheck size={14} /></span>
+          <h2 id="connected-accounts-title">Connected accounts</h2>
+        </div>
+
+        <div class="connected-accounts-list">
+          <!-- Email identity row -->
+          <div class="identity-row">
+            <div class="identity-row-copy">
+              <strong>Email &amp; password</strong>
+              <small>{data.connectedAccounts?.email ?? userEmail}</small>
+            </div>
+            <span class="identity-status" class:connected={data.connectedAccounts?.hasEmail}>
+              {data.connectedAccounts?.hasEmail ? 'Connected' : 'Not set'}
+            </span>
+          </div>
+
+          <!-- Google identity row -->
+          <div class="identity-row">
+            <div class="identity-row-copy">
+              <strong>Google</strong>
+              <small>{data.connectedAccounts?.hasGoogle ? 'Connected to your account' : 'Not connected'}</small>
+            </div>
+            <span class="identity-status" class:connected={data.connectedAccounts?.hasGoogle}>
+              {data.connectedAccounts?.hasGoogle ? 'Connected' : 'Not connected'}
+            </span>
+          </div>
+        </div>
+
+        <!-- Action buttons — only ONE of link/disconnect is shown at a time.
+             The duplicate-request guard prevents a double-click from
+             starting two OAuth flows. -->
+        {#if data.connectedAccounts?.hasGoogle}
+          <!-- Google is connected — show Disconnect with confirmation. -->
+          {#if disconnectGoogleOpen}
+            <div class="confirm-row" role="alertdialog" aria-labelledby="disconnect-google-confirm-title" aria-describedby="disconnect-google-confirm-body">
+              <strong id="disconnect-google-confirm-title">Disconnect Google?</strong>
+              <p id="disconnect-google-confirm-body">You will not be able to sign in with Google on this account.</p>
+              <form method="POST" action="?/unlinkGoogle" class="confirm-actions">
+                <button type="button" class="secondary-cta" onclick={() => (disconnectGoogleOpen = false)}>Cancel</button>
+                <button type="submit" class="danger-cta" disabled={googleBusy}>Disconnect</button>
+              </form>
+            </div>
+          {:else}
+            <form method="POST" action="?/unlinkGoogle" class="connected-accounts-actions">
+              <button type="submit" class="danger-cta" disabled={googleBusy} onclick={() => { googleBusy = true; }}>
+                Disconnect Google
+              </button>
+            </form>
+          {/if}
+        {:else}
+          <!-- Google is NOT connected — show Link button. -->
+          <form
+            method="POST"
+            action="?/linkGoogle"
+            class="connected-accounts-actions"
+            use:enhance={() => {
+              googleBusy = true;
+              return async ({ result }) => {
+                googleBusy = false;
+                // If the action returned an OAuth URL, navigate to it
+                // (the browser follows to Google's authorization screen).
+                // The action's return shape includes `oauthUrl` only when
+                // the OAuth flow was successfully initiated.
+                if (result.type === 'success') {
+                  const data = result.data as { oauthUrl?: string } | undefined;
+                  if (data?.oauthUrl) {
+                    window.location.href = data.oauthUrl;
+                    return;
+                  }
+                }
+                // Otherwise re-apply the form data so the message renders.
+                await applyAction(result);
+              };
+            }}
+          >
+            <button type="submit" class="secondary-cta" disabled={googleBusy}>
+              {googleBusy ? 'Redirecting…' : 'Link Google account'}
+            </button>
+          </form>
+        {/if}
+
+        <!-- Result messages — the callback writes ?google=linked|conflict|error|cancelled
+             to the URL; we surface them here. -->
+        {#if googleResult === 'linked'}
+          <p class="form-note ok" role="status">Google has been connected to your account.</p>
+        {:else if googleResult === 'conflict'}
+          <p class="form-note" role="alert">That Google account is already connected to another MAVERO account. Sign out and use that account, or contact support.</p>
+        {:else if googleResult === 'error'}
+          <p class="form-note" role="alert">Google could not be connected. Please try again.</p>
+        {:else if googleResult === 'cancelled'}
+          <p class="form-note" role="status">Google linking was cancelled.</p>
+        {/if}
+
+        <!-- Form-action result messages (?/linkGoogle or ?/unlinkGoogle). -->
+        {#if form?.section === 'connected-accounts'}
+          <p class="form-note" class:ok={form.success} role={form.success ? 'status' : 'alert'}>{form.message}</p>
+        {/if}
+      </section>
     {/if}
 
     <!-- Phase 2-J (audit UIX-1): the previous "Playback & interface" section
@@ -915,6 +1046,73 @@
     gap: 8px;
   }
   #password-form { border-top: 0; padding-top: 10px; }
+
+  /* ── Connected accounts (Google OAuth, 2026-10) ── */
+  .connected-accounts-list { display: grid; gap: 10px; }
+  .connected-accounts-list .identity-row {
+    /* Reuses the existing .identity-row shape but inside the settings
+       section — the existing identity-row lives in the header. */
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface-raised);
+  }
+  .connected-accounts-list .identity-row-copy { display: grid; gap: 2px; min-width: 0; }
+  .connected-accounts-list .identity-row-copy strong { color: var(--color-text); font-size: .8rem; font-weight: 700; }
+  .connected-accounts-list .identity-row-copy small { color: var(--color-text-muted); font-size: .68rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .identity-status {
+    display: inline-flex; align-items: center;
+    padding: 4px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--color-border-strong);
+    color: var(--color-text-muted);
+    background: transparent;
+    font-size: .58rem; font-weight: 700;
+    letter-spacing: .06em; text-transform: uppercase;
+    white-space: nowrap;
+  }
+  .identity-status.connected {
+    color: var(--color-primary);
+    border-color: var(--color-primary-border);
+    background: var(--color-primary-soft);
+  }
+  .connected-accounts-actions {
+    display: flex; justify-content: flex-end;
+    margin-top: 10px;
+  }
+  .danger-cta {
+    display: inline-flex; align-items: center; gap: 6px;
+    justify-self: end;
+    min-height: 40px;
+    padding: 0 15px;
+    border-radius: 999px;
+    color: #fff;
+    background: rgba(220, 60, 60, .9);
+    border: 1px solid rgba(220, 60, 60, .9);
+    font: inherit;
+    font-size: .72rem; font-weight: 700;
+    cursor: pointer;
+    transition: transform var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), opacity var(--motion-fast) var(--ease-out);
+  }
+  .danger-cta:hover { background: rgba(200, 40, 40, .95); transform: translateY(-1px); }
+  .danger-cta:active { transform: scale(.98); }
+  .danger-cta:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+  .danger-cta:disabled { opacity: .55; cursor: not-allowed; transform: none; }
+  .confirm-row {
+    display: grid; gap: 8px;
+    margin-top: 10px;
+    padding: 12px 14px;
+    border: 1px solid rgba(220, 60, 60, .35);
+    border-radius: var(--radius-sm);
+    background: rgba(220, 60, 60, .06);
+  }
+  .confirm-row strong { color: var(--color-text); font-size: .8rem; }
+  .confirm-row p { margin: 0; color: var(--color-text-muted); font-size: .7rem; line-height: 1.5; }
+  .confirm-actions { display: flex; justify-content: flex-end; gap: 8px; }
 
   /* ── Buttons ── */
   .secondary-cta {
