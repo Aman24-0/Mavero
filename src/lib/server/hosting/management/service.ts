@@ -210,6 +210,88 @@ export class ManagementService {
   }
 
   /**
+   * MAV-FOCUSED (2026-10) — Unlink a media-to-provider-file association.
+   *
+   * Unlike `detachAsset` (which sets `mavero_status='missing'` but keeps
+   * the `media_assets` row + `media_item_id` association for reactivation),
+   * `unlinkAsset` DELETES the `media_assets` row entirely. This:
+   *   * Removes the Mavero-side association between the media item and
+   *     the provider file.
+   *   * Does NOT delete the provider-side file (no `adapter.deleteAsset`
+   *     call — the provider file remains on Vidara/Abyss).
+   *   * Makes the provider file available for re-linking to a DIFFERENT
+   *     media item via `linkAsset` (which checks for an existing row and
+   *     inserts a new one when none exists).
+   *   * Preserves the `media_item` (canonical record — never deleted).
+   *   * Preserves all other `media_assets` rows and their associations.
+   *
+   * Use `unlinkAsset` when a file was accidentally linked to the WRONG
+   * media title and needs to be re-linked to the correct one. Use
+   * `detachAsset` when you want to temporarily hide an asset from
+   * playback without removing the association (it can be reactivated).
+   * Use `deleteAsset` when you want to delete the provider-side file
+   * AND the Mavero-side row.
+   */
+  async unlinkAsset(mediaAssetId: string, adminUserId?: string): Promise<ManagementResult> {
+    const asset = await this.getMediaAsset(mediaAssetId);
+
+    // TERMINAL-STATE GUARD: deleted assets are already gone from the
+    // provider — unlinking is meaningless.
+    if (asset.status === 'deleted') {
+      throw new HostingProviderError('ASSET_DELETED', { message: 'Deleted provider assets cannot be unlinked. The asset is already terminal.' });
+    }
+
+    try {
+      // DELETE the media_assets row — this removes the Mavero-side
+      // association. The provider file is NOT touched (no adapter call).
+      const { error: deleteError } = await this.client
+        .from('media_assets')
+        .delete()
+        .eq('id', mediaAssetId);
+
+      if (deleteError) {
+        throw new HostingProviderError('ASSET_DELETE_FAILED', {
+          message: `Failed to unlink asset: ${deleteError.message}`,
+          cause: deleteError,
+        });
+      }
+
+      // Record the operation for audit history.
+      await this.uploadService.recordOperation({
+        action: 'unlink',
+        status: 'success',
+        media_item_id: asset.media_item_id,
+        media_asset_id: mediaAssetId,
+        provider_source_id: asset.provider_source_id ?? undefined,
+        admin_user_id: adminUserId,
+        details: {
+          provider_asset_id: asset.provider_asset_id,
+          note: 'Mavero association removed; provider file preserved.',
+        },
+      });
+
+      // Reopen demand if no other available asset exists for this media
+      // item (same as detach — the content is no longer available).
+      await this.reopenDemandForMediaItem(asset.media_item_id);
+
+      return { ok: true, action: 'unlink', mediaAssetId, providerAssetId: asset.provider_asset_id };
+    } catch (error) {
+      const err = error instanceof HostingProviderError ? error : new HostingProviderError('UNKNOWN', { cause: error });
+      await this.uploadService.recordOperation({
+        action: 'unlink',
+        status: 'failed',
+        media_item_id: asset.media_item_id,
+        media_asset_id: mediaAssetId,
+        provider_source_id: asset.provider_source_id ?? undefined,
+        admin_user_id: adminUserId,
+        error_code: err.code,
+        error_message: err.message,
+      });
+      return { ok: false, action: 'unlink', mediaAssetId, providerAssetId: asset.provider_asset_id, error: { code: err.code, message: err.message } };
+    }
+  }
+
+  /**
    * Deletes a provider-side asset through the adapter and marks the
    * Mavero media_asset as deleted. If the provider-side delete fails,
    * the Mavero asset is NOT marked as deleted — it retains enough state

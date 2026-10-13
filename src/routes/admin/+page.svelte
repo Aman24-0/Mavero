@@ -15,7 +15,7 @@
    *   - HOSTING & MEDIA — quick links to media/hosting management
    *   - INTEGRATIONS — secondary metric cards
    */
-  import { AlertCircle, Database, Download, Film, Layers3, Puzzle, Server, ShieldCheck, Wifi } from 'lucide-svelte';
+  import { AlertCircle, Database, Download, Layers3, Puzzle, ShieldCheck, Wifi } from 'lucide-svelte';
   import AdminAppShell from '$lib/components/admin2/AdminAppShell.svelte';
   import AdminPage from '$lib/components/admin2/AdminPage.svelte';
   import AdminStatus from '$lib/components/admin2/AdminStatus.svelte';
@@ -75,39 +75,22 @@
     </section>
 
     <!-- ============================================================
-         QUICK ACTIONS (MAV-FOCUSED, 2026-10): surfaced the destinations
-         that the mobile bottom-nav no longer carries directly (the More
-         sheet was removed). Every route that was in the More sheet is
-         reachable here OR through the System Status metric cards above
-         (API & Sources, Content Rules, Downloads, Integrations). This
-         section adds the remaining items: Media Library, Missing Media,
-         Hosting Control. Desktop already has the full sidebar — these
-         cards are the mobile-equivalent affordance.
+         QUICK ACTIONS (MAV-FOCUSED, 2026-10 — revised): removed the
+         duplicate Media Library + Hosting Control cards (they have
+         dedicated bottom-nav entries on mobile and sidebar entries on
+         desktop). Retained Missing Media (the only route NOT in the
+         mobile bottom-nav) as a single quick-action card.
          ============================================================ -->
     <section class="a2-section">
       <div class="a2-section-head">
         <h2 class="a2-section-title">Quick actions</h2>
       </div>
       <div class="a2-quick-grid">
-        <a class="a2-quick-card" href="/admin/media/library">
-          <div class="a2-quick-icon"><Film size={16} /></div>
-          <div class="a2-quick-copy">
-            <strong>Media Library</strong>
-            <small>Search and manage hosted files</small>
-          </div>
-        </a>
         <a class="a2-quick-card" href="/admin/media/missing">
           <div class="a2-quick-icon"><AlertCircle size={16} /></div>
           <div class="a2-quick-copy">
             <strong>Missing Media</strong>
             <small>Demand awaiting a provider file</small>
-          </div>
-        </a>
-        <a class="a2-quick-card" href="/admin/hosting">
-          <div class="a2-quick-icon"><Server size={16} /></div>
-          <div class="a2-quick-copy">
-            <strong>Hosting Control</strong>
-            <small>Providers, sync, and inventory</small>
           </div>
         </a>
       </div>

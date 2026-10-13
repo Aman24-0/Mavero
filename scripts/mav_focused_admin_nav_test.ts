@@ -81,12 +81,13 @@ console.log('\n§3 — Overview quick-action cards surface the routes the mobile
   const overview = readCode('src/routes/admin/+page.svelte');
   // The Quick actions section exists.
   ok(/Quick actions/.test(overview), '3a. Overview has a "Quick actions" section');
-  // Media Library quick-action card.
-  ok(/href="\/admin\/media\/library"/.test(overview), '3b. Media Library quick-action card');
-  // Missing Media quick-action card.
-  ok(/href="\/admin\/media\/missing"/.test(overview), '3c. Missing Media quick-action card');
-  // Hosting Control quick-action card.
-  ok(/href="\/admin\/hosting"/.test(overview), '3d. Hosting Control quick-action card');
+  // MAV-FOCUSED (2026-10 revised): Media Library + Hosting Control quick-action
+  // cards were REMOVED (they have dedicated bottom-nav entries on mobile and
+  // sidebar entries on desktop). Only Missing Media remains as a quick-action
+  // card (it's NOT in the mobile bottom-nav).
+  ok(!/href="\/admin\/media\/library"/.test(overview), '3b. Media Library quick-action card REMOVED (duplicate of bottom-nav + sidebar)');
+  ok(/href="\/admin\/media\/missing"/.test(overview), '3c. Missing Media quick-action card retained (not in bottom-nav)');
+  ok(!/href="\/admin\/hosting"/.test(overview), '3d. Hosting Control quick-action card REMOVED (duplicate of bottom-nav + sidebar)');
 }
 
 console.log('\n§4 — System Status metric cards link to API & Sources / Content Rules / Downloads / Integrations');
@@ -134,9 +135,11 @@ console.log('\n§7 — Media Library page header carries "Link media" + "Upload 
   const library = readCode('src/routes/admin/media/library/+page.svelte');
   ok(/Upload \/ Import/.test(library), '7a. Media Library header has "Upload / Import" action');
   ok(/Link media/.test(library), '7b. Media Library header has "Link media" action (immediately to the right of Upload)');
-  // The link button uses the registerLinkTrigger callback (not bind:this).
-  ok(/registerLinkTrigger/.test(library), '7c. the header "Link media" button uses the registerLinkTrigger callback');
-  ok(/linkTrigger\?\.\(\)/.test(library), '7d. the header button calls linkTrigger?.()');
+  // MAV-FOCUSED (2026-10 revised): the header button now opens the shared
+  // AdminLinkMediaModal (TMDB-first search) instead of using the old
+  // registerLinkTrigger callback. The modal is a separate component.
+  ok(/AdminLinkMediaModal/.test(library), '7c. Media Library uses AdminLinkMediaModal (shared component, TMDB-first)');
+  ok(/linkModalOpen/.test(library), '7d. Media Library uses linkModalOpen state to control the modal');
 }
 
 console.log('\n§8 — AdminHostingAssets exposes the link flow via registerLinkTrigger');

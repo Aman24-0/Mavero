@@ -2,50 +2,48 @@
   /**
    * Admin 2.0 — Media Library — Canonical File Manager
    *
-   * ARCHITECTURE: Media Library is a single asset-centric file manager.
-   * It shows active provider files (media_assets, default status='active'
-   * — terminal deleted files are EXCLUDED) with their associated canonical
-   * media metadata.
+   * MAV-FOCUSED (2026-10): the "Link media" header button now opens the
+   * shared AdminLinkMediaModal — a TMDB-FIRST search → provider-tabbed
+   * file picker. The old AdminHostingAssets link modal (which searched
+   * the local media_items table) is replaced by this shared component.
    *
-   * No more "Media" / "Provider Files" dual-view split.
-   * The AdminHostingAssets component is the sole file manager — it
-   * handles search, filters, facet counts, sorting, pagination, file
-   * details, provider metadata, and all lifecycle actions (reconcile,
-   * rename, move, detach, delete, reactivate, link).
-   *
-   * The page server passes initialFilters parsed from the canonical URL
-   * params (provider / q / contentType / status / linked / sort /
-   * mediaItem) — Hosting Control's provider deep-link and the
-   * Jobs/Activity/Attention media deep-links land here and initialize
-   * the file manager in exactly the requested state.
-   *
-   * Deleted files are excluded from the active inventory.
-   * Canonical media identities (media_items) are preserved for
-   * Missing Media, demand tracking, and future re-upload.
-   *
-   * MAV-FOCUSED (2026-10): the header now carries TWO primary actions —
-   * "Upload / Import" (existing) and "Link media" (new). "Link media"
-   * uses the `registerLinkTrigger` callback so AdminHostingAssets can
-   * register its internal startLinkExistingFlow function with the
-   * parent — ONE implementation, no duplication. (Svelte 5 runes mode
-   * does not expose internal functions through `bind:this` directly;
-   * the callback registration pattern is the idiomatic equivalent.)
+   * The flow is:
+   *   1. Admin clicks "Link media".
+   *   2. AdminLinkMediaModal opens with TMDB search (Step A).
+   *   3. Admin searches TMDB for a movie/series/anime title.
+   *   4. Admin selects a TMDB result → modal transitions to Step B.
+   *   5. Step B shows provider tabs (Vidara / Abyss) with isolated state.
+   *   6. Admin selects a provider file + confirms.
+   *   7. POST /api/admin/media/assets/link creates the association.
+   *   8. On success, the modal closes and the page refreshes.
    */
   import { Upload, Link2 } from 'lucide-svelte';
+  import { invalidateAll } from '$app/navigation';
   import AdminAppShell from '$lib/components/admin2/AdminAppShell.svelte';
   import AdminPage from '$lib/components/admin2/AdminPage.svelte';
   import AdminHostingAssets from '$lib/components/admin2/AdminHostingAssets.svelte';
+  import AdminLinkMediaModal from '$lib/components/admin2/AdminLinkMediaModal.svelte';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
 
-  // The link-trigger callback. AdminHostingAssets registers its internal
-  // startLinkExistingFlow here on mount, so the header "Link media"
-  // button and the in-table button share ONE implementation.
-  let linkTrigger: (() => void) | null = $state(null);
+  let linkModalOpen = $state(false);
 
-  function registerLinkTrigger(fn: (() => void) | null) {
-    linkTrigger = fn;
+  // Resolve provider sources for the shared link modal.
+  const linkProviders = $derived(
+    data.hostingSources
+      ?.filter((s: any) => s.adapterId && s.capabilities)
+      .map((s: any) => ({ adapterId: s.adapterId, name: s.providerName ?? s.name, sourceId: s.id })) ?? []
+  );
+
+  function openLinkModal() {
+    linkModalOpen = true;
+  }
+
+  async function onLinkModalClose() {
+    linkModalOpen = false;
+    // Refresh the page data so the newly linked asset appears.
+    await invalidateAll();
   }
 </script>
 
@@ -68,18 +66,12 @@
       <a class="library-action" href="/admin/media/upload">
         <Upload size={13} /> Upload / Import
       </a>
-      <!-- MAV-FOCUSED (2026-10): "Link media" immediately to the right of
-           Upload. Triggers the AdminHostingAssets link flow (media-item
-           search → provider tabs with per-provider search → link). The
-           file is NOT re-uploaded — Mavero records the link to the
-           existing provider file. -->
-      <button type="button" class="library-action library-action-link" onclick={() => linkTrigger?.()} disabled={!linkTrigger}>
+      <button type="button" class="library-action library-action-link" onclick={openLinkModal} disabled={linkProviders.length === 0}>
         <Link2 size={13} /> Link media
       </button>
     {/snippet}
 
     <AdminHostingAssets
-      {registerLinkTrigger}
       initialFilters={data.initialFilters}
       providers={data.hostingSources
         ?.filter((s: any) => s.adapterId && s.capabilities)
@@ -87,6 +79,12 @@
     />
   </AdminPage>
 </AdminAppShell>
+
+<AdminLinkMediaModal
+  bind:open={linkModalOpen}
+  providers={linkProviders}
+  onclose={onLinkModalClose}
+/>
 
 <style>
   .library-action {
@@ -112,8 +110,6 @@
   }
   .library-action:disabled { opacity: 0.5; cursor: not-allowed; }
   .library-action-link {
-    /* Same shape as the Upload action; distinct border tint to signal
-       the secondary "link existing file" semantic. */
     border-color: var(--a2-border-strong);
     background: var(--a2-surface-3);
     color: var(--a2-text);
