@@ -4,6 +4,7 @@ import { isValidEmail, MIN_PASSWORD_LENGTH } from '$lib/shared/auth';
 import { env as publicEnv } from '$env/dynamic/public';
 import { recordServerEvent } from '$lib/server/analytics/ingest';
 import { createSupabaseAdminClient } from '$lib/server/supabase/admin';
+import { buildUnauthenticatedOAuthState, buildOAuthRedirectUrl, GOOGLE_PROVIDER, OAuthConfigError } from '$lib/shared/oauth';
 import type { Actions } from './$types';
 
 export const actions: Actions = {
@@ -84,5 +85,59 @@ export const actions: Actions = {
     }
 
     return { success: true, message: 'Check your email to confirm your MAVERO account, then sign in.', displayName, email };
+  },
+
+  // MAVERO Google OAuth (focused implementation, 2026-10):
+  //
+  // The "Continue with Google" button on /auth/sign-up posts to this
+  // action. Identical security model to the sign-in `google` action — the
+  // only difference is the OAuth intent encoded in the signed state token
+  // ('sign-up' instead of 'sign-in') so the callback can fire the right
+  // analytics event and pick the right post-flow destination.
+  //
+  // Supabase Auth's Google flow CREATES a new user when no matching
+  // identity exists, OR signs in an existing user when a matching Google
+  // identity already exists. The "Enable Manual Linking" project setting
+  // is NOT required for the create-or-sign-in path (only for explicit
+  // linking to an existing email/password account, which lives on
+  // /settings).
+  google: async ({ request, locals, url }) => {
+    // If the user is ALREADY signed in, redirect them to their intended
+    // destination. (An authenticated user who lands on /auth/sign-up and
+    // clicks Google is redirected — they should use /settings to link
+    // Google to their existing account, not sign up again.)
+    if (locals.user) {
+      const formData = await request.formData().catch(() => null);
+      const next = safeRedirectPath(String(formData?.get('next') ?? url.searchParams.get('next') ?? '/settings'));
+      throw redirect(303, next);
+    }
+
+    const formData = await request.formData();
+    const next = safeRedirectPath(String(formData.get('next') ?? url.searchParams.get('next') ?? '/settings'));
+
+    let state: string;
+    try {
+      state = buildUnauthenticatedOAuthState('sign-up', next);
+    } catch (error) {
+      if (error instanceof OAuthConfigError) {
+        return fail(503, { message: 'Google sign-up is not configured. Please try email sign-up instead.' });
+      }
+      throw error;
+    }
+
+    const redirectTo = buildOAuthRedirectUrl(url);
+    const { data, error } = await locals.supabase.auth.signInWithOAuth({
+      provider: GOOGLE_PROVIDER,
+      options: {
+        redirectTo,
+        queryParams: { state },
+      },
+    });
+
+    if (error) {
+      return fail(503, { message: friendlyAuthMessage(error.message, 'sign-up') || 'Google sign-up could not be started. Please try again.' });
+    }
+
+    throw redirect(303, data.url);
   },
 };
