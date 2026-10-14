@@ -135,12 +135,9 @@ console.log('\n§7 — Media Library page header carries "Link media" (Upload/Im
 {
   const library = readCode('src/routes/admin/media/library/+page.svelte');
   ok(!/Upload \/ Import/.test(library), '7a. Upload/Import REMOVED from Media Library header');
-  ok(/Link media/.test(library), '7b. Media Library header has "Link media" action (immediately to the right of Upload)');
-  // MAV-FOCUSED (2026-10 revised): the header button now opens the shared
-  // AdminLinkMediaModal (TMDB-first search) instead of using the old
-  // registerLinkTrigger callback. The modal is a separate component.
-  ok(/AdminLinkMediaModal/.test(library), '7c. Media Library uses AdminLinkMediaModal (shared component, TMDB-first)');
-  ok(/linkModalOpen/.test(library), '7d. Media Library uses linkModalOpen state to control the modal');
+  ok(/Add file/.test(library), '7b. Media Library header has "Add file" action (replaces Link media)');
+  ok(/AdminMediaList/.test(library), '7c. Media Library uses AdminMediaList (new compact list component)');
+  ok(/registerAddFile/.test(library), '7d. Media Library uses registerAddFile callback for the add-file trigger');
 }
 
 console.log('\n§8 — AdminHostingAssets exposes the link flow via registerLinkTrigger');

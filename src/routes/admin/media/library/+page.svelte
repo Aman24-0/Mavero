@@ -1,49 +1,33 @@
 <script lang="ts">
   /**
-   * Admin 2.0 — Media Library — Canonical File Manager
+   * Admin 2.0 — Media Library — Compact List (Phase 2, 2026-10).
    *
-   * MAV-FOCUSED (2026-10): the "Link media" header button now opens the
-   * shared AdminLinkMediaModal — a TMDB-FIRST search → provider-tabbed
-   * file picker. The old AdminHostingAssets link modal (which searched
-   * the local media_items table) is replaced by this shared component.
+   * Replaces the old AdminHostingAssets (2262 lines) with a simple compact
+   * list + Add File wizard. The admin manually links Vidara/Abyss references
+   * to TMDB titles — no provider API calls, no inventory sync, no upload.
    *
-   * The flow is:
-   *   1. Admin clicks "Link media".
-   *   2. AdminLinkMediaModal opens with TMDB search (Step A).
-   *   3. Admin searches TMDB for a movie/series/anime title.
-   *   4. Admin selects a TMDB result → modal transitions to Step B.
-   *   5. Step B shows provider tabs (Vidara / Abyss) with isolated state.
-   *   6. Admin selects a provider file + confirms.
-   *   7. POST /api/admin/media/assets/link creates the association.
-   *   8. On success, the modal closes and the page refreshes.
+   * Three-dot menu: Delete (Mavero-side only) + Update link.
    */
-  import { Link2 } from 'lucide-svelte';
-  import { invalidateAll } from '$app/navigation';
+  import { Plus } from 'lucide-svelte';
   import AdminAppShell from '$lib/components/admin2/AdminAppShell.svelte';
   import AdminPage from '$lib/components/admin2/AdminPage.svelte';
-  import AdminHostingAssets from '$lib/components/admin2/AdminHostingAssets.svelte';
-  import AdminLinkMediaModal from '$lib/components/admin2/AdminLinkMediaModal.svelte';
+  import AdminMediaList from '$lib/components/admin2/AdminMediaList.svelte';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
 
-  let linkModalOpen = $state(false);
-
-  // Resolve provider sources for the shared link modal.
-  const linkProviders = $derived(
+  // Provider sources for the new list component.
+  const providers = $derived(
     data.hostingSources
-      ?.filter((s: any) => s.adapterId && s.capabilities)
-      .map((s: any) => ({ adapterId: s.adapterId, name: s.providerName ?? s.name, sourceId: s.id })) ?? []
+      ?.filter((s: any) => s.adapterId === 'vidara' || s.adapterId === 'abyss')
+      .map((s: any) => ({ adapterId: s.adapterId, name: s.providerName ?? s.name ?? s.adapterId, sourceId: s.id })) ?? []
   );
 
-  function openLinkModal() {
-    linkModalOpen = true;
-  }
+  // Expose the add-file trigger from the list component.
+  let addFileTrigger: (() => void) | null = $state(null);
 
-  async function onLinkModalClose() {
-    linkModalOpen = false;
-    // Refresh the page data so the newly linked asset appears.
-    await invalidateAll();
+  function registerAddFile(fn: (() => void) | null) {
+    addFileTrigger = fn;
   }
 </script>
 
@@ -56,32 +40,21 @@
   <AdminPage eyebrow="Content" title="Media Library" accent="cyan">
     {#snippet description()}
       <p>
-        Active provider file inventory — search, filter, and manage every hosted
-        file across Vidara and Abyss. Deleted files are excluded from this view
-        but remain in Hosting Control → Activity.
+        Manually linked media files across Vidara and Abyss. Click "Add file"
+        to link a new title, or use the three-dot menu to update or remove an
+        existing association.
       </p>
     {/snippet}
 
     {#snippet actions()}
-      <button type="button" class="library-action library-action-link" onclick={openLinkModal} disabled={linkProviders.length === 0}>
-        <Link2 size={13} /> Link media
+      <button type="button" class="library-action" onclick={() => addFileTrigger?.()} disabled={!addFileTrigger}>
+        <Plus size={13} /> Add file
       </button>
     {/snippet}
 
-    <AdminHostingAssets
-      initialFilters={data.initialFilters}
-      providers={data.hostingSources
-        ?.filter((s: any) => s.adapterId && s.capabilities)
-        .map((s: any) => ({ adapterId: s.adapterId, name: s.providerName ?? s.name, capabilities: s.capabilities })) ?? []}
-    />
+    <AdminMediaList {providers} {registerAddFile} />
   </AdminPage>
 </AdminAppShell>
-
-<AdminLinkMediaModal
-  bind:open={linkModalOpen}
-  providers={linkProviders}
-  onclose={onLinkModalClose}
-/>
 
 <style>
   .library-action {
@@ -96,7 +69,6 @@
     font-family: var(--a2-font-sans);
     font-size: var(--a2-text-sm);
     font-weight: 600;
-    text-decoration: none;
     cursor: pointer;
     transition: background var(--a2-motion-micro) var(--a2-ease-out),
                 border-color var(--a2-motion-micro) var(--a2-ease-out);
@@ -106,14 +78,4 @@
     border-color: var(--a2-cyan);
   }
   .library-action:disabled { opacity: 0.5; cursor: not-allowed; }
-  .library-action-link {
-    border-color: var(--a2-border-strong);
-    background: var(--a2-surface-3);
-    color: var(--a2-text);
-  }
-  .library-action-link:hover {
-    background: var(--a2-cyan-soft);
-    border-color: var(--a2-cyan);
-    color: var(--a2-cyan);
-  }
 </style>
