@@ -31,6 +31,7 @@
   // cold).
   import { fetchBatchWithCache } from '$lib/client/discover/rail-cache';
   import { appendReturnTo } from '$lib/shared/navigation';
+  import { detailHref as detailPath, watchHref as watchPath } from '$lib/shared/routes';
   // Phase 9 fix: import the canonical SECTION_PRIORITY + canonicalExcludeIds
   // from the SHARED module (client-safe). The server dedup loop walks the
   // SAME SECTION_PRIORITY, so Show More exclude lists honor the same
@@ -790,8 +791,8 @@
                        their own origin). Without it, DetailPage's goBack fell to
                        the hardcoded /discover fallback and replaced the history
                        entry — losing the origin page entirely. -->
-                  <a class="hero-play" href={appendReturnTo(`/watch/${slide.item.type}/${slide.item.id}`, heroOrigin)}><Play size={15} fill="currentColor" strokeWidth={0} /> Play</a>
-                  <a class="hero-btn" href={appendReturnTo(`/${slide.item.type}/${slide.item.id}`, heroOrigin)} aria-label={`Details for ${slide.item.title}`}><Info size={14} /> See More</a>
+                  <a class="hero-play" href={appendReturnTo(watchPath(slide.item.id, slide.item.type, slide.item.isAnime, slide.item.animeFormat), heroOrigin)}><Play size={15} fill="currentColor" strokeWidth={0} /> Play</a>
+                  <a class="hero-btn" href={appendReturnTo(detailPath(slide.item.id, slide.item.type, slide.item.isAnime, slide.item.animeFormat), heroOrigin)} aria-label={`Details for ${slide.item.title}`}><Info size={14} /> See More</a>
                   <button class="hero-btn icon-only" type="button" aria-label={isHeroFavorite ? `Remove ${slide.item.title} from My List` : `Add ${slide.item.title} to My List`} onclick={toggleHeroFavorite}>
                     <ListPlus size={14} />
                   </button>

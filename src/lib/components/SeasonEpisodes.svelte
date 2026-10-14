@@ -8,6 +8,7 @@
   // entry point.
   import { AlertTriangle, ChevronRight, Download, LoaderCircle, Play } from 'lucide-svelte';
   import { appendReturnTo } from '$lib/shared/navigation';
+  import { watchHref as watchPath } from '$lib/shared/routes';
   import { markEpisodeAsResumeTarget } from '$lib/client/progress/service';
   // MAV-FOCUSED Issue 4 (2026-10): pure eligibility helpers — hide
   // Play/Download for unreleased episodes and hide season tabs for
@@ -266,7 +267,7 @@
                       );
                     } catch { /* local persistence failure is non-fatal — navigation still proceeds */ }
                   }
-                  void goto(appendReturnTo(`/watch/${watchType}/${id}?season=${selectedSeason}&episode=${episode.number}`, returnTo));
+                  void goto(appendReturnTo(watchPath(id, watchType, watchType === 'anime', watchType === 'anime' ? 'series' : undefined, selectedSeason, episode.number), returnTo));
                 }}
               >
                 <Play size={13} fill="currentColor" strokeWidth={0} />

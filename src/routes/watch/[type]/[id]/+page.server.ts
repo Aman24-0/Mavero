@@ -1,4 +1,4 @@
-import { error, isHttpError } from '@sveltejs/kit';
+import { error, isHttpError, redirect } from '@sveltejs/kit';
 import { getDetail, getSeriesSeason } from '$lib/server/content/service';
 import { getPublicStreamingConfig } from '$lib/server/streaming/public-config';
 import { toMediaItem } from '$lib/server/content/presenter';
@@ -7,6 +7,7 @@ import { canAccessAdultContent } from '$lib/server/content/adult-policy';
 import { detailVerdict } from '$lib/server/content/search-classify';
 import { logWatchLoadStageFailure } from '$lib/server/content/watch-load-diagnostics';
 import { logger } from '$lib/server/http/log';
+import { isPublicRouteType, internalContentType, isLegacyWatchType, modernizeWatchType, isValidTmdbId, extractTmdbId } from '$lib/shared/routes';
 import type { PageServerLoad } from './$types';
 
 // Phase 2-E (audit PERF-005) — Watch page server load parallelization.
@@ -71,7 +72,45 @@ const EMPTY_STREAMING_CONFIG: StreamingConfigFallback = {
 };
 
 export const load: PageServerLoad = async ({ params, locals, cookies, url }) => {
-  if (!isContentType(params.type)) throw error(404, 'Unsupported content type');
+  // Phase 5: accept both the new public route types (tv-show, anime-series,
+  // anime-movie) and the legacy internal types (movie, series, anime).
+  //
+  // Legacy types are redirected to the canonical new form:
+  //   /watch/series/{id} → /watch/tv-show/{id}
+  //   /watch/anime/{id}  → /watch/anime-series/{id}
+  //   /watch/movie/{id}  → /watch/movie/{id} (unchanged, no redirect needed)
+  //
+  // The internal ContentType passed to getDetail() is derived from the
+  // public route type via internalContentType():
+  //   movie       → 'movie'
+  //   tv-show     → 'series'
+  //   anime-series → 'anime'
+  //   anime-movie  → 'movie'
+  if (isLegacyWatchType(params.type)) {
+    const modernType = modernizeWatchType(params.type);
+    if (modernType) {
+      const bareId = extractTmdbId(params.id) ?? params.id;
+      throw redirect(307, `/watch/${modernType}/${bareId}${url.search}`);
+    }
+  }
+
+  if (!isPublicRouteType(params.type)) {
+    // Also accept the raw internal types for backward compatibility
+    // (in case any internal code calls /watch/movie/ or /watch/series/
+    // directly — these are NOT redirected because they're the same as
+    // the new types for 'movie' and would create a redirect loop for
+    // 'series'/'anime' which ARE redirected above).
+    if (!isContentType(params.type)) {
+      throw error(404, 'Unsupported content type');
+    }
+  }
+
+  // Derive the internal ContentType for getDetail().
+  // For public route types, use internalContentType(). For legacy internal
+  // types that pass the isContentType check above, use as-is.
+  const internalType = isPublicRouteType(params.type)
+    ? internalContentType(params.type)
+    : params.type as 'movie' | 'series' | 'anime';
 
   // Phase 6 — direct watch enforcement (server-side, non-disclosing).
   //
@@ -106,7 +145,7 @@ export const load: PageServerLoad = async ({ params, locals, cookies, url }) => 
   // missing title in operator diagnostics — the previous silent boundaries
   // made the next production occurrence unidentifiable. The typed outcomes
   // (404 / empty config / null) are unchanged byte-for-byte.
-  const detailPromise = getDetail(params.type, params.id).catch((detailError) => {
+  const detailPromise = getDetail(internalType, params.id).catch((detailError) => {
     logWatchLoadStageFailure(logger, 'watch:detail', detailError);
     // Fail-closed: an unresolvable title (including a failed classification
     // fetch) is a 404 — never an unclassified watch page.
@@ -160,9 +199,13 @@ export const load: PageServerLoad = async ({ params, locals, cookies, url }) => 
   // For series/anime params.type, we know this upfront; for the rare
   // movie+anime-series case (item.isAnime && animeFormat !== 'movie'), we
   // only know after detail resolves.
-  const isSeriesLike = params.type === 'series'
+  //
+  // Phase 5: use the internalType (not params.type) for the series-like
+  // check, because params.type may now be 'tv-show' or 'anime-series'
+  // (the new public route types) which aren't valid ContentType values.
+  const isSeriesLike = internalType === 'series'
     || (item.isAnime === true && item.animeFormat !== 'movie')
-    || params.type === 'anime';
+    || internalType === 'anime';
   // Season fetch — optional, failure is silently absorbed (the player
   // falls back to item.seasonsData episodes). Result normalized to
   // `Episode[] | null` so the union type doesn't widen (the fixture path

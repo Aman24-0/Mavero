@@ -1,10 +1,29 @@
-import { error } from '@sveltejs/kit';
+import { error, redirect } from '@sveltejs/kit';
 import { getDetail } from '$lib/server/content/service';
 import { toMediaItem } from '$lib/server/content/presenter';
 import { canAccessAdultContent } from '$lib/server/content/adult-policy';
+import { isValidTmdbId, isLegacyPrefixedId, extractTmdbId } from '$lib/shared/routes';
 import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ params, locals, cookies, setHeaders }) => {
+  const { id } = params;
+
+  // Phase 5: legacy prefixed ID (e.g. 'movie-278') → redirect to canonical
+  // bare-ID form (/movie/278). This preserves backward compatibility with
+  // any existing bookmarks, search-engine indexes, or internal links that
+  // use the old prefixed form.
+  if (isLegacyPrefixedId(id)) {
+    const bareId = extractTmdbId(id);
+    if (bareId) {
+      throw redirect(308, `/movie/${bareId}`);
+    }
+  }
+
+  // Phase 5: validate bare TMDB ID. Reject malformed IDs early.
+  if (!isValidTmdbId(id)) {
+    throw error(404, 'Movie not found');
+  }
+
   // MAVP-5 (RC-7 — slow Back navigation from the player): the detail data
   // response carries a SHORT PRIVATE cache policy. The SvelteKit client
   // router honors it, so the history.back() navigation from the player
@@ -29,7 +48,7 @@ export const load: PageServerLoad = async ({ params, locals, cookies, setHeaders
     // classifier + the identical adult gate). The adult PARENT gate
     // below is unchanged — an unauthorized adult title still 404s at
     // the page level.
-    const detail = await getDetail('movie', params.id);
+    const detail = await getDetail('movie', id);
 
     // Phase 10: SSR adult content guard.
     if (detail.tags?.includes('Adult')) {

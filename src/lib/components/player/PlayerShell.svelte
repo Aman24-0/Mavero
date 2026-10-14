@@ -599,7 +599,11 @@
     clearMediaSession();
     // Phase 6: exit PiP if the active PiP element was Mavero's video. This
     // prevents the PiP window from showing stale video after a source switch.
-    if (document.pictureInPictureElement === videoElement) exitPipQuietly();
+    // Phase 5 fix: guard document access during SSR. The `document`
+    // global is only available in the browser — accessing it during SSR
+    // (which happens for series/anime watch pages) throws ReferenceError.
+    // The `browser` import from $app/environment is the canonical guard.
+    if (browser && document.pictureInPictureElement === videoElement) exitPipQuietly();
   }
   // MAVP-4 Issue 1: same-source URL change (episode switch — the resolver
   // rebuilds the embed URL for the new episode while sourceId stays equal).
@@ -672,7 +676,11 @@
     tapGestureController?.cancel();
     void releaseWakeLock();
     clearMediaSession();
-    if (document.pictureInPictureElement === videoElement) exitPipQuietly();
+    // Phase 5 fix: guard document access during SSR. The `document`
+    // global is only available in the browser — accessing it during SSR
+    // (which happens for series/anime watch pages) throws ReferenceError.
+    // The `browser` import from $app/environment is the canonical guard.
+    if (browser && document.pictureInPictureElement === videoElement) exitPipQuietly();
   }
 
   // ----- Player V2 final remediation (Issue 3): DELAYED RESUME APPLICATION -----
@@ -1445,7 +1453,11 @@
       // Phase 6: explicit teardown of shell-level playback features. The browser
       // auto-exits fullscreen/PiP when playerRoot leaves the DOM, but explicit
       // calls are deterministic and prevent stale state across SPA navigation.
-      if (document.pictureInPictureElement === videoElement) exitPipQuietly();
+      // Phase 5 fix: guard document access during SSR. The `document`
+    // global is only available in the browser — accessing it during SSR
+    // (which happens for series/anime watch pages) throws ReferenceError.
+    // The `browser` import from $app/environment is the canonical guard.
+    if (browser && document.pictureInPictureElement === videoElement) exitPipQuietly();
       if (document.fullscreenElement === playerRoot) exitFullscreenQuietly();
       // Player V2 corrections (real-device feedback — the reported "audio
       // keeps playing after pressing Back" and "PiP close leaves audio"):

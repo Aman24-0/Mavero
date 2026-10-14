@@ -473,7 +473,80 @@ The Google OAuth flow was NOT used because it requires interactive Google accoun
 - Episode routing works
 - Anime movies distinguished from regular movies
 
-**Status**: NOT_STARTED
+**Status**: DONE — verified 2026-10-14
+
+---
+
+### Phase 5 Implementation (2026-10-14)
+
+**Baseline**: commit `f39f841` (Phase 4 complete, clean working tree).
+
+**Changes**:
+
+1. **NEW: `src/lib/shared/routes.ts`** — shared route helper module. Single source of truth for public detail + watch URL generation. Exports:
+   - `detailHref(id, type, isAnime?, animeFormat?)` → `/movie/278`, `/tv-show/1396`, `/anime-series/30984`, `/anime-movie/1311031`
+   - `watchHref(id, type, isAnime?, animeFormat?, season?, episode?)` → `/watch/movie/278`, `/watch/tv-show/1396?season=1&episode=1`
+   - `extractTmdbId(id)` — strips prefix, validates bare TMDB ID
+   - `publicRouteType(type, isAnime, animeFormat)` — maps internal ContentType to public route type segment
+   - `internalContentType(routeType)` — reverse mapping
+   - `isLegacyPrefixedId(id)`, `isPublicRouteType(value)`, `isValidTmdbId(value)`, `isLegacyWatchType(type)`, `modernizeWatchType(type)`
+
+2. **NEW routes**:
+   - `src/routes/tv-show/[id]/` — TV series detail (accepts bare TMDB ID, redirects legacy prefixed IDs with 308)
+   - `src/routes/anime-series/[id]/` — Anime series detail (accepts bare TMDB ID)
+   - `src/routes/anime-movie/[id]/` — Anime movie detail (accepts bare TMDB ID, uses `getDetail('movie', id)` — anime classification is content-driven, not route-driven)
+
+3. **MODIFIED routes**:
+   - `src/routes/movie/[id]/+page.server.ts` — accepts bare TMDB IDs, redirects legacy prefixed IDs (`movie-278` → `278`) with 308
+   - `src/routes/series/[id]/+page.server.ts` — redirect-only (308 → `/tv-show/{bareId}`)
+   - `src/routes/anime/[id]/+page.server.ts` — redirect-only (308 → `/anime-series/{bareId}`)
+   - `src/routes/watch/[type]/[id]/+page.server.ts` — accepts new public route types (`tv-show`, `anime-series`, `anime-movie`), redirects legacy types (`series` → `tv-show`, `anime` → `anime-series`) with 307, derives internal ContentType via `internalContentType()`
+
+4. **MODIFIED components** (all use shared route helper):
+   - `MediaCard.svelte` — `detailHref` + `watchHref` via shared helper
+   - `SpotlightCarousel.svelte` — same
+   - `DiscoverPage.svelte` — same
+   - `DetailPage.svelte` — `canonicalUrl` + `watchPath` via shared helper (canonical URL now uses public route type + bare TMDB ID)
+   - `SeasonEpisodes.svelte` — episode watch links via shared helper
+
+5. **MODIFIED shared modules**:
+   - `src/lib/shared/upcoming-policy.ts` — `upcomingDetailPath()` now maps `series-123` → `/tv-show/123`, `anime-456` → `/anime-series/456`
+
+6. **FIX: `src/lib/components/player/PlayerShell.svelte`** — guarded `document.pictureInPictureElement` access with `browser` check during SSR. This was a pre-existing bug that caused HTTP 500 on ALL series/anime watch pages (the `document` global is not available during SSR). The fix adds `browser &&` guards to all 3 occurrences.
+
+**Tests added**:
+- `scripts/mav_phase5_route_contract_test.ts` (54 checks) — verifies: shared route helper exports, new route directories exist, bare TMDB ID validation, legacy redirect behavior, watch route type handling, all route generators use shared helper, upcoming policy mapping, sitemap unchanged.
+
+**Verification results**:
+
+| Suite | Result |
+|-------|--------|
+| `pnpm check` | 0 errors, 10 warnings (cosmetic a11y — pre-existing) |
+| `pnpm build` | success |
+| `mav_focused_admin_nav_test` | 65/65 passed |
+| `hosting_lifecycle_regression_test` | 11/11 passed |
+| `signout_reliability_test` | passed |
+| `admin_nav_dom_qa` (Playwright) | 20/20 passed |
+| `mav_focused_manual_link_contract_test` | 74/74 passed |
+| `mav_phase3_missing_media_contract_test` | 62/62 passed |
+| `mav_phase5_route_contract_test` (NEW) | 54/54 passed |
+| `mav_phase2_browser_acceptance.mjs` (regression) | 66/66 passed |
+| `mav_phase3_browser_acceptance.mjs` (regression) | 50/50 passed |
+
+**Route verification (curl against dev server)**:
+- `/movie/278` → HTTP 200 ✓
+- `/movie/movie-278` → HTTP 308 (redirect to `/movie/278`) ✓
+- `/tv-show/1396` → HTTP 200 ✓
+- `/series/series-1396` → HTTP 308 (redirect to `/tv-show/1396`) ✓
+- `/watch/movie/278` → HTTP 200 ✓
+- `/watch/tv-show/1396?season=1&episode=1` → HTTP 200 ✓ (was 500 before SSR fix)
+- `/watch/anime-series/30984?season=1&episode=1` → HTTP 200 ✓
+- `/watch/anime-movie/1311031` → HTTP 200 ✓
+- `/watch/series/series-1396` → HTTP 307 (redirect to `/watch/tv-show/1396`) ✓
+
+**SEO + sitemap**: unchanged — the sitemap ships only verified static public pages (`/`, `/movies`, `/tv-shows`, `/anime`). Detail pages are NOT in the sitemap (the production catalog is a live TMDB pass-through with no local table of catalogued titles — dynamic detail URLs are discovered by crawling). Canonical URLs now use the public route type + bare TMDB ID via `detailHref()`.
+
+**Status**: DONE
 
 ---
 

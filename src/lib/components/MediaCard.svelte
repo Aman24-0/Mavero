@@ -3,6 +3,7 @@
   import { page } from '$app/state';
   import { Play, Star, Check } from 'lucide-svelte';
   import { appendReturnTo } from '$lib/shared/navigation';
+  import { detailHref as detailPath, watchHref as watchPath } from '$lib/shared/routes';
   import { haptic } from '$lib/client/haptics';
   // MAVP-3 Issue 1: the MAVP-2 click-time landscape-first presentation was
   // REMOVED — card playback opens in the device's existing orientation; the
@@ -159,12 +160,14 @@
 
   $: if (item.poster) imageFailed = false;
   $: returnTo = `${page.url.pathname}${page.url.search}${page.url.hash}`;
-  $: cardHref = appendReturnTo(`/${item.type}/${item.id}`, returnTo);
-  $: detailHref = appendReturnTo(`/${item.type}/${item.id}`, returnTo);
+  // Phase 5: use shared route helper for canonical public URLs.
+  $: cardHref = appendReturnTo(detailPath(item.id, item.type, item.isAnime, item.animeFormat), returnTo);
+  $: detailHref = appendReturnTo(detailPath(item.id, item.type, item.isAnime, item.animeFormat), returnTo);
   // BUG #1 + #7 fix: prefer item.resumeHref (which carries the correct
   // ?season=X&episode=Y for series) when available. Fall back to the
   // bare first-play watch route when no resume target exists.
-  $: watchHref = appendReturnTo(item.resumeHref ?? `/watch/${item.type}/${item.id}`, returnTo);
+  // Phase 5: use shared route helper for the fallback watch URL.
+  $: watchHref = appendReturnTo(item.resumeHref ?? watchPath(item.id, item.type, item.isAnime, item.animeFormat), returnTo);
   $: posterSrcset = item.posterSmall ? `${item.posterSmall} 342w, ${item.poster} 500w` : undefined;
   $: posterSizes = compact ? '(max-width: 640px) calc((100vw - 38px) / 2), 150px' : '(max-width: 640px) 40vw, 178px';
   // Phase 7F+ (anime routing): dual-badge layout. Anime-flagged titles

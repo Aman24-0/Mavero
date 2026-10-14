@@ -772,3 +772,81 @@ node scripts/mav_phase2_check_constraint_probe.mjs
 ### Conclusion
 
 Phase 4 is complete. The live Supabase database schema fully matches the expected state from the 90 migration files. No schema drift, no missing objects, no stale constraints, no corrective migrations needed. The previously reported "27 of 72 applied" discrepancy is resolved — the schema-object-based reconciliation confirms all expected tables, columns, constraints, indexes, and policies are present and enforced. All regression suites pass (65 + 11 + 20 + 74 + 62 + 73 + 30 + 18 + 7 = 360 checks). TMDB configuration works locally. DB is clean — existing data preserved, 0 test leftovers.
+
+---
+
+## Phase 5 — Public Route Migration + Canonical URL Audit (2026-10-14)
+
+**Status**: DONE
+**Baseline**: commit `f39f841` (Phase 4 complete, clean working tree)
+**Branch**: main (in sync with origin)
+
+### Route inventory (before → after)
+
+| Content type | Old detail route | New detail route | Old watch route | New watch route |
+|-------------|-----------------|-----------------|----------------|----------------|
+| Movie | /movie/movie-278 | /movie/278 | /watch/movie/movie-278 | /watch/movie/278 |
+| TV series | /series/series-1396 | /tv-show/1396 | /watch/series/series-1396 | /watch/tv-show/1396?season=1&episode=1 |
+| Anime series | /anime/anime-30984 | /anime-series/30984 | /watch/anime/anime-30984 | /watch/anime-series/30984?season=1&episode=1 |
+| Anime movie | (none) | /anime-movie/1311031 | (none) | /watch/anime-movie/1311031 |
+
+### Files changed
+
+**New files**:
+1. `src/lib/shared/routes.ts` — shared route helper (detailHref, watchHref, extractTmdbId, publicRouteType, internalContentType, isLegacyPrefixedId, isPublicRouteType, isValidTmdbId, isLegacyWatchType, modernizeWatchType).
+2. `src/routes/tv-show/[id]/+page.server.ts` + `+page.svelte` — TV series detail (bare TMDB ID, 308 redirect for legacy prefixed IDs).
+3. `src/routes/anime-series/[id]/+page.server.ts` + `+page.svelte` — Anime series detail.
+4. `src/routes/anime-movie/[id]/+page.server.ts` + `+page.svelte` — Anime movie detail (uses `getDetail('movie', id)` — anime classification is content-driven).
+5. `scripts/mav_phase5_route_contract_test.ts` — 54-check static contract test.
+
+**Modified files**:
+6. `src/routes/movie/[id]/+page.server.ts` — accepts bare TMDB IDs, redirects legacy prefixed IDs with 308.
+7. `src/routes/series/[id]/+page.server.ts` — redirect-only (308 → /tv-show/{bareId}).
+8. `src/routes/series/[id]/+page.svelte` — empty (server loader always redirects).
+9. `src/routes/anime/[id]/+page.server.ts` — redirect-only (308 → /anime-series/{bareId}).
+10. `src/routes/anime/[id]/+page.svelte` — empty (server loader always redirects).
+11. `src/routes/watch/[type]/[id]/+page.server.ts` — accepts new public route types (tv-show, anime-series, anime-movie), redirects legacy types (series → tv-show, anime → anime-series) with 307, derives internal ContentType via internalContentType().
+12. `src/lib/components/MediaCard.svelte` — uses shared route helper for detailHref + watchHref.
+13. `src/lib/components/SpotlightCarousel.svelte` — same.
+14. `src/lib/components/DiscoverPage.svelte` — same.
+15. `src/lib/components/DetailPage.svelte` — canonicalUrl + watchPath via shared helper.
+16. `src/lib/components/SeasonEpisodes.svelte` — episode watch links via shared helper.
+17. `src/lib/shared/upcoming-policy.ts` — upcomingDetailPath() maps series → /tv-show/, anime → /anime-series/.
+18. `src/lib/components/player/PlayerShell.svelte` — **FIX**: guarded `document.pictureInPictureElement` with `browser &&` during SSR (pre-existing bug caused HTTP 500 on ALL series/anime watch pages).
+19. `scripts/mav_phase3_browser_acceptance.mjs` — updated to use new routes (/movie/278, /tv-show/1396).
+
+### Pre-existing bug fixed
+
+`PlayerShell.svelte` line 675 (and 2 other occurrences) accessed `document.pictureInPictureElement` during SSR without a `browser` guard. This caused HTTP 500 on ALL series/anime watch pages — the `document` global is not available during SSR. Verified pre-existing: the old `/watch/series/series-1396` route also returned HTTP 500 before Phase 5. The fix adds `browser &&` guards to all 3 occurrences.
+
+### Route verification (curl against dev server)
+
+```text
+/movie/278                                      → HTTP 200 ✓
+/movie/movie-278                                → HTTP 308 (redirect to /movie/278) ✓
+/tv-show/1396                                   → HTTP 200 ✓
+/series/series-1396                             → HTTP 308 (redirect to /tv-show/1396) ✓
+/watch/movie/278                                → HTTP 200 ✓
+/watch/tv-show/1396?season=1&episode=1          → HTTP 200 ✓ (was 500 before SSR fix)
+/watch/anime-series/30984?season=1&episode=1     → HTTP 200 ✓
+/watch/anime-movie/1311031                      → HTTP 200 ✓
+/watch/series/series-1396                       → HTTP 307 (redirect to /watch/tv-show/1396) ✓
+```
+
+### SEO + sitemap
+
+- Sitemap unchanged — ships only verified static public pages (`/`, `/movies`, `/tv-shows`, `/anime`).
+- Detail pages NOT in sitemap (production catalog is a live TMDB pass-through — dynamic URLs discovered by crawling).
+- Canonical URLs now use the public route type + bare TMDB ID via `detailHref()`.
+- PRODUCTION_ORIGIN constant unchanged (`https://maveroweb.space`).
+- No stale legacy route references in generated links (all route generators updated).
+
+### Remaining blockers
+
+1. **Netlify production TMDB configuration** — cannot verify whether `TMDB_API_KEY` / `TMDB_READ_ACCESS_TOKEN` is configured in the Netlify production deployment. Local `.env` has it configured. **Action**: verify in the Netlify dashboard.
+
+2. **Player source selection** — the player uses fallback sources (Vidrift, MoviesNexus) by default because Vidara/Abyss are experimental low-priority sources. The resolver returns the correct URL when explicitly requested. **Action** (optional): configure Vidara/Abyss as default source or raise their priority.
+
+### DB state
+
+Clean — 1 media_items (pre-existing Sicario), 1 media_assets, 0 test leftovers.

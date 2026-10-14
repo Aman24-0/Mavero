@@ -375,10 +375,13 @@ export function selectUpcomingSeasonCandidates(
  * Event IDs are episode-unique (`series-123-s58e294`, `anime-456-s01e22`
  * — season/episode suffixes keep duplicate-keyed cards apart) but the
  * detail routes need the parent TMDB ID. Strict parse, no blind prefix
- * stripping:
+ * stripping.
+ *
+ * Phase 5: the output now uses the NEW public route conventions:
  *      movie-789            -> /movie/789
- *      series-123-s58e294   -> /series/123
- *      anime-456-s01e22     -> /anime/456
+ *      series-123-s58e294   -> /tv-show/123
+ *      anime-456-s01e22     -> /anime-series/456
+ *
  * Malformed IDs (wrong prefix, non-numeric ID, empty, junk suffixes)
  * return null — the caller fails safe instead of routing to a 404.
  */
@@ -389,7 +392,11 @@ export function upcomingDetailPath(eventId: string): string | null {
   const [, type, numericId] = match;
   const id = Number(numericId);
   if (!Number.isInteger(id) || id <= 0) return null;
-  return `/${type}/${id}`;
+  // Phase 5: map the internal type to the public route type.
+  if (type === 'movie') return `/movie/${id}`;
+  if (type === 'series') return `/tv-show/${id}`;
+  if (type === 'anime') return `/anime-series/${id}`;
+  return null;
 }
 
 // ============================================================

@@ -4,6 +4,7 @@
   // Technical SEO remediation: canonical host = the FIXED production origin
   // (the request can never self-canonicalize at a forged/deployment host).
   import { PRODUCTION_ORIGIN } from '$lib/shared/seo';
+  import { detailHref as detailPath, watchHref as watchPath, publicRouteType } from '$lib/shared/routes';
   import { goto } from '$app/navigation';
   // MAVP-3 Issue 1: the MAVP-2 click-time landscape-first presentation was
   // REMOVED — playback must open in the device's existing orientation; the
@@ -127,9 +128,13 @@
   let clientRecommendations = $state<MediaItem[]>([]);
   const recommendations = $derived(recommendationItems.length ? recommendationItems : clientRecommendations);
   const statusSheetOptions = $derived(watchlistStatus ? statusOptions : statusOptions.filter((option) => option.key !== 'remove'));
-  const canonicalUrl = $derived(`${PRODUCTION_ORIGIN}/${type}/${item.id}`);
-  const watchPath = $derived(type === 'movie' ? `/watch/${type}/${item.id}` : `/watch/${type}/${item.id}?season=${resumeEpisode?.season ?? 1}&episode=${resumeEpisode?.episode ?? 1}`);
-  const watchHref = $derived(appendReturnTo(watchPath, `${page.url.pathname}${page.url.search}${page.url.hash}`));
+  // Phase 5: use shared route helper for canonical URL + watch path.
+  // The canonical URL uses the public route type (movie/tv-show/anime-series/anime-movie)
+  // and the bare TMDB ID — NOT the internal ContentType or prefixed item.id.
+  const routeType = $derived(publicRouteType(type, item.isAnime, item.animeFormat));
+  const canonicalUrl = $derived(`${PRODUCTION_ORIGIN}${detailPath(item.id, type, item.isAnime, item.animeFormat)}`);
+  const watchRoutePath = $derived(watchPath(item.id, type, item.isAnime, item.animeFormat, resumeEpisode?.season, resumeEpisode?.episode));
+  const watchHrefVal = $derived(appendReturnTo(watchRoutePath, `${page.url.pathname}${page.url.search}${page.url.hash}`));
   // Technical SEO remediation: the JSON-LD AggregateRating previously
   // hard-coded `ratingCount: 1` — a fabricated count (the TMDB pipeline
   // carries the real vote count on item.voteCount). The rating block is now
@@ -393,7 +398,7 @@
       const query = params.toString();
       const cleanDetail = `/${type}/${item.id}${query ? `?${query}` : ''}`;
       window.history.replaceState(window.history.state, '', cleanDetail);
-      void goto(`/watch/${type}/${item.id}${query ? `?${query}` : ''}`);
+      void goto(`${watchRoutePath}${query ? `&${query.replace(/^\?/, '')}` : ''}`);
     }
     return () => {
       active = false;
@@ -903,7 +908,7 @@
              approved secondary row immediately beneath it. -->
         <div class="actions">
           <div class="primary-actions">
-            <a class="play-btn" href={watchHref} aria-label={playSubLabel ? `${playLabel} — season ${resumeEpisode?.season}, episode ${resumeEpisode?.episode}` : `${playLabel} ${item.title}`} onclick={() => { markPlayerMilestone('mavero:play'); }}>
+            <a class="play-btn" href={watchHrefVal} aria-label={playSubLabel ? `${playLabel} — season ${resumeEpisode?.season}, episode ${resumeEpisode?.episode}` : `${playLabel} ${item.title}`} onclick={() => { markPlayerMilestone('mavero:play'); }}>
               <Play size={17} fill="currentColor" strokeWidth={0} />
               <span class="play-copy">
                 <span class="play-label">{playLabel}</span>
