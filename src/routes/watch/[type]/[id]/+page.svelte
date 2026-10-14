@@ -8,6 +8,7 @@
   import { resolveSandboxRuntime } from '$lib/shared/sandbox-policy';
   import { controlsPositionFromCapabilities } from '$lib/shared/player-controls-position';
   import { appendReturnTo, navigateBackOr, safeReturnTo } from '$lib/shared/navigation';
+  import { internalContentType, isPublicRouteType, publicRouteType } from '$lib/shared/routes';
   import type { PageData } from './$types';
   import { createProgressWriter, getResumeProgress, setFavoriteStatus } from '$lib/client/progress/service';
   import { recordCloudHistory, syncAuthenticatedState } from '$lib/client/progress/cloud';
@@ -21,17 +22,19 @@
   export let data: PageData;
 
   $: item = data.item;
-  // The canonical `contentType` for the URL and progress keys stays as the
-  // original route type ('movie', 'series', or 'anime'). This preserves
-  // progress identity, My List keys, and Continue Watching.
-  //
-  // Anime content now comes from TMDB (TMDB TV series flagged as anime via
-  // genre 16 + 'ja'). The resolver request's `mediaType` is `contentType`
-  // directly — anime content with `contentType='series'` (the typical case
-  // for TMDB-tagged anime series) routes through the normal series pipeline.
-  // The legacy `/watch/anime/{id}` URL path still works for backward
-  // compatibility with deep links but is no longer produced by the UI.
-  $: contentType = (page.params.type === 'series' || page.params.type === 'anime' ? page.params.type : 'movie') as 'movie' | 'series' | 'anime';
+  // Phase 5+7 fix: derive contentType from the modern public route type
+  // ('tv-show' → 'series', 'anime-series' → 'anime', 'anime-movie' → 'movie')
+  // using the shared route helper. Legacy types ('series', 'anime', 'movie')
+  // are handled by the fallback. This fixes the critical bug where TV/anime
+  // watch URLs were incorrectly classified as 'movie', causing the resolver
+  // to reject the request with INVALID_REQUEST.
+  $: contentType = isPublicRouteType(page.params.type)
+    ? internalContentType(page.params.type)
+    : (page.params.type === 'series' || page.params.type === 'anime' ? page.params.type : 'movie') as 'movie' | 'series' | 'anime';
+  // The public route type for URL construction (for goto/navigation).
+  $: routeType = isPublicRouteType(page.params.type)
+    ? page.params.type as ReturnType<typeof publicRouteType>
+    : publicRouteType(contentType, item.isAnime, item.animeFormat);
   let season = Number(page.url.searchParams.get('season') || '') || undefined;
   let episode = Number(page.url.searchParams.get('episode') || '') || undefined;
   // MAVP-3 Issue 4: explicit control-position CALIBRATION session — the
@@ -887,11 +890,13 @@
     const params = new URLSearchParams(page.url.searchParams);
     params.set('season', String(target.season));
     params.set('episode', String(target.episode));
-    await goto(`/watch/${contentType}/${item.id}?${params.toString()}`, { replaceState: true, keepFocus: true, noScroll: true });
+    await goto(`/watch/${routeType}/${item.id}?${params.toString()}`, { replaceState: true, keepFocus: true, noScroll: true });
   }
 
   function isDetailPath(value: string) {
-    return /^\/(movie|series|anime)\/[^/?#]+(?:[?#].*)?$/.test(value);
+    // Phase 5: recognize both legacy (/movie/, /series/, /anime/) and
+    // modern (/tv-show/, /anime-series/, /anime-movie/) route types.
+    return /^\/(movie|series|anime|tv-show|anime-series|anime-movie)\/[^/?#]+(?:[?#].*)?$/.test(value);
   }
 
   function closePlayer() {
@@ -924,7 +929,7 @@
     // instantly — nothing in this path awaits network cleanup.
     void writer?.pause();
     const returnTo = safeReturnTo(page.url.searchParams.get('from'));
-    const fallbackDestination = returnTo && isDetailPath(returnTo) ? returnTo : appendReturnTo(`/${contentType}/${item.id}`, returnTo ?? '/discover');
+    const fallbackDestination = returnTo && isDetailPath(returnTo) ? returnTo : appendReturnTo(`/${routeType}/${item.id}`, returnTo ?? '/discover');
     navigateBackOr(() => {
       void goto(fallbackDestination, { replaceState: true, keepFocus: true });
     });
@@ -932,7 +937,7 @@
 
   function openDetails() {
     const returnTo = safeReturnTo(page.url.searchParams.get('from'));
-    const destination = appendReturnTo(`/${contentType}/${item.id}`, returnTo && !isDetailPath(returnTo) ? returnTo : '/discover');
+    const destination = appendReturnTo(`/${routeType}/${item.id}`, returnTo && !isDetailPath(returnTo) ? returnTo : '/discover');
     void goto(destination, { replaceState: true, keepFocus: true });
   }
   $: resolutionErrorForwarded = resolutionState === 'provider-error' || resolutionState === 'unsupported' || resolutionState === 'unavailable' || resolutionState === 'network-error' || resolutionState === 'title-unavailable' ? resolutionMessage : '';

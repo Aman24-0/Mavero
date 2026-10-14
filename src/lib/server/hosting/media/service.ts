@@ -62,6 +62,8 @@ export type EnsureMovieInput = {
   imdbId?: string | null;
   title: string;
   year?: number | null;
+  posterPath?: string | null;
+  backdropPath?: string | null;
 };
 
 /** Input for creating/ensuring a series media item. */
@@ -70,6 +72,8 @@ export type EnsureSeriesInput = {
   imdbId?: string | null;
   title: string;
   year?: number | null;
+  posterPath?: string | null;
+  backdropPath?: string | null;
 };
 
 /** Input for creating/ensuring an episode media item. */
@@ -177,6 +181,8 @@ export class CanonicalMediaService {
       episode: null,
       episode_title: null,
       parent_media_id: null,
+      poster_path: input.posterPath ?? null,
+      backdrop_path: input.backdropPath ?? null,
     });
 
     // 2. Ensure the root Movies folder.
@@ -238,6 +244,8 @@ export class CanonicalMediaService {
       episode: null,
       episode_title: null,
       parent_media_id: null,
+      poster_path: input.posterPath ?? null,
+      backdrop_path: input.backdropPath ?? null,
     });
 
     const root = await this.ensureRootFolder('series');
@@ -352,6 +360,8 @@ export class CanonicalMediaService {
       episode: null,
       episode_title: null,
       parent_media_id: null,
+      poster_path: input.posterPath ?? null,
+      backdrop_path: input.backdropPath ?? null,
     });
 
     const root = await this.ensureRootFolder('anime');
@@ -475,14 +485,38 @@ export class CanonicalMediaService {
   // --- Internal upsert helpers ---
 
   private async upsertMediaItem(row: Database['public']['Tables']['media_items']['Insert']): Promise<{ id: string }> {
+    // Phase 7: poster_path + backdrop_path are new nullable columns that
+    // may not exist on the live DB yet (migration pending). Strip them
+    // from the upsert row and apply them via a separate UPDATE that
+    // gracefully fails if the columns don't exist.
+    const { poster_path: posterPath, backdrop_path: backdropPath, ...rowWithoutPoster } = row;
+
     const { data, error } = await this.client
       .from('media_items')
-      .upsert(row, { onConflict: 'canonical_key' })
+      .upsert(rowWithoutPoster, { onConflict: 'canonical_key' })
       .select('id')
       .single();
     if (error || !data) {
       throw new MediaServiceError('DATABASE_ERROR', error?.message ?? 'Failed to upsert media item.');
     }
+
+    // Best-effort poster update — silently fails if the column doesn't exist.
+    if (posterPath || backdropPath) {
+      try {
+        const update: Database['public']['Tables']['media_items']['Update'] = {};
+        if (posterPath) update.poster_path = posterPath;
+        if (backdropPath) update.backdrop_path = backdropPath;
+        await this.client
+          .from('media_items')
+          .update(update)
+          .eq('id', data.id);
+      } catch {
+        // Column doesn't exist yet — silently absorb. The migration
+        // will add the column; poster data will be persisted on the
+        // next link/update after the migration is applied.
+      }
+    }
+
     return data;
   }
 

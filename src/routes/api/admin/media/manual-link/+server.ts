@@ -206,9 +206,9 @@ function validateReference(provider: string, reference: string): string | null {
 // only the CanonicalMediaService.ensure* branch differs.
 async function resolveMediaItemId(
   mediaService: CanonicalMediaService,
-  args: { contentType: string; tmdbId: string; title: string; year: number | null; seasonNum: number | null; episodeNum: number | null; episodeTitle?: string | null },
+  args: { contentType: string; tmdbId: string; title: string; year: number | null; seasonNum: number | null; episodeNum: number | null; episodeTitle?: string | null; posterPath?: string | null; backdropPath?: string | null },
 ): Promise<string> {
-  const { contentType, tmdbId, title, year, seasonNum, episodeNum, episodeTitle } = args;
+  const { contentType, tmdbId, title, year, seasonNum, episodeNum, episodeTitle, posterPath, backdropPath } = args;
 
   // Validate season/episode as integers BEFORE calling ensure*, so
   // NaN strings don't surface as a confusing INVALID_SEASON error.
@@ -217,7 +217,7 @@ async function resolveMediaItemId(
     episodeNum != null && Number.isInteger(episodeNum);
 
   if (contentType === 'movie') {
-    return (await mediaService.ensureMovie({ tmdbId, title, year })).mediaItemId;
+    return (await mediaService.ensureMovie({ tmdbId, title, year, posterPath, backdropPath })).mediaItemId;
   }
   if (contentType === 'anime') {
     if (hasEpisode) {
@@ -225,7 +225,7 @@ async function resolveMediaItemId(
         seriesTmdbId: tmdbId, season: seasonNum as number, episode: episodeNum as number, seriesTitle: title, episodeTitle: episodeTitle ?? null,
       })).mediaItemId;
     }
-    return (await mediaService.ensureAnime({ tmdbId, title, year })).mediaItemId;
+    return (await mediaService.ensureAnime({ tmdbId, title, year, posterPath, backdropPath })).mediaItemId;
   }
   // contentType === 'series'
   if (hasEpisode) {
@@ -233,7 +233,7 @@ async function resolveMediaItemId(
       seriesTmdbId: tmdbId, season: seasonNum as number, episode: episodeNum as number, seriesTitle: title, episodeTitle: episodeTitle ?? null,
     })).mediaItemId;
   }
-  return (await mediaService.ensureSeries({ tmdbId, title, year })).mediaItemId;
+  return (await mediaService.ensureSeries({ tmdbId, title, year, posterPath, backdropPath })).mediaItemId;
 }
 
 export const POST: RequestHandler = async ({ request, locals }) => {
@@ -253,6 +253,8 @@ export const POST: RequestHandler = async ({ request, locals }) => {
     title?: string;
     year?: string | number;
     episodeTitle?: string;
+    posterPath?: string;
+    backdropPath?: string;
   };
   try {
     body = await request.json();
@@ -260,7 +262,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
     return json({ ok: false, error: { code: 'INVALID_REQUEST', message: 'Invalid JSON body.' } }, { status: 400, headers: NO_STORE_HEADERS });
   }
 
-  const { contentType, tmdbId, season, episode, provider, reference, mediaAssetId, title: clientTitle, year: clientYear, episodeTitle: clientEpisodeTitle } = body;
+  const { contentType, tmdbId, season, episode, provider, reference, mediaAssetId, title: clientTitle, year: clientYear, episodeTitle: clientEpisodeTitle, posterPath: clientPosterPath, backdropPath: clientBackdropPath } = body;
 
   if (!contentType || !tmdbId || !provider || !reference) {
     return json({ ok: false, error: { code: 'INVALID_REQUEST', message: 'contentType, tmdbId, provider, and reference are required.' } }, { status: 400, headers: NO_STORE_HEADERS });
@@ -324,7 +326,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
     }
 
     resolvedMediaItemId = await resolveMediaItemId(mediaService, {
-      contentType, tmdbId, title, year, seasonNum, episodeNum, episodeTitle: clientEpisodeTitle,
+      contentType, tmdbId, title, year, seasonNum, episodeNum, episodeTitle: clientEpisodeTitle, posterPath: clientPosterPath, backdropPath: clientBackdropPath,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to resolve the media item.';

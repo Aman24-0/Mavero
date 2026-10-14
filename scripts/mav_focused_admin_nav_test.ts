@@ -76,18 +76,15 @@ console.log('\n§2 — Desktop sidebar unchanged (every route still reachable)')
   }
 }
 
-console.log('\n§3 — Overview quick-action cards surface the routes the mobile bottom-nav no longer carries');
+console.log('\n§3 — Overview quick-action cards removed (Phase 7 fix: owner requested removal)');
 {
   const overview = readCode('src/routes/admin/+page.svelte');
-  // The Quick actions section exists.
-  ok(/Quick actions/.test(overview), '3a. Overview has a "Quick actions" section');
-  // MAV-FOCUSED (2026-10 revised): Media Library + Hosting Control quick-action
-  // cards were REMOVED (they have dedicated bottom-nav entries on mobile and
-  // sidebar entries on desktop). Only Missing Media remains as a quick-action
-  // card (it's NOT in the mobile bottom-nav).
-  ok(!/href="\/admin\/media\/library"/.test(overview), '3b. Media Library quick-action card REMOVED (duplicate of bottom-nav + sidebar)');
-  ok(/href="\/admin\/media\/missing"/.test(overview), '3c. Missing Media quick-action card retained (not in bottom-nav)');
-  ok(!/href="\/admin\/hosting"/.test(overview), '3d. Hosting Control quick-action card REMOVED (duplicate of bottom-nav + sidebar)');
+  // Phase 7 fix: the Quick actions section was REMOVED per owner request.
+  // Missing Media remains accessible via the dedicated sidebar + mobile nav.
+  ok(!/Quick actions/.test(overview), '3a. Overview NO LONGER has a "Quick actions" section (removed per owner request)');
+  ok(!/href="\/admin\/media\/library"/.test(overview), '3b. Media Library quick-action card REMOVED');
+  ok(!/href="\/admin\/media\/missing"/.test(overview), '3c. Missing Media quick-action card REMOVED from Overview (accessible via sidebar/mobile nav)');
+  ok(!/href="\/admin\/hosting"/.test(overview), '3d. Hosting Control quick-action card REMOVED');
 }
 
 console.log('\n§4 — System Status metric cards link to API & Sources / Content Rules / Downloads / Integrations');
@@ -116,7 +113,7 @@ console.log('\n§5 — No route is unreachable on mobile');
   ok(mobileNavRoutes.includes('/admin/analytics'), '5d. bottom-nav includes Analytics');
 
   // Overview cards for the remaining routes.
-  ok(overview.includes('href="/admin/media/missing"'), '5e. Overview card for Missing Media (not in bottom-nav)');
+  ok(!overview.includes('href="/admin/media/missing"'), '5e. Missing Media quick-action card REMOVED from Overview (Phase 7 fix)');
   ok(overview.includes('href="/admin/system/api-sources"'), '5f. Overview card for API & Sources (not in bottom-nav)');
   ok(overview.includes('href="/admin/system/content-rules"'), '5g. Overview card for Content Rules (not in bottom-nav)');
   ok(overview.includes('href="/admin/system/downloads"'), '5h. Overview card for Downloads (not in bottom-nav)');

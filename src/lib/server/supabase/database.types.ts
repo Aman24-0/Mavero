@@ -1158,6 +1158,8 @@ export type Database = {
           episode: number | null
           episode_title: string | null
           parent_media_id: string | null
+          poster_path: string | null
+          backdrop_path: string | null
           created_at: string
           updated_at: string
         }
@@ -1173,6 +1175,8 @@ export type Database = {
           episode?: number | null
           episode_title?: string | null
           parent_media_id?: string | null
+          poster_path?: string | null
+          backdrop_path?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -1188,6 +1192,8 @@ export type Database = {
           episode?: number | null
           episode_title?: string | null
           parent_media_id?: string | null
+          poster_path?: string | null
+          backdrop_path?: string | null
           created_at?: string
           updated_at?: string
         }

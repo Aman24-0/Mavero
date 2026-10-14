@@ -130,10 +130,22 @@ export function continueWatchingRecords(progress: WatchProgressRecord[], favorit
   // manualWatching records WITHOUT season/episode — losing episode context.
   const byTitle = new Map<string, WatchProgressRecord>();
   // Group all progress records by content title and pick the latest resume target.
+  // Phase 7 fix: normalize the key by TMDB ID to prevent duplicates when the
+  // same title was classified as both 'series' and 'anime' due to the
+  // previous contentType derivation bug on the watch page.
   const titlesInProgress = new Set<string>();
   for (const record of progress) {
     if (record.completionState === 'completed') continue;
-    const titleKey = favoriteKey(record.contentType, record.contentId);
+    // Normalize: strip any prefix from contentId and use a unified key
+    // that treats 'series' and 'anime' as the same title when they share
+    // the same TMDB ID. This prevents the same show from appearing twice
+    // in Continue Watching just because its content_type was inconsistently
+    // classified (a bug fixed in Phase 7 Part B).
+    const bareContentId = record.contentId.replace(/^(movie|series|anime)-/, '');
+    const isSeriesLike = record.contentType === 'series' || record.contentType === 'anime';
+    const titleKey = isSeriesLike
+      ? `series-anime:${bareContentId}`
+      : favoriteKey(record.contentType, bareContentId);
     titlesInProgress.add(titleKey);
     const existing = byTitle.get(titleKey);
     if (!existing) {
@@ -149,9 +161,10 @@ export function continueWatchingRecords(progress: WatchProgressRecord[], favorit
   }
   // For each title, use getLatestResumeTarget to ensure the correct episode.
   const result: WatchProgressRecord[] = [];
-  for (const [titleKey, _] of byTitle) {
-    // Parse contentType + contentId from the title key.
-    const [contentType, contentId] = titleKey.split(':');
+  for (const [titleKey, record] of byTitle) {
+    // Use the winning record's contentType + contentId for the resume target.
+    const contentType = record.contentType;
+    const contentId = record.contentId;
     if (!contentType || !contentId) continue;
     const target = getLatestResumeTarget(contentType as WatchProgressRecord['contentType'], contentId, progress);
     if (target) {
@@ -159,8 +172,7 @@ export function continueWatchingRecords(progress: WatchProgressRecord[], favorit
     } else {
       // Fallback: use the record from byTitle (could be a movie with currentTime>0
       // or a series record that didn't match getLatestResumeTarget's filter).
-      const fallback = byTitle.get(titleKey);
-      if (fallback && fallback.currentTime > 0) result.push(fallback);
+      if (record.currentTime > 0) result.push(record);
     }
   }
   // Also include manual "watching" favorites that have NO progress records at all

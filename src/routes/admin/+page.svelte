@@ -15,7 +15,7 @@
    *   - HOSTING & MEDIA — quick links to media/hosting management
    *   - INTEGRATIONS — secondary metric cards
    */
-  import { AlertCircle, Database, Download, Layers3, Puzzle, ShieldCheck, Wifi } from 'lucide-svelte';
+  import { Database, Download, Layers3, Puzzle, ShieldCheck, Wifi } from 'lucide-svelte';
   import AdminAppShell from '$lib/components/admin2/AdminAppShell.svelte';
   import AdminPage from '$lib/components/admin2/AdminPage.svelte';
   import AdminStatus from '$lib/components/admin2/AdminStatus.svelte';
@@ -71,28 +71,6 @@
           <div class="a2-metric-label">Config Version</div>
           <div class="a2-metric-status">Invalidates on mutation</div>
         </div>
-      </div>
-    </section>
-
-    <!-- ============================================================
-         QUICK ACTIONS (MAV-FOCUSED, 2026-10 — revised): removed the
-         duplicate Media Library + Hosting Control cards (they have
-         dedicated bottom-nav entries on mobile and sidebar entries on
-         desktop). Retained Missing Media (the only route NOT in the
-         mobile bottom-nav) as a single quick-action card.
-         ============================================================ -->
-    <section class="a2-section">
-      <div class="a2-section-head">
-        <h2 class="a2-section-title">Quick actions</h2>
-      </div>
-      <div class="a2-quick-grid">
-        <a class="a2-quick-card" href="/admin/media/missing">
-          <div class="a2-quick-icon"><AlertCircle size={16} /></div>
-          <div class="a2-quick-copy">
-            <strong>Missing Media</strong>
-            <small>Demand awaiting a provider file</small>
-          </div>
-        </a>
       </div>
     </section>
 

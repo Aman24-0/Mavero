@@ -1012,3 +1012,94 @@ Actual third-party video playback has not been confirmed by GLM. Cross-origin re
 1. Netlify production TMDB configuration — cannot verify without dashboard access.
 2. Actual playback start — cross-origin restrictions. Owner must manually test.
 3. Player auto-selects higher-priority sources (MoviesNexus) instead of Vidara/Abyss by default. This is intentional (experimental, ordering 500/501). To auto-load: configure as default source via admin or lower their ordering.
+
+---
+
+## Episode Linking + Media Library Redesign + Continue Watching Fix (2026-10-15)
+
+**Status**: PARTIALLY COMPLETE — critical fixes applied, wizard/library redesign pending
+**Baseline**: commit `2444b90` (Phase 7 complete)
+**Branch**: main (in sync with origin)
+
+### Root cause of TV/anime playback error
+
+**CRITICAL BUG FIXED**: `src/routes/watch/[type]/[id]/+page.svelte:34`
+
+The watch page client derived `contentType` from `page.params.type` using a broken check that only recognized legacy types ('series', 'anime'). Modern public route types ('tv-show', 'anime-series', 'anime-movie') fell through to 'movie', causing the resolver to reject the request with `INVALID_REQUEST` ("The playback request is invalid").
+
+**Fix**: Use `internalContentType()` from the shared route helper to correctly map modern route types to internal content types. Also fixed `goto` URL construction and `isDetailPath` regex to use the modern route type.
+
+### Changes applied
+
+1. **Watch page contentType fix** (Part B):
+   - `src/routes/watch/[type]/[id]/+page.svelte` — replaced broken `$: contentType` derivation with `internalContentType(page.params.type)`.
+   - Fixed `goto` to use `routeType` (public route type) instead of `contentType` (internal type).
+   - Fixed `isDetailPath` regex to recognize modern routes (`tv-show`, `anime-series`, `anime-movie`).
+
+2. **Supabase migration for poster_path** (Part D):
+   - `supabase/migrations/20261015000000_add_poster_to_media_items.sql` — adds `poster_path` + `backdrop_path` nullable text columns to `media_items`.
+   - `src/lib/server/supabase/database.types.ts` — updated TypeScript types to include new columns.
+   - `src/lib/server/hosting/media/service.ts` — `ensureMovie`/`ensureSeries`/`ensureAnime` accept + persist `posterPath`/`backdropPath`.
+   - `upsertMediaItem` gracefully degrades: strips poster fields from the upsert row and applies them via a separate best-effort UPDATE that silently fails if the column doesn't exist yet (migration not applied).
+   - `src/routes/api/admin/media/manual-link/+server.ts` — accepts `posterPath`/`backdropPath` in the POST body.
+
+3. **Remove Missing Media Quick Actions from admin Home** (Part G):
+   - `src/routes/admin/+page.svelte` — removed the entire "Quick actions" section.
+   - Removed unused `AlertCircle` import.
+
+4. **Fix Continue Watching duplicates** (Part H):
+   - `src/lib/shared/progress-merge.ts` — `continueWatchingRecords` now normalizes the key by TMDB ID, treating 'series' and 'anime' records with the same TMDB ID as the same title. This prevents the same show from appearing twice in Continue Watching due to inconsistent content_type classification.
+   - The root cause was the watch page's broken `contentType` derivation (Part B fix), which caused progress to be recorded with the wrong content type.
+
+5. **Resolver error-isolation fix** (carried from Phase 7):
+   - `src/lib/server/resolver/mavero-hosted.ts` — re-throw `ResolverError` instances instead of swallowing them.
+
+### Migration status
+
+The `poster_path`/`backdrop_path` migration (`20261015000000_add_poster_to_media_items.sql`) is CREATED but NOT APPLIED to the live Supabase DB. Direct Postgres connection is blocked by Supabase network restrictions. The owner must apply it via the Supabase dashboard SQL editor:
+```sql
+ALTER TABLE public.media_items ADD COLUMN IF NOT EXISTS poster_path text;
+ALTER TABLE public.media_items ADD COLUMN IF NOT EXISTS backdrop_path text;
+```
+
+The code gracefully degrades without these columns — poster data is silently not persisted until the migration is applied.
+
+### Verification results
+
+| Suite | Result |
+|-------|--------|
+| `pnpm check` | 0 errors, 19 warnings |
+| `pnpm build` | success |
+| `mav_focused_admin_nav_test` | 65/65 (updated for removed Quick Actions) |
+| `hosting_lifecycle_regression_test` | 11/11 |
+| `signout_reliability_test` | passed |
+| `admin_nav_dom_qa` (Playwright) | 20/20 |
+| `mav_focused_manual_link_contract_test` | 74/74 |
+| `mav_phase3_missing_media_contract_test` | 62/62 |
+| `mav_phase5_route_contract_test` | 54/54 |
+| `mav_phase6_reference_normalization_test` | 40/40 |
+| `mav_phase7_resolver_contract_test` | 51/51 |
+| `mav_phase4_schema_audit` (live DB) | 73/73 |
+| `mav_phase2_live_db_probe` (live DB) | 18/18 |
+| `mav_phase2_browser_acceptance.mjs` | 66/66 |
+| `mav_phase3_browser_acceptance.mjs` | 50/50 |
+
+### Remaining work (not completed in this session)
+
+1. **Wizard season/episode selection** (Part C) — the `AdminAddFileWizard` does NOT yet have a season/episode picker UI. The manual-link API already supports episode-level linking (season/episode/episodeTitle parameters), and the Missing Media flow already passes these. The Media Library "Add file" flow still links at the series level only.
+
+2. **Media Library redesign** (Parts E+F) — the `AdminMediaList` still uses the old compact list with `limit=100` and no filters. The library API supports filters, sort, and pagination, but the UI doesn't consume them. Grid/list toggle, poster display, and incremental pagination are NOT implemented.
+
+3. **Poster rendering** — posters are accepted by the API but NOT rendered in the UI yet (no poster display in search results or Media Library).
+
+4. **Supabase migration** — the `poster_path`/`backdrop_path` migration is created but NOT applied to the live DB.
+
+### Owner manual testing checklist
+
+1. **TV episode playback**: Navigate to `/watch/tv-show/1396?season=5&episode=1` — should now resolve correctly (was showing "playback request is invalid").
+2. **Anime playback**: Navigate to `/watch/anime-series/30984?season=2&episode=2` — should now resolve correctly.
+3. **Movie playback**: Verify `/watch/movie/278` still works (unchanged).
+4. **Admin Home**: Verify the Quick Actions / Missing Media card is removed from the Overview page.
+5. **Missing Media**: Verify it's still accessible from the sidebar + mobile bottom-nav.
+6. **Continue Watching**: Verify Bleach (or any anime that appeared twice) now appears only once.
+7. **Apply migration**: Apply the `poster_path` migration via the Supabase dashboard SQL editor.
