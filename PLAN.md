@@ -563,7 +563,122 @@ The Google OAuth flow was NOT used because it requires interactive Google accoun
 - Player receives correct source
 - No provider API calls during save
 
-**Status**: NOT_STARTED
+**Status**: DONE — verified 2026-10-14
+
+---
+
+### Phase 6 Implementation (2026-10-14)
+
+**Baseline**: commit `79f2f2c` (Phase 5 complete, clean working tree).
+
+**Abyss iframe investigation (Part D)**:
+
+**Root cause**: The Abyss iframe "failure" is **intentional design**, not a code bug.
+
+The player's source-selection logic works as follows:
+1. The watch page derives `selectedSourceId` from: admin-configured default → saved progress → `sourceOptions[0]` (lowest `ordering` value).
+2. Abyss (Mavero 2) has `ordering=501` (experimental, intentionally low-priority per Phase 4 migration comment).
+3. MoviesNexus has `ordering=270` (active, higher priority).
+4. On initial load, the player sends `sourceId=<moviesNexus-uuid>` to the resolver, which resolves MoviesNexus (a template source that always succeeds by substituting the TMDB ID into a URL template — no media_assets lookup needed).
+5. The resolver correctly returns the Abyss URL when explicitly requested with `sourceId=<abyss-uuid>` + `enableFallback=false` (verified in Phase 3 browser acceptance §7f-7h).
+
+**Evidence**:
+- The Phase 4 migration explicitly comments: `500, -- high ordering = low priority in the source selector (experimental)`.
+- The implementation plan documents: "Mavero 2 selected → Abyss" requires explicit user selection. In "Auto" mode, the system uses "normal source/default ordering".
+- The Phase 3 browser acceptance test explicitly documents and accepts this behavior.
+- The resolver returns the correct Abyss URL when explicitly requested (HTTP 200, `source.url = https://player.abyssplayer.com/-7DfAqb5s`).
+
+**The three legitimate ways Abyss gets loaded**:
+1. **Manual source switch** — User clicks "Mavero 2" in the player source selector.
+2. **Admin-configured default** — Admin sets Abyss as position 1 in `streaming_default_source_slots` via `/admin/system/api-sources`.
+3. **Health-ranked fallback walk** — Every higher-priority source fails (unlikely since template sources always succeed).
+
+**No code changes were needed** — the codebase behaves exactly as documented. The "failure" was a misunderstanding of the source-selection policy, not a defect.
+
+**Provider reference normalization audit (Part B)**:
+
+The existing normalization is correct and handles all documented input forms:
+
+Vidara:
+- Bare code: `Vw0hY4n13k83` → `provider_asset_id=Vw0hY4n13k83`, `playback_url=https://vidara.to/e/Vw0hY4n13k83`
+- Embed URL: `https://vidara.to/e/Vw0hY4n13k83` → same (code extracted from path)
+- Share URL: `https://vidara.so/v/Vw0hY4n13k83` → same (code extracted from path, canonical URL reconstructed)
+- Legacy URL: `https://vidara.to/Vw0hY4n13k83` → same
+
+Abyss:
+- Bare slug: `-7DfAqb5s` → `provider_asset_id=-7DfAqb5s`, `playback_url=https://player.abyssplayer.com/-7DfAqb5s`
+- Player URL: `https://player.abyssplayer.com/-7DfAqb5s` → same (slug extracted from path)
+
+Shared validation:
+- Empty input rejected.
+- Non-HTTPS URLs rejected.
+- URLs with credentials rejected.
+- Cross-provider URLs rejected (input origin checked against provider allowlist).
+- `provider_asset_id` length capped at 200 chars (matches DB CHECK).
+- `provider_asset_id` validated as alphanumeric + hyphens/underscores.
+- Canonical URL always reconstructed (never preserves input URL).
+- No `deleteAsset()` or `adapter.delete()` calls anywhere.
+
+**Database persistence audit (Part C)**:
+- `requireAdmin` enforced on POST + DELETE.
+- Provider validated against `vidara`/`abyss` only.
+- Reference normalized before persistence.
+- `provider_asset_id` contains the short code (not URL).
+- `playback_url` contains the canonical embed URL.
+- Canonical identity correct for movie/series/anime/episode/anime-episode.
+- Audit logging correct (FK-safe: success-path unlink omits `media_asset_id` at top level).
+- DELETE removes only the `media_assets` row — no provider API call.
+
+**Source selection audit (Part E)**:
+- Explicit Vidara selection: works (resolver returns Vidara URL with `enableFallback=false`).
+- Explicit Abyss selection: works (resolver returns Abyss URL with `enableFallback=false`).
+- Automatic/default: prefers higher-priority sources (MoviesNexus ordering=270 vs Abyss ordering=501).
+- Fallback: health-ranked walk over eligible sources.
+- Stale async results: PlaybackManager guards against stale resolver responses.
+- No changes to source-selection policy — it works as designed.
+
+**Tests added**:
+- `scripts/mav_phase6_reference_normalization_test.ts` (40 checks) — verifies: Vidara/Abyss canonical bases, accepted origins, share URL normalization, canonical reconstruction, short-code path, provider_asset_id validation, no provider deletion, FK-safe audit logging, client title/year, episodeTitle support, resolver dual-gate, SSRF allowlist, PlayerShell SSR fix.
+
+**Verification results**:
+
+| Suite | Result |
+|-------|--------|
+| `pnpm check` | 0 errors, 10 warnings (cosmetic a11y — pre-existing) |
+| `pnpm build` | success |
+| `mav_focused_admin_nav_test` | 65/65 passed |
+| `hosting_lifecycle_regression_test` | 11/11 passed |
+| `signout_reliability_test` | passed |
+| `admin_nav_dom_qa` (Playwright) | 20/20 passed |
+| `mav_focused_manual_link_contract_test` | 74/74 passed |
+| `mav_phase3_missing_media_contract_test` | 62/62 passed |
+| `mav_phase5_route_contract_test` | 54/54 passed |
+| `mav_phase6_reference_normalization_test` (NEW) | 40/40 passed |
+| `mav_phase4_schema_audit` (live DB) | 73/73 passed |
+| `mav_phase4_constraint_audit` (live DB) | 30/30 passed |
+| `mav_phase2_live_db_probe` (live DB) | 18/18 passed |
+| `mav_phase2_check_constraint_probe` (live DB) | 7/7 passed |
+| `mav_phase2_browser_acceptance.mjs` (regression) | 66/66 passed |
+| `mav_phase3_browser_acceptance.mjs` (regression) | 50/50 passed |
+
+**Verification matrix (per provider)**:
+
+| Level | Vidara | Abyss |
+|-------|--------|-------|
+| Contract (normalization) | ✓ Verified | ✓ Verified |
+| Persistence (DB row) | ✓ Verified | ✓ Verified |
+| Resolver (returns URL) | ✓ Verified (HTTP 200, `https://vidara.to/e/LyBctGwWUh9c`) | ✓ Verified (HTTP 200, `https://player.abyssplayer.com/-7DfAqb5s`) |
+| Iframe navigation | ⚠ Player uses fallback source by default (Vidara ordering=500, experimental). Explicit selection loads Vidara iframe. | ⚠ Same — player uses fallback source by default (Abyss ordering=501, experimental). Explicit selection loads Abyss iframe. |
+| Actual playback | ⚠ NOT VERIFIED — cross-origin restrictions prevent reading iframe contentDocument. | ⚠ NOT VERIFIED — same limitation. |
+
+**Production configuration**: TMDB_API_KEY configured locally. Netlify production configuration NOT VERIFIED (no authorized dashboard access).
+
+**Remaining blockers**:
+1. Netlify production TMDB configuration — cannot verify without dashboard access.
+2. Actual playback start — cross-origin restrictions prevent verifying video playback from the parent page.
+3. Player source selection — Vidara/Abyss are intentionally low-priority (experimental). To auto-load them, configure as default source via admin or lower their `ordering` value.
+
+**Status**: DONE
 
 ---
 

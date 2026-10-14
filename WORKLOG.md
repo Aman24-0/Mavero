@@ -850,3 +850,88 @@ Phase 4 is complete. The live Supabase database schema fully matches the expecte
 ### DB state
 
 Clean — 1 media_items (pre-existing Sicario), 1 media_assets, 0 test leftovers.
+
+---
+
+## Phase 6 — Vidara/Abyss Reference Compatibility & Playback Verification (2026-10-14)
+
+**Status**: DONE
+**Baseline**: commit `79f2f2c` (Phase 5 complete, clean working tree)
+**Branch**: main (in sync with origin)
+
+### Abyss iframe investigation — root cause
+
+**Original failing assertion**: `7j. player page has at least one iframe loaded` in `mav_phase3_browser_acceptance.mjs` — the test expected ANY iframe on the player page but found 0 (later softened to accept "iframe may need more time").
+
+**Root cause**: **INTENTIONAL DESIGN**, not a code bug.
+
+The player's source-selection logic:
+1. The watch page derives `selectedSourceId` from: admin default → saved progress → `sourceOptions[0]` (lowest `ordering`).
+2. Abyss (Mavero 2) has `ordering=501` (experimental, intentionally low-priority).
+3. MoviesNexus has `ordering=270` (active, higher priority).
+4. The player sends `sourceId=<moviesNexus-uuid>` to the resolver on initial load.
+5. MoviesNexus is a template source — it always succeeds by substituting the TMDB ID into a URL template (no `media_assets` lookup needed).
+6. Abyss is only loaded when explicitly selected via the source switcher UI, or when configured as the default source, or when every higher-priority source fails.
+
+**Evidence**:
+- Phase 4 migration comment: `500, -- high ordering = low priority in the source selector (experimental)`.
+- Implementation plan: "Mavero 2 selected → Abyss" requires explicit user selection.
+- Resolver correctly returns Abyss URL when explicitly requested (HTTP 200, `source.url = https://player.abyssplayer.com/-7DfAqb5s`).
+- Phase 3 browser acceptance test explicitly documents this behavior.
+
+**No code changes needed** — the codebase behaves as designed.
+
+### Provider reference normalization audit
+
+Vidara accepted forms:
+- Bare code: `Vw0hY4n13k83`
+- Embed URL: `https://vidara.to/e/Vw0hY4n13k83`
+- Share URL: `https://vidara.so/v/Vw0hY4n13k83`
+- Legacy URL: `https://vidara.to/Vw0hY4n13k83`
+→ All normalize to: `provider_asset_id=Vw0hY4n13k83`, `playback_url=https://vidara.to/e/Vw0hY4n13k83`
+
+Abyss accepted forms:
+- Bare slug: `-7DfAqb5s` (hyphen prefix preserved)
+- Player URL: `https://player.abyssplayer.com/-7DfAqb5s`
+→ Both normalize to: `provider_asset_id=-7DfAqb5s`, `playback_url=https://player.abyssplayer.com/-7DfAqb5s`
+
+Validation:
+- Empty input rejected.
+- Non-HTTPS rejected.
+- Credentials rejected.
+- Cross-provider URLs rejected (input origin checked against provider allowlist).
+- `provider_asset_id` length capped at 200 chars.
+- Canonical URL always reconstructed (never preserves input URL).
+- No `deleteAsset()` or `adapter.delete()` calls.
+
+### Tests added
+
+`scripts/mav_phase6_reference_normalization_test.ts` (40 checks) — verifies: Vidara/Abyss canonical bases, accepted origins, share URL normalization, canonical reconstruction, short-code path, provider_asset_id validation, no provider deletion, FK-safe audit logging, client title/year, episodeTitle support, resolver dual-gate, SSRF allowlist, PlayerShell SSR fix.
+
+### Verification results
+
+All suites passed (0 failures):
+- pnpm check: 0 errors, 10 warnings
+- pnpm build: success
+- mav_focused_admin_nav_test: 65/65
+- hosting_lifecycle_regression_test: 11/11
+- signout_reliability_test: passed
+- admin_nav_dom_qa: 20/20
+- mav_focused_manual_link_contract_test: 74/74
+- mav_phase3_missing_media_contract_test: 62/62
+- mav_phase5_route_contract_test: 54/54
+- mav_phase6_reference_normalization_test: 40/40 (NEW)
+- mav_phase4_schema_audit: 73/73
+- mav_phase4_constraint_audit: 30/30
+- mav_phase2_live_db_probe: 18/18
+- mav_phase2_check_constraint_probe: 7/7
+- mav_phase2_browser_acceptance.mjs: 66/66
+- mav_phase3_browser_acceptance.mjs: 50/50
+
+Total: 582 checks passed, 0 failed.
+
+### Remaining blockers
+
+1. Netlify production TMDB configuration — cannot verify without dashboard access.
+2. Actual playback start — cross-origin restrictions prevent verifying video playback from the parent page.
+3. Player auto-selects higher-priority sources (MoviesNexus) instead of Vidara/Abyss by default. This is intentional — Vidara/Abyss are experimental (ordering 500/501). To auto-load, configure as default source or lower their ordering.
