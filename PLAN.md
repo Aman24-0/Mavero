@@ -310,7 +310,47 @@ The Google OAuth flow was NOT used because it requires interactive Google accoun
 - Same provider reference validation as Media Library
 - Demand resolves when media becomes available
 
-**Status**: NOT_STARTED
+**Status**: DONE — verified 2026-10-14
+
+---
+
+### Phase 3 Implementation (2026-10-14)
+
+**Changes**:
+
+1. **NEW: `src/lib/components/admin2/AdminAddFileWizard.svelte`** — Extracted the Add File / Update Link wizard from `AdminMediaList.svelte` into a shared component. Accepts:
+   - `open` (bindable) — controls visibility.
+   - `providers` — provider source list.
+   - `preselectedMediaItem` — optional: when provided (Missing Media), skips TMDB search and goes to provider selection.
+   - `updateTarget` — optional: when provided (Media Library "Update link"), pre-fills with current data.
+   - `onclose` / `onsaved` callbacks.
+
+2. **Modified: `src/lib/components/admin2/AdminMediaList.svelte`** — Now uses the shared `AdminAddFileWizard` instead of inline wizard markup. The list, three-dot menu, and delete confirmation remain in AdminMediaList. No behavioral change for Media Library users.
+
+3. **Modified: `src/routes/admin/media/missing/+page.svelte`** — Removed the old `AdminLinkMediaModal` (provider-inventory file picker — required provider API calls). Now uses the shared `AdminAddFileWizard` with a `preselectedMediaItem` built from the demand row (`content_type`, `tmdb_id`, `season`, `episode`, `title_snapshot`, `episode_title_snapshot`).
+
+4. **Modified: `src/routes/api/admin/media/manual-link/+server.ts`** — Added optional `episodeTitle` parameter to the POST body. When provided, it's passed through to `ensureEpisode` / `ensureAnimeEpisode` so the episode's `media_items.episode_title` is populated. Previously the endpoint only passed `seriesTitle` but not `episodeTitle`.
+
+**Tests added**:
+- `scripts/mav_phase3_missing_media_contract_test.ts` (62 checks) — static contract test verifying: Missing Media uses shared wizard, preselectedMediaItem carries full canonical identity, no Upload/provider-inventory/hosting-control, authorization enforced, demand sweep runs, all content types supported (movie/series/anime + episode variants).
+- `scripts/mav_phase3_browser_acceptance.mjs` (50 checks) — browser acceptance test with real admin session via magic link: Missing Media page renders, Link media opens shared wizard with preselected title, save via authenticated API, demand auto-resolves, Vidara + Abyss playback acceptance (resolver returns correct URL, player loads iframe).
+
+**Verification results**:
+
+| Suite | Result |
+|-------|--------|
+| `pnpm check` | 0 errors, 10 warnings (cosmetic a11y — pre-existing) |
+| `pnpm build` | success |
+| `mav_focused_admin_nav_test` | 65/65 passed |
+| `hosting_lifecycle_regression_test` | 11/11 passed |
+| `signout_reliability_test` | passed |
+| `admin_nav_dom_qa` (Playwright) | 20/20 passed |
+| `mav_focused_manual_link_contract_test` | 74/74 passed |
+| `mav_phase3_missing_media_contract_test` (NEW) | 62/62 passed |
+| `mav_phase2_browser_acceptance.mjs` (regression) | 66/66 passed |
+| `mav_phase3_browser_acceptance.mjs` (NEW) | 50/50 passed |
+
+**Status**: DONE
 
 ---
 

@@ -1,14 +1,14 @@
 <script lang="ts" module>
-  // MAV-FOCUSED — Compact Media Library list with Add File wizard (2026-10).
+  // MAV-FOCUSED — Compact Media Library list (2026-10).
   //
   // Replaces the old AdminHostingAssets (2262 lines) with a simple list:
   //   * Compact rows: poster, title, type, TMDB ID, provider, 3-dot menu.
-  //   * Add File wizard: TMDB search → provider selection → reference entry → save.
+  //   * Add File wizard: delegated to the shared AdminAddFileWizard.
   //   * Three-dot menu: Delete (Mavero-side only) + Update link.
   //
-  // Uses the new /api/admin/media/manual-link endpoint for create/update/delete.
-  // Uses the existing /api/admin/media/search endpoint for TMDB search.
-  // Uses the existing /api/admin/media/library endpoint for the list.
+  // Uses the /api/admin/media/manual-link endpoint for create/update/delete.
+  // Uses the /api/admin/media/search endpoint for TMDB search (via the wizard).
+  // Uses the /api/admin/media/library endpoint for the list.
 
   export type MediaRow = {
     id: string;
@@ -22,20 +22,12 @@
     maveroStatus: string;
     mediaAssetId: string;
   };
-
-  export type TmdbResult = {
-    id: string;
-    tmdbId: string;
-    title: string;
-    year?: number;
-    poster?: string;
-    type: 'movie' | 'series' | 'anime';
-    overview?: string;
-  };
 </script>
 
 <script lang="ts">
-  import { Plus, MoreVertical, Trash2, Link2, Search, X, Loader2, Film, Tv, Sparkles, AlertCircle, Check, ChevronRight } from 'lucide-svelte';
+  import { Plus, MoreVertical, Trash2, Link2, Loader2, Film, Tv, Sparkles, AlertCircle } from 'lucide-svelte';
+  import AdminAddFileWizard from './AdminAddFileWizard.svelte';
+  import type { UpdateTarget } from './AdminAddFileWizard.svelte';
 
   // --- Props ---
   let {
@@ -51,24 +43,9 @@
   let loading = $state(true);
   let error = $state<string | null>(null);
 
-  // Add File wizard state
+  // Shared wizard state
   let wizardOpen = $state(false);
-  let wizardStep = $state<'search' | 'provider' | 'reference' | 'saving'>('search');
-  let tmdbQuery = $state('');
-  let tmdbType = $state<'movie' | 'series'>('movie');
-  let tmdbSearching = $state(false);
-  let tmdbResults = $state<TmdbResult[]>([]);
-  let tmdbError = $state<string | null>(null);
-  let tmdbDebounce: ReturnType<typeof setTimeout> | null = null;
-  let selectedTmdb = $state<TmdbResult | null>(null);
-  let selectedProvider = $state<'vidara' | 'abyss' | null>(null);
-  let providerReference = $state('');
-  let referenceError = $state<string | null>(null);
-  let saving = $state(false);
-  let saveError = $state<string | null>(null);
-
-  // Update link state
-  let updateTarget = $state<MediaRow | null>(null);
+  let wizardUpdateTarget = $state<UpdateTarget | null>(null);
 
   // Delete confirmation state
   let deleteTarget = $state<MediaRow | null>(null);
@@ -147,107 +124,6 @@
     return p?.name ?? p?.adapterId ?? 'Unknown';
   }
 
-  // --- TMDB Search ---
-  function onTmdbInput() {
-    if (tmdbDebounce) clearTimeout(tmdbDebounce);
-    tmdbDebounce = setTimeout(() => void doTmdbSearch(), 300);
-  }
-
-  async function doTmdbSearch() {
-    const q = tmdbQuery.trim();
-    if (!q) { tmdbResults = []; return; }
-    tmdbSearching = true;
-    tmdbError = null;
-    try {
-      const res = await fetch(`/api/admin/media/search?q=${encodeURIComponent(q)}&type=${tmdbType}`);
-      const json = await res.json();
-      if (json.ok) {
-        tmdbResults = (json.results ?? []).map((r: any) => ({
-          id: r.id,
-          tmdbId: String(r.id).replace(/^(movie|series|anime)-/, ''),
-          title: r.title,
-          year: r.year,
-          poster: r.poster,
-          type: r.type ?? (tmdbType === 'movie' ? 'movie' : 'series'),
-          overview: r.overview ?? r.description,
-        }));
-      } else {
-        tmdbResults = [];
-        tmdbError = json.error?.message ?? 'Search failed.';
-      }
-    } catch (err) {
-      tmdbResults = [];
-      tmdbError = err instanceof Error ? err.message : 'Search failed.';
-    } finally {
-      tmdbSearching = false;
-    }
-  }
-
-  function selectTmdb(result: TmdbResult) {
-    selectedTmdb = result;
-    wizardStep = 'provider';
-  }
-
-  // --- Provider selection ---
-  function selectProvider(p: 'vidara' | 'abyss') {
-    selectedProvider = p;
-    wizardStep = 'reference';
-  }
-
-  // --- Save ---
-  async function saveLink() {
-    if (!selectedTmdb || !selectedProvider || !providerReference.trim()) return;
-
-    // Validate reference
-    const ref = providerReference.trim();
-    if (!/^[a-zA-Z0-9_-]+$/.test(ref) && !ref.startsWith('http')) {
-      referenceError = 'Reference must be alphanumeric (filecode/ID) or a full URL.';
-      return;
-    }
-    referenceError = null;
-
-    saving = true;
-    saveError = null;
-    try {
-      const body: Record<string, string> = {
-        contentType: selectedTmdb.type,
-        tmdbId: selectedTmdb.tmdbId,
-        provider: selectedProvider,
-        reference: ref,
-        // Send the title + year from the TMDB search result so the
-        // server doesn't have to re-fetch from TMDB on every save
-        // (also works in environments where TMDB credentials are not
-        // configured).
-        title: selectedTmdb.title,
-      };
-      if (selectedTmdb.year != null) {
-        body.year = String(selectedTmdb.year);
-      }
-
-      // If updating, include the mediaAssetId
-      if (updateTarget) {
-        body.mediaAssetId = updateTarget.mediaAssetId;
-      }
-
-      const res = await fetch('/api/admin/media/manual-link', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      const json = await res.json();
-      if (json.ok) {
-        closeWizard();
-        await loadList();
-      } else {
-        saveError = json.error?.message ?? 'Save failed.';
-      }
-    } catch (err) {
-      saveError = err instanceof Error ? err.message : 'Network error during save.';
-    } finally {
-      saving = false;
-    }
-  }
-
   // --- Delete ---
   async function confirmDelete() {
     if (!deleteTarget) return;
@@ -274,46 +150,20 @@
 
   // --- Wizard control ---
   function openAddWizard() {
-    resetWizard();
+    wizardUpdateTarget = null;
     wizardOpen = true;
   }
 
   function openUpdateWizard(row: MediaRow) {
-    resetWizard();
-    updateTarget = row;
-    // Pre-fill with current data
-    selectedTmdb = {
-      id: `${row.contentType === 'anime' ? 'series' : row.contentType}-${row.tmdbId}`,
-      tmdbId: row.tmdbId,
+    wizardUpdateTarget = {
+      mediaAssetId: row.mediaAssetId,
       title: row.title,
-      type: row.contentType === 'movie' ? 'movie' : 'series',
+      contentType: row.contentType,
+      tmdbId: row.tmdbId,
+      providerName: row.providerName,
+      providerAssetId: row.providerAssetId,
     };
-    selectedProvider = row.providerName.toLowerCase().includes('vidara') ? 'vidara'
-      : row.providerName.toLowerCase().includes('abyss') ? 'abyss' : null;
-    providerReference = row.providerAssetId;
-    wizardStep = 'search'; // Start at search so admin can change title
     wizardOpen = true;
-  }
-
-  function resetWizard() {
-    wizardStep = 'search';
-    tmdbQuery = '';
-    tmdbResults = [];
-    tmdbError = null;
-    tmdbSearching = false;
-    selectedTmdb = null;
-    selectedProvider = null;
-    providerReference = '';
-    referenceError = null;
-    saveError = null;
-    saving = false;
-    updateTarget = null;
-    if (tmdbDebounce) { clearTimeout(tmdbDebounce); tmdbDebounce = null; }
-  }
-
-  function closeWizard() {
-    wizardOpen = false;
-    resetWizard();
   }
 
   // --- Helpers ---
@@ -379,135 +229,13 @@
   {/if}
 </section>
 
-<!-- Add File / Update Link Wizard Modal -->
-{#if wizardOpen}
-  <div class="wizard-overlay" onclick={closeWizard} role="presentation">
-    <!-- svelte-ignore a11y_click_events_have_key_events -->
-    <div class="wizard" role="dialog" aria-modal="true" aria-labelledby="wizard-title" tabindex="-1" onclick={(e) => e.stopPropagation()}>
-      <div class="wizard-head">
-        <h2 id="wizard-title">{updateTarget ? 'Update link' : 'Add file'}</h2>
-        <button type="button" class="wizard-close" onclick={closeWizard} aria-label="Close"><X size={16} /></button>
-      </div>
-
-      {#if saveError}
-        <div class="wizard-error" role="alert"><AlertCircle size={14} /> {saveError}</div>
-      {/if}
-
-      <!-- Step 1: TMDB Search -->
-      {#if wizardStep === 'search'}
-        <div class="wizard-step">
-          <div class="step-label">Step 1 — Search for a title</div>
-          <div class="search-bar">
-            <div class="type-toggle" role="radiogroup" aria-label="Search type">
-              <button type="button" class:active={tmdbType === 'movie'} onclick={() => tmdbType = 'movie'} role="radio" aria-checked={tmdbType === 'movie'}>Movie</button>
-              <button type="button" class:active={tmdbType === 'series'} onclick={() => tmdbType = 'series'} role="radio" aria-checked={tmdbType === 'series'}>Series</button>
-            </div>
-            <div class="search-input-wrap">
-              <Search size={14} class="search-icon" />
-              <input type="text" class="search-input" placeholder="Search TMDB by title…" bind:value={tmdbQuery} oninput={onTmdbInput} autocomplete="off" />
-              {#if tmdbSearching}<Loader2 size={14} class="spinner" />{/if}
-            </div>
-          </div>
-
-          {#if updateTarget && selectedTmdb}
-            <div class="current-selection">
-              <span>Current: <strong>{selectedTmdb.title}</strong></span>
-              <button type="button" class="skip-btn" onclick={() => { wizardStep = 'provider'; }}>Keep current →</button>
-            </div>
-          {/if}
-
-          <div class="results-list">
-            {#if tmdbError}
-              <div class="results-empty"><AlertCircle size={14} /> {tmdbError}</div>
-            {:else if tmdbResults.length === 0 && !tmdbSearching}
-              <div class="results-empty">{tmdbQuery.trim() ? `No results for "${tmdbQuery}".` : 'Start typing to search TMDB.'}</div>
-            {/if}
-            {#each tmdbResults as result (result.id)}
-              <button type="button" class="result-row" class:selected={selectedTmdb?.tmdbId === result.tmdbId} onclick={() => selectTmdb(result)}>
-                <div class="result-icon">{#if result.type === 'movie'}<Film size={14} />{:else if result.type === 'anime'}<Sparkles size={14} />{:else}<Tv size={14} />{/if}</div>
-                <div class="result-info">
-                  <div class="result-title">{result.title}</div>
-                  <div class="result-meta"><span>{result.type}</span>{#if result.year}<span>· {result.year}</span>{/if}<span>· TMDB {result.tmdbId}</span></div>
-                </div>
-                {#if selectedTmdb?.tmdbId === result.tmdbId}<span class="result-check"><Check size={14} /></span>{/if}
-              </button>
-            {/each}
-          </div>
-
-          {#if selectedTmdb}
-            <div class="wizard-footer">
-              <button type="button" class="btn btn-next" onclick={() => { wizardStep = 'provider'; }}>
-                Continue <ChevronRight size={14} />
-              </button>
-            </div>
-          {/if}
-        </div>
-      {/if}
-
-      <!-- Step 2: Provider Selection -->
-      {#if wizardStep === 'provider'}
-        <div class="wizard-step">
-          <div class="step-label">Step 2 — Select the host</div>
-          <div class="selected-title-bar">
-            <span>Linking: <strong>{selectedTmdb?.title}</strong></span>
-            <button type="button" class="change-btn" onclick={() => { wizardStep = 'search'; }}>Change</button>
-          </div>
-          <div class="provider-cards">
-            <button type="button" class="provider-card" class:selected={selectedProvider === 'vidara'} onclick={() => selectProvider('vidara')}>
-              <div class="provider-name">Vidara</div>
-              <div class="provider-desc">Filecode or embed URL from vidara.to</div>
-            </button>
-            <button type="button" class="provider-card" class:selected={selectedProvider === 'abyss'} onclick={() => selectProvider('abyss')}>
-              <div class="provider-name">Abyss</div>
-              <div class="provider-desc">Resource ID or player URL from abyss.to</div>
-            </button>
-          </div>
-          <div class="wizard-footer">
-            <button type="button" class="btn btn-back" onclick={() => { wizardStep = 'search'; }}>Back</button>
-          </div>
-        </div>
-      {/if}
-
-      <!-- Step 3: Reference Entry -->
-      {#if wizardStep === 'reference'}
-        <div class="wizard-step">
-          <div class="step-label">Step 3 — Enter the file reference</div>
-          <div class="selected-title-bar">
-            <span>Linking: <strong>{selectedTmdb?.title}</strong> · {selectedProvider}</span>
-            <button type="button" class="change-btn" onclick={() => { wizardStep = 'provider'; }}>Change</button>
-          </div>
-          <div class="ref-input-section">
-            <label class="ref-label">
-              {selectedProvider === 'vidara' ? 'Vidara filecode or URL' : 'Abyss resource ID or URL'}
-            </label>
-            <input
-              type="text"
-              class="ref-input"
-              bind:value={providerReference}
-              oninput={() => { referenceError = null; }}
-              placeholder={selectedProvider === 'vidara' ? 'e.g. Vw0hY4n13k83 or https://vidara.to/e/Vw0hY4n13k83' : 'e.g. ltJEfKQxR or https://player.abyssplayer.com/ltJEfKQxR'}
-              autocomplete="off"
-            />
-            <p class="ref-hint">
-              {selectedProvider === 'vidara'
-                ? 'Upload your video on the Vidara dashboard, then copy the filecode from the share/embed URL.'
-                : 'Upload your video on the Abyss dashboard, then copy the resource ID from the player URL.'}
-            </p>
-            {#if referenceError}
-              <p class="ref-error"><AlertCircle size={12} /> {referenceError}</p>
-            {/if}
-          </div>
-          <div class="wizard-footer">
-            <button type="button" class="btn btn-back" onclick={() => { wizardStep = 'provider'; }}>Back</button>
-            <button type="button" class="btn btn-save" onclick={saveLink} disabled={saving || !providerReference.trim()}>
-              {#if saving}<Loader2 size={12} class="spinner" /> Saving…{:else}{updateTarget ? 'Update' : 'Save'}{/if}
-            </button>
-          </div>
-        </div>
-      {/if}
-    </div>
-  </div>
-{/if}
+<!-- Shared Add File / Update Link Wizard -->
+<AdminAddFileWizard
+  bind:open={wizardOpen}
+  {providers}
+  updateTarget={wizardUpdateTarget}
+  onsaved={() => { void loadList(); }}
+/>
 
 <!-- Delete Confirmation -->
 {#if deleteTarget}
@@ -561,80 +289,21 @@
   .menu-item-danger { color: var(--a2-red); }
   .menu-item-danger:hover { background: var(--a2-red-soft); }
 
-  /* Wizard */
-  .wizard-overlay { position: fixed; inset: 0; z-index: 90; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; }
-  .wizard { position: relative; z-index: 91; width: min(560px, calc(100vw - 32px)); max-height: calc(100dvh - 64px); display: flex; flex-direction: column; background: var(--a2-surface-2, #1a1a1a); border: 1px solid var(--a2-border-strong, #333); border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,0.5); overflow: hidden; }
-  .wizard-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--a2-border, #222); }
-  .wizard-head h2 { margin: 0; font-size: 1rem; font-weight: 700; color: var(--a2-text-bright, #f0f0f0); }
-  .wizard-close { display: grid; place-items: center; width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--a2-text-muted, #888); cursor: pointer; }
-  .wizard-close:hover { background: var(--a2-surface-3, #222); color: var(--a2-text, #ddd); }
-
-  .wizard-error { padding: 8px 12px; margin: 8px 20px; border: 1px solid rgba(220,60,60,0.3); border-radius: 8px; background: rgba(220,60,60,0.08); color: #c44; font-size: 0.75rem; display: flex; align-items: center; gap: 6px; }
-
-  .wizard-step { padding: 0 20px 8px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
-  .step-label { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--a2-text-muted, #888); margin-top: 12px; }
-
-  .search-bar { display: flex; flex-direction: column; gap: 8px; }
-  .type-toggle { display: inline-flex; gap: 2px; border: 1px solid var(--a2-border, #222); border-radius: 8px; overflow: hidden; align-self: flex-start; }
-  .type-toggle button { padding: 5px 12px; border: 0; background: transparent; color: var(--a2-text-muted, #888); font-size: 0.7rem; font-weight: 600; cursor: pointer; }
-  .type-toggle button.active { background: rgba(0,200,200,0.12); color: #0ff; }
-  .search-input-wrap { display: flex; align-items: center; gap: 8px; padding: 0 12px; height: 38px; background: var(--a2-surface-3, #1a1a1a); border: 1px solid var(--a2-border, #222); border-radius: 8px; }
-  .search-input-wrap:focus-within { border-color: #0ff; }
-  .search-input { flex: 1; border: 0; outline: 0; background: transparent; color: var(--a2-text, #ddd); font-size: 0.82rem; }
-  .search-input::placeholder { color: var(--a2-text-dim, #555); }
-  .search-icon { color: var(--a2-text-dim, #555); flex-shrink: 0; }
-  .spinner { animation: spin 1s linear infinite; }
-
-  .current-selection { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; background: rgba(0,200,200,0.08); border-radius: 6px; font-size: 0.75rem; color: var(--a2-text, #ddd); }
-  .skip-btn { background: transparent; border: 0; color: #0ff; font-size: 0.7rem; font-weight: 600; cursor: pointer; text-decoration: underline; }
-
-  .results-list { max-height: 240px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
-  .results-empty { padding: 20px; text-align: center; color: var(--a2-text-dim, #555); font-size: 0.8rem; display: flex; align-items: center; justify-content: center; gap: 6px; }
-  .result-row { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: var(--a2-surface-3, #1a1a1a); border: 1px solid var(--a2-border, #222); border-radius: 8px; cursor: pointer; text-align: left; transition: border-color 140ms ease; }
-  .result-row:hover { border-color: rgba(0,255,255,0.3); }
-  .result-row.selected { border-color: #0ff; background: rgba(0,255,255,0.08); }
-  .result-icon { display: flex; align-items: center; color: var(--a2-text-dim, #555); flex-shrink: 0; }
-  .result-info { flex: 1; min-width: 0; }
-  .result-title { font-size: 0.8rem; color: var(--a2-text-bright, #f0f0f0); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .result-meta { display: flex; gap: 4px; font-size: 0.6rem; color: var(--a2-text-dim, #555); text-transform: uppercase; letter-spacing: 0.04em; }
-  .result-check { color: #0ff; flex-shrink: 0; }
-
-  .selected-title-bar { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; background: rgba(0,200,200,0.08); border-radius: 6px; font-size: 0.78rem; color: var(--a2-text, #ddd); }
-  .change-btn { background: transparent; border: 0; color: #0ff; font-size: 0.7rem; font-weight: 600; cursor: pointer; text-decoration: underline; }
-
-  .provider-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-  .provider-card { display: flex; flex-direction: column; gap: 4px; padding: 14px; border: 1px solid var(--a2-border, #222); border-radius: 8px; background: var(--a2-surface-3, #1a1a1a); cursor: pointer; text-align: left; transition: border-color 140ms ease; }
-  .provider-card:hover { border-color: rgba(0,255,255,0.3); }
-  .provider-card.selected { border-color: #0ff; background: rgba(0,255,255,0.08); }
-  .provider-name { font-size: 0.9rem; font-weight: 700; color: var(--a2-text-bright, #f0f0f0); }
-  .provider-desc { font-size: 0.65rem; color: var(--a2-text-dim, #555); }
-
-  .ref-input-section { display: flex; flex-direction: column; gap: 6px; }
-  .ref-label { font-size: 0.75rem; font-weight: 600; color: var(--a2-text, #ddd); }
-  .ref-input { height: 40px; padding: 0 12px; background: var(--a2-surface-3, #1a1a1a); border: 1px solid var(--a2-border, #222); border-radius: 8px; color: var(--a2-text, #ddd); font-size: 0.82rem; outline: 0; }
-  .ref-input:focus { border-color: #0ff; }
-  .ref-hint { margin: 0; font-size: 0.65rem; color: var(--a2-text-dim, #555); line-height: 1.4; }
-  .ref-error { margin: 0; font-size: 0.65rem; color: #c44; display: flex; align-items: center; gap: 4px; }
-
-  .wizard-footer { display: flex; justify-content: flex-end; gap: 8px; padding-top: 8px; }
-  .btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; border: 1px solid transparent; border-radius: 8px; font-size: 0.78rem; font-weight: 700; cursor: pointer; transition: background 140ms ease, border-color 140ms ease; }
-  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-  .btn-next { background: rgba(0,200,200,0.12); border-color: rgba(0,200,200,0.3); color: #0ff; }
-  .btn-next:hover { background: rgba(0,200,200,0.2); }
-  .btn-back { background: var(--a2-surface-3, #1a1a1a); border-color: var(--a2-border, #222); color: var(--a2-text-muted, #888); }
-  .btn-back:hover { color: var(--a2-text, #ddd); }
-  .btn-save { background: rgba(53,214,143,0.12); border-color: rgba(53,214,143,0.3); color: #35d68f; }
-  .btn-save:hover { background: rgba(53,214,143,0.2); }
-  .btn-cancel { background: var(--a2-surface-3, #1a1a1a); border-color: var(--a2-border, #222); color: var(--a2-text-muted, #888); }
-  .btn-danger { background: rgba(220,60,60,0.12); border-color: rgba(220,60,60,0.3); color: #c44; }
-  .btn-danger:hover { background: rgba(220,60,60,0.2); }
-
   /* Delete confirmation */
+  .wizard-overlay { position: fixed; inset: 0; z-index: 90; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; }
   .confirm-dialog { position: relative; z-index: 91; width: min(420px, calc(100vw - 32px)); background: var(--a2-surface-2, #1a1a1a); border: 1px solid var(--a2-border-strong, #333); border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,0.5); overflow: hidden; padding: 20px; }
   .confirm-dialog h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; font-size: 0.9rem; color: var(--a2-text-bright, #f0f0f0); }
   .confirm-desc { margin: 0 0 8px; font-size: 0.8rem; color: var(--a2-text, #ddd); }
   .confirm-note { margin: 0 0 16px; font-size: 0.7rem; color: var(--a2-text-muted, #888); }
   .confirm-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+  .btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; border: 1px solid transparent; border-radius: 8px; font-size: 0.78rem; font-weight: 700; cursor: pointer; transition: background 140ms ease, border-color 140ms ease; }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-cancel { background: var(--a2-surface-3, #1a1a1a); border-color: var(--a2-border, #222); color: var(--a2-text-muted, #888); }
+  .btn-danger { background: rgba(220,60,60,0.12); border-color: rgba(220,60,60,0.3); color: #c44; }
+  .btn-danger:hover { background: rgba(220,60,60,0.2); }
+
+  .spinner { animation: spin 1s linear infinite; }
 
   @keyframes spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
 
@@ -643,6 +312,5 @@
     .media-poster { width: 32px; height: 32px; }
     .media-title { font-size: var(--a2-text-xs); }
     .media-meta { flex-wrap: wrap; gap: 4px; }
-    .provider-cards { grid-template-columns: 1fr; }
   }
 </style>

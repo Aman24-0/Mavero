@@ -243,11 +243,15 @@ ok(/service\.list\(query\)/.test(libraryApi), '13b. list delegated to MediaLibra
 
 const listComp = src('src/lib/components/admin2/AdminMediaList.svelte');
 ok(/\/api\/admin\/media\/library\?status=all&limit=100&sort=recently_updated/.test(listComp), '13c. AdminMediaList fetches with status=all (sees all rows including missing)');
-ok(/\/api\/admin\/media\/manual-link/.test(listComp), '13d. AdminMediaList calls manual-link API for create/update/delete');
-ok(/method:\s*'POST'/.test(listComp), '13e. POST for save (create/update)');
-// The fetch call structure is: fetch(URL, { method: 'DELETE' }). The URL
-// precedes the method, so we just check both appear together in the
-// confirmDelete function body.
+ok(/AdminAddFileWizard/.test(listComp), '13d. AdminMediaList uses shared AdminAddFileWizard component');
+
+// The POST to manual-link now lives in the shared wizard component
+// (Phase 3 extraction). Verify it there.
+const wizardComp = src('src/lib/components/admin2/AdminAddFileWizard.svelte');
+ok(/\/api\/admin\/media\/manual-link/.test(wizardComp), '13d1. AdminAddFileWizard calls manual-link API');
+ok(/method:\s*'POST'/.test(wizardComp), '13e. POST for save (create/update) in shared wizard');
+
+// AdminMediaList still uses DELETE directly (for the three-dot menu Delete action).
 const deleteFnMatch = listComp.match(/async function confirmDelete\([\s\S]*?\n  \}/);
 ok(deleteFnMatch !== null, '13f1. confirmDelete function present in AdminMediaList');
 if (deleteFnMatch) {

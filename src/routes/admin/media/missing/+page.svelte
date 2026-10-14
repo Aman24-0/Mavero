@@ -1,21 +1,28 @@
 <script lang="ts">
   /**
-   * Admin 2.0 — Missing Media workspace.
+   * Admin 2.0 — Missing Media workspace (Phase 3, 2026-10).
    *
-   * MAV-FOCUSED (2026-10): the "Link existing" button now opens the shared
-   * AdminLinkMediaModal with a preselected media item (derived from the
-   * demand row). This SKIPS the TMDB search step (the destination title is
-   * already known from the demand) and goes directly to the provider-tabbed
-   * file picker — the SAME shared component used by Media Library.
+   * MAV-FOCUSED (Phase 3): the "Link media" button now opens the SAME
+   * shared AdminAddFileWizard used by Media Library — NOT the old
+   * AdminLinkMediaModal (which was a provider-inventory file picker
+   * that required provider API calls). The demand row's TMDB ID,
+   * content type, season, episode, and episode title are passed as a
+   * preselectedMediaItem so the wizard skips the TMDB search step
+   * and goes directly to provider selection.
    *
-   * The old flat file picker sheet (which conflated all providers into a
-   * single list with no tabs, no per-provider search, and no lifecycle
-   * state filtering) has been removed entirely.
+   * The wizard calls /api/admin/media/manual-link (the secure endpoint
+   * that resolves canonical identity server-side via CanonicalMediaService).
+   * No provider inventory API calls, no upload, no Hosting Control.
+   *
+   * After a successful save, the page calls invalidateAll() to refresh
+   * the demand list — the linked title's demand row will be auto-resolved
+   * by the demand sweep in the server loader.
    */
   import AdminAppShell from '$lib/components/admin2/AdminAppShell.svelte';
   import AdminPage from '$lib/components/admin2/AdminPage.svelte';
   import AdminStatusBadge from '$lib/components/admin/AdminStatusBadge.svelte';
-  import AdminLinkMediaModal from '$lib/components/admin2/AdminLinkMediaModal.svelte';
+  import AdminAddFileWizard from '$lib/components/admin2/AdminAddFileWizard.svelte';
+  import type { PreselectedMediaItem } from '$lib/components/admin2/AdminAddFileWizard.svelte';
   import { invalidateAll } from '$app/navigation';
   import { AlertCircle, EyeOff, RotateCcw, CheckCircle2, Link2 } from 'lucide-svelte';
   import type { PageData } from './$types';
@@ -26,51 +33,59 @@
   let errorId = $state<string | null>(null);
   let errorMessage = $state<string>('');
 
-  // --- Shared Link Media Modal state ---
-  let linkModalOpen = $state(false);
-  let linkProviders = $state<Array<{ adapterId: string; name: string; sourceId: string }>>([]);
-  let preselectedMediaItem = $state<{
-    title: string;
-    contentType: string;
-    tmdbId: string;
-    season?: number | null;
-    episode?: number | null;
-  } | null>(null);
+  // --- Shared Add File Wizard state ---
+  let wizardOpen = $state(false);
+  let wizardProviders = $state<Array<{ adapterId: string; name: string; sourceId: string }>>([]);
+  let preselectedMediaItem = $state<PreselectedMediaItem | null>(null);
 
   async function openLinkModal(req: Record<string, unknown>) {
-    // Resolve hosting providers for the shared modal.
+    // Resolve hosting providers for the shared wizard. This calls
+    // /api/admin/hosting/providers?skipHealth=1 which returns the
+    // provider registry (no provider API calls — just DB rows).
     try {
       const provRes = await fetch('/api/admin/hosting/providers?skipHealth=1');
       const provJson = await provRes.json();
       if (provJson.ok && Array.isArray(provJson.providers)) {
-        linkProviders = provJson.providers
+        wizardProviders = provJson.providers
           .filter((p: any) => p.adapterId && p.sourceId && p.name)
           .map((p: any) => ({ adapterId: p.adapterId, name: p.name, sourceId: p.sourceId }));
       }
     } catch {
-      linkProviders = [];
+      wizardProviders = [];
     }
 
-    // Build the preselected media item from the demand row. The demand row
-    // carries the TMDB ID, content type, season, and episode. The link
-    // endpoint resolves these to a real media_items UUID server-side via
+    // Build the preselected media item from the demand row. The demand
+    // row carries the TMDB ID, content type, season, episode, title
+    // snapshot, and episode title snapshot. The manual-link endpoint
+    // resolves these to a real media_items UUID server-side via
     // CanonicalMediaService.ensure* — the client does NOT fabricate a
     // prefixed canonical key or a fake UUID.
     const contentType = String(req.content_type ?? 'movie');
     const tmdbId = String(req.tmdb_id ?? '');
+    const season = req.season != null ? Number(req.season) : null;
+    const episode = req.episode != null ? Number(req.episode) : null;
 
     preselectedMediaItem = {
       title: String(req.title_snapshot ?? '') + (req.episode_title_snapshot ? ` — ${req.episode_title_snapshot}` : ''),
       contentType,
       tmdbId,
-      season: req.season != null ? Number(req.season) : null,
-      episode: req.episode != null ? Number(req.episode) : null,
+      season,
+      episode,
+      episodeTitle: req.episode_title_snapshot ? String(req.episode_title_snapshot) : null,
     };
-    linkModalOpen = true;
+    wizardOpen = true;
   }
 
-  async function onLinkModalClose() {
-    linkModalOpen = false;
+  async function onWizardSaved(_mediaAssetId: string) {
+    // The save succeeded — the demand sweep in the server loader will
+    // auto-resolve the demand row on the next load. invalidateAll()
+    // triggers a reload of all server load functions.
+    preselectedMediaItem = null;
+    await invalidateAll();
+  }
+
+  async function onWizardClose() {
+    wizardOpen = false;
     preselectedMediaItem = null;
     // Refresh all server load functions — the demand row may have resolved.
     await invalidateAll();
@@ -187,11 +202,13 @@
   </AdminPage>
 </AdminAppShell>
 
-<AdminLinkMediaModal
-  bind:open={linkModalOpen}
-  providers={linkProviders}
+<!-- Shared Add File Wizard (same component as Media Library) -->
+<AdminAddFileWizard
+  bind:open={wizardOpen}
+  providers={wizardProviders}
   {preselectedMediaItem}
-  onclose={onLinkModalClose}
+  onsaved={onWizardSaved}
+  onclose={onWizardClose}
 />
 
 <style>

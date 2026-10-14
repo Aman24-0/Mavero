@@ -453,3 +453,143 @@ PUBLIC_SUPABASE_URL=… PUBLIC_SUPABASE_PUBLISHABLE_KEY=… PRIVATE_SUPABASE_SER
 ### Conclusion
 
 Phase 2 acceptance is genuinely complete. The 3 new defects found during this acceptance pass are fixed. The end-user browser workflow is verified (66/66 checks) with a real admin session via the magic-link fallback. The DB state changes after each create/update/delete are verified against the live Supabase instance. Remote provider files are confirmed untouched after delete. The data flow up to the iframe is verified by 77 live-DB probe checks. The only remaining blocker (live iframe render) is a deployment configuration issue (missing TMDB credentials), not a Phase 2 code defect. Phase 2 is genuinely ready to close.
+
+---
+
+## Phase 3 — Baseline (2026-10-14)
+
+**Status**: IN_PROGRESS
+**Baseline**: commit `ff2c1f7` (Phase 2 end-user acceptance complete, verified clean working tree)
+**Branch**: main (in sync with origin, HEAD == origin/main == ff2c1f7ea241d6ffc1847c87b54cc9a174d9f24e)
+
+### Baseline verification
+
+- Branch: main
+- HEAD: ff2c1f7ea241d6ffc1847c87b54cc9a174d9f24e
+- origin/main: ff2c1f7ea241d6ffc1847c87b54cc9a174d9f24e (in sync)
+- Working tree: clean
+- Phase 2 commits present: 4a1a8f3, 894d90d, c9c8803, ff2c1f7
+
+### Phase 3 acceptance criteria (from PLAN.md)
+
+1. No Upload button on Missing Media
+2. "Link media" opens shared Add File wizard with title preselected
+3. Same provider reference validation as Media Library
+4. Demand resolves when media becomes available
+
+### Phase 3.1 audit — current Missing Media behavior
+
+**Current implementation** (`src/routes/admin/media/missing/+page.svelte`):
+- Missing Media page uses the OLD `AdminLinkMediaModal` component — a provider-inventory file picker that lists provider files via the host's `/api/admin/hosting/providers/[adapterId]/files` API.
+- This VIOLATES the Phase 3 brief: "Do not add an Upload button, API import workflow, **provider asset browser**, or Hosting Control dependency."
+- The `AdminLinkMediaModal` fetches provider inventory (requires provider API calls to Vidara/Abyss) — the opposite of the manual-link workflow.
+
+**Server loader** (`src/routes/admin/media/missing/+page.server.ts`):
+- Queries `media_availability_requests` table (the demand table) filtered by `status` (default: 'open').
+- Runs `demandService.sweepResolvedDemand()` (auto-resolves stale 'open' demands that now have a ready+available asset) + `demandService.sweepStaleResolvedDemand()` (reopens stale 'ready' demands whose asset was deleted/detached).
+- Returns `requests` + `statusFilter`.
+
+**Demand row schema** (from `media_availability_requests`):
+- `id`, `canonical_key`, `content_type`, `tmdb_id`, `season`, `episode`, `title_snapshot`, `episode_title_snapshot`, `request_count`, `first_requested_at`, `last_requested_at`, `status` ('open'|'uploading'|'ready'|'ignored').
+
+**Phase 3 plan**:
+1. Extract the Add File wizard from `AdminMediaList.svelte` into a new shared `AdminAddFileWizard.svelte` component that accepts an optional `preselectedMediaItem` prop.
+2. Update `AdminMediaList.svelte` to use the shared wizard (no behavioral change for Media Library).
+3. Update Missing Media page to use the shared wizard with a preselected media item (from the demand row), removing the old `AdminLinkMediaModal`.
+4. Add optional `episodeTitle` parameter to the manual-link endpoint (the demand row has `episode_title_snapshot` which should be passed through to `ensureEpisode`/`ensureAnimeEpisode`).
+5. Verify canonical identity for movie, TV series, TV episode, anime series, anime episode.
+6. Add focused contract test + browser test for Missing Media.
+
+---
+
+## Phase 3 + Stage 4-5 — Implementation + Verification (2026-10-14)
+
+**Status**: DONE
+**Baseline**: commit `ff2c1f7` (Phase 2 end-user acceptance complete)
+**Branch**: main (in sync with origin)
+
+### Phase 3 implementation
+
+**Files changed**:
+1. `src/lib/components/admin2/AdminAddFileWizard.svelte` (NEW) — shared wizard extracted from AdminMediaList. Supports preselectedMediaItem (Missing Media) + updateTarget (Media Library Update link).
+2. `src/lib/components/admin2/AdminMediaList.svelte` — uses shared wizard (no behavioral change).
+3. `src/routes/admin/media/missing/+page.svelte` — removed old AdminLinkMediaModal (provider-inventory picker); uses shared AdminAddFileWizard with preselectedMediaItem from demand row.
+4. `src/routes/api/admin/media/manual-link/+server.ts` — added optional episodeTitle parameter.
+
+**Tests added**:
+5. `scripts/mav_phase3_missing_media_contract_test.ts` (62 checks)
+6. `scripts/mav_phase3_browser_acceptance.mjs` (50 checks)
+
+### Stage 4 — Production configuration audit
+
+**Required env vars** (traced from code):
+
+| Variable | Used by | Required for |
+|----------|--------|-------------|
+| `PUBLIC_SUPABASE_URL` | hooks.server.ts, supabase/server.ts, supabase/admin.ts | Core app + auth |
+| `PUBLIC_SUPABASE_PUBLISHABLE_KEY` | hooks.server.ts, supabase/server.ts | Auth |
+| `PRIVATE_SUPABASE_SERVICE_ROLE_KEY` | supabase/admin.ts, resolver/service.ts, resolver/mavero-hosted.ts | Admin operations + resolver |
+| `TMDB_READ_ACCESS_TOKEN` OR `TMDB_API_KEY` | content/adapters/tmdb.ts | Detail pages, search, resolver (content lookup) |
+
+**Optional env vars** (NOT used by manual-link workflow):
+- `VIDARA_API_KEY` — Vidara provider adapter (inventory sync, not manual linking)
+- `ABYSS_EMAIL` / `ABYSS_PASSWORD` — Abyss provider adapter (inventory sync, not manual linking)
+
+**Netlify deployment audit**:
+- `netlify.toml` inspected — NODE_VERSION=22, esbuild bundler, security headers configured.
+- Netlify CLI not available — cannot directly inspect production env vars.
+- **BLOCKED**: Cannot verify whether `TMDB_API_KEY` / `TMDB_READ_ACCESS_TOKEN` is configured in the Netlify production deployment without authorized access to the Netlify dashboard. This is a deployment configuration verification task, not a code defect.
+- Local `.env` has `TMDB_API_KEY` configured (provided by user) — verified the TMDB-dependent paths work locally.
+
+**TMDB dependency audit**:
+- Public detail routes (`/movie/[id]`, `/series/[id]`, `/anime/[id]`) → require TMDB (`getDetail()`).
+- Watch/player route (`/watch/[type]/[id]`) → requires TMDB via `getDetail()` in the resolver's `loadContent()`.
+- Playback resolver (`/api/playback/resolve`) → requires TMDB via `loadContent()`.
+- Manual-link endpoint (`/api/admin/media/manual-link`) → does NOT require TMDB when client provides `title` + `year` (Phase 2 fix). Falls back to TMDB `getDetail()` only when title is absent.
+- Missing Media loader → does NOT require TMDB (queries `media_availability_requests` table directly).
+
+### Stage 5 — Final playback acceptance
+
+**Vidara (real filecode LyBctGwWUh9c from https://Vidara.so/v/LyBctGwWUh9c)**:
+
+| Check | Result |
+|-------|--------|
+| Canonical identity | ✓ Verified — media_items row created with content_type=movie, tmdb_id=278 |
+| Media association lookup | ✓ Verified — media_assets row found by mediaAssetId |
+| Resolver result | ✓ Verified — POST /api/playback/resolve returned HTTP 200, ok:true, source.url |
+| Canonical embed URL | ✓ Verified — resolver returned `https://vidara.to/e/LyBctGwWUh9c` (NOT the input share URL) |
+| Iframe source and document load | ⚠ Partially verified — player page loads an iframe, but the player uses a FALLBACK source (Vidrift/MoviesNexus) by default because Vidara is experimental (ordering=500). The resolver returns the correct Vidara URL when explicitly requested (verified above), but the player's source-selection logic prefers higher-priority sources. |
+| Actual playback start | ⚠ NOT VERIFIED — cross-origin restrictions prevent reading the iframe's contentDocument. The iframe element exists + src is correct + dimensions are non-zero, but actual video playback start cannot be verified from the parent page. |
+
+**Abyss (real slug -7DfAqb5s from https://player.abyssplayer.com/-7DfAqb5s)**:
+
+| Check | Result |
+|-------|--------|
+| Canonical identity | ✓ Verified — media_items row created with content_type=series, tmdb_id=1396 |
+| Media association lookup | ✓ Verified — media_assets row found |
+| Resolver result | ✓ Verified — resolver returned HTTP 200, ok:true, source.url |
+| Canonical embed URL | ✓ Verified — resolver returned `https://player.abyssplayer.com/-7DfAqb5s` |
+| Iframe source and document load | ⚠ Partially verified — player loads an iframe, but uses a fallback source (MoviesNexus) by default. Same reason as Vidara. |
+| Actual playback start | ⚠ NOT VERIFIED — cross-origin limitation. |
+
+**Remote provider file preservation**:
+- Vidara file `https://vidara.to/e/LyBctGwWUh9c` still reachable after all tests (HTTP > 0) — we never deleted it.
+- Abyss file `https://player.abyssplayer.com/-7DfAqb5s` still reachable after all tests (HTTP > 0) — we never deleted it.
+
+### Remaining blockers
+
+1. **Netlify production TMDB configuration** — cannot verify whether `TMDB_API_KEY` or `TMDB_READ_ACCESS_TOKEN` is configured in the Netlify production deployment without authorized access to the Netlify dashboard. Required action: verify in Netlify dashboard that `TMDB_API_KEY` (or `TMDB_READ_ACCESS_TOKEN`) is set for the production deployment context.
+
+2. **Player source selection** — the player uses fallback sources (Vidrift, MoviesNexus) by default because Vidara/Abyss are experimental, low-priority sources (ordering: 500/501). The resolver correctly returns the Vidara/Abyss URL when explicitly requested, but the player doesn't choose it by default. Required action (optional): configure Vidara/Abyss as the default source per content type in the admin System → API & Sources settings, OR raise their priority in the `streaming_sources.ordering` column.
+
+3. **Actual playback start** — cross-origin restrictions prevent verifying whether the provider iframe actually started playing video. The iframe element exists and its src is correct, but the parent page cannot read the iframe's internal DOM. This is a fundamental browser security limitation, not a Mavero defect.
+
+### DB state after all tests
+
+- `media_assets` count: 1 (pre-existing Sicario row — untouched).
+- `media_items` count: 1 (pre-existing Sicario row — untouched).
+- All test rows cleaned up (0 leftovers).
+
+### Conclusion
+
+Phase 3 is complete. Missing Media now uses the same shared AdminAddFileWizard as Media Library — no provider-inventory picker, no upload, no Hosting Control. The demand row's canonical identity (content_type, tmdb_id, season, episode, episode_title) is passed through to the manual-link endpoint, which resolves the correct canonical media_item UUID via CanonicalMediaService. The demand sweep auto-resolves the demand row after a successful link. All regression suites pass (65 + 11 + 20 + 74 + 62 + 66 + 50 = 348 checks). The resolver correctly returns the canonical Vidara/Abyss embed URL when explicitly requested. The player loads an iframe but uses a fallback source by default (Vidara/Abyss are experimental low-priority sources). Actual playback start cannot be verified cross-origin.
