@@ -33,8 +33,8 @@
   <AdminPage eyebrow="Mavero / Control" title="Overview" accent="cyan">
     {#snippet description()}
       <p>
-        Real-time operational view of Mavero — provider health, hosting
-        activity, content inventory, and integration status at a glance.
+        Operational view of Mavero — content inventory, demand tracking,
+        and integration status at a glance.
       </p>
     {/snippet}
 

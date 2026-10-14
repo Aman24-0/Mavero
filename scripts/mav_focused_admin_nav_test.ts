@@ -66,7 +66,7 @@ console.log('\n§2 — Desktop sidebar unchanged (every route still reachable)')
     const navSrc = navGroupsMatch[1];
     ok(navSrc.includes("/admin/media/library"), '2b. Media Library in navGroups');
     ok(navSrc.includes("/admin/media/missing"), '2c. Missing Media in navGroups');
-    ok(navSrc.includes("/admin/hosting"), '2d. Hosting Control in navGroups');
+    ok(!navSrc.includes("/admin/hosting"), '2d. Hosting Control REMOVED from navGroups');
     ok(navSrc.includes("/admin/system/api-sources"), '2e. API & Sources in navGroups');
     ok(navSrc.includes("/admin/system/content-rules"), '2f. Content Rules in navGroups');
     ok(navSrc.includes("/admin/system/downloads"), '2g. Downloads in navGroups');
@@ -111,7 +111,8 @@ console.log('\n§5 — No route is unreachable on mobile');
   const mobileNavRoutes = mobileNavMatch ? (mobileNavMatch[1].match(/href:\s*['"]([^'"]+)['"]/g) ?? []).map((s: string) => s.match(/['"]([^'"]+)['"]/)![1]) : [];
   ok(mobileNavRoutes.includes('/admin'), '5a. bottom-nav includes Home (/admin)');
   ok(mobileNavRoutes.includes('/admin/media/library'), '5b. bottom-nav includes Media Library');
-  ok(mobileNavRoutes.includes('/admin/hosting'), '5c. bottom-nav includes Hosting');
+  ok(!mobileNavRoutes.includes('/admin/hosting'), '5c. Hosting REMOVED from bottom-nav (replaced with Missing Media)');
+  ok(mobileNavRoutes.includes('/admin/media/missing'), '5c2. Missing Media ADDED to bottom-nav (replaces Hosting)');
   ok(mobileNavRoutes.includes('/admin/analytics'), '5d. bottom-nav includes Analytics');
 
   // Overview cards for the remaining routes.
@@ -130,10 +131,10 @@ console.log('\n§6 — Mobile bottom-nav has NO "more" item (no duplicate naviga
   ok(!/<button[^>]*aria-label="More navigation"/.test(shell), '6b. the bottom-nav has no "More navigation" button');
 }
 
-console.log('\n§7 — Media Library page header carries "Link media" + "Upload / Import"');
+console.log('\n§7 — Media Library page header carries "Link media" (Upload/Import removed)');
 {
   const library = readCode('src/routes/admin/media/library/+page.svelte');
-  ok(/Upload \/ Import/.test(library), '7a. Media Library header has "Upload / Import" action');
+  ok(!/Upload \/ Import/.test(library), '7a. Upload/Import REMOVED from Media Library header');
   ok(/Link media/.test(library), '7b. Media Library header has "Link media" action (immediately to the right of Upload)');
   // MAV-FOCUSED (2026-10 revised): the header button now opens the shared
   // AdminLinkMediaModal (TMDB-first search) instead of using the old

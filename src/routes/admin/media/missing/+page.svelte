@@ -17,7 +17,7 @@
   import AdminStatusBadge from '$lib/components/admin/AdminStatusBadge.svelte';
   import AdminLinkMediaModal from '$lib/components/admin2/AdminLinkMediaModal.svelte';
   import { invalidateAll } from '$app/navigation';
-  import { AlertCircle, Upload, EyeOff, RotateCcw, CheckCircle2, Link2 } from 'lucide-svelte';
+  import { AlertCircle, EyeOff, RotateCcw, CheckCircle2, Link2 } from 'lucide-svelte';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -116,21 +116,12 @@
     return new Date(iso).toLocaleDateString();
   }
 
-  function uploadUrl(req: Record<string, unknown>): string {
-    const params = new URLSearchParams({
-      tmdbId: String(req.tmdb_id),
-      contentType: String(req.content_type),
-    });
-    if (req.season != null) params.set('season', String(req.season));
-    if (req.episode != null) params.set('episode', String(req.episode));
-    return `/admin/media/upload?${params}`;
-  }
 </script>
 
 <svelte:head><title>Missing Media — Mavero Admin</title><meta name="robots" content="noindex,nofollow" /></svelte:head>
 
 <AdminAppShell active="missing-media">
-  <AdminPage eyebrow="Hosting" title="Missing Media" accent="cyan">
+  <AdminPage eyebrow="Content" title="Missing Media" accent="cyan">
     {#snippet description()}
       <p>Track demand for media not yet hosted on Mavero providers. Each card shows the request, its status, and the actions you can take.</p>
     {/snippet}
@@ -179,11 +170,8 @@
                 </button>
               {/if}
               {#if req.status === 'open'}
-                <a class="a2-missing-action a2-missing-action-upload" href={uploadUrl(req)}>
-                  <Upload size={14} /> Upload
-                </a>
                 <button type="button" class="a2-missing-action a2-missing-action-link" onclick={() => openLinkModal(req)}>
-                  <Link2 size={14} /> Link existing
+                  <Link2 size={14} /> Link media
                 </button>
               {/if}
             </div>
@@ -231,8 +219,6 @@
   .a2-missing-action:disabled { opacity: 0.5; cursor: not-allowed; }
   .a2-missing-action-primary { color: var(--a2-green); border-color: var(--a2-green-border); }
   .a2-missing-action-primary:hover:not(:disabled) { color: var(--a2-green); border-color: var(--a2-green-border); background: var(--a2-green-soft); }
-  .a2-missing-action-upload { color: var(--a2-surface-1); background: var(--a2-cyan); border-color: var(--a2-cyan); }
-  .a2-missing-action-upload:hover { background: var(--a2-cyan); color: var(--a2-surface-1); border-color: var(--a2-cyan); opacity: 0.9; }
   .a2-missing-action-link { color: var(--a2-cyan); border-color: var(--a2-cyan-border); }
   .a2-missing-action-link:hover:not(:disabled) { color: var(--a2-cyan); border-color: var(--a2-cyan); background: var(--a2-surface-3); }
   .a2-missing-card-error { display: flex; align-items: center; gap: 6px; padding: var(--a2-space-2) var(--a2-space-3); margin-top: var(--a2-space-2); background: var(--a2-red-soft); border: 1px solid var(--a2-red-border); border-radius: var(--a2-radius-sm); color: var(--a2-red); font-size: var(--a2-text-xs); }

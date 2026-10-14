@@ -45,7 +45,7 @@
   import { page } from '$app/state';
   import type { Snippet } from 'svelte';
   import {
-    LayoutGrid, Library, Upload, AlertCircle, Server, HardDrive, RefreshCw,
+    LayoutGrid, Library, Upload, AlertCircle, HardDrive, RefreshCw,
     Activity, History, TriangleAlert, Settings, Layers, Download, Puzzle,
     BarChart3, PanelLeftClose, PanelLeft, ArrowLeft,
     Search, Command, ArrowRight
@@ -109,13 +109,6 @@
       ]
     },
     {
-      id: 'hosting',
-      label: 'Hosting',
-      items: [
-        { id: 'hosting', label: 'Hosting Control', href: '/admin/hosting', icon: Server, matchPrefix: '/admin/hosting' },
-      ]
-    },
-    {
       id: 'system',
       label: 'System',
       items: [
@@ -145,15 +138,13 @@
   // Configure dropdown and the mobile "Configuration" section are removed
   // (no longer render an empty affordance).
 
-  // Mobile bottom nav: 4 primary destinations (MAV-FOCUSED, 2026-10).
-  // The "More" item + its sheet were removed — every route is reachable
-  // through the Overview quick-action cards or the System Status metric
-  // cards. The desktop sidebar (≥1024px) still carries the full navGroups
-  // set, so no destination is lost.
+  // Mobile bottom nav: 4 primary destinations.
+  // Hosting Control removed — replaced with Missing Media (the demand-
+  // tracking surface that admins need quick access to).
   const mobileNav: NavItem[] = [
     { id: 'overview', label: 'Home', href: '/admin', icon: LayoutGrid },
     { id: 'media-library', label: 'Media', href: '/admin/media/library', icon: Library, matchPrefix: '/admin/media/library' },
-    { id: 'hosting', label: 'Hosting', href: '/admin/hosting', icon: Server, matchPrefix: '/admin/hosting' },
+    { id: 'missing-media', label: 'Missing', href: '/admin/media/missing', icon: AlertCircle },
     { id: 'analytics', label: 'Analytics', href: '/admin/analytics', icon: BarChart3, matchPrefix: '/admin/analytics' },
   ];
 

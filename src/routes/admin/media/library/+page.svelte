@@ -17,7 +17,7 @@
    *   7. POST /api/admin/media/assets/link creates the association.
    *   8. On success, the modal closes and the page refreshes.
    */
-  import { Upload, Link2 } from 'lucide-svelte';
+  import { Link2 } from 'lucide-svelte';
   import { invalidateAll } from '$app/navigation';
   import AdminAppShell from '$lib/components/admin2/AdminAppShell.svelte';
   import AdminPage from '$lib/components/admin2/AdminPage.svelte';
@@ -63,9 +63,6 @@
     {/snippet}
 
     {#snippet actions()}
-      <a class="library-action" href="/admin/media/upload">
-        <Upload size={13} /> Upload / Import
-      </a>
       <button type="button" class="library-action library-action-link" onclick={openLinkModal} disabled={linkProviders.length === 0}>
         <Link2 size={13} /> Link media
       </button>

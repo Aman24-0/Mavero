@@ -194,7 +194,7 @@ export const browser = true;
     ok(sidebarLinks.includes('/admin'), '1a. sidebar includes Overview (/admin)');
     ok(sidebarLinks.includes('/admin/media/library'), '1b. sidebar includes Media Library');
     ok(sidebarLinks.includes('/admin/media/missing'), '1c. sidebar includes Missing Media');
-    ok(sidebarLinks.includes('/admin/hosting'), '1d. sidebar includes Hosting Control');
+    ok(!sidebarLinks.includes('/admin/hosting'), '1d. Hosting Control REMOVED from sidebar');
     ok(sidebarLinks.includes('/admin/system/api-sources'), '1e. sidebar includes API & Sources');
     ok(sidebarLinks.includes('/admin/system/content-rules'), '1f. sidebar includes Content Rules');
     ok(sidebarLinks.includes('/admin/system/downloads'), '1g. sidebar includes Downloads');
@@ -222,7 +222,8 @@ export const browser = true;
     ok(!bottomNavItems.some((i) => i.href === '#more'), '2c. no item with href="#more"');
     ok(bottomNavItems.some((i) => i.label === 'Home'), '2d. Home item present');
     ok(bottomNavItems.some((i) => i.label === 'Media'), '2e. Media item present');
-    ok(bottomNavItems.some((i) => i.label === 'Hosting'), '2f. Hosting item present');
+    ok(!bottomNavItems.some((i) => i.label === 'Hosting'), '2f. Hosting item REMOVED from bottom-nav');
+    ok(bottomNavItems.some((i) => i.label === 'Missing'), '2f2. Missing Media item ADDED to bottom-nav');
     ok(bottomNavItems.some((i) => i.label === 'Analytics'), '2g. Analytics item present');
 
     const moreSheet = await page.evaluate(() => document.querySelector('.a2-more-sheet'));
