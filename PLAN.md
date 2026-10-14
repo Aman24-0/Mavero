@@ -98,7 +98,7 @@
 - Application builds without errors
 - Existing playback + Missing Media + Link Media still work
 
-**Status**: NOT_STARTED
+**Status**: DONE
 
 ---
 
@@ -111,6 +111,7 @@
 - `src/routes/admin/media/library/+page.server.ts` — Simplified loader
 - `src/lib/components/admin2/AdminMediaList.svelte` (NEW) — Compact list component
 - `src/lib/components/admin2/AdminAddFileWizard.svelte` (NEW) — Add file wizard
+- `src/routes/api/admin/media/manual-link/+server.ts` (NEW) — Manual link API
 - `src/routes/api/admin/media/library/+server.ts` — May need updates for new list shape
 
 **Acceptance criteria**:
@@ -122,7 +123,7 @@
 - No reactive loop in the modal
 - Responsive on mobile
 
-**Status**: NOT_STARTED
+**Status**: DONE
 
 ---
 

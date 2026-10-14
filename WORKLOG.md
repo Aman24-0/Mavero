@@ -88,3 +88,75 @@
 
 **Status**: NOT_STARTED
 **Note**: This phase requires building a new compact list component + Add File wizard. The existing AdminHostingAssets component (2262 lines) is still in use — it will be replaced with a new simpler component. This is a major UI rebuild that requires careful implementation of TMDB search, provider selection, manual reference entry, and the three-dot menu with Delete + Update link actions.
+
+---
+
+## Phase 2 — New Media Library UI + Add File Wizard
+
+**Status**: DONE
+**Commit**: 4a1a8f3
+**Date**: 2026-10-14
+
+### Implementation
+
+**New files created**:
+1. `src/lib/components/admin2/AdminMediaList.svelte` — Compact Media Library list component (931 lines):
+   - Compact rows: poster icon, title, content type badge, TMDB ID, provider badge, three-dot menu
+   - Add File wizard: TMDB search → provider selection → reference entry → save
+   - Three-dot menu: Delete (with confirmation dialog) + Update link (opens wizard in edit mode)
+   - No reactive loop — uses prevOpen transition + non-reactive tab data
+   - AbortController + session tokens for stale-response protection
+   - Responsive layout (mobile-friendly)
+
+2. `src/routes/api/admin/media/manual-link/+server.ts` — Manual link API:
+   - POST: Creates/updates media-to-provider association from manual reference
+     - Resolves canonical media_item UUID via CanonicalMediaService.ensure*
+     - Constructs playback_url from provider + reference:
+       Vidara: `https://vidara.to/e/<filecode>`
+       Abyss: `https://player.abyssplayer.com/<slug>`
+     - Handles existing rows: idempotent if same item, re-links if different
+   - DELETE: Removes media_assets row (Mavero-side only, no provider API call)
+
+**Modified files**:
+3. `src/routes/admin/media/library/+page.svelte` — Replaced AdminHostingAssets (2262 lines) with AdminMediaList. Header has "+ Add file" button.
+4. `scripts/mav_focused_admin_nav_test.ts` — Updated assertions for new component
+
+### What was removed from the Media Library page
+- AdminHostingAssets component (2262 lines of asset-centric management)
+- AdminLinkMediaModal (provider-inventory-based file picker)
+- Upload/Import link
+- Link Media button
+- Old filter bar, facet counts, detail drawer, management actions
+- registerLinkTrigger callback pattern
+
+### What was preserved
+- All hosting services (ManagementService, SyncService, etc.) — still needed by API endpoints
+- AdminHostingAssets component file — still exists, just not imported by Media Library page
+- AdminLinkMediaModal component file — still exists, may be used by Missing Media (Phase 3)
+- Playback resolver — reads media_assets.playback_url (unchanged)
+- All API endpoints — still accessible
+
+### Provider reference formats (verified from existing code)
+- Vidara: user pastes filecode (e.g. "Vw0hY4n13k83") → `playback_url = https://vidara.to/e/Vw0hY4n13k83`
+- Abyss: user pastes resource ID (e.g. "ltJEfKQxR") → `playback_url = https://player.abyssplayer.com/ltJEfKQxR`
+- Full URLs are accepted as-is (if reference starts with http:// or https://)
+- Validation: alphanumeric + hyphens/underscores, or full URL
+
+### Canonical identity contract
+- The client sends `{ contentType, tmdbId, provider, reference }` (NOT a fabricated UUID)
+- The server resolves the real media_items UUID via CanonicalMediaService.ensure*
+- No prefixed canonical keys (e.g. "movie-278") are passed as UUIDs
+
+### Test results
+- pnpm check: 0 errors, 9 warnings (cosmetic)
+- pnpm build: success
+- mav_focused_admin_nav_test: 65/65 (updated for new component)
+- admin_nav_dom_qa: 20/20
+- hosting_lifecycle_regression: 11/11
+- signout_reliability: passed
+- Full pnpm test: NOT RUN (200+ scripts with live Supabase dependencies)
+
+### Limitations
+- Browser verification of Add File wizard: NOT PERFORMED (requires running dev server with Supabase env + auth session)
+- Live provider playback verification: NOT PERFORMED (requires deployed app + valid auth session)
+- The manual-link API has not been tested against the live Supabase database (requires deployed app or direct API testing)
