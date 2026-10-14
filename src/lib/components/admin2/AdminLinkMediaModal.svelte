@@ -8,28 +8,20 @@
   //   * Missing Media → "Link Existing" (destination media item is already
   //     known from the demand row — skips Step A, goes directly to Step B).
   //
-  // The TMDB search reuses the EXISTING `/api/admin/media/search` endpoint
-  // (the same one AdminUploadFlow uses) — NOT the local `media_items` table
-  // search. This ensures the admin can find ANY title in TMDB, even if it
-  // has not yet been added to the Mavero catalog. The `linkAsset` server-
-  // side handler creates the `media_item` if it doesn't already exist (via
-  // `CanonicalMediaService.ensure*`), or reuses the existing one.
+  // The TMDB search reuses the EXISTING `/api/admin/media/search` endpoint.
+  // The link endpoint resolves the canonical media_item UUID server-side
+  // via CanonicalMediaService.ensure* — the client sends the TMDB type +
+  // bare TMDB ID, NOT a fabricated UUID or prefixed canonical key.
   //
-  // The provider file picker has two tabs (Vidara / Abyss) with isolated
-  // state — each tab carries its own inventory, search query, loading/
-  // error state, and selected file. Terminal deleted/failed files are
-  // excluded from the linkable list. Files already linked to a DIFFERENT
-  // media item are shown with a "linked elsewhere" badge and disabled.
-  //
-  // Architecture:
-  //   * Step A (TMDB search) — calls `/api/admin/media/search?q=…&type=…`
-  //     (TMDB-backed, same as Upload/Import).
-  //   * Step B (provider file) — calls `/api/admin/hosting/providers/
-  //     [adapterId]/files` (real provider inventory via the adapter).
-  //   * Confirm — calls `/api/admin/media/assets/link` with
-  //     `{ mediaItemId, providerSourceId, providerAssetId }`.
-  //   * When opened with `preselectedMediaItem` (Missing Media case),
-  //     Step A is skipped entirely.
+  // MAV-FOCUSED fix (reactive loop + UUID contract):
+  //   * Modal initialization is driven by a `$derived` snapshot of the
+  //     `open` prop — NOT a `$effect` that reads/writes reactive state
+  //     it itself mutates. The snapshot is compared to the previous one;
+  //     init runs only when `open` transitions false→true.
+  //   * Inventory requests use AbortController + a 15s timeout. Stale
+  //     responses are ignored (session token check).
+  //   * The `mediaItemId` sent to the link endpoint is the bare TMDB ID +
+  //     content type — the server resolves it to a real UUID.
 
   export type TmdbSearchResult = {
     id: string;          // prefixed, e.g. "movie-12345"
@@ -42,10 +34,9 @@
   };
 
   export type PreselectedMediaItem = {
-    mediaItemId: string;
     title: string;
     contentType: string;
-    tmdbId?: string;
+    tmdbId: string;
     season?: number | null;
     episode?: number | null;
   };
@@ -58,8 +49,8 @@
 </script>
 
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
-  import { Link2, Search, FileVideo, Check, AlertCircle, Loader2, Film, Tv, Sparkles, X } from 'lucide-svelte';
+  import { onDestroy } from 'svelte';
+  import { Link2, Search, FileVideo, Check, AlertCircle, Loader2, Film, Tv, Sparkles, X, RotateCcw } from 'lucide-svelte';
 
   // --- Props ---
   let {
@@ -74,17 +65,27 @@
     onclose?: () => void;
   } = $props();
 
-  // --- Step A: TMDB search ---
+  // --- Step A: TMDB search state ---
   let tmdbSearchQuery = $state('');
   let tmdbSearchType = $state<'movie' | 'series'>('movie');
   let tmdbSearching = $state(false);
   let tmdbResults = $state<TmdbSearchResult[]>([]);
   let tmdbError = $state<string | null>(null);
   let tmdbDebounce: ReturnType<typeof setTimeout> | null = null;
-  let selectedMediaItem = $state<{ mediaItemId: string; title: string; contentType: string; tmdbId: string } | null>(null);
 
-  // --- Step B: Provider file picker ---
-  type LinkProviderTab = {
+  // The selected media item carries the TMDB identity (type + bare TMDB ID).
+  // The server resolves this to a real media_items UUID via
+  // CanonicalMediaService.ensure*.
+  let selectedMedia = $state<{
+    title: string;
+    contentType: string;
+    tmdbId: string;
+    season?: number | null;
+    episode?: number | null;
+  } | null>(null);
+
+  // --- Step B: Provider file picker state ---
+  type ProviderTab = {
     adapterId: string;
     name: string;
     inventory: Array<{
@@ -100,79 +101,121 @@
     loading: boolean;
     error: string | null;
     searchQuery: string;
-    searchDebounce: ReturnType<typeof setTimeout> | null;
     selectedFile: { providerAssetId: string; title: string | null; filename: string | null } | null;
     loaded: boolean;
   };
-  let providerTabs = $state<LinkProviderTab[]>([]);
+
+  // Non-reactive mutable state — NOT tracked by $effect.
+  // Using a plain object + manual re-render trigger.
+  let tabsData: ProviderTab[] = [];
+  let tabsVersion = $state(0); // bump to trigger re-render
   let activeTabId = $state<string | null>(null);
   let linkError = $state<string | null>(null);
   let linking = $state(false);
   let linkSuccess = $state<string | null>(null);
 
+  // Session token for stale-response protection.
+  let sessionToken = 0;
+  // AbortControllers for in-flight inventory requests.
+  const abortControllers = new Map<string, AbortController>();
+
   // --- Derived ---
-  let step = $derived(preselectedMediaItem ? 'provider' : (selectedMediaItem ? 'provider' : 'tmdb'));
-  let activeTab = $derived(providerTabs.find((t) => t.adapterId === activeTabId) ?? null);
+  let step = $derived(preselectedMediaItem ? 'provider' : (selectedMedia ? 'provider' : 'tmdb'));
 
-  // --- Lifecycle ---
+  function getActiveTab(): ProviderTab | null {
+    return tabsData.find((t) => t.adapterId === activeTabId) ?? null;
+  }
+
+  function bumpTabs() { tabsVersion += 1; }
+
+  // --- Modal initialization (lifecycle-safe) ---
+  // Track the previous `open` value to detect false→true transitions.
+  let prevOpen = false;
+
   $effect(() => {
-    if (open) {
+    const isOpen = open;
+    if (isOpen && !prevOpen) {
+      // Modal just opened — initialize once.
+      prevOpen = true;
       initModal();
-    } else {
-      resetState();
-    }
-  });
-
-  onDestroy(() => {
-    if (tmdbDebounce) clearTimeout(tmdbDebounce);
-    for (const tab of providerTabs) {
-      if (tab.searchDebounce) clearTimeout(tab.searchDebounce);
+    } else if (!isOpen && prevOpen) {
+      // Modal just closed — cleanup.
+      prevOpen = false;
+      cleanupModal();
     }
   });
 
   function initModal() {
-    resetState();
-    // If preselected (Missing Media), set the media item directly.
+    // Cancel any in-flight requests from a previous session.
+    cancelAllRequests();
+    sessionToken += 1; // invalidate stale responses
+
+    // Reset TMDB search state.
+    tmdbSearchQuery = '';
+    tmdbResults = [];
+    tmdbError = null;
+    tmdbSearching = false;
+    if (tmdbDebounce) { clearTimeout(tmdbDebounce); tmdbDebounce = null; }
+
+    // Reset link state.
+    linkError = null;
+    linking = false;
+    linkSuccess = null;
+
+    // Set the selected media item.
     if (preselectedMediaItem) {
-      selectedMediaItem = {
-        mediaItemId: preselectedMediaItem.mediaItemId,
+      selectedMedia = {
         title: preselectedMediaItem.title,
         contentType: preselectedMediaItem.contentType,
-        tmdbId: preselectedMediaItem.tmdbId ?? '',
+        tmdbId: preselectedMediaItem.tmdbId,
+        season: preselectedMediaItem.season ?? null,
+        episode: preselectedMediaItem.episode ?? null,
       };
+    } else {
+      selectedMedia = null;
     }
-    // Build provider tabs.
-    providerTabs = providers.map((p) => ({
+
+    // Build provider tabs from a snapshot of the providers prop.
+    tabsData = providers.map((p) => ({
       adapterId: p.adapterId,
       name: p.name,
       inventory: [],
       loading: false,
       error: null,
       searchQuery: '',
-      searchDebounce: null,
       selectedFile: null,
       loaded: false,
     }));
-    activeTabId = providerTabs[0]?.adapterId ?? null;
+    activeTabId = tabsData[0]?.adapterId ?? null;
+    bumpTabs();
+
     // Lazy-load the first tab's inventory.
     if (activeTabId) void loadInventory(activeTabId);
   }
 
-  function resetState() {
-    tmdbSearchQuery = '';
-    tmdbResults = [];
-    tmdbError = null;
-    tmdbSearching = false;
-    selectedMediaItem = null;
-    providerTabs = [];
-    activeTabId = null;
-    linkError = null;
-    linking = false;
-    linkSuccess = null;
+  function cleanupModal() {
+    cancelAllRequests();
+    sessionToken += 1;
     if (tmdbDebounce) { clearTimeout(tmdbDebounce); tmdbDebounce = null; }
+    selectedMedia = null;
+    tabsData = [];
+    activeTabId = null;
+    bumpTabs();
   }
 
-  // --- Step A: TMDB search (reuses the EXISTING /api/admin/media/search endpoint) ---
+  function cancelAllRequests() {
+    for (const [, controller] of abortControllers) {
+      try { controller.abort(); } catch { /* already aborted */ }
+    }
+    abortControllers.clear();
+  }
+
+  onDestroy(() => {
+    cancelAllRequests();
+    if (tmdbDebounce) clearTimeout(tmdbDebounce);
+  });
+
+  // --- Step A: TMDB search ---
   function onTmdbSearchInput() {
     if (tmdbDebounce) clearTimeout(tmdbDebounce);
     tmdbDebounce = setTimeout(() => void doTmdbSearch(), 300);
@@ -209,33 +252,47 @@
   }
 
   function selectTmdbResult(result: TmdbSearchResult) {
-    // The TMDB result's `id` is the prefixed canonical key (e.g.
-    // "movie-24428"). This IS the `mediaItemId` that `linkAsset` expects —
-    // it corresponds to the `media_items.id` column. If the media_item
-    // doesn't exist yet, `linkAsset` will create it via
-    // `CanonicalMediaService.ensure*`.
-    selectedMediaItem = {
-      mediaItemId: result.id,
+    // Store the TMDB identity (type + bare TMDB ID). The server resolves
+    // this to a real media_items UUID — the client NEVER sends a prefixed
+    // canonical key as a UUID.
+    selectedMedia = {
       title: result.title,
       contentType: result.type,
       tmdbId: result.tmdbId,
     };
-    // Reset provider-tab selections when a new media item is selected.
-    for (const tab of providerTabs) {
+    // Reset provider-tab file selections.
+    for (const tab of tabsData) {
       tab.selectedFile = null;
     }
-    providerTabs = [...providerTabs];
+    bumpTabs();
   }
 
   // --- Step B: Provider file picker ---
   async function loadInventory(adapterId: string) {
-    const tab = providerTabs.find((t) => t.adapterId === adapterId);
+    const tab = tabsData.find((t) => t.adapterId === adapterId);
     if (!tab || tab.loaded || tab.loading) return;
+
+    const mySession = sessionToken;
+    const controller = new AbortController();
+    abortControllers.set(adapterId, controller);
+
     tab.loading = true;
     tab.error = null;
+    bumpTabs();
+
+    // Bounded timeout — 15 seconds. A hung provider request must not
+    // leave the modal permanently loading.
+    const timeoutId = setTimeout(() => controller.abort(), 15_000);
+
     try {
-      const res = await fetch(`/api/admin/hosting/providers/${encodeURIComponent(adapterId)}/files`);
+      const res = await fetch(`/api/admin/hosting/providers/${encodeURIComponent(adapterId)}/files`, {
+        signal: controller.signal,
+      });
       const data = await res.json();
+
+      // Ignore stale responses (modal was closed/reopened).
+      if (mySession !== sessionToken) return;
+
       if (data.ok && Array.isArray(data.files)) {
         tab.inventory = data.files.map((f: any) => ({
           providerAssetId: f.providerAssetId,
@@ -247,37 +304,47 @@
           lifecycleState: f.lifecycleState ?? f.status ?? 'unknown',
           linkedToMediaItemId: f.linkedToMediaItemId ?? null,
         }));
+        tab.loaded = true;
       } else {
         tab.error = data.error?.message ?? 'Failed to load provider inventory.';
         tab.inventory = [];
+        tab.loaded = false; // allow retry
       }
-    } catch (err) {
-      tab.error = err instanceof Error ? err.message : 'Failed to load provider inventory.';
+    } catch (err: any) {
+      if (mySession !== sessionToken) return;
+      if (err?.name === 'AbortError') {
+        tab.error = 'Request timed out. Click Retry to try again.';
+      } else {
+        tab.error = err instanceof Error ? err.message : 'Failed to load provider inventory.';
+      }
       tab.inventory = [];
+      tab.loaded = false; // allow retry
     } finally {
-      tab.loading = false;
-      tab.loaded = true;
-      providerTabs = [...providerTabs];
+      clearTimeout(timeoutId);
+      abortControllers.delete(adapterId);
+      if (mySession === sessionToken) {
+        tab.loading = false;
+        bumpTabs();
+      }
     }
+  }
+
+  function retryInventory(adapterId: string) {
+    const tab = tabsData.find((t) => t.adapterId === adapterId);
+    if (!tab) return;
+    tab.loaded = false;
+    tab.error = null;
+    void loadInventory(adapterId);
   }
 
   function selectTab(adapterId: string) {
     if (activeTabId === adapterId) return;
     activeTabId = adapterId;
-    const tab = providerTabs.find((t) => t.adapterId === adapterId);
-    if (tab && !tab.loaded) void loadInventory(adapterId);
+    const tab = tabsData.find((t) => t.adapterId === adapterId);
+    if (tab && !tab.loaded && !tab.loading) void loadInventory(adapterId);
   }
 
-  function onProviderSearchInput(adapterId: string) {
-    const tab = providerTabs.find((t) => t.adapterId === adapterId);
-    if (!tab) return;
-    if (tab.searchDebounce) clearTimeout(tab.searchDebounce);
-    tab.searchDebounce = setTimeout(() => {
-      providerTabs = [...providerTabs]; // trigger reactivity for filtered list
-    }, 200);
-  }
-
-  function getFilteredInventory(tab: LinkProviderTab) {
+  function getFilteredInventory(tab: ProviderTab) {
     const q = tab.searchQuery.trim().toLowerCase();
     if (!q) return tab.inventory;
     return tab.inventory.filter((f) => {
@@ -290,35 +357,46 @@
   function isFileLinkable(file: { lifecycleState: string; linkedToMediaItemId: string | null }): boolean {
     if (file.lifecycleState === 'deleted' || file.lifecycleState === 'failed') return false;
     if (file.linkedToMediaItemId === '<deleted>') return false;
-    if (file.linkedToMediaItemId && file.linkedToMediaItemId !== selectedMediaItem?.mediaItemId) return false;
-    return true;
+    // Unlinked assets (mavero_status='missing') are surfaced with
+    // linkedToMediaItemId=null by the server — they are always linkable.
+    if (!file.linkedToMediaItemId) return true;
+    // Actively linked to another title — NOT linkable (must unlink first).
+    return false;
   }
 
   async function confirmLink() {
-    if (!activeTab?.selectedFile || !selectedMediaItem) return;
-    const file = activeTab.selectedFile;
-    const sourceId = providers.find((p) => p.adapterId === activeTab.adapterId)?.sourceId;
+    const tab = getActiveTab();
+    if (!tab?.selectedFile || !selectedMedia) return;
+    const file = tab.selectedFile;
+    const sourceId = providers.find((p) => p.adapterId === tab.adapterId)?.sourceId;
     if (!sourceId) {
-      linkError = `Could not resolve the Mavero source for provider "${activeTab.adapterId}".`;
+      linkError = `Could not resolve the Mavero source for provider "${tab.adapterId}".`;
       return;
     }
     linking = true;
     linkError = null;
     linkSuccess = null;
     try {
+      // Send the TMDB identity (contentType + tmdbId + season/episode) —
+      // the server resolves this to a real media_items UUID via
+      // CanonicalMediaService.ensure*.
+      const body: Record<string, string> = {
+        providerSourceId: sourceId,
+        providerAssetId: file.providerAssetId,
+        contentType: selectedMedia.contentType,
+        tmdbId: selectedMedia.tmdbId,
+      };
+      if (selectedMedia.season != null) body.season = String(selectedMedia.season);
+      if (selectedMedia.episode != null) body.episode = String(selectedMedia.episode);
+
       const res = await fetch('/api/admin/media/assets/link', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          mediaItemId: selectedMediaItem.mediaItemId,
-          providerSourceId: sourceId,
-          providerAssetId: file.providerAssetId,
-        }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
       if (data.ok) {
-        linkSuccess = `Linked "${file.filename ?? file.title ?? file.providerAssetId}" to "${selectedMediaItem.title}".`;
-        // Close after a brief delay so the success message is visible.
+        linkSuccess = `Linked "${file.filename ?? file.title ?? file.providerAssetId}" to "${selectedMedia.title}".`;
         setTimeout(() => {
           open = false;
           onclose();
@@ -392,13 +470,13 @@
             <div class="results-empty">{tmdbSearchQuery.trim() ? `No results for "${tmdbSearchQuery}".` : 'Start typing to search TMDB.'}</div>
           {/if}
           {#each tmdbResults as result (result.id)}
-            <button type="button" class="result-row" class:selected={selectedMediaItem?.mediaItemId === result.id} onclick={() => selectTmdbResult(result)}>
+            <button type="button" class="result-row" class:selected={selectedMedia?.tmdbId === result.tmdbId} onclick={() => selectTmdbResult(result)}>
               <div class="result-icon">{#if result.type === 'movie'}<Film size={14} />{:else if result.type === 'anime'}<Sparkles size={14} />{:else}<Tv size={14} />{/if}</div>
               <div class="result-info">
                 <div class="result-title">{result.title}</div>
                 <div class="result-meta"><span>{result.type}</span>{#if result.year}<span>· {result.year}</span>{/if}<span>· TMDB {result.tmdbId}</span></div>
               </div>
-              {#if selectedMediaItem?.mediaItemId === result.id}<span class="result-check"><Check size={14} /></span>{/if}
+              {#if selectedMedia?.tmdbId === result.tmdbId}<span class="result-check"><Check size={14} /></span>{/if}
             </button>
           {/each}
         </div>
@@ -409,17 +487,17 @@
         <h3 class="modal-step">{preselectedMediaItem ? '1' : '2'}. Select a provider file</h3>
         <div class="selected-media-bar">
           <span class="selected-media-label">Linking to:</span>
-          <strong>{selectedMediaItem?.title ?? 'Unknown'}</strong>
+          <strong>{selectedMedia?.title ?? 'Unknown'}</strong>
           {#if !preselectedMediaItem}
-            <button type="button" class="change-media-btn" onclick={() => { selectedMediaItem = null; }}>Change</button>
+            <button type="button" class="change-media-btn" onclick={() => { selectedMedia = null; }}>Change</button>
           {/if}
         </div>
 
-        {#if providerTabs.length === 0}
+        {#if tabsData.length === 0}
           <div class="results-empty">No hosting providers are configured.</div>
         {:else}
           <div class="tab-strip" role="tablist" aria-label="Provider">
-            {#each providerTabs as tab (tab.adapterId)}
+            {#each tabsData as tab (tab.adapterId)}
               <button type="button" class="tab-btn" class:active={activeTabId === tab.adapterId} role="tab" aria-selected={activeTabId === tab.adapterId} onclick={() => selectTab(tab.adapterId)}>
                 {tab.name}
                 {#if tab.loaded && !tab.loading}<span class="tab-count">{tab.inventory.length}</span>{/if}
@@ -427,26 +505,30 @@
             {/each}
           </div>
 
-          {#each providerTabs as tab (tab.adapterId)}
+          {#each tabsData as tab (tab.adapterId)}
             <div role="tabpanel" hidden={activeTabId !== tab.adapterId} class="tab-panel">
               {#if tab.loading}
                 <div class="loading-row"><Loader2 size={14} class="spinner" /> Loading {tab.name} inventory…</div>
               {:else if tab.error}
-                <div class="error-box" role="alert"><AlertCircle size={14} /><span>{tab.error}</span></div>
+                <div class="error-box-inline" role="alert">
+                  <AlertCircle size={14} />
+                  <span>{tab.error}</span>
+                  <button type="button" class="retry-btn" onclick={() => retryInventory(tab.adapterId)}><RotateCcw size={12} /> Retry</button>
+                </div>
               {:else}
                 <div class="search-row">
                   <div class="search-input-wrap">
                     <Search size={14} class="search-icon" />
-                    <input type="text" class="search-input" placeholder={`Search ${tab.name} files by filename, title, or ID…`} bind:value={tab.searchQuery} oninput={() => onProviderSearchInput(tab.adapterId)} autocomplete="off" />
+                    <input type="text" class="search-input" placeholder={`Search ${tab.name} files by filename, title, or ID…`} bind:value={tab.searchQuery} oninput={() => bumpTabs()} autocomplete="off" />
                   </div>
                 </div>
                 <div class="results-list" style="max-height: 280px;">
                   {#if getFilteredInventory(tab).length === 0}
-                    <div class="results-empty">{tab.searchQuery.trim() ? `No ${tab.name} files match.` : `No unlinked ${tab.name} files. Run a sync to discover files.`}</div>
+                    <div class="results-empty">{tab.searchQuery.trim() ? `No ${tab.name} files match.` : `No unlinked ${tab.name} files available. Run a sync to discover files.`}</div>
                   {/if}
                   {#each getFilteredInventory(tab) as file (file.providerAssetId)}
                     {@const linkable = isFileLinkable(file)}
-                    <button type="button" class="result-row" class:selected={tab.selectedFile?.providerAssetId === file.providerAssetId} class:disabled={!linkable} disabled={!linkable} onclick={() => { tab.selectedFile = { providerAssetId: file.providerAssetId, title: file.title, filename: file.filename }; providerTabs = [...providerTabs]; }} aria-disabled={!linkable}>
+                    <button type="button" class="result-row" class:selected={tab.selectedFile?.providerAssetId === file.providerAssetId} class:disabled={!linkable} disabled={!linkable} onclick={() => { tab.selectedFile = { providerAssetId: file.providerAssetId, title: file.title, filename: file.filename }; bumpTabs(); }} aria-disabled={!linkable}>
                       <div class="result-icon"><FileVideo size={14} /></div>
                       <div class="result-info">
                         <div class="result-title">{file.filename ?? file.title ?? file.providerAssetId}</div>
@@ -474,7 +556,7 @@
       <footer class="modal-actions">
         <button type="button" class="btn btn-cancel" onclick={handleClose}>Cancel</button>
         {#if step === 'provider'}
-          <button type="button" class="btn btn-confirm" onclick={confirmLink} disabled={!activeTab?.selectedFile || !selectedMediaItem || linking}>
+          <button type="button" class="btn btn-confirm" onclick={confirmLink} disabled={!getActiveTab()?.selectedFile || !selectedMedia || linking}>
             {#if linking}<Loader2 size={12} class="spinner" /> Linking…{:else}<Link2 size={12} /> Link file{/if}
           </button>
         {/if}
@@ -538,6 +620,10 @@
   .loading-row { display: flex; align-items: center; gap: 8px; padding: 24px 20px; color: var(--a2-text-muted, #888); font-size: 0.8rem; }
 
   .error-box { display: flex; align-items: center; gap: 8px; padding: 8px 12px; margin: 8px 20px; border: 1px solid rgba(220,60,60,0.3); border-radius: 8px; background: rgba(220,60,60,0.08); color: #c44; font-size: 0.75rem; }
+  .error-box-inline { display: flex; align-items: center; gap: 8px; padding: 8px 12px; margin: 8px 20px; border: 1px solid rgba(220,60,60,0.3); border-radius: 8px; background: rgba(220,60,60,0.08); color: #c44; font-size: 0.75rem; }
+  .retry-btn { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; margin-left: auto; border: 1px solid rgba(220,60,60,0.4); border-radius: 6px; background: transparent; color: #c44; font-size: 0.65rem; font-weight: 700; cursor: pointer; }
+  .retry-btn:hover { background: rgba(220,60,60,0.15); }
+
   .success-box { display: flex; align-items: center; gap: 8px; padding: 8px 12px; margin: 8px 20px; border: 1px solid rgba(53,214,143,0.3); border-radius: 8px; background: rgba(53,214,143,0.08); color: #35d68f; font-size: 0.75rem; }
 
   .modal-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--a2-border, #222); }

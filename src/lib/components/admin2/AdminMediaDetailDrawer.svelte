@@ -32,7 +32,7 @@
    */
   import { onMount, onDestroy, tick } from 'svelte';
   import { invalidateAll } from '$app/navigation';
-  import { X, Film, Tv, Sparkles, ExternalLink, Upload, AlertCircle, Activity, Clock, HardDrive, Languages, FileText, ArrowRight, Link2, FileVideo, Loader2, RefreshCw, PowerOff, Zap, Trash2, Pencil, FolderInput } from 'lucide-svelte';
+  import { X, Film, Tv, Sparkles, ExternalLink, Upload, AlertCircle, Activity, Clock, HardDrive, Languages, FileText, ArrowRight, Link2, FileVideo, Loader2, RefreshCw, PowerOff, Zap, Trash2, Pencil, FolderInput, Unlink } from 'lucide-svelte';
   import AdminAssetStatus from './AdminAssetStatus.svelte';
   import AdminStatus from './AdminStatus.svelte';
   import type { LibraryMediaItem, LibraryOperationSummary, LibraryAssetSummary } from '$lib/server/hosting/library/service';
@@ -380,7 +380,7 @@
   let actionLoading = $state<string | null>(null); // '<assetId>:<action>' when in-flight
   let actionError = $state<string | null>(null);
   let actionSuccess = $state<string | null>(null);
-  let confirmDialog = $state<{ assetId: string; action: 'detach' | 'delete' } | null>(null);
+  let confirmDialog = $state<{ assetId: string; action: 'detach' | 'delete' | 'unlink'; assetTitle?: string; mediaTitle?: string } | null>(null);
 
   // Rename + Move modal state (Phase 2C consolidation — these actions
   // are now exposed in the Media Library drawer, consolidating the
@@ -403,6 +403,24 @@
 
   function isActionLoading(assetId: string, action: string): boolean {
     return actionLoading === `${assetId}:${action}`;
+  }
+
+  async function unlinkAsset(assetId: string) {
+    confirmDialog = null;
+    actionLoading = `${assetId}:unlink`;
+    actionError = null;
+    actionSuccess = null;
+    try {
+      const res = await fetch(`/api/admin/media/assets/${assetId}/unlink`, { method: 'POST' });
+      const json = await res.json();
+      if (!res.ok || !json.ok) throw new Error(json?.error?.message ?? `HTTP ${res.status}`);
+      actionSuccess = 'Asset unlinked. The provider file was NOT deleted — it can be re-linked to a different title.';
+      await invalidateAll();
+    } catch (err) {
+      actionError = err instanceof Error ? err.message : 'Failed to unlink asset.';
+    } finally {
+      actionLoading = null;
+    }
   }
 
   async function detachAsset(assetId: string) {
@@ -698,7 +716,7 @@
                       <!-- State-aware action buttons per asset -->
                       <div class="provider-asset-actions">
                         {#if asset.mavero_status === 'available' || asset.mavero_status === 'processing'}
-                          <!-- LINKED: Reconcile + Detach -->
+                          <!-- LINKED: Reconcile + Unlink + Detach -->
                           <button
                             class="a2-drawer-action a2-drawer-action-sm"
                             type="button"
@@ -709,11 +727,20 @@
                             {#if isActionLoading(asset.id, 'reconcile')}<Loader2 size={13} style="animation: a2-spin 1s linear infinite;" /> Reconciling…{:else}<RefreshCw size={13} /> Reconcile{/if}
                           </button>
                           <button
+                            class="a2-drawer-action a2-drawer-action-sm a2-drawer-action-warning"
+                            type="button"
+                            onclick={() => { confirmDialog = { assetId: asset.id, action: 'unlink', assetTitle: asset.provider_asset_id ?? 'this file', mediaTitle: item?.title }; }}
+                            disabled={actionLoading !== null}
+                            title="Unlink from this media item — the provider file is preserved and can be re-linked to a different title"
+                          >
+                            <Unlink size={13} /> Unlink
+                          </button>
+                          <button
                             class="a2-drawer-action a2-drawer-action-sm a2-drawer-action-danger"
                             type="button"
                             onclick={() => { confirmDialog = { assetId: asset.id, action: 'detach' }; }}
                             disabled={actionLoading !== null}
-                            title="Detach from this media item (remote file preserved)"
+                            title="Detach from playback (remote file preserved, same-title reactivation)"
                           >
                             <PowerOff size={13} /> Detach
                           </button>
@@ -927,11 +954,21 @@
         {:else if confirmDialog.action === 'delete'}
           <h3 id="a2-confirm-title" class="a2-confirm-title"><Trash2 size={16} /> Delete provider file?</h3>
           <p class="a2-confirm-desc">This will <strong>permanently delete the file from the provider</strong> (Vidara/Abyss). The Mavero media asset will be marked as deleted.</p>
-          <p class="a2-confirm-note"><strong>This action cannot be undone.</strong> The file will be removed from the provider's servers. If you only want to unlink without deleting, use Detach instead.</p>
+          <p class="a2-confirm-note"><strong>This action cannot be undone.</strong> The file will be removed from the provider's servers. If you only want to unlink without deleting, use Unlink instead.</p>
           <div class="a2-confirm-actions">
             <button class="a2-drawer-action a2-drawer-action-sm" type="button" onclick={() => { confirmDialog = null; }} disabled={actionLoading !== null}>Cancel</button>
             <button class="a2-drawer-action a2-drawer-action-sm a2-drawer-action-danger" type="button" onclick={() => { if (confirmDialog) deleteAsset(confirmDialog.assetId); }} disabled={actionLoading !== null}>
               {#if isActionLoading(confirmDialog.assetId, 'delete')}<Loader2 size={13} style="animation: a2-spin 1s linear infinite;" /> Deleting…{:else}<Trash2 size={13} /> Delete permanently{/if}
+            </button>
+          </div>
+        {:else if confirmDialog.action === 'unlink'}
+          <h3 id="a2-confirm-title" class="a2-confirm-title"><Unlink size={16} /> Unlink from "{confirmDialog.mediaTitle ?? 'this title'}"?</h3>
+          <p class="a2-confirm-desc">This removes the association between <strong>{confirmDialog.assetTitle ?? 'the provider file'}</strong> and <strong>{confirmDialog.mediaTitle ?? 'this media item'}</strong>. The file can then be linked to a different title.</p>
+          <p class="a2-confirm-note"><strong>The remote provider file will NOT be deleted.</strong> It remains on Vidara/Abyss and can be re-linked to the correct title via Link Media.</p>
+          <div class="a2-confirm-actions">
+            <button class="a2-drawer-action a2-drawer-action-sm" type="button" onclick={() => { confirmDialog = null; }} disabled={actionLoading !== null}>Cancel</button>
+            <button class="a2-drawer-action a2-drawer-action-sm a2-drawer-action-warning" type="button" onclick={() => { if (confirmDialog) unlinkAsset(confirmDialog.assetId); }} disabled={actionLoading !== null}>
+              {#if isActionLoading(confirmDialog.assetId, 'unlink')}<Loader2 size={13} style="animation: a2-spin 1s linear infinite;" /> Unlinking…{:else}<Unlink size={13} /> Unlink{/if}
             </button>
           </div>
         {/if}
@@ -1861,6 +1898,8 @@
   .a2-drawer-action-primary { background: var(--a2-cyan-soft); border-color: var(--a2-cyan-border); color: var(--a2-cyan); }
   .a2-drawer-action-danger { color: var(--a2-red); border-color: var(--a2-red-border); }
   .a2-drawer-action-danger:hover { background: var(--a2-red-soft); border-color: var(--a2-red); }
+  .a2-drawer-action-warning { color: var(--a2-amber, #f59e0b); border-color: var(--a2-amber-border, rgba(245,158,11,0.3)); }
+  .a2-drawer-action-warning:hover { background: rgba(245,158,11,0.1); border-color: var(--a2-amber, #f59e0b); }
   .a2-drawer-action-success { color: var(--a2-green); border-color: var(--a2-green-border); }
   .a2-drawer-action-success:hover { background: var(--a2-green-soft); border-color: var(--a2-green); }
   .a2-drawer-action-error { display: flex; align-items: center; gap: 6px; padding: var(--a2-space-2) var(--a2-space-3); margin-top: var(--a2-space-2); background: var(--a2-red-soft); border: 1px solid var(--a2-red-border); border-radius: var(--a2-radius-sm); color: var(--a2-red); font-size: var(--a2-text-2xs); }

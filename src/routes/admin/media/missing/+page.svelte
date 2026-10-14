@@ -30,10 +30,9 @@
   let linkModalOpen = $state(false);
   let linkProviders = $state<Array<{ adapterId: string; name: string; sourceId: string }>>([]);
   let preselectedMediaItem = $state<{
-    mediaItemId: string;
     title: string;
     contentType: string;
-    tmdbId?: string;
+    tmdbId: string;
     season?: number | null;
     episode?: number | null;
   } | null>(null);
@@ -53,16 +52,14 @@
     }
 
     // Build the preselected media item from the demand row. The demand row
-    // carries the TMDB ID, content type, season, and episode — enough to
-    // resolve the canonical media_item via the server-side link endpoint.
-    // We use the demand's tmdb_id as the mediaItemId (the link endpoint
-    // will ensure the media_item exists via CanonicalMediaService).
+    // carries the TMDB ID, content type, season, and episode. The link
+    // endpoint resolves these to a real media_items UUID server-side via
+    // CanonicalMediaService.ensure* — the client does NOT fabricate a
+    // prefixed canonical key or a fake UUID.
     const contentType = String(req.content_type ?? 'movie');
     const tmdbId = String(req.tmdb_id ?? '');
-    const mediaItemId = `${contentType === 'anime' ? 'series' : contentType}-${tmdbId}`;
 
     preselectedMediaItem = {
-      mediaItemId,
       title: String(req.title_snapshot ?? '') + (req.episode_title_snapshot ? ` — ${req.episode_title_snapshot}` : ''),
       contentType,
       tmdbId,
