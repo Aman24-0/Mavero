@@ -41,8 +41,7 @@ export type HostingErrorCode =
   // Asset-lifecycle state codes (final remediation). Mavero-side state
   // machine rejections — deterministic, permanent.
   | 'ASSET_DELETED'
-  | 'ASSET_STATE'
-  | 'ASSET_DELETE_FAILED';
+  | 'ASSET_STATE';
 
 const messages: Record<HostingErrorCode, string> = {
   AUTHENTICATION: 'Provider authentication failed. Check server-side credentials.',
@@ -67,7 +66,6 @@ const messages: Record<HostingErrorCode, string> = {
   ASSET_INSERT_FAILED: 'Failed to insert the media asset row.',
   ASSET_DELETED: 'The provider file was permanently deleted — this state is terminal.',
   ASSET_STATE: 'The media asset is in a state that does not allow this operation.',
-  ASSET_DELETE_FAILED: 'Failed to remove the media asset association.',
 };
 
 /** Whether an error code is retryable (transient failures only). */

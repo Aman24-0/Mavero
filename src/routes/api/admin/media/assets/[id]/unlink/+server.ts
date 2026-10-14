@@ -2,14 +2,20 @@
  * MAV-FOCUSED (2026-10) — Unlink asset API.
  * POST /api/admin/media/assets/:id/unlink
  *
- * Removes the Mavero-side media_assets association WITHOUT deleting the
- * provider file. The provider file remains on Vidara/Abyss and can be
- * re-linked to a different media item.
+ * Marks the media_assets row as `mavero_status='missing'` — the asset is
+ * removed from playback availability, but the provider inventory row
+ * (provider_asset_id, playback_url, status, sync history, etc.) is
+ * PRESERVED. The provider file remains on Vidara/Abyss untouched.
  *
- * Unlike detach (which sets mavero_status='missing' but keeps the row +
- * media_item_id association for reactivation), unlink DELETES the
- * media_assets row entirely — the association is gone, the file is
- * available for fresh linking.
+ * The asset can then be re-linked to the SAME or a DIFFERENT media item
+ * via `linkAsset` (which recognizes `mavero_status='missing'` as a
+ * re-link candidate).
+ *
+ * Semantically distinct from `detach`:
+ *   * `detach` — temporary hide (admin intends to reactivate for same title).
+ *   * `unlink` — remove incorrect association (admin intends to re-link
+ *     to a different title).
+ * Both set `mavero_status='missing'`; the difference is the audit action.
  *
  * Authorization: admin-only (requireAdmin). The mediaAssetId comes from
  * the URL param (server-validated), not from the request body.

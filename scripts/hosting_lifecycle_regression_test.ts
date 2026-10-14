@@ -92,7 +92,7 @@ ok('3. Detach: only mavero_status changes — all provider identity preserved fo
 
 assert.match(managementService, /mavero_status.*===.*'missing'/, '4a. linkAsset checks for mavero_status=missing on existing rows');
 assert.match(managementService, /reactivateAsset\(existingRow\.id/, '4b. linkAsset calls reactivateAsset for detached rows (instead of throwing)');
-assert.match(managementService, /Detach it first/, '4c. linkAsset gives clear error for rows linked to different media_item');
+assert.match(managementService, /Unlink it first/, '4c. linkAsset gives clear error for rows actively linked to different media_item (tells admin to Unlink, not Detach)');
 ok('4. linkAsset: handles detached rows via reactivation (fixes detach → relink lifecycle)');
 
 // ============================================================

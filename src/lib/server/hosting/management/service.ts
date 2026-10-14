@@ -212,25 +212,27 @@ export class ManagementService {
   /**
    * MAV-FOCUSED (2026-10) — Unlink a media-to-provider-file association.
    *
-   * Unlike `detachAsset` (which sets `mavero_status='missing'` but keeps
-   * the `media_assets` row + `media_item_id` association for reactivation),
-   * `unlinkAsset` DELETES the `media_assets` row entirely. This:
-   *   * Removes the Mavero-side association between the media item and
-   *     the provider file.
-   *   * Does NOT delete the provider-side file (no `adapter.deleteAsset`
-   *     call — the provider file remains on Vidara/Abyss).
-   *   * Makes the provider file available for re-linking to a DIFFERENT
-   *     media item via `linkAsset` (which checks for an existing row and
-   *     inserts a new one when none exists).
-   *   * Preserves the `media_item` (canonical record — never deleted).
-   *   * Preserves all other `media_assets` rows and their associations.
+   * Sets `mavero_status='missing'` on the `media_assets` row — this
+   * removes the asset from playback availability and marks it as
+   * detached/unlinked. The row itself (and all its provider inventory
+   * metadata — provider_asset_id, playback_url, status, sync history,
+   * etc.) is PRESERVED so that:
+   *   * The provider file's Mavero inventory identity remains intact.
+   *   * The next sync can UPDATE the row (not INSERT a new one).
+   *   * The asset can be re-linked to the SAME or a DIFFERENT media
+   *     item via `linkAsset` (case (a) for same-item reactivation,
+   *     case (b) for different-item re-link when mavero_status='missing').
    *
-   * Use `unlinkAsset` when a file was accidentally linked to the WRONG
-   * media title and needs to be re-linked to the correct one. Use
-   * `detachAsset` when you want to temporarily hide an asset from
-   * playback without removing the association (it can be reactivated).
-   * Use `deleteAsset` when you want to delete the provider-side file
-   * AND the Mavero-side row.
+   * This is semantically distinct from `detachAsset`:
+   *   * `detachAsset` — temporarily hides an asset from playback (the
+   *     admin intends to reactivate it for the SAME title later).
+   *   * `unlinkAsset` — the admin intends to re-link the file to a
+   *     DIFFERENT title (the association was incorrect).
+   * Both set `mavero_status='missing'`; the difference is the audit
+   * record's action ('detach' vs 'unlink') and the admin's intent.
+   *
+   * Neither `unlinkAsset` nor `detachAsset` deletes the provider-side
+   * file — only `deleteAsset` does that (via `adapter.deleteAsset()`).
    */
   async unlinkAsset(mediaAssetId: string, adminUserId?: string): Promise<ManagementResult> {
     const asset = await this.getMediaAsset(mediaAssetId);
@@ -242,21 +244,19 @@ export class ManagementService {
     }
 
     try {
-      // DELETE the media_assets row — this removes the Mavero-side
-      // association. The provider file is NOT touched (no adapter call).
-      const { error: deleteError } = await this.client
-        .from('media_assets')
-        .delete()
-        .eq('id', mediaAssetId);
+      // UPDATE mavero_status='missing' — preserves the inventory row +
+      // all provider metadata. The asset is no longer available for
+      // playback, but the provider file's Mavero-side identity is
+      // preserved for re-linking.
+      await this.client.from('media_assets').update({
+        mavero_status: 'missing',
+        last_synced_at: new Date().toISOString(),
+      }).eq('id', mediaAssetId);
 
-      if (deleteError) {
-        throw new HostingProviderError('ASSET_DELETE_FAILED', {
-          message: `Failed to unlink asset: ${deleteError.message}`,
-          cause: deleteError,
-        });
-      }
-
-      // Record the operation for audit history.
+      // Record the operation for audit history. The 'unlink' action
+      // distinguishes this from 'detach' (which has the same DB effect
+      // but a different admin intent — temporary hide vs remove
+      // incorrect association).
       await this.uploadService.recordOperation({
         action: 'unlink',
         status: 'success',
@@ -266,7 +266,7 @@ export class ManagementService {
         admin_user_id: adminUserId,
         details: {
           provider_asset_id: asset.provider_asset_id,
-          note: 'Mavero association removed; provider file preserved.',
+          note: 'Mavero association marked missing; provider file preserved. Asset can be re-linked to a different media item.',
         },
       });
 
@@ -478,8 +478,61 @@ export class ManagementService {
         return { ok: true, action: 'link', mediaAssetId: existingRow.id, providerAssetId };
       }
 
-      // Case (b): linked to a different media_item → reject.
-      throw new HostingProviderError('VALIDATION', { message: 'This provider file is already linked to a different media asset. Detach it first.' });
+      // Case (b): linked to a different media_item.
+      //   * If mavero_status='missing' (detached/unlinked): RE-LINK by
+      //     updating media_item_id to the new one. This preserves the
+      //     provider inventory row (metadata, sync history, lifecycle
+      //     state) while changing only the association. This is the
+      //     unlink → relink-to-different-title path.
+      //   * If mavero_status != 'missing' (still actively linked):
+      //     REJECT with VALIDATION error. The admin must unlink/detach
+      //     it first — we never silently change an active association.
+      if (existingRow.media_item_id !== mediaItemId) {
+        if (existingRow.mavero_status === 'missing') {
+          // Re-link: UPDATE media_item_id + reactivate.
+          const { data: updatedRow, error: updateError } = await this.client
+            .from('media_assets')
+            .update({
+              media_item_id: mediaItemId,
+              mavero_status: existingRow.status === 'ready' ? 'available' : 'processing',
+              last_synced_at: new Date().toISOString(),
+            })
+            .eq('id', existingRow.id)
+            .select('id')
+            .single();
+
+          if (updateError || !updatedRow) {
+            throw new HostingProviderError('ASSET_INSERT_FAILED', {
+              message: `Failed to re-link asset: ${updateError?.message ?? 'no row returned'}`,
+              cause: updateError ?? undefined,
+            });
+          }
+
+          await this.uploadService.recordOperation({
+            action: 'link',
+            status: 'success',
+            media_item_id: mediaItemId,
+            media_asset_id: existingRow.id,
+            provider_source_id: providerSourceId,
+            admin_user_id: adminUserId,
+            details: { provider_asset_id: providerAssetId, relinked: true, previous_media_item_id: existingRow.media_item_id },
+          });
+
+          // Resolve demand for the NEW media item.
+          try {
+            const { DemandService } = await import('../demand/service');
+            const demandService = new DemandService(this.client);
+            await demandService.resolveDemand((mediaItem as { canonical_key: string }).canonical_key);
+          } catch {
+            // Best-effort.
+          }
+
+          return { ok: true, action: 'link', mediaAssetId: existingRow.id, providerAssetId };
+        }
+
+        // Still actively linked to a different title — reject.
+        throw new HostingProviderError('VALIDATION', { message: 'This provider file is already linked to a different media asset. Unlink it first.' });
+      }
     }
 
     // 3. Resolve the adapter for this provider source via the CANONICAL
@@ -777,16 +830,17 @@ export class ManagementService {
       .eq('provider_source_id', providerSourceId)
       .not('provider_asset_id', 'is', null);
 
-    // Map provider_asset_id → { mediaItemId, isDeleted } for the DB
-    // lookup. A media_assets row with status='deleted' is a terminal
-    // soft-delete — the provider file may still exist at the provider
-    // but the Mavero-side row is gone. linkAsset() will refuse to link
-    // to a deleted row (ASSET_DELETED guard); we surface that here too.
-    const linkedMap = new Map<string, { mediaItemId: string | null; isDeleted: boolean }>();
+    // Map provider_asset_id → { mediaItemId, isDeleted, isUnlinked } for
+    // the DB lookup. A media_assets row with status='deleted' is a terminal
+    // soft-delete. A row with mavero_status='missing' is detached/unlinked
+    // — the provider file still exists, the row is preserved, and the
+    // asset can be re-linked to a DIFFERENT media_item via linkAsset case (b).
+    const linkedMap = new Map<string, { mediaItemId: string | null; isDeleted: boolean; isUnlinked: boolean }>();
     for (const row of (linkedAssets ?? []) as Array<{ provider_asset_id: string; media_item_id: string; status: string; mavero_status: string }>) {
       linkedMap.set(row.provider_asset_id, {
         mediaItemId: row.media_item_id,
         isDeleted: row.status === 'deleted',
+        isUnlinked: row.mavero_status === 'missing',
       });
     }
 
@@ -797,22 +851,20 @@ export class ManagementService {
         // When the DB row is deleted, linkAsset will refuse (ASSET_DELETED).
         // Surface the file but mark it as not-linkable through
         // `linkedToMediaItemId: '<deleted>'` so the UI can show the
-        // reason. (A future "reactivate" flow could clear the deleted
-        // row first — out of scope here.)
+        // reason. When the row is unlinked (mavero_status='missing'),
+        // the file IS linkable to a different media_item (linkAsset
+        // case (b) re-links). We surface `linkedToMediaItemId: null`
+        // so the UI treats it as linkable — the `mavero_status='missing'`
+        // state is the signal that the association can be changed.
         const linkedToMediaItemId = linked?.isDeleted
           ? '<deleted>'
-          : (linked?.mediaItemId ?? null);
+          : (linked?.isUnlinked ? null : (linked?.mediaItemId ?? null));
         return {
           providerAssetId: f.providerAssetId,
           title: f.title,
           filename: f.filename,
           sizeBytes: f.sizeBytes,
           durationSeconds: f.durationSeconds,
-          // `providerStatus` is the provider's own status string (e.g.
-          // "active" / "processing" / "deleted"); `status` is the
-          // canonical Mavero-side AssetLifecycleState. The Link Media
-          // UI uses `lifecycleState` (the canonical state) to decide
-          // whether a file is linkable.
           status: f.providerStatus,
           lifecycleState: f.status,
           linkedToMediaItemId,
