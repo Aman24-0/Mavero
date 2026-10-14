@@ -8,7 +8,7 @@
   import { resolveSandboxRuntime } from '$lib/shared/sandbox-policy';
   import { controlsPositionFromCapabilities } from '$lib/shared/player-controls-position';
   import { appendReturnTo, navigateBackOr, safeReturnTo } from '$lib/shared/navigation';
-  import { internalContentType, isPublicRouteType, publicRouteType } from '$lib/shared/routes';
+  import { internalContentType, isPublicRouteType, publicRouteType, extractTmdbId, canonicalWatchHref } from '$lib/shared/routes';
   import type { PageData } from './$types';
   import { createProgressWriter, getResumeProgress, setFavoriteStatus } from '$lib/client/progress/service';
   import { recordCloudHistory, syncAuthenticatedState } from '$lib/client/progress/cloud';
@@ -35,8 +35,19 @@
   $: routeType = isPublicRouteType(page.params.type)
     ? page.params.type as ReturnType<typeof publicRouteType>
     : publicRouteType(contentType, item.isAnime, item.animeFormat);
-  let season = Number(page.url.searchParams.get('season') || '') || undefined;
-  let episode = Number(page.url.searchParams.get('episode') || '') || undefined;
+  // Season/episode — CANONICAL PATH params first (both route forms after
+  // the loader's canonicalization redirect: /watch/tv-show/1396/5/6),
+  // falling back to the legacy query params for direct query-form reads
+  // (season-only deep links keep their historical resume semantics).
+  // A path-form segment is strictly validated by the server loader; here a
+  // non-positive value simply means "not selected".
+  const pathParams = page.params as Record<string, string | undefined>;
+  const pathSeason = pathParams.season !== undefined ? (Number.isInteger(Number(pathParams.season)) && Number(pathParams.season) > 0 ? Number(pathParams.season) : undefined) : undefined;
+  const pathEpisode = pathParams.episode !== undefined ? (Number.isInteger(Number(pathParams.episode)) && Number(pathParams.episode) > 0 ? Number(pathParams.episode) : undefined) : undefined;
+  const querySeason = Number(page.url.searchParams.get('season') || '') || undefined;
+  const queryEpisode = Number(page.url.searchParams.get('episode') || '') || undefined;
+  let season = pathSeason ?? querySeason;
+  let episode = pathSeason !== undefined ? pathEpisode : queryEpisode;
   // MAVP-3 Issue 4: explicit control-position CALIBRATION session — the
   // watch URL parameter `?controls=calibrate` opens the player with the
   // floating controls held visible so a per-source calibration can be
@@ -167,6 +178,20 @@
   })();
   $: episodes = data.episodes.map((candidate) => ({ id: candidate.id, number: candidate.number, season: candidate.season, title: candidate.title, overview: candidate.overview, runtime: candidate.runtime, still: candidate.still })) satisfies PlayerEpisode[];
   $: playerContent = ({ id: item.id, tmdbId: item.externalIds?.tmdb, type: contentType, title: item.title, poster: item.poster, backdrop: item.backdrop });
+
+  // Deep-audit Section 4: the progress/favorite SNAPSHOT carries the anime
+  // classification so Continue Watching / My List can render the canonical
+  // /anime-movie/ + /watch/anime-movie/ identities for anime movies and
+  // /anime-series/ identities for anime series WITHOUT re-fetching TMDB.
+  // Previously the snapshot dropped isAnime entirely and the presenters
+  // rebuilt legacy /watch/movie/movie-{id} URLs — the duplication source.
+  function buildSnapshot() {
+    return {
+      title: item.title, poster: item.poster, backdrop: item.backdrop, year: item.year, runtime: item.runtime, rating: item.rating, genres: item.genres, description: item.description,
+      isAnime: item.isAnime === true,
+      animeFormat: item.animeFormat,
+    };
+  }
 
   // ----- Phase 1: PlaybackManager owns source resolution + adapter lifecycle -----
   //
@@ -350,7 +375,7 @@
       }
       if (event.type === 'ended') {
         const currentTime = manager.getState().currentTime;
-        const snapshot = { title: item.title, poster: item.poster, backdrop: item.backdrop, year: item.year, runtime: item.runtime, rating: item.rating, genres: item.genres, description: item.description };
+        const snapshot = buildSnapshot();
         void setFavoriteStatus(contentType, item.id, snapshot, 'completed').then(() => void syncAuthenticatedState());
         void sendHistory('completed', currentTime, duration);
       }
@@ -629,7 +654,7 @@
     if (!sourceRuntimes && resume.record?.selectedSourceId && resume.record.duration > 0) {
       sourceRuntimes = { [resume.record.selectedSourceId]: { duration: resume.record.duration, updatedAt: resume.record.updatedAt } };
     }
-    const snapshot = { title: item.title, poster: item.poster, backdrop: item.backdrop, year: item.year, runtime: item.runtime, rating: item.rating, genres: item.genres, description: item.description };
+    const snapshot = buildSnapshot();
     // Phase 20 fix: pass initialDuration from the existing record so the
     // ProgressWriter's lastKnownDuration is initialized correctly. This
     // prevents a later update() call with duration=0/undefined from
@@ -650,7 +675,7 @@
     const knownCurrentTime = writer.getKnownCurrentTime();
     writer.dispose();
     selectedSourceId = sourceId;
-    const snapshot = { title: item.title, poster: item.poster, backdrop: item.backdrop, year: item.year, runtime: item.runtime, rating: item.rating, genres: item.genres, description: item.description };
+    const snapshot = buildSnapshot();
     // Phase 9 fix: pass the accumulated sourceRuntimes + knownCurrentTime
     // into the new writer so per-source runtimes survive source switches
     // within the same episode, and the known position is never reset to 0.
@@ -702,7 +727,22 @@
     // (the position the user was at in the previous source).
     const startPosition = allowFallback ? resumeTime : currentPlaybackTime;
     {
-      const request: Parameters<typeof manager.loadSource>[0] = { sourceId, contentId: item.id, mediaType: contentType, season, episode };
+      // PROVIDER PLAYBACK REQUEST vs PUBLIC ROUTE IDENTITY (deep-audit
+      // Section 3 — demonstrated root cause of "The playback request is
+      // invalid"): the resolver's mediaType contract is 'movie' | 'series'
+      // and the strict identity check requires request.mediaType to equal
+      // the loaded content's type. Anime-series pages load TMDB TV content
+      // (content.type='series') — requesting it with the internal 'anime'
+      // classification failed the check. Anime movies already map to
+      // 'movie' (internalContentType('anime-movie')). The internal 'anime'
+      // identity is PRESERVED for progress/history/favorites via
+      // playbackContext — only the PROVIDER request uses the mapped type.
+      const playbackMediaType: 'movie' | 'series' = contentType === 'anime' ? 'series' : (contentType === 'series' ? 'series' : 'movie');
+      // Provider contract: movies never carry season/episode (the resolver
+      // rejects that shape outright).
+      const requestSeason = playbackMediaType === 'series' ? season : undefined;
+      const requestEpisode = playbackMediaType === 'series' ? episode : undefined;
+      const request: Parameters<typeof manager.loadSource>[0] = { sourceId, contentId: item.id, mediaType: playbackMediaType, season: requestSeason, episode: requestEpisode };
       // VidRift (documented vidrift:nextup-info): forward Mavero's
       // authoritative next-episode context. Client-side only — the resolver
       // POST body is built field-by-field and does not include it. Adapters
@@ -741,7 +781,7 @@
     }
     if (resolved && !watchingSavedForSession) {
       watchingSavedForSession = true;
-      const snapshot = { title: item.title, poster: item.poster, backdrop: item.backdrop, year: item.year, runtime: item.runtime, rating: item.rating, genres: item.genres, description: item.description };
+      const snapshot = buildSnapshot();
       try {
         await setFavoriteStatus(contentType, item.id, snapshot, 'watching');
         if (active && page.data.user) void syncAuthenticatedState();
@@ -788,7 +828,7 @@
       void sendHistory('progressed', position, duration);
     }
     if (event.completed) {
-      const snapshot = { title: item.title, poster: item.poster, backdrop: item.backdrop, year: item.year, runtime: item.runtime, rating: item.rating, genres: item.genres, description: item.description };
+      const snapshot = buildSnapshot();
       void setFavoriteStatus(contentType, item.id, snapshot, 'completed').then(() => { if (page.data.user) void syncAuthenticatedState(); });
       if (page.data.user) void sendHistory('completed', position, duration);
     }
@@ -888,9 +928,15 @@
     resolutionState = 'idle';
     resolvedSource = null;
     const params = new URLSearchParams(page.url.searchParams);
-    params.set('season', String(target.season));
-    params.set('episode', String(target.episode));
-    await goto(`/watch/${routeType}/${item.id}?${params.toString()}`, { replaceState: true, keepFocus: true, noScroll: true });
+    params.delete('season');
+    params.delete('episode');
+    const forwardedQuery = params.toString();
+    // Canonical PATH form: /watch/tv-show/1396/5/6 — season + episode are
+    // path segments, never query params. Other query params (from,
+    // controls) are preserved. The bare TMDB ID keeps the URL canonical
+    // (the prefixed item.id would trigger an extra redirect hop).
+    const bareId = extractTmdbId(item.id) ?? item.id;
+    await goto(`${canonicalWatchHref(routeType, bareId, target.season, target.episode)}${forwardedQuery ? `?${forwardedQuery}` : ''}`, { replaceState: true, keepFocus: true, noScroll: true });
   }
 
   function isDetailPath(value: string) {
@@ -929,7 +975,9 @@
     // instantly — nothing in this path awaits network cleanup.
     void writer?.pause();
     const returnTo = safeReturnTo(page.url.searchParams.get('from'));
-    const fallbackDestination = returnTo && isDetailPath(returnTo) ? returnTo : appendReturnTo(`/${routeType}/${item.id}`, returnTo ?? '/discover');
+    // Bare TMDB ID — the prefixed item.id would land on a 308 redirect hop.
+    const bareId = extractTmdbId(item.id) ?? item.id;
+    const fallbackDestination = returnTo && isDetailPath(returnTo) ? returnTo : appendReturnTo(`/${routeType}/${bareId}`, returnTo ?? '/discover');
     navigateBackOr(() => {
       void goto(fallbackDestination, { replaceState: true, keepFocus: true });
     });
@@ -937,7 +985,9 @@
 
   function openDetails() {
     const returnTo = safeReturnTo(page.url.searchParams.get('from'));
-    const destination = appendReturnTo(`/${routeType}/${item.id}`, returnTo && !isDetailPath(returnTo) ? returnTo : '/discover');
+    // Bare TMDB ID — see closePlayer.
+    const bareId = extractTmdbId(item.id) ?? item.id;
+    const destination = appendReturnTo(`/${routeType}/${bareId}`, returnTo && !isDetailPath(returnTo) ? returnTo : '/discover');
     void goto(destination, { replaceState: true, keepFocus: true });
   }
   $: resolutionErrorForwarded = resolutionState === 'provider-error' || resolutionState === 'unsupported' || resolutionState === 'unavailable' || resolutionState === 'network-error' || resolutionState === 'title-unavailable' ? resolutionMessage : '';

@@ -277,6 +277,20 @@ export const POST: RequestHandler = async ({ request, locals }) => {
     return json({ ok: false, error: { code: 'INVALID_REQUEST', message: 'provider must be "vidara" or "abyss".' } }, { status: 400, headers: NO_STORE_HEADERS });
   }
 
+  // Deep-audit Section 6: EVERY series/anime series link identifies
+  // exactly ONE episode. The series-level save path no longer exists —
+  // a series/anime request without BOTH an integer season and episode is
+  // rejected with a clear 400 instead of silently creating a series-level
+  // association (ensureSeries/ensureAnime). Movie requests are unchanged.
+  const seasonNum = season != null && season !== '' ? Number(season) : null;
+  const episodeNum = episode != null && episode !== '' ? Number(episode) : null;
+  if (contentType === 'series' || contentType === 'anime') {
+    if (seasonNum == null || !Number.isInteger(seasonNum) || seasonNum <= 0
+      || episodeNum == null || !Number.isInteger(episodeNum) || episodeNum <= 0) {
+      return json({ ok: false, error: { code: 'EPISODE_REQUIRED', message: 'Series and anime-series links require both a season and an episode.' } }, { status: 400, headers: NO_STORE_HEADERS });
+    }
+  }
+
   const refError = validateReference(provider, reference);
   if (refError) {
     return json({ ok: false, error: { code: 'INVALID_REQUEST', message: refError } }, { status: 400, headers: NO_STORE_HEADERS });
@@ -289,8 +303,6 @@ export const POST: RequestHandler = async ({ request, locals }) => {
   // Resolve canonical media_item UUID (branches on contentType so anime
   // rows are stored with content_type='anime', not 'series').
   let resolvedMediaItemId: string;
-  const seasonNum = season ? Number(season) : null;
-  const episodeNum = episode ? Number(episode) : null;
 
   // Title resolution priority:
   //   1. Client-supplied `title` + `year` (the AdminMediaList wizard

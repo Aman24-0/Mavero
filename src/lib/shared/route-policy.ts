@@ -50,6 +50,11 @@ const LIBRARY_AWARE_PREFIXES: readonly string[] = [
   '/anime',
   '/movies',
   '/tv-shows',
+  // Deep-audit Section 5 follow-up: the Phase 5 route migration moved TV
+  // detail pages to /tv-show/{id} but never added the prefix here — those
+  // pages skipped the layout-level cloud library sync. (/anime-series/ and
+  // /anime-movie/ are already covered by the '/anime' prefix.)
+  '/tv-show/',
 ];
 
 /** Exact paths that are library-aware. */

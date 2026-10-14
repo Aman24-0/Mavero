@@ -168,7 +168,7 @@ ok(/frame-src \*/.test(netlify), '11f. CSP frame-src permissive for admin-config
 // ============================================================
 // 12. Security invariants — UI is NEVER an authorization boundary.
 // ============================================================
-ok(/canAccessAdultContent\(locals\.supabase, user, cookies\)/.test(read('src/routes/watch/[type]/[id]/+page.server.ts')), '12a. watch route still calls canAccessAdultContent (server-authoritative)');
+ok(/canAccessAdultContent\(event\.locals\.supabase, user, event\.cookies\)/.test(read('src/routes/watch/[type]/[id]/watch-loader.ts')), '12a. watch route still calls canAccessAdultContent (server-authoritative)');
 ok(/status: 404/.test(read('src/routes/api/content/adult-discover/+server.ts')), '12b. adult-discover unauthorized response stays 404 (non-disclosing)');
 ok(/RESOLUTION_UNAVAILABLE: 503/.test(read('src/lib/server/resolver/errors.ts')), '12c. RESOLUTION_UNAVAILABLE maps to HTTP 503 (transient, not cached)');
 

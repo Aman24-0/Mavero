@@ -132,10 +132,69 @@ export async function deleteProgress(context: PlaybackContext) {
   return removeProgress(context);
 }
 
+// ============================================================
+// Deep-audit Section 4 — CANONICAL FAVORITE IDENTITY.
+//
+// An anime series is ONE internal identity ('anime') regardless of which
+// surface wrote the favorite: rails/heroes pass type='series' (the TMDB
+// classification) while the /anime-series/{id} detail page passes
+// type='anime'. Storing both produced duplicate My List entries and a
+// heart state that flipped between surfaces.
+//
+// Convergence strategy (read-time dedupe lives in progress-merge.ts's
+// mergeFavorites):
+//   1. WRITE-TIME normalization — saveFavorite stores an anime-flagged
+//      series favorite under the 'anime' key. New records converge
+//      immediately.
+//   2. FAMILY-AWARE reads/removals — getFavoriteStatus / isFavorite /
+//      removeFavoriteFromMyList consult BOTH family keys ('series:X' and
+//      'anime:X' for series inputs) so existing legacy records stay
+//      visible and removable. No destructive migration.
+// ============================================================
+
+function canonicalFavoriteType(contentType: LocalContentType, snapshot?: ContentSnapshot): LocalContentType {
+  if (contentType === 'series' && snapshot?.isAnime === true && snapshot.animeFormat !== 'movie') return 'anime';
+  return contentType;
+}
+
+/** The family keys to consult for a series-like favorite (legacy + canonical). */
+function favoriteIdentityCandidates(contentType: LocalContentType, contentId: string): Array<{ contentType: LocalContentType; contentId: string }> {
+  if (contentType === 'series') {
+    return [
+      { contentType: 'series', contentId },
+      { contentType: 'anime', contentId },
+    ];
+  }
+  if (contentType === 'anime') {
+    return [
+      { contentType: 'anime', contentId },
+      { contentType: 'series', contentId },
+    ];
+  }
+  return [{ contentType, contentId }];
+}
+
 export async function saveFavorite(contentType: LocalContentType, contentId: string, snapshot: ContentSnapshot, now = Date.now(), status: WatchlistStatus = 'planned'): Promise<FavoriteRecord> {
-  const existing = await getFavorite(contentType, contentId);
-  await removeFavoriteDeletion(contentType, contentId);
-  return putFavorite({ key: favoriteKey(contentType, contentId), contentType, contentId, snapshot, status: normalizeWatchlistStatus(status), createdAt: existing?.createdAt ?? now, updatedAt: now });
+  const canonicalType = canonicalFavoriteType(contentType, snapshot);
+  // Family-aware existence lookup — preserves createdAt across the
+  // legacy→canonical key migration instead of resetting it.
+  let existing: FavoriteRecord | undefined;
+  for (const candidate of favoriteIdentityCandidates(canonicalType, contentId)) {
+    const found = await getFavorite(candidate.contentType, candidate.contentId);
+    if (found) { existing = found; break; }
+  }
+  // Clear deletion tombstones for the WHOLE family — a saved favorite is
+  // newer than any previous removal of the same title.
+  for (const candidate of favoriteIdentityCandidates(canonicalType, contentId)) {
+    await removeFavoriteDeletion(candidate.contentType, candidate.contentId);
+  }
+  // Migrate: when the canonical key differs from the requested one (an
+  // anime-flagged series favorited as 'series'), remove the legacy record
+  // so the title exists under exactly ONE key going forward.
+  if (canonicalType !== contentType) {
+    await removeFavorite(contentType, contentId);
+  }
+  return putFavorite({ key: favoriteKey(canonicalType, contentId), contentType: canonicalType, contentId, snapshot, status: normalizeWatchlistStatus(status), createdAt: existing?.createdAt ?? now, updatedAt: now });
 }
 
 export async function setFavoriteStatus(contentType: LocalContentType, contentId: string, snapshot: ContentSnapshot, status: WatchlistStatus, now = Date.now()) {
@@ -180,16 +239,28 @@ export async function getLocalFavorites() {
 }
 
 export async function isFavorite(contentType: LocalContentType, contentId: string) {
-  return Boolean(await getFavorite(contentType, contentId));
+  return Boolean(await getFavoriteStatus(contentType, contentId));
 }
 
 export async function getFavoriteStatus(contentType: LocalContentType, contentId: string): Promise<WatchlistStatus | null> {
-  const record = await getFavorite(contentType, contentId);
-  return record ? normalizeWatchlistStatus(record.status) : null;
+  // Family-aware: an anime series favorited from either surface (legacy
+  // 'series:' key or canonical 'anime:' key) reports the same status, so
+  // the heart state no longer flips between /tv-show/ and /anime-series/.
+  for (const candidate of favoriteIdentityCandidates(contentType, contentId)) {
+    const record = await getFavorite(candidate.contentType, candidate.contentId);
+    if (record) return normalizeWatchlistStatus(record.status);
+  }
+  return null;
 }
 
 export async function removeFavoriteFromMyList(contentType: LocalContentType, contentId: string, deletedAt = Date.now()) {
   const key = favoriteKey(contentType, contentId);
+  // Deep-audit Section 4: the removal is FAMILY-WIDE. The same anime show
+  // may exist under the legacy 'series:' key AND the canonical 'anime:'
+  // key (plus progress in both families) — removing from one surface must
+  // remove both, or the un-removed legacy key would resurrect the entry
+  // on the next sync/render.
+  const identity = favoriteIdentityCandidates(contentType, contentId);
   // Phase 9 fix (race-safe): invalidate any active writer for this title BEFORE
   // deleting progress, AND drain any in-flight flush before deleting. This
   // guarantees that a pending/queued/in-flight flush cannot recreate the
@@ -200,18 +271,18 @@ export async function removeFavoriteFromMyList(contentType: LocalContentType, co
   //   on, any writer callback (queued setTimeout, pause, complete, update,
   //   updateRuntime, flush) will see disposed=true and return immediately
   //   without persisting.
-  invalidateWritersForContent(contentType, contentId);
+  for (const candidate of identity) invalidateWritersForContent(candidate.contentType, candidate.contentId);
   // Step 2: drain in-flight persistence. Any flush() that already passed the
   //   disposed check and is currently awaiting saveProgress() will finish
   //   its post-check (which sees the bumped generation and undoes its write
   //   via removeProgress). We MUST wait for these to settle before deleting
   //   progress, otherwise the in-flight put transaction would commit AFTER
   //   deleteAllProgressForContent and recreate the deleted record.
-  await drainPendingWritesForContent(contentType, contentId);
-  // Step 3: delete ALL watch progress for this title (every season:episode)
-  //   so it disappears from Continue Watching immediately.
-  await deleteAllProgressForContent(contentType, contentId);
-  await removeFavorite(contentType, contentId);
+  await Promise.all(identity.map((candidate) => drainPendingWritesForContent(candidate.contentType, candidate.contentId)));
+  // Step 3: delete ALL watch progress for this title (every season:episode
+  //   AND every family key) so it disappears from Continue Watching immediately.
+  for (const candidate of identity) await deleteAllProgressForContent(candidate.contentType, candidate.contentId);
+  for (const candidate of identity) await removeFavorite(candidate.contentType, candidate.contentId);
   await putFavoriteDeletion({ key, contentType, contentId, deletedAt });
 }
 

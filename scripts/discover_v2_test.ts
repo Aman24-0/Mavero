@@ -274,9 +274,13 @@ const appFooter = await readFile(path.join(repoRoot, 'src/lib/components/AppFoot
 // N. Anime navigation — anime movie opens movie route; anime series opens series route.
 // ============================================================================
 {
-  // MediaCard builds href from item.type — no special anime route override.
+  // MediaCard builds the detail href through the SHARED route helper
+  // (detailPath → detailHref) which maps the item's type + anime flags to
+  // the canonical public route — anime movies land on /anime-movie/{id},
+  // anime series on /anime-series/{id}, everything else on /movie/ or
+  // /tv-show/. Deep-audit: the pre-Phase-5 inline template is gone.
   const mediaCard = await readFile(path.join(repoRoot, 'src/lib/components/MediaCard.svelte'), 'utf8');
-  assert.match(mediaCard, /appendReturnTo\(`\/\$\{item\.type\}\/\$\{item\.id\}`/, 'card href uses canonical item.type');
+  assert.match(mediaCard, /detailPath\(item\.id, item\.type, item\.isAnime, item\.animeFormat\)/, 'card href uses the shared anime-aware detail helper');
   // No /anime/ route override in the card.
   assert.doesNotMatch(mediaCard, /href=\{`\/anime\//, 'no /anime/ route in card');
 }

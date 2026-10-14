@@ -81,7 +81,11 @@ assert.match(spotlight, /@media \(max-width: 900px\)\s*\{[\s\S]*?min-height: min
 assert.match(spotlight, /@media \(max-width: 640px\)\s*\{[\s\S]*?min-height: 66vh;/, 'mobile stays cinematic but compact (first rail still begins naturally)');
 // Play/More-details grouping + routes preserved.
 assert.match(spotlight, /class="slide-actions"/, 'Play and More details stay grouped in one CTA row');
-assert.match(spotlight, /\/watch\/\$\{slide\.type\}\/\$\{slide\.id\}/, 'Play keeps the existing watch route');
+// Deep-audit: since Phase 5 the Play/More-details links route through the
+// SHARED route helpers (watchPath/detailHref with the anime-aware
+// classification) — the URL behavior contract is unchanged, the string
+// construction moved to src/lib/shared/routes.ts.
+assert.match(spotlight, /watchPath\(slide\.id, slide\.type, slide\.isAnime, slide\.animeFormat\)/, 'Play keeps the existing watch route');
 ok('A. spotlight layout: cinematic full-bleed, bottom-right pagination cluster, bg-fading scrim, per-breakpoint heights');
 
 // ============================================================
@@ -193,8 +197,9 @@ assert.match(mediaCard, /\.mc-play:hover \{ opacity: 1;[\s\S]*?\}/, 'Play keeps 
 assert.match(mediaCard, /\.mc-wrap:has\(\.mc-play:hover\) \.mc-poster, \.mc-wrap:has\(\.mc-play:focus-visible\) \.mc-poster/, 'the poster keeps its elevated treatment while Play is hovered/focused (no flicker)');
 assert.match(mediaCard, /\.mc-wrap:has\(\.mc-card-link:hover\) \.mc-play, \.mc-wrap:has\(\.mc-card-link:focus-visible\) \.mc-play \{ opacity: 1;/, 'card-link hover/focus still reveals Play');
 assert.match(mediaCard, /\.mc-play:focus-visible \{ opacity: 1;/, 'keyboard focus on Play still reveals it');
-// The watch URL behavior is untouched.
-assert.match(mediaCard, /watchHref = appendReturnTo\(item\.resumeHref \?\? `\/watch\/\$\{item\.type\}\/\$\{item\.id\}`/, 'the watch href contract is unchanged');
+// The watch URL behavior is untouched (deep-audit: via the shared route
+// helper since Phase 5 — anime-aware, single source of truth).
+assert.match(mediaCard, /watchHref = appendReturnTo\(item\.resumeHref \?\? watchPath\(item\.id, item\.type, item\.isAnime, item\.animeFormat\)/, 'the watch href contract is unchanged');
 assert.doesNotMatch(mediaCard, /onmouseenter|onmousemove/, 'the hover fix is pure CSS (no JS hover handlers)');
 ok('G. MediaCard: Play stays opaque on direct hover, poster elevation follows, watch href unchanged, CSS-only');
 

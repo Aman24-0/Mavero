@@ -346,7 +346,12 @@ export async function getDetail(type: ContentType, id: string): Promise<ContentD
     // item has `type: 'series'` and `isAnime: true` (when genre 16 + 'ja'
     // match) so the card UI and resolver both treat it correctly.
     if (type === 'anime') return await getTmdbDetail('series', id.replace(/^(anime|series)-/, ''));
-    return await getTmdbDetail(type, id.replace(/^(movie|series)-/, ''));
+    // Deep-audit: the SERIES branch also accepts legacy 'anime-' prefixed
+    // IDs — the resolver normalizes legacy mediaType 'anime' → 'series'
+    // (provider contract) while the contentId may still carry the anime
+    // prefix from old clients/deep links. Real TMDB IDs are numeric, so a
+    // leading 'anime-' is never ambiguous.
+    return await getTmdbDetail(type, id.replace(/^(movie|series|anime)-/, ''));
   } catch (error) {
     // MAV-FOCUSED Issue 1 (2026-10): dummy detail URLs must 404.
     //

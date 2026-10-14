@@ -791,3 +791,23 @@ This restores the documented §18 contract and enables the provider cooldown for
 3. Player auto-selects higher-priority sources (MoviesNexus) instead of Vidara/Abyss by default. This is intentional (Vidara/Abyss are experimental, ordering 500/501). To auto-load, configure as default source via admin or lower their ordering.
 
 **Status**: DONE
+
+---
+
+# Deep Root-Cause Audit addendum (2026-10-15, baseline b696bc5)
+
+All eight work items from the deep-audit task are implemented on `main` (see the WORKLOG entry of the same date for the proven root causes, exact commands and results):
+
+| # | Item | State |
+|---|------|-------|
+| A | Wizard season/episode loading | FIXED — real `{ok,item.seasonsData}` + `{ok,season.episodes}` contracts, retryable errors |
+| B | Poster persistence + display | FIXED — read model returns poster_path/backdrop_path; wizard extracts + persists the relative TMDB path; migration is idempotent, owner applies it via the dashboard (credentials blocked here) |
+| C | Canonical path-based watch URLs | DONE — `/watch/tv-show/1396/5/6` canonical; query + prefixed forms 308; invalid segments 404 |
+| 3 | Route identity vs provider params | FIXED — provider request uses movie/series contract (anime→series normalization at the resolver boundary; season/episode preserved); internal identity stays 'anime' |
+| 4 | Anime duplication | FIXED — snapshot carries the anime classification; deterministic category rule (recency decides position, never category); favorites converge on one identity; upcoming anime movies → /anime-movie/ |
+| 5 | Detail-page chrome | FIXED — layout bare-render gate covers all six detail route types (runtime-verified) |
+| 6 | Add File compact sheet | DONE — single adaptive sheet, explicit 4-kind content type, season/episode required, no series-level save |
+| 7 | Media Library | DONE — poster fields in the API, compact toolbar + filter sheet, grid/list + 20/page pagination preserved |
+| 8 | Live Supabase audit | BLOCKED (no valid credentials in the audit environment) — probe script + checklist provided for the owner |
+
+Verification: `pnpm check` 0 errors; `pnpm build` success; 263-suite inventory → 235 pass / 27 pre-existing baseline failures (each verified failing at `b696bc5` via a baseline worktree; 4 additional pre-existing failures repaired); new regression suites `mav_deep_audit_regression_test` (68/68, registered in the chain) + `mav_deep_audit_layout_gate_check` (26/26).

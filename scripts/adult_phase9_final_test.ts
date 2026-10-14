@@ -337,16 +337,19 @@ const POLICY_OFF = { allowLoggedIn: false, allowGuest: false };
 // API classify FIRST and authorize per request, with non-disclosing denials.
 // ============================================================================
 {
-  const watch = src('../src/routes/watch/[type]/[id]/+page.server.ts');
+  // Deep-audit: the watch load logic lives in the SHARED loader
+  // (watch-loader.ts) consumed by both the query-form and the canonical
+  // path-form routes — the guard wiring is unchanged, only relocated.
+  const watch = src('../src/routes/watch/[type]/[id]/watch-loader.ts');
   assert.match(watch, /detailVerdict\(item\.tags\) === 'adult'/, 'watch route classifies the resolved title');
-  assert.match(watch, /canAccessAdultContent\(locals\.supabase, user, cookies\)/, 'watch route evaluates per-request authorization');
+  assert.match(watch, /canAccessAdultContent\(event\.locals\.supabase, user, event\.cookies\)/, 'watch route evaluates per-request authorization');
   assert.match(watch, /throw error\(404, 'Title not found'\)/, 'watch denial is a non-disclosing 404');
   // Phase 2-E: the streamingConfigPromise is started concurrently with
   // detail (it's independent of item.tags), but the streamingConfig
   // VALUE is only consumed AFTER the adult gate clears. The contract
   // test verifies the guard runs before the value is consumed (not
   // before the promise is started — that would defeat the parallelization).
-  const classifyPos = watch.indexOf('const detailPromise = getDetail(params.type, params.id)');
+  const classifyPos = watch.indexOf('const detailPromise = getDetail(internalType, rawId)');
   const guardPos = watch.indexOf("detailVerdict(item.tags) === 'adult'");
   // The streamingConfig value is destructured from Promise.all AFTER the guard.
   const dataPos = watch.indexOf('const [streamingConfig, seasonEpisodes] = await Promise.all');

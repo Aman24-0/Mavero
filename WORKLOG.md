@@ -1103,3 +1103,76 @@ The code gracefully degrades without these columns — poster data is silently n
 5. **Missing Media**: Verify it's still accessible from the sidebar + mobile bottom-nav.
 6. **Continue Watching**: Verify Bleach (or any anime that appeared twice) now appears only once.
 7. **Apply migration**: Apply the `poster_path` migration via the Supabase dashboard SQL editor.
+
+---
+
+# Deep Root-Cause Audit & Complete Regression-Safe Fix (2026-10-15)
+
+**Status**: DONE
+**Baseline**: commit `b696bc5936dab89e3d99071e4f159b5f7151b587` (verified via fast-forward sync; 13 filesystem-deleted upload files restored to match the audited baseline — the owner's PLAN.md documents the same deletions as restored at their own baseline, and the manual-link/operations endpoints still import UploadService)
+**Branch**: main
+
+## Verified root causes (each proven, not guessed)
+
+1. **Wizard "No seasons found" (Issue A)** — `AdminAddFileWizard.svelte` fetched the correct endpoints but read top-level `seasonsData` / `seasons_list` / `episodes`. The detail endpoint returns `{ ok, item }` (seasons at `item.seasonsData`) and the season endpoint returns `{ ok, season }` (episodes at `season.episodes`). Fixed by parsing the real contracts + retryable errors with safe diagnostics (endpoint path + HTTP status).
+
+2. **Posters never displayed (Issue B)** — `MediaLibraryService.list()`/`detail()` selects omitted `poster_path`/`backdrop_path`; the columns exist (migration `20261015000000`, `ADD COLUMN IF NOT EXISTS`), the UI already mapped `item.poster_path`. Fixed by adding both columns to the read model + `LibraryMediaItem` type. The wizard now also extracts the RELATIVE TMDB poster path and manual-link persists it via `ensure*`.
+
+3. **Query-based watch URLs (Issue C)** — `watchHref` emitted `?season=&episode=`. The required contract is PATH form. Implemented:
+   - `routes.ts`: `watchHref` → `/watch/tv-show/1396/5/6`; new `canonicalWatchHref` + `isEpisodicRouteType`.
+   - Shared `watch-loader.ts` serves BOTH route shapes: the query form 308s to the canonical path form (loop-safe: forwarded query strips season/episode), legacy prefixed IDs 308 to bare IDs, invalid path segments 404 (no silent fallback).
+   - New canonical route `watch/[type]/[id]/[season]/[episode]` renders the SAME page component.
+   - Episode navigation + close/details URLs use bare TMDB IDs + path segments.
+
+4. **"The playback request is invalid" (Section 3)** — DEMONSTRATED chain: `/watch/anime-series/…` derived internal contentType `'anime'` → resolve request `mediaType:'anime'` → resolver core `content.type !== request.mediaType` (anime detail loads as `type:'series'`) → INVALID_REQUEST; second gate: `computeCanonicalKey` returned null for `'anime'`. Fixes:
+   - Watch page separates PUBLIC ROUTE IDENTITY from the PROVIDER REQUEST: `playbackMediaType = anime→series` used ONLY for the resolve request; `playbackContext` keeps `'anime'` for progress/history/favorites. Movies never carry season/episode.
+   - `parseResolverRequest` normalizes legacy `'anime'` → `'series'` (provider contract; season/episode preserved — proven by test).
+   - `computeCanonicalKey` treats series-like requests uniformly (episode canonical key). `getDetail` series branch strips legacy `anime-` prefixes.
+
+5. **Anime duplication (Section 4)** — PRIMARY source: `progress/presenter.ts` had a private URL builder producing `/watch/movie/movie-1311031` + dropped `isAnime` from snapshots → Continue Watching/My List rendered anime movies as normal movies while rails linked `/anime-movie/`. Fixes:
+   - `ContentSnapshot` carries `isAnime`/`animeFormat` (watch page writes them; legacy records fall back to their own contentType — never guessed from genre names).
+   - Presenter rebuilds canonical URLs through the SHARED route helpers (with a fixture-id fallback).
+   - `continueWatchingRecords`: deterministic category rule (anime identity wins per title family; recency decides only the RESUME POSITION) + one entry per title + numeric-TMDB-id-only canonical re-key (fixtures pass through verbatim).
+   - Favorites: write-time normalization (series+isAnime → `'anime'` key), family-aware status/removal, read-time family dedupe in `mergeFavorites` (newest record's content, deterministic anime category, family-wide tombstones).
+   - Upcoming: anime movies carry `anime-movie-{id}` + `isAnime` → `/anime-movie/{id}`; `upcomingDetailPath` accepts the canonical anime prefixes.
+   - `getTmdbTrendingMoviesByLanguage` now applies `excludesAnimeRows` (+ policy-key cache invalidation).
+
+6. **Detail-page chrome (Section 5)** — `+layout.svelte` bare-render regex listed only the LEGACY route types; `/tv-show/`, `/anime-series/`, `/anime-movie/` detail pages rendered inside AppShell (sticky topbar + fixed bottom pill permanently visible). Regex extended to all six types (runtime-verified 26/26 in `mav_deep_audit_layout_gate_check.mjs`); `/tv-show/` added to `LIBRARY_AWARE_PREFIXES`.
+
+7. **Add File wizard (Section 6)** — REWRITTEN as ONE compact adaptive sheet: explicit 4-way content type (Movie / TV Series / Anime Movie / Anime Series — the ambiguous anime checkbox removed), TMDB search → AUTOMATIC transition to the single edit form (no Continue/Back), series forms require season+episode dropdowns (real TMDB data), Change clears the selection + query + results, no series-level save path, validation next to fields, stale-response tokens. Server: manual-link rejects series/anime saves without season+episode (`400 EPISODE_REQUIRED`).
+
+8. **Media Library (Section 7)** — compact ONE-row toolbar (search flex + view toggle + Filter button ~fixed width; NO stacked dropdown rows on mobile), filters in a sheet with Apply/Clear + active-count badge, posters from the API in both views, 20/page pagination + dedupe + stale-token + infinite scroll + end-of-list state preserved. Delete remains Mavero-side only (no provider deletion calls).
+
+## Supabase audit (Section 8) — BLOCKED, honestly documented
+
+The audit environment has NO valid credentials: the `.env` publishable key returns `401 Invalid API key` on REST and there is no `PRIVATE_SUPABASE_SERVICE_ROLE_KEY`. NOTHING was executed against the live DB and no migration was applied by this run. The owner must:
+1. Verify the project ref is `whekhqimzrafhsrmswbn`.
+2. Confirm/apply `supabase/migrations/20261015000000_add_poster_to_media_items.sql` via the dashboard SQL editor (idempotent).
+3. Run `PRIVATE_SUPABASE_SERVICE_ROLE_KEY=<key> node scripts/mav_deep_audit_live_db_probe.mjs` (read-only; `--write-test` adds a controlled insert/read/delete cycle that cleans up after itself).
+
+## Verification (exact commands + results)
+
+- `npx pnpm check` → **0 errors** (23 pre-existing cosmetic warnings)
+- `npx pnpm build` → **success** (Netlify adapter + build executor)
+- Full `pnpm test` chain inventory (all 263 suites executed individually): **235 pass, 27 fail — ALL 27 verified to fail at the BASELINE `b696bc5` as well** (via a `git worktree` at the baseline; failures include stale pins predating this run: admin2_phaseB/C/E/G/I/J/2, phase6_player_apis PiP, phase7_playback_resolver, phase8_9_management_demand, consolidation, lifecycle, final_remediation, abyss_inventory, cloudstream_registry, cloudstream_phase4, mavp6, player_v2_final_remediation, seo 4f, upcoming_test, mav21, phase1_analytics 10e, phase9_landscape_drawer_position, post_phase6, phase2_watch… no — the last four were REPAIRED). 4 pre-existing failures were additionally REPAIRED by this run: `phase2_watch_parallel`, `phase3_classification_cache`, `phase4_ux_a11y`, `mav20` (all pinned the pre-refactor watch server file).
+- NEW: `mav_deep_audit_regression_test.ts` — **68/68** (registered in the `pnpm test` chain): canonical URLs, provider-contract separation (parses a real anime-series resolve request and asserts season/episode preservation + INVALID_REQUEST rejections), deterministic anime identity (CW + My List + upcoming), layout gate, wizard contracts, library read model.
+- NEW: `mav_deep_audit_layout_gate_check.mjs` — 26/26 runtime gate evaluations.
+- NEW: `mav_deep_audit_live_db_probe.mjs` — owner-run live DB verification (blocked here, documented above).
+- Stale baseline pins updated to current contracts (each documented in-place): pwa_boot_overlay (six-type regex), explorer_page/ui_hardening/hero_redesign, discover_v2, discover_subpage_ux, mavp7, adult_mode, adult_phase8_ui, adult_phase9_final, phase2_session_projection, mavp5, phase2_watch_parallel, phase3_classification_cache, phase4_ux_a11y, mav20.
+
+## Browser verification status
+
+- Dev-server smoke: `/discover`, `/movies`, `/tv-shows`, `/anime`, `/upcoming`, `/search` all render 200 with the AppShell present (chrome NOT hidden on shell routes).
+- The exact production gate predicate evaluated at runtime: all six detail types bare; watch/admin/auth/tv-login/authorize/scan-tv bare; listings/shell routes keep AppShell; prefix boundaries safe (26/26).
+- Admin UI flows (wizard/sheet) and REAL playback: NOT browser-verified here — the admin surfaces require a live Supabase session and playback requires TMDB + provider credentials. Static + unit contracts cover them; the owner must run the manual checklist.
+
+## Owner manual testing checklist
+
+1. Apply the poster migration via the Supabase dashboard SQL editor; run the live DB probe (above).
+2. Deploy from this `main` (owner deploys from Termium/Netlify as usual).
+3. `/watch/tv-show/1396/5/6` (path form) plays S5E6; old `/watch/tv-show/1396?season=5&episode=6` redirects (308) to the path form; `/watch/movie/movie-278` redirects to `/watch/movie/278`.
+4. `/watch/anime-series/30984/2/1` — was the "playback request is invalid" case; must now resolve through the series provider contract.
+5. Detail pages `/tv-show/1396`, `/anime-series/30984`, `/anime-movie/1311031`, `/movie/278` on MOBILE: no global header/bottom-nav; Back control usable; discover/search/admin keep their nav.
+6. Continue Watching: Demon Slayer appears ONCE with the anime-movie link; Bleach (or any anime series) shows ONE entry with the anime-series link.
+7. Media Library: posters render; one compact toolbar row on mobile; Filter opens a sheet; 20/page pagination; delete removes the Mavero link only.
+8. Add file: search → select → edit form directly; series requires season+episode; Change returns to a fresh search; save persists and the row shows the poster.

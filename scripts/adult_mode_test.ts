@@ -12,7 +12,9 @@ const tmdb = await readFile(path.join(repoRoot, 'src/lib/server/content/adapters
 const service = await readFile(path.join(repoRoot, 'src/lib/server/content/service.ts'), 'utf8');
 const searchClassify = await readFile(path.join(repoRoot, 'src/lib/server/content/search-classify.ts'), 'utf8');
 const listClassify = await readFile(path.join(repoRoot, 'src/lib/server/content/list-classify.ts'), 'utf8');
-const watchPageServer = await readFile(path.join(repoRoot, 'src/routes/watch/[type]/[id]/+page.server.ts'), 'utf8');
+// Deep-audit: the watch load logic lives in the SHARED loader (watch-loader.ts)
+// consumed by both the query-form and canonical path-form routes.
+const watchPageServer = await readFile(path.join(repoRoot, 'src/routes/watch/[type]/[id]/watch-loader.ts'), 'utf8');
 const seasonEndpoint = await readFile(path.join(repoRoot, 'src/routes/api/content/series/[id]/season/[season]/+server.ts'), 'utf8');
 const upcomingSource = await readFile(path.join(repoRoot, 'src/lib/server/content/upcoming.ts'), 'utf8');
 const railEndpoint = await readFile(path.join(repoRoot, 'src/routes/api/discover/rail/+server.ts'), 'utf8');
@@ -380,12 +382,20 @@ const accountPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pag
   assert.match(tmdb, /if \(isAdultContent[\s\S]*?item\.tags = \[\.\.\.\(item\.tags \?\? \[\]\), 'Adult'\]/, 'detail adds Adult tag when classified');
   // The SSR routes check tags?.includes('Adult').
   const movieSsr = await readFile(path.join(repoRoot, 'src/routes/movie/[id]/+page.server.ts'), 'utf8');
-  const seriesSsr = await readFile(path.join(repoRoot, 'src/routes/series/[id]/+page.server.ts'), 'utf8');
+  // Deep-audit: since the Phase 5 route migration, /series/[id] and
+  // /anime/[id] are pure 308 redirect stubs — the SSR Adult gates live on
+  // the canonical detail routes (/tv-show/, /anime-series/, /anime-movie/).
+  // The gate coverage contract is unchanged, only the file locations moved.
+  const seriesSsr = await readFile(path.join(repoRoot, 'src/routes/tv-show/[id]/+page.server.ts'), 'utf8');
+  const animeSeriesSsr = await readFile(path.join(repoRoot, 'src/routes/anime-series/[id]/+page.server.ts'), 'utf8');
+  const animeMovieSsr = await readFile(path.join(repoRoot, 'src/routes/anime-movie/[id]/+page.server.ts'), 'utf8');
   const animeSsr = await readFile(path.join(repoRoot, 'src/routes/anime/[id]/+page.server.ts'), 'utf8');
   const contentApi = await readFile(path.join(repoRoot, 'src/routes/api/content/[type]/[id]/+server.ts'), 'utf8');
   assert.match(movieSsr, /tags\?\.includes\('Adult'\)/, 'movie SSR checks Adult tag');
-  assert.match(seriesSsr, /tags\?\.includes\('Adult'\)/, 'series SSR checks Adult tag');
-  assert.match(animeSsr, /tags\?\.includes\('Adult'\)/, 'anime SSR checks Adult tag');
+  assert.match(seriesSsr, /tags\?\.includes\('Adult'\)/, 'tv-show SSR checks Adult tag');
+  assert.match(animeSeriesSsr, /tags\?\.includes\('Adult'\)/, 'anime-series SSR checks Adult tag');
+  assert.match(animeMovieSsr, /tags\?\.includes\('Adult'\)/, 'anime-movie SSR checks Adult tag');
+  assert.match(animeSsr, /redirect\(308/, 'legacy /anime/ route is a permanent redirect stub (gate enforced on the canonical route)');
   // Phase 6: the content API reads the classification through the canonical
   // central verdict reader (detailVerdict — the same central-classifier tag,
   // behaviorally tested in the Phase 6 suite).
@@ -636,7 +646,7 @@ const accountPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pag
   // ---- Direct watch route guard ----
   assert.match(watchPageServer, /import \{ canAccessAdultContent \} from '\$lib\/server\/content\/adult-policy'/, 'watch route uses the Phase 5 authorization function');
   assert.match(watchPageServer, /detailVerdict\(item\.tags\) === 'adult'/, 'watch route classifies via the central classifier verdict');
-  assert.match(watchPageServer, /await canAccessAdultContent\(locals\.supabase, user, cookies\)/, 'watch route evaluates authorization per request');
+  assert.match(watchPageServer, /await canAccessAdultContent\(event\.locals\.supabase, user, event\.cookies\)/, 'watch route evaluates authorization per request');
   assert.match(watchPageServer, /throw error\(404, 'Title not found'\)/, 'unauthorized adult watch requests get the non-disclosing 404');
   // Guard runs BEFORE episodes + streaming config are fetched.
   // Phase 2-E: the watch page now uses `const episodes` (renamed from
@@ -673,11 +683,14 @@ const accountPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pag
   // ---- Detail recommendations leak fix ----
   assert.match(service, /export async function getDetailWithSafeRecommendations/, 'consumer detail path filters recommendations');
   assert.match(service, /shouldFilterDetailRecommendations\(detail\.tags\)/, 'recommendation filtering is decided by the parent CLASSIFICATION (content fact)');
+  // Deep-audit: since MAV-20 Phase D the detail PAGES load the parent
+  // detail only (getDetail) and fetch the classified recommendation rail
+  // CLIENT-SIDE through /api/content/recommendations — the rec-safe
+  // consumer path (getDetailWithSafeRecommendations) lives on the API
+  // surface. /series/ + /anime/ are 308 redirect stubs since Phase 5.
   const detailPages = [
-    'src/routes/movie/[id]/+page.server.ts',
-    'src/routes/series/[id]/+page.server.ts',
-    'src/routes/anime/[id]/+page.server.ts',
-    'src/routes/api/content/[type]/[id]/+server.ts'
+    'src/routes/api/content/[type]/[id]/+server.ts',
+    'src/routes/api/content/recommendations/[type]/[id]/+server.ts'
   ];
   for (const rel of detailPages) {
     const src = await readFile(path.join(repoRoot, rel), 'utf8');

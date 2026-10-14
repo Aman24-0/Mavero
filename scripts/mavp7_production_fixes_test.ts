@@ -155,7 +155,9 @@ const lettersOf = (db: { mappings: MappingRow[] }) => {
     ok(!/onclick/.test(playAnchor), 'I1: the Play anchor carries NO click handler (the router receives the event and performs the SPA navigation)');
     ok(!playAnchor.includes('stopPropagation') && !playAnchor.includes('preventDefault'), 'I1: Play neither stops propagation (which caused the native full-SSR navigations) nor prevents default (which would kill navigation entirely)');
     // The href semantics are unchanged: resumeHref preferred, returnTo appended.
-    ok(card.includes('item.resumeHref ?? `/watch/${item.type}/${item.id}`'), 'I1: the Play target contract is unchanged (resumeHref preferred, watch route fallback)');
+    // Deep-audit: the watch fallback goes through the SHARED route helper
+    // (watchPath — anime-aware) since Phase 5, not the inline template.
+    ok(card.includes('item.resumeHref ?? watchPath(item.id, item.type, item.isAnime, item.animeFormat)'), 'I1: the Play target contract is unchanged (resumeHref preferred, shared watch-route fallback)');
     ok(card.includes('appendReturnTo(item.resumeHref'), 'I1: returnTo is still appended to the Play target');
     // Selectable mode still HIDES Play (batch selection cannot start playback).
     const selectableBranch = card.slice(card.indexOf('{#if selectable}'), card.indexOf('{:else}'));

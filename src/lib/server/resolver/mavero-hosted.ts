@@ -156,24 +156,30 @@ export function __setMaveroHostedServiceClientForTests(client: SupabaseClient<Da
  * Returns `null` when:
  *   - `identifiers.tmdbId` is absent (TMDB ID could not be extracted
  *     from the content item).
- *   - `request.mediaType === 'anime'` (Phase 4 capability flags
- *     `anime:false` — the resolver should have excluded the source
- *     already, but we fail safe here).
- *   - `request.mediaType === 'series'` but only one of season/episode
- *     is present (malformed request — fail safe).
+ *   - `request.mediaType` is series-like ('series' or the legacy 'anime')
+ *     but only one of season/episode is present (malformed request —
+ *     fail safe).
  *
- * For `series` without season+episode (e.g. a series-level lookup,
- * rarely used in practice but supported by the contract), the SERIES
- * canonical_key is returned. This matches a `media_items` row of
- * `content_type='series'` with NULL season+episode — i.e. the show
- * itself, not any specific episode. Phase 5 `ensureSeries()` creates
- * exactly this row.
+ * For series-like requests WITHOUT season+episode (e.g. a series-level
+ * lookup, rarely used in practice but supported by the contract), the
+ * SERIES canonical_key is returned. This matches a `media_items` row of
+ * `content_type='series'` (or 'anime') with NULL season+episode — i.e.
+ * the show itself, not any specific episode. Phase 5 `ensureSeries()` /
+ * `ensureAnime()` create exactly these rows.
+ *
+ * Deep-audit Section 3 (defense in depth): parseResolverRequest now
+ * normalizes legacy 'anime' mediaType → 'series' at the request boundary,
+ * so the 'anime' branch below is unreachable from the HTTP API — it is
+ * kept as a fail-safe for direct internal callers. Anime series assets
+ * are stored with episode canonical keys exactly like TV series (the
+ * provider contract is the TMDB TV episode identity; the anime
+ * distinction lives in media_items.content_type, not in the asset key).
  */
 function computeCanonicalKey(context: ResolverContext): string | null {
   const { request, identifiers } = context;
   if (!identifiers.tmdbId) return null;
   if (request.mediaType === 'movie') return movieCanonicalKey(identifiers.tmdbId);
-  if (request.mediaType === 'series') {
+  if (request.mediaType === 'series' || request.mediaType === 'anime') {
     if (request.season != null && request.episode != null) {
       return episodeCanonicalKey(identifiers.tmdbId, request.season, request.episode);
     }
@@ -183,7 +189,7 @@ function computeCanonicalKey(context: ResolverContext): string | null {
     // Malformed: only one of season/episode present. Fail safe.
     return null;
   }
-  // anime or unknown — fail safe (Phase 4 caps block this branch).
+  // unknown — fail safe.
   return null;
 }
 

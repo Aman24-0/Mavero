@@ -223,13 +223,21 @@
   <meta name="twitter:card" content="summary_large_image" />
 </svelte:head>
 
-{#if page.url.pathname.startsWith('/watch/') || /^\/(movie|series|anime)\/[^/]+/.test(page.url.pathname) || page.url.pathname.startsWith('/auth/') || page.url.pathname.startsWith('/admin') || page.url.pathname.startsWith('/tv-login') || page.url.pathname.startsWith('/authorize') || page.url.pathname.startsWith('/settings/scan-tv')}
+{#if page.url.pathname.startsWith('/watch/') || /^\/(movie|series|anime|tv-show|anime-series|anime-movie)\/[^/]+/.test(page.url.pathname) || page.url.pathname.startsWith('/auth/') || page.url.pathname.startsWith('/admin') || page.url.pathname.startsWith('/tv-login') || page.url.pathname.startsWith('/authorize') || page.url.pathname.startsWith('/settings/scan-tv')}
   <!-- /admin/* renders bare too: admin pages use AdminAppShell, a
        self-contained administrative layout with its OWN navigation.
        The consumer AppShell (side rail + mobile bottom nav) must not
        render there at all — not hidden, not covered — so admin never
        shows the normal Discover/Movies/TV Shows/Anime/Upcoming/Search
        navigation. -->
+  <!-- Detail pages (all six public route types: /movie/, /series/,
+       /anime/, /tv-show/, /anime-series/, /anime-movie/) render BARE —
+       the immersive DetailPage presentation carries its own Back
+       control, and the AppShell's sticky topbar + fixed bottom pill
+       would permanently overlay it (deep-audit Section 5: the Phase 5
+       route migration added /tv-show/ + /anime-series/ + /anime-movie/
+       but never extended this gate — the reported "header/navbar
+       permanently visible on detail pages" root cause). -->
   <!-- /movies, /tv-shows and /anime are FIRST-CLASS destinations and
        render inside the consumer AppShell (Navigation & Settings
        Redesign, Phase 1). The legacy /discover/movies|series|anime paths

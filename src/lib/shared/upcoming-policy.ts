@@ -387,7 +387,11 @@ export function selectUpcomingSeasonCandidates(
  */
 export function upcomingDetailPath(eventId: string): string | null {
   if (typeof eventId !== 'string') return null;
-  const match = /^(movie|series|anime)-(\d+)(?:-s\d+e\d+)?$/.exec(eventId);
+  // Deep-audit Section 4: the canonical anime route prefixes are accepted
+  // so an anime movie card links to /anime-movie/{id} (never /movie/{id}).
+  // Alternation order matters — 'anime-movie'/'anime-series' must be tried
+  // before 'anime' or the shorter alternative would truncate the match.
+  const match = /^(anime-movie|anime-series|movie|series|anime)-(\d+)(?:-s\d+e\d+)?$/.exec(eventId);
   if (!match) return null;
   const [, type, numericId] = match;
   const id = Number(numericId);
@@ -396,6 +400,9 @@ export function upcomingDetailPath(eventId: string): string | null {
   if (type === 'movie') return `/movie/${id}`;
   if (type === 'series') return `/tv-show/${id}`;
   if (type === 'anime') return `/anime-series/${id}`;
+  // Deep-audit: canonical anime route prefixes pass through unchanged.
+  if (type === 'anime-movie') return `/anime-movie/${id}`;
+  if (type === 'anime-series') return `/anime-series/${id}`;
   return null;
 }
 

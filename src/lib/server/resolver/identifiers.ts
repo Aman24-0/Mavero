@@ -19,12 +19,30 @@ export function parseResolverRequest(input: unknown): ResolverRequest {
   if (typeof input.contentId !== 'string' || !isValidContentId(input.contentId)) throw new ResolverError('INVALID_REQUEST');
   if (typeof input.mediaType !== 'string' || !isContentType(input.mediaType)) throw new ResolverError('INVALID_REQUEST');
 
+  // PROVIDER CONTRACT NORMALIZATION (deep-audit Section 3):
+  //
+  // The public route identity ('anime-series' / 'anime-movie') is a URL/SEO
+  // concept and NEVER reaches an upstream endpoint. The provider playback
+  // pipeline speaks only 'movie' | 'series' — anime IS TMDB TV (genre 16 +
+  // original_language 'ja'), so a legacy 'anime' mediaType is normalized to
+  // the SERIES contract here instead of failing the strict content-type
+  // identity check in resolveSourceFromConfig (content.type === 'series'
+  // !== 'anime' → INVALID_REQUEST — the demonstrated "The playback request
+  // is invalid" root cause for anime-series playback).
+  //
+  // Season/episode semantics are unchanged: anime series use the TV
+  // contract (TMDB TV id + season + episode); anime movies already flow
+  // through the movie contract. The internal Mavero identity ('anime' in
+  // media_items/content_type and progress records) is NOT affected — this
+  // mapping exists only inside the resolver request boundary.
+  const mediaType: ContentType = input.mediaType === 'anime' ? 'series' : input.mediaType;
+
   const season = positiveInteger(input.season, 'season');
   const episode = positiveInteger(input.episode, 'episode');
-  if (input.mediaType === 'movie' && (season !== undefined || episode !== undefined)) throw new ResolverError('INVALID_REQUEST');
+  if (mediaType === 'movie' && (season !== undefined || episode !== undefined)) throw new ResolverError('INVALID_REQUEST');
   if ((season === undefined) !== (episode === undefined)) throw new ResolverError('INVALID_REQUEST');
 
-  const request: ResolverRequest = { sourceId: input.sourceId, contentId: input.contentId, mediaType: input.mediaType };
+  const request: ResolverRequest = { sourceId: input.sourceId, contentId: input.contentId, mediaType };
   if (season !== undefined) request.season = season;
   if (episode !== undefined) request.episode = episode;
   const fallbackFlag = typeof input.enableFallback === 'boolean' ? input.enableFallback : input.allowFallback;

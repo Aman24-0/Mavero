@@ -328,8 +328,14 @@ assert.match(layoutSource, /page\.url\.pathname\.startsWith\('\/admin'\)/,
   '/admin bare-render preserved');
 assert.match(layoutSource, /page\.url\.pathname\.startsWith\('\/auth\/'\)/,
   '/auth/ bare-render preserved');
-assert.match(layoutSource, /\^\\\/\(movie\|series\|anime\)\\\/\[\^\/\]\+/,
-  'movie/series/anime detail bare-render preserved');
+// Deep-audit Section 5: the bare-render detail regex MUST cover all six
+// public detail route types — the Phase 5 migration added /tv-show/,
+// /anime-series/ and /anime-movie/ but the original gate only listed the
+// legacy three, leaving AppShell's sticky topbar + bottom pill permanently
+// visible on the new detail pages. The fix extends the alternation; the
+// assertion locks ALL six types so the gate can never regress to a subset.
+assert.match(layoutSource, /\^\\\/\(movie\|series\|anime\|tv-show\|anime-series\|anime-movie\)\\\/\[\^\/\]\+/,
+  'detail bare-render preserved for ALL six route types (movie/series/anime/tv-show/anime-series/anime-movie)');
 // Navigation & Settings Redesign, Phase 1 — the /discover/{movies,series,anime}
 // sub-page bare-render regex is REMOVED: those paths are permanent 308
 // redirects and the first-class /movies, /tv-shows, /anime destinations

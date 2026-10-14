@@ -426,9 +426,12 @@ const POLICY_OFF = { allowLoggedIn: false, allowGuest: false };
 // 23+24 — Phase 6 regression (wiring on the real protected routes).
 // ============================================================================
 {
-  const watchServer = await read('src/routes/watch/[type]/[id]/+page.server.ts');
+  // Deep-audit: the watch load logic lives in the SHARED loader
+  // (watch-loader.ts) consumed by both the query-form and the canonical
+  // path-form routes — the guard wiring is unchanged, only relocated.
+  const watchServer = await read('src/routes/watch/[type]/[id]/watch-loader.ts');
   assert.match(watchServer, /detailVerdict\(item\.tags\) === 'adult'/, '23a. the watch route still classifies via the central detail verdict');
-  assert.match(watchServer, /canAccessAdultContent\(locals\.supabase, user, cookies\)/, '23b. the watch route still evaluates the Phase 5 policy per request');
+  assert.match(watchServer, /canAccessAdultContent\(event\.locals\.supabase, user, event\.cookies\)/, '23b. the watch route still evaluates the Phase 5 policy per request');
   assert.match(watchServer, /if \(!canAccess\) \{[\s\S]*?throw error\(404/, '23c. the watch guard still denies with the non-disclosing 404');
   const seasonEndpoint = await read('src/routes/api/content/series/[id]/season/[season]/+server.ts');
   assert.match(seasonEndpoint, /detailVerdict\(parent\.tags\) === 'adult'/, '24a. the season endpoint still classifies the parent series');

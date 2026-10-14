@@ -69,6 +69,15 @@ export type LibraryMediaItem = {
   episode: number | null;
   episode_title: string | null;
   parent_media_id: string | null;
+  /**
+   * Deep-audit Issue B: RELATIVE TMDB poster/backdrop paths persisted on
+   * the media_items row (migration 20261015000000). The library list must
+   * RETURN them so AdminMediaList can build the TMDB image URL — the
+   * previous select omitted both columns, so the UI could never render a
+   * poster even when one was persisted. Client fallback when null: icon.
+   */
+  poster_path: string | null;
+  backdrop_path: string | null;
   created_at: string;
   updated_at: string;
   assets: LibraryAssetSummary[];
@@ -166,9 +175,11 @@ export class MediaLibraryService {
     const sort = query.sort ?? 'recently_updated';
 
     // Build the media_items query.
+    // Deep-audit Issue B: poster_path + backdrop_path are REQUIRED in the
+    // projection — the Media Library grid/list views render them.
     let itemsQuery = this.client
       .from('media_items')
-      .select('id, canonical_key, content_type, tmdb_id, imdb_id, title, year, season, episode, episode_title, parent_media_id, created_at, updated_at', { count: 'exact' });
+      .select('id, canonical_key, content_type, tmdb_id, imdb_id, title, year, season, episode, episode_title, parent_media_id, poster_path, backdrop_path, created_at, updated_at', { count: 'exact' });
 
     // Text search — supports title / tmdb_id / imdb_id / canonical_key
     if (query.q && query.q.trim()) {
@@ -353,9 +364,10 @@ export class MediaLibraryService {
   // ------------------------------------------------------------
   async detail(mediaItemId: string): Promise<LibraryDetailResult | null> {
     // 1. Fetch the media item.
+    // Deep-audit Issue B: poster fields included (same contract as list()).
     const { data: item, error: itemError } = await this.client
       .from('media_items')
-      .select('id, canonical_key, content_type, tmdb_id, imdb_id, title, year, season, episode, episode_title, parent_media_id, created_at, updated_at')
+      .select('id, canonical_key, content_type, tmdb_id, imdb_id, title, year, season, episode, episode_title, parent_media_id, poster_path, backdrop_path, created_at, updated_at')
       .eq('id', mediaItemId)
       .maybeSingle();
     if (itemError) throw new Error(`MediaLibraryService.detail (item): ${itemError.message}`);

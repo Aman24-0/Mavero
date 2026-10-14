@@ -39,8 +39,10 @@ const moviesRoute = await read('src/routes/movies/+page.svelte');
 const tvShowsRoute = await read('src/routes/tv-shows/+page.svelte');
 const animeRoute = await read('src/routes/anime/+page.svelte');
 const movieServer = await read('src/routes/movie/[id]/+page.server.ts');
-const seriesServer = await read('src/routes/series/[id]/+page.server.ts');
-const animeServer = await read('src/routes/anime/[id]/+page.server.ts');
+// Deep-audit: /series/ + /anime/ are 308 redirect stubs since Phase 5 —
+// the canonical detail loads live on /tv-show/, /anime-series/, /anime-movie/.
+const seriesServer = await read('src/routes/tv-show/[id]/+page.server.ts');
+const animeServer = await read('src/routes/anime-series/[id]/+page.server.ts');
 const recEndpoint = await read('src/routes/api/content/recommendations/[type]/[id]/+server.ts');
 const upcomingPage = await read('src/routes/upcoming/+page.svelte');
 const railCache = await read('src/lib/client/discover/rail-cache.ts');
@@ -420,10 +422,11 @@ function createCountingFetchRail(
   ok(/beforeunload|pagehide/.test(watchPage), 'E5d. the pagehide/beforeunload progress flushes remain (durable writes)');
 
   // E6. Hero links carry the origin (the wrong-destination root cause).
-  ok(/appendReturnTo\(`\/watch\/\$\{slide\.item\.type\}\/\$\{slide\.item\.id\}\`, heroOrigin\)/.test(discoverPage), 'E6a. Discover hero Play carries the origin');
-  ok(/appendReturnTo\(`\/\$\{slide\.item\.type\}\/\$\{slide\.item\.id\}\`, heroOrigin\)/.test(discoverPage), 'E6b. Discover hero See More carries the origin');
-  ok(/appendReturnTo\(`\/watch\/\$\{slide\.type\}\/\$\{slide\.id\}\`, returnTo\)/.test(spotlight), 'E6c. Explorer spotlight Play carries the origin');
-  ok(/appendReturnTo\(`\/\$\{slide\.type\}\/\$\{slide\.id\}\`, returnTo\)/.test(spotlight), 'E6d. Explorer spotlight More details carries the origin');
+  // Deep-audit: the URLs go through the shared route helpers since Phase 5.
+  ok(/appendReturnTo\(watchPath\(slide\.item\.id, slide\.item\.type, slide\.item\.isAnime, slide\.item\.animeFormat\), heroOrigin\)/.test(discoverPage), 'E6a. Discover hero Play carries the origin');
+  ok(/appendReturnTo\(detailPath\(slide\.item\.id, slide\.item\.type, slide\.item\.isAnime, slide\.item\.animeFormat\), heroOrigin\)/.test(discoverPage), 'E6b. Discover hero See More carries the origin');
+  ok(/appendReturnTo\(watchPath\(slide\.id, slide\.type, slide\.isAnime, slide\.animeFormat\), returnTo\)/.test(spotlight), 'E6c. Explorer spotlight Play carries the origin');
+  ok(/appendReturnTo\(detailPath\(slide\.id, slide\.type, slide\.isAnime, slide\.animeFormat\), returnTo\)/.test(spotlight), 'E6d. Explorer spotlight More details carries the origin');
   ok(/returnTo=\{explorerOrigin\}/.test(explorerPage), 'E6e. ExplorerPage passes its origin (page + filter state) to the spotlight');
   ok(/\$derived\(`\$\{page\.url\.pathname\}\$\{page\.url\.search\}\$\{page\.url\.hash\}`\)/.test(explorerPage), 'E6f. the Explorer origin includes query + hash (filter state)');
 
@@ -467,7 +470,7 @@ function createCountingFetchRail(
 
   // E11. The watch route's own load (arrival) still runs its parallel
   // detail + streaming config pipeline (no playback regression).
-  ok(/getDetail\(params\.type, params\.id\)/.test(await read('src/routes/watch/[type]/[id]/+page.server.ts')), 'E11. the watch route load still resolves detail directly (playback path untouched)');
+  ok(/getDetail\(internalType, rawId\)/.test(await read('src/routes/watch/[type]/[id]/watch-loader.ts')), 'E11. the watch route load still resolves detail directly (playback path untouched)');
 }
 
 // ============================================================

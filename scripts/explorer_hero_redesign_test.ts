@@ -213,16 +213,18 @@ function sliceOf(source: string, start: string, end: string): string {
 // §G — Route links preserved
 // ============================================================
 {
-        // MAV-20 Phase D: the links keep the SAME route patterns, now
-        // wrapped in appendReturnTo(..., returnTo) so they carry the
-        // Explorer origin as `from` for correct back-navigation.
+        // MAV-20 Phase D: the links keep the SAME route targets, wrapped
+        // in appendReturnTo(..., returnTo) so they carry the Explorer
+        // origin as `from` for correct back-navigation. Deep-audit: since
+        // Phase 5 the URL construction lives in the SHARED route helpers
+        // (watchPath/detailHref — anime-aware, single source of truth).
         assert.ok(
-                spotlight.includes('appendReturnTo(`/watch/${slide.type}/${slide.id}`, returnTo)'),
-                'Play keeps the /watch/{type}/{id} pattern (with the Explorer origin)'
+                spotlight.includes('appendReturnTo(watchPath(slide.id, slide.type, slide.isAnime, slide.animeFormat), returnTo)'),
+                'Play keeps the watch route (via the shared route helper, with the Explorer origin)'
         );
         assert.ok(
-                spotlight.includes('appendReturnTo(`/${slide.type}/${slide.id}`, returnTo)'),
-                'More details keeps the /{type}/{id} pattern (with the Explorer origin)'
+                spotlight.includes('appendReturnTo(detailPath(slide.id, slide.type, slide.isAnime, slide.animeFormat), returnTo)'),
+                'More details keeps the detail route (via the shared route helper, with the Explorer origin)'
         );
         assert.ok(spotlight.includes('aria-roledescription="carousel"'), 'the carousel landmark is preserved');
         assert.ok(spotlight.includes('role="tab"'), 'dots remain tab semantics');

@@ -4,14 +4,20 @@
  * Single source of truth for public detail + watch URL generation.
  * Replaces scattered string concatenation across components.
  *
- * Public route conventions (Phase 5):
+ * Public route conventions (Phase 5 + deep-audit canonical watch form):
  *
  *   Content type      Detail route              Watch route
  *   ──────────────────────────────────────────────────────────────────
  *   Movie             /movie/278                /watch/movie/278
- *   TV series         /tv-show/1396             /watch/tv-show/1396?season=1&episode=1
- *   Anime series      /anime-series/30984       /watch/anime-series/30984?season=1&episode=1
+ *   TV series         /tv-show/1396             /watch/tv-show/1396/5/6
+ *   Anime series      /anime-series/30984       /watch/anime-series/30984/2/1
  *   Anime movie       /anime-movie/1311031      /watch/anime-movie/1311031
+ *
+ * For episodic watch URLs the final two path segments are SEASON and
+ * EPISODE (not additional TMDB IDs). The previous query-parameter form
+ * (`?season=5&episode=6`) remains readable — the watch route redirects
+ * it (308) to the canonical path form — but every URL THIS codebase
+ * generates uses the path form.
  *
  * Internal identity (unchanged):
  *   - media_items.canonical_key = 'movie:tmdb:278' / 'series:tmdb:1396' (DB)
@@ -22,6 +28,12 @@
  *   - ContentType 'movie' → public route 'movie' OR 'anime-movie' (if isAnime + animeFormat='movie')
  *   - ContentType 'series' → public route 'tv-show'
  *   - ContentType 'anime'  → public route 'anime-series' (if animeFormat='series') OR 'anime-movie' (if animeFormat='movie')
+ *
+ * The public route identity is a URL/SEO concept ONLY. It never dictates
+ * the parameters sent to a playback provider — the resolver request
+ * carries the internal provider contract ('movie' | 'series' + TMDB ID +
+ * season + episode), never the public 'anime-movie'/'anime-series'
+ * strings (see internalContentType + the resolver's mediaType contract).
  *
  * Legacy prefixed IDs (movie-278, series-1396, anime-30984) are accepted
  * by the detail routes for backward compatibility and redirected to the
@@ -94,17 +106,20 @@ export function detailHref(
 /**
  * Generate the public watch (player) route for a content item.
  *
- * For episodic content (TV series, anime series), season + episode are
- * passed as query parameters (the canonical form). The legacy
- * /watch/[type]/[id]/[season]/[episode] path-form redirects to this.
+ * For episodic content (TV series, anime series) the season + episode are
+ * PATH SEGMENTS — the canonical public form:
+ *   /watch/tv-show/1396/5/6   (TMDB TV 1396, season 5, episode 6)
+ *   /watch/anime-series/30984/2/1
  *
- * @param id — item.id (e.g. 'movie-278')
+ * Movies (and anime movies) never carry season/episode segments.
+ *
+ * @param id — item.id (e.g. 'movie-278', 'series-1396')
  * @param type — internal ContentType
  * @param isAnime — optional
  * @param animeFormat — optional
- * @param season — optional (for episodic content)
- * @param episode — optional (for episodic content)
- * @returns site-relative watch path (e.g. '/watch/movie/278', '/watch/tv-show/1396?season=1&episode=1')
+ * @param season — optional (for episodic content; defaults to 1)
+ * @param episode — optional (for episodic content; defaults to 1)
+ * @returns site-relative watch path (e.g. '/watch/movie/278', '/watch/tv-show/1396/5/6')
  */
 export function watchHref(
   id: string,
@@ -118,11 +133,42 @@ export function watchHref(
   if (!tmdbId) return '/';
   const routeType = publicRouteType(type, isAnime, animeFormat);
   const base = `/watch/${routeType}/${tmdbId}`;
-  // Episodic content: append season + episode as query params.
+  // Episodic content: season + episode as canonical PATH segments.
   if (routeType === 'tv-show' || routeType === 'anime-series') {
-    const s = season ?? 1;
-    const e = episode ?? 1;
-    return `${base}?season=${s}&episode=${e}`;
+    const s = Number.isInteger(season) && (season as number) > 0 ? (season as number) : 1;
+    const e = Number.isInteger(episode) && (episode as number) > 0 ? (episode as number) : 1;
+    return `${base}/${s}/${e}`;
+  }
+  return base;
+}
+
+/**
+ * True when the public route type is episodic (its canonical watch URL
+ * carries /{season}/{episode} path segments).
+ */
+export function isEpisodicRouteType(routeType: PublicRouteType): boolean {
+  return routeType === 'tv-show' || routeType === 'anime-series';
+}
+
+/**
+ * Build the canonical watch URL for a route type + bare TMDB ID,
+ * optionally carrying season/episode PATH segments (episodic types only).
+ *
+ * Used by the watch route's canonicalization redirects and the player's
+ * episode navigation — both of which own the raw URL shape rather than
+ * an item object.
+ */
+export function canonicalWatchHref(
+  routeType: PublicRouteType,
+  tmdbId: string,
+  season?: number,
+  episode?: number,
+): string {
+  const base = `/watch/${routeType}/${tmdbId}`;
+  if (isEpisodicRouteType(routeType)) {
+    const s = Number.isInteger(season) && (season as number) > 0 ? (season as number) : 1;
+    const e = Number.isInteger(episode) && (episode as number) > 0 ? (episode as number) : 1;
+    return `${base}/${s}/${e}`;
   }
   return base;
 }

@@ -116,7 +116,12 @@ assert.match(routes.series, /<ExplorerPage\s+type="series"/, '/tv-shows renders 
 assert.match(routes.anime, /<ExplorerPage\s+type="anime"/, '/anime renders the shared ExplorerPage');
 assert.match(explorerPage, /<SpotlightCarousel items=\{spotlight\}/, 'the Explorer embeds the spotlight carousel');
 assert.match(explorerPage, /<ContentRail title=\{section\.title\} items=\{section\.items\} href=\{section\.showMoreHref \|\| ''\} linkLabel="Show more" \/>/, 'unfiltered sections render through the existing ContentRail (+ the Follow-up task 2 Show-more CTA)');
-assert.match(spotlightCarousel, /\/watch\/\$\{slide\.type\}\/\$\{slide\.id\}/, 'spotlight Play links to the existing watch route (playback preserved)');
+// Deep-audit: the pre-Phase-5 assertion pinned the inline string
+// `/watch/${slide.type}/${slide.id}` — the codebase has routed ALL card
+// URLs through the shared route helpers since Phase 5 (single source of
+// truth for the public URL contract). The spotlight Play link MUST use the
+// shared watchPath helper with the slide's anime-aware classification.
+assert.match(spotlightCarousel, /watchPath\(slide\.id, slide\.type, slide\.isAnime, slide\.animeFormat\)/, 'spotlight Play links through the shared watch route helper (playback preserved, anime-aware)');
 for (const [key, src] of Object.entries(routes)) assert.match(src, /totalPages=\{data\.totalPages\}/, `${key} route passes totalPages through`);
 ok('4. the three first-class routes reuse one shared ExplorerPage (spotlight + chips + sections/feed)');
 

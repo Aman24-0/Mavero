@@ -10,6 +10,20 @@ export type ContentSnapshot = {
   rating?: number;
   genres?: string[];
   description?: string;
+  // Deep-audit Section 4: the anime classification travels WITH the
+  // snapshot so Continue Watching / My List can rebuild the canonical
+  // /anime-movie/ + /watch/anime-movie/ + /anime-series/ identities from
+  // persisted records WITHOUT re-fetching TMDB. Previously the snapshot
+  // dropped isAnime entirely and the presenters rebuilt legacy
+  // /watch/movie/movie-{id} URLs — the duplication source.
+  //
+  // Backward compatibility: records written before this field have no
+  // flag. Readers fall back to the record's own contentType — an 'anime'
+  // contentType means an anime series; a 'movie'/'series' record without
+  // the flag renders with its historical (non-anime) identity rather than
+  // guessing from genre names.
+  isAnime?: boolean;
+  animeFormat?: 'movie' | 'series';
 };
 
 export type PlaybackContext = {

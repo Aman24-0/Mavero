@@ -601,9 +601,16 @@ export async function getTmdbTrendingMoviesByLanguage(language: string, page = 1
   // Movie-only query — /discover/movie has NO network filter, so the
   // adult exclusion stays on the TRANSITIONAL watch-provider mechanism
   // (documented in the worklog Phase 3 endpoint matrix).
+  //
+  // Deep-audit Section 4: this rail previously skipped the anime
+  // exclusion — anime movies (genre 16 + 'ja') leaked into a language
+  // movie rail, duplicating the Anime rail's identity. Every other movie
+  // rail (discover/collection/popular/top-rated/genre) already applies
+  // excludesAnimeRows; the cache key embeds the anime exclusion policy
+  // key so existing cached payloads invalidate when the policy changes.
   const adultIds = await getResolvedAdultProviderIds();
   const adultExclusion = adultIds.length > 0 ? adultIds.join('|') : undefined;
-  const key = `tmdb:lang-movies:movie:${normalized}:${page}:${adultExclusion ?? 'no-adult'}`;
+  const key = `tmdb:lang-movies:movie:${normalized}:${page}:${adultExclusion ?? 'no-adult'}:${ANIME_EXCLUSION_POLICY_KEY}`;
   const { value, stale } = await getOrSet(key, listPolicy, async () => {
     const result = await tmdbRequest<TmdbList<TmdbMovie>>('/discover/movie', {
       page,
@@ -613,7 +620,9 @@ export async function getTmdbTrendingMoviesByLanguage(language: string, page = 1
       region: 'IN',
       ...(adultExclusion ? { 'without_watch_providers': adultExclusion, watch_region: 'IN' } : {}),
     });
-    const items = (result.results ?? []).filter((item) => hasRequiredListMetadata(item, 'movie')).map((item) => mapTmdb(item, 'movie', 'Trending'));
+    const items = excludesAnimeRows(result.results ?? [])
+      .filter((item) => hasRequiredListMetadata(item, 'movie'))
+      .map((item) => mapTmdb(item, 'movie', 'Trending'));
     return { items, page: result.page ?? page, hasNextPage: (result.page ?? page) < (result.total_pages ?? page), source: tmdbSource() };
   });
   return { ...value, source: { ...value.source, stale } };

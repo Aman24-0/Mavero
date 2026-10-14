@@ -29,6 +29,12 @@ export type UpcomingProvider = {
 export type UpcomingItem = {
   id: string;
   type: UpcomingType;
+  // Deep-audit Section 4: true when the item is anime (genre 16 + 'ja').
+  // Anime MOVIES keep the internal type 'movie' (the provider contract is
+  // the movie pipeline) but carry the flag AND the canonical
+  // 'anime-movie-{tmdbId}' event id so detail links resolve to
+  // /anime-movie/{id} — never the normal /movie/{id} category.
+  isAnime?: boolean;
   title: string;
   poster: string;
   backdrop?: string;

@@ -117,13 +117,14 @@ const hooks = read('src/hooks.server.ts');
 // The hook resolves auth per-request — it does NOT read from the TMDB
 // detail cache (that's content-side, evaluated inside content routes).
 ok(!/tmdb:detail/.test(hooks), '6a. hooks.server.ts does NOT read from the TMDB detail cache (authz is per-request, not cache-derived)');
-const watch = read('src/routes/watch/[type]/[id]/+page.server.ts');
+// Deep-audit: the watch load logic lives in the SHARED loader (consumed by both the query-form and canonical path-form routes).
+const watch = read('src/routes/watch/[type]/[id]/watch-loader.ts');
 // The watch route's adult gate calls canAccessAdultContent — not detailVerdict.
-ok(/canAccessAdultContent\(locals\.supabase, user, cookies\)/.test(watch), '6b. watch route adult gate calls canAccessAdultContent (per-request authz)');
+ok(/canAccessAdultContent\(event\.locals\.supabase, user, event\.cookies\)/.test(watch), '6b. watch route adult gate calls canAccessAdultContent (per-request authz)');
 ok(/detailVerdict\(item\.tags\)/.test(watch), '6c. watch route uses detailVerdict for CLASSIFICATION (content-side), separate from authz');
 // The two are evaluated in sequence: classify first, then authorize.
 const classifyIdx = watch.indexOf("detailVerdict(item.tags) === 'adult'");
-const authzIdx = watch.indexOf('canAccessAdultContent(locals.supabase, user, cookies)');
+const authzIdx = watch.indexOf('canAccessAdultContent(event.locals.supabase, user, event.cookies)');
 ok(classifyIdx > -1 && authzIdx > classifyIdx, '6d. classification (detailVerdict) evaluated BEFORE authorization (canAccessAdultContent) — classify then authorize');
 
 // ============================================================

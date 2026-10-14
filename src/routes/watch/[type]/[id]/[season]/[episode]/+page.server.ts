@@ -1,10 +1,19 @@
-import { redirect, error } from '@sveltejs/kit';
+/**
+ * Watch route — CANONICAL PATH form: /watch/[type]/[id]/[season]/[episode]
+ *
+ * The required public watch contract:
+ *   /watch/tv-show/1396/5/6      — TMDB TV 1396, season 5, episode 6
+ *   /watch/anime-series/30984/2/1
+ *
+ * The final two segments are SEASON and EPISODE — never additional TMDB
+ * IDs. Invalid or non-positive segments are rejected with a 404 by the
+ * shared loader (no silent fallbacks on the canonical form).
+ *
+ * All logic lives in ../../watch-loader.ts — the same loader serves the
+ * backward-compatible query form, so behavior (adult gate, parallel
+ * fetches, season resolution, return shape) is identical across both.
+ */
 import type { PageServerLoad } from './$types';
+import { loadWatchPage } from '../../watch-loader';
 
-export const load: PageServerLoad = ({ params }) => {
-  const type = params.type === 'series' || params.type === 'anime' || params.type === 'movie' ? params.type : undefined;
-  const season = Number(params.season);
-  const episode = Number(params.episode);
-  if (!type || !Number.isInteger(season) || !Number.isInteger(episode) || season < 0 || episode < 1) throw error(404, 'Episode not found');
-  throw redirect(307, `/watch/${type}/${params.id}?season=${season}&episode=${episode}`);
-};
+export const load: PageServerLoad = async (event) => loadWatchPage(event, 'path');

@@ -95,11 +95,17 @@ assert.match(spotlight, /MAX_SLIDES = 6/, 'the carousel rendering window is exac
 assert.match(spotlight, /\.spotlight \{[\s\S]*?width: 100%;/, 'the carousel is a full-width cinematic hero');
 assert.doesNotMatch(spotlight, /width: 90%;/, 'the old ~90% boxed width is gone');
 assert.match(spotlight, /prefers-reduced-motion: reduce/, 'the carousel honors reduced motion');
-assert.match(spotlight, /\/watch\/\$\{slide\.type\}\/\$\{slide\.id\}/, 'Play preserves the existing watch route pattern');
+// Deep-audit: the pre-Phase-5 assertions pinned the inline string URLs;
+// since Phase 5 ALL card URLs flow through the shared route helpers
+// (single source of truth for the public URL contract — detailHref/
+// watchHref with the anime-aware classification). The behavior contract
+// (Play → watch route, More details → detail route with the Explorer
+// origin) is unchanged.
+assert.match(spotlight, /watchPath\(slide\.id, slide\.type, slide\.isAnime, slide\.animeFormat\)/, 'Play preserves the existing watch route (via the shared route helper)');
 // MAV-20 Phase D: the More details link still targets the detail route,
 // now wrapped in appendReturnTo so it carries the Explorer origin as `from`.
-assert.match(spotlight, /appendReturnTo\(`\/\$\{slide\.type\}\/\$\{slide\.id\}`, returnTo\)/, 'More details preserves the existing detail route pattern (with the Explorer origin)');
-assert.match(spotlight, /appendReturnTo\(`\/watch\/\$\{slide\.type\}\/\$\{slide\.id\}`, returnTo\)/, 'Play carries the Explorer origin too');
+assert.match(spotlight, /appendReturnTo\(detailPath\(slide\.id/, 'More details preserves the existing detail route (via the shared route helper, with the Explorer origin)');
+assert.match(spotlight, /appendReturnTo\(watchPath\(slide\.id, slide\.type, slide\.isAnime, slide\.animeFormat\), returnTo\)/, 'Play carries the Explorer origin too');
 assert.match(explorerPage, /explorer-hero-fallback/, 'honest fallback block when the catalog cannot supply a lineup');
 assert.doesNotMatch(spotlight + loader, /Math\.random/, 'no render-time randomization (SSR/hydration stability)');
 ok('2. spotlight: 6 slides, 4s rotation, deterministic daily selection, 30-day freshness, honest fallback');

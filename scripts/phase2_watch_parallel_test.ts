@@ -29,7 +29,7 @@ import path from 'node:path';
  *   5. Episode fetch is still optional (failure is silently absorbed).
  *   6. The season fetch starts AFTER the adult gate clears (security:
  *      unauthorized requests never trigger episode metadata fetches).
- *   7. The adult gate uses locals.user (Phase 2-A reuse).
+ *   7. The adult gate uses event.locals.user (Phase 2-A reuse).
  *   8. No duplicate queries — the season fetch runs at most once.
  *
  * Runtime measurement (timing) is NOT covered here — the audit explicitly
@@ -48,7 +48,8 @@ function ok(condition: unknown, label: string) {
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 'utf8');
 
-const watch = read('src/routes/watch/[type]/[id]/+page.server.ts');
+// Deep-audit: the watch load logic lives in the SHARED loader (consumed by both the query-form and canonical path-form routes).
+const watch = read('src/routes/watch/[type]/[id]/watch-loader.ts');
 
 // ============================================================
 // 1. The load function uses Promise.all to parallelize.
@@ -65,7 +66,7 @@ ok(/detailVerdict\(item\.tags\)/.test(watch), '2b. the adult gate reads item.tag
 // ============================================================
 // 3. The adult gate is preserved — server-authoritative, non-disclosing.
 // ============================================================
-ok(/canAccessAdultContent\(locals\.supabase,\s*user,\s*cookies\)/.test(watch), '3a. adult gate calls canAccessAdultContent with the verified user + cookies');
+ok(/canAccessAdultContent\(event\.locals\.supabase,\s*user,\s*event\.cookies\)/.test(watch), '3a. adult gate calls canAccessAdultContent with the verified user + cookies');
 ok(/throw error\(404, 'Title not found'\)/.test(watch), '3b. unauthorized adult title returns the non-disclosing 404 (same as missing title)');
 
 // ============================================================
@@ -73,7 +74,7 @@ ok(/throw error\(404, 'Title not found'\)/.test(watch), '3b. unauthorized adult 
 // ============================================================
 ok(/EMPTY_STREAMING_CONFIG/.test(watch), '4a. EMPTY_STREAMING_CONFIG fallback defined');
 ok(/providers:\s*\[\]/.test(watch) && /sources:\s*\[\]/.test(watch) && /categories:\s*\[\]/.test(watch), '4b. fallback config has empty providers/sources/categories (safe degraded state)');
-ok(/getPublicStreamingConfig\(locals\.supabase\)\s*\.catch\(/.test(watch), '4c. streaming config failure is caught (no unhandled rejection)');
+ok(/getPublicStreamingConfig\(event\.locals\.supabase\)\s*\.catch\(/.test(watch), '4c. streaming config failure is caught (no unhandled rejection)');
 
 // ============================================================
 // 5. The obsolete MAVERO Player availability check is GONE.
@@ -84,11 +85,11 @@ ok(!/hasStreamEligibleAddons/.test(watch), '5b. hasStreamEligibleAddons is no lo
 // ============================================================
 // 6. Episode fetch is still optional (failure is silently absorbed).
 // ============================================================
-ok(/getSeriesSeason\(params\.id, seasonNumber\)/.test(watch), '6a. season fetch is called when series-like');
+ok(/getSeriesSeason\(rawId, seasonNumber\)/.test(watch), '6a. season fetch is called when series-like');
 // MAVP-6 (Issue 1) supersession: the season boundary now LOGS a stage-tagged
 // failure line before returning the SAME null — the absorption contract is
 // unchanged; the assertion checks the stronger shape (log + null outcome).
-ok(/getSeriesSeason\(params\.id, seasonNumber\)[\s\S]*?logWatchLoadStageFailure\(logger, 'watch:season'[\s\S]*?return null;/.test(watch), '6b. season fetch failure returns null (silently absorbed; MAVP-6: stage-logged)');
+ok(/getSeriesSeason\(rawId, seasonNumber\)[\s\S]*?logWatchLoadStageFailure\(logger, 'watch:season'[\s\S]*?return null;/.test(watch), '6b. season fetch failure returns null (silently absorbed; MAVP-6: stage-logged)');
 
 // ============================================================
 // 7. SECURITY: the season fetch starts AFTER the adult gate clears.
@@ -97,7 +98,7 @@ ok(/getSeriesSeason\(params\.id, seasonNumber\)[\s\S]*?logWatchLoadStageFailure\
 // adult requests. We verify the gate appears BEFORE the season promise.
 // ============================================================
 const gateIdx = watch.indexOf("detailVerdict(item.tags) === 'adult'");
-const seasonIdx = watch.indexOf('getSeriesSeason(params.id, seasonNumber)');
+const seasonIdx = watch.indexOf('getSeriesSeason(rawId, seasonNumber)');
 ok(gateIdx > -1, '7a. adult gate exists in source');
 ok(seasonIdx > -1, '7b. season fetch exists in source');
 ok(gateIdx < seasonIdx, '7c. adult gate appears BEFORE the season fetch (security: unauthorized requests never trigger episode metadata fetches)');
@@ -109,9 +110,9 @@ ok(/item\.seasonsData\?\.flatMap\(/.test(watch), '8a. fallback episodes from ite
 ok(/isSeriesLike\s*&&\s*seasonEpisodes\s*&&\s*seasonEpisodes\.length\s*>\s*0/.test(watch), '8b. season episodes used only when series-like AND non-empty');
 
 // ============================================================
-// 9. The adult gate uses locals.user (Phase 2-A reuse, not safeGetSession).
+// 9. The adult gate uses event.locals.user (Phase 2-A reuse, not safeGetSession).
 // ============================================================
-ok(/const user = locals\.user/.test(watch), '9a. adult gate uses locals.user (Phase 2-A: hook-resolved, no second auth roundtrip)');
+ok(/const user = event\.locals\.user/.test(watch), '9a. adult gate uses event.locals.user (Phase 2-A: hook-resolved, no second auth roundtrip)');
 ok(!/await\s+locals\.safeGetSession\(\)/.test(watch.replace(/\/\/[^\n]*/g, '')), '9b. no redundant safeGetSession call (Phase 2-A preserved)');
 
 // ============================================================
@@ -119,7 +120,7 @@ ok(!/await\s+locals\.safeGetSession\(\)/.test(watch.replace(/\/\/[^\n]*/g, '')),
 // ============================================================
 // Count occurrences of getSeriesSeason as a CALL (not import or comment).
 // Should be 1: the single season promise started after the adult gate.
-const seasonCallMatches = watch.match(/getSeriesSeason\(params\.id, seasonNumber\)/g) || [];
+const seasonCallMatches = watch.match(/getSeriesSeason\(rawId, seasonNumber\)/g) || [];
 ok(seasonCallMatches.length === 1, `10a. getSeriesSeason call sites: ${seasonCallMatches.length} (expected 1 — single season promise after the adult gate clears)`);
 
 console.log(`phase2_watch_parallel_test: ${passed} checks passed (Phase 2-E watch page parallelization)`);

@@ -468,9 +468,18 @@ async function enrichMovieCandidates(
     if (!m || (!m.title && !m.original_title)) return null;
     const date = m.release_date ?? '';
     if (!date || !Number.isFinite(Date.parse(date))) return null;
+    // Deep-audit Section 4: an anime movie (genre 16 + original_language
+    // 'ja') keeps the internal 'movie' type (the provider playback
+    // contract IS the movie pipeline) but carries the canonical
+    // 'anime-movie-{tmdbId}' event id + isAnime flag so the detail link
+    // resolves to /anime-movie/{id} — the same URL every other surface
+    // generates for the same title. It must not surface as a normal
+    // movie ONLY because TMDB's upstream endpoint is /movie/{id}.
+    const isAnimeMovie = isAnimeCandidate(m.genre_ids, m.original_language);
     const item: UpcomingItem = {
-      id: `movie-${m.id}`,
+      id: isAnimeMovie ? `anime-movie-${m.id}` : `movie-${m.id}`,
       type: 'movie' as const,
+      isAnime: isAnimeMovie || undefined,
       title: m.title || m.original_title || 'Untitled',
       poster: tmdbImage(m.poster_path, 'w500'),
       backdrop: tmdbImage(m.backdrop_path, 'w780') || undefined,

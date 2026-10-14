@@ -27,7 +27,7 @@
 </script>
 
 <script lang="ts">
-  import { Plus, MoreVertical, Trash2, Link2, Loader2, Film, Tv, Sparkles, AlertCircle, Search, LayoutGrid, List as ListIcon } from 'lucide-svelte';
+  import { Plus, MoreVertical, Trash2, Link2, Loader2, Film, Tv, Sparkles, AlertCircle, Search, LayoutGrid, List as ListIcon, SlidersHorizontal, X } from 'lucide-svelte';
   import AdminAddFileWizard from './AdminAddFileWizard.svelte';
   import type { UpdateTarget } from './AdminAddFileWizard.svelte';
 
@@ -50,12 +50,72 @@
   const PAGE_SIZE = 20;
 
   // --- Filters ---
+  // Deep-audit Section 7: the four filter dropdowns NO LONGER stack as
+  // separate toolbar rows — they live in a filter SHEET. The toolbar is
+  // ONE compact row: search (flex) + view toggle + Filter button. The
+  // sheet drafts locally and Apply commits (predictable close, applied
+  // filters preserved, active-count badge on the button).
   let searchQuery = $state('');
   let filterType = $state<string>('all');
   let filterProvider = $state<string>('all');
   let filterStatus = $state<string>('all');
   let sortBy = $state<string>('recently_updated');
   let viewMode = $state<'grid' | 'list'>('list');
+
+  // --- Filter sheet state ---
+  let filterSheetOpen = $state(false);
+  let draftType = $state<string>('all');
+  let draftProvider = $state<string>('all');
+  let draftStatus = $state<string>('all');
+  let draftSort = $state<string>('recently_updated');
+
+  function activeFilterCount(): number {
+    return (filterType !== 'all' ? 1 : 0)
+      + (filterProvider !== 'all' ? 1 : 0)
+      + (filterStatus !== 'all' ? 1 : 0)
+      + (sortBy !== 'recently_updated' ? 1 : 0);
+  }
+
+  function openFilterSheet() {
+    draftType = filterType;
+    draftProvider = filterProvider;
+    draftStatus = filterStatus;
+    draftSort = sortBy;
+    filterSheetOpen = true;
+  }
+
+  function closeFilterSheet() {
+    filterSheetOpen = false;
+  }
+
+  function applyFilters() {
+    filterType = draftType;
+    filterProvider = draftProvider;
+    filterStatus = draftStatus;
+    sortBy = draftSort;
+    filterSheetOpen = false;
+    void loadList(true);
+  }
+
+  function clearFilters() {
+    draftType = 'all';
+    draftProvider = 'all';
+    draftStatus = 'all';
+    draftSort = 'recently_updated';
+    filterType = 'all';
+    filterProvider = 'all';
+    filterStatus = 'all';
+    sortBy = 'recently_updated';
+    filterSheetOpen = false;
+    void loadList(true);
+  }
+
+  function onFilterKeydown(event: KeyboardEvent) {
+    if (event.key === 'Escape' && filterSheetOpen) {
+      event.stopPropagation();
+      closeFilterSheet();
+    }
+  }
 
   // --- Wizard + delete state ---
   let wizardOpen = $state(false);
@@ -269,39 +329,26 @@
   }
 </script>
 
+<svelte:window onkeydown={onFilterKeydown} />
+
 <section class="media-library" aria-label="Media Library">
-  <!-- Filter bar -->
-  <div class="filter-bar">
+  <!-- Compact toolbar: ONE horizontal row on every viewport — search
+       input (flex) + view toggle + Filter button. Filters open in a
+       sheet; they never stack as toolbar rows. -->
+  <div class="toolbar">
     <div class="search-input-wrap">
       <Search size={14} class="search-icon" />
-      <input type="text" class="search-input" placeholder="Search by title or TMDB ID…" bind:value={searchQuery} oninput={onFilterChange} autocomplete="off" />
+      <input type="text" class="search-input" placeholder="Search by title or TMDB ID…" bind:value={searchQuery} oninput={onFilterChange} autocomplete="off" aria-label="Search media library" />
     </div>
-    <select class="filter-select" bind:value={filterType} onchange={onFilterChange} aria-label="Content type">
-      <option value="all">All Types</option>
-      <option value="movie">Movie</option>
-      <option value="series">TV Series</option>
-      <option value="anime">Anime</option>
-    </select>
-    <select class="filter-select" bind:value={filterProvider} onchange={onFilterChange} aria-label="Provider">
-      <option value="all">All Providers</option>
-      <option value="vidara">Vidara</option>
-      <option value="abyss">Abyss</option>
-    </select>
-    <select class="filter-select" bind:value={filterStatus} onchange={onFilterChange} aria-label="Status">
-      <option value="all">All Status</option>
-      <option value="available">Available</option>
-      <option value="missing">Missing</option>
-      <option value="ready">Ready</option>
-    </select>
-    <select class="filter-select" bind:value={sortBy} onchange={onFilterChange} aria-label="Sort">
-      <option value="recently_updated">Recently Updated</option>
-      <option value="recently_added">Recently Added</option>
-      <option value="title">Title A-Z</option>
-    </select>
     <div class="view-toggle" role="group" aria-label="View mode">
-      <button type="button" class:active={viewMode === 'list'} onclick={() => toggleView('list')} aria-label="List view"><ListIcon size={15} /></button>
-      <button type="button" class:active={viewMode === 'grid'} onclick={() => toggleView('grid')} aria-label="Grid view"><LayoutGrid size={15} /></button>
+      <button type="button" class:active={viewMode === 'list'} onclick={() => toggleView('list')} aria-label="List view" aria-pressed={viewMode === 'list'}><ListIcon size={15} /></button>
+      <button type="button" class:active={viewMode === 'grid'} onclick={() => toggleView('grid')} aria-label="Grid view" aria-pressed={viewMode === 'grid'}><LayoutGrid size={15} /></button>
     </div>
+    <button type="button" class="filter-btn" class:filters-active={activeFilterCount() > 0} onclick={openFilterSheet} aria-haspopup="dialog" aria-expanded={filterSheetOpen}>
+      <SlidersHorizontal size={14} />
+      <span>Filter</span>
+      {#if activeFilterCount() > 0}<span class="filter-count" aria-label="{activeFilterCount()} active filters">{activeFilterCount()}</span>{/if}
+    </button>
   </div>
 
   <!-- Loading / Error / Empty / List -->
@@ -391,6 +438,62 @@
   onsaved={() => { void loadList(true); }}
 />
 
+<!-- Filter sheet: ALL filters in ONE modal — never stacked toolbar rows.
+     Draft values commit on Apply; Clear resets everything. Escape and
+     the overlay close predictably (drafts discarded, applied filters
+     preserved). -->
+{#if filterSheetOpen}
+  <div class="wizard-overlay" onclick={closeFilterSheet} role="presentation">
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <div class="filter-sheet" role="dialog" aria-modal="true" aria-labelledby="filter-title" tabindex="-1" onclick={(e) => e.stopPropagation()}>
+      <div class="filter-head">
+        <h3 id="filter-title"><SlidersHorizontal size={14} /> Filters</h3>
+        <button type="button" class="wizard-close" onclick={closeFilterSheet} aria-label="Close filters"><X size={16} /></button>
+      </div>
+      <div class="filter-body">
+        <div class="field-group">
+          <label class="field-label" for="filter-type">Content type</label>
+          <select id="filter-type" class="ref-input" bind:value={draftType}>
+            <option value="all">All</option>
+            <option value="movie">Movie</option>
+            <option value="series">TV Series</option>
+            <option value="anime">Anime</option>
+          </select>
+        </div>
+        <div class="field-group">
+          <label class="field-label" for="filter-provider">Provider</label>
+          <select id="filter-provider" class="ref-input" bind:value={draftProvider}>
+            <option value="all">All</option>
+            <option value="vidara">Vidara</option>
+            <option value="abyss">Abyss</option>
+          </select>
+        </div>
+        <div class="field-group">
+          <label class="field-label" for="filter-status">Status</label>
+          <select id="filter-status" class="ref-input" bind:value={draftStatus}>
+            <option value="all">All</option>
+            <option value="available">Available</option>
+            <option value="missing">Missing</option>
+            <option value="ready">Ready</option>
+          </select>
+        </div>
+        <div class="field-group">
+          <label class="field-label" for="filter-sort">Sort</label>
+          <select id="filter-sort" class="ref-input" bind:value={draftSort}>
+            <option value="recently_updated">Recently Updated</option>
+            <option value="recently_added">Recently Added</option>
+            <option value="title">Title A-Z</option>
+          </select>
+        </div>
+      </div>
+      <div class="filter-actions">
+        <button type="button" class="btn btn-cancel" onclick={clearFilters}>Clear</button>
+        <button type="button" class="btn btn-apply" onclick={applyFilters}>Apply</button>
+      </div>
+    </div>
+  </div>
+{/if}
+
 <!-- Delete Confirmation -->
 {#if deleteTarget}
   <div class="wizard-overlay" onclick={() => { if (!deleting) deleteTarget = null; }} role="presentation">
@@ -412,17 +515,39 @@
 <style>
   .media-library { display: flex; flex-direction: column; gap: var(--a2-space-3); }
 
-  .filter-bar { display: flex; gap: var(--a2-space-2); flex-wrap: wrap; align-items: center; }
-  .search-input-wrap { display: flex; align-items: center; gap: 8px; padding: 0 12px; height: 36px; background: var(--a2-surface-3); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); flex: 1; min-width: 180px; }
+  /* Compact toolbar — ONE row on every viewport (deep-audit Section 7):
+     search takes the available width, the view toggle + Filter button
+     stay compact and adjacent. Filters live in the sheet, not here. */
+  .toolbar { display: flex; gap: var(--a2-space-2); align-items: center; }
+  .search-input-wrap { display: flex; align-items: center; gap: 8px; padding: 0 12px; height: 36px; background: var(--a2-surface-3); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); flex: 1; min-width: 0; }
   .search-input-wrap:focus-within { border-color: var(--a2-cyan); }
-  .search-input { flex: 1; border: 0; outline: 0; background: transparent; color: var(--a2-text); font-size: var(--a2-text-sm); }
+  .search-input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--a2-text); font-size: var(--a2-text-sm); }
   .search-input::placeholder { color: var(--a2-text-dim); }
   .search-icon { color: var(--a2-text-dim); flex-shrink: 0; }
-  .filter-select { height: 36px; padding: 0 8px; background: var(--a2-surface-3); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); color: var(--a2-text); font-size: var(--a2-text-xs); cursor: pointer; outline: 0; }
-  .filter-select:focus { border-color: var(--a2-cyan); }
-  .view-toggle { display: inline-flex; gap: 2px; border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); overflow: hidden; }
+  .view-toggle { display: inline-flex; gap: 2px; border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); overflow: hidden; flex-shrink: 0; }
   .view-toggle button { padding: 7px 10px; border: 0; background: transparent; color: var(--a2-text-muted); cursor: pointer; display: grid; place-items: center; }
   .view-toggle button.active { background: rgba(0,200,200,0.12); color: var(--a2-cyan); }
+  .filter-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 36px; padding: 0 12px; flex-shrink: 0; min-width: 76px; border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); background: var(--a2-surface-3); color: var(--a2-text); font-size: var(--a2-text-xs); font-weight: 600; cursor: pointer; }
+  .filter-btn:hover { border-color: var(--a2-cyan); color: var(--a2-cyan); }
+  .filter-btn.filters-active { border-color: var(--a2-cyan); color: var(--a2-cyan); background: rgba(0,200,200,0.08); }
+  .filter-count { display: inline-grid; place-items: center; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--a2-cyan); color: #001418; font-size: 0.6rem; font-weight: 800; }
+
+  /* Filter sheet */
+  .filter-sheet { position: relative; z-index: 91; width: min(400px, calc(100vw - 32px)); max-height: calc(100dvh - 64px); display: flex; flex-direction: column; background: var(--a2-surface-2, #1a1a1a); border: 1px solid var(--a2-border-strong, #333); border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,0.5); overflow: hidden; }
+  .filter-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--a2-border, #222); }
+  .filter-head h3 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 0.9rem; font-weight: 700; color: var(--a2-text-bright, #f0f0f0); }
+  .wizard-close { display: grid; place-items: center; width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--a2-text-muted, #888); cursor: pointer; }
+  .wizard-close:hover { background: var(--a2-surface-3, #222); color: var(--a2-text, #ddd); }
+  .filter-body { padding: 14px 18px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
+  .field-group { display: flex; flex-direction: column; gap: 6px; }
+  .field-label { font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--a2-text-muted, #888); }
+  .ref-input { height: 38px; padding: 0 12px; background: var(--a2-surface-3, #1a1a1a); border: 1px solid var(--a2-border, #222); border-radius: 8px; color: var(--a2-text, #ddd); font-size: 0.82rem; outline: 0; }
+  .ref-input:focus { border-color: var(--a2-cyan, #0ff); }
+  .filter-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--a2-border, #222); }
+  .btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; border: 1px solid transparent; border-radius: 8px; font-size: 0.78rem; font-weight: 700; cursor: pointer; }
+  .btn-cancel { background: var(--a2-surface-3, #1a1a1a); border-color: var(--a2-border, #222); color: var(--a2-text-muted, #888); }
+  .btn-apply { background: rgba(0,200,200,0.12); border-color: rgba(0,200,200,0.3); color: var(--a2-cyan, #0ff); }
+  .btn-apply:hover { background: rgba(0,200,200,0.2); }
 
   .state-msg { display: flex; flex-direction: column; align-items: center; gap: var(--a2-space-3); padding: var(--a2-space-8); color: var(--a2-text-muted); font-size: var(--a2-text-sm); }
   .state-error { color: var(--a2-red); }
@@ -489,8 +614,12 @@
   @keyframes spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
 
   @media (max-width: 640px) {
-    .filter-bar { flex-direction: column; align-items: stretch; }
-    .filter-select { width: 100%; }
+    /* The toolbar REMAINS one compact row on mobile — search flexes, the
+       Filter button stays a compact fixed-width control. Filters open in
+       the sheet (no stacked dropdown rows). */
+    .toolbar { gap: 6px; }
+    .filter-btn { min-width: 44px; padding: 0 10px; }
+    .filter-btn span:not(.filter-count) { display: none; }
     .media-grid { grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); }
     .media-poster { width: 32px; height: 48px; }
     .media-title { font-size: var(--a2-text-xs); }

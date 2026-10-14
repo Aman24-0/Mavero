@@ -69,11 +69,16 @@ const identityOnlyRoutes = [
   'src/routes/api/account/favorites/+server.ts',
   'src/routes/api/account/favorites/batch-delete/+server.ts',
   'src/routes/api/account/sync/+server.ts',
-  'src/routes/watch/[type]/[id]/+page.server.ts',
+  // Deep-audit: the parent watch route is a thin wrapper (its load logic
+  // lives in watch-loader.ts, listed below).
+  'src/routes/watch/[type]/[id]/watch-loader.ts',
   'src/routes/watch/mavero-downloader/tv/[tmdbId]/[season]/[episode]/+page.server.ts',
   'src/routes/watch/mavero-downloader/movie/[tmdbId]/+page.server.ts',
-  'src/routes/series/[id]/+page.server.ts',
-  'src/routes/anime/[id]/+page.server.ts',
+  // Deep-audit: /series/ + /anime/ are 308 redirect stubs since Phase 5 —
+  // the canonical detail routes carry the session reads.
+  'src/routes/tv-show/[id]/+page.server.ts',
+  'src/routes/anime-series/[id]/+page.server.ts',
+  'src/routes/anime-movie/[id]/+page.server.ts',
   'src/routes/movie/[id]/+page.server.ts',
   'src/routes/search/+page.server.ts',
   'src/lib/server/account/actions.ts',

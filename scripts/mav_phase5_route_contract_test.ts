@@ -94,13 +94,19 @@ ok(/redirect\(308/.test(movieServer), '5f. /movie/[id] redirects legacy prefixed
 
 console.log('\n§6 — Watch route accepts new public route types');
 
-const watchServer = src('src/routes/watch/[type]/[id]/+page.server.ts');
+// Deep-audit refactor: the watch load logic lives in the SHARED loader
+// (watch-loader.ts) consumed by BOTH the query-form parent route AND the
+// canonical [season]/[episode] path-form route — one implementation, two
+// URL shapes, identical behavior.
+const watchServer = src('src/routes/watch/[type]/[id]/watch-loader.ts');
 ok(/isPublicRouteType/.test(watchServer), '6a. watch route checks isPublicRouteType');
 ok(/internalContentType/.test(watchServer), '6b. watch route derives internal type from public route type');
 ok(/isLegacyWatchType/.test(watchServer), '6c. watch route detects legacy types (series/anime)');
 ok(/modernizeWatchType/.test(watchServer), '6d. watch route modernizes legacy types to new form');
 ok(/redirect/.test(watchServer), '6e. watch route redirects legacy types');
 ok(/internalType === 'series'/.test(watchServer), '6f. watch route uses internalType for isSeriesLike check');
+ok(existsSync(resolve(root, 'src/routes/watch/[type]/[id]/[season]/[episode]/+page.server.ts')) && /loadWatchPage\(event, 'path'\)/.test(src('src/routes/watch/[type]/[id]/[season]/[episode]/+page.server.ts')), '6g. canonical path-form route delegates to the shared loader');
+ok(/loadWatchPage\(event, 'query'\)/.test(watchServer) || /loadWatchPage\(event, 'query'\)/.test(src('src/routes/watch/[type]/[id]/+page.server.ts')), '6h. query-form route delegates to the shared loader');
 
 console.log('\n§7 — Route generators use shared helper');
 
@@ -138,10 +144,20 @@ const seo = src('src/lib/shared/seo.ts');
 ok(/PRODUCTION_ORIGIN/.test(seo), '9b. SEO uses fixed PRODUCTION_ORIGIN');
 ok(/canonicalHref/.test(seo), '9c. canonicalHref function exists');
 
-console.log('\n§10 — Watch episode redirect preserves query params');
+console.log('\n§10 — Canonical path-form watch contract');
 
-const watchEpisode = src('src/routes/watch/[type]/[id]/[season]/[episode]/+page.server.ts');
-ok(/redirect\(307/.test(watchEpisode), '10a. /watch/[type]/[id]/[season]/[episode] redirects (307)');
+// Deep-audit: the canonical public watch URL is the PATH form
+// (/watch/tv-show/1396/5/6). The [season]/[episode] route IS the
+// canonical shape (no redirect); the QUERY form is the backward-compatible
+// shape that redirects (308) to the path form. watchHref() generates path
+// segments; the loop-safe redirect rules live in the shared loader.
+const routesHelpers = src('src/lib/shared/routes.ts');
+ok(/\/\$\{s\}\/\$\{e\}/.test(routesHelpers) || /`\$\{base\}\/\$\{s\}\/\$\{e\}`/.test(routesHelpers), '10a. watchHref generates PATH-form season/episode segments');
+ok(/canonicalWatchHref/.test(routesHelpers), '10b. canonicalWatchHref helper exists (loader redirects + episode navigation)');
+const watchLoader = src('src/routes/watch/[type]/[id]/watch-loader.ts');
+ok(/redirect\(308/.test(watchLoader), '10c. query-form season+episode deep links 308 to the canonical path form');
+ok(/isLegacyPrefixedId/.test(watchLoader), '10d. legacy prefixed watch IDs 308 to bare TMDB IDs');
+ok(/Invalid season or episode/.test(watchLoader), '10e. invalid path season/episode rejected with 404 (no silent fallback)');
 
 console.log(`\nmav_phase5_route_contract_test: ${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

@@ -101,7 +101,9 @@ const shell = read('../src/lib/components/player/PlayerShell.svelte');
 const shellCode = codeOnly(shell);
 const viewport = read('../src/lib/components/player/PlayerViewport.svelte');
 const viewportCode = codeOnly(viewport);
-const watchServer = read('../src/routes/watch/[type]/[id]/+page.server.ts');
+// Deep-audit: the watch load logic lives in the SHARED loader (consumed by
+// both the query-form and canonical path-form routes).
+const watchServer = read('../src/routes/watch/[type]/[id]/watch-loader.ts');
 const watchServerCode = codeOnly(watchServer);
 const watchRoute = read('../src/routes/watch/[type]/[id]/+page.svelte');
 const watchRouteCode = codeOnly(watchRoute);
@@ -126,8 +128,11 @@ const validation = read('../src/lib/server/streaming/validation.ts');
 const validationCode = codeOnly(validation);
 const migration = read('../supabase/migrations/20261107000000_default_source_slots.sql');
 const movieDetailServer = read('../src/routes/movie/[id]/+page.server.ts');
-const seriesDetailServer = read('../src/routes/series/[id]/+page.server.ts');
-const animeDetailServer = read('../src/routes/anime/[id]/+page.server.ts');
+// Deep-audit: /series/ + /anime/ are 308 redirect stubs since Phase 5 —
+// the canonical detail loads (with the cache policy + adult gate) live on
+// the /tv-show/, /anime-series/ and /anime-movie/ routes.
+const seriesDetailServer = read('../src/routes/tv-show/[id]/+page.server.ts');
+const animeDetailServer = read('../src/routes/anime-series/[id]/+page.server.ts');
 const vidriftMigration = read('../supabase/migrations/20261105000000_vidrift_provider.sql');
 
 // ---------------------------------------------------------------------------
@@ -182,7 +187,7 @@ ok(watchServerCode.includes("import { logger } from '$lib/server/http/log';"),
 ok(/if \(detailVerdict\(item\.tags\) === 'adult'\)\s*\{[^}]*canAccessAdultContent[\s\S]*?\n  \}/.test(watchServerCode),
   'RC-2: the fail-closed guard lives inside the adult-verdict branch only');
 // The rest of the load's guarded shape is unchanged (detail→404, config→empty, season→null).
-ok(watchServerCode.includes(".catch(() => {\n    // Fail-closed: an unresolvable title (including a failed classification\n    // fetch) is a 404 — never an unclassified watch page.\n    throw error(404, 'Title not found');\n  })") || /getDetail\(params\.type, params\.id\)\.catch/.test(watchServerCode),
+ok(/getDetail\(internalType, rawId\)\.catch/.test(watchServerCode),
   'RC-2: the getDetail→404 guard is unchanged');
 // MAVP-6 (Issue 1): the degradation boundary now LOGS (stage-tagged) before
 // returning the SAME EMPTY config — the outcome contract is unchanged; the
@@ -193,7 +198,7 @@ ok(watchServerCode.includes('logWatchLoadStageFailure(logger, \'watch:streaming-
 // MAVP-6 (Issue 1): the season boundary now LOGS (stage-tagged) before
 // returning the SAME null — the absorption contract is unchanged; the
 // assertion is updated to the stronger shape (log + same typed outcome).
-ok(/getSeriesSeason\(params\.id, seasonNumber\)[\s\S]*?logWatchLoadStageFailure\(logger, 'watch:season'[\s\S]*?return null;/.test(watchServerCode),
+ok(/getSeriesSeason\(rawId, seasonNumber\)[\s\S]*?logWatchLoadStageFailure\(logger, 'watch:season'[\s\S]*?return null;/.test(watchServerCode),
   'RC-2: the optional season fetch absorption is unchanged (now stage-logged)');
 section('Issue 2 — The Gentlemen card-play 500');
 

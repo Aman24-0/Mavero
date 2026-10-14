@@ -27,6 +27,7 @@ function ok(cond: boolean, label: string, extra = ''): void {
 console.log('\n§1 — Resolver error-isolation contract (Phase 7 §18 fix)');
 
 const adapter = src('src/lib/server/resolver/mavero-hosted.ts');
+const identifiers = src('src/lib/server/resolver/identifiers.ts');
 
 // The fix: ResolverError subclasses are re-thrown, not swallowed.
 ok(/if \(error instanceof ResolverError\) throw error/.test(adapter), '1a. ResolverError instances re-thrown (not swallowed)');
@@ -48,7 +49,14 @@ console.log('\n§3 — Canonical identity matching (no cross-episode collision)'
 ok(/movieCanonicalKey/.test(adapter), '3a. uses movieCanonicalKey for movies');
 ok(/seriesCanonicalKey/.test(adapter), '3b. uses seriesCanonicalKey for series');
 ok(/episodeCanonicalKey/.test(adapter), '3c. uses episodeCanonicalKey for episodes (exact season+episode)');
-ok(/return null/.test(adapter) && /anime or unknown/.test(adapter), '3d. anime/unknown/malformed → null (fail safe)');
+// Deep-audit Section 3: legacy 'anime' mediaType is normalized to the
+// series contract at the parse boundary (parseResolverRequest) and the
+// adapter's canonical-key derivation treats series-like requests
+// ('series' + fail-safe 'anime') uniformly — the previous hard 'anime →
+// null' branch was the second half of the INVALID_REQUEST root cause.
+// Unknown media types still fail safe to null.
+ok(/unknown — fail safe/.test(adapter) && /return null/.test(adapter), '3d. unknown mediaType → null (fail safe; legacy anime normalized at the parse boundary)');
+ok(/=== 'anime' \? 'series'/.test(identifiers), '3d-2. parseResolverRequest normalizes legacy anime mediaType to the series provider contract');
 
 console.log('\n§4 — Embed type (not direct)');
 
