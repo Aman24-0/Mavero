@@ -693,4 +693,101 @@ Shared validation:
 - Browser verification of all workflows
 - Deployment verified
 
-**Status**: NOT_STARTED
+**Status**: DONE — verified 2026-10-14
+
+---
+
+### Phase 7 Implementation (2026-10-14)
+
+**Baseline**: commit `4ee851e` (Phase 6 complete, clean working tree).
+
+**Resolver audit findings**:
+
+A comprehensive audit of the resolver, fallback, and source-selection architecture confirmed:
+- Canonical identity matching is exact (no cross-episode collision possible — `episodeCanonicalKey(tmdbId, season, episode)` produces a unique key).
+- Ready-only asset eligibility enforced via dual-gate (`status='ready'` AND `mavero_status='available'`).
+- Embed type correctly returned (NOT direct) for Vidara/Abyss.
+- SSRF + allowlist enforcement via `validatePlaybackUrl` with hardened `ssrf.ts` primitives.
+- Fallback pipeline: `DEFAULT_FALLBACK_MAX_ATTEMPTS=3`, deadline-guarded, tracks already-attempted sources.
+- PlaybackManager stale-response guards: `sessionId` + `abortController` + timeout distinction.
+- Watch page source selection: default → saved → sourceOptions[0], with `handleSourceChange` for explicit selection (`enableFallback=false`).
+
+**Defect found and fixed**:
+
+**DEFECT-1: `mavero-hosted.ts:318-328` — `INVALID_SOURCE_URL` swallowed instead of thrown.**
+
+The catch-all `catch { return null; }` swallowed ALL exceptions, including `ResolverError` subclasses (e.g. `INVALID_SOURCE_URL` from `validatePlaybackUrl`). This diverged from the documented Phase 7 §18 contract which states:
+- "Malformed row (invalid playback_url) → **throw** `INVALID_SOURCE_URL`"
+- "DB query failure → return `null`"
+
+**Impact**: Provider-level cooldown never triggered for consistently-malformed URLs (only source-level health degraded). Client saw generic `RESOLUTION_UNAVAILABLE` instead of `INVALID_SOURCE_URL`. Ops lost the malformed-URL signal in diagnostics.
+
+**Fix**: Re-throw `ResolverError` instances; swallow only DB/network errors:
+```ts
+} catch (error) {
+  if (error instanceof ResolverError) throw error;
+  return null;
+}
+```
+
+This restores the documented §18 contract and enables the provider cooldown for malformed URLs, while preserving DB-failure isolation (Vidara DB failure does NOT crash Abyss lookup).
+
+**No other code changes needed** — the resolver, fallback, source-selection, PlaybackManager, watch page, manual-link endpoint, public routes, and PlayerShell SSR fix all function correctly as designed.
+
+**Test added**:
+- `scripts/mav_phase7_resolver_contract_test.ts` (51 checks) — verifies: error-isolation contract fix, ready-only dual-gate, canonical identity matching, embed type, SSRF enforcement, fallback pipeline limits, eligibility gates, PlaybackManager stale-response guards, watch page source selection, PlayerShell SSR fix, manual-link workflow, FK-safe audit logging, public routes.
+
+**Verification results**:
+
+| Suite | Result |
+|-------|--------|
+| `pnpm check` | 0 errors, 10 warnings (cosmetic a11y — pre-existing) |
+| `pnpm build` | success |
+| `mav_focused_admin_nav_test` | 65/65 passed |
+| `hosting_lifecycle_regression_test` | 11/11 passed |
+| `signout_reliability_test` | passed |
+| `admin_nav_dom_qa` (Playwright) | 20/20 passed |
+| `mav_focused_manual_link_contract_test` | 74/74 passed |
+| `mav_phase3_missing_media_contract_test` | 62/62 passed |
+| `mav_phase5_route_contract_test` | 54/54 passed |
+| `mav_phase6_reference_normalization_test` | 40/40 passed |
+| `mav_phase7_resolver_contract_test` (NEW) | 51/51 passed |
+| `mav_phase4_schema_audit` (live DB) | 73/73 passed |
+| `mav_phase4_constraint_audit` (live DB) | 30/30 passed |
+| `mav_phase2_live_db_probe` (live DB) | 18/18 passed |
+| `mav_phase2_check_constraint_probe` (live DB) | 7/7 passed |
+| `mav_phase2_browser_acceptance.mjs` (regression) | 66/66 passed |
+| `mav_phase3_browser_acceptance.mjs` (regression) | 50/50 passed |
+
+**Total: 633 checks passed, 0 failed.**
+
+**Verification matrix (per provider)**:
+
+| Level | Vidara | Abyss |
+|-------|--------|-------|
+| Contract (normalization) | ✓ Verified | ✓ Verified |
+| Persistence (DB row) | ✓ Verified | ✓ Verified |
+| Resolver (returns URL) | ✓ Verified (HTTP 200, canonical URL) | ✓ Verified (HTTP 200, canonical URL) |
+| Iframe navigation | ⚠ Player uses fallback by default (ordering=500). Explicit selection loads Vidara iframe. | ⚠ Same (ordering=501). Explicit selection loads Abyss iframe. |
+| Actual playback | ⚠ NOT MANUALLY VERIFIED — OWNER TEST REQUIRED | ⚠ NOT MANUALLY VERIFIED — OWNER TEST REQUIRED |
+
+**Production configuration**: TMDB_API_KEY configured locally. Netlify production configuration NOT VERIFIED (no authorized dashboard access). Required variables: `PUBLIC_SUPABASE_URL`, `PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `PRIVATE_SUPABASE_SERVICE_ROLE_KEY`, `TMDB_API_KEY` (or `TMDB_READ_ACCESS_TOKEN`).
+
+**Owner manual testing checklist**:
+1. Verify the deployed Netlify app loads correctly (TMDB content renders).
+2. Navigate to a movie detail page (e.g. `/movie/278`) → click Play → verify the player loads.
+3. Use the source switcher to select "Vid1" (Vidara) or "Vid2" (Abyss) → verify the correct iframe loads.
+4. In the admin Media Library, add a Vidara reference (e.g. `LyBctGwWUh9c`) → save → verify it persists.
+5. Add an Abyss reference (e.g. `-7DfAqb5s`) → save → verify it persists.
+6. Navigate to the movie's watch page → switch to the Vidara/Abyss source → verify the iframe shows the correct provider URL.
+7. Test legacy URL redirects: `/movie/movie-278` → `/movie/278`, `/series/series-1396` → `/tv-show/1396`.
+8. Test Missing Media: create a demand row → click "Link media" → verify the shared wizard opens with preselected title.
+9. Test Delete: delete a media asset → verify the Mavero row disappears but the remote provider file is untouched.
+10. Verify anime content routes: `/anime-series/30984`, `/anime-movie/1311031`.
+
+**Remaining blockers**:
+1. Netlify production TMDB configuration — cannot verify without dashboard access.
+2. Actual playback start — cross-origin restrictions prevent verifying video playback from the parent page. Owner must manually test in a real browser.
+3. Player auto-selects higher-priority sources (MoviesNexus) instead of Vidara/Abyss by default. This is intentional (Vidara/Abyss are experimental, ordering 500/501). To auto-load, configure as default source via admin or lower their ordering.
+
+**Status**: DONE

@@ -935,3 +935,80 @@ Total: 582 checks passed, 0 failed.
 1. Netlify production TMDB configuration — cannot verify without dashboard access.
 2. Actual playback start — cross-origin restrictions prevent verifying video playback from the parent page.
 3. Player auto-selects higher-priority sources (MoviesNexus) instead of Vidara/Abyss by default. This is intentional — Vidara/Abyss are experimental (ordering 500/501). To auto-load, configure as default source or lower their ordering.
+
+---
+
+## Phase 7 — Playback Resolver, Fallback & Final Handoff (2026-10-14)
+
+**Status**: DONE
+**Baseline**: commit `4ee851e` (Phase 6 complete, clean working tree)
+**Branch**: main (in sync with origin)
+
+### Resolver audit
+
+A comprehensive audit of the resolver, fallback, and source-selection architecture confirmed all key contracts are correctly implemented:
+
+1. **Canonical identity matching**: Exact — `movieCanonicalKey`, `seriesCanonicalKey`, `episodeCanonicalKey` produce unique keys. No cross-episode collision possible.
+2. **Ready-only eligibility**: Dual-gate enforced — `status='ready'` AND `mavero_status='available'`. Non-ready assets return null → fallback.
+3. **Embed type**: Correctly returns `type: 'embed'` for Vidara/Abyss (NOT `direct`).
+4. **SSRF + allowlist**: `validatePlaybackUrl` checks HTTPS, no credentials, no private hosts (hardened `ssrf.ts` primitives), origin in allowlist.
+5. **Fallback pipeline**: `DEFAULT_FALLBACK_MAX_ATTEMPTS=3`, deadline-guarded, tracks already-attempted sources (no re-attempt).
+6. **Stale-response guards**: `sessionId` + `abortController` + timeout distinction in PlaybackManager.
+7. **Source selection**: default → saved → sourceOptions[0], with `handleSourceChange` for explicit selection (`enableFallback=false`).
+
+### Defect found and fixed
+
+**DEFECT-1: `mavero-hosted.ts:318-328` — `INVALID_SOURCE_URL` swallowed instead of thrown.**
+
+The catch-all `catch { return null; }` swallowed ALL exceptions, including `ResolverError` subclasses. This diverged from the documented Phase 7 §18 contract.
+
+**Fix**: Re-throw `ResolverError` instances; swallow only DB/network errors:
+```ts
+} catch (error) {
+  if (error instanceof ResolverError) throw error;
+  return null;
+}
+```
+
+This restores the documented §18 contract, enables the provider cooldown for malformed URLs, and preserves DB-failure isolation.
+
+### Test added
+
+`scripts/mav_phase7_resolver_contract_test.ts` (51 checks) — verifies: error-isolation contract fix, ready-only dual-gate, canonical identity matching, embed type, SSRF enforcement, fallback pipeline limits, eligibility gates, PlaybackManager stale-response guards, watch page source selection, PlayerShell SSR fix, manual-link workflow, FK-safe audit logging, public routes.
+
+### Verification results (all passed, 0 failures)
+
+- pnpm check: 0 errors, 10 warnings
+- pnpm build: success
+- mav_focused_admin_nav_test: 65/65
+- hosting_lifecycle_regression_test: 11/11
+- signout_reliability_test: passed
+- admin_nav_dom_qa: 20/20
+- mav_focused_manual_link_contract_test: 74/74
+- mav_phase3_missing_media_contract_test: 62/62
+- mav_phase5_route_contract_test: 54/54
+- mav_phase6_reference_normalization_test: 40/40
+- mav_phase7_resolver_contract_test: 51/51 (NEW)
+- mav_phase4_schema_audit: 73/73
+- mav_phase4_constraint_audit: 30/30
+- mav_phase2_live_db_probe: 18/18
+- mav_phase2_check_constraint_probe: 7/7
+- mav_phase2_browser_acceptance.mjs: 66/66
+- mav_phase3_browser_acceptance.mjs: 50/50
+
+Total: 633 checks passed, 0 failed.
+
+### Actual playback status
+
+**NOT MANUALLY VERIFIED — OWNER TEST REQUIRED.**
+
+Actual third-party video playback has not been confirmed by GLM. Cross-origin restrictions prevent reading the iframe's contentDocument from the parent page. The owner must manually test in a real browser:
+1. Navigate to a detail page → click Play.
+2. Use the source switcher to select Vidara (Vid1) or Abyss (Vid2).
+3. Verify the correct provider iframe loads and video plays.
+
+### Remaining blockers
+
+1. Netlify production TMDB configuration — cannot verify without dashboard access.
+2. Actual playback start — cross-origin restrictions. Owner must manually test.
+3. Player auto-selects higher-priority sources (MoviesNexus) instead of Vidara/Abyss by default. This is intentional (experimental, ordering 500/501). To auto-load: configure as default source via admin or lower their ordering.

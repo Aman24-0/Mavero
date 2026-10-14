@@ -80,6 +80,7 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '$lib/server/supabase/database.types';
 import { allowedEmbedOriginsFromCapabilities, allowDynamicEmbedOriginsFromCapabilities, validatePlaybackUrl } from './safe-url';
+import { ResolverError } from './errors';
 import { episodeCanonicalKey, movieCanonicalKey, seriesCanonicalKey } from '$lib/server/hosting/media/canonical-key';
 import type { AdapterResult, ProviderAdapter, ResolverContext } from './types';
 import type { Json } from '$lib/server/supabase/database.types';
@@ -315,15 +316,18 @@ export function createMaveroHostedAdapter(adapterId: 'vidara' | 'abyss'): Provid
             adapterId,
           },
         };
-      } catch {
-        // Swallow the exception — Phase 7 §18 contract. Never log
-        // credentials (none are present in this code path; the catch
-        // is purely defensive). The resolver's existing
-        // `console.error('[Resolver] adapter failure', ...)` log path
-        // in core.ts will surface INTERNAL_RESOLUTION_ERROR if the
-        // error propagates from `resultFromAdapter` — but this catch
-        // prevents propagation for adapter-internal failures, so the
-        // next candidate is attempted instead.
+      } catch (error) {
+        // Phase 7 §18 error-isolation contract:
+        //   * ResolverError subclasses (e.g. INVALID_SOURCE_URL from
+        //     validatePlaybackUrl) MUST propagate — the resolver core
+        //     catches them via asResolverError, records the correct
+        //     diagnostic code, and triggers the provider cooldown for
+        //     consistently-malformed URLs. Swallowing these would
+        //     hide the root cause from ops and prevent the cooldown.
+        //   * DB / network / Supabase-client failures return null so
+        //     the resolver's fallback machinery continues with the next
+        //     candidate. Vidara DB failure does NOT crash Abyss lookup.
+        if (error instanceof ResolverError) throw error;
         return null;
       }
     },
