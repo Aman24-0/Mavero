@@ -1,9 +1,10 @@
 <script lang="ts" module>
-  // MAV-FOCUSED — Compact Media Library list (2026-10).
+  // MAV-FOCUSED — Compact Media Library list with filters, grid/list, pagination (2026-10).
   //
   // Replaces the old AdminHostingAssets (2262 lines) with a simple list:
-  //   * Compact rows: poster, title, type, TMDB ID, provider, 3-dot menu.
-  //   * Add File wizard: delegated to the shared AdminAddFileWizard.
+  //   * Grid/List view toggle with poster display.
+  //   * Search by title, filter by content type / provider / status.
+  //   * 20-item incremental pagination with infinite scroll.
   //   * Three-dot menu: Delete (Mavero-side only) + Update link.
   //
   // Uses the /api/admin/media/manual-link endpoint for create/update/delete.
@@ -21,11 +22,12 @@
     status: string;
     maveroStatus: string;
     mediaAssetId: string;
+    posterPath?: string | null;
   };
 </script>
 
 <script lang="ts">
-  import { Plus, MoreVertical, Trash2, Link2, Loader2, Film, Tv, Sparkles, AlertCircle } from 'lucide-svelte';
+  import { Plus, MoreVertical, Trash2, Link2, Loader2, Film, Tv, Sparkles, AlertCircle, Search, LayoutGrid, List as ListIcon } from 'lucide-svelte';
   import AdminAddFileWizard from './AdminAddFileWizard.svelte';
   import type { UpdateTarget } from './AdminAddFileWizard.svelte';
 
@@ -41,37 +43,55 @@
   // --- State ---
   let items = $state<MediaRow[]>([]);
   let loading = $state(true);
+  let loadingMore = $state(false);
   let error = $state<string | null>(null);
+  let hasMore = $state(false);
+  let currentPage = $state(1);
+  const PAGE_SIZE = 20;
 
-  // Shared wizard state
+  // --- Filters ---
+  let searchQuery = $state('');
+  let filterType = $state<string>('all');
+  let filterProvider = $state<string>('all');
+  let filterStatus = $state<string>('all');
+  let sortBy = $state<string>('recently_updated');
+  let viewMode = $state<'grid' | 'list'>('list');
+
+  // --- Wizard + delete state ---
   let wizardOpen = $state(false);
   let wizardUpdateTarget = $state<UpdateTarget | null>(null);
-
-  // Delete confirmation state
   let deleteTarget = $state<MediaRow | null>(null);
   let deleting = $state(false);
-
-  // Three-dot menu state
   let openMenuId = $state<string | null>(null);
+
+  // --- Debounce for search ---
+  let searchDebounce: ReturnType<typeof setTimeout> | null = null;
+  let searchToken = 0;
+
+  // --- TMDB image helper ---
+  const TMDB_IMAGE_BASE = 'https://image.tmdb.org/t/p/w342';
+  function posterUrl(path?: string | null): string | null {
+    if (!path) return null;
+    if (path.startsWith('http')) return path;
+    return `${TMDB_IMAGE_BASE}${path}`;
+  }
 
   // --- Lifecycle ---
   let prevOpen = false;
 
   $effect(() => {
     if (!prevOpen) {
-      loadList();
+      loadList(true);
     }
     prevOpen = true;
   });
 
-  // Register the add-file trigger with the parent.
   $effect(() => {
     if (registerAddFile) {
       registerAddFile(() => { openAddWizard(); });
     }
   });
 
-  // Close menu on outside click
   $effect(() => {
     if (openMenuId) {
       const handler = () => { openMenuId = null; };
@@ -80,29 +100,83 @@
     }
   });
 
-  // --- List loading ---
-  async function loadList() {
-    loading = true;
-    error = null;
+  // --- Load list with filters + pagination ---
+  async function loadList(reset: boolean = false) {
+    if (reset) {
+      currentPage = 1;
+      items = [];
+      loading = true;
+      error = null;
+    } else {
+      loadingMore = true;
+    }
+
+    const token = ++searchToken;
+
+    const params = new URLSearchParams({
+      status: filterStatus,
+      sort: sortBy,
+      limit: String(PAGE_SIZE),
+      page: String(currentPage),
+    });
+    if (searchQuery.trim()) params.set('q', searchQuery.trim());
+    if (filterType !== 'all') params.set('type', filterType);
+    // Provider filter uses source_id — we need to find it from the providers list.
+    if (filterProvider !== 'all') {
+      const prov = providers.find(p => p.adapterId === filterProvider);
+      if (prov) params.set('provider', prov.sourceId);
+    }
+
     try {
-      const res = await fetch('/api/admin/media/library?status=all&limit=100&sort=recently_updated');
+      const res = await fetch(`/api/admin/media/library?${params.toString()}`);
       const json = await res.json();
+      if (token !== searchToken) return; // stale response
+
       if (json.ok) {
-        items = (json.items ?? []).map(mapLibraryItem).filter((i: MediaRow) => i.mediaAssetId);
+        const newItems = (json.items ?? []).map(mapLibraryItem).filter((i: MediaRow) => i.mediaAssetId);
+        if (reset) {
+          items = newItems;
+        } else {
+          // Deduplicate by mediaAssetId.
+          const existingIds = new Set(items.map(i => i.mediaAssetId));
+          const filtered = newItems.filter((i: MediaRow) => !existingIds.has(i.mediaAssetId));
+          items = [...items, ...filtered];
+        }
+        hasMore = json.has_more ?? false;
       } else {
         error = json.error?.message ?? 'Failed to load media library.';
-        items = [];
+        if (reset) items = [];
       }
     } catch (err) {
+      if (token !== searchToken) return;
       error = err instanceof Error ? err.message : 'Failed to load media library.';
-      items = [];
+      if (reset) items = [];
     } finally {
-      loading = false;
+      if (token === searchToken) {
+        loading = false;
+        loadingMore = false;
+      }
+    }
+  }
+
+  // --- Filter change handler ---
+  function onFilterChange() {
+    if (searchDebounce) clearTimeout(searchDebounce);
+    searchDebounce = setTimeout(() => { void loadList(true); }, 300);
+  }
+
+  // --- Infinite scroll ---
+  function onScroll(event: Event) {
+    const target = event.target as HTMLElement;
+    if (!target) return;
+    const nearBottom = target.scrollHeight - target.scrollTop - target.clientHeight < 200;
+    if (nearBottom && !loadingMore && !loading && hasMore) {
+      currentPage++;
+      void loadList(false);
     }
   }
 
   function mapLibraryItem(item: any): MediaRow {
-    // Find the first non-deleted asset for this media item.
     const asset = (item.assets ?? []).find((a: any) => a.status !== 'deleted') ?? item.assets?.[0];
     const providerName = asset ? providerNameForSource(asset.provider_source_id) : 'Unknown';
     return {
@@ -116,6 +190,7 @@
       status: asset?.status ?? 'unknown',
       maveroStatus: asset?.mavero_status ?? 'unknown',
       mediaAssetId: asset?.id ?? '',
+      posterPath: item.poster_path ?? null,
     };
   }
 
@@ -137,7 +212,7 @@
       const json = await res.json();
       if (json.ok) {
         deleteTarget = null;
-        await loadList();
+        await loadList(true);
       } else {
         error = json.error?.message ?? 'Delete failed.';
       }
@@ -176,22 +251,106 @@
       : row.providerName === 'abyss' || row.providerName.toLowerCase().includes('abyss') ? 'Abyss'
       : row.providerName;
   }
+
+  function providerShort(row: MediaRow): string {
+    const label = providerLabel(row);
+    return label === 'Vidara' ? 'Vid' : label === 'Abyss' ? 'Ab' : label.slice(0, 3);
+  }
+
+  // Load view mode from localStorage.
+  try {
+    const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('mav-library-view') : null;
+    if (saved === 'grid' || saved === 'list') viewMode = saved;
+  } catch { /* ignore */ }
+
+  function toggleView(mode: 'grid' | 'list') {
+    viewMode = mode;
+    try { if (typeof localStorage !== 'undefined') localStorage.setItem('mav-library-view', mode); } catch { /* ignore */ }
+  }
 </script>
 
 <section class="media-library" aria-label="Media Library">
+  <!-- Filter bar -->
+  <div class="filter-bar">
+    <div class="search-input-wrap">
+      <Search size={14} class="search-icon" />
+      <input type="text" class="search-input" placeholder="Search by title or TMDB ID…" bind:value={searchQuery} oninput={onFilterChange} autocomplete="off" />
+    </div>
+    <select class="filter-select" bind:value={filterType} onchange={onFilterChange} aria-label="Content type">
+      <option value="all">All Types</option>
+      <option value="movie">Movie</option>
+      <option value="series">TV Series</option>
+      <option value="anime">Anime</option>
+    </select>
+    <select class="filter-select" bind:value={filterProvider} onchange={onFilterChange} aria-label="Provider">
+      <option value="all">All Providers</option>
+      <option value="vidara">Vidara</option>
+      <option value="abyss">Abyss</option>
+    </select>
+    <select class="filter-select" bind:value={filterStatus} onchange={onFilterChange} aria-label="Status">
+      <option value="all">All Status</option>
+      <option value="available">Available</option>
+      <option value="missing">Missing</option>
+      <option value="ready">Ready</option>
+    </select>
+    <select class="filter-select" bind:value={sortBy} onchange={onFilterChange} aria-label="Sort">
+      <option value="recently_updated">Recently Updated</option>
+      <option value="recently_added">Recently Added</option>
+      <option value="title">Title A-Z</option>
+    </select>
+    <div class="view-toggle" role="group" aria-label="View mode">
+      <button type="button" class:active={viewMode === 'list'} onclick={() => toggleView('list')} aria-label="List view"><ListIcon size={15} /></button>
+      <button type="button" class:active={viewMode === 'grid'} onclick={() => toggleView('grid')} aria-label="Grid view"><LayoutGrid size={15} /></button>
+    </div>
+  </div>
+
   <!-- Loading / Error / Empty / List -->
   {#if loading}
     <div class="state-msg"><Loader2 size={20} class="spinner" /> Loading media library…</div>
   {:else if error}
-    <div class="state-msg state-error"><AlertCircle size={20} /> {error}<button class="retry-btn" onclick={loadList}>Retry</button></div>
+    <div class="state-msg state-error"><AlertCircle size={20} /> {error}<button class="retry-btn" onclick={() => loadList(true)}>Retry</button></div>
   {:else if items.length === 0}
     <div class="state-msg state-empty"><Film size={32} /><p>No media linked yet. Click "Add file" to link your first video.</p></div>
+  {:else if viewMode === 'grid'}
+    <div class="media-grid" onscroll={onScroll}>
+      {#each items as row (row.id)}
+        <div class="grid-card" data-status={row.maveroStatus}>
+          <div class="grid-poster">
+            {#if posterUrl(row.posterPath)}
+              <img src={posterUrl(row.posterPath)} alt={row.title} loading="lazy" />
+            {:else}
+              <div class="grid-poster-fallback">{#if row.contentType === 'movie'}<Film size={24} />{:else if row.contentType === 'anime'}<Sparkles size={24} />{:else}<Tv size={24} />{/if}</div>
+            {/if}
+            <div class="grid-menu-btn" onclick={(e) => { e.stopPropagation(); openMenuId = openMenuId === row.id ? null : row.id; }}>
+              <MoreVertical size={14} />
+            </div>
+            {#if openMenuId === row.id}
+              <div class="menu-dropdown" role="menu" onclick={(e) => e.stopPropagation()}>
+                <button type="button" class="menu-item" role="menuitem" onclick={() => { openMenuId = null; openUpdateWizard(row); }}><Link2 size={14} /> Update link</button>
+                <button type="button" class="menu-item menu-item-danger" role="menuitem" onclick={() => { openMenuId = null; deleteTarget = row; }}><Trash2 size={14} /> Delete</button>
+              </div>
+            {/if}
+          </div>
+          <div class="grid-info">
+            <div class="grid-title">{row.title}</div>
+            <div class="grid-meta">
+              <span class="badge-type">{contentTypeLabel(row.contentType)}</span>
+              <span class="badge-provider" data-provider={providerLabel(row).toLowerCase()}>{providerLabel(row)}</span>
+            </div>
+          </div>
+        </div>
+      {/each}
+    </div>
   {:else}
-    <div class="media-list">
+    <div class="media-list" onscroll={onScroll}>
       {#each items as row (row.id)}
         <div class="media-row" data-status={row.maveroStatus}>
           <div class="media-poster">
-            {#if row.contentType === 'movie'}<Film size={18} />{:else if row.contentType === 'anime'}<Sparkles size={18} />{:else}<Tv size={18} />{/if}
+            {#if posterUrl(row.posterPath)}
+              <img src={posterUrl(row.posterPath)} alt={row.title} loading="lazy" />
+            {:else}
+              {#if row.contentType === 'movie'}<Film size={18} />{:else if row.contentType === 'anime'}<Sparkles size={18} />{:else}<Tv size={18} />{/if}
+            {/if}
           </div>
           <div class="media-info">
             <div class="media-title">{row.title}</div>
@@ -202,30 +361,25 @@
             </div>
           </div>
           <div class="media-actions">
-            <!-- Three-dot menu -->
-            <button
-              type="button"
-              class="menu-trigger"
-              onclick={(e) => { e.stopPropagation(); openMenuId = openMenuId === row.id ? null : row.id; }}
-              aria-label="Actions"
-              aria-expanded={openMenuId === row.id}
-            >
-              <MoreVertical size={16} />
-            </button>
+            <button type="button" class="menu-trigger" onclick={(e) => { e.stopPropagation(); openMenuId = openMenuId === row.id ? null : row.id; }} aria-label="Actions" aria-expanded={openMenuId === row.id}><MoreVertical size={16} /></button>
             {#if openMenuId === row.id}
               <div class="menu-dropdown" role="menu" onclick={(e) => e.stopPropagation()}>
-                <button type="button" class="menu-item" role="menuitem" onclick={() => { openMenuId = null; openUpdateWizard(row); }}>
-                  <Link2 size={14} /> Update link
-                </button>
-                <button type="button" class="menu-item menu-item-danger" role="menuitem" onclick={() => { openMenuId = null; deleteTarget = row; }}>
-                  <Trash2 size={14} /> Delete
-                </button>
+                <button type="button" class="menu-item" role="menuitem" onclick={() => { openMenuId = null; openUpdateWizard(row); }}><Link2 size={14} /> Update link</button>
+                <button type="button" class="menu-item menu-item-danger" role="menuitem" onclick={() => { openMenuId = null; deleteTarget = row; }}><Trash2 size={14} /> Delete</button>
               </div>
             {/if}
           </div>
         </div>
       {/each}
     </div>
+  {/if}
+
+  <!-- Loading more indicator -->
+  {#if loadingMore}
+    <div class="loading-more"><Loader2 size={16} class="spinner" /> Loading more…</div>
+  {/if}
+  {#if !loading && !loadingMore && !hasMore && items.length > 0}
+    <div class="end-of-list">End of list</div>
   {/if}
 </section>
 
@@ -234,7 +388,7 @@
   bind:open={wizardOpen}
   {providers}
   updateTarget={wizardUpdateTarget}
-  onsaved={() => { void loadList(); }}
+  onsaved={() => { void loadList(true); }}
 />
 
 <!-- Delete Confirmation -->
@@ -258,19 +412,33 @@
 <style>
   .media-library { display: flex; flex-direction: column; gap: var(--a2-space-3); }
 
+  .filter-bar { display: flex; gap: var(--a2-space-2); flex-wrap: wrap; align-items: center; }
+  .search-input-wrap { display: flex; align-items: center; gap: 8px; padding: 0 12px; height: 36px; background: var(--a2-surface-3); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); flex: 1; min-width: 180px; }
+  .search-input-wrap:focus-within { border-color: var(--a2-cyan); }
+  .search-input { flex: 1; border: 0; outline: 0; background: transparent; color: var(--a2-text); font-size: var(--a2-text-sm); }
+  .search-input::placeholder { color: var(--a2-text-dim); }
+  .search-icon { color: var(--a2-text-dim); flex-shrink: 0; }
+  .filter-select { height: 36px; padding: 0 8px; background: var(--a2-surface-3); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); color: var(--a2-text); font-size: var(--a2-text-xs); cursor: pointer; outline: 0; }
+  .filter-select:focus { border-color: var(--a2-cyan); }
+  .view-toggle { display: inline-flex; gap: 2px; border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); overflow: hidden; }
+  .view-toggle button { padding: 7px 10px; border: 0; background: transparent; color: var(--a2-text-muted); cursor: pointer; display: grid; place-items: center; }
+  .view-toggle button.active { background: rgba(0,200,200,0.12); color: var(--a2-cyan); }
+
   .state-msg { display: flex; flex-direction: column; align-items: center; gap: var(--a2-space-3); padding: var(--a2-space-8); color: var(--a2-text-muted); font-size: var(--a2-text-sm); }
   .state-error { color: var(--a2-red); }
   .state-empty p { margin: 0; text-align: center; max-width: 420px; }
   .retry-btn { padding: 6px 14px; border: 1px solid var(--a2-border-strong); border-radius: var(--a2-radius-sm); background: var(--a2-surface-3); color: var(--a2-text); font-size: var(--a2-text-xs); font-weight: 600; cursor: pointer; }
   .retry-btn:hover { border-color: var(--a2-cyan); color: var(--a2-cyan); }
+  .loading-more { display: flex; align-items: center; justify-content: center; gap: 8px; padding: var(--a2-space-3); color: var(--a2-text-muted); font-size: var(--a2-text-xs); }
+  .end-of-list { text-align: center; padding: var(--a2-space-2); color: var(--a2-text-dim); font-size: var(--a2-text-2xs); }
 
-  .media-list { display: flex; flex-direction: column; gap: 2px; }
+  /* List view */
+  .media-list { display: flex; flex-direction: column; gap: 2px; max-height: calc(100dvh - 280px); overflow-y: auto; }
   .media-row { display: flex; align-items: center; gap: var(--a2-space-3); padding: var(--a2-space-3); background: var(--a2-surface-2); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); transition: border-color 140ms ease; }
   .media-row:hover { border-color: var(--a2-border-strong); }
   .media-row[data-status="missing"] { opacity: 0.6; }
-
-  .media-poster { display: grid; place-items: center; width: 40px; height: 40px; flex-shrink: 0; border-radius: var(--a2-radius-sm); background: var(--a2-surface-4); color: var(--a2-text-dim); }
-
+  .media-poster { display: grid; place-items: center; width: 40px; height: 60px; flex-shrink: 0; border-radius: var(--a2-radius-sm); background: var(--a2-surface-4); color: var(--a2-text-dim); overflow: hidden; }
+  .media-poster img { width: 100%; height: 100%; object-fit: cover; }
   .media-info { flex: 1; min-width: 0; }
   .media-title { font-size: var(--a2-text-sm); font-weight: 600; color: var(--a2-text-bright); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .media-meta { display: flex; gap: var(--a2-space-2); align-items: center; margin-top: 3px; }
@@ -280,6 +448,21 @@
   .badge-provider[data-provider="abyss"] { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
   .tmdb-id { font-family: var(--a2-font-mono); font-size: var(--a2-text-2xs); color: var(--a2-text-dim); }
 
+  /* Grid view */
+  .media-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: var(--a2-space-3); max-height: calc(100dvh - 280px); overflow-y: auto; }
+  .grid-card { display: flex; flex-direction: column; background: var(--a2-surface-2); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); overflow: hidden; transition: border-color 140ms ease; }
+  .grid-card:hover { border-color: var(--a2-border-strong); }
+  .grid-card[data-status="missing"] { opacity: 0.6; }
+  .grid-poster { position: relative; width: 100%; aspect-ratio: 2/3; background: var(--a2-surface-4); display: grid; place-items: center; }
+  .grid-poster img { width: 100%; height: 100%; object-fit: cover; }
+  .grid-poster-fallback { color: var(--a2-text-dim); }
+  .grid-menu-btn { position: absolute; top: 4px; right: 4px; width: 28px; height: 28px; display: grid; place-items: center; border-radius: var(--a2-radius-xs); background: rgba(0,0,0,0.6); color: var(--a2-text); cursor: pointer; opacity: 0; transition: opacity 140ms ease; }
+  .grid-card:hover .grid-menu-btn { opacity: 1; }
+  .grid-info { padding: 8px; }
+  .grid-title { font-size: var(--a2-text-xs); font-weight: 600; color: var(--a2-text-bright); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .grid-meta { display: flex; gap: 4px; align-items: center; margin-top: 4px; flex-wrap: wrap; }
+
+  /* Menu */
   .media-actions { position: relative; flex-shrink: 0; }
   .menu-trigger { display: grid; place-items: center; width: 32px; height: 32px; border: 0; border-radius: var(--a2-radius-sm); background: transparent; color: var(--a2-text-muted); cursor: pointer; }
   .menu-trigger:hover { background: var(--a2-surface-3); color: var(--a2-text); }
@@ -296,20 +479,20 @@
   .confirm-desc { margin: 0 0 8px; font-size: 0.8rem; color: var(--a2-text, #ddd); }
   .confirm-note { margin: 0 0 16px; font-size: 0.7rem; color: var(--a2-text-muted, #888); }
   .confirm-actions { display: flex; justify-content: flex-end; gap: 8px; }
-
-  .btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; border: 1px solid transparent; border-radius: 8px; font-size: 0.78rem; font-weight: 700; cursor: pointer; transition: background 140ms ease, border-color 140ms ease; }
+  .btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; border: 1px solid transparent; border-radius: 8px; font-size: 0.78rem; font-weight: 700; cursor: pointer; }
   .btn:disabled { opacity: 0.5; cursor: not-allowed; }
   .btn-cancel { background: var(--a2-surface-3, #1a1a1a); border-color: var(--a2-border, #222); color: var(--a2-text-muted, #888); }
   .btn-danger { background: rgba(220,60,60,0.12); border-color: rgba(220,60,60,0.3); color: #c44; }
   .btn-danger:hover { background: rgba(220,60,60,0.2); }
-
   .spinner { animation: spin 1s linear infinite; }
 
   @keyframes spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
 
   @media (max-width: 640px) {
-    .media-row { padding: var(--a2-space-2); }
-    .media-poster { width: 32px; height: 32px; }
+    .filter-bar { flex-direction: column; align-items: stretch; }
+    .filter-select { width: 100%; }
+    .media-grid { grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); }
+    .media-poster { width: 32px; height: 48px; }
     .media-title { font-size: var(--a2-text-xs); }
     .media-meta { flex-wrap: wrap; gap: 4px; }
   }

@@ -1,11 +1,11 @@
 <script lang="ts" module>
   /**
-   * MAV-FOCUSED — Shared Add File / Update Link wizard (Phase 3, 2026-10).
+   * MAV-FOCUSED — Shared Add File / Update Link wizard (Phase 3+7, 2026-10).
    *
    * Extracted from AdminMediaList.svelte so both Media Library and Missing
    * Media use the SAME manual-link workflow:
    *
-   *   TMDB search → provider selection → reference entry → save
+   *   TMDB search → [episode selection for series/anime] → provider selection → reference entry → save
    *
    * The wizard calls /api/admin/media/manual-link (the secure endpoint
    * that resolves canonical identity server-side via CanonicalMediaService).
@@ -58,10 +58,24 @@
     type: 'movie' | 'series' | 'anime';
     overview?: string;
   };
+
+  export type SeasonInfo = {
+    number: number;
+    title: string;
+    episodeCount: number;
+    airDate?: string;
+  };
+
+  export type EpisodeInfo = {
+    number: number;
+    title: string;
+    airDate?: string;
+    still?: string;
+  };
 </script>
 
 <script lang="ts">
-  import { Search, X, Loader2, Film, Tv, Sparkles, AlertCircle, Check, ChevronRight } from 'lucide-svelte';
+  import { Search, X, Loader2, Film, Tv, Sparkles, AlertCircle, Check, ChevronRight, Image as ImageIcon } from 'lucide-svelte';
 
   // --- Props ---
   let {
@@ -81,9 +95,10 @@
   } = $props();
 
   // --- Wizard state ---
-  let wizardStep = $state<'search' | 'provider' | 'reference' | 'saving'>('search');
+  let wizardStep = $state<'search' | 'episode' | 'provider' | 'reference' | 'saving'>('search');
   let tmdbQuery = $state('');
   let tmdbType = $state<'movie' | 'series'>('movie');
+  let isAnimeChoice = $state(false);
   let tmdbSearching = $state(false);
   let tmdbResults = $state<TmdbResult[]>([]);
   let tmdbError = $state<string | null>(null);
@@ -95,26 +110,43 @@
   let saving = $state(false);
   let saveError = $state<string | null>(null);
 
+  // --- Episode selection state ---
+  let seasonsLoading = $state(false);
+  let seasonsError = $state<string | null>(null);
+  let seasons = $state<SeasonInfo[]>([]);
+  let selectedSeason = $state<number | null>(null);
+  let episodesLoading = $state(false);
+  let episodesError = $state<string | null>(null);
+  let episodes = $state<EpisodeInfo[]>([]);
+  let selectedEpisode = $state<EpisodeInfo | null>(null);
+  let seasonFetchToken = 0;
+  let episodeFetchToken = 0;
+
+  // --- TMDB image helper ---
+  const TMDB_IMAGE_BASE = 'https://image.tmdb.org/t/p/w342';
+  function posterUrl(path?: string): string | null {
+    if (!path) return null;
+    if (path.startsWith('http')) return path;
+    return `${TMDB_IMAGE_BASE}${path}`;
+  }
+
   // --- React to open / preselectedMediaItem / updateTarget changes ---
-  // When the wizard opens, initialize the state based on what was passed.
   $effect(() => {
     if (open) {
       resetWizard();
       if (updateTarget) {
-        // Update link mode — pre-fill with current data, start at search
-        // so admin can change title.
         selectedTmdb = {
           id: `${updateTarget.contentType === 'anime' ? 'series' : updateTarget.contentType}-${updateTarget.tmdbId}`,
           tmdbId: updateTarget.tmdbId,
           title: updateTarget.title,
           type: updateTarget.contentType === 'movie' ? 'movie' : 'series',
         };
+        isAnimeChoice = updateTarget.contentType === 'anime';
         selectedProvider = updateTarget.providerName.toLowerCase().includes('vidara') ? 'vidara'
           : updateTarget.providerName.toLowerCase().includes('abyss') ? 'abyss' : null;
         providerReference = updateTarget.providerAssetId;
         wizardStep = 'search';
       } else if (preselectedMediaItem) {
-        // Missing Media mode — skip TMDB search, go to provider selection.
         selectedTmdb = {
           id: `${preselectedMediaItem.contentType === 'anime' ? 'series' : preselectedMediaItem.contentType}-${preselectedMediaItem.tmdbId}`,
           tmdbId: preselectedMediaItem.tmdbId,
@@ -122,9 +154,17 @@
           year: preselectedMediaItem.year ?? undefined,
           type: preselectedMediaItem.contentType === 'movie' ? 'movie' : 'series',
         };
+        isAnimeChoice = preselectedMediaItem.contentType === 'anime';
+        // If the preselected item has season+episode, set them.
+        if (preselectedMediaItem.season != null) selectedSeason = preselectedMediaItem.season;
+        if (preselectedMediaItem.episode != null) {
+          selectedEpisode = {
+            number: preselectedMediaItem.episode,
+            title: preselectedMediaItem.episodeTitle ?? `Episode ${preselectedMediaItem.episode}`,
+          };
+        }
         wizardStep = 'provider';
       } else {
-        // Media Library mode — start at TMDB search.
         wizardStep = 'search';
       }
     }
@@ -168,6 +208,102 @@
 
   function selectTmdb(result: TmdbResult) {
     selectedTmdb = result;
+    selectedEpisode = null;
+    selectedSeason = null;
+    episodes = [];
+    seasons = [];
+    // For movies, skip episode selection. For series/anime, go to episode step.
+    if (result.type === 'movie') {
+      wizardStep = 'provider';
+    } else {
+      wizardStep = 'episode';
+      void loadSeasons(result.tmdbId);
+    }
+  }
+
+  // --- Season + Episode loading ---
+  async function loadSeasons(tmdbId: string) {
+    const token = ++seasonFetchToken;
+    seasonsLoading = true;
+    seasonsError = null;
+    seasons = [];
+    try {
+      // Fetch the series detail to get seasons list.
+      // The detail endpoint returns seasonsData with season metadata.
+      const res = await fetch(`/api/content/series/${encodeURIComponent(`series-${tmdbId}`)}`);
+      if (!res.ok) throw new Error(`Failed to load seasons (HTTP ${res.status}).`);
+      const json = await res.json();
+      const seasonsData = json.seasonsData ?? json.seasons_list ?? [];
+      if (token !== seasonFetchToken) return; // stale
+      if (Array.isArray(seasonsData) && seasonsData.length > 0) {
+        seasons = seasonsData.map((s: any) => ({
+          number: s.number ?? s.season_number ?? 0,
+          title: s.title ?? s.name ?? `Season ${s.number ?? s.season_number ?? 0}`,
+          episodeCount: s.episodeCount ?? s.episode_count ?? 0,
+          airDate: s.airDate ?? s.air_date,
+        }));
+        // Auto-select the first non-specials season.
+        const firstRegular = seasons.find(s => s.number > 0) ?? seasons[0];
+        if (firstRegular) {
+          selectedSeason = firstRegular.number;
+          void loadEpisodes(tmdbId, firstRegular.number);
+        }
+      } else {
+        seasonsError = 'No seasons found for this title. You can still link at the series level.';
+      }
+    } catch (err) {
+      if (token !== seasonFetchToken) return;
+      seasonsError = err instanceof Error ? err.message : 'Failed to load seasons.';
+    } finally {
+      if (token === seasonFetchToken) seasonsLoading = false;
+    }
+  }
+
+  async function loadEpisodes(tmdbId: string, seasonNumber: number) {
+    const token = ++episodeFetchToken;
+    episodesLoading = true;
+    episodesError = null;
+    episodes = [];
+    selectedEpisode = null;
+    try {
+      const res = await fetch(`/api/content/series/${encodeURIComponent(`series-${tmdbId}`)}/season/${seasonNumber}`);
+      if (!res.ok) throw new Error(`Failed to load episodes (HTTP ${res.status}).`);
+      const json = await res.json();
+      if (token !== episodeFetchToken) return; // stale
+      const eps = json.episodes ?? [];
+      if (Array.isArray(eps) && eps.length > 0) {
+        episodes = eps.map((e: any) => ({
+          number: e.number ?? e.episode_number ?? 0,
+          title: e.title ?? e.name ?? `Episode ${e.number ?? e.episode_number ?? 0}`,
+          airDate: e.airDate ?? e.air_date,
+          still: e.still ?? (e.still_path ? `https://image.tmdb.org/t/p/w300${e.still_path}` : undefined),
+        }));
+      } else {
+        episodesError = 'No episodes found for this season. You can still link at the series level.';
+      }
+    } catch (err) {
+      if (token !== episodeFetchToken) return;
+      episodesError = err instanceof Error ? err.message : 'Failed to load episodes.';
+    } finally {
+      if (token === episodeFetchToken) episodesLoading = false;
+    }
+  }
+
+  function selectSeason(seasonNumber: number) {
+    selectedSeason = seasonNumber;
+    selectedEpisode = null;
+    if (selectedTmdb) {
+      void loadEpisodes(selectedTmdb.tmdbId, seasonNumber);
+    }
+  }
+
+  function selectEpisode(ep: EpisodeInfo) {
+    selectedEpisode = ep;
+  }
+
+  function skipEpisodeSelection() {
+    selectedEpisode = null;
+    selectedSeason = null;
     wizardStep = 'provider';
   }
 
@@ -181,8 +317,6 @@
   async function saveLink() {
     if (!selectedTmdb || !selectedProvider || !providerReference.trim()) return;
 
-    // Client-side reference format validation (the server does the
-    // authoritative SSRF + allowlist check).
     const ref = providerReference.trim();
     if (!/^[a-zA-Z0-9_-]+$/.test(ref) && !ref.startsWith('http')) {
       referenceError = 'Reference must be alphanumeric (filecode/ID) or a full URL.';
@@ -193,32 +327,49 @@
     saving = true;
     saveError = null;
     try {
+      // Determine the contentType: if the admin chose anime, use 'anime';
+      // otherwise use the TMDB type. For series, the admin may choose anime.
+      const contentType = isAnimeChoice ? 'anime' : (selectedTmdb.type === 'movie' ? 'movie' : 'series');
       const body: Record<string, string> = {
-        contentType: selectedTmdb.type === 'movie' ? 'movie' : (preselectedMediaItem?.contentType ?? selectedTmdb.type),
+        contentType,
         tmdbId: selectedTmdb.tmdbId,
         provider: selectedProvider,
         reference: ref,
-        // Send the title + year from the TMDB search result (or the
-        // preselected item) so the server doesn't have to re-fetch from
-        // TMDB on every save.
         title: selectedTmdb.title,
       };
       if (selectedTmdb.year != null) {
         body.year = String(selectedTmdb.year);
       }
-      // Pass season + episode from the preselected item (Missing Media
-      // demand rows carry these for episode-level linking).
-      if (preselectedMediaItem?.season != null) {
+      // Pass season + episode from the wizard's episode selection.
+      if (selectedSeason != null) {
+        body.season = String(selectedSeason);
+      }
+      if (selectedEpisode != null) {
+        body.episode = String(selectedEpisode.number);
+        if (selectedEpisode.title) {
+          body.episodeTitle = selectedEpisode.title;
+        }
+      }
+      // Also handle preselectedMediaItem (Missing Media flow).
+      if (!selectedSeason && preselectedMediaItem?.season != null) {
         body.season = String(preselectedMediaItem.season);
       }
-      if (preselectedMediaItem?.episode != null) {
+      if (!selectedEpisode && preselectedMediaItem?.episode != null) {
         body.episode = String(preselectedMediaItem.episode);
+        if (preselectedMediaItem.episodeTitle) {
+          body.episodeTitle = preselectedMediaItem.episodeTitle;
+        }
       }
-      if (preselectedMediaItem?.episodeTitle) {
-        body.episodeTitle = preselectedMediaItem.episodeTitle;
+      // Pass poster path if available from search results.
+      if (selectedTmdb.poster) {
+        // Extract the relative path from the full URL.
+        const match = selectedTmdb.poster.match(/\/p\/\w+\//);
+        if (match) {
+          const relativePath = selectedTmdb.poster.substring(selectedTmdb.poster.indexOf(match[0]) + match[0].length);
+          if (relativePath) body.posterPath = relativePath;
+        }
       }
 
-      // If updating, include the mediaAssetId
       if (updateTarget) {
         body.mediaAssetId = updateTarget.mediaAssetId;
       }
@@ -256,6 +407,15 @@
     referenceError = null;
     saveError = null;
     saving = false;
+    isAnimeChoice = false;
+    seasons = [];
+    selectedSeason = null;
+    seasonsLoading = false;
+    seasonsError = null;
+    episodes = [];
+    selectedEpisode = null;
+    episodesLoading = false;
+    episodesError = null;
     if (tmdbDebounce) { clearTimeout(tmdbDebounce); tmdbDebounce = null; }
   }
 
@@ -268,6 +428,12 @@
   // --- Helpers ---
   function contentTypeLabel(type: string): string {
     return type === 'movie' ? 'Movie' : type === 'series' ? 'TV Series' : type === 'anime' ? 'Anime' : type;
+  }
+
+  // Computed: is this a series-like title that needs episode selection?
+  function needsEpisodeSelection(): boolean {
+    if (!selectedTmdb) return false;
+    return selectedTmdb.type !== 'movie';
   }
 </script>
 
@@ -303,7 +469,7 @@
           {#if updateTarget && selectedTmdb}
             <div class="current-selection">
               <span>Current: <strong>{selectedTmdb.title}</strong></span>
-              <button type="button" class="skip-btn" onclick={() => { wizardStep = 'provider'; }}>Keep current →</button>
+              <button type="button" class="skip-btn" onclick={() => { wizardStep = needsEpisodeSelection() ? 'episode' : 'provider'; }}>Keep current →</button>
             </div>
           {/if}
 
@@ -315,7 +481,13 @@
             {/if}
             {#each tmdbResults as result (result.id)}
               <button type="button" class="result-row" class:selected={selectedTmdb?.tmdbId === result.tmdbId} onclick={() => selectTmdb(result)}>
-                <div class="result-icon">{#if result.type === 'movie'}<Film size={14} />{:else if result.type === 'anime'}<Sparkles size={14} />{:else}<Tv size={14} />{/if}</div>
+                <div class="result-poster">
+                  {#if posterUrl(result.poster)}
+                    <img src={posterUrl(result.poster)} alt={result.title} loading="lazy" />
+                  {:else}
+                    {#if result.type === 'movie'}<Film size={14} />{:else if result.type === 'anime'}<Sparkles size={14} />{:else}<Tv size={14} />{/if}
+                  {/if}
+                </div>
                 <div class="result-info">
                   <div class="result-title">{result.title}</div>
                   <div class="result-meta"><span>{result.type}</span>{#if result.year}<span>· {result.year}</span>{/if}<span>· TMDB {result.tmdbId}</span></div>
@@ -326,8 +498,15 @@
           </div>
 
           {#if selectedTmdb}
+            <!-- Anime classification toggle for series results -->
+            {#if tmdbType === 'series'}
+              <label class="anime-toggle">
+                <input type="checkbox" bind:checked={isAnimeChoice} />
+                <span>Classify as Anime (uses anime canonical identity)</span>
+              </label>
+            {/if}
             <div class="wizard-footer">
-              <button type="button" class="btn btn-next" onclick={() => { wizardStep = 'provider'; }}>
+              <button type="button" class="btn btn-next" onclick={() => { wizardStep = needsEpisodeSelection() ? 'episode' : 'provider'; }}>
                 Continue <ChevronRight size={14} />
               </button>
             </div>
@@ -335,13 +514,74 @@
         </div>
       {/if}
 
-      <!-- Step 2: Provider Selection -->
+      <!-- Step 1.5: Episode Selection (series/anime only) -->
+      {#if wizardStep === 'episode'}
+        <div class="wizard-step">
+          <div class="step-label">Step 2 — Select episode</div>
+          <div class="selected-title-bar">
+            <span>Linking: <strong>{selectedTmdb?.title}</strong>{#if isAnimeChoice} (Anime){/if}</span>
+            <button type="button" class="change-btn" onclick={() => { wizardStep = 'search'; }}>Change</button>
+          </div>
+
+          {#if seasonsLoading}
+            <div class="results-empty"><Loader2 size={14} class="spinner" /> Loading seasons…</div>
+          {:else if seasonsError}
+            <div class="results-empty"><AlertCircle size={14} /> {seasonsError}</div>
+          {:else if seasons.length > 0}
+            <div class="season-selector">
+              <label class="ref-label" for="season-select">Season</label>
+              <select id="season-select" class="ref-input" value={selectedSeason} onchange={(e) => selectSeason(Number((e.target as HTMLSelectElement).value))}>
+                {#each seasons as s}
+                  <option value={s.number}>{s.title} ({s.episodeCount} episodes)</option>
+                {/each}
+              </select>
+            </div>
+
+            {#if episodesLoading}
+              <div class="results-empty"><Loader2 size={14} class="spinner" /> Loading episodes…</div>
+            {:else if episodesError}
+              <div class="results-empty"><AlertCircle size={14} /> {episodesError}</div>
+            {:else if episodes.length > 0}
+              <div class="results-list">
+                {#each episodes as ep (ep.number)}
+                  <button type="button" class="result-row" class:selected={selectedEpisode?.number === ep.number} onclick={() => selectEpisode(ep)}>
+                    <div class="episode-number">E{String(ep.number).padStart(2, '0')}</div>
+                    <div class="result-info">
+                      <div class="result-title">{ep.title}</div>
+                      <div class="result-meta">{#if ep.airDate}<span>{ep.airDate}</span>{/if}</div>
+                    </div>
+                    {#if selectedEpisode?.number === ep.number}<span class="result-check"><Check size={14} /></span>{/if}
+                  </button>
+                {/each}
+              </div>
+            {/if}
+          {/if}
+
+          {#if selectedEpisode}
+            <div class="current-selection">
+              <span>Selected: <strong>{selectedTmdb?.title}</strong> — S{String(selectedSeason).padStart(2, '0')}E{String(selectedEpisode.number).padStart(2, '0')} — {selectedEpisode.title}</span>
+            </div>
+          {/if}
+
+          <div class="wizard-footer">
+            <button type="button" class="btn btn-back" onclick={() => { wizardStep = 'search'; }}>Back</button>
+            <button type="button" class="btn btn-link-series" onclick={skipEpisodeSelection}>Link at series level</button>
+            {#if selectedEpisode}
+              <button type="button" class="btn btn-next" onclick={() => { wizardStep = 'provider'; }}>
+                Continue <ChevronRight size={14} />
+              </button>
+            {/if}
+          </div>
+        </div>
+      {/if}
+
+      <!-- Step 2/3: Provider Selection -->
       {#if wizardStep === 'provider'}
         <div class="wizard-step">
-          <div class="step-label">Step 2 — Select the host</div>
+          <div class="step-label">{needsEpisodeSelection() ? 'Step 3' : 'Step 2'} — Select the host</div>
           <div class="selected-title-bar">
-            <span>Linking: <strong>{selectedTmdb?.title}</strong></span>
-            <button type="button" class="change-btn" onclick={() => { wizardStep = 'search'; }}>Change</button>
+            <span>Linking: <strong>{selectedTmdb?.title}</strong>{#if selectedEpisode} — S{String(selectedSeason).padStart(2, '0')}E{String(selectedEpisode.number).padStart(2, '0')}{/if}</span>
+            <button type="button" class="change-btn" onclick={() => { wizardStep = needsEpisodeSelection() ? 'episode' : 'search'; }}>Change</button>
           </div>
           <div class="provider-cards">
             <button type="button" class="provider-card" class:selected={selectedProvider === 'vidara'} onclick={() => selectProvider('vidara')}>
@@ -354,24 +594,25 @@
             </button>
           </div>
           <div class="wizard-footer">
-            <button type="button" class="btn btn-back" onclick={() => { wizardStep = 'search'; }}>Back</button>
+            <button type="button" class="btn btn-back" onclick={() => { wizardStep = needsEpisodeSelection() ? 'episode' : 'search'; }}>Back</button>
           </div>
         </div>
       {/if}
 
-      <!-- Step 3: Reference Entry -->
+      <!-- Step 3/4: Reference Entry -->
       {#if wizardStep === 'reference'}
         <div class="wizard-step">
-          <div class="step-label">Step 3 — Enter the file reference</div>
+          <div class="step-label">{needsEpisodeSelection() ? 'Step 4' : 'Step 3'} — Enter the file reference</div>
           <div class="selected-title-bar">
-            <span>Linking: <strong>{selectedTmdb?.title}</strong> · {selectedProvider}</span>
+            <span>Linking: <strong>{selectedTmdb?.title}</strong>{#if selectedEpisode} — S{String(selectedSeason).padStart(2, '0')}E{String(selectedEpisode.number).padStart(2, '0')}{/if} · {selectedProvider}</span>
             <button type="button" class="change-btn" onclick={() => { wizardStep = 'provider'; }}>Change</button>
           </div>
           <div class="ref-input-section">
-            <label class="ref-label">
+            <label class="ref-label" for="ref-input">
               {selectedProvider === 'vidara' ? 'Vidara filecode or URL' : 'Abyss resource ID or URL'}
             </label>
             <input
+              id="ref-input"
               type="text"
               class="ref-input"
               bind:value={providerReference}
@@ -424,22 +665,32 @@
   .search-icon { color: var(--a2-text-dim, #555); flex-shrink: 0; }
   .spinner { animation: spin 1s linear infinite; }
 
-  .current-selection { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; background: rgba(0,200,200,0.08); border-radius: 6px; font-size: 0.75rem; color: var(--a2-text, #ddd); }
-  .skip-btn { background: transparent; border: 0; color: #0ff; font-size: 0.7rem; font-weight: 600; cursor: pointer; text-decoration: underline; }
+  .current-selection { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; background: rgba(0,200,200,0.08); border-radius: 6px; font-size: 0.75rem; color: var(--a2-text, #ddd); }
+  .skip-btn { background: transparent; border: 0; color: #0ff; font-size: 0.7rem; font-weight: 600; cursor: pointer; text-decoration: underline; white-space: nowrap; }
 
-  .results-list { max-height: 240px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+  .results-list { max-height: 280px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
   .results-empty { padding: 20px; text-align: center; color: var(--a2-text-dim, #555); font-size: 0.8rem; display: flex; align-items: center; justify-content: center; gap: 6px; }
   .result-row { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: var(--a2-surface-3, #1a1a1a); border: 1px solid var(--a2-border, #222); border-radius: 8px; cursor: pointer; text-align: left; transition: border-color 140ms ease; }
   .result-row:hover { border-color: rgba(0,255,255,0.3); }
   .result-row.selected { border-color: #0ff; background: rgba(0,255,255,0.08); }
-  .result-icon { display: flex; align-items: center; color: var(--a2-text-dim, #555); flex-shrink: 0; }
+
+  .result-poster { width: 34px; height: 51px; flex-shrink: 0; border-radius: 4px; overflow: hidden; display: grid; place-items: center; background: var(--a2-surface-4, #2a2a2a); color: var(--a2-text-dim, #555); }
+  .result-poster img { width: 100%; height: 100%; object-fit: cover; }
+
+  .episode-number { font-size: 0.7rem; font-weight: 700; color: #0ff; min-width: 36px; text-align: center; flex-shrink: 0; }
+
   .result-info { flex: 1; min-width: 0; }
   .result-title { font-size: 0.8rem; color: var(--a2-text-bright, #f0f0f0); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .result-meta { display: flex; gap: 4px; font-size: 0.6rem; color: var(--a2-text-dim, #555); text-transform: uppercase; letter-spacing: 0.04em; }
   .result-check { color: #0ff; flex-shrink: 0; }
 
-  .selected-title-bar { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; background: rgba(0,200,200,0.08); border-radius: 6px; font-size: 0.78rem; color: var(--a2-text, #ddd); }
-  .change-btn { background: transparent; border: 0; color: #0ff; font-size: 0.7rem; font-weight: 600; cursor: pointer; text-decoration: underline; }
+  .anime-toggle { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: rgba(168,85,247,0.08); border: 1px solid rgba(168,85,247,0.2); border-radius: 8px; font-size: 0.75rem; color: var(--a2-text, #ddd); cursor: pointer; }
+  .anime-toggle input { accent-color: #a855f7; }
+
+  .season-selector { display: flex; flex-direction: column; gap: 6px; }
+
+  .selected-title-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; background: rgba(0,200,200,0.08); border-radius: 6px; font-size: 0.78rem; color: var(--a2-text, #ddd); }
+  .change-btn { background: transparent; border: 0; color: #0ff; font-size: 0.7rem; font-weight: 600; cursor: pointer; text-decoration: underline; white-space: nowrap; }
 
   .provider-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   .provider-card { display: flex; flex-direction: column; gap: 4px; padding: 14px; border: 1px solid var(--a2-border, #222); border-radius: 8px; background: var(--a2-surface-3, #1a1a1a); cursor: pointer; text-align: left; transition: border-color 140ms ease; }
@@ -455,7 +706,7 @@
   .ref-hint { margin: 0; font-size: 0.65rem; color: var(--a2-text-dim, #555); line-height: 1.4; }
   .ref-error { margin: 0; font-size: 0.65rem; color: #c44; display: flex; align-items: center; gap: 4px; }
 
-  .wizard-footer { display: flex; justify-content: flex-end; gap: 8px; padding-top: 8px; }
+  .wizard-footer { display: flex; justify-content: flex-end; gap: 8px; padding-top: 8px; flex-wrap: wrap; }
   .btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; border: 1px solid transparent; border-radius: 8px; font-size: 0.78rem; font-weight: 700; cursor: pointer; transition: background 140ms ease, border-color 140ms ease; }
   .btn:disabled { opacity: 0.5; cursor: not-allowed; }
   .btn-next { background: rgba(0,200,200,0.12); border-color: rgba(0,200,200,0.3); color: #0ff; }
@@ -464,10 +715,14 @@
   .btn-back:hover { color: var(--a2-text, #ddd); }
   .btn-save { background: rgba(53,214,143,0.12); border-color: rgba(53,214,143,0.3); color: #35d68f; }
   .btn-save:hover { background: rgba(53,214,143,0.2); }
+  .btn-link-series { background: transparent; border-color: var(--a2-border, #222); color: var(--a2-text-muted, #888); font-size: 0.7rem; }
+  .btn-link-series:hover { color: var(--a2-text, #ddd); border-color: var(--a2-border-strong, #444); }
 
   @keyframes spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
 
   @media (max-width: 640px) {
     .provider-cards { grid-template-columns: 1fr; }
+    .wizard-footer { flex-direction: column-reverse; }
+    .btn { width: 100%; justify-content: center; }
   }
 </style>

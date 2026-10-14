@@ -242,7 +242,10 @@ ok(/requireAdmin\(locals,/.test(libraryApi), '13a. library list endpoint enforce
 ok(/service\.list\(query\)/.test(libraryApi), '13b. list delegated to MediaLibraryService');
 
 const listComp = src('src/lib/components/admin2/AdminMediaList.svelte');
-ok(/\/api\/admin\/media\/library\?status=all&limit=100&sort=recently_updated/.test(listComp), '13c. AdminMediaList fetches with status=all (sees all rows including missing)');
+ok(/\/api\/admin\/media\/library/.test(listComp), '13c. AdminMediaList fetches from library API (with filters + pagination)');
+ok(/PAGE_SIZE\s*=\s*20/.test(listComp), '13c1. AdminMediaList uses 20-item page size');
+ok(/filterType|filterProvider|filterStatus|sortBy/.test(listComp), '13c2. AdminMediaList has filters (type, provider, status, sort)');
+ok(/viewMode.*grid.*list/.test(listComp), '13c3. AdminMediaList has grid/list view toggle');
 ok(/AdminAddFileWizard/.test(listComp), '13d. AdminMediaList uses shared AdminAddFileWizard component');
 
 // The POST to manual-link now lives in the shared wizard component
