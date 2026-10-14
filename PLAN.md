@@ -123,7 +123,88 @@
 - No reactive loop in the modal
 - Responsive on mobile
 
-**Status**: DONE
+**Status**: DONE — verified 2026-10-14
+
+---
+
+### Phase 2 Verification (2026-10-14)
+
+**Baseline**: commit `894d90d` (Phase 2 implementation + docs).
+
+**Audit findings (5 confirmed defects)**:
+
+1. **CRITICAL — Anime content_type routing**: When `contentType='anime'`, the manual-link endpoint called `ensureSeries` (creating `content_type='series'` row) instead of `ensureAnime` (would create `content_type='anime'`). Anime items got saved as TV Series, making them invisible to anime-specific queries and the future Phase 5 `/anime/` routes.
+
+2. **CRITICAL — `provider_asset_id` length mismatch**: `validateReference` allowed up to 2000 chars but the DB CHECK constraint on `media_assets.provider_asset_id` caps at 200 chars. A URL longer than 200 chars would trigger a confusing DB 500 error rather than a clean 400 validation error.
+
+3. **CRITICAL — Full URL stored as `provider_asset_id`**: When the admin pasted a full URL like `https://vidara.to/e/Vw0hY4n13k83`, the entire URL was stored as `provider_asset_id`. Existing Vidara/Abyss adapters store only the short filecode/slug. This broke the UNIQUE constraint identity contract — a later Vidara sync would create a duplicate row with the short code.
+
+4. **MAJOR — No SSRF/allowlist validation at write time**: The endpoint accepted any HTTPS URL. Save succeeded even for URLs that the resolver would silently reject at playback time (origin not in `allowed_embed_origins`). Admin got no feedback.
+
+5. **MAJOR — Missing `media_operations` audit log**: POST (link/relink) and DELETE (unlink) did not write to `media_operations`. The existing `ManagementService.linkAsset` / `unlinkAsset` always write audit entries with `action='link'` / `action='unlink'`; the manual-link endpoint broke that audit trail.
+
+**Fixes applied** (commit pending):
+
+- **Anime routing**: New `resolveMediaItemId()` helper branches on `contentType` — `ensureMovie` for movie, `ensureAnime` / `ensureAnimeEpisode` for anime, `ensureSeries` / `ensureEpisode` for series.
+- **Reference normalization**: New `normalizeReference()` function splits the admin's input into `providerAssetId` (short code) and `playbackUrl` (full URL). For full URLs, the short code is extracted from the last path segment.
+- **Length cap**: New `PROVIDER_ASSET_ID_MAX = 200` constant — `validateReference` rejects references whose derived `provider_asset_id` exceeds 200 chars with a clean 400 error.
+- **SSRF/allowlist at write time**: New `PROVIDER_ALLOWED_ORIGINS` constant mirrors the DB capabilities. `validateReference` rejects non-HTTPS URLs, URLs with credentials, and URLs whose origin is not in the provider's allowlist.
+- **Audit log**: Both POST and DELETE now invoke `uploadService.recordOperation(...)` with `action='link'` / `action='unlink'`, `admin_user_id=user.id`, and `details.mode` ∈ {`insert`, `update`, `relink`}. Failure paths also log `error_code` + `error_message`.
+- **Season/Episode NaN guard**: `resolveMediaItemId` validates season/episode as integers before calling `ensureEpisode` / `ensureAnimeEpisode`, preventing misleading `INVALID_SEASON` errors.
+
+**Live verification performed** (read-only probes against production Supabase):
+
+- `mav_phase2_live_db_probe.mjs` (18 checks): confirmed Vidara + Abyss providers exist with correct capabilities (`allowed_embed_origins` includes `https://vidara.to`, `https://vidara.so`, `https://player.abyssplayer.com`).
+- `mav_phase2_check_constraint_probe.mjs` (7 checks): confirmed `media_operations.action` CHECK constraint accepts `link` and `unlink` (migrations applied to live DB). Negative test confirmed unknown actions are rejected.
+- `mav_phase2_live_resolution_probe.mjs` (24 checks, Vidara): inserted a temporary manually-linked asset (canonical_key=`movie:tmdb:278`, playback_url=`https://vidara.to/e/MAVTESTFILECODEXYZ`), exercised the resolver's actual lookup query, verified the URL passes the allowlist, verified both `status` and `mavero_status` gates. Cleaned up all test rows.
+- `mav_phase2_live_resolution_probe_abyss.mjs` (21 checks, Abyss): mirror of the Vidara probe with `series:tmdb:1396` + `https://player.abyssplayer.com/MAVTESTABYSSSLUG`. All checks pass. Cleanup verified.
+
+**Static contract test** (`mav_focused_manual_link_contract_test.ts`, 61 checks):
+
+- Endpoint imports all required services (requireAdmin, createSupabaseAdminClient, CanonicalMediaService, UploadService).
+- POST and DELETE both call `requireAdmin(locals, ...)` and capture the `user` object for `admin_user_id`.
+- Anime routing verified via isolated function-body regex — anime branch calls `ensureAnime` / `ensureAnimeEpisode` and does NOT fall through to `ensureSeries`.
+- `normalizeReference` exists; length cap enforced before INSERT; URL path extraction stores short code as `provider_asset_id` and full URL as `playback_url`.
+- SSRF allowlist matches DB capabilities for both providers.
+- `action='link'` written on POST, `action='unlink'` written on DELETE, with `mode='insert'|'update'|'relink'` tags.
+- DELETE only deletes from `media_assets` — no `adapter.deleteAsset()` invocation anywhere (verified after stripping comments).
+- UPDATE writes `provider_source_id`, `provider_asset_id`, AND `playback_url` (allows changing provider/reference).
+- Resolver dual-gate verified (`status=ready` AND `mavero_status=available`).
+- Phase 4 + Phase 6 migrations match the URL construction.
+
+**Regression tests run** (after fixes):
+
+| Suite | Result |
+|-------|--------|
+| `pnpm check` | 0 errors, 9 warnings (pre-existing cosmetic a11y warnings — same count as before) |
+| `pnpm build` | success (vite build + Netlify adapter + build_executor_function) |
+| `mav_focused_admin_nav_test` | 65/65 passed |
+| `hosting_lifecycle_regression_test` | 11/11 passed |
+| `signout_reliability_test` | passed |
+| `admin_nav_dom_qa` (Playwright) | 20/20 passed |
+| `mav_focused_manual_link_contract_test` (NEW) | 61/61 passed |
+| `mav_phase2_live_db_probe` (NEW, live Supabase) | 18/18 passed |
+| `mav_phase2_check_constraint_probe` (NEW, live Supabase) | 7/7 passed |
+| `mav_phase2_live_resolution_probe` (NEW, Vidara) | 24/24 passed |
+| `mav_phase2_live_resolution_probe_abyss` (NEW, Abyss) | 21/21 passed |
+
+**Vidara playback compatibility**:
+
+- Automated verification: ✓ (resolution probe exercised the full DB → resolver → URL allowlist chain with a Vidara-constructed URL).
+- Live iframe playback: NOT VERIFIED — would require an authenticated admin session opening the player page in a real browser against a real Vidara file. The `MAVTESTFILECODEXYZ` filecode used in the probe is synthetic and would not produce a real Vidara embed. Phase 6 / Phase 7 will perform live browser playback verification against real Vidara filecodes.
+
+**Abyss playback compatibility**:
+
+- Automated verification: ✓ (mirror of Vidara probe with Abyss URL shape).
+- Live iframe playback: NOT VERIFIED — same reason as Vidara. The `MAVTESTABYSSSLUG` slug is synthetic.
+
+**Remaining unverified items**:
+
+- Browser-based admin workflow (open wizard, search TMDB, select provider, save, reload, update link, delete) — requires a running dev server with Supabase env + auth session.
+- Live provider iframe playback against a real Vidara/Abyss filecode.
+- The `pnpm test` suite (200+ scripts with live Supabase dependencies) was NOT run in full — only the focused regression suites above.
+
+**Status**: DONE — Phase 2 verified, defects fixed, automated regression + live DB evidence collected. Browser-based admin workflow and live iframe playback deferred to Phase 7.
 
 ---
 
