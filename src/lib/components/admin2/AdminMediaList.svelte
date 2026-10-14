@@ -214,7 +214,15 @@
         tmdbId: selectedTmdb.tmdbId,
         provider: selectedProvider,
         reference: ref,
+        // Send the title + year from the TMDB search result so the
+        // server doesn't have to re-fetch from TMDB on every save
+        // (also works in environments where TMDB credentials are not
+        // configured).
+        title: selectedTmdb.title,
       };
+      if (selectedTmdb.year != null) {
+        body.year = String(selectedTmdb.year);
+      }
 
       // If updating, include the mediaAssetId
       if (updateTarget) {

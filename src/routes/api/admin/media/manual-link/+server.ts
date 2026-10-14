@@ -72,18 +72,40 @@ const PROVIDER_ALLOWED_ORIGINS: Record<string, string[]> = {
  *   - `providerAssetId`: the SHORT code (e.g. "Vw0hY4n13k83"), suitable
  *     for the `media_assets.provider_asset_id` column and the
  *     `(provider_source_id, provider_asset_id)` UNIQUE constraint.
- *   - `playbackUrl`: the FULL embed URL that the resolver will return
- *     to the player iframe.
+ *   - `playbackUrl`: the FULL canonical embed URL that the resolver
+ *     will return to the player iframe.
  *
- * For a short code, both are derived directly:
- *   - providerAssetId = code
- *   - playbackUrl = `${EMBED_BASE}${code}`
+ * Reference forms accepted:
  *
- * For a full URL, we extract the last path segment as the short code
- * (matches the URL shape `https://vidara.to/e/<code>` and
- * `https://player.abyssplayer.com/<code>`). The URL is preserved as
- * the playback_url — but the allowlist below still must accept its
- * origin, otherwise we reject with a 400.
+ *   Vidara:
+ *     - Short code: "Vw0hY4n13k83"
+ *     - Embed URL:  https://vidara.to/e/Vw0hY4n13k83     (canonical)
+ *     - Share URL:  https://vidara.to/Vw0hY4n13k83       (share page)
+ *     - Legacy URL: https://vidara.so/v/Vw0hY4n13k83    (legacy share page)
+ *
+ *   Abyss:
+ *     - Short code: "-7DfAqb5s"  (slugs may start with a hyphen)
+ *     - Player URL: https://player.abyssplayer.com/-7DfAqb5s  (canonical)
+ *
+ * CANONICAL URL RECONSTRUCTION (Phase 2 acceptance fix):
+ *
+ *   For full URLs, we ALWAYS reconstruct the canonical embed URL from
+ *   the extracted short code — we do NOT preserve the input URL as-is.
+ *
+ *   Why: the admin may paste a Vidara SHARE URL
+ *   (`https://vidara.so/v/<code>` or `https://vidara.to/<code>`),
+ *   which renders the Vidara landing/share page in the iframe instead
+ *   of the embedded player (confirmed by the Phase 6 fix migration
+ *   `20261010000000_vidara_embed_url_fix.sql`). Storing the share URL
+ *   as `playback_url` produces a non-playable iframe — the URL "looks
+ *   valid" against the origin allowlist but doesn't actually play.
+ *
+ *   The canonical embed forms are:
+ *     - Vidara: `https://vidara.to/e/<code>`     (Phase 6 fix)
+ *     - Abyss:  `https://player.abyssplayer.com/<code>`
+ *
+ *   The origin allowlist still applies — it's checked against the
+ *   reconstructed canonical URL, not the input URL.
  */
 function normalizeReference(provider: string, reference: string): {
   providerAssetId: string;
@@ -102,11 +124,25 @@ function normalizeReference(provider: string, reference: string): {
     if (url.username || url.password) return null;
 
     // Extract the short code = last non-empty path segment.
+    //
+    // This handles every known URL form for both providers:
+    //   - https://vidara.so/v/<code>     → "/v/<code>"     → "<code>"
+    //   - https://vidara.to/e/<code>     → "/e/<code>"     → "<code>"
+    //   - https://vidara.to/<code>       → "/<code>"       → "<code>"
+    //   - https://player.abyssplayer.com/<slug>  → "/<slug>"  → "<slug>"
     const segments = url.pathname.split('/').filter(Boolean);
     const code = segments.length > 0 ? decodeURIComponent(segments[segments.length - 1]) : '';
     if (!code) return null;
 
-    return { providerAssetId: code, playbackUrl: url.toString() };
+    // ALWAYS reconstruct the canonical embed URL. See the function
+    // docstring for why the input URL is not preserved.
+    if (provider === 'vidara') {
+      return { providerAssetId: code, playbackUrl: `${VIDARA_EMBED_BASE}${code}` };
+    }
+    if (provider === 'abyss') {
+      return { providerAssetId: code, playbackUrl: `${ABYSS_PLAYER_BASE}${code}` };
+    }
+    return null;
   }
 
   // Short-code form.
@@ -136,12 +172,28 @@ function validateReference(provider: string, reference: string): string | null {
 
   // Allowlist check at write time — matches the resolver's
   // `validatePlaybackUrl('embed', allowedEmbedOrigins, allowDynamic=false)`.
-  let url: URL;
-  try { url = new URL(normalized.playbackUrl); } catch { return 'Constructed playback URL is invalid.'; }
+  // We check BOTH the input URL's origin AND the reconstructed canonical
+  // URL's origin against the allowlist. The input check catches the
+  // mistake of pasting an Abyss URL when Vidara is selected (and
+  // vice-versa) — without it, the admin would silently get a
+  // non-playable iframe because we always reconstruct the canonical URL.
   const allowed = PROVIDER_ALLOWED_ORIGINS[provider] ?? [];
   const allowedLower = allowed.map((o) => o.toLowerCase());
-  if (!allowedLower.includes(url.origin.toLowerCase())) {
-    return `Playback URL origin ${url.origin} is not in the ${provider} allowlist (${allowed.join(', ')}).`;
+
+  // Input-URL origin check (only when the admin pasted a URL).
+  if (ref.startsWith('http://') || ref.startsWith('https://')) {
+    let inputUrl: URL;
+    try { inputUrl = new URL(ref); } catch { return 'Input URL is invalid.'; }
+    if (!allowedLower.includes(inputUrl.origin.toLowerCase())) {
+      return `Input URL origin ${inputUrl.origin} is not in the ${provider} allowlist (${allowed.join(', ')}). Did you select the wrong provider?`;
+    }
+  }
+
+  // Reconstructed-URL origin check (always — defense in depth).
+  let canonicalUrl: URL;
+  try { canonicalUrl = new URL(normalized.playbackUrl); } catch { return 'Constructed playback URL is invalid.'; }
+  if (!allowedLower.includes(canonicalUrl.origin.toLowerCase())) {
+    return `Playback URL origin ${canonicalUrl.origin} is not in the ${provider} allowlist (${allowed.join(', ')}).`;
   }
 
   return null;
@@ -198,6 +250,8 @@ export const POST: RequestHandler = async ({ request, locals }) => {
     provider?: string;
     reference?: string;
     mediaAssetId?: string;
+    title?: string;
+    year?: string | number;
   };
   try {
     body = await request.json();
@@ -205,7 +259,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
     return json({ ok: false, error: { code: 'INVALID_REQUEST', message: 'Invalid JSON body.' } }, { status: 400, headers: NO_STORE_HEADERS });
   }
 
-  const { contentType, tmdbId, season, episode, provider, reference, mediaAssetId } = body;
+  const { contentType, tmdbId, season, episode, provider, reference, mediaAssetId, title: clientTitle, year: clientYear } = body;
 
   if (!contentType || !tmdbId || !provider || !reference) {
     return json({ ok: false, error: { code: 'INVALID_REQUEST', message: 'contentType, tmdbId, provider, and reference are required.' } }, { status: 400, headers: NO_STORE_HEADERS });
@@ -235,11 +289,38 @@ export const POST: RequestHandler = async ({ request, locals }) => {
   const seasonNum = season ? Number(season) : null;
   const episodeNum = episode ? Number(episode) : null;
 
+  // Title resolution priority:
+  //   1. Client-supplied `title` + `year` (the AdminMediaList wizard
+  //      already has these from its TMDB search results — no need for
+  //      the server to re-fetch from TMDB on every save).
+  //   2. TMDB API lookup via `getDetail()` — used when the client did
+  //      NOT supply a title (e.g. a programmatic API caller with only
+  //      a tmdbId). Requires TMDB_READ_ACCESS_TOKEN / TMDB_API_KEY
+  //      to be configured.
+  //
+  // This split lets the endpoint succeed in environments where TMDB
+  // credentials are not configured (e.g. local dev, CI) as long as
+  // the client passes a title — which the wizard does. It also saves
+  // one network round-trip per save.
   try {
-    const tmdbType = (contentType === 'movie') ? 'movie' : 'series';
-    const detail = await getDetail(tmdbType as ContentType, tmdbId);
-    const title = detail.title ?? 'Untitled';
-    const year = detail.year ?? null;
+    let title: string;
+    let year: number | null;
+
+    if (clientTitle && typeof clientTitle === 'string' && clientTitle.trim()) {
+      // Client-supplied title — skip the TMDB fetch entirely.
+      title = clientTitle.trim();
+      year = (() => {
+        if (clientYear == null) return null;
+        const n = typeof clientYear === 'number' ? clientYear : parseInt(String(clientYear), 10);
+        return Number.isInteger(n) ? n : null;
+      })();
+    } else {
+      // Fallback: fetch from TMDB. Requires TMDB credentials.
+      const tmdbType = (contentType === 'movie') ? 'movie' : 'series';
+      const detail = await getDetail(tmdbType as ContentType, tmdbId);
+      title = detail.title ?? 'Untitled';
+      year = detail.year ?? null;
+    }
 
     resolvedMediaItemId = await resolveMediaItemId(mediaService, {
       contentType, tmdbId, title, year, seasonNum, episodeNum,
@@ -431,6 +512,8 @@ export const DELETE: RequestHandler = async ({ request, locals }) => {
       .eq('id', mediaAssetId);
 
     if (deleteError) {
+      // Failure audit: the asset row still exists at this point (the
+      // delete failed), so we CAN reference media_asset_id.
       await uploadService.recordOperation({
         action: 'unlink', status: 'failed', media_item_id: ex.media_item_id, media_asset_id: mediaAssetId,
         provider_source_id: ex.provider_source_id ?? undefined, admin_user_id: user.id,
@@ -439,10 +522,22 @@ export const DELETE: RequestHandler = async ({ request, locals }) => {
       return json({ ok: false, error: { code: 'DELETE_FAILED', message: deleteError.message } }, { status: 500, headers: NO_STORE_HEADERS });
     }
 
+    // Success audit: the asset row is now GONE — we MUST NOT pass
+    // media_asset_id, because the FK constraint on
+    // `media_operations.media_asset_id REFERENCES media_assets(id)` would
+    // reject the insert (the referenced row no longer exists). The
+    // recordOperation helper silently swallows insert errors, so without
+    // this fix the unlink audit entry would silently disappear.
+    //
+    // We retain media_item_id (which is preserved by the asset deletion —
+    // the canonical media_items row is never deleted here) plus the
+    // provider_asset_id in the details JSON, so the audit trail still
+    // carries full context.
     await uploadService.recordOperation({
-      action: 'unlink', status: 'success', media_item_id: ex.media_item_id, media_asset_id: mediaAssetId,
+      action: 'unlink', status: 'success', media_item_id: ex.media_item_id,
       provider_source_id: ex.provider_source_id ?? undefined, admin_user_id: user.id,
       details: {
+        media_asset_id: mediaAssetId,
         provider_asset_id: ex.provider_asset_id,
         note: 'Mavero association deleted via /api/admin/media/manual-link. Provider file preserved on the host.',
       },

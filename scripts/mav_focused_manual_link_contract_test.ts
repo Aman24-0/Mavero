@@ -109,7 +109,14 @@ ok(/PROVIDER_ASSET_ID_MAX\s*=\s*200/.test(server), '4b. provider_asset_id length
 ok(/normalized\.providerAssetId\.length > PROVIDER_ASSET_ID_MAX/.test(server), '4c. length cap enforced BEFORE insert');
 ok(/segments\[segments\.length - 1\]/.test(server), '4d. short code extracted from URL path (last segment)');
 ok(/providerAssetId: code,/.test(server), '4e. extracted code stored as provider_asset_id');
-ok(/playbackUrl: url\.toString\(\)/.test(server), '4f. full URL stored as playback_url');
+// 4f (Phase 2 acceptance fix): the playback_url is ALWAYS reconstructed
+// from the canonical embed base + extracted code. We do NOT preserve the
+// input URL as-is, because the admin may paste a Vidara SHARE URL
+// (https://vidara.so/v/<code>) which renders the share page, not the
+// embeddable player (per the Phase 6 fix migration).
+ok(!/playbackUrl:\s*url\.toString\(\)/.test(server), '4f. input URL NOT preserved as playback_url (canonical reconstruction instead)');
+ok(/VIDARA_EMBED_BASE\s*=\s*'https:\/\/vidara\.to\/e\/'/.test(server), '4g. Vidara canonical embed base = https://vidara.to/e/');
+ok(/ABYSS_PLAYER_BASE\s*=\s*'https:\/\/player\.abyssplayer\.com\/'/.test(server), '4h. Abyss canonical player base = https://player.abyssplayer.com/');
 
 console.log('\n§5 — SSRF / embed-origin allowlist enforced at write time');
 
@@ -118,7 +125,8 @@ ok(/vidara:\s*\['https:\/\/vidara\.to',\s*'https:\/\/vidara\.so'\]/.test(server)
 ok(/abyss:\s*\['https:\/\/player\.abyssplayer\.com'\]/.test(server), '5c. abyss allowlist matches DB capabilities');
 ok(/url\.protocol !== 'https:'/.test(server), '5d. non-HTTPS URLs rejected');
 ok(/url\.username \|\| url\.password/.test(server), '5e. URLs with credentials rejected');
-ok(/allowedLower\.includes\(url\.origin\.toLowerCase\(\)\)/.test(server), '5f. origin checked against allowlist at write time');
+ok(/allowedLower\.includes\(inputUrl\.origin\.toLowerCase\(\)\)/.test(server), '5f1. INPUT url origin checked against allowlist (catches cross-provider mistakes)');
+ok(/allowedLower\.includes\(canonicalUrl\.origin\.toLowerCase\(\)\)/.test(server), '5f2. CANONICAL reconstructed url origin checked against allowlist (defense in depth)');
 
 console.log('\n§6 — Audit log entries (media_operations)');
 
@@ -144,6 +152,53 @@ const serverNoComments = server.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?
 ok(!/\bawait\s+\w+\.deleteAsset\(/.test(serverNoComments), '7d. no real `await x.deleteAsset(...)` call statement');
 ok(!/\bawait\s+adapter\.delete/.test(serverNoComments), '7e. no `await adapter.delete(...)` call statement');
 ok(!/\bdeleteAsset\s*\(/.test(serverNoComments), '7f. no direct deleteAsset() call (after stripping comments)');
+
+console.log('\n§7b — Delete audit log FK constraint (Phase 2 acceptance fix)');
+
+// The success-path unlink audit entry must NOT pass media_asset_id,
+// because the asset row has just been deleted and the FK
+// `media_operations.media_asset_id REFERENCES media_assets(id)` would
+// reject the insert. recordOperation silently swallows insert errors,
+// so without this fix the unlink audit entry would silently disappear.
+//
+// Verified by reading the success-path recordOperation call in DELETE:
+//   - The success path must NOT pass `media_asset_id: mediaAssetId` at
+//     the top level of recordOperation's params.
+//   - The success path MUST retain `media_item_id` (which is preserved).
+//   - The media_asset_id can still be embedded in the details JSON.
+//
+// The failure path (deleteError branch) DOES pass media_asset_id at
+// the top level — that's fine because the asset row still exists when
+// the delete fails.
+
+// Extract the success-path recordOperation call from the DELETE handler.
+// The DELETE handler is the LAST export in the file — match to EOF.
+const deleteHandlerMatch = server.match(/export const DELETE[\s\S]*$/);
+ok(deleteHandlerMatch !== null, '7g. DELETE handler found in source');
+if (deleteHandlerMatch) {
+  const deleteHandler = deleteHandlerMatch[0];
+  // The success-path recordOperation call: action='unlink' + status='success'
+  // MUST be the FIRST property (so the regex doesn't accidentally capture
+  // the failure-path call which has action='unlink', status='failed' first,
+  // then spans into the success path).
+  const successAuditMatch = deleteHandler.match(/await uploadService\.recordOperation\(\{\s*action:\s*'unlink',\s*status:\s*'success'[\s\S]*?\}\);/);
+  ok(successAuditMatch !== null, '7h. success-path unlink recordOperation call found');
+  if (successAuditMatch) {
+    const call = successAuditMatch[0];
+    // The success path must NOT pass media_asset_id at the top level
+    // (it would cause an FK violation since the asset row is gone).
+    // We split the call into the params section (before "details:") and
+    // the details section. The params section must NOT contain media_asset_id.
+    const detailsIdx = call.indexOf('details:');
+    const paramsSection = detailsIdx >= 0 ? call.slice(0, detailsIdx) : call;
+    const detailsSection = detailsIdx >= 0 ? call.slice(detailsIdx) : '';
+    ok(!/media_asset_id:/.test(paramsSection), '7i. success-path unlink audit does NOT pass top-level media_asset_id (would violate FK)');
+    // But the details JSON CAN carry media_asset_id for context.
+    ok(/media_asset_id:/.test(detailsSection), '7j. success-path unlink audit carries media_asset_id in details JSON (preserves context)');
+    // The media_item_id is preserved (it's not deleted).
+    ok(/media_item_id:\s*ex\.media_item_id/.test(paramsSection), '7k. success-path unlink audit passes media_item_id (preserved by asset deletion)');
+  }
+}
 
 console.log('\n§8 — Idempotent / relink behavior');
 
@@ -199,6 +254,21 @@ if (deleteFnMatch) {
   ok(/manual-link/.test(deleteFnMatch[0]), '13f2. confirmDelete targets manual-link endpoint');
   ok(/method:\s*'DELETE'/.test(deleteFnMatch[0]), '13f3. confirmDelete uses DELETE method');
 }
+
+console.log('\n§14 — Vidara share-URL canonicalization (Phase 2 acceptance fix)');
+
+// Regression: the user-provided link https://Vidara.so/v/LyBctGwWUh9c
+// is the SHARE URL, not the embed URL. The endpoint MUST reconstruct the
+// canonical embed URL https://vidara.to/e/LyBctGwWUh9c — never preserve
+// the input URL as-is.
+//
+// Verified via static-regex check on normalizeReference():
+//   - The URL branch must NOT call `url.toString()` for the playbackUrl.
+//   - The URL branch must reconstruct the embed URL via the provider base.
+ok(!/playbackUrl:\s*url\.toString\(\)/.test(server), '14a. URL branch does NOT preserve input URL as playbackUrl (regression)');
+ok(/provider === 'vidara'[\s\S]*?playbackUrl:\s*`\$\{VIDARA_EMBED_BASE\}\$\{code\}`/.test(server), '14b. URL branch reconstructs Vidara embed URL from extracted code');
+ok(/provider === 'abyss'[\s\S]*?playbackUrl:\s*`\$\{ABYSS_PLAYER_BASE\}\$\{code\}`/.test(server), '14c. URL branch reconstructs Abyss player URL from extracted slug');
+ok(/Phase 6 fix migration/.test(server), '14d. code comment cites the Phase 6 fix migration as the rationale');
 
 console.log(`\nmav_focused_manual_link_contract_test: ${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);
