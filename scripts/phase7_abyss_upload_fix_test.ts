@@ -160,18 +160,18 @@ console.log('  ok — A.4 proxy-upload retired; structured JSON errors live on i
 // contract: a non-JSON or empty response never crashes the UI with
 // "Unexpected end of JSON input".
 {
-  const flowSrc = readFileSync(path.join(REPO_ROOT, 'src/lib/components/admin2/AdminUploadFlow.svelte'), 'utf8');
-  // (2026-10-15) the upload page was removed with the workflow; the flow
-  // component survives as unreachable dead code. Its defensive JSON
-  // handling contract remains a valid pattern reference.
+  // (2026-10-16) AdminUploadFlow was DELETED with the Upload/Import
+  // workflow — the defensive JSON-handling contract lives on in the LIVE
+  // media-management surfaces (try/catch + structured json.error?.message).
+  ok(!existsSync(path.join(REPO_ROOT, 'src/lib/components/admin2/AdminUploadFlow.svelte')), 'A.5.0 upload flow component deleted with the workflow');
   ok(!existsSync(path.join(REPO_ROOT, 'src/routes/admin/media/upload/+page.svelte')), 'A.5.1 upload page removed with the workflow');
-  // The flow handles fetch errors via try/catch (never propagates raw JSON parse errors).
-  ok(flowSrc.includes('try {') && flowSrc.includes('catch'), 'A.5.2 flow wraps fetch calls in try/catch (never throws raw parse errors)');
-  // The flow surfaces error messages to the user (no silent swallowing).
-  ok(flowSrc.includes('operationError') || flowSrc.includes('searchError') || flowSrc.includes('createError'), 'A.5.3 flow surfaces error messages to the user');
-  // 413 / 504 handling is delegated to the backend routes (which return
-  // structured JSON errors). The flow's try/catch catches them.
-  ok(flowSrc.includes('json?.error?.message') || flowSrc.includes("json?.error"), 'A.5.4 flow reads error.message from backend JSON responses');
+  const listSrc = readFileSync(path.join(REPO_ROOT, 'src/lib/components/admin2/AdminMediaList.svelte'), 'utf8');
+  // The live surfaces handle fetch errors via try/catch (never propagates raw JSON parse errors).
+  ok(listSrc.includes('try {') && listSrc.includes('catch'), 'A.5.2 live surfaces wrap fetch calls in try/catch (never throws raw parse errors)');
+  // The live surfaces surface error messages to the user (no silent swallowing).
+  ok(listSrc.includes('state-error'), 'A.5.3 live surfaces render error messages to the user');
+  // Backend JSON errors are read + surfaced.
+  ok(listSrc.includes("json.error?.message"), 'A.5.4 live surfaces read error.message from backend JSON responses');
 }
 console.log('  ok — A.5 frontend contract (Phase D — 4 checks)\n');
 

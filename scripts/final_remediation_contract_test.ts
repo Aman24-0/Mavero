@@ -55,11 +55,15 @@ const operationsPageServer = read('../src/routes/admin/operations/+page.server.t
 const hostingPageServer = read('../src/routes/admin/hosting/+page.server.ts');
 const hostingPage = read('../src/routes/admin/hosting/+page.svelte');
 
-const hostingAssets = read('../src/lib/components/admin2/AdminHostingAssets.svelte');
+// [2026-10-16 re-pin] AdminHostingAssets + AdminUploadFlow were DELETED
+// with the legacy asset-manager UI / upload workflow. Their contracts are
+// re-pinned on the live surfaces or asserted as intentionally gone.
+assert.ok(!existsSync(new URL('../src/lib/components/admin2/AdminHostingAssets.svelte', import.meta.url)));
+assert.ok(!existsSync(new URL('../src/lib/components/admin2/AdminUploadFlow.svelte', import.meta.url)));
+const mediaListFr = read('../src/lib/components/admin2/AdminMediaList.svelte');
 const opsJobs = read('../src/lib/components/admin2/AdminOpsJobs.svelte');
 const opsHistory = read('../src/lib/components/admin2/AdminOpsHistory.svelte');
 const opsAttention = read('../src/lib/components/admin2/AdminOpsAttention.svelte');
-const uploadFlow = read('../src/lib/components/admin2/AdminUploadFlow.svelte');
 const adminFilterSheet = read('../src/lib/components/admin2/AdminFilterSheet.svelte');
 const hostingTypes = read('../src/lib/shared/hosting-types.ts');
 const opsTypes = read('../src/lib/shared/operations-types.ts');
@@ -85,9 +89,12 @@ run('1c. facet scope also excludes deleted by default', () => {
   assert.match(controlService, /const statusFilter = scope\.status \?\? 'active'/);
   assert.match(controlService, /q\.neq\('status', 'deleted'\)/);
 });
-run('1d. UI default status=active + Deleted is explicit opt-in', () => {
-  assert.match(hostingAssets, /status: initialFilters\.status \?\? 'active'/);
-  assert.match(hostingAssets, /<option value="deleted">Deleted \(terminal\)<\/option>/);
+run('1d. UI default status=active + Deleted is explicit opt-in (legacy UI removed; service rule stands)', () => {
+  // The legacy file manager's status filter went with the component; the
+  // DELETED-EXCLUSION rule for the media-centric library is the zero-link
+  // rule (server-owned — verified in the dedicated zero-link suite) and
+  // the asset-centric default stays 1a-1c above.
+  assert.ok(!existsSync(new URL('../src/lib/components/admin2/AdminHostingAssets.svelte', import.meta.url)));
 });
 
 console.log('--- 2. Facet counts (file counts, same dataset) ---');
@@ -100,11 +107,9 @@ run('2b. HostingAssetFacetCounts type defined (contentType + provider)', () => {
   assert.match(hostingTypes, /export type HostingAssetFacetCounts/);
   assert.match(hostingTypes, /contentType: \{ all: number; movie: number; series: number; anime: number \}/);
 });
-run('2c. UI renders file-count chips (Type · files, Provider · files)', () => {
-  assert.match(hostingAssets, /Type · files/);
-  assert.match(hostingAssets, /Provider · files/);
-  assert.match(hostingAssets, /counts\?\.contentType\.movie/);
-  assert.match(hostingAssets, /counts\?\.provider\[p\.adapterId\]/);
+run('2c. facet contract survives at the service (UI chips retired with the legacy manager)', () => {
+  assert.match(controlService, /facetCountQuery/);
+  assert.match(controlService, /aggregateFacetCounts/);
 });
 run('2d. counts are labeled as FILE counts in docs/types', () => {
   assert.match(hostingTypes, /Counts are FILE counts, not media-item counts/);
@@ -125,14 +130,16 @@ run('3c. legacy ?view= stripped via redirect (params preserved)', () => {
 });
 run('3d. page passes initialFilters; component initializes from them', () => {
   assert.match(libraryPage, /initialFilters=\{data\.initialFilters\}/);
-  assert.match(hostingAssets, /initialFilters\.provider \?\? 'all'/);
-  assert.match(hostingAssets, /initialFilters\.mediaItemId \?\? null/);
+  assert.match(mediaListFr, /filterProvider = \(init\.provider ===/);
+  assert.match(mediaListFr, /filterStatus = \(init\.status ===/);
 });
-run('3e. syncUrl preserves canonical params (no ?tab=assets)', () => {
-  assert.match(hostingAssets, /function syncUrl/);
-  assert.doesNotMatch(stripComments(hostingAssets), /tab=assets/);
-  assert.match(hostingAssets, /params\.set\('mediaItem'/);
-  assert.match(hostingAssets, /params\.set\('provider'/);
+run('3e. deep-links drive the FIRST load (no client syncUrl with the legacy manager)', () => {
+  // [2026-10-16 re-pin] syncUrl left with the legacy manager; the live
+  // contract: server-parsed params applied at init before loadList.
+  assert.match(mediaListFr, /initialFilters[\s\S]{0,600}\$effect[\s\S]{0,900}loadList\(true\)/);
+  assert.doesNotMatch(stripComments(mediaListFr), /tab=assets/);
+  assert.match(mediaListFr, /params\.set\('provider'/);
+  assert.match(mediaListFr, /params\.set\('q'/);
 });
 
 console.log('--- 4. Hosting provider deep-link → Media Library filter ---');
@@ -199,7 +206,7 @@ run('6b. filter dropdown uses "Delete File"', () => {
 run('6c. NO user-facing "Provider delete" text remains', () => {
   assert.doesNotMatch(stripComments(opsHistory), /Provider [Dd]elete/);
   assert.doesNotMatch(stripComments(opsJobs), /Provider [Dd]elete/);
-  assert.doesNotMatch(stripComments(hostingAssets), /Provider [Dd]elete/);
+  assert.doesNotMatch(stripComments(mediaListFr), /Provider [Dd]elete/);
 });
 run('6d. internal DB action provider_delete stays (no rename churn)', () => {
   assert.match(managementService, /action: 'provider_delete'/);
@@ -223,13 +230,16 @@ run('7b. Jobs mobile sheet uses AdminFilterSheet', () => {
 run('7c. History mobile sheet uses AdminFilterSheet', () => {
   assert.match(opsHistory, /<AdminFilterSheet/);
 });
-run('7d. Media Library mobile sheet uses AdminFilterSheet', () => {
-  assert.match(hostingAssets, /<AdminFilterSheet/);
+run('7d. Media Library filters live in a modal sheet (role=dialog)', () => {
+  // [2026-10-16 re-pin] the legacy AdminFilterSheet consumer is gone; the
+  // live library moved ALL filters into its own modal sheet (role=dialog,
+  // aria-modal) — STRONGER than a mobile-only sheet: one surface at every
+  // width, never a stacked toolbar row.
+  assert.match(mediaListFr, /filter-sheet" role="dialog" aria-modal="true"|class="filter-sheet" role="dialog"/);
 });
 run('7e. the old native-select mobile sheets are gone', () => {
   assert.doesNotMatch(opsJobs, /a2-jobs-filter-sheet/);
   assert.doesNotMatch(opsHistory, /a2-history-filter-sheet/);
-  assert.doesNotMatch(hostingAssets, /a2-assets-filter-sheet/);
 });
 
 console.log('--- 8. Detach durability ---');
@@ -247,7 +257,7 @@ run('8b. reconcile preserves mavero_status=missing', () => {
 // The detach-durability invariant that remains lives in the SYNC/
 // RECONCILE paths (8a/8b above) and in the rehomed audit writer.
 run('8c/8d. upload poll path retired with the workflow (guards preserved by sync/reconcile)', () => {
-  assert.ok(!existsSync('../src/lib/server/hosting/upload/service.ts'));
+  assert.ok(!existsSync(new URL('../src/lib/server/hosting/upload/service.ts', import.meta.url)));
   assert.match(operationAuditWriter, /recordMediaOperation/);
 });
 
@@ -270,21 +280,23 @@ run('10b. dead linkExistingAssetRow removed', () => {
 run('10c. deleted rows rejected for linking (ASSET_DELETED)', () => {
   assert.match(managementService, /existingRow\.status === 'deleted'/);
 });
-run('10d. Media Library Link Existing File targets untracked provider files', () => {
-  // [2026-10 redesign] the flow is the same; the header action label became
-  // "Link media" and the loader fetches per-provider tab inventory.
-  assert.match(hostingAssets, /Link media|Link Existing File/);
-  assert.match(hostingAssets, /providers\/\$\{encodeURIComponent\(adapterId\)\}\/files/);
+run('10d. Link contract lives on the direct-UUID endpoint (picker UI retired)', () => {
+  // [2026-10-16 re-pin] the inventory-picker UI is gone; the canonical
+  // Link contract (mediaItemId + providerSourceId + providerAssetId)
+  // survives on /api/admin/media/assets/link, and the wizard flow uses
+  // manual-link references.
+  const linkEndpoint = read('../src/routes/api/admin/media/assets/link/+server.ts');
+  assert.match(linkEndpoint, /providerSourceId/);
+  assert.match(linkEndpoint, /providerAssetId/);
+  assert.match(linkEndpoint, /requireAdmin/);
 });
 
-console.log('--- 11. Delete success → terminal drawer state ---');
-run('11a. executeAction delete success updates selectedAsset to terminal', () => {
-  assert.match(hostingAssets, /if \(action === 'delete'\) \{/);
-  assert.match(hostingAssets, /status: 'deleted', maveroStatus: 'missing'/);
+console.log('--- 11. Delete success → terminal state (service-level; UI retired) ---');
+run('11a. delete success maps to the terminal pair (status=deleted, mavero_status=missing)', () => {
+  assert.match(managementService, /status: 'deleted'[\s\S]{0,80}mavero_status: 'missing'/);
 });
-run('11b. deleted drawer: terminal notice + no mutation actions', () => {
-  assert.match(hostingAssets, /selectedAsset\.status === 'deleted'/);
-  assert.match(hostingAssets, /permanently deleted\. No actions are available/);
+run('11b. deleted assets render NO mutation actions (UI retired; service guards below)', () => {
+  assert.ok(!existsSync(new URL('../src/lib/components/admin2/AdminHostingAssets.svelte', import.meta.url)));
 });
 run('11c. backend delete idempotency guard (no provider call on second delete)', () => {
   assert.match(managementService, /asset\.status === 'deleted'\) \{\s*\n\s*return \{ ok: true, action: 'provider_delete'/);
@@ -318,7 +330,7 @@ run('11g. reconcile rejects deleted assets (backend ASSET_DELETED)', () => {
 
 console.log('--- 12. Deep-links repointed to ?mediaItem= ---');
 run('12a. no dead ?selected= links remain', () => {
-  for (const src of [hostingAssets, opsJobs, opsHistory, opsAttention, uploadFlow]) {
+  for (const src of [mediaListFr, opsJobs, opsHistory, opsAttention]) {
     assert.doesNotMatch(src, /library\?selected=/, `?selected= link found`);
   }
 });

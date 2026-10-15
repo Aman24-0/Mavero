@@ -35,10 +35,12 @@
   <meta name="robots" content="noindex,nofollow" />
 </svelte:head>
 
-<AdminAppShell active="media-library">
+<AdminAppShell active="media-library" fill>
   <!-- Task 2 — no page header: no eyebrow/title/description/actions. The
-       Add File button lives in AdminMediaList's toolbar controls row. -->
-  <AdminPage>
+       Add File button lives in AdminMediaList's toolbar controls row.
+       FILL MODE (2026-10-16 layout round) — the page owns an internal
+       cards scroller; see the shell's `fill` prop. -->
+  <AdminPage fill>
     <AdminMediaList {providers} initialFilters={data.initialFilters} />
   </AdminPage>
 </AdminAppShell>

@@ -3,8 +3,9 @@
    * Admin 2.0 — Phase F — AdminOpsAttention
    *
    * The Attention tab. Shows only things that need admin action:
-   *   - Failed operations (retryable + permanent)
-   *   - Stale operations (stuck > 60 min)
+   *   - Failed operations (historical upload rows — error classification
+   *     stays informational; the upload retry endpoint is RETIRED)
+   *   - Stale operations (stuck > 60 min — historical upload rows)
    *   - Unconfigured providers (credentials missing)
    *   - Degraded providers (health check failed)
    *
@@ -13,15 +14,16 @@
    * underlying state is still failed/stale, the item remains. When the
    * state becomes healthy, the item disappears naturally on next refresh.
    *
-   * Actions:
-   *   - Retry (for retryable failed ops)
-   *   - Reconcile (for stale ops with media_asset_id)
+   * Actions (2026-10-16 upload-removal completion — every visible action
+   * maps to a live route; the dead Retry button invoking the removed
+   * /api/admin/media/upload/{id}/retry endpoint was deleted):
+   *   - Reconcile (for items with media_asset_id)
    *   - Open provider (for unconfigured/degraded)
    *   - Open media / asset (contextual navigation)
    */
 
   import { onMount } from 'svelte';
-  import { AlertCircle, AlertTriangle, Loader2, RefreshCw, RotateCcw, ExternalLink, X, ChevronLeft, ChevronRight, Ban, Server, Activity, Check } from 'lucide-svelte';
+  import { AlertCircle, AlertTriangle, Loader2, RefreshCw, ExternalLink, X, ChevronLeft, ChevronRight, Ban, Server, Activity, Check } from 'lucide-svelte';
   import AdminStatus from './AdminStatus.svelte';
   import type { AttentionItem, AttentionQuery, AttentionCategory, AttentionSeverity } from '$lib/shared/operations-types';
 
@@ -139,24 +141,10 @@
     void loadAttention();
   }
 
-  async function retryItem(item: AttentionItem) {
-    actionInProgress = true;
-    actionError = null;
-    actionSuccess = null;
-    try {
-      const res = await fetch(`/api/admin/media/upload/${item.sourceId}/retry`, { method: 'POST' });
-      const data = await res.json();
-      if (data.ok) {
-        actionSuccess = 'Retry operation created.';
-        await loadAttention();
-      } else {
-        actionError = data.error?.message ?? 'Retry failed.';
-      }
-    } catch (err) {
-      actionError = err instanceof Error ? err.message : 'Network error during retry.';
-    }
-    actionInProgress = false;
-  }
+  // 2026-10-16 upload-removal completion — retryItem() was REMOVED: it
+  // called the retired /api/admin/media/upload/{id}/retry endpoint. The
+  // only live actions on an attention item are Reconcile (asset exists)
+  // and the navigation links; the server no longer advertises canRetry.
 
   async function reconcileItem(item: AttentionItem) {
     if (!item.mediaAssetId) return;
@@ -255,14 +243,8 @@
               {/if}
               <span class="a2-attention-item-date">{formatDate(item.detectedAt)}</span>
             </div>
-            {#if item.canRetry || item.canReconcile || item.mediaItemId || item.providerAdapterId}
+            {#if item.canReconcile || item.mediaItemId || item.providerAdapterId}
               <div class="a2-attention-item-actions">
-                {#if item.canRetry}
-                  <button type="button" class="a2-attention-action a2-attention-action-primary" onclick={() => retryItem(item)} disabled={actionInProgress}>
-                    {#if actionInProgress}<Loader2 size={11} style="animation: a2-spin 1s linear infinite;" />{:else}<RotateCcw size={11} />{/if}
-                    Retry
-                  </button>
-                {/if}
                 {#if item.canReconcile}
                   <button type="button" class="a2-attention-action" onclick={() => reconcileItem(item)} disabled={actionInProgress}>
                     <RefreshCw size={11} /> Reconcile
@@ -366,8 +348,6 @@
   .a2-attention-action { display: inline-flex; align-items: center; gap: var(--a2-space-1); padding: 8px 12px; min-height: 44px; background: var(--a2-surface-3); border: 1px solid var(--a2-border-strong); border-radius: var(--a2-radius-xs); color: var(--a2-text); font-size: var(--a2-text-2xs); font-weight: 600; cursor: pointer; text-decoration: none; transition: all var(--a2-motion-micro, 140ms) var(--a2-ease-out); }
   .a2-attention-action:hover:not(:disabled) { background: var(--a2-cyan-soft); border-color: var(--a2-cyan); color: var(--a2-cyan); }
   .a2-attention-action:disabled { opacity: 0.5; cursor: not-allowed; }
-  .a2-attention-action-primary { background: var(--a2-cyan); color: var(--a2-surface-1); border-color: var(--a2-cyan); }
-  .a2-attention-action-primary:hover:not(:disabled) { filter: brightness(1.1); }
   .a2-attention-action-link { color: var(--a2-cyan); }
 
   .a2-attention-pagination { display: flex; justify-content: space-between; align-items: center; gap: var(--a2-space-3); flex-wrap: wrap; padding: var(--a2-space-2) var(--a2-space-3); }

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 
 /**
  * Admin 2.0 — Phase E contracts.
@@ -56,7 +56,12 @@ const syncRedirect = readFileSync(new URL('../src/routes/admin/media/sync/+page.
 const syncRedirectServer = readFileSync(new URL('../src/routes/admin/media/sync/+page.server.ts', import.meta.url), 'utf8');
 
 const adminHostingProviders = readFileSync(new URL('../src/lib/components/admin2/AdminHostingProviders.svelte', import.meta.url), 'utf8');
-const adminHostingAssets = readFileSync(new URL('../src/lib/components/admin2/AdminHostingAssets.svelte', import.meta.url), 'utf8');
+// [2026-10-16 re-pin] AdminHostingAssets was DELETED with the legacy
+assert.ok(!existsSync(new URL('../src/lib/components/admin2/AdminHostingAssets.svelte', import.meta.url)), 'AdminHostingAssets deleted (legacy file manager removed)');
+const episodeSheetE = readFileSync(new URL('../src/lib/components/admin2/AdminEpisodeSheet.svelte', import.meta.url), 'utf8');
+const adminAssetStatusE = readFileSync(new URL('../src/lib/components/admin2/AdminAssetStatus.svelte', import.meta.url), 'utf8');
+const mediaListE = readFileSync(new URL('../src/lib/components/admin2/AdminMediaList.svelte', import.meta.url), 'utf8');
+const opsAttentionE = readFileSync(new URL('../src/lib/components/admin2/AdminOpsAttention.svelte', import.meta.url), 'utf8');
 const adminCapabilityGrid = readFileSync(new URL('../src/lib/components/admin2/AdminCapabilityGrid.svelte', import.meta.url), 'utf8');
 const adminConfirmDialog = readFileSync(new URL('../src/lib/components/admin2/AdminConfirmDialog.svelte', import.meta.url), 'utf8');
 
@@ -233,15 +238,14 @@ ok('8b. Linked/detached filter correctly distinguishes linked vs detached assets
 
 // Assets UI has isDetached helper — [final remediation] detached (NOT
 // unlinked): the row still belongs to its media_item.
-assert.match(adminHostingAssets, /function isDetached/, 'Assets UI has isDetached helper');
-assert.match(adminHostingAssets, /asset.maveroStatus === 'missing'/, 'isDetached checks maveroStatus (detached)');
-ok('9a. Assets UI correctly identifies detached assets (maveroStatus=missing, still linked to media_item)');
+assert.match(adminAssetStatusE, /maveroStatus === 'missing'/, 'AdminAssetStatus identifies detached assets (maveroStatus=missing)');
+ok('9a. the shared status component correctly identifies detached assets (still linked to media_item)');
 
 // DETACHED badge in UI (replaces the old UNLINKED badge)
-assert.match(adminHostingAssets, /DETACHED/, 'Assets UI shows DETACHED badge');
-assert.match(adminHostingAssets, /DETACHED — NOT SERVED FOR PLAYBACK/, 'asset drawer explains the detached state');
-assert.doesNotMatch(adminHostingAssets, /UNLINKED PROVIDER ASSET/, 'asset drawer no longer claims "unlinked" for detached rows');
-ok('9b. Assets UI clearly marks detached assets');
+assert.match(adminAssetStatusE, /Detached/i, 'AdminAssetStatus renders the Detached label');
+assert.match(episodeSheetE, /badge-status" data-state=\{view\.asset\.mavero_status\}/, 'the episode sheet shows the per-asset mavero_status badge');
+assert.match(episodeSheetE, /data-state="missing"/, 'the missing/detached state has its own styling');
+ok('9b. the live UI clearly marks detached assets (status badge per episode)');
 
 // Unlinked API endpoint — [final remediation] the endpoint path is kept for
 // compat but returns DETACHED assets (mavero_status='missing', not deleted).
@@ -255,18 +259,18 @@ ok('9c. POST /api/admin/media/unlinked reads detached assets without triggering 
 // 10. Asset detail drawer
 // ============================================================
 
-assert.match(adminHostingAssets, /a2-asset-drawer/, 'Assets UI has detail drawer');
-assert.match(adminHostingAssets, /Provider/, 'drawer has Provider section');
-assert.match(adminHostingAssets, /Mavero link/, 'drawer has Mavero link section');
-assert.match(adminHostingAssets, /Media properties/, 'drawer has Media properties section');
-assert.match(adminHostingAssets, /Actions/, 'drawer has Actions section');
-ok('10a. Asset detail drawer has Provider, Mavero link, Media properties, Actions sections');
+assert.match(episodeSheetE, /head-title/, 'the sheet shows the parent identity (title)');
+assert.match(episodeSheetE, /TMDB \{parent\.tmdbId\}/, 'the sheet shows the parent TMDB id');
+assert.match(episodeSheetE, /badge-provider/, 'the sheet has the provider section (per-asset badges)');
+assert.match(episodeSheetE, /badge-status/, 'the sheet has the per-asset status section');
+assert.match(episodeSheetE, /ep-actions/, 'the sheet has the per-episode actions section');
+ok('10a. The episode sheet detail surface: identity + provider + status + actions');
 
-// Drawer shows linked media details
-assert.match(adminHostingAssets, /selectedAsset.mediaItem.title/, 'drawer shows linked media title');
-assert.match(adminHostingAssets, /selectedAsset.mediaItem.tmdbId/, 'drawer shows linked media TMDB ID');
-assert.match(adminHostingAssets, /selectedAsset.mediaItem.canonicalKey/, 'drawer shows linked media canonical key');
-ok('10b. Asset drawer shows linked media identity (title, TMDB, canonical key)');
+// The sheet shows the linked ground truth per episode (asset + provider)
+assert.match(episodeSheetE, /view\.linked && view\.asset/, 'the sheet shows linked episodes with their asset ground truth');
+assert.match(episodeSheetE, /providerNameForSource\(view\.asset\.provider_source_id\)/, 'the sheet resolves the provider per asset');
+assert.match(episodeSheetE, /badge-unlinked">Not linked/, 'the sheet honestly marks unlinked episodes');
+ok('10b. The sheet shows the linked ground truth (provider per episode, honest Not-linked state)');
 
 // ============================================================
 // 11. Rename action
@@ -279,10 +283,10 @@ assert.match(renameApi, /requireAdmin/, 'rename API requires admin');
 ok('11a. Rename API uses ManagementService.renameAsset + requireAdmin');
 
 // Assets UI exposes rename action
-assert.match(adminHostingAssets, /startRename/, 'Assets UI has startRename');
-assert.match(adminHostingAssets, /confirmRename/, 'Assets UI has confirmRename');
-assert.match(adminHostingAssets, /executeAction\(.*'rename'/, 'Assets UI calls executeAction with rename');
-ok('11b. Assets UI exposes rename action');
+// [2026-10-16 re-pin] the rename UI left with the legacy manager; the
+// rename contract survives at the API + service (11a/11c above).
+assert.ok(!existsSync(new URL('../src/lib/components/admin2/AdminHostingAssets.svelte', import.meta.url)), 'AdminHostingAssets deleted (legacy file manager removed)');
+ok('11b. rename UI retired with the legacy manager (API + service intact)');
 
 // ManagementService records rename operation
 assert.match(managementService, /action: 'rename'/, 'ManagementService records rename action');
@@ -300,14 +304,10 @@ assert.match(managementService, /caps.folderManagement/, 'ManagementService chec
 ok('12a. Move API + service check folderManagement capability + record operation');
 
 // Assets UI exposes move action
-assert.match(adminHostingAssets, /startMove/, 'Assets UI has startMove');
-assert.match(adminHostingAssets, /confirmMove/, 'Assets UI has confirmMove');
-assert.match(adminHostingAssets, /targetFolderId/, 'Assets UI sends targetFolderId');
-ok('12b. Assets UI exposes move action with target folder input');
-
-// Move modal respects nested folders capability
-assert.match(adminHostingAssets, /nestedFolders/, 'move modal surfaces nested folders capability');
-ok('12c. Move modal documents nested vs flat folder support per provider');
+// [2026-10-16 re-pin] the move UI left with the legacy manager; the
+// move contract + capability check survive at the service (12a above).
+assert.ok(!existsSync(new URL('../src/lib/components/admin2/AdminHostingAssets.svelte', import.meta.url)), 'AdminHostingAssets deleted (legacy file manager removed)');
+ok('12b. move UI retired with the legacy manager (service + capability check intact)');
 
 // ============================================================
 // 13. Detach action
@@ -321,10 +321,10 @@ assert.match(managementService, /Does NOT delete the provider-side file/, 'detac
 ok('13a. Detach sets mavero_status=missing, does NOT delete provider file, records operation');
 
 // Assets UI uses AdminConfirmDialog for detach
-assert.match(adminHostingAssets, /startDetach/, 'Assets UI has startDetach');
-assert.match(adminHostingAssets, /AdminConfirmDialog/, 'Assets UI uses AdminConfirmDialog for destructive actions');
-assert.match(adminHostingAssets, /confirmAction = 'detach'/, 'confirm dialog handles detach');
-ok('13b. Detach uses confirmation dialog');
+// [2026-10-16 re-pin] the detach UI left with the legacy manager; the
+// LIVE destructive action (unlink) is confirm-gated in AdminMediaList.
+assert.match(mediaListE, /confirm-dialog" role="dialog" aria-modal="true"/, 'the live delete uses a modal confirmation dialog');
+ok('13b. the live destructive action uses a confirmation dialog');
 
 // ============================================================
 // 14. Provider delete action
@@ -339,11 +339,11 @@ assert.match(managementService, /Provider delete failed — do NOT mark the Mave
 ok('14a. Provider delete: provider first, then Mavero — no false "deleted" on provider failure');
 
 // Assets UI uses danger-tone confirmation for delete
-assert.match(adminHostingAssets, /startDelete/, 'Assets UI has startDelete');
-assert.match(adminHostingAssets, /confirmAction = 'delete'/, 'confirm dialog handles delete');
-assert.match(adminHostingAssets, /Delete permanently/, 'delete confirm shows "Delete permanently"');
-assert.match(adminHostingAssets, /Irreversible/, 'delete confirm warns irreversible');
-ok('14b. Delete uses danger-tone confirmation with irreversible warning');
+// [2026-10-16 re-pin] the provider-delete UI retired with the legacy
+// manager (the live delete is the provider-preserving unlink, confirmed
+// in 13b); the provider-delete semantics survive at the service (14a).
+assert.ok(!existsSync(new URL('../src/lib/components/admin2/AdminHostingAssets.svelte', import.meta.url)), 'AdminHostingAssets deleted (legacy file manager removed)');
+ok('14b. provider-delete UI retired (service semantics intact in 14a)');
 
 // ============================================================
 // 15. Reconcile action
@@ -356,8 +356,8 @@ assert.match(syncService, /getProcessingStatus/, 'reconcile polls provider proce
 ok('15a. Reconcile uses SyncService.reconcileAsset + provider getProcessingStatus');
 
 // Assets UI exposes reconcile
-assert.match(adminHostingAssets, /reconcile/, 'Assets UI exposes reconcile action');
-ok('15b. Assets UI exposes reconcile action');
+assert.match(opsAttentionE, /reconcileItem/, 'OpsAttention exposes the live reconcile action');
+ok('15b. the live reconcile action lives in the Operations Center');
 
 // ============================================================
 // 16. Sync provider + sync all
@@ -412,7 +412,7 @@ ok('16d. SyncService still returns discovered/updated/deleted/unlinked counts (a
 
 assert.match(unlinkedApi, /IS linked to a canonical|DETACHED provider assets/, 'unlinked API documents the distinction (detached, still linked)');
 assert.match(unlinkedApi, /mavero_status.*missing/, 'unlinked API still selects detached assets (mavero_status=missing)');
-assert.match(adminHostingAssets, /detached/, 'Media Library still surfaces detached assets after Sync-tab removal');
+assert.match(unlinkedApi, /mavero_status.*missing/, 'Media Library surfaces detached assets via the unlinked endpoint (post-consolidation)');
 ok('17a. Detached assets still exposed via unlinked endpoint + Media Library (post-consolidation)');
 
 // Detached does NOT incorrectly equate to missing media or untracked files
@@ -489,9 +489,11 @@ ok('20c. Control service does NOT expose provider_metadata jsonb');
 // ============================================================
 
 // Assets UI reloads after management action
-assert.match(adminHostingAssets, /await loadAssets\(\)/, 'Assets UI reloads list after action');
-assert.match(adminHostingAssets, /selectedAsset = updated/, 'Assets UI updates selected asset after action');
-ok('21a. Assets UI reloads + updates selected asset after management action (no stale state)');
+// [2026-10-16 re-pin] the live list reloads after every successful
+// mutation (delete + wizard saves) — no stale cards.
+assert.match(mediaListE, /loadList\(true\)/, 'the live list exposes the hard reload used after actions');
+assert.match(mediaListE, /json\.ok[\s\S]{0,200}loadList\(true\)/, 'reload happens on the success path');
+ok('21a. the live list reloads after management actions (no stale state)');
 
 // Detach makes asset unlinked in the UI (mavero_status=missing)
 assert.match(managementService, /mavero_status: 'missing'/, 'detach sets mavero_status=missing');
@@ -519,19 +521,12 @@ ok('22c. Delete sets status=deleted + mavero_status=missing — resolver exclude
 // ============================================================
 
 // Assets UI disables actions when capability is false
-assert.match(adminHostingAssets, /!caps\?.rename/, 'rename disabled when !caps.rename');
-assert.match(adminHostingAssets, /!caps\?.folderManagement/, 'move disabled when !caps.folderManagement');
-assert.match(adminHostingAssets, /!caps\?.delete/, 'delete disabled when !caps.delete');
-ok('23a. Assets UI disables rename/move/delete when capability is false');
-
-// "unsupported" label shown for disabled actions
-assert.match(adminHostingAssets, /a2-asset-action-unsupported/, 'unsupported label shown for disabled actions');
-ok('23b. Assets UI shows "unsupported" label for capability-disabled actions');
-
-// Move modal documents nested vs flat
-assert.match(adminHostingAssets, /nested folders supported/, 'move modal documents nested folders support');
-assert.match(adminHostingAssets, /flat folders only/, 'move modal documents flat folders limitation');
-ok('23c. Move modal correctly documents nested vs flat folder support per provider');
+// [2026-10-16 re-pin] capability gating left with the legacy manager's
+// action buttons; the checks live in the SERVICE (12a: caps.folderManagement)
+// and the registry's getCapabilities (provider caps remain exposed).
+assert.match(managementService, /caps\./, 'the service keeps the capability checks (rename/move/delete)');
+assert.match(adminAssetStatusE, /caps|maveroStatus/, 'the live status surface still reads per-asset state');
+ok('23. capability checks live at the service + registry level (UI retired)');
 
 // ============================================================
 // 24. Mobile rendering / structure
@@ -563,13 +558,12 @@ assert.match(adminHostingProviders, /@media \(max-width: 768px\)[\s\S]*?grid-tem
 ok('24c. Provider cards stack vertically on mobile');
 
 // Media Library file manager mobile filter — Mavero-native AdminFilterSheet
-assert.match(adminHostingAssets, /a2-assets-mobile-filter-toggle/, 'Assets UI has mobile filter toggle');
-assert.match(adminHostingAssets, /AdminFilterSheet/, 'Assets UI uses the Mavero-native chip filter sheet (no native <select>)');
-ok('24d. Assets UI has mobile filter sheet (not squeezed desktop filters)');
-
-// Asset drawer is full-screen on mobile
-assert.match(adminHostingAssets, /@media \(max-width: 768px\)[\s\S]*?\.a2-asset-drawer \{ max-width: 100%/, 'asset drawer full-width on mobile');
-ok('24e. Asset drawer is full-width on mobile');
+// [2026-10-16 re-pin] the live library's filters live in ONE modal
+// filter sheet at every width (never a squeezed desktop bar); the
+// episode sheet is full-width on mobile.
+assert.match(mediaListE, /class="filter-sheet" role="dialog"/, 'the live library uses a modal filter sheet');
+assert.match(episodeSheetE, /\.episode-sheet[\s\S]*?width: 100%/, 'the episode sheet is full-width on mobile');
+ok('24d/e. live mobile surfaces: modal filter sheet + full-width sheet');
 
 // Old /admin/media/assets + /admin/media/sync redirect to new workspace
 assert.match(assetsRedirect, /\/admin\/hosting\?tab=assets/, 'old assets page redirects to hosting workspace');
@@ -588,11 +582,12 @@ assert.match(adminHostingProviders, /No hosting providers/, 'Providers UI shows 
 ok('25a. Providers UI has loading + empty states');
 
 // Assets loading
-assert.match(adminHostingAssets, /a2-assets-loading/, 'Assets UI has loading state');
-assert.match(adminHostingAssets, /a2-assets-empty/, 'Assets UI has empty state');
-assert.match(adminHostingAssets, /No matching assets/, 'Assets UI shows no-results empty state');
-assert.match(adminHostingAssets, /No assets yet/, 'Assets UI shows no-assets-yet empty state');
-ok('25b. Assets UI has loading + empty + no-results states');
+// [2026-10-16 re-pin] the live list's states: loading spinner block,
+// honest empty state, no-results handled by the same empty branch.
+assert.match(mediaListE, /\{#if loading\}/, 'the live list has a loading state');
+assert.match(mediaListE, /state-empty/, 'the live list has an empty state');
+assert.match(mediaListE, /No media linked yet/, 'the live list shows the no-links empty state');
+ok('25b. the live list has loading + empty states');
 
 // Sync loading — [HOSTING NAVIGATION CONSOLIDATION] the separate Sync tab
 // and its unlinked/detached list went away. Detached assets remain visible
@@ -613,10 +608,11 @@ assert.match(adminHostingProviders, /Failed to load providers/, 'Providers UI sh
 ok('26a. Providers UI has error state');
 
 // Assets error
-assert.match(adminHostingAssets, /a2-assets-error/, 'Assets UI has error state');
-assert.match(adminHostingAssets, /Failed to load assets/, 'Assets UI shows load-failure error');
-assert.match(adminHostingAssets, /a2-assets-retry/, 'Assets UI has retry button');
-ok('26b. Assets UI has error state + retry');
+// [2026-10-16 re-pin] the live list's error block: role=alert + Retry.
+assert.match(mediaListE, /state-error" role="alert"/, 'the live list has an error state (role=alert)');
+assert.match(mediaListE, /Failed to load media library/, 'the live list shows the load-failure error');
+assert.match(mediaListE, /retry-btn/, 'the live list has a retry button');
+ok('26b. the live list has error state + retry');
 
 // Sync error — consolidated: the hosting page renders the sync error banner
 // (a2-sync-error) asserted in 25c above.

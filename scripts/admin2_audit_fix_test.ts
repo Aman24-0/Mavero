@@ -9,7 +9,7 @@
  * Run: pnpm exec tsx --tsconfig ./jsconfig.json scripts/admin2_audit_fix_test.ts
  */
 import assert from 'node:assert/strict';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -73,14 +73,19 @@ const libraryService = read('src/lib/server/hosting/library/service.ts');
 
 // FINDING-003: orphan filtering + hosting_state
 assert.match(libraryService, /includeOrphans/, 'G1. Library query has includeOrphans flag');
-// [2026-10 Task-2 hierarchy] the orphan rule now applies to the PARENT-level
-// asset/demand UNION (a series card rolls up its episodes' assets + demand);
-// same invariant — no active assets AND no demand anywhere → filtered.
-assert.match(libraryService, /if \(!includeOrphans && activeUnionAssets\.length === 0 && !unionDemand\)/, 'G2. Orphans (no active assets + no demand, parent union) filtered by default');
+// [2026-10-16 final round re-pin] the default exclusion is now the stricter
+// ZERO-LINK rule: a library card requires at least one ACTIVE (non-deleted)
+// asset in its union. This intentionally supersedes the earlier "demand but
+// no assets still shown" behavior — demand-backed zero-link titles are
+// Missing Media's domain (their demand rows are untouched by unlink and
+// resurface there), which is also the fix for the stale "0/62 episodes
+// linked" cards after a bulk delete.
+assert.match(libraryService, /if \(!includeOrphans && activeUnionAssets\.length === 0\) \{/, 'G2. Zero-link titles (no active assets in the parent union) filtered by default');
+assert.doesNotMatch(libraryService, /if \(!includeOrphans && activeUnionAssets\.length === 0 && !unionDemand\)/, 'G2b. the old demand-carve-out is gone (demand-backed zero-link rows no longer stay in the library)');
 assert.match(libraryService, /hosting_state/, 'G3. LibraryMediaItem has hosting_state field');
 assert.match(libraryService, /computeHostingState/, 'G4. computeHostingState helper exists');
 assert.match(libraryService, /'hosted' \| 'processing' \| 'failed' \| 'pending' \| 'catalog_only'/, 'G5. hosting_state has 5 values');
-ok('FINDING-003: orphan media_items filtered + hosting_state computed');
+ok('FINDING-003: orphan media_items filtered + hosting_state computed (zero-link form)');
 
 // ============================================================
 // PHASE C — Canonical Provider Resolver
@@ -126,24 +131,34 @@ assert.match(libraryPageServer, /hostingSourcesError/, 'L1. Library page server 
 ok('FINDING-005: hostingSourcesError surfaced by library server');
 
 // Components use shared helpers (no more duplicated adapterIdForSource)
-const mediaTable = read('src/lib/components/admin2/AdminMediaTable.svelte');
+// [2026-10-16 re-pin] AdminMediaTable + AdminMediaDetailDrawer were DELETED
+// with the legacy asset-manager UI (dead code, unimported). The surviving
+// consumer of the shared helpers is AdminMediaCard — and NO live component
+// re-defines the helpers locally (the dedup invariant, widened from 3 named
+// files to a whole-directory scan).
+assert.ok(!existsSync('src/lib/components/admin2/AdminMediaTable.svelte'), 'M0a. AdminMediaTable deleted (legacy table removed with the asset-manager UI)');
+assert.ok(!existsSync('src/lib/components/admin2/AdminMediaDetailDrawer.svelte'), 'M0b. AdminMediaDetailDrawer deleted (legacy drawer removed)');
 const mediaCard = read('src/lib/components/admin2/AdminMediaCard.svelte');
-const mediaDrawer = read('src/lib/components/admin2/AdminMediaDetailDrawer.svelte');
-assert.match(mediaTable, /import.*adapterIdForSource.*from '\$lib\/shared\/hosting-source-helpers'/, 'M1. AdminMediaTable imports shared helper');
-assert.match(mediaCard, /import.*adapterIdForSource.*from '\$lib\/shared\/hosting-source-helpers'/, 'M2. AdminMediaCard imports shared helper');
-assert.match(mediaDrawer, /import.*adapterIdForSource, sourceNameForId.*from '\$lib\/shared\/hosting-source-helpers'/, 'M3. AdminMediaDetailDrawer imports shared helpers');
-// No more local function definitions
-assert.doesNotMatch(mediaTable, /function adapterIdForSource\(/, 'M4. AdminMediaTable no longer has local adapterIdForSource');
-assert.doesNotMatch(mediaCard, /function adapterIdForSource\(/, 'M5. AdminMediaCard no longer has local adapterIdForSource');
-assert.doesNotMatch(mediaDrawer, /function adapterIdForSource\(/, 'M6. AdminMediaDetailDrawer no longer has local adapterIdForSource');
-assert.doesNotMatch(mediaDrawer, /function sourceNameForId\(/, 'M7. AdminMediaDetailDrawer no longer has local sourceNameForId');
-ok('Duplicated adapterIdForSource/sourceNameForId removed from all 3 components');
+assert.match(mediaCard, /import.*adapterIdForSource.*from '\$lib\/shared\/hosting-source-helpers'/, 'M1. AdminMediaCard imports shared helper (the live consumer)');
+const admin2Dir = readdirSync('src/lib/components/admin2');
+const localHelperDefs: string[] = [];
+for (const entry of admin2Dir) {
+  if (!entry.endsWith('.svelte')) continue;
+  const src = read(`src/lib/components/admin2/${entry}`);
+  if (/function adapterIdForSource\(/.test(src)) localHelperDefs.push(entry);
+}
+assert.deepEqual(localHelperDefs, [], 'M4. NO live admin2 component re-defines adapterIdForSource locally (dedup invariant, directory-wide)');
+ok('Duplicated adapterIdForSource removed from all components (survivors import the shared helper)');
 
-// Detail drawer surfaces "Unresolved" instead of "UNKNOWN"
-assert.match(mediaDrawer, /unresolved/, 'N1. Detail drawer has unresolved state');
-assert.match(mediaDrawer, /provider-block-unresolved-notice/, 'N2. Detail drawer renders unresolved notice');
-assert.doesNotMatch(mediaDrawer, /sourceNameForId.*'Unknown'/, 'N3. Detail drawer no longer returns Unknown from sourceNameForId');
-ok('Detail drawer surfaces Unresolved state instead of misleading UNKNOWN');
+// [2026-10-16 re-pin] the "Unresolved instead of UNKNOWN" notice lived in
+// the deleted AdminMediaDetailDrawer. The invariant it protected is the
+// shared helper's contract: sourceNameForId returns null (caller decides
+// the fallback) — it must NEVER return a misleading 'Unknown' string that
+// looks like a real provider name.
+assert.match(helpers, /NOTE: returns null \(NOT 'Unknown'\)/, 'N1. shared helper documents the null-not-Unknown contract');
+assert.doesNotMatch(helpers, /return '\?\?.*Unknown/, 'N2. sourceNameForId/providerNameForSource never stringify an Unknown provider name');
+assert.doesNotMatch(helpers, /\?\? 'Unknown'/, 'N3. no Unknown fallback inside the shared helpers (callers own the fallback)');
+ok('Provider-name resolution surfaces null instead of a misleading UNKNOWN label');
 
 // Management service uses resolver
 assert.match(managementService, /resolveAdapterForSource/, 'O1. Management service uses canonical resolver');

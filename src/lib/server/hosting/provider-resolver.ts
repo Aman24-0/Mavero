@@ -12,11 +12,11 @@
  *      app-code join, NO enabled filter (post-fix).
  *   2. (removed) the old upload page's loader — two explicit queries,
  *      app-code join, WITH enabled=true filter (FINDING-004 — bug).
- *   3. AdminMediaTable.svelte               — adapterIdForSource() on
- *      the client, using the hostingSources list from #1.
+ *   3. AdminMediaTable.svelte (deleted 2026-10-16 with the retired
+ *      legacy asset-manager UI) — adapterIdForSource() on the client.
  *   4. AdminMediaCard.svelte                — identical duplicate of #3.
- *   5. AdminMediaDetailDrawer.svelte        — identical duplicate of #3,
- *      plus sourceNameForId().
+ *   5. AdminMediaDetailDrawer.svelte (deleted 2026-10-16, same round) —
+ *      identical duplicate of #3, plus sourceNameForId().
  *
  * Plus the upload service, status route, complete route, upload-server
  * route, management service, and sync service all do their own

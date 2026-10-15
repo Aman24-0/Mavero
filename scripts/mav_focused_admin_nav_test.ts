@@ -9,7 +9,7 @@
  * Source-inspection tests — no env deps.
  */
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { resolve as pathResolve } from 'node:path';
 
@@ -140,30 +140,40 @@ console.log('\n§7 — Media Library add-file lives in the toolbar (Upload/Impor
   ok(/function openAddWizard/.test(mediaList), '7d. Add File opens the shared wizard from the list component');
 }
 
-console.log('\n§8 — AdminHostingAssets exposes the link flow via registerLinkTrigger');
+console.log('\n§8 — the legacy provider-inventory link flow is GONE (2026-10-16 removal)');
 {
-  const assets = readCode('src/lib/components/admin2/AdminHostingAssets.svelte');
-  ok(/registerLinkTrigger\s*=\s*\(\(\)\s*=>\s*\{\}\)\s*as/.test(assets), '8a. AdminHostingAssets declares the registerLinkTrigger prop');
-  ok(/registerLinkTrigger\(\(\)\s*=>\s*\{\s*void\s+startLinkExistingFlow\(\);\s*\}\)/.test(assets), '8b. AdminHostingAssets registers startLinkExistingFlow with the parent on mount');
-  ok(/registerLinkTrigger\(null\)/.test(assets), '8c. AdminHostingAssets deregisters on destroy (no stale closure)');
+  // The registerLinkTrigger + Link Media modal contract lived on
+  // AdminHostingAssets, which was DELETED with the legacy asset-manager UI.
+  // The live link flow is the shared Add File wizard (manual reference),
+  // reachable from the library toolbar + parent cards + Missing Media.
+  ok(!existsSync('src/lib/components/admin2/AdminHostingAssets.svelte'), '8a. AdminHostingAssets deleted (the registerLinkTrigger host is gone)');
+  // No live source resurrects the picker pattern.
+  const pickerRefs: string[] = [];
+  for (const entry of readdirSync('src/lib/components')) {
+    const full = `src/lib/components/${entry}`;
+    if (statSync(full).isDirectory()) {
+      for (const f of readdirSync(full)) {
+        if (!/\.svelte$/.test(f)) continue;
+        const src = readCode(`${full}/${f}`);
+        if (/registerLinkTrigger|LinkProviderTabState|loadProviderInventory/.test(src)) pickerRefs.push(`${full}/${f}`);
+      }
+    } else if (/\.svelte$/.test(entry)) {
+      const src = readCode(full);
+      if (/registerLinkTrigger|LinkProviderTabState|loadProviderInventory/.test(src)) pickerRefs.push(full);
+    }
+  }
+  ok(pickerRefs.length === 0, `8b. zero live components reference the removed picker pattern (got ${pickerRefs.join(', ')})`);
+  ok(existsSync('src/lib/components/admin2/AdminAddFileWizard.svelte'), '8c. the shared Add File wizard is the live link flow');
 }
 
-console.log('\n§9 — Link Media modal uses provider tabs with isolated state');
+console.log('\n§9 — the live link flow is the wizard (manual reference), no provider-inventory modal');
 {
-  const assets = readCode('src/lib/components/admin2/AdminHostingAssets.svelte');
-  ok(/LinkProviderTabState/.test(assets), '9a. the LinkProviderTabState type exists (per-tab isolated state)');
-  ok(/linkProviderTabs\s*=\s*\$state<LinkProviderTabState\[\]>\(\[\]\)/.test(assets), '9b. linkProviderTabs state array');
-  ok(/linkActiveTabId\s*=\s*\$state<string\s*\|\s*null>/.test(assets), '9c. linkActiveTabId state');
-  ok(/function\s+selectLinkTab/.test(assets), '9d. selectLinkTab function (tab switching)');
-  ok(/function\s+loadProviderInventory/.test(assets), '9e. loadProviderInventory function (lazy per-tab fetch)');
-  ok(/function\s+getFilteredInventory/.test(assets), '9f. getFilteredInventory function (per-provider client-side search)');
-  ok(/function\s+onProviderSearchInput/.test(assets), '9g. onProviderSearchInput function (debounced per-provider search)');
-  // The modal markup uses tabs.
-  ok(/role="tablist"[\s\S]*aria-label="Provider"/.test(assets), '9h. provider tab strip with role=tablist');
-  ok(/role="tabpanel"/.test(assets), '9i. provider tabpanel exists');
-  // The modal Step 1 = media search, Step 2 = provider file.
-  ok(/1\.\s*Media item/.test(assets), '9j. modal step 1 = Media item search');
-  ok(/2\.\s*Provider file/.test(assets), '9k. modal step 2 = Provider file');
+  const wizard = readCode('src/lib/components/admin2/AdminAddFileWizard.svelte');
+  ok(/manual-link/.test(wizard), '9a. the wizard saves via the manual-link contract (server-validated reference)');
+  ok(!/role="tablist"[\s\S]*aria-label="Provider"/.test(wizard), '9b. no provider tab strip in the live link flow (picker removed)');
+  ok(!/loadProviderInventory/.test(wizard), '9c. no provider inventory loading in the wizard');
+  // TMDB-first search is the wizard's media discovery step.
+  ok(/tmdb|search/i.test(wizard), '9d. the wizard searches TMDB for the media step');
 }
 
 console.log('\n§10 — No duplicate navigation surface (More sheet was the only duplicate)');

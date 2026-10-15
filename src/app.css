@@ -597,7 +597,7 @@ html[data-a2-dialog-open] body { overflow: hidden; }
      Admin 2.0 components render <Loader2 style="animation: a2-spin 1s linear infinite;">
      inline. Inline styles can only be overridden by !important — this single
      rule covers every spinner across AdminHostingProviders /
-     AdminOpsAttention / AdminOpsJobs / AdminOpsHistory / AdminHostingAssets /
+     AdminOpsAttention / AdminOpsJobs / AdminOpsHistory / AdminMediaList /
      admin/system/* without needing per-component overrides. (AdminHostingSync
      was removed during the Hosting navigation consolidation.) */
   .a2-workspace :global([style*="a2-spin"]) { animation: none !important; }

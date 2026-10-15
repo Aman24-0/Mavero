@@ -26,6 +26,18 @@
  * (season_count / episode_count / linked_episode_count) and listed on
  * demand via episodes(parentId) for the accessible episode sheet.
  *
+ * 2026-10-16 final round — ZERO-LINK EXCLUSION.
+ * list() represents ONLY titles with at least one ACTIVE (non-deleted)
+ * link in their union (a parent's own + its episodes' assets; a movie's
+ * own assets). When the final link is removed the card disappears from
+ * the library on the next read (the UI reloads after every mutation),
+ * so a "0/N episodes linked" parent card can never remain. Demand-backed
+ * zero-link titles are NOT shown here anymore — that duplicated Missing
+ * Media and was the root cause of the stale cards; demand rows are
+ * untouched by unlink and Missing Media's sweeps surface them again.
+ * `includeOrphans: true` remains the explicit debug escape hatch that
+ * returns every top-level row regardless of links.
+ *
  * Query budget: list() performs exactly FOUR bounded batch queries
  * regardless of page size (items, episode children by parent id,
  * assets by media_item_id, demand by canonical_key) — still no N+1.
@@ -196,20 +208,17 @@ export type LibraryQuery = {
   page?: number;
   limit?: number;
   /**
-   * FINDING-003 fix: when false (default), items with NO assets AND NO
-   * demand are excluded from the list. These are "orphan" rows left
-   * behind by failed uploads — they have a canonical identity but no
-   * playable asset and nobody has requested them, so showing them in
-   * Media Library is misleading (they look like hosted items with
-   * "Not linked" pills + a demand count that doesn't exist).
+   * FINDING-003 fix (historical): when false (default), orphan items are
+   * excluded from the list.
    *
-   * Items with demand but no assets are STILL shown (they're
-   * "missing media" — users have requested them and the admin should
-   * see them to know an upload is needed).
-   *
-   * Items with at least one non-deleted asset are always shown.
-   *
-   * Set to `true` to include orphans (for admin debugging / cleanup).
+   * 2026-10-16 final round — the default exclusion is now the ZERO-LINK
+   * rule: Media Library represents ONLY titles with at least one
+   * ACTIVE (non-deleted) media asset. This supersedes the earlier
+   * "items with demand but no assets are STILL shown" behavior — those
+   * titles belong to Missing Media (which owns the demand/request view)
+   * and keeping them here left "0/N episodes linked" parent cards after
+   * a bulk delete. Set to `true` to include everything (admin
+   * debugging / cleanup — returns demand-backed and orphan rows too).
    */
   includeOrphans?: boolean;
 };
@@ -418,23 +427,17 @@ export class MediaLibraryService {
     // items whose asset list matches the filter; items with no matching
     // assets are dropped (when the filter is set).
     //
-    // FINDING-003 fix: also filter out ORPHAN items (no assets AND no
-    // demand) unless `includeOrphans` is explicitly true. These are
-    // ghost rows from failed uploads — they have a canonical identity
-    // but no playable asset and nobody has requested them. Showing them
-    // in Media Library is misleading.
+    // 2026-10-16 ZERO-LINK EXCLUSION: items (movies) / unions (parents)
+    // with NO active asset are dropped from the default list — a library
+    // card requires at least one currently-linked asset. Demand-backed
+    // zero-link titles resurface in Missing Media (the demand row and
+    // its sweeps are untouched by this filter).
     //
-    // ARCHITECTURE FIX: also exclude items whose ONLY assets are deleted.
-    // A deleted provider file is terminal — it should NOT appear in the
-    // active file manager. The item may still be visible in Missing Media
-    // (if it has demand) or in Operations Activity (historical record).
-    // This uses the same "active assets" concept as computeHostingState():
-    // assets with status !== 'deleted'.
+    // ARCHITECTURE FIX (kept): items whose ONLY assets are deleted are
+    // excluded by the same rule — a deleted provider file is terminal.
     //
     // TASK 2: for a PARENT row these rules apply to the ROLLUP — the
-    // union of the parent's own assets and its episodes' assets, and the
-    // union of the parent's + episodes' demand. A parent whose episodes
-    // are all unlinked orphans is itself an orphan.
+    // union of the parent's own assets and its episodes' assets.
     const includeOrphans = query.includeOrphans === true;
     const resultItems: LibraryMediaItem[] = [];
     // Task 1: parents whose episode_summary needs the TMDB metadata
@@ -457,8 +460,12 @@ export class MediaLibraryService {
       const unionDemand = firstDemandRow ? demandByKey.get(firstDemandRow.canonical_key) ?? null : null;
       const activeUnionAssets = unionAssets.filter(a => a.status !== 'deleted');
 
-      // Orphan filter (parents: no linked episode + no demand anywhere).
-      if (!includeOrphans && activeUnionAssets.length === 0 && !unionDemand) {
+      // 2026-10-16 ZERO-LINK EXCLUSION — a library card requires at least
+      // one ACTIVE link in the union. This intentionally no longer keeps
+      // demand-backed zero-link rows (the old "pending" cards): they are
+      // Missing Media's domain, and keeping them here produced the
+      // reported stale "0/62 episodes linked" cards after a bulk delete.
+      if (!includeOrphans && activeUnionAssets.length === 0) {
         continue;
       }
 

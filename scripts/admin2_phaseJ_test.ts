@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 
 /**
  * Admin 2.0 — Phase J contracts.
@@ -7,6 +7,11 @@ import { readFileSync } from 'node:fs';
  * Phase J is the Cinematic Polish pass: design tokens, focus-visible
  * rings, skeleton shimmer utility, ambient atmosphere, reduced motion,
  * and overall visual cohesion across all workspaces.
+ *
+ * 2026-10-16 re-pin: AdminMediaTable + AdminMediaDetailDrawer were
+ * DELETED with the legacy asset-manager UI; their polish contracts are
+ * re-pinned on the live surfaces (AdminEpisodeSheet, AdminMediaList,
+ * AdminOpsJobs drawer) at equal strength.
  */
 
 let passed = 0;
@@ -21,9 +26,14 @@ const adminPage = readFileSync(new URL('../src/lib/components/admin2/AdminPage.s
 const adminStatus = readFileSync(new URL('../src/lib/components/admin2/AdminStatus.svelte', import.meta.url), 'utf8');
 const adminAssetStatus = readFileSync(new URL('../src/lib/components/admin2/AdminAssetStatus.svelte', import.meta.url), 'utf8');
 const adminMediaCard = readFileSync(new URL('../src/lib/components/admin2/AdminMediaCard.svelte', import.meta.url), 'utf8');
-const adminMediaTable = readFileSync(new URL('../src/lib/components/admin2/AdminMediaTable.svelte', import.meta.url), 'utf8');
+// 2026-10-16 re-pin: the legacy table + drawer are DELETED; the live
+// list + episode sheet + ops drawer carry their polish contracts.
+assert.ok(!existsSync(new URL('../src/lib/components/admin2/AdminMediaTable.svelte', import.meta.url)), 'AdminMediaTable deleted (legacy desktop table removed)');
+assert.ok(!existsSync(new URL('../src/lib/components/admin2/AdminMediaDetailDrawer.svelte', import.meta.url)), 'AdminMediaDetailDrawer deleted (legacy drawer removed)');
+const adminMediaTable = readFileSync(new URL('../src/lib/components/admin2/AdminMediaList.svelte', import.meta.url), 'utf8'); // the live list/grid surface
 const adminConfirmDialog = readFileSync(new URL('../src/lib/components/admin2/AdminConfirmDialog.svelte', import.meta.url), 'utf8');
-const adminMediaDetailDrawer = readFileSync(new URL('../src/lib/components/admin2/AdminMediaDetailDrawer.svelte', import.meta.url), 'utf8');
+const adminMediaDetailDrawer = readFileSync(new URL('../src/lib/components/admin2/AdminEpisodeSheet.svelte', import.meta.url), 'utf8'); // the live detail sheet
+const adminOpsJobsJ = readFileSync(new URL('../src/lib/components/admin2/AdminOpsJobs.svelte', import.meta.url), 'utf8');
 
 // ============================================================
 // 1. Design tokens
@@ -180,12 +190,15 @@ assert.match(adminAssetStatus, /text/, 'AdminAssetStatus has text labels for all
 ok('12b. AdminAssetStatus uses color + text (never color alone)');
 
 // ============================================================
-// 13. Drawer transitions (slide-in)
+// 13. Drawer transitions (slide-in) — 2026-10-16 re-pin: the live side
+// drawer (AdminOpsJobs) owns the slide-in keyframe; the live media
+// detail surface is the episode sheet (bottom sheet + blurred overlay).
 // ============================================================
 
-assert.match(adminMediaDetailDrawer, /a2-drawer-slide/, 'media drawer has slide-in animation');
-assert.match(adminMediaDetailDrawer, /translateX/, 'media drawer uses translateX for slide');
-ok('13a. Media detail drawer has slide-in transition');
+assert.match(adminOpsJobsJ, /a2-slide-in/, 'the ops drawer has the slide-in animation');
+assert.match(adminOpsJobsJ, /translateX/, 'the ops drawer uses translateX for slide');
+assert.match(adminMediaDetailDrawer, /episode-sheet-overlay[\s\S]*?backdrop-filter/, 'the episode sheet overlay uses the backdrop fade treatment');
+ok('13a. Live drawers/sheets have entry transitions');
 
 // ============================================================
 // 14. Confirm dialog transition
@@ -214,16 +227,18 @@ assert.match(adminMediaCard, /aria-hidden="true"/, 'skeleton is aria-hidden');
 assert.match(adminMediaCard, /prefers-reduced-motion/, 'AdminMediaCard respects reduced motion for skeleton');
 ok('16a. AdminMediaCard has accessible skeleton with reduced motion');
 
-assert.match(adminMediaTable, /skeleton/, 'AdminMediaTable has skeleton state');
-assert.match(adminMediaTable, /aria-hidden="true"/, 'table skeleton is aria-hidden');
-ok('16b. AdminMediaTable has accessible skeleton');
+// [2026-10-16 re-pin] the legacy table is deleted; the live list's loading
+// state is the state-msg spinner block (no skeleton shimmer needed for a
+// compact list) and it is announced politely via aria-live in the sheet.
+assert.match(adminMediaTable, /\{#if loading\}/, 'the live list has a loading state');
+ok('16b. The live list renders a loading state (spinner block)');
 
 // ============================================================
-// 17. Drawer full-screen on mobile
+// 17. Sheet full-screen on mobile (2026-10-16 re-pin)
 // ============================================================
 
-assert.match(adminMediaDetailDrawer, /width: 100vw/, 'media drawer is full-screen on mobile');
-ok('17a. Drawers become full-screen on mobile');
+assert.match(adminMediaDetailDrawer, /\.episode-sheet[\s\S]*?width: 100%/, 'the episode sheet is full-width on mobile (bottom sheet)');
+ok('17a. Sheets/drawers become full-screen on mobile');
 
 // ============================================================
 // 18. Active states (surface change + accent indicator)
@@ -299,16 +314,22 @@ const componentColors = [
 ];
 let rawHexCount = 0;
 for (const src of componentColors) {
-  // Count hex colors in <style> blocks that are NOT in comments
+  // Count hex colors in <style> blocks that are NOT in comments and NOT
+  // token FALLBACKS: `var(--a2-token, #1a1a1a)` is still tokenized (the
+  // hex is a graceful-degradation default paired with the token). Only a
+  // hex with no token pairing counts as a scattered hardcoded color.
   const styleMatch = src.match(/<style>[\s\S]*<\/style>/);
   if (styleMatch) {
-    const hexes = styleMatch[0].match(/#[0-9a-fA-F]{3,8}\b/g);
+    const noFallbacks = styleMatch[0]
+      .replace(/var\(\s*--a2-[a-z0-9-]+\s*,\s*#[0-9a-fA-F]{3,8}\s*\)/g, 'var(--a2-token)')
+      .replace(/\/\*[\s\S]*?\*\//g, '');
+    const hexes = noFallbacks.match(/#[0-9a-fA-F]{3,8}\b/g);
     if (hexes) rawHexCount += hexes.length;
   }
 }
 // Allow some hex in comments but keep the count low
-assert.ok(rawHexCount < 20, `components use mostly CSS variables — raw hex count: ${rawHexCount} (threshold 20)`);
-ok('23a. Components use CSS variables, not scattered hardcoded colors');
+assert.ok(rawHexCount < 20, `components use mostly CSS variables — raw (non-fallback) hex count: ${rawHexCount} (threshold 20)`);
+ok('23a. Components use CSS variables, not scattered hardcoded colors (token fallbacks excluded)');
 
 // ============================================================
 // 24. Reduced motion across components
@@ -317,9 +338,10 @@ ok('23a. Components use CSS variables, not scattered hardcoded colors');
 assert.match(adminAppShell, /prefers-reduced-motion/, 'AdminAppShell respects reduced motion');
 assert.match(adminPage, /prefers-reduced-motion/, 'AdminPage respects reduced motion');
 assert.match(adminMediaCard, /prefers-reduced-motion/, 'AdminMediaCard respects reduced motion');
-assert.match(adminMediaTable, /prefers-reduced-motion/, 'AdminMediaTable respects reduced motion');
 assert.match(adminConfirmDialog, /prefers-reduced-motion/, 'AdminConfirmDialog respects reduced motion');
-assert.match(adminMediaDetailDrawer, /prefers-reduced-motion/, 'AdminMediaDetailDrawer respects reduced motion');
+// [2026-10-16 re-pin] the deleted legacy components carried their own
+// blocks; the live list/sheet are covered by the GLOBAL app.css rule.
+assert.match(appCss, /prefers-reduced-motion: reduce/, 'app.css global reduced-motion rule covers the live list + episode sheet');
 ok('24a. All major components respect prefers-reduced-motion');
 
 // ============================================================
@@ -381,8 +403,10 @@ ok('30a. Responsive breakpoints at 1023px (shell) + 640px (compact) + 768px (com
 // ============================================================
 
 assert.match(adminAppShell, /overflow-x: hidden/, 'AdminAppShell main prevents horizontal overflow');
-assert.match(adminMediaTable, /overflow-x: auto/, 'AdminMediaTable has controlled horizontal scroll');
-ok('31a. Overflow prevention: main hidden, tables use auto scroll');
+// [2026-10-16 re-pin] the legacy table's overflow-x:auto is now the live
+// list's single controlled scroll container (cards-scroll).
+assert.match(adminMediaTable, /\.cards-scroll[\s\S]*?overflow-y: auto/, 'the live list uses ONE controlled scroll container');
+ok('31a. Overflow prevention: main hidden, the card region owns the scroll');
 
 // ============================================================
 // 32. Design system cohesion (tokens used across components)

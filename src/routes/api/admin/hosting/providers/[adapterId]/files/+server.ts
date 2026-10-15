@@ -3,10 +3,14 @@
  *
  * GET /api/admin/hosting/providers/[adapterId]/files
  *   Returns provider-side files (Vidara/Abyss/…) that are NOT currently
- *   linked to any Mavero media_asset. Used by the "Link existing file"
- *   pickers (AdminMediaDetailDrawer, Media Library header action, and
- *   the Missing Media link flow) to let an admin manually connect a
- *   provider file to a canonical media_item.
+ *   linked to any Mavero media_asset. Historically used by the removed
+ *   "Link existing file" inventory pickers (AdminMediaDetailDrawer /
+ *   AdminLinkMediaModal, deleted with the provider-inventory-picker UI
+ *   in the 2026-10-16 upload-removal completion) to let an admin
+ *   manually connect a provider file to a canonical media_item. The
+ *   route itself remains a valid admin inventory read (adapter files +
+ *   playback URLs) — retained for compatibility; the intended linking
+ *   flow is the manual-reference wizard via /api/admin/media/manual-link.
  *
  * Path param:
  *   adapterId — must be a registered HOSTING adapter key (derived from

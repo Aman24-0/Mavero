@@ -94,15 +94,25 @@ ok(/body\.episodeTitle\s*=/.test(wizard), '6g. wizard sends episodeTitle when pr
 console.log('\n§7 — Wizard preselectedMediaItem skips TMDB search step');
 
 ok(/preselectedMediaItem/.test(wizard), '7a. wizard checks preselectedMediaItem');
-ok(/wizardStep\s*=\s*'provider'/.test(wizard), '7b. wizard goes to provider step when preselected (skips TMDB search)');
+// [2026-10-16 re-pin] the multi-step wizard was replaced by the compact
+// ONE-form design (no step state). The preselected path still SKIPS the
+// search: the init effect sets selectedTmdb directly from the preselected
+// item and enters the edit form (enterEdit) — no TMDB search round-trip.
+ok(/preselected[\s\S]{0,600}selectedTmdb\s*=\s*\{/.test(wizard), '7b. preselect sets the TMDB selection directly (skips the search — compact form design)');
+ok(/enterEdit\(\)/.test(wizard), '7b-2. the wizard enters the edit form directly (no step machine)');
 
 console.log('\n§8 — Manual-link endpoint accepts episodeTitle');
 
 const server = src('src/routes/api/admin/media/manual-link/+server.ts');
 ok(/episodeTitle\?:\s*string/.test(server), '8a. endpoint body type includes optional episodeTitle');
 ok(/episodeTitle:\s*clientEpisodeTitle/.test(server), '8b. endpoint destructures episodeTitle from body');
-ok(/episodeTitle:\s*clientEpisodeTitle/.test(server), '8c. endpoint passes episodeTitle to resolveMediaItemId');
-ok(/episodeTitle:\s*episodeTitle/.test(server), '8d. resolveMediaItemId passes episodeTitle to ensureEpisode/ensureAnimeEpisode');
+ok(/episodeTitle:\s*clientEpisodeTitle/.test(server), '8c. endpoint passes episodeTitle to the identity resolver');
+// [2026-10-16 re-pin] the ensureEpisode/ensureAnimeEpisode call moved into
+// the shared manual-link-identity module (the route is a thin adapter).
+// The full chain: route → resolveManualLinkIdentity(episodeTitle) →
+// ensureEpisode/ensureAnimeEpisode(episodeTitle ?? null).
+const identity = src('src/lib/server/hosting/media/manual-link-identity.ts');
+ok(/episodeTitle:\s*episodeTitle \?\? null/.test(identity), '8d. resolveManualLinkIdentity passes episodeTitle to ensureEpisode/ensureAnimeEpisode');
 
 console.log('\n§9 — Authorization enforced on all mutations');
 

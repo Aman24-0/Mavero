@@ -199,8 +199,13 @@ export type AttentionItem = {
   errorMessage: string | null;
   /** When the issue was first detected / last updated */
   detectedAt: string;
-  /** Whether a retry action is available for this item */
-  canRetry: boolean;
+  /**
+   * 2026-10-16 upload-removal completion — `canRetry` was REMOVED: the
+   * upload retry endpoint (/api/admin/media/upload/{id}/retry) was
+   * retired with the upload workflow, so no attention item may
+   * advertise a retry action. Error classification (transient vs
+   * permanent) remains informational on the Jobs tab.
+   */
   /** Whether a reconcile action is available for this item */
   canReconcile: boolean;
 };

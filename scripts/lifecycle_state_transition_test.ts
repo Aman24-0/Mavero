@@ -15,7 +15,7 @@
  * Run: pnpm exec tsx --tsconfig ./jsconfig.json scripts/lifecycle_state_transition_test.ts
  */
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -32,8 +32,13 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 console.log('\n=== Lifecycle State-Transition Bug Fix — Regression Tests ===\n');
 
 const mgmt = read('src/lib/server/hosting/management/service.ts');
-const hostingAssets = read('src/lib/components/admin2/AdminHostingAssets.svelte');
-const mediaDrawer = read('src/lib/components/admin2/AdminMediaDetailDrawer.svelte');
+// [2026-10-16 re-pin] AdminHostingAssets + AdminMediaDetailDrawer were
+// DELETED with the legacy asset-manager UI (dead code, unimported). The
+// service-level state-transition matrices below are the real safety
+// invariants and stay verbatim; the per-component UI-gating checks are
+// replaced by a STRONGER directory-wide invariant (see §3/§6 notes).
+assert.ok(!existsSync(path.join(REPO_ROOT, 'src/lib/components/admin2/AdminHostingAssets.svelte')), '0a. AdminHostingAssets deleted (legacy provider-file manager removed)');
+assert.ok(!existsSync(path.join(REPO_ROOT, 'src/lib/components/admin2/AdminMediaDetailDrawer.svelte')), '0b. AdminMediaDetailDrawer deleted (legacy media detail drawer removed)');
 
 // ============================================================
 // BUG 1 — linkAsset() must UPDATE existing unlinked rows
@@ -121,23 +126,38 @@ assert.match(mgmt, /newMaveroStatus = asset\.status === 'ready' \|\| asset\.stat
 ok('Bug 2: reactivateAsset() rejects deleted assets (ASSET_DELETED), DB unchanged');
 
 // ============================================================
-// BUG 2 — UI gating: Reactivate NOT shown for deleted assets
+// BUG 2 — UI gating: Reactivate NOT reachable for deleted assets
 // ============================================================
 console.log('\n--- Bug 2 UI: Reactivate gating ---');
 
-// AdminHostingAssets: Reactivate must NOT appear for deleted assets.
-// The entire actions section is wrapped in {#if status !== 'deleted'} {:else},
-// so Reactivate is only rendered inside the non-deleted block.
-const deletedBlockMatch = hostingAssets.match(/selectedAsset\.status === 'deleted'[\s\S]*?\{:else\}/);
-assert.ok(deletedBlockMatch, '3a. AdminHostingAssets wraps actions in status !== deleted check');
-// Verify the deleted notice is shown
-assert.match(hostingAssets, /permanently deleted.*No actions/, '3a-2. AdminHostingAssets shows terminal deleted notice');
+// [2026-10-16 re-pin] the reactivate BUTTON lived only in the deleted
+// AdminHostingAssets / AdminMediaDetailDrawer. The live UI wires NO
+// reactivate action at all — "reactivate" survives solely as historical
+// record labels/filters in the Operations Center. Safety is enforced at
+// the service layer (§2 above: ASSET_DELETED before any DB write), and
+// the endpoint remains a guarded API. Directory-wide scan = stronger
+// than the old per-component check: NO live component may fetch the
+// reactivate (or any asset-mutating) endpoint ungated.
+{
+  const admin2Dir = path.join(REPO_ROOT, 'src/lib/components/admin2');
+  const reactivateCallers: string[] = [];
+  for (const entry of readdirSync(admin2Dir)) {
+    if (!/\.svelte$/.test(entry)) continue;
+    const src = read(`src/lib/components/admin2/${entry}`);
+    if (/\/reactivate['"`]/.test(src) && /fetch\(/.test(src) && /reactivate/.test(src)) {
+      // any fetch URL containing /reactivate
+      if (new RegExp("fetch\\(\\s*[`'\"]\\S*reactivate").test(src)) reactivateCallers.push(entry);
+    }
+  }
+  assert.deepEqual(reactivateCallers, [], '3a. NO live admin2 component invokes the reactivate endpoint (the action surface was removed with the legacy drawer; the service guard §2 owns safety)');
+}
+// The live "unlink" flow (episode sheet Delete) only offers the action for
+// episodes that actually HAVE an asset link — the same state-aware gating
+// intent, on the live surface.
+const episodeSheet = read('src/lib/components/admin2/AdminEpisodeSheet.svelte');
+assert.match(episodeSheet, /view\.asset[\s\S]{0,400}Delete|Delete[\s\S]{0,400}view\.asset| ondeletelink/, '3b. the live episode sheet gates Delete on an existing asset link (state-aware action visibility)');
 
-// AdminMediaDetailDrawer: Reactivate must check status !== 'deleted'
-const drawerReactivateMatch = mediaDrawer.match(/mavero_status === 'missing' && asset\.status !== 'deleted'[\s\S]*?reactivateAsset/);
-assert.ok(drawerReactivateMatch, '3b. AdminMediaDetailDrawer Reactivate checks status !== deleted');
-
-ok('Bug 2 UI: Reactivate NOT shown for deleted assets in both Provider Files + Media Library drawer');
+ok('Bug 2 UI: reactivate unreachable from live UI (removed with the legacy drawer); unlink gated on live links');
 
 // ============================================================
 // State-transition matrix verification
@@ -170,35 +190,30 @@ assert.doesNotMatch(deletedCheckBlock[0], /\.update\(/, '5c. REACTIVATE case 3: 
 ok('REACTIVATE state-transition matrix: 3 cases verified (ready/processing→available, deleted→rejected)');
 
 // ============================================================
-// UI state-aware button visibility (Provider Files)
+// UI state-aware action availability (live surfaces)
 // ============================================================
-console.log('\n--- UI state-aware visibility (Provider Files) ---');
+console.log('\n--- UI state-aware action availability (live surfaces) ---');
 
-// Link Existing File (final remediation): a header-level action for genuine
-// untracked provider files (no media_assets row). The drawer button gated on
-// !mediaItem was dead code under the NOT NULL constraint and was removed.
-// [2026-10 redesign] the button label is "Link media" (the flow is the same
-// startLinkExistingFlow → tabbed provider inventory → confirmLink).
-const unlinkedBlock = hostingAssets.match(/a2-assets-link-existing[\s\S]*?<\/button>/);
-assert.ok(unlinkedBlock, '6a. Link Existing File header action present (label: Link media)');
-// Reactivate should NOT appear in the header action block
-assert.doesNotMatch(unlinkedBlock![0], /reactivate/i, '6b. Header action: Reactivate NOT shown there');
-// Detach should NOT appear for unlinked (no mediaItem to detach from)
-const detachBlock = hostingAssets.match(/selectedAsset\.mediaItem[\s\S]*?startDetach/);
-assert.ok(detachBlock, '6c. Detach only shown when mediaItem exists (linked)');
+// [2026-10-16 re-pin] the old assertions pinned the deleted drawer's
+// Link-Existing/Detach/Reactivate button placement. The live equivalents:
+//  - "Link media" (the manual-reference flow) = the Add File wizard,
+//    reachable from the library toolbar + parent cards + Missing Media;
+//  - "Detach" for a linked episode = the episode sheet's Delete (unlink)
+    // action, offered ONLY for episodes with an asset;
+//  - deleted assets never render as linked (the library's active-assets
+//    rule + the episode sheet's ground-truth asset).
+assert.match(episodeSheet, /ondeletelink/, '6a. the live per-episode Delete (unlink) action exists');
+// The delete action requires an asset: the sheet derives `view.asset` per
+// episode and renders the action inside that branch.
+assert.match(episodeSheet, /view\.asset[\s\S]{0,600}ondeletelink|ondeletelink[\s\S]{0,600}view\.asset/, '6b. Delete (unlink) only rendered for episodes WITH an asset (state-aware)');
+// The Add File wizard (the live link flow) is mounted by the library list.
+const mediaList = read('src/lib/components/admin2/AdminMediaList.svelte');
+assert.match(mediaList, /AdminAddFileWizard/, '6c. the library list mounts the Add File wizard (the live link flow)');
+// The wizard saves through the manual-link contract (server-validated),
+// not through any removed upload path.
+assert.doesNotMatch(mediaList, /\/api\/admin\/media\/upload/, '6d. no dead upload-route references in the live list');
 
-// Detached (maveroStatus='missing' inside non-deleted block): Reactivate visible
-// Since the entire actions section is wrapped in {#if status !== 'deleted'}, 
-// Reactivate appears for any maveroStatus='missing' inside that block.
-const detachedBlock = hostingAssets.match(/maveroStatus === 'missing'[\s\S]*?Reactivate[\s\S]*?<\/button>/);
-assert.ok(detachedBlock, '6d. Detached: Reactivate button present (inside non-deleted block)');
-
-// Deleted (status='deleted'): Reactivate NOT visible
-// The entire actions section is wrapped in {#if status === 'deleted'} ... {:else} ... {/if}
-// so Reactivate (inside {:else}) is never rendered for deleted assets.
-assert.match(hostingAssets, /selectedAsset\.status === 'deleted'[\s\S]*?permanently deleted[\s\S]*?\{:else\}/, '6e. Deleted assets get terminal notice, actions in {:else} block');
-
-ok('UI state-aware visibility: header Link Existing File, Detached→Reactivate, Deleted→no Reactivate, Linked→Detach');
+ok('UI state-aware availability: wizard = link flow; Delete gated on live asset; no upload-route references');
 
 // ============================================================
 // SUMMARY

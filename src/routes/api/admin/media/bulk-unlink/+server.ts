@@ -1,12 +1,15 @@
 /**
  * Task 4 (2026-10-15) — Bulk season unlink API.
+ * 2026-10-16 final round — SELECTED-EPISODE semantics.
  * POST /api/admin/media/bulk-unlink
  *
- * Removes the Mavero-side media_assets associations of every linked
- * episode of ONE season of ONE series/anime. See
- * src/lib/server/hosting/media/bulk-unlink-contract.ts for the full
- * contract (scope guarantees, eligibility gate, partial failure,
- * audit trail). This route file is a thin HTTP adapter:
+ * Removes the Mavero-side media_assets associations of an EXPLICIT,
+ * client-selected set of linked episodes of ONE season of ONE
+ * series/anime (body: { parentId, season, episodeIds }). An absent or
+ * empty selection is rejected — bulk never deletes every episode by
+ * default. See src/lib/server/hosting/media/bulk-unlink-contract.ts for
+ * the full contract (scope guarantees, eligibility gate, partial
+ * failure, audit trail). This route file is a thin HTTP adapter:
  *   1. requireAdmin (authorization lives HERE, never in the client),
  *   2. input validation,
  *   3. the shared deletion core.
@@ -27,19 +30,19 @@ export const POST: RequestHandler = async ({ request, locals }) => {
   const { user } = await requireAdmin(locals, { redirectTo: '/admin' });
   const adminClient = createSupabaseAdminClient();
 
-  let body: { parentId?: string; season?: string | number };
+  let body: { parentId?: string; season?: string | number; episodeIds?: unknown };
   try {
     body = await request.json();
   } catch {
     return json({ ok: false, error: { code: 'INVALID_REQUEST', message: 'Invalid JSON body.' } }, { status: 400, headers: NO_STORE_HEADERS });
   }
 
-  const validated = validateBulkUnlinkInput(body.parentId, body.season);
+  const validated = validateBulkUnlinkInput(body.parentId, body.season, body.episodeIds);
   if ('code' in validated) {
     return json({ ok: false, error: { code: validated.code, message: validated.message } }, { status: 400, headers: NO_STORE_HEADERS });
   }
 
-  const outcome = await bulkUnlinkSeason(adminClient, user.id, validated.parentId, validated.season);
+  const outcome = await bulkUnlinkSeason(adminClient, user.id, validated.parentId, validated.season, validated.episodeIds);
   if (!outcome.ok) {
     const status = outcome.error.code === 'PARENT_NOT_FOUND' ? 404 : 400;
     return json({ ok: false, error: { code: outcome.error.code, message: outcome.error.message } }, { status, headers: NO_STORE_HEADERS });

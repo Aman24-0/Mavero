@@ -85,10 +85,35 @@
 
   let {
     active = '' as string,
+    /**
+     * FILL MODE (2026-10-16 layout round) — opt-in per page. Set by pages
+     * that own an INTERNAL scroll region (Media Library's cards list).
+     * When true, `.a2-main` stops being the scroller (overflow: hidden;
+     * exactly 100dvh tall between the fixed header and the mobile bottom
+     * nav) and the workspace stretches into a flex column, so the page's
+     * own cards region becomes the ONLY scroll container and its toolbar
+     * NEVER scrolls away.
+     *
+     * Root cause this fixes: the previous design relied on
+     * `position: sticky` for the library toolbar, but `.a2-main` keeps
+     * `overflow-y: auto` from its base rule even in the <1024px media
+     * query (where `height: auto` makes it grow with content and the
+     * DOCUMENT scrolls instead). An `overflow: auto` ancestor is the
+     * sticky element's scrollport even when it never actually scrolls —
+     * so on mobile the toolbar never received a sticky offset and simply
+     * scrolled away with the page while the first card slid under the
+     * fixed admin header. Fill mode removes the need for sticky entirely.
+     *
+     * Pages that do NOT opt in keep the exact previous behavior
+     * (mobile: document scroll; desktop: `.a2-main` internal scroll).
+     */
+    fill = false as boolean,
     children
   }: {
     /** Optional override for the active nav item id. When empty, route-aware detection is used. */
     active?: string;
+    /** Opt into the fixed-height workspace layout (see comment above). */
+    fill?: boolean;
     children: Snippet;
   } = $props();
 
@@ -395,7 +420,7 @@
   <!-- ============================================================
        MAIN WORKSPACE
        ============================================================ -->
-  <main class="a2-main a2-scroll">
+  <main class="a2-main a2-scroll" class:a2-main-fill={fill}>
     <div class="a2-workspace" data-key={workspaceKey}>
       {@render children()}
     </div>
@@ -904,6 +929,37 @@
     .a2-workspace { animation: none; }
     .a2-status-dot { animation: none; }
     .a2-sidebar, .a2-topbar, .a2-main { transition: none; }
+  }
+
+  /* ============================================================
+     FILL MODE (2026-10-16 layout round) — see the `fill` prop comment.
+     `.a2-shell .a2-main-fill` (0,2,0) intentionally outranks the
+     `.a2-main` base + responsive rules (0,1,0) at every breakpoint:
+       - height: 100dvh   → the main region is EXACTLY the viewport
+                            (mobile override of `height: auto`);
+       - overflow: hidden → the main region is NOT a scroller — the page's
+                            internal cards region owns scrolling (this is
+                            also why NO descendant may rely on
+                            position:sticky against the main region: an
+                            `overflow: hidden` ancestor would defeat it);
+       - display: flex column → the workspace stretches to the remaining
+                            height (100dvh minus padding-top, and minus
+                            the mobile bottom-nav padding-bottom), so all
+                            heights derive from the REAL header/nav
+                            (--a2-topbar-h-safe / --a2-mobile-nav-h-safe,
+                            both safe-area aware) — no hard-coded offsets.
+     The workspace in fill mode: flex child (fills the main region's
+     content box) + flex column itself, with padding-top removed so the
+     page's toolbar sits tight under the fixed admin header (the reported
+     "large blank gap between the page header and search bar").
+     ============================================================ */
+  .a2-shell .a2-main-fill { display: flex; flex-direction: column; height: 100dvh; overflow: hidden; }
+  .a2-shell .a2-main-fill > .a2-workspace {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    padding-top: 0;
   }
 
   /* ============================================================

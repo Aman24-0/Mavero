@@ -61,6 +61,15 @@
     actions,
     toolbar,
     header,
+    /**
+     * FILL MODE (2026-10-16 layout round) — opt-in for pages whose body
+     * owns an internal scroll region (Media Library). The page section
+     * stretches to the workspace's full height (flex child + flex
+     * column) and the body becomes a flex column too, so the child
+     * component can own the only scroller on the page. Only meaningful
+     * when AdminAppShell also runs in fill mode.
+     */
+    fill = false as boolean,
     children
   }: {
     eyebrow?: string;
@@ -78,11 +87,13 @@
     actions?: Snippet;
     toolbar?: Snippet;
     header?: Snippet;
+    /** Opt into the full-height flex chain (see comment above). */
+    fill?: boolean;
     children: Snippet;
   } = $props();
 </script>
 
-<section class="a2-page">
+<section class="a2-page" class:a2-page-fill={fill}>
   {#if header}
     {@render header()}
   {:else if eyebrow || title || description || actions}
@@ -323,6 +334,15 @@
     flex: 1;
     min-height: 0;
   }
+
+  /* ---- Fill mode (2026-10-16 layout round) ----
+     The page fills the (fill-mode) workspace: it is a flex CHILD of the
+     workspace column AND a flex column itself, so `.a2-page-body`
+     (already flex:1 + min-height:0) receives a definite height and the
+     body's own children can stretch + own the page's single scroller.
+     `.a2-page.a2-page-fill` (0,2,0) outranks the `.a2-page` base (0,1,0). */
+  .a2-page.a2-page-fill { flex: 1 1 auto; min-height: 0; }
+  .a2-page.a2-page-fill .a2-page-body { display: flex; flex-direction: column; }
 
   @media (max-width: 640px) {
     .a2-page-header {

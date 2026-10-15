@@ -1521,3 +1521,115 @@ with equal or greater strength, reasons documented in-file)
 Production deployment and live-HTTP verification were NOT performed
 (owner deploys). The live Supabase schema was not touched; no
 migrations added or applied.
+
+## Final Media Library fixes + upload-workflow removal completion (2026-10-16)
+
+Baseline: `2e8b7df` on `main` (in sync with `origin/main`). This round
+finishes the five-task spec on top of the committed five-task round:
+the sticky-layout fix, the zero-link library rule, the explicit
+episode-selection bulk delete, and the COMPLETE upload-workflow removal
+(the dangling Retry/Cancel buttons + the legacy dead-code components).
+
+### Root causes addressed
+
+1. **Sticky layout / mobile scroll ownership** — the earlier
+   position:sticky toolbar was inert on mobile (the shell's main region
+   kept `overflow-y:auto` while the document scrolled, so the sticky
+   scrollport never scrolled). Fix: the page runs in the shell's FILL
+   mode — the toolbar is a STATIC block at the top of the page's flex
+   column and the ONE scroll container is the cards region below it
+   (`cards-scroll`, bounded by viewport − header − bottom nav). The
+   toolbar can never scroll away, the first card always begins fully
+   below it, and the last card scrolls clear of the mobile bottom nav.
+   No hard-coded offsets; heights come from the flex chain.
+2. **Stale "0/62" parent cards** — Media Library kept demand-backed
+   zero-link rows (the historical "pending" carve-out). Fix: the
+   ZERO-LINK rule in `MediaLibraryService.list()` — a library card
+   requires at least one ACTIVE (non-deleted) asset in its union
+   (movie: own assets; parent: own + episodes' assets). Demand-backed
+   zero-link titles return to Missing Media (their demand rows are
+   untouched by unlink and its sweeps re-surface them — no duplicate
+   demand rows, canonical identity preserved). `includeOrphans:true`
+   remains the explicit debug escape hatch.
+3. **Bulk delete was "delete the whole season"** — the request carried
+   no selection and the server derived ALL episodes of the season. Fix:
+   `episodeIds` is REQUIRED in `bulk-unlink-contract.ts` (empty/absent
+   selection → 400 SELECTION_INVALID — opening the dialog can never
+   delete by itself); membership is still server-derived (cross-parent /
+   cross-season / unknown ids are per-episode failures, never deletions);
+   unselected linked episodes untouched; idempotent retry preserved.
+   UI: >1 linked episode → explicit multi-select list (only linked
+   episodes, per-episode checkboxes, live count, Continue disabled on
+   empty selection, explicit final confirmation); exactly 1 linked
+   episode → direct single-episode confirmation; 0 linked → the bulk
+   action is not offered.
+4. **Dangling upload Retry/Cancel** — AdminOpsJobs rendered Retry/Cancel
+   that POSTed to removed `/api/admin/media/upload/{id}/retry|cancel`;
+   AdminOpsAttention had a Retry wiring; `AttentionItem.canRetry`
+   advertised a dead capability. Fix: handlers + wiring + type removed
+   (the historical upload rows stay as labeled records — the table is
+   retained for production data), and the legacy dead-code components
+   were DELETED (no importers remained): AdminUploadFlow,
+   AdminMediaDetailDrawer, AdminHostingAssets, AdminMediaTable,
+   AdminLinkMediaModal (~7.6k lines of unreachable UI).
+5. **Documentation drift** — PLAN.md rewritten to the as-built
+   architecture (manual-reference workflow, upload REMOVED with the
+   intentionally-retained list); WORKLOG (this section) records the
+   round; a 45-check suite pins the docs to the implementation.
+
+### Changed files (this round)
+
+- **Server**: `hosting/library/service.ts` (zero-link rule),
+  `hosting/media/bulk-unlink-contract.ts` (selected-episode semantics),
+  `hosting/operations/service.ts` + `shared/operations-types.ts`
+  (canRetry capability removed), `hosting/provider-resolver.ts` +
+  `api/.../providers/[adapterId]/files` + `api/.../assets/link` +
+  `api/.../missing/link` + `bulk-unlink` route (comments/contracts
+  updated to the live architecture).
+- **UI**: `AdminMediaList.svelte` (fill-mode layout, error role=alert,
+  44px row-action hit areas), `AdminEpisodeSheet.svelte` (bulk-delete
+  selection + single-episode confirm flows, 44px close button),
+  `AdminAppShell.svelte` + `AdminPage.svelte` (fill mode), `AdminOpsJobs.svelte`
+  + `AdminOpsAttention.svelte` (dead upload actions removed), app.css.
+- **Deleted**: the five legacy components above.
+- **Tests**: 2 NEW suites (mav_library_zero_link_exclusion 28 checks;
+  mav_upload_removal_completion 45 checks) + 17 suites re-pinned to the
+  live surfaces (see below).
+
+### Test re-pin ledger (2026-10-16)
+
+17 suites still read the deleted components or pinned superseded
+contracts. Each was updated ONLY where the old expectation was
+genuinely obsolete, re-locating the contract to its live surface at
+equal-or-greater strength (deletion assertions, directory-wide scans
+instead of named files, service-level invariants instead of
+per-component UI gating):
+
+- admin2_phase0/C/E/F/J/2/5, admin2_audit_fix, architecture_remediation,
+  consolidation_regression, lifecycle_state_transition,
+  mav_focused_admin_nav, mav_focused_vidara_abyss,
+  delete_and_upload_selector, drawer_management_ui, final_remediation,
+  final3_issue_regression, post_deploy_regression,
+  phase7_live_upload_fix, phase7_abyss_upload_fix,
+  mav_phase3_missing_media_contract.
+- Component fixes made INSTEAD of weakening touch-target/a11y pins:
+  episode-sheet close 32→44px, grid/list kebab 28/32→44px, list error
+  block gains role="alert".
+
+### Verification matrix (this round)
+
+| Gate | Result |
+|------|--------|
+| New focused suites | zero-link 28/28; upload-removal 45/45 |
+| Full non-browser chain | 277/277 tsx suites PASS (275 prior + 2 new) |
+| Browser suites (.mjs) | NOT RUN (excluded per instruction — headless Chromium suites at the chain tail) |
+| pnpm check | 0 errors / 5 warnings (unused-CSS-selector families, pre-existing) |
+| pnpm build | success (Netlify adapter + executor) |
+| git diff --check | clean |
+| Secrets scan (full diff) | clean |
+
+Production deployment, live-HTTP, and in-browser verification were NOT
+performed (owner deploys; browser testing explicitly excluded). The
+live Supabase schema was not touched — the historical
+`media_upload_operations` rows and tables are retained intentionally
+(no destructive migration).

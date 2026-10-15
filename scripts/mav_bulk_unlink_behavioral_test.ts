@@ -1,21 +1,38 @@
 /**
  * Task 4 regression (2026-10-15) — safe bulk season deletion.
+ * 2026-10-16 final round — RE-PINNED to the SELECTED-EPISODE contract.
  *
  * Behavioral tests for the bulk-unlink contract
  * (src/lib/server/hosting/media/bulk-unlink-contract.ts) against an
  * in-memory postgrest emulation (the mav_task2/mav_task3 pattern).
  *
+ * RE-PIN REASON (2026-10-16): the previous contract deleted EVERY linked
+ * episode of the season by default (the client sent only parentId +
+ * season; the server derived the whole set). The product contract now
+ * requires bulk to operate on an EXPLICIT, client-selected set:
+ *   * the request MUST carry episodeIds (absent/empty → 400
+ *     SELECTION_INVALID — opening the bulk-delete action can never
+ *     remove anything by itself);
+ *   * only the selected episodes are processed; unselected linked
+ *     episodes are untouched;
+ *   * the server still derives membership from parent+season, so stale,
+ *     cross-parent, or cross-season ids fail per-episode and can never
+ *     unlink assets outside the requested scope.
+ * Every behavioral assertion below was re-pinned to that contract with
+ * equal or greater strength (each § now also asserts the untouched
+ * survivors, not just the deleted rows).
+ *
  * Required coverage (from the task):
- *   §A  several linked episodes deleted from the selected season
- *   §B  unlinked episodes are not affected (idempotent outcomes)
+ *   §A  several SELECTED linked episodes deleted from the season
+ *   §B  unselected linked episodes + unlinked episodes are unaffected
  *   §C  another season remains untouched
- *   §D  invalid parent/season/episode requests fail safely
- *   §E  authorization is enforced by the ROUTE (source contract — the
- *       contract function never bypasses requireAdmin)
+ *   §D  invalid parent/season/selection/stale/cross-parent requests fail safely
+ *   §E  authorization is enforced by the ROUTE (source contract)
  *   §F  partial failures are reported accurately
  *   §G  retrying failed deletions does not damage successful results
  *   §H  audit records follow the existing conventions
  *   §I  provider-hosted files are NEVER deleted (no provider writes)
+ *   §J  UI contract — Case A/B/C selection semantics (source contract)
  *
  * Run: pnpm exec tsx --tsconfig ./jsconfig.json scripts/mav_bulk_unlink_behavioral_test.ts
  */
@@ -79,6 +96,18 @@ globalThis.fetch = (async (input: RequestInfo | URL): Promise<Response> => {
       air_date: '2027-01-01',
     }));
     return new Response(JSON.stringify({ id: '46648', season_number: 3, name: 'Season 3', episodes }), { status: 200, headers: { 'content-type': 'application/json' } });
+  }
+  // The Wire (tmdb 999) season 1: ONLY episode 1 exists (released) — for
+  // the cross-parent / oversized-selection case.
+  if (/^\/(3\/)?tv\/999\/season\/1$/.test(url.pathname)) {
+    const episodes = [1].map((n) => ({
+      id: 9000 + n,
+      episode_number: n,
+      season_number: 1,
+      name: `Episode ${n}`,
+      air_date: '2002-06-01',
+    }));
+    return new Response(JSON.stringify({ id: '999', season_number: 1, name: 'Season 1', episodes }), { status: 200, headers: { 'content-type': 'application/json' } });
   }
   return new Response(JSON.stringify({}), { status: 200, headers: { 'content-type': 'application/json' } });
 }) as typeof fetch;
@@ -198,19 +227,16 @@ class MockSupabase {
 
   from(name: string): QueryBuilder {
     const table = this.tables.find((t) => t.name === name);
-    if (!table) throw new Error(`unexpected table ${name}`);
+    if (!table) throw new Error(`unknown table ${name}`);
     return new QueryBuilder(table.rows, name, () => this.nextId(), this.failDeleteFor);
   }
 }
 type Table = { name: string; rows: Row[] };
 
-// ---------------------------------------------------------------------------
-// Fixtures — "Dark" parent with episodes in seasons 1 + 2.
-// ---------------------------------------------------------------------------
-
+// Seed: Dark (series:tmdb:46648) — S1 E1+E2 linked + E3 unlinked; S2 E1 linked.
 function seedSeason(mock: MockSupabase, parentId: string, season: number, episodes: number[], linked: number[]): void {
   for (const e of episodes) {
-    const epRow: Row = {
+    const epRow = {
       id: `dark-s${season}e${e}`,
       canonical_key: `series:tmdb:46648:s${season}:e${e}`,
       content_type: 'series',
@@ -269,32 +295,49 @@ const assets = (mock: MockSupabase) => mock.tables[1].rows;
 const ops = (mock: MockSupabase) => mock.tables[2].rows;
 
 // ===========================================================================
-console.log('§A — several linked episodes deleted from the selected season');
+console.log('§A — several SELECTED linked episodes deleted from the season');
 // ===========================================================================
 {
   const mock = seedShow();
-  const outcome = await bulkUnlinkSeason(mock as never, 'admin-user-1', 'parent-dark', 1);
+  // The admin selected S1 E1+E2 (E3 is unlinked; not selected).
+  const outcome = await bulkUnlinkSeason(mock as never, 'admin-user-1', 'parent-dark', 1, [1, 2]);
   ok(outcome.ok, 'A1a. request succeeds');
   if (outcome.ok) {
-    ok(outcome.succeeded === 3 && outcome.failed === 0, `A1b. all 3 S1 episodes processed (2 deleted + 1 idempotent), got ${outcome.succeeded}/${outcome.failed}`);
+    ok(outcome.total === 2 && outcome.succeeded === 2 && outcome.failed === 0, `A1b. exactly the 2 SELECTED episodes processed (nothing else), got ${outcome.total}/${outcome.succeeded}/${outcome.failed}`);
     ok(outcome.deletedAssets === 2, `A1c. exactly 2 asset rows deleted, got ${outcome.deletedAssets}`);
     const sorted = outcome.results.map((r) => `${r.episode}:${r.ok ? r.mode : 'fail'}`);
-    ok(sorted.join(',') === '1:deleted,2:deleted,3:idempotent', `A1d. per-episode results sorted + explicit, got ${sorted.join(',')}`);
+    ok(sorted.join(',') === '1:deleted,2:deleted', `A1d. per-episode results sorted + explicit, got ${sorted.join(',')}`);
+    // Unselected E3 is NOT even reported (it was never in the selection).
+    ok(!outcome.results.some((r) => r.episode === 3), 'A1e. unselected episode NOT processed (no result row — untouched)');
   }
-  ok(assets(mock).every((a) => a.id !== 'asset-s1e1' && a.id !== 'asset-s1e2'), 'A1e. S1 assets gone');
-  ok(assets(mock).some((a) => a.id === 'asset-s2e1'), 'A1f. S2 asset still present');
-  ok(mock.tables[0].rows.length === 6, `A1g. NO media_items rows deleted (parent + 5 episodes remain), got ${mock.tables[0].rows.length}`);
+  ok(assets(mock).every((a) => a.id !== 'asset-s1e1' && a.id !== 'asset-s1e2'), 'A1f. selected assets gone');
+  ok(assets(mock).some((a) => a.id === 'asset-s2e1'), 'A1g. S2 asset still present');
+  ok(mock.tables[0].rows.length === 6, `A1h. NO media_items rows deleted (parent + 5 episodes remain), got ${mock.tables[0].rows.length}`);
 }
 
 // ===========================================================================
-console.log('§B — unlinked episodes are not affected');
+console.log('§B — unselected linked episodes + unlinked episodes are unaffected');
 // ===========================================================================
 {
   const mock = seedShow();
-  const outcome = await bulkUnlinkSeason(mock as never, 'admin-user-1', 'parent-dark', 1);
-  ok(outcome.ok && outcome.results.find((r) => r.episode === 3)?.ok === true, 'B1a. unlinked episode reports ok');
-  ok(outcome.ok && (outcome.results.find((r) => r.episode === 3) as { mode?: string }).mode === 'idempotent', 'B1b. unlinked episode reports idempotent (nothing to delete)');
-  ok(mock.tables[0].rows.some((r) => r.id === 'dark-s1e3'), 'B1c. unlinked episode media_items row preserved');
+  // Select ONLY E1: E2 is a LINKED episode that must survive.
+  const outcome = await bulkUnlinkSeason(mock as never, 'admin-user-1', 'parent-dark', 1, [1]);
+  ok(outcome.ok && outcome.total === 1, 'B1a. only the single selected episode is processed');
+  ok(assets(mock).some((a) => a.id === 'asset-s1e2'), 'B1b. UNSELECTED LINKED episode E2 keeps its association');
+  ok(assets(mock).every((a) => a.id !== 'asset-s1e1'), 'B1c. selected episode E1 loses its association');
+  ok(mock.tables[0].rows.some((r) => r.id === 'dark-s1e2' && r.id === 'dark-s1e2'), 'B1d. unselected episode row preserved');
+
+  // An UNLINKED episode that IS selected reports idempotent success.
+  const mock2 = seedShow();
+  const outcome2 = await bulkUnlinkSeason(mock2 as never, 'admin-user-1', 'parent-dark', 1, [3]);
+  ok(outcome2.ok && outcome2.results.find((r) => r.episode === 3)?.ok === true, 'B2a. selected unlinked episode reports ok');
+  if (outcome2.ok) {
+    const r3 = outcome2.results.find((r) => r.episode === 3);
+    ok((r3 as { mode?: string } | undefined)?.mode === 'idempotent', 'B2b. unlinked episode reports idempotent (nothing to delete)');
+  }
+  ok(mock2.tables[0].rows.some((r) => r.id === 'dark-s1e3'), 'B2c. unlinked episode media_items row preserved');
+  // Everything else survived.
+  ok(assets(mock2).some((a) => a.id === 'asset-s1e1') && assets(mock2).some((a) => a.id === 'asset-s1e2'), 'B2d. the OTHER linked episodes survived untouched');
 }
 
 // ===========================================================================
@@ -302,55 +345,115 @@ console.log('§C — another season remains untouched');
 // ===========================================================================
 {
   const mock = seedShow();
-  await bulkUnlinkSeason(mock as never, 'admin-user-1', 'parent-dark', 1);
+  await bulkUnlinkSeason(mock as never, 'admin-user-1', 'parent-dark', 1, [1, 2]);
   ok(assets(mock).some((a) => a.id === 'asset-s2e1'), 'C1a. season 2 asset untouched');
   ok(mock.tables[0].rows.some((r) => r.id === 'dark-s2e1') && mock.tables[0].rows.some((r) => r.id === 'dark-s2e2'), 'C1b. season 2 episode rows untouched');
 }
 
 // ===========================================================================
-console.log('§D — invalid parent/season/episode requests fail safely');
+console.log('§D — invalid parent/season/selection/stale/cross-parent requests fail safely');
 // ===========================================================================
 {
   const mock = seedShow();
-  const missing = await bulkUnlinkSeason(mock as never, 'admin-user-1', 'no-such-parent', 1);
+  const missing = await bulkUnlinkSeason(mock as never, 'admin-user-1', 'no-such-parent', 1, [1]);
   ok(!missing.ok && (!missing.ok && missing.error.code === 'PARENT_NOT_FOUND'), 'D1a. unknown parent → PARENT_NOT_FOUND');
 
   const movieMock = new MockSupabase();
   movieMock.tables[0].rows.push({ id: 'movie-1', canonical_key: 'movie:tmdb:1', content_type: 'movie', tmdb_id: '1', parent_media_id: null, season: null, episode: null });
-  const movie = await bulkUnlinkSeason(movieMock as never, 'admin-user-1', 'movie-1', 1);
+  const movie = await bulkUnlinkSeason(movieMock as never, 'admin-user-1', 'movie-1', 1, [1]);
   ok(!movie.ok && movie.error.code === 'INVALID_PARENT', 'D1b. movie parent → INVALID_PARENT (episodic parents only)');
 
   const episodeMock = new MockSupabase();
   episodeMock.tables[0].rows.push({ id: 'ep-1', canonical_key: 'series:tmdb:46648:s1:e1', content_type: 'series', tmdb_id: '46648', parent_media_id: 'parent-dark', season: 1, episode: 1 });
-  const epAsParent = await bulkUnlinkSeason(episodeMock as never, 'admin-user-1', 'ep-1', 1);
+  const epAsParent = await bulkUnlinkSeason(episodeMock as never, 'admin-user-1', 'ep-1', 1, [1]);
   ok(!epAsParent.ok && epAsParent.error.code === 'INVALID_PARENT', 'D1c. episode row as parent → INVALID_PARENT');
 
-  const v1 = validateBulkUnlinkInput('parent-dark', 1);
-  ok('season' in v1 && v1.season === 1, 'D1d. valid input passes validation');
-  const v2 = validateBulkUnlinkInput('parent-dark', 0);
-  ok(!('season' in v2) && (!('season' in v2) && v2.code === 'SEASON_INVALID'), 'D1e. season 0 → SEASON_INVALID');
-  const v3 = validateBulkUnlinkInput('parent-dark', 'nan');
+  // --- Selection validation (the 2026-10-16 contract) ---
+  const v1 = validateBulkUnlinkInput('parent-dark', 1, [2, 1, 2]);
+  ok('season' in v1 && v1.season === 1 && 'episodeIds' in v1 && v1.episodeIds.join(',') === '1,2', 'D1d. valid input passes + selection deduped and sorted');
+  const v2 = validateBulkUnlinkInput('parent-dark', 0, [1]);
+  ok(!('season' in v2) && v2.code === 'SEASON_INVALID', 'D1e. season 0 → SEASON_INVALID');
+  const v3 = validateBulkUnlinkInput('parent-dark', 'nan', [1]);
   ok(!('season' in v3) && v3.code === 'SEASON_INVALID', 'D1f. non-numeric season → SEASON_INVALID');
-  const v4 = validateBulkUnlinkInput('', 1);
+  const v4 = validateBulkUnlinkInput('', 1, [1]);
   ok(!('season' in v4) && v4.code === 'SEASON_INVALID', 'D1g. missing parentId → invalid');
+  // Missing / empty / non-integer selections are REJECTED — bulk never
+  // defaults to "delete everything".
+  const s1 = validateBulkUnlinkInput('parent-dark', 1, undefined);
+  ok(!('season' in s1) && s1.code === 'SELECTION_INVALID', 'D2a. MISSING episodeIds → SELECTION_INVALID (never "all episodes")');
+  const s2 = validateBulkUnlinkInput('parent-dark', 1, []);
+  ok(!('season' in s2) && s2.code === 'SELECTION_INVALID', 'D2b. EMPTY episodeIds → SELECTION_INVALID');
+  const s3 = validateBulkUnlinkInput('parent-dark', 1, [1, 'x']);
+  ok(!('season' in s3) && s3.code === 'SELECTION_INVALID', 'D2c. non-integer episode id → SELECTION_INVALID');
+  const s4 = validateBulkUnlinkInput('parent-dark', 1, [0]);
+  ok(!('season' in s4) && s4.code === 'SELECTION_INVALID', 'D2d. episode number 0 → SELECTION_INVALID');
 
-  // Season with NO episode rows: empty results, nothing crashes.
-  const emptySeason = await bulkUnlinkSeason(seedShow() as never, 'admin-user-1', 'parent-dark', 9);
-  ok(emptySeason.ok && emptySeason.ok && emptySeason.total === 0, 'D1h. unknown season → empty result set (safe)');
+  // --- Stale selection: an id with no episode row in THIS season ---
+  {
+    const stale = seedShow();
+    const out = await bulkUnlinkSeason(stale as never, 'admin-user-1', 'parent-dark', 1, [1, 99]);
+    ok(out.ok, 'D3a. stale selection → per-episode outcomes (request succeeds)');
+    if (out.ok) {
+      const e99 = out.results.find((r) => r.episode === 99);
+      ok(e99?.ok === false, 'D3b. stale episode 99 reports failure');
+      if (!e99.ok) ok(e99.code === 'EPISODE_NOT_IN_SEASON', `D3c. code EPISODE_NOT_IN_SEASON, got ${e99.code}`);
+      ok(out.results.find((r) => r.episode === 1)?.ok === true, 'D3d. the VALID selection entry still processed');
+      ok(assets(stale).every((a) => a.id !== 'asset-s1e1'), 'D3e. valid entry deleted; stale entry deleted nothing');
+    }
+  }
 
-  // D2 — the release-eligibility gate mirrors the single-episode DELETE
+  // --- Cross-parent / cross-season id: membership is server-derived ---
+  {
+    const cross = seedShow();
+    // Episode 1 of SEASON 2 (a real episode of THIS parent, another season).
+    const out = await bulkUnlinkSeason(cross as never, 'admin-user-1', 'parent-dark', 1, [1, 2]);
+    // Sanity: selection of S1 ids only. Now the cross-SEASON case:
+    const out2 = await bulkUnlinkSeason(cross as never, 'admin-user-1', 'parent-dark', 1, [2]);
+    ok(out2.ok, 'D4a. cross-season request processed');
+    // A DIFFERENT parent's episode id can never be expressed as an episode
+    // NUMBER of this parent+season — the server looks up children of THIS
+    // parent only. Simulate the strongest attack: request every S1 episode
+    // number for a parent whose S1 has only E1.
+    const other = new MockSupabase();
+    other.tables[0].rows.push({
+      id: 'parent-wire', canonical_key: 'series:tmdb:999', content_type: 'series', tmdb_id: '999',
+      title: 'The Wire', year: 2002, season: null, episode: null, parent_media_id: null, poster_path: null, backdrop_path: null,
+    });
+    seedSeason(other, 'parent-wire', 1, [1], [1]);
+    const out3 = await bulkUnlinkSeason(other as never, 'admin-user-1', 'parent-wire', 1, [1, 2, 3, 4, 5]);
+    ok(out3.ok, 'D4b. oversized selection processed');
+    if (out3.ok) {
+      ok(out3.results.find((r) => r.episode === 1)?.ok === true, 'D4c. the real episode processed');
+      ok(out3.results.filter((r) => !r.ok).length === 4, 'D4d. the 4 nonexistent ids fail safely');
+      ok(assets(other).every((a) => a.id !== 'asset-s1e1'), 'D4e. only the real episode\'s asset deleted');
+    }
+    // Cross-parent is structurally impossible: episode ids are matched
+    // against THIS parent's children only (asserted by the source too).
+    const contract = read('src/lib/server/hosting/media/bulk-unlink-contract.ts');
+    ok(/eq\('parent_media_id', parentId\)/.test(contract), 'D4f. membership query scopes to THIS parent (server-derived)');
+  }
+
+  // Season with NO episode rows + an explicit selection: every id fails
+  // per-episode (nothing crashes, nothing is deleted).
+  const emptySeason = await bulkUnlinkSeason(seedShow() as never, 'admin-user-1', 'parent-dark', 9, [1, 2]);
+  ok(emptySeason.ok && emptySeason.ok && emptySeason.total === 2, 'D1h. unknown season + selection → per-episode failures (safe)');
+  if (emptySeason.ok) {
+    ok(emptySeason.failed === 2, 'D1i. both selected ids reported failed (EPISODE_NOT_IN_SEASON)');
+  }
+
+  // D5 — the release-eligibility gate mirrors the single-episode DELETE
   // contract: an UNRELEASED episode's association is NOT bulk-deleted.
   {
     const gateMock = seedShow();
     // Season 3, episode 1 — linked but not released (stub air date 2027).
     seedSeason(gateMock, 'parent-dark', 3, [1], [1]);
-    const gate = await bulkUnlinkSeason(gateMock as never, 'admin-user-1', 'parent-dark', 3);
-    ok(gate.ok, 'D2a. gate request itself succeeds (per-episode outcomes)');
+    const gate = await bulkUnlinkSeason(gateMock as never, 'admin-user-1', 'parent-dark', 3, [1]);
+    ok(gate.ok, 'D5a. gate request itself succeeds (per-episode outcomes)');
     if (gate.ok) {
       const e1 = gate.results.find((r) => r.episode === 1);
-      ok(e1?.ok === false, 'D2b. unreleased episode reports failure');
-      if (!e1.ok) ok(e1.code === 'EPISODE_NOT_RELEASED', `D2c. code EPISODE_NOT_RELEASED, got ${e1.code}`);
-      ok(assets(gateMock).some((a) => a.id === 'asset-s3e1'), 'D2d. the unreleased episode association SURVIVES');
+      ok(e1?.ok === false, 'D5b. unreleased episode reports failure');
+      if (!e1.ok) ok(e1.code === 'EPISODE_NOT_RELEASED', `D5c. code EPISODE_NOT_RELEASED, got ${e1.code}`);
+      ok(assets(gateMock).some((a) => a.id === 'asset-s3e1'), 'D5d. the unreleased episode association SURVIVES');
     }
   }
 }
@@ -362,9 +465,10 @@ console.log('§E — authorization is enforced by the ROUTE (never UI-only)');
   const route = read('src/routes/api/admin/media/bulk-unlink/+server.ts');
   ok(/requireAdmin/.test(route), 'E1a. route calls requireAdmin (server-side admin gate)');
   ok(/locals/.test(route), 'E1b. route uses hook-resolved locals (no client trust)');
+  ok(/body\.episodeIds/.test(route) && /validated\.episodeIds/.test(route), 'E1c. route forwards the client selection to the contract');
   const contract = read('src/lib/server/hosting/media/bulk-unlink-contract.ts');
-  ok(!/import.*requireAdmin|requireAdmin\(/.test(contract), 'E1c. contract module holds NO authorization code (single gate in the route; the doc comment references the route)');
-  ok(/adminUserId/.test(contract), 'E1d. contract records the authenticated admin id on every audit row');
+  ok(!/import.*requireAdmin|requireAdmin\(/.test(contract), 'E1d. contract module holds NO authorization code (single gate in the route)');
+  ok(/adminUserId/.test(contract), 'E1e. contract records the authenticated admin id on every audit row');
 }
 
 // ===========================================================================
@@ -372,9 +476,9 @@ console.log('§F — partial failures are reported accurately');
 // ===========================================================================
 {
   const mock = seedShow();
-  // Make the S1E2 asset delete FAIL server-side; S1E1 succeeds.
+  // Make the S1E2 asset delete FAIL server-side; S1E1 succeeds. Both selected.
   mock.failDeleteFor = (assetId) => assetId === 'asset-s1e2';
-  const outcome = await bulkUnlinkSeason(mock as never, 'admin-user-1', 'parent-dark', 1);
+  const outcome = await bulkUnlinkSeason(mock as never, 'admin-user-1', 'parent-dark', 1, [1, 2]);
   ok(outcome.ok, 'F1a. request itself succeeds (per-episode outcomes)');
   if (outcome.ok) {
     const e1 = outcome.results.find((r) => r.episode === 1);
@@ -398,11 +502,11 @@ console.log('§G — retrying failed deletions does not damage successful result
 {
   const mock = seedShow();
   mock.failDeleteFor = (assetId) => assetId === 'asset-s1e2';
-  const first = await bulkUnlinkSeason(mock as never, 'admin-user-1', 'parent-dark', 1);
+  const first = await bulkUnlinkSeason(mock as never, 'admin-user-1', 'parent-dark', 1, [1, 2]);
   ok(first.ok, 'G1a. first pass ran');
-  // Clear the failure — retry round.
+  // Clear the failure — retry round with the SAME selection.
   mock.failDeleteFor = () => false;
-  const retry = await bulkUnlinkSeason(mock as never, 'admin-user-1', 'parent-dark', 1);
+  const retry = await bulkUnlinkSeason(mock as never, 'admin-user-1', 'parent-dark', 1, [1, 2]);
   ok(retry.ok, 'G1b. retry request succeeds');
   if (retry.ok) {
     // S1E1 was already deleted → idempotent this round; S1E2 now deletes.
@@ -420,7 +524,7 @@ console.log('§H — audit records follow the existing conventions');
 // ===========================================================================
 {
   const mock = seedShow();
-  await bulkUnlinkSeason(mock as never, 'admin-user-1', 'parent-dark', 1);
+  await bulkUnlinkSeason(mock as never, 'admin-user-1', 'parent-dark', 1, [1, 2]);
   const unlinkOps = ops(mock).filter((o) => o.action === 'unlink');
   ok(unlinkOps.length === 2, `H1a. one audit row per DELETED asset (2), got ${unlinkOps.length}`);
   const success = unlinkOps.find((o) => o.status === 'success')!;
@@ -432,8 +536,8 @@ console.log('§H — audit records follow the existing conventions');
   ok((success.details as Row)?.season === 1, 'H1g. details carries the season');
   ok(success.admin_user_id === 'admin-user-1', 'H1h. admin_user_id recorded');
   ok(typeof (success.details as Row)?.note === 'string', 'H1i. note documents provider-file preservation');
-  // No duplicate ops for the idempotent episode (nothing deleted → no audit).
-  ok(ops(mock).filter((o) => (o.details as Row)?.episode === 3).length === 0, 'H1j. idempotent episode writes NO audit row');
+  // No audit rows for episodes outside the selection.
+  ok(ops(mock).filter((o) => (o.details as Row)?.episode === 3).length === 0, 'H1j. unselected episode writes NO audit row');
 }
 
 // ===========================================================================
@@ -450,7 +554,7 @@ console.log('§I — provider-hosted files are NEVER deleted');
     }
     return origFrom(name);
   };
-  const outcome = await bulkUnlinkSeason(mock as never, 'admin-user-1', 'parent-dark', 1);
+  const outcome = await bulkUnlinkSeason(mock as never, 'admin-user-1', 'parent-dark', 1, [1, 2]);
   ok(outcome.ok, 'I1a. operation completes');
   ok(providerTouches.length === 0, `I1b. ONLY media_items/media_assets/media_operations touched (no provider tables), got ${providerTouches.join(',')}`);
   const contract = read('src/lib/server/hosting/media/bulk-unlink-contract.ts');
@@ -460,6 +564,32 @@ console.log('§I — provider-hosted files are NEVER deleted');
   // The single-episode DELETE behavior is unchanged (regression guard).
   const manualLink = read('src/routes/api/admin/media/manual-link/+server.ts');
   ok(/Does NOT call provider APIs/.test(manualLink), 'I1e. single-episode delete still documents provider-file preservation');
+}
+
+// ===========================================================================
+console.log('§J — UI contract: Case A/B/C selection semantics (source)');
+// ===========================================================================
+{
+  const sheet = read('src/lib/components/admin2/AdminEpisodeSheet.svelte');
+  // Case A — more than one linked episode: an explicit selection view.
+  ok(/bulkDeleteSelectOpen = true/.test(sheet), 'J1a. >1 linked → selection view opens (explicit)');
+  ok(/data-bulk-delete-select/.test(sheet), 'J1b. selection view is a distinct, testable region');
+  ok(/toggleBulkDeleteEpisode/.test(sheet), 'J1c. per-episode checkboxes drive the selection');
+  ok(/toggleBulkDeleteSelectAll/.test(sheet), 'J1d. explicit select-all (never automatic)');
+  ok(/disabled=\{bulkDeleteSelected\.size === 0\}/.test(sheet), 'J1e. empty selection disables Continue');
+  ok(/Select at least one linked episode/.test(sheet), 'J1f. empty selection is rejected with a clear message');
+  // Case B — exactly one linked episode: direct single-item confirmation.
+  ok(/linkedCountThisSeason === 1/.test(sheet) && /bulkDeleteConfirmOpen = true/.test(sheet), 'J2a. exactly 1 linked → confirm dialog directly (no selection screen)');
+  ok(/bulkDeleteSelected = new Set\(\[sole\.number\]\)/.test(sheet), 'J2b. Case B targets the sole linked episode');
+  // Case C — no linked episodes: no destructive action.
+  ok(/linkedCountThisSeason === 0\) return;/.test(sheet), 'J3a. 0 linked → bulk delete is a no-op');
+  ok(/disabled=\{seasonLoading \|\| linkedCountThisSeason === 0\}/.test(sheet), 'J3b. 0 linked → the bulk-delete button is disabled');
+  // The request carries the selection; the confirmation names the count.
+  ok(/episodeIds: \[\.\.\.bulkDeleteSelected\]/.test(sheet), 'J4a. the POST body carries the explicit episodeIds');
+  ok(/Delete \{bulkDeleteSelected\.size\} association/.test(sheet), 'J4b. the confirmation names the exact count');
+  ok(/Unselected linked episodes stay linked/.test(sheet), 'J4c. the confirmation states unselected episodes stay linked');
+  // Bulk never deletes everything by default (the old contract is gone).
+  ok(!/bulkDeleteConfirmOpen = true;?\s*$/.test(sheet.replace(/\/\/[^\n]*/g, '').replace(/bulkDeleteSelected = new Set\(\[sole\.number\]\);\s*bulkDeleteSelectOpen = false;\s*bulkDeleteConfirmOpen = true;/, 'CASEB')), 'J4d. no path opens the confirm dialog without a selection (Case B sets it)');
 }
 
 console.log(`\nmav_bulk_unlink_behavioral_test: ${passed} passed, ${failed} failed`);

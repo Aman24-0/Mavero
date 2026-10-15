@@ -5,8 +5,13 @@ import { readFileSync, existsSync } from 'node:fs';
  * Admin 2.0 — Phase F contracts.
  *
  * Phase F is the Operations Center: Jobs, Activity/History, Attention tabs
- * with real operational visibility, retry/reconcile actions, sync audit
+ * with real operational visibility, reconcile actions, sync audit
  * logging, stale detection, and nav badges.
+ *
+ * 2026-10-16 re-pin: the upload retry/cancel ACTIONS were removed with the
+ * upload workflow's routes (dead buttons invoking nonexistent endpoints).
+ * Historical upload rows remain visible as records; Reconcile is the only
+ * live action. The active-state/isRetryable data contracts are kept.
  *
  * This test pins the contracts that Phase G+ will depend on. It also
  * verifies the audit-driven fixes:
@@ -129,10 +134,12 @@ ok('5b. Job timeline shows full lifecycle');
 // ============================================================
 // 6. Active jobs prioritized
 // ============================================================
-
-assert.match(adminOpsJobs, /isActive/, 'Jobs UI has isActive helper');
-assert.match(adminOpsJobs, /queued.*uploading.*uploaded.*processing/, 'isActive checks non-terminal states');
-ok('6a. Jobs UI correctly identifies active jobs');
+// 2026-10-16 re-pin: the isActive UI helper was removed together with the
+// Cancel action (upload pipeline retired). The ACTIVE-STATE concept
+// survives as the data contract on the service/types + the active filter.
+assert.match(opsService, /queued.*uploading.*uploaded.*processing/, 'the service defines the non-terminal (active) states');
+assert.match(opsTypes, /'queued' \| 'uploading' \| 'uploaded' \| 'processing'/, 'JobStatus carries the active states');
+ok('6a. Active (non-terminal) states remain a first-class data contract');
 
 // 'active' filter option in UI
 assert.match(adminOpsJobs, /value="active"/, 'Jobs UI has active filter option');
@@ -261,16 +268,17 @@ assert.match(opsTypes, /isRetryable: boolean/, 'JobRow has isRetryable field');
 ok('16b. JobRow exposes isRetryable derived field');
 
 // ============================================================
-// 17. Retry restrictions
+// 17. Retry restrictions (2026-10-16 re-pin)
 // ============================================================
-
-// Retry only available for failed + retryable
-assert.match(adminOpsJobs, /selectedJob.status === 'failed' && selectedJob.isRetryable/, 'Retry only shown for failed + retryable');
-ok('17a. Retry button only shown for failed + retryable jobs');
-
-// Retry unavailable message for permanent errors
-assert.match(adminOpsJobs, /Retry unavailable.*permanent error/, 'Retry unavailable message for permanent errors');
-ok('17b. Retry unavailable message shown for permanent errors');
+// The upload retry/cancel ROUTES were removed with the workflow, so the
+// Jobs drawer renders NO Retry/Cancel actions at all — a historical row
+// keeps its record view and Reconcile when the asset exists. Error
+// classification (isRetryable) stays as honest DATA on JobRow.
+assert.doesNotMatch(adminOpsJobs, /retryJob|cancelJob/, 'Jobs UI holds no retry/cancel handlers (endpoints retired)');
+ok('17a. No Retry/Cancel action renders for upload-origin jobs (retired workflow)');
+assert.match(opsTypes, /isRetryable: boolean/, 'JobRow keeps the honest isRetryable error classification');
+assert.match(adminOpsJobs, /upload pipeline is retired/, 'historical upload rows are labeled as records');
+ok('17b. Historical rows stay visible with their error classification (no dead buttons)');
 
 // ============================================================
 // 18. Retry operation

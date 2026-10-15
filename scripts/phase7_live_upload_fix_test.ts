@@ -73,25 +73,28 @@ console.log('=== Phase 7 — Live Upload Failure Fix ===\n');
 // backend (including on error status codes) are surfaced to the user.
 // ===========================================================================
 
-console.log('--- Section A: frontend error handling contract (Phase D) ---\n');
+console.log('--- Section A: frontend error handling contract (2026-10-16 re-pin: live surfaces) ---\n');
 
 {
-  const flowSrc = readFileSync(path.join(REPO_ROOT, 'src/lib/components/admin2/AdminUploadFlow.svelte'), 'utf8');
-  // The flow wraps all fetch calls in try/catch.
-  ok(flowSrc.includes('try {') && flowSrc.includes('catch'), 'A.1 flow wraps fetch calls in try/catch');
-  // The flow reads JSON from error responses (EVEN on error status codes).
-  ok(flowSrc.includes('await res.json()'), 'A.2 flow parses JSON from responses');
-  // The flow surfaces backend error messages to the user.
-  ok(flowSrc.includes("json?.error?.message"), 'A.3 flow surfaces actual server-side error messages');
-  // The flow does NOT have the old hardcoded "~26MB" message.
-  ok(!flowSrc.includes('~26MB'), 'A.4 NO hardcoded ~26MB message in flow');
-  // The flow references the generic "platform request-body limit" via the
-  // backend's structured error (the proxy-upload route returns
-  // FILE_TOO_LARGE with the limit info — the flow just surfaces the
-  // error.message).
-  ok(flowSrc.includes('operationError') || flowSrc.includes('createError'), 'A.5 flow tracks operation/create errors for surfacing');
+  // (2026-10-16) AdminUploadFlow was DELETED with the Upload/Import
+  // workflow. The defensive error-handling contract lives on in the LIVE
+  // media-management surfaces (AdminMediaList / AdminEpisodeSheet /
+  // AdminAddFileWizard): try/catch around every fetch, structured
+  // json.error?.message surfaced to the user, no hardcoded messages.
+  ok(!existsSync(path.join(REPO_ROOT, 'src/lib/components/admin2/AdminUploadFlow.svelte')), 'A.0 upload flow component removed with the workflow');
+  const listSrc = readFileSync(path.join(REPO_ROOT, 'src/lib/components/admin2/AdminMediaList.svelte'), 'utf8');
+  // The live surfaces wrap all fetch calls in try/catch.
+  ok(listSrc.includes('try {') && listSrc.includes('catch'), 'A.1 live surfaces wrap fetch calls in try/catch');
+  // The live surfaces read JSON from responses.
+  ok(listSrc.includes('await res.json()'), 'A.2 live surfaces parse JSON from responses');
+  // The live surfaces surface backend error messages to the user.
+  ok(listSrc.includes("json.error?.message"), 'A.3 live surfaces surface actual server-side error messages');
+  // No hardcoded size messages anywhere in the live list.
+  ok(!listSrc.includes('~26MB'), 'A.4 NO hardcoded ~26MB message in the live surface');
+  // Error state is tracked for surfacing (role=alert block).
+  ok(listSrc.includes('state-error'), 'A.5 live surface tracks + renders error state');
 }
-console.log('  ok — A. frontend error handling contract (Phase D — 5 checks)\n');
+console.log('  ok — A. frontend error handling contract (live surfaces — 6 checks)\n');
 
 // ===========================================================================
 // SECTION B — upload-server route source contract

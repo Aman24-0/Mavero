@@ -11,7 +11,7 @@
  * Offline (regex-on-source) — no live Supabase needed.
  */
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 
 let passed = 0;
 function ok(message: string) {
@@ -53,24 +53,36 @@ ok('A3. API endpoint parses + validates ?series= param');
 // /api/admin/media/library endpoint STILL support ?series= (A1-A3 above —
 // used by the Link Existing media picker); the library PAGE now parses the
 // canonical params (provider/q/contentType/status/linked/sort/mediaItem).
-const hostingAssetsCmp = read('src/lib/components/admin2/AdminHostingAssets.svelte');
+// [2026-10-16 re-pin] AdminHostingAssets was DELETED with the legacy
+// asset-manager UI; the live file manager is AdminMediaList, whose URL
+// wiring is: server-parsed deep-links → initialFilters → applied ONCE at
+// init (the first loadList() request carries them).
+assert.ok(!existsSync(new URL('../src/lib/components/admin2/AdminHostingAssets.svelte', import.meta.url)), 'A0. AdminHostingAssets deleted (legacy file manager removed)');
+const mediaListCmp = read('src/lib/components/admin2/AdminMediaList.svelte');
 assert.match(libraryServer, /get\('provider'\)/, 'A4a. Server loader reads the provider deep-link param (canonical URL params)');
 assert.match(libraryServer, /get\('mediaItem'\)/, 'A4b. Server loader reads the mediaItem deep-link param');
 assert.match(libraryServer, /initialFilters/, 'A4c. Server loader returns initialFilters for the file manager');
 ok('A4. Server loader parses the canonical URL params into initialFilters');
 
-assert.match(hostingAssetsCmp, /params\.set\('provider'/, 'A5a. file manager sends provider filter to the inventory API');
-ok('A5. File manager sends the canonical filters to the inventory API');
+assert.match(mediaListCmp, /params\.set\('provider'/, 'A5a. file manager sends provider filter to the library API');
+assert.match(mediaListCmp, /params\.set\('q'/, 'A5b. file manager sends the search query to the library API');
+ok('A5. File manager sends the canonical filters to the library API');
 
-assert.match(hostingAssetsCmp, /function syncUrl/, 'A6a. file manager persists filters in the URL');
-assert.match(hostingAssetsCmp, /params\.set\('mediaItem'/, 'A6b. mediaItem deep-link persisted (shareable)');
-ok('A6. File manager syncs filter state to the URL (survives refresh + shareable)');
+// [2026-10-16 re-pin] the old syncUrl (client → URL push) left with the
+// legacy manager; the live contract is the server-parsed deep-link IN:
+// every canonical param the server validates is APPLIED at init (the
+// Task-2 fix — ?provider=vidara now actually filters the first load).
+assert.match(mediaListCmp, /initialFilters[\s\S]{0,600}\$effect[\s\S]{0,900}loadList\(true\)/, 'A6a. initialFilters applied at init BEFORE the first loadList (deep-links take effect immediately)');
+ok('A6. Deep-link params drive the first load (server-parsed, applied once)');
 
-assert.match(hostingAssetsCmp, /initialFilters\.provider \?\? 'all'/, 'A7a. filters initialized from server-parsed URL params (deep-link safe)');
+assert.match(mediaListCmp, /filterProvider = \(init\.provider ===/, 'A7a. filters initialized from server-parsed URL params (deep-link safe)');
 ok('A7. File manager initializes from URL params (deep-link safe)');
 
-assert.match(hostingAssetsCmp, /initialFilters\.mediaItemId \?\? null/, 'A8a. mediaItem deep-link initializes the file manager');
-ok('A8. mediaItem deep-link initializes the file manager');
+// The mediaItem deep-link: still parsed + UUID-validated server-side; with
+// the detail drawer retired, the media-centric surface is the parent row +
+// episode sheet (opened by row click — phase C 4g).
+assert.match(libraryServer, /\[0-9a-f\]\{8\}-\[0-9a-f\]\{4\}/, 'A8a. mediaItem deep-link still parsed + UUID-validated by the page server');
+ok('A8. mediaItem deep-link accepted server-side (the sheet owns the media surface now)');
 
 // ============================================================
 // B. [final remediation] seriesTmdbFilter page wiring superseded — the

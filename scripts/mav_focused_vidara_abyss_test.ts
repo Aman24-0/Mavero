@@ -20,7 +20,7 @@
  *   §6 linkAsset writes `durationSeconds` through the typed parser.
  */
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:url';
 import { resolve as pathResolve } from 'node:path';
@@ -170,23 +170,25 @@ console.log('\n§7 — Vidara normalize uses parseDurationSeconds for video_leng
   ok(!/durationSeconds:\s*coerceNumber\(/.test(vidaraSrc), '7c. Vidara normalize no longer uses coerceNumber for the duration path');
 }
 
-console.log('\n§8 — listUnlinkedProviderFiles excludes terminal deleted/failed (UI contract)');
+console.log('\n§8 — listUnlinkedProviderFiles excludes terminal deleted/failed (service contract)');
 {
   // The listUnlinkedProviderFiles now returns `lifecycleState` +
-  // `linkedToMediaItemId` so the UI can filter / disable rows. The UI
-  // (AdminHostingAssets) uses isFileLinkable() to gate the rows.
+  // `linkedToMediaItemId` so callers can filter / disable rows.
+  // [2026-10-16 re-pin] the UI consumer (AdminHostingAssets, deleted with
+  // the legacy asset-manager UI) used a client-side isFileLinkable() gate.
+  // The inventory-picker flow is retired, and the INVARIANT is now
+  // enforced SERVER-SIDE in linkAsset — strictly stronger than a UI filter:
+  //   - terminal deleted rows → ASSET_DELETED rejection,
+  //   - rows already linked to a DIFFERENT media_item → rejection,
+  //   - '<deleted>' marker rows → the same terminal rejection.
   const mgmtSrc = readCode('src/lib/server/hosting/management/service.ts');
   ok(/lifecycleState:\s*f\.status/.test(mgmtSrc), '8a. listUnlinkedProviderFiles returns lifecycleState (canonical AssetLifecycleState)');
-  ok(/linkedToMediaItemId/.test(mgmtSrc), '8b. listUnlinkedProviderFiles returns linkedToMediaItemId (for the UI duplicate-link guard)');
+  ok(/linkedToMediaItemId/.test(mgmtSrc), '8b. listUnlinkedProviderFiles returns linkedToMediaItemId (duplicate-link guard data)');
 
-  const assetsSrc = readCode('src/lib/components/admin2/AdminHostingAssets.svelte');
-  ok(/function\s+isFileLinkable/.test(assetsSrc), '8c. AdminHostingAssets defines isFileLinkable()');
-  ok(/lifecycleState\s*===\s*['"]deleted['"]\s*\|\|\s*file\.lifecycleState\s*===\s*['"]failed['"]/.test(assetsSrc), '8d. isFileLinkable() excludes terminal deleted/failed files');
-  ok(/linkedToMediaItemId\s*&&\s*file\.linkedToMediaItemId\s*!==\s*linkSelectedMediaItemId/.test(assetsSrc), '8e. isFileLinkable() excludes files linked to a DIFFERENT media_item (preserves idempotent relink to the same item)');
-  // MAV-FOCUSED fix (behavioral audit): a file whose DB row is
-  // terminal-deleted (linkedToMediaItemId === '<deleted>') must also
-  // be excluded — linkAsset case (d) would reject with ASSET_DELETED.
-  ok(/file\.linkedToMediaItemId\s*===\s*['"]<deleted>['"]/.test(assetsSrc), '8f. isFileLinkable() excludes files whose DB row is terminal-deleted (server would reject with ASSET_DELETED)');
+  ok(!existsSync(pathResolve(root, 'src/lib/components/admin2/AdminHostingAssets.svelte')), '8c. AdminHostingAssets deleted (the isFileLinkable host is gone with the picker UI)');
+  ok(/existingRow\.status === 'deleted'/.test(mgmtSrc) && /ASSET_DELETED/.test(mgmtSrc), '8d. linkAsset rejects terminal deleted files SERVER-SIDE (unbypassable, stronger than the UI gate)');
+  ok(/already linked to a different media asset/.test(mgmtSrc), '8e. linkAsset rejects files linked to a DIFFERENT media_item (idempotent relink to the same item stays allowed)');
+  ok(/'<deleted>'/.test(mgmtSrc), '8f. listUnlinkedProviderFiles marks terminal-deleted rows (\'<deleted>\') — linkAsset would reject them with ASSET_DELETED');
 }
 
 console.log(`\nmav_focused_vidara_abyss_test: ${passed} passed, ${failed} failed`);

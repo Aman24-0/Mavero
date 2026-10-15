@@ -1,71 +1,72 @@
-# PLAN.md — Mavero Complete Manual Hosting Workflow + Media Library Redesign + Canonical Routing
+# PLAN.md — Mavero Manual-Reference Media Management (upload workflow REMOVED)
 
-**Created**: 2026-10-14
+**Created**: 2026-10-14 · **Last updated**: 2026-10-16 (final Media Library fixes + upload-workflow removal completion)
 **Branch**: main
-**Baseline commit**: 0a57c671ca5f75eecb9868e841bf88de037eee3b
-**Working tree**: clean (after restoring filesystem-deleted upload files)
+**Baseline commit (original)**: 0a57c671ca5f75eecb9868e841bf88de037eee3b
 
-## Current Architecture Summary
+## Current Architecture Summary (as of 2026-10-16)
+
+### Intended product workflow (manual provider references ONLY)
+1. **Media Library** — titles with at least one currently-linked (non-deleted) media asset; the manual **Add File wizard** (TMDB-first selection → provider → provider reference entry); update link; delete/unlink of the Mavero-side association. There is **no media upload/import workflow** and **no provider-inventory picker UI** — the admin links files that already exist on Vidara/Abyss.
+2. **Missing Media** — demand/request-backed movies and episodes that still need media; uses the same manual Add File wizard (preselected to the demanded identity).
+3. **Operations Center** (`/admin/operations`, reachable via Hosting Control) — the unified Jobs/Attention/History stream. Legacy `media_upload_operations` rows remain as HISTORICAL records (the table is retained for production data + schema compatibility; it is not a live upload workflow). No UI action invokes a removed endpoint; the only live job action is Reconcile.
+
+### Upload/import workflow — REMOVED (completed 2026-10-16)
+- Routes gone: `/admin/media/upload` page, `/api/admin/media/upload/*` (create/status/cancel/retry/complete/proxy-upload/subtitle, upload-server), the UploadService, and the upload-page loaders.
+- UI components deleted as dead code (no importers remained): `AdminUploadFlow.svelte` (the wizard), `AdminMediaDetailDrawer.svelte`, `AdminHostingAssets.svelte`, `AdminMediaTable.svelte`, `AdminLinkMediaModal.svelte` (the provider-inventory picker).
+- Retained INTENTIONALLY: `media_upload_operations` + `media_operations` tables and their historical rows (no destructive schema migration — production records stay); `/api/admin/media/missing/link` (a valid admin link endpoint that reuses canonical services); `/api/admin/hosting/providers/[adapterId]/files` (a valid adapter inventory read; its picker UI is gone); all management/reconcile/sync services and the assets `link/detach/delete/move/rename/reconcile/reactivate/unlink` routes.
 
 ### Admin Navigation (AdminAppShell.svelte)
-- Desktop sidebar: Command (Overview), Content (Media Library, Missing Media), Hosting (Hosting Control), System (API & Sources, Content Rules, Downloads, Integrations), People (Analytics)
-- Mobile bottom nav: Home, Media, Hosting, Analytics
+- Desktop sidebar: Command (Overview), Content (Media Library, Missing Media), System (API & Sources, Content Rules, Downloads, Integrations), People (Analytics)
+- Mobile bottom nav: Home, Media, Missing, Analytics
+- `/admin/hosting` (providers + Operations tabs) remains reachable but is not in the nav (linked from Attention items).
 
 ### Key Admin Routes
 - `/admin` — Overview dashboard
-- `/admin/media/library` — Media Library (uses AdminHostingAssets component)
-- `/admin/media/missing` — Missing Media demand tracking
-- `/admin/media/upload` — Upload/Import wizard (AdminUploadFlow component)
-- `/admin/media/history` — Operations history
-- `/admin/media/operations` — Operations management
-- `/admin/media/stale` — Stale media management
-- `/admin/media/sync` — Sync management
-- `/admin/media/assets` — Asset management
-- `/admin/hosting` — Hosting Control (providers, sync, inventory)
+- `/admin/media/library` — Media Library (AdminMediaList, fill-mode layout, zero-link excluded)
+- `/admin/media/missing` — Missing Media demand tracking (Add File wizard linking)
+- `/admin/media/history`, `/admin/media/operations`, `/admin/media/stale`, `/admin/media/sync`, `/admin/media/assets` — operations-adjacent admin pages
+- `/admin/hosting` — providers + Operations (Jobs/Attention/History)
 - `/admin/system/*` — System configuration
 
-### Key Components
-- `AdminHostingAssets.svelte` (2262 lines) — Asset-centric file manager with filters, facets, detail drawer
-- `AdminMediaDetailDrawer.svelte` (1923 lines) — Right-side detail drawer with reconcile/detach/delete/rename/move/unlink/reactivate
-- `AdminUploadFlow.svelte` (2371 lines) — Upload wizard with TMDB search → provider selection → upload
-- `AdminLinkMediaModal.svelte` (638 lines) — Shared link media modal (TMDB search → provider tabs)
+### Key Components (src/lib/components/admin2/)
+- `AdminMediaList.svelte` — the Media Library list/grid (fill-mode layout: static toolbar + single cards scroller), filters, portaled action menu, pagination
+- `AdminEpisodeSheet.svelte` — accessible episode sheet (season chips, per-episode link/update/delete, bulk link per-episode references, bulk delete with EXPLICIT episode selection)
+- `AdminAddFileWizard.svelte` — the shared manual-link wizard (TMDB-first, provider reference entry, update mode, preselection)
+- `AdminAppShell.svelte` (+ optional `fill` mode), `AdminPage.svelte` (header-less form + optional `fill`), `AdminOpsJobs/Attention/History`, `AdminHostingProviders`, `dialog-stack.svelte.ts`
 
 ### Key API Routes
-- `/api/admin/media/search` — TMDB search proxy
-- `/api/admin/media/library` — Local media_items search
-- `/api/admin/media/assets/link` — Link provider file to media item
-- `/api/admin/media/assets/[id]/*` — detach, delete, move, rename, reconcile, reactivate, unlink
-- `/api/admin/media/upload/*` — Upload workflow (create, status, cancel, retry, complete, proxy-upload, subtitle)
-- `/api/admin/media/missing/link` — Missing Media link endpoint
-- `/api/admin/hosting/providers` — Provider registry
-- `/api/admin/hosting/providers/[adapterId]/files` — Provider inventory listing
+- `/api/admin/media/search` — TMDB search proxy (wizard)
+- `/api/admin/media/library` — top-level rows read model (parent rollups, zero-link exclusion); `/api/admin/media/library/[id]/episodes` — episode sheet ground truth
+- `/api/admin/media/manual-link` — POST create/update link (canonical identity, normalization, audits), DELETE unlink (Mavero-side only)
+- `/api/admin/media/bulk-link` — per-episode OWN references, idempotent outcomes
+- `/api/admin/media/bulk-unlink` — SELECTED-episode unlink (explicit `episodeIds`, server re-derives membership, per-episode outcomes)
+- `/api/admin/media/missing/link` — legacy-but-valid demand link endpoint (canonical services)
+- `/api/admin/media/assets/[id]/*` — detach, delete, move, rename, reconcile, reactivate, unlink (management operations)
+- `/api/admin/hosting/providers` + `/[adapterId]/files` — provider registry / adapter inventory (valid reads)
 
-### Hosting Services
-- `src/lib/server/hosting/management/service.ts` — ManagementService (linkAsset, detachAsset, unlinkAsset, deleteAsset, reactivateAsset, listUnlinkedProviderFiles)
-- `src/lib/server/hosting/sync/service.ts` — SyncService (provider inventory sync)
-- `src/lib/server/hosting/control/service.ts` — HostingControlService (provider health, inventory counts)
-- `src/lib/server/hosting/upload/service.ts` — UploadService (upload workflow)
-- `src/lib/server/hosting/library/service.ts` — MediaLibraryService (list, detail, folderSummary)
-- `src/lib/server/hosting/media/service.ts` — CanonicalMediaService (ensureMovie, ensureSeries, ensureEpisode)
+### Hosting Services (src/lib/server/hosting/)
+- `media/manual-link-contract.ts` + `bulk-unlink-contract.ts` — the shared, audited link/unlink cores (recordMediaOperation audits)
+- `library/service.ts` — MediaLibraryService read model (list/detail/episodes, season metadata denominators)
+- `media/service.ts` — CanonicalMediaService (ensureMovie/ensureSeries/ensureEpisode, parent-first)
+- `management/service.ts`, `sync/service.ts`, `control/service.ts`, `operations/service.ts`, `demand/service.ts` — management ops, inventory sync, health/counts, unified jobs stream, demand sweeps
+- REMOVED: `upload/service.ts` (UploadService) and its routes.
 
-### Playback Resolution
-- Vidara: `https://vidara.to/e/<filecode>` (iframe embed)
-- Abyss: `https://player.abyssplayer.com/<slug>` (iframe embed)
+### Playback Resolution (manual references)
+- Vidara: `https://vidara.to/e/<filecode>` (canonical embed URL)
+- Abyss: `https://player.abyssplayer.com/<slug>` (player URL)
 - Resolver: `src/lib/server/resolver/mavero-hosted.ts` reads `playback_url` from `media_assets`
 
 ### Public Routes (current)
-- Detail: `/movie/[id]`, `/series/[id]`, `/anime/[id]` (where [id] is prefixed canonical key like "movie-278")
+- Detail: `/movie/[id]`, `/series/[id]`, `/anime/[id]`, `/tv-show/[id]`, `/anime-movie/[id]`, `/anime-series/[id]` (canonical path forms; [id] is the prefixed canonical key like "movie-278")
 - Player: `/watch/[type]/[id]` and `/watch/[type]/[id]/[season]/[episode]`
 
 ### Database Tables
-- `media_items` — Canonical media identity (UUID PK, tmdb_id, content_type, canonical_key)
-- `media_assets` — Provider file association (UUID PK, media_item_id UUID NOT NULL FK, provider_source_id, provider_asset_id, playback_url, status, mavero_status)
-- `media_operations` — Audit log (action CHECK constraint includes 'unlink')
-- `media_folders` — Folder management
-- `provider_folder_mappings` — Provider folder mappings
-- `media_availability_requests` — Missing Media demand tracking
-- `streaming_providers` — Provider registry
-- `streaming_sources` — Provider source configuration
+- `media_items` — Canonical media identity (UUID PK, tmdb_id, content_type, canonical_key, parent_media_id, poster_path, backdrop_path)
+- `media_assets` — Provider file association (UUID PK, media_item_id UUID FK, provider_source_id, provider_asset_id, playback_url, status, mavero_status; UNIQUE(provider_source_id, provider_asset_id))
+- `media_operations` — audit log (action CHECK includes 'link'/'unlink'); `media_upload_operations` — historical upload pipeline records (retained, read-only history)
+- `media_availability_requests` — Missing Media demand tracking (sweeps re-resolve/reopen)
+- `media_folders`, `provider_folder_mappings`, `streaming_providers`, `streaming_sources`
 
 ---
 

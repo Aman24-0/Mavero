@@ -24,7 +24,10 @@
  *         A4  parent hosting_state rolls up from episodes (hosted)
  *         A5  movies unchanged (own assets, flat cards)
  *         A6  orphan parents dropped (no linked episodes + no demand)
- *         A7  parent with demand shows as pending
+ *         A7  (2026-10-16 re-pin) zero-link parents EXCLUDED even with
+ *             demand — Media Library shows only titles with >=1 ACTIVE
+ *             link; demand-backed zero-link titles live in Missing Media.
+ *             includeOrphans:true remains the debug escape hatch.
  *         A8  provider filter matches parents via EPISODE assets
  *   §B  episodes(parentId)
  *         B1  parent + children ordered by season then episode
@@ -266,7 +269,10 @@ function demand(mock: MockSupabase, over: Partial<Row>): Row {
 //   The Wire (series parent)          1 episode, linked
 //   Cinderella (movie)                1 row, own asset
 //   Ghost Orphan (series parent)      1 episode, NO assets, NO demand  → orphan
-//   Wanted Show (series parent)       1 episode, NO assets, demand     → pending
+//   Wanted Show (series parent)       1 episode, NO assets, demand     → EXCLUDED
+//                                     (2026-10-16 zero-link rule: demand-
+//                                     backed zero-link rows are Missing
+//                                     Media's domain, not library cards)
 async function seedCatalog(mock: MockSupabase): Promise<void> {
   // Breaking Bad family
   const bb = item(mock, { id: 'p-bb', canonical_key: 'series:tmdb:1399', content_type: 'series', tmdb_id: '1399', title: 'Breaking Bad', year: 2008, poster_path: '/bb.jpg' });
@@ -312,9 +318,12 @@ async function run() {
 
     const result = await service.list({ sort: 'title' });
 
-    ok(result.items.length === 4, `A1. one card per top-level row (parents + movies) — got ${result.items.length} (Breaking Bad, Cinderella, The Wire, Wanted Show)`);
+    // 2026-10-16 zero-link re-pin: 3 cards — Wanted Show (demand, zero
+    // links) is EXCLUDED (Missing Media owns it); Ghost Orphan (no links,
+    // no demand) was already excluded.
+    ok(result.items.length === 3, `A1. one card per LINKED top-level row — got ${result.items.length} (Breaking Bad, Cinderella, The Wire)`);
     const titles = result.items.map((i) => `${i.title}${i.episode_summary != null ? ' [parent]' : ' [movie]'}`);
-    ok(titles.join(' | ') === 'Breaking Bad [parent] | Cinderella [movie] | The Wire [parent] | Wanted Show [parent]', `A1b. NO per-episode cards, no orphan parent — ${titles.join(' | ')}`);
+    ok(titles.join(' | ') === 'Breaking Bad [parent] | Cinderella [movie] | The Wire [parent]', `A1b. NO per-episode cards, no orphan parent, no zero-link card — ${titles.join(' | ')}`);
     const bb = result.items.find((i) => i.title === 'Breaking Bad');
     ok(bb != null && bb.episode_summary != null, 'A2. the parent carries an episode_summary rollup');
     if (bb?.episode_summary) {
@@ -326,8 +335,15 @@ async function run() {
     const cin = result.items.find((i) => i.title === 'Cinderella');
     ok(cin != null && cin.episode_summary == null && cin.assets.length === 1, 'A5. movies unchanged — flat row with its own asset, no rollup');
     const wanted = result.items.find((i) => i.title === 'Wanted Show');
-    ok(wanted != null && wanted.hosting_state === 'pending', `A7. parent with demand but no links → 'pending' (got ${wanted?.hosting_state})`);
-    ok(result.total === 5, `A1c. total counts top-level rows including the orphan (got ${result.total})`);
+    ok(wanted == null, `A7. zero-link parent with demand is EXCLUDED from the default list (Missing Media owns it; got ${wanted?.title ?? 'excluded'})`);
+    ok(result.total === 5, `A1c. total counts top-level rows at the SQL level including excluded ones (got ${result.total})`);
+
+    // includeOrphans:true remains the debug escape hatch: EVERY top-level
+    // row returns (Ghost Orphan + Wanted Show included).
+    const debug = await service.list({ sort: 'title', includeOrphans: true });
+    ok(debug.items.length === 5, `A7b. includeOrphans:true returns every top-level row (Ghost Orphan + Wanted Show too — got ${debug.items.length})`);
+    const debugWanted = debug.items.find((i) => i.title === 'Wanted Show');
+    ok(debugWanted != null && debugWanted.hosting_state === 'pending', `A7c. debug view keeps the honest 'pending' state for the zero-link demand parent (got ${debugWanted?.hosting_state})`);
   }
 
   console.log('\n§A2 — provider/status filters see THROUGH the parent to its episodes');
@@ -384,15 +400,17 @@ async function run() {
     const page1 = await service.list({ sort: 'title', page: 1, limit: 2 });
     const page2 = await service.list({ sort: 'title', page: 2, limit: 2 });
     const page3 = await service.list({ sort: 'title', page: 3, limit: 2 });
-    // Page 2 = [Ghost Orphan, The Wire] — the orphan is filtered
-    // JS-side (the pre-existing FINDING-003 contract), so ONE card shows.
-    ok(page1.items.length === 2 && page2.items.length === 1 && page3.items.length === 1,
-      'C1. pages slice the top-level page; the JS-side orphan filter removes a card from page 2 (episodes never consume a card slot)');
+    // Page 2 = [Ghost Orphan, The Wire] and page 3 = [Wanted Show] —
+    // both zero-link rows are filtered JS-side (the 2026-10-16 zero-link
+    // exclusion), so page 2 shows ONE card and page 3 shows NONE.
+    ok(page1.items.length === 2 && page2.items.length === 1 && page3.items.length === 0,
+      'C1. pages slice the top-level page; the JS-side zero-link filter removes cards (episodes never consume a card slot)');
     ok(page1.items.every((i) => i.parent_media_id === null) && page2.items.every((i) => i.parent_media_id === null) && page3.items.every((i) => i.parent_media_id === null), 'C1b. every carded row is a top-level row');
-    // The SQL total counts 5 top-level rows (including the orphan — the
-    // pre-existing behavior), so has_more stays true through page 2 and
-    // turns false only past the last top-level row.
-    ok(page1.has_more === true && page2.has_more === true && page3.has_more === false, 'C1c. has_more follows the SQL top-level count (orphan-filtered pages keep scrolling — the FINDING-003 contract)');
+    // The SQL total counts 5 top-level rows (including excluded ones —
+    // the pre-existing behavior), so has_more stays true through page 2
+    // and turns false only past the last top-level row. The UI's
+    // proximity loader keeps fetching until it is exhausted (bounded).
+    ok(page1.has_more === true && page2.has_more === true && page3.has_more === false, 'C1c. has_more follows the SQL top-level count (zero-link-filtered pages keep scrolling — bounded fetch-until-exhausted)');
     const all = [...page1.items, ...page2.items, ...page3.items];
     const sorted = all.every((i, idx) => idx === 0 || all[idx - 1].title <= i.title);
     ok(sorted, 'C2. title sort orders the parent/movie cards');

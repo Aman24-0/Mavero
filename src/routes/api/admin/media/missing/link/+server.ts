@@ -15,9 +15,8 @@
  *   2. Load the demand row (media_availability_requests) by requestId.
  *   3. Resolve/ensure the canonical media_item from the demand identity
  *      (tmdb_id + content_type + season/episode + title_snapshot) via
- *      CanonicalMediaService — the SAME ensure pattern
- *      UploadService.createOperation uses (movie / series+episode /
- *      anime+episode).
+ *      CanonicalMediaService — the same ensure pattern the RETIRED upload
+ *      service used (movie / series+episode / anime+episode).
  *   4. ManagementService.linkAsset(mediaItemId, providerSourceId,
  *      providerAssetId, adminUserId) — the canonical linking operation
  *      (duplicate/reactivate/deleted/different-item guards, adapter
@@ -114,7 +113,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
   }
 
   // 3. Ensure the canonical media_item for the demand identity — the
-  //    SAME pattern UploadService.createOperation uses.
+  //    same ensure pattern the retired upload service used.
   const mediaService = new CanonicalMediaService(adminClient);
   const mediaIdentity = {
     tmdbId: demand.tmdb_id,

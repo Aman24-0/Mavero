@@ -24,7 +24,12 @@ function ok(message: string) {
 const read = (p: string) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
 
 const libraryServer = read('src/routes/admin/media/library/+page.server.ts');
-const uploadFlow = read('src/lib/components/admin2/AdminUploadFlow.svelte');
+// [2026-10-16 re-pin] AdminUploadFlow was DELETED with the Upload/Import
+// workflow; the json.item envelope contract lives on in the LIVE consumers
+// (the Add File wizard's poster/seasons backfill + the episode sheet's
+// seasons read).
+const wizard = read('src/lib/components/admin2/AdminAddFileWizard.svelte');
+const episodeSheetPost = read('src/lib/components/admin2/AdminEpisodeSheet.svelte');
 const integrationsPage = read('src/routes/admin/system/integrations/+page.svelte');
 const vidaraNormalize = read('src/lib/server/hosting/vidara/normalize.ts');
 const demandService = read('src/lib/server/hosting/demand/service.ts');
@@ -63,20 +68,22 @@ assert.match(read('src/routes/admin/hosting/+page.server.ts'), /providersError/,
 ok('2. Upload provider discovery: explicit queries, no fragile nested join, error state returned');
 
 // ============================================================
-// 3. Deep-link metadata — reads json.item, not json
+// 3. Deep-link metadata — reads json.item, not json (2026-10-16 re-pin:
+//    the live consumers are the wizard + episode sheet)
 // ============================================================
 
-// 3a. Deep-link checks json.ok and extracts json.item
-assert.match(uploadFlow, /json\.ok[\s\S]*?json\.item/, '3a. Deep-link checks json.ok and extracts json.item');
-// 3b. Title comes from item, not json directly
-assert.match(uploadFlow, /item\.title|json\.item\.title/, '3b. Title read from json.item, not json directly');
-// 3c. Poster comes from item
-assert.match(uploadFlow, /item\.poster|json\.item\.poster/, '3c. Poster read from json.item');
-// 3d. ExternalIds come from item
-assert.match(uploadFlow, /item\.externalIds|json\.item\.externalIds/, '3d. ExternalIds read from json.item');
-// 3e. Error handling for ok=false
-assert.match(uploadFlow, /json\.ok.*false|!json\.ok|json\.error/, '3e. Deep-link handles ok=false / error response');
-ok('3. Deep-link metadata: reads json.item envelope correctly, handles errors');
+// 3a. Live consumers check the response and extract json.item
+assert.match(wizard, /json\?\.item\?\.(poster|seasonsData)/, '3a. Live consumers extract json?.item (envelope contract)');
+assert.match(episodeSheetPost, /json\?\.item\?\.seasonsData/, '3a-2. The episode sheet reads seasonsData from json.item');
+// 3b. Title comes from the item (wizard TMDB selection), not raw json
+assert.match(wizard, /selectedTmdb[\s\S]{0,200}title/, '3b. Title carried on the item-derived selection');
+// 3c. Poster comes from json.item (backfill)
+assert.match(wizard, /json\?\.item\?\.poster/, '3c. Poster read from json.item (backfill)');
+// 3d. Seasons/episodes metadata comes from json.item
+assert.match(wizard, /json\?\.item\?\.seasonsData/, '3d. seasonsData read from json.item');
+// 3e. Error handling for failed fetches (stale-guard + error states)
+assert.match(wizard, /seasonsError = `Could not load seasons \(HTTP \$\{res\.status\}\)\.`/, '3e. Live consumers surface HTTP failures (error state)');
+ok('3. Deep-link metadata: json.item envelope consumed correctly on live surfaces, errors handled');
 
 // ============================================================
 // 4. Stremio preview — JSON endpoint, no form-action hack

@@ -47,8 +47,8 @@ ok(!/eyebrow="Content"/.test(libraryPage), 'A1a. no page eyebrow');
 ok(!/title="Media Library"/.test(libraryPage), 'A1b. no page title heading');
 ok(!/description\(\)/.test(libraryPage) && !/snippet description/.test(libraryPage), 'A1c. no explanatory paragraph snippet');
 ok(!/\{#snippet actions\(\)\}/.test(libraryPage), 'A1d. no page-level actions snippet (Add File moved into the toolbar)');
-ok(/<AdminPage>/.test(libraryPage), 'A2a. AdminPage framework still wraps the content (header-less form)');
-ok(/<AdminAppShell active="media-library">/.test(libraryPage), 'A2b. Admin Panel shell header RETAINED with its navigation');
+ok(/<AdminPage fill>/.test(libraryPage), 'A2a. AdminPage framework still wraps the content (header-less form, FILL mode)');
+ok(/<AdminAppShell active="media-library" fill>/.test(libraryPage), 'A2b. Admin Panel shell header RETAINED with its navigation (fill mode)');
 ok(/AdminMediaList/.test(libraryPage), 'A2c. the media list remains the sole content component');
 
 // AdminPage skips the header block when EVERY header input is absent.
@@ -75,23 +75,55 @@ ok(/<div class="search-input-wrap">[\s\S]*?aria-label="Search media library"/.te
 ok(/function openAddWizard/.test(mediaList) && /onclick=\{openAddWizard\}/.test(mediaList), 'B2b. Add File opens the shared wizard');
 
 // ===========================================================================
-console.log('§C — sticky toolbar + natural card scroll (no nested boxes)');
+console.log('§C — FILL-MODE layout: static toolbar + ONE cards scroller');
+// (2026-10-16 re-pin: the old position:sticky contract was REPLACED. On
+//  mobile the shell's .a2-main keeps overflow-y:auto from its base rule
+//  while `height:auto` lets the DOCUMENT scroll — an overflow ancestor is
+//  the sticky scrollport even when it never scrolls, so the toolbar stuck
+//  nothing and scrolled away with the page (the reported defect). The new
+//  architecture: the library page opts into the shell's FILL MODE — the
+//  toolbar is a STATIC flex block and the cards region below it is the
+//  page's single scroll container, bounded by the real header/nav tokens.)
 // ===========================================================================
 const toolbarCss = mediaList.match(/\.toolbar \{[^}]+\}/)?.[0] ?? '';
-ok(/position:\s*sticky/.test(toolbarCss), 'C1a. toolbar is position:sticky within the scrolling admin content region');
-ok(/top:\s*var\(--a2-topbar-h-safe/.test(toolbarCss), 'C1b. sticky offset accounts for the fixed admin header height');
+ok(!/position:\s*sticky/.test(toolbarCss) && /position:\s*relative/.test(toolbarCss), 'C1a. toolbar is a STATIC block (fill-mode column) — never sticky, never scrolls away');
+ok(/flex:\s*0 0 auto/.test(toolbarCss), 'C1b. toolbar keeps its natural height (flex: 0 0 auto) above the scroller');
 ok(/background:\s*var\(--a2-bg\)/.test(toolbarCss), 'C1c. opaque toolbar background (cards never show through)');
 ok(/z-index:\s*30/.test(toolbarCss), 'C1d. toolbar z-index below the bottom nav (45) and dialogs (92+)');
+const sectionCss = mediaList.match(/\.media-library \{[^}]+\}/)?.[0] ?? '';
+ok(/flex:\s*1 1 auto/.test(sectionCss) && /min-height:\s*0/.test(sectionCss), 'C1e. the library section fills the fill-mode page body (flex chain)');
+// THE single scroll container: .cards-scroll, sibling AFTER the toolbar.
+const scrollCss = mediaList.match(/\.cards-scroll \{[^}]+\}/)?.[0] ?? '';
+const scrollIdx = mediaList.indexOf('class="cards-scroll"');
+const toolbarIdx = mediaList.indexOf('class="toolbar"');
+ok(/overflow-y:\s*auto/.test(scrollCss) && /flex:\s*1 1 auto/.test(scrollCss) && /min-height:\s*0/.test(scrollCss), 'C2a. the cards region is the ONE scroll container (overflow-y:auto, flex-sized)');
+ok(scrollIdx > toolbarIdx, 'C2b. the scroller renders AFTER the toolbar — the first card can never be covered by it');
+ok(/data-media-cards-scroll/.test(mediaList), 'C2c. the scroll container is identifiable (data attribute)');
+ok(/overscroll-behavior:\s*contain/.test(scrollCss), 'C2d. scroll chaining contained inside the cards region');
+// Both view modes render INSIDE the same single scroller (consistent
+// scroll ownership across list/grid).
+const listOpenIdx = mediaList.indexOf('<div class="media-list"');
+const gridOpenIdx = mediaList.indexOf('<div class="media-grid"');
+ok(scrollIdx < listOpenIdx && scrollIdx < gridOpenIdx, 'C2e. list AND grid render inside the SAME scroller (consistent scroll ownership)');
 const listCss = mediaList.match(/\.media-list \{[^}]+\}/)?.[0] ?? '';
 const gridCss = mediaList.match(/\.media-grid \{[^}]+\}/)?.[0] ?? '';
-ok(!/max-height/.test(listCss) && !/overflow-y/.test(listCss), 'C2a. list view: NO nested scroll container (natural scroll)');
-ok(!/max-height/.test(gridCss) && !/overflow-y/.test(gridCss), 'C2b. grid view: NO nested scroll container (natural scroll)');
-ok(!/overflow-x:\s*(scroll|auto)/.test(mediaList.replace(/overscroll-behavior-x[^;]*;/g, '')), 'C2c. no horizontal page overflow introduced');
-// Infinite scroll survives the container change via the capture-phase
-// window listener (sees BOTH the shell's .a2-main and the document).
-ok(/addEventListener\('scroll', onWindowScroll, \{ capture: true, passive: true \}\)/.test(mediaList), 'C3a. capture-phase window scroll listener (both scroll architectures)');
-ok(/checkCardsNearViewportBottom/.test(mediaList), 'C3b. proximity-based load-more (rect-based, container-agnostic)');
-ok(/data-media-cards/.test(mediaList), 'C3c. cards area is identifiable for the proximity check');
+ok(!/max-height/.test(listCss) && !/overflow-y/.test(listCss), 'C2f. list view: no SECOND scroll box inside the scroller');
+ok(!/max-height/.test(gridCss) && !/overflow-y/.test(gridCss), 'C2g. grid view: no SECOND scroll box inside the scroller');
+ok(!/overflow-x:\s*(scroll|auto)/.test(mediaList.replace(/overscroll-behavior-x[^;]*;/g, '')), 'C2h. no horizontal page overflow introduced');
+// The shell owns the fill-mode chain: exactly-viewport main + flex column
+// workspace (heights derive from the REAL header/nav tokens, and the
+// workspace top padding is removed so the search sits tight under the
+// fixed admin header — the reported "large blank gap").
+ok(/\.a2-shell \.a2-main-fill/.test(shell), 'C3a. the shell defines the fill-mode class chain');
+ok(/height:\s*100dvh/.test(shell.match(/\.a2-shell \.a2-main-fill \{[^}]+\}/)?.[0] ?? '') && /overflow:\s*hidden/.test(shell.match(/\.a2-shell \.a2-main-fill \{[^}]+\}/)?.[0] ?? ''), 'C3b. fill-mode main is exactly 100dvh and NOT a scroller (overflow hidden)');
+ok(/padding-top:\s*0/.test(shell.match(/\.a2-main-fill > \.a2-workspace \{[^}]+\}/)?.[0] ?? ''), 'C3c. fill-mode workspace drops its top padding (header→search gap closed)');
+ok(/fill = false as boolean/.test(shell), 'C3d. fill mode is opt-in (other admin pages keep the default scroller)');
+// Infinite scroll survives via the container onscroll + the capture-phase
+// window listener (sees every scroller).
+ok(/addEventListener\('scroll', onWindowScroll, \{ capture: true, passive: true \}\)/.test(mediaList), 'C3e. capture-phase window scroll listener (sees the cards scroller)');
+ok(/checkCardsNearViewportBottom/.test(mediaList), 'C3f. proximity-based load-more (rect-based, container-agnostic)');
+ok(/data-media-cards/.test(mediaList), 'C3g. cards area is identifiable for the proximity check');
+ok(/onscroll=\{onScroll\}/.test(mediaList.match(/<div class="cards-scroll"[^>]*>/)?.[0] ?? ''), 'C3h. the scroller carries the load-more onscroll handler');
 
 // ===========================================================================
 console.log('§D — bottom-navigation clearance + safe areas');

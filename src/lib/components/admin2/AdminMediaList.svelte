@@ -14,8 +14,23 @@
   //     full TMDB episode list merged with linked ground truth).
   //   * Movies stay flat one-card-per-movie cards.
   //
+  // 2026-10-16 final round:
+  //   * LAYOUT — the page runs in the shell's FILL MODE: the toolbar
+  //     (search + controls) is a static block and the CARDS REGION below
+  //     it is the page's single scroll container. This replaces the
+  //     position:sticky toolbar, which was inert on mobile (the shell's
+  //     `.a2-main` keeps overflow-y:auto while the document scrolls, so
+  //     the sticky scrollport never scrolled) — the toolbar scrolled
+  //     away and the first card slid under the fixed admin header.
+  //   * ZERO-LINK EXCLUSION — the server list() only returns titles
+  //     with at least one ACTIVE (non-deleted) link. A parent whose
+  //     final episode link is removed leaves the library immediately
+  //     (after any delete/bulk-unlink refresh); demand-backed zero-link
+  //     titles live ONLY in Missing Media.
+  //
   // Uses the /api/admin/media/manual-link endpoint for create/update/delete.
   // Uses the /api/admin/media/bulk-link endpoint for per-episode bulk links.
+  // Uses the /api/admin/media/bulk-unlink endpoint for SELECTED-episode bulk deletes.
   // Uses the /api/admin/media/search endpoint for TMDB search (via the wizard).
   // Uses the /api/admin/media/library endpoint for the list (top-level rows
   // only — the server rolls episode children into episode_summary).
@@ -433,11 +448,11 @@
       if (token !== searchToken) return; // stale response
 
       if (json.ok) {
-        // Task 2: NO client-side mediaAssetId filter — the server now owns
-        // the orphan/pending rules (top-level rows only; parents roll up
-        // their episodes). A movie with demand but no assets (pending)
-        // shows here with an "Add link" action; a parent shows even
-        // though it has no assets of its own (its episodes do).
+        // 2026-10-16 zero-link round — the server owns the "at least one
+        // ACTIVE link" rule (top-level rows only; parents roll up their
+        // episodes; zero-link rows — demand-backed included — are
+        // excluded and belong to Missing Media). No client-side
+        // mediaAssetId filtering.
         const newItems = (json.items ?? []).map(mapLibraryItem);
         if (reset) {
           items = newItems;
@@ -475,13 +490,12 @@
   let sectionEl = $state<HTMLElement | null>(null);
 
   // --- Infinite scroll ---
-  // Task 2 — the cards scroll NATURALLY beneath the sticky toolbar (the
-  // admin shell's main region on desktop, the document on mobile) — the
-  // list/grid containers are no longer nested scroll boxes. Scroll events
-  // do not bubble, so the proximity check runs on a CAPTURE-phase window
-  // listener (the same pattern the portaled menu uses), which sees BOTH
-  // scroll containers. The per-container onscroll stays as a harmless
-  // fallback.
+  // 2026-10-16 layout round — the CARDS REGION is the page's only scroll
+  // container (fill-mode shell). Scroll events do not bubble, so the
+  // proximity check ALSO runs on a capture-phase window listener (the
+  // same pattern the portaled menu uses) which sees every scroller; the
+  // scroll handler on the cards container itself stays as the primary
+  // path.
   function onScroll(event: Event) {
     const target = event.target as HTMLElement;
     if (!target) return;
@@ -514,7 +528,13 @@
     };
   });
 
+  // --- Mapping ---
   function mapLibraryItem(item: any): MediaRow {
+    // 2026-10-16 zero-link round — the server EXCLUDES zero-asset rows
+    // (Media Library = titles with ≥1 active link; demand-backed
+    // zero-link titles live in Missing Media only), so every movie row
+    // carries at least one non-deleted asset. The asset fallback stays
+    // defensive but no longer special-cases the 'pending' state.
     // Task 2 — PARENT rows (series/anime with episode_summary): one card,
     // identity = the series; the episode rollup drives the subtitle and
     // the card opens the episode sheet. Episode rows NEVER reach this
@@ -556,7 +576,7 @@
       providerAssetId: asset?.provider_asset_id ?? '',
       providerSourceId: asset?.provider_source_id ?? '',
       providerName,
-      status: asset?.status ?? (item.hosting_state === 'pending' ? 'pending' : 'unknown'),
+      status: asset?.status ?? 'unknown',
       maveroStatus: asset?.mavero_status ?? item.hosting_state ?? 'unknown',
       mediaAssetId: asset?.id ?? '',
       posterPath: item.poster_path ?? null,
@@ -673,13 +693,16 @@
 <svelte:window onkeydown={onFilterKeydown} />
 
 <section class="media-library" aria-label="Media Library" bind:this={sectionEl} data-media-library>
-  <!-- Task 2 — TWO toolbar rows, in this exact order:
+  <!-- 2026-10-16 layout round — TWO toolbar rows, in this exact order:
          Row 1: search — full available row width.
          Row 2: Add File (left) + view toggle + filter (right).
-       The toolbar block is STICKY inside the scrolling admin content
-       region; the cards scroll naturally beneath it (no nested scroll
-       containers). The page-level heading/description were removed with
-       the same task. -->
+       The toolbar is a STATIC block at the top of the page's flex column
+       (fill-mode shell): the ONLY scroll container on the page is the
+       cards region BELOW it, so the toolbar can never scroll away, the
+       first card always begins fully below it, and no sticky offset is
+       needed at all (the old position:sticky design was inert on mobile
+       because the shell's main region kept overflow-y:auto while the
+       document scrolled). -->
   <div class="toolbar" data-media-toolbar>
     <div class="search-row">
       <div class="search-input-wrap">
@@ -706,137 +729,139 @@
     </div>
   </div>
 
-  <!-- Loading / Error / Empty / List -->
-  {#if loading}
-    <div class="state-msg"><Loader2 size={20} class="spinner" /> Loading media library…</div>
-  {:else if error}
-    <div class="state-msg state-error"><AlertCircle size={20} /> {error}<button class="retry-btn" onclick={() => loadList(true)}>Retry</button></div>
-  {:else if items.length === 0}
-    <div class="state-msg state-empty"><Film size={32} /><p>No media linked yet. Click "Add file" to link your first video.</p></div>
-  {:else if viewMode === 'grid'}
-    <div class="media-grid" data-media-cards onscroll={onScroll}>
-      {#each items as row (row.id)}
-        {#if row.isParent}
-          <!-- Task 2 — ONE parent card per series/anime: opens the episode
-               sheet; the menu offers the same entry plus Add file. -->
-          <div class="grid-card" data-status={row.maveroStatus}>
-            <div class="grid-poster">
-              {#if posterUrl(row.posterPath)}
-                <img src={posterUrl(row.posterPath)} alt={row.title} loading="lazy" />
-              {:else}
-                <div class="grid-poster-fallback">{#if row.contentType === 'anime'}<Sparkles size={24} />{:else}<Tv size={24} />{/if}</div>
-              {/if}
-              <button type="button" class="grid-menu-btn" onclick={(e) => toggleMenu(row, e)} aria-label="Actions" aria-haspopup="menu" aria-expanded={openMenuId === row.id}>
-                <MoreVertical size={14} />
-              </button>
-            </div>
-            <div class="grid-info">
-              <div class="grid-title">{row.title}</div>
-              <div class="grid-meta">
-                <span class="badge-type">{contentTypeLabel(row.contentType)}</span>
-                <span class="badge-progress" data-metadata={row.metadataAvailable ? 'tmdb' : 'local'}>
-                  {#if row.metadataAvailable}{row.linkedEpisodeCount}/{row.episodeCount} ep{:else}{row.linkedEpisodeCount} ep linked{/if}
-                </span>
+  <!-- 2026-10-16 layout round — THE page scroll container. Every content
+       state (loading/error/empty/list/grid/load-more/end-of-list) lives
+       INSIDE it so the whole content region scrolls as one; the toolbar
+       above never moves. The box's height is bounded by the fill-mode
+       flex chain (viewport − fixed header − mobile bottom nav), so the
+       LAST card always scrolls fully into view above the bottom nav. -->
+  <div class="cards-scroll" data-media-cards-scroll onscroll={onScroll}>
+    {#if loading}
+      <div class="state-msg"><Loader2 size={20} class="spinner" /> Loading media library…</div>
+    {:else if error}
+      <div class="state-msg state-error" role="alert"><AlertCircle size={20} /> {error}<button class="retry-btn" onclick={() => loadList(true)}>Retry</button></div>
+    {:else if items.length === 0}
+      <div class="state-msg state-empty"><Film size={32} /><p>No media linked yet. Click "Add file" to link your first video.</p></div>
+    {:else if viewMode === 'grid'}
+      <div class="media-grid" data-media-cards>
+        {#each items as row (row.id)}
+          {#if row.isParent}
+            <!-- Task 2 — ONE parent card per series/anime: opens the episode
+                 sheet; the menu offers the same entry plus Add file. -->
+            <div class="grid-card" data-status={row.maveroStatus}>
+              <div class="grid-poster">
+                {#if posterUrl(row.posterPath)}
+                  <img src={posterUrl(row.posterPath)} alt={row.title} loading="lazy" />
+                {:else}
+                  <div class="grid-poster-fallback">{#if row.contentType === 'anime'}<Sparkles size={24} />{:else}<Tv size={24} />{/if}</div>
+                {/if}
+                <button type="button" class="grid-menu-btn" onclick={(e) => toggleMenu(row, e)} aria-label="Actions" aria-haspopup="menu" aria-expanded={openMenuId === row.id}>
+                  <MoreVertical size={14} />
+                </button>
               </div>
-              <button type="button" class="grid-open-episodes" onclick={() => openEpisodeSheet(row)} aria-label="View episodes of {row.title} — {row.linkedEpisodeCount} of {row.episodeCount} episodes linked">
-                <Layers size={11} /> Episodes
-              </button>
+              <div class="grid-info">
+                <div class="grid-title">{row.title}</div>
+                <div class="grid-meta">
+                  <span class="badge-type">{contentTypeLabel(row.contentType)}</span>
+                  <span class="badge-progress" data-metadata={row.metadataAvailable ? 'tmdb' : 'local'}>
+                    {#if row.metadataAvailable}{row.linkedEpisodeCount}/{row.episodeCount} ep{:else}{row.linkedEpisodeCount} ep linked{/if}
+                  </span>
+                </div>
+                <button type="button" class="grid-open-episodes" onclick={() => openEpisodeSheet(row)} aria-label="View episodes of {row.title} — {row.linkedEpisodeCount} of {row.episodeCount} episodes linked">
+                  <Layers size={11} /> Episodes
+                </button>
+              </div>
             </div>
-          </div>
-        {:else}
-          <div class="grid-card" data-status={row.maveroStatus}>
-            <div class="grid-poster">
-              {#if posterUrl(row.posterPath)}
-                <img src={posterUrl(row.posterPath)} alt={row.title} loading="lazy" />
-              {:else}
-                <div class="grid-poster-fallback">{#if row.contentType === 'movie'}<Film size={24} />{:else if row.contentType === 'anime'}<Sparkles size={24} />{:else}<Tv size={24} />{/if}</div>
-              {/if}
-              <button type="button" class="grid-menu-btn" onclick={(e) => toggleMenu(row, e)} aria-label="Actions" aria-haspopup="menu" aria-expanded={openMenuId === row.id}>
-                <MoreVertical size={14} />
-              </button>
+          {:else}
+            <div class="grid-card" data-status={row.maveroStatus}>
+              <div class="grid-poster">
+                {#if posterUrl(row.posterPath)}
+                  <img src={posterUrl(row.posterPath)} alt={row.title} loading="lazy" />
+                {:else}
+                  <div class="grid-poster-fallback">{#if row.contentType === 'movie'}<Film size={24} />{:else if row.contentType === 'anime'}<Sparkles size={24} />{:else}<Tv size={24} />{/if}</div>
+                {/if}
+                <button type="button" class="grid-menu-btn" onclick={(e) => toggleMenu(row, e)} aria-label="Actions" aria-haspopup="menu" aria-expanded={openMenuId === row.id}>
+                  <MoreVertical size={14} />
+                </button>
+              </div>
+              <div class="grid-info">
+                <div class="grid-title">{row.title}</div>
+                <div class="grid-meta">
+                  <span class="badge-type">{contentTypeLabel(row.contentType)}</span>
+                  {#if row.mediaAssetId}
+                    <span class="badge-provider" data-provider={providerLabel(row).toLowerCase()}>{providerLabel(row)}</span>
+                  {/if}
+                </div>
+              </div>
             </div>
-            <div class="grid-info">
-              <div class="grid-title">{row.title}</div>
-              <div class="grid-meta">
-                <span class="badge-type">{contentTypeLabel(row.contentType)}</span>
-                {#if row.mediaAssetId}
-                  <span class="badge-provider" data-provider={providerLabel(row).toLowerCase()}>{providerLabel(row)}</span>
-                {:else if row.status === 'pending'}
-                  <span class="badge-progress">Requested</span>
+          {/if}
+        {/each}
+      </div>
+    {:else}
+      <div class="media-list" data-media-cards>
+        {#each items as row (row.id)}
+          {#if row.isParent}
+            <!-- Task 2 — ONE parent row per series/anime; the whole row is a
+                 button that opens the accessible episode sheet (season chips
+                 + per-episode links + bulk link). -->
+            <div class="media-row media-row-parent" data-status={row.maveroStatus}>
+              <div class="media-poster">
+                {#if posterUrl(row.posterPath)}
+                  <img src={posterUrl(row.posterPath)} alt="" loading="lazy" />
+                {:else}
+                  {#if row.contentType === 'anime'}<Sparkles size={18} />{:else}<Tv size={18} />{/if}
                 {/if}
               </div>
-            </div>
-          </div>
-        {/if}
-      {/each}
-    </div>
-  {:else}
-    <div class="media-list" data-media-cards onscroll={onScroll}>
-      {#each items as row (row.id)}
-        {#if row.isParent}
-          <!-- Task 2 — ONE parent row per series/anime; the whole row is a
-               button that opens the accessible episode sheet (season chips
-               + per-episode links + bulk link). -->
-          <div class="media-row media-row-parent" data-status={row.maveroStatus}>
-            <div class="media-poster">
-              {#if posterUrl(row.posterPath)}
-                <img src={posterUrl(row.posterPath)} alt="" loading="lazy" />
-              {:else}
-                {#if row.contentType === 'anime'}<Sparkles size={18} />{:else}<Tv size={18} />{/if}
-              {/if}
-            </div>
-            <button type="button" class="media-info media-open" data-episode-sheet-opener={row.id} onclick={() => openEpisodeSheet(row)} aria-label="Open episodes of {row.title} — {row.seasonCount} season{row.seasonCount === 1 ? '' : 's'}, {row.linkedEpisodeCount} of {row.episodeCount} episodes linked">
-              <div class="media-title">{row.title}</div>
-              <div class="media-meta">
-                <span class="badge-type">{contentTypeLabel(row.contentType)}</span>
-                <span class="badge-progress">{row.seasonCount} season{row.seasonCount === 1 ? '' : 's'}</span>
-                <span class="badge-progress" data-metadata={row.metadataAvailable ? 'tmdb' : 'local'}>
-                  {#if row.metadataAvailable}{row.linkedEpisodeCount}/{row.episodeCount} episodes linked{:else}{row.linkedEpisodeCount} linked episode{row.linkedEpisodeCount === 1 ? '' : 's'}{/if}
-                </span>
-                {#if row.maveroStatus === 'pending'}<span class="badge-unlinked">Requested</span>{/if}
+              <button type="button" class="media-info media-open" data-episode-sheet-opener={row.id} onclick={() => openEpisodeSheet(row)} aria-label="Open episodes of {row.title} — {row.seasonCount} season{row.seasonCount === 1 ? '' : 's'}, {row.linkedEpisodeCount} of {row.episodeCount} episodes linked">
+                <div class="media-title">{row.title}</div>
+                <div class="media-meta">
+                  <span class="badge-type">{contentTypeLabel(row.contentType)}</span>
+                  <span class="badge-progress">{row.seasonCount} season{row.seasonCount === 1 ? '' : 's'}</span>
+                  <span class="badge-progress" data-metadata={row.metadataAvailable ? 'tmdb' : 'local'}>
+                    {#if row.metadataAvailable}{row.linkedEpisodeCount}/{row.episodeCount} episodes linked{:else}{row.linkedEpisodeCount} linked episode{row.linkedEpisodeCount === 1 ? '' : 's'}{/if}
+                  </span>
+                </div>
+              </button>
+              <div class="media-actions">
+                <button type="button" class="menu-trigger" onclick={(e) => toggleMenu(row, e)} aria-label="Actions" aria-haspopup="menu" aria-expanded={openMenuId === row.id}><MoreVertical size={16} /></button>
               </div>
-            </button>
-            <div class="media-actions">
-              <button type="button" class="menu-trigger" onclick={(e) => toggleMenu(row, e)} aria-label="Actions" aria-haspopup="menu" aria-expanded={openMenuId === row.id}><MoreVertical size={16} /></button>
             </div>
-          </div>
-        {:else}
-          <div class="media-row" data-status={row.maveroStatus}>
-            <div class="media-poster">
-              {#if posterUrl(row.posterPath)}
-                <img src={posterUrl(row.posterPath)} alt="" loading="lazy" />
-              {:else}
-                {#if row.contentType === 'movie'}<Film size={18} />{:else if row.contentType === 'anime'}<Sparkles size={18} />{:else}<Tv size={18} />{/if}
-              {/if}
-            </div>
-            <div class="media-info">
-              <div class="media-title">{row.title}</div>
-              <div class="media-meta">
-                <span class="badge-type">{contentTypeLabel(row.contentType)}</span>
-                {#if row.mediaAssetId}
-                  <span class="badge-provider" data-provider={providerLabel(row).toLowerCase()}>{providerLabel(row)}</span>
-                {:else if row.status === 'pending'}
-                  <span class="badge-progress">Requested — link needed</span>
+          {:else}
+            <div class="media-row" data-status={row.maveroStatus}>
+              <div class="media-poster">
+                {#if posterUrl(row.posterPath)}
+                  <img src={posterUrl(row.posterPath)} alt="" loading="lazy" />
+                {:else}
+                  {#if row.contentType === 'movie'}<Film size={18} />{:else if row.contentType === 'anime'}<Sparkles size={18} />{:else}<Tv size={18} />{/if}
                 {/if}
-                <span class="tmdb-id">TMDB: {row.tmdbId}</span>
+              </div>
+              <div class="media-info">
+                <div class="media-title">{row.title}</div>
+                <div class="media-meta">
+                  <span class="badge-type">{contentTypeLabel(row.contentType)}</span>
+                  {#if row.mediaAssetId}
+                    <span class="badge-provider" data-provider={providerLabel(row).toLowerCase()}>{providerLabel(row)}</span>
+                  {/if}
+                  <span class="tmdb-id">TMDB: {row.tmdbId}</span>
+                </div>
+              </div>
+              <div class="media-actions">
+                <button type="button" class="menu-trigger" onclick={(e) => toggleMenu(row, e)} aria-label="Actions" aria-haspopup="menu" aria-expanded={openMenuId === row.id}><MoreVertical size={16} /></button>
               </div>
             </div>
-            <div class="media-actions">
-              <button type="button" class="menu-trigger" onclick={(e) => toggleMenu(row, e)} aria-label="Actions" aria-haspopup="menu" aria-expanded={openMenuId === row.id}><MoreVertical size={16} /></button>
-            </div>
-          </div>
-        {/if}
-      {/each}
-    </div>
-  {/if}
+          {/if}
+        {/each}
+      </div>
+    {/if}
 
-  <!-- Loading more indicator -->
-  {#if loadingMore}
-    <div class="loading-more"><Loader2 size={16} class="spinner" /> Loading more…</div>
-  {/if}
-  {#if !loading && !loadingMore && !hasMore && items.length > 0}
-    <div class="end-of-list">End of list</div>
-  {/if}
+    <!-- Loading more indicator -->
+    {#if loadingMore}
+      <div class="loading-more"><Loader2 size={16} class="spinner" /> Loading more…</div>
+    {/if}
+    {#if !loading && !loadingMore && !hasMore && items.length > 0}
+      <div class="end-of-list">End of list</div>
+    {/if}
+  </div>
 
   <!-- Task 3 — PORTAL action menu (grid + list share ONE instance).
        Portaled to document.body so NO ancestor overflow (the grid
@@ -857,11 +882,11 @@
       {#if openMenuRow.isParent}
         <button type="button" class="menu-item" role="menuitem" onclick={() => { const row = openMenuRow; closeMenu(false); if (row) openEpisodeSheet(row); }}><Layers size={14} /> View episodes</button>
         <button type="button" class="menu-item" role="menuitem" onclick={() => { const row = openMenuRow; closeMenu(false); if (row) openPreselectedWizard({ tmdbId: row.tmdbId, contentType: row.contentType, title: row.title, year: row.year }); }}><Link2 size={14} /> Add file</button>
-      {:else if openMenuRow.mediaAssetId}
+      {:else}
+        <!-- Movie row — the 2026-10-16 zero-link exclusion guarantees every
+             movie card carries an active asset: Update link + Delete. -->
         <button type="button" class="menu-item" role="menuitem" onclick={() => { const row = openMenuRow; closeMenu(false); if (row) openUpdateWizard(row); }}><Link2 size={14} /> Update link</button>
         <button type="button" class="menu-item menu-item-danger" role="menuitem" onclick={() => { const row = openMenuRow; closeMenu(false); if (row) deleteTarget = row; }}><Trash2 size={14} /> Delete</button>
-      {:else}
-        <button type="button" class="menu-item" role="menuitem" onclick={() => { const row = openMenuRow; closeMenu(false); if (row) openPreselectedWizard({ tmdbId: row.tmdbId, contentType: row.contentType, title: row.title, year: row.year }); }}><Link2 size={14} /> Add link</button>
       {/if}
     </div>
   {/if}
@@ -993,20 +1018,24 @@
 {/if}
 
 <style>
-  .media-library { display: flex; flex-direction: column; gap: var(--a2-space-3); }
+  /* 2026-10-16 layout round — the section fills the fill-mode page body
+     (flex: 1 + min-height: 0) and is a flex column: toolbar (fixed
+     height, never scrolls) + cards region (the ONLY scroller). */
+  .media-library { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: var(--a2-space-2); }
 
-  /* Task 2 — TWO-row toolbar:
+  /* TWO-row toolbar:
        row 1 = full-width search,
        row 2 = Add File (left) + view toggle + filter (right).
-     STICKY within the scrolling admin content region (the admin shell's
-     .a2-main on desktop / the document on mobile) — it sticks below the
-     fixed admin header, keeps an opaque background so cards scrolling
-     beneath it never show through, and stays clear of the mobile bottom
-     nav (different axis). */
+     STATIC positioning (no sticky): the cards region below is the page's
+     single scroll container, so the toolbar physically cannot scroll
+     away and the first card always begins completely below it — no
+     sticky offset, no overlap, no ancestor-overflow failure modes. The
+     relative positioning keeps the toolbar above the cards in paint
+     order for its opaque background. */
   .toolbar {
-    position: sticky;
-    top: var(--a2-topbar-h-safe, 52px);
+    position: relative;
     z-index: 30;
+    flex: 0 0 auto;
     display: flex;
     flex-direction: column;
     gap: var(--a2-space-2);
@@ -1058,11 +1087,22 @@
   .loading-more { display: flex; align-items: center; justify-content: center; gap: 8px; padding: var(--a2-space-3); color: var(--a2-text-muted); font-size: var(--a2-text-xs); }
   .end-of-list { text-align: center; padding: var(--a2-space-2); color: var(--a2-text-dim); font-size: var(--a2-text-2xs); }
 
-  /* List view — Task 2: natural page scroll beneath the sticky toolbar.
-     No nested scroll container (the previous max-height/overflow box is
-     gone); the shell's main region / document scrolls the cards, and the
-     last row clears the fixed bottom nav via the shell's existing
-     .a2-main padding-bottom. */
+  /* 2026-10-16 layout round — THE page scroll container. All content
+     states (loading/error/empty/list/grid/load-more/end-of-list) render
+     inside it; the box is bounded by the fill-mode flex chain
+     (viewport − fixed header − mobile bottom nav, all derived from the
+     real --a2-*-safe tokens), so the last card and its actions always
+     scroll fully into view above the bottom navigation. ONE scroller —
+     the list/grid containers themselves have no overflow rules. */
+  .cards-scroll {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-bottom: var(--a2-space-3);
+  }
+
+  /* List view — plain stacked rows inside the cards scroller. */
   .media-list { display: flex; flex-direction: column; gap: 2px; }
   .media-row { display: flex; align-items: center; gap: var(--a2-space-3); padding: var(--a2-space-3); background: var(--a2-surface-2); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); transition: border-color 140ms ease; }
   .media-row:hover { border-color: var(--a2-border-strong); }
@@ -1077,7 +1117,6 @@
   .badge-provider[data-provider="vidara"] { background: rgba(99, 102, 241, 0.15); color: #818cf8; }
   .badge-provider[data-provider="abyss"] { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
   .badge-progress { padding: 1px 6px; border-radius: var(--a2-radius-xs); background: rgba(0,200,200,0.08); font-size: var(--a2-text-2xs); font-weight: 700; color: var(--a2-text-muted); letter-spacing: 0.04em; }
-  .badge-unlinked { padding: 1px 6px; border-radius: var(--a2-radius-xs); background: var(--a2-surface-4); font-size: var(--a2-text-2xs); font-weight: 700; text-transform: uppercase; color: var(--a2-text-muted); letter-spacing: 0.04em; }
   .tmdb-id { font-family: var(--a2-font-mono); font-size: var(--a2-text-2xs); color: var(--a2-text-dim); }
 
   /* Task 2 — parent rows/cards: the open-episodes control. */
@@ -1088,7 +1127,7 @@
   .grid-open-episodes:hover { background: rgba(0,200,200,0.14); }
   .grid-open-episodes:focus-visible { outline: 2px solid var(--a2-cyan); outline-offset: 1px; }
 
-  /* Grid view — same Task 2 natural-scroll contract as the list. */
+  /* Grid view — same single-scroller contract as the list. */
   .media-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: var(--a2-space-3); }
   .grid-card { display: flex; flex-direction: column; background: var(--a2-surface-2); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); overflow: hidden; transition: border-color 140ms ease; }
   .grid-card:hover { border-color: var(--a2-border-strong); }
@@ -1096,7 +1135,7 @@
   .grid-poster { position: relative; width: 100%; aspect-ratio: 2/3; background: var(--a2-surface-4); display: grid; place-items: center; }
   .grid-poster img { width: 100%; height: 100%; object-fit: cover; }
   .grid-poster-fallback { color: var(--a2-text-dim); }
-  .grid-menu-btn { position: absolute; top: 4px; right: 4px; width: 28px; height: 28px; display: grid; place-items: center; padding: 0; border: 0; border-radius: var(--a2-radius-xs); background: rgba(0,0,0,0.6); color: var(--a2-text); cursor: pointer; opacity: 0; transition: opacity 140ms ease; }
+  .grid-menu-btn { position: absolute; top: 4px; right: 4px; width: 44px; height: 44px; display: grid; place-items: center; padding: 0; border: 0; border-radius: var(--a2-radius-xs); background: rgba(0,0,0,0.6); color: var(--a2-text); cursor: pointer; opacity: 0; transition: opacity 140ms ease; }
   .grid-card:hover .grid-menu-btn, .grid-menu-btn:focus-visible, .grid-menu-btn[aria-expanded="true"] { opacity: 1; }
   .grid-menu-btn:focus-visible { outline: 2px solid var(--a2-accent, #9b87f5); outline-offset: 1px; }
   .grid-info { padding: 8px; }
@@ -1110,7 +1149,7 @@
      position:fixed + inline top/left and lifts the z-index above the
      wizard/confirm overlays (90/91) so an open menu is never buried. */
   .media-actions { position: relative; flex-shrink: 0; }
-  .menu-trigger { display: grid; place-items: center; width: 32px; height: 32px; border: 0; border-radius: var(--a2-radius-sm); background: transparent; color: var(--a2-text-muted); cursor: pointer; }
+  .menu-trigger { display: grid; place-items: center; width: 44px; height: 44px; border: 0; border-radius: var(--a2-radius-sm); background: transparent; color: var(--a2-text-muted); cursor: pointer; }
   .menu-trigger:hover { background: var(--a2-surface-3); color: var(--a2-text); }
   .menu-dropdown { position: absolute; right: 0; top: 100%; z-index: 10; min-width: 160px; background: var(--a2-surface-3); border: 1px solid var(--a2-border-strong); border-radius: var(--a2-radius-sm); box-shadow: 0 8px 24px rgba(0,0,0,0.3); overflow: hidden; }
   .menu-dropdown.floating { position: fixed; right: auto; top: 0; left: 0; z-index: 1000; min-width: 176px; padding: 4px 0; }
@@ -1119,6 +1158,11 @@
   .menu-item:hover { background: var(--a2-surface-4); }
   .menu-item-danger { color: var(--a2-red); }
   .menu-item-danger:hover { background: var(--a2-red-soft); }
+
+  /* NOTE (2026-10-16): .badge-unlinked was retired with the zero-link
+     exclusion — demand-backed zero-asset titles no longer render in the
+     library (they live in Missing Media), so the "Requested" badge has
+     no remaining source row. */
 
   /* Delete confirmation */
   /* Task 3 — the delete confirmation and filter sheet render ABOVE the

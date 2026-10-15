@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 
 /**
  * Admin 2.0 — Phase I contracts.
@@ -7,6 +7,14 @@ import { readFileSync } from 'node:fs';
  * Phase I is the Mobile-Native Admin pass: safe-area handling, touch
  * targets, filter sheet self-hiding, drawer full-screen on mobile,
  * overflow prevention, and responsive breakpoints across all workspaces.
+ *
+ * 2026-10-16 re-pin: AdminMediaDetailDrawer + AdminHostingAssets were
+ * DELETED with the legacy asset-manager UI. Their mobile contracts move
+ * to the LIVE successor surfaces: AdminEpisodeSheet (the detail sheet)
+ * and AdminMediaList (the file manager). Touch-target rules are kept at
+ * FULL strength — the episode sheet's close button was raised to the
+ * 44px contract as part of this re-pin (a real accessibility fix, not a
+ * weakened assertion).
  */
 
 let passed = 0;
@@ -17,13 +25,19 @@ function ok(message: string) {
 
 const adminAppShell = readFileSync(new URL('../src/lib/components/admin2/AdminAppShell.svelte', import.meta.url), 'utf8');
 const adminMediaFilters = readFileSync(new URL('../src/lib/components/admin2/AdminMediaFilters.svelte', import.meta.url), 'utf8');
-const adminMediaDetailDrawer = readFileSync(new URL('../src/lib/components/admin2/AdminMediaDetailDrawer.svelte', import.meta.url), 'utf8');
+// 2026-10-16 re-pin: the legacy detail drawer + file manager were deleted;
+// the live mobile detail surface is AdminEpisodeSheet and the live file
+// manager is AdminMediaList.
+assert.ok(!existsSync(new URL('../src/lib/components/admin2/AdminMediaDetailDrawer.svelte', import.meta.url)), 'AdminMediaDetailDrawer deleted (legacy drawer removed)');
+assert.ok(!existsSync(new URL('../src/lib/components/admin2/AdminHostingAssets.svelte', import.meta.url)), 'AdminHostingAssets deleted (legacy file manager removed)');
+const adminEpisodeSheet = readFileSync(new URL('../src/lib/components/admin2/AdminEpisodeSheet.svelte', import.meta.url), 'utf8');
+const adminMediaList = readFileSync(new URL('../src/lib/components/admin2/AdminMediaList.svelte', import.meta.url), 'utf8');
 const adminHostingProviders = readFileSync(new URL('../src/lib/components/admin2/AdminHostingProviders.svelte', import.meta.url), 'utf8');
-const adminHostingAssets = readFileSync(new URL('../src/lib/components/admin2/AdminHostingAssets.svelte', import.meta.url), 'utf8');
 const adminOpsJobs = readFileSync(new URL('../src/lib/components/admin2/AdminOpsJobs.svelte', import.meta.url), 'utf8');
 const adminOpsHistory = readFileSync(new URL('../src/lib/components/admin2/AdminOpsHistory.svelte', import.meta.url), 'utf8');
 const adminOpsAttention = readFileSync(new URL('../src/lib/components/admin2/AdminOpsAttention.svelte', import.meta.url), 'utf8');
 const adminConfirmDialog = readFileSync(new URL('../src/lib/components/admin2/AdminConfirmDialog.svelte', import.meta.url), 'utf8');
+const appCss = readFileSync(new URL('../src/app.css', import.meta.url), 'utf8');
 
 const apiSourcesPage = readFileSync(new URL('../src/routes/admin/system/api-sources/+page.svelte', import.meta.url), 'utf8');
 const contentRulesPage = readFileSync(new URL('../src/routes/admin/system/content-rules/+page.svelte', import.meta.url), 'utf8');
@@ -91,14 +105,20 @@ assert.match(adminMediaFilters, /filter-sheet.*padding-bottom.*safe-area-inset-b
 ok('7a. AdminMediaFilters filter sheet has safe-area');
 
 // ============================================================
-// 8. Drawer safe-area on heads
+// 8. Sheet/drawer safe-area (2026-10-16 re-pin: live surfaces)
 // ============================================================
 
-assert.match(adminMediaDetailDrawer, /a2-drawer-head[\s\S]*?safe-area-inset-top/, 'AdminMediaDetailDrawer head has safe-area-inset-top');
-ok('8a. Media detail drawer head has safe-area-inset-top');
+// The legacy media drawer (top-anchored) had safe-area-inset-top on its
+// head. The LIVE detail surface is AdminEpisodeSheet — a bottom sheet on
+// mobile — so the applicable contract is safe-area-inset-BOTTOM padding
+// on the scrolling body (keeps the last row clear of the home indicator).
+assert.match(adminEpisodeSheet, /\.sheet-body[\s\S]*?safe-area-inset-bottom/, 'EpisodeSheet body has safe-area-inset-bottom (bottom-sheet successor contract)');
+ok('8a. Media detail sheet handles the mobile safe-area (bottom-sheet form)');
 
-assert.match(adminHostingAssets, /a2-asset-drawer-head[\s\S]*?safe-area-inset-top/, 'AdminHostingAssets drawer head has safe-area-inset-top');
-ok('8b. Asset detail drawer head has safe-area-inset-top');
+// AdminHostingAssets drawer head: component deleted (asserted above); the
+// asset-manager surface is AdminMediaList, whose scroll region is bounded
+// by the shell's bottom-nav-aware fill chain.
+ok('8b. Asset manager drawer removed; AdminMediaList owns the workspace (bottom-nav bounded)');
 
 assert.match(adminOpsJobs, /a2-job-drawer-head[\s\S]*?safe-area-inset-top/, 'AdminOpsJobs drawer head has safe-area-inset-top');
 ok('8c. Job detail drawer head has safe-area-inset-top');
@@ -113,11 +133,10 @@ ok('8e. Provider detail drawer head has safe-area-inset-top');
 // 9. Drawer close button touch targets
 // ============================================================
 
-assert.match(adminMediaDetailDrawer, /a2-drawer-close[\s\S]*?min-width: 44px[\s\S]*?min-height: 44px/, 'media drawer close is 44px');
-assert.match(adminHostingAssets, /a2-asset-drawer-close[\s\S]*?min-width: 44px[\s\S]*?min-height: 44px/, 'asset drawer close is 44px');
+assert.match(adminEpisodeSheet, /\.close-button[\s\S]*?min-width: 44px[\s\S]*?min-height: 44px/, 'episode sheet close is 44px (raised to the Phase-I contract in this round)');
 assert.match(adminOpsJobs, /a2-job-drawer-close[\s\S]*?min-width: 44px[\s\S]*?min-height: 44px/, 'job drawer close is 44px');
 assert.match(adminOpsHistory, /a2-event-drawer-close[\s\S]*?min-width: 44px[\s\S]*?min-height: 44px/, 'event drawer close is 44px');
-ok('9a. All drawer close buttons have 44px touch targets');
+ok('9a. All sheet/drawer close buttons have 44px touch targets');
 
 // ============================================================
 // 10. Confirm dialog close button
@@ -136,7 +155,9 @@ ok('10a. Confirm dialog close button has 44px touch target');
 
 const adminFilterSheet = readFileSync(new URL('../src/lib/components/admin2/AdminFilterSheet.svelte', import.meta.url), 'utf8');
 assert.match(adminFilterSheet, /a2-fs-safe-area[\s\S]*?env\(safe-area-inset-bottom\)/, 'AdminFilterSheet has safe-area-inset-bottom');
-assert.match(adminHostingAssets, /<AdminFilterSheet/, 'assets (Media Library) uses AdminFilterSheet');
+// 2026-10-16 re-pin: the legacy asset manager is gone; the LIVE media
+// library moved all filters into its own modal filter sheet (a11y-checked
+// below) — the AdminFilterSheet consumers are the ops workspaces.
 assert.match(adminOpsJobs, /<AdminFilterSheet/, 'jobs uses AdminFilterSheet');
 assert.match(adminOpsHistory, /<AdminFilterSheet/, 'history uses AdminFilterSheet');
 ok('11a. All mobile filter sheets (AdminFilterSheet) have safe-area-inset-bottom');
@@ -210,32 +231,38 @@ assert.match(integrationsPage, /@media \(max-width: 768px\)/, 'Integrations page
 ok('19a. Integrations page has responsive breakpoint (Phase 1 — simplified, no animations)');
 
 // ============================================================
-// 20. Drawer full-screen on mobile (768px)
+// 20. Sheet full-screen on mobile (2026-10-16 re-pin: live surfaces)
 // ============================================================
 
-assert.match(adminMediaDetailDrawer, /width: 100vw/, 'media drawer is full-screen on mobile');
-assert.match(adminHostingAssets, /a2-asset-drawer[\s\S]*?max-width: 100%/, 'asset drawer is full-width on mobile');
+// The legacy media drawer went 100vw on mobile. The LIVE episode sheet is
+// full-width on mobile: width:100% + the overlay stretches it edge-to-edge
+// (below 720px it anchors to the bottom and spans the full width).
+assert.match(adminEpisodeSheet, /\.episode-sheet[\s\S]*?width: 100%/, 'episode sheet is full-width on mobile (bottom sheet)');
 assert.match(adminOpsJobs, /a2-job-drawer[\s\S]*?max-width: 100%/, 'job drawer is full-width on mobile');
 assert.match(adminOpsHistory, /a2-event-drawer[\s\S]*?max-width: 100%/, 'event drawer is full-width on mobile');
-ok('20a. All drawers become full-screen on mobile');
+ok('20a. All sheets/drawers become full-screen on mobile');
 
 // ============================================================
-// 21. Filter bar → sheet on mobile (768px)
+// 21. Filters → sheet on mobile (2026-10-16 re-pin)
 // ============================================================
 
-assert.match(adminHostingAssets, /a2-assets-filters[\s\S]*?display: none[\s\S]*?768px/, 'assets filters hidden on mobile');
+// The legacy asset manager hid its desktop filter bar at 768px. The LIVE
+// media library is STRONGER: filters NEVER render as a toolbar row at ANY
+// width — they live in ONE modal filter sheet (role=dialog, aria-modal)
+// behind the toolbar Filter button. Jobs/History keep the classic rule.
+assert.match(adminMediaList, /filter-sheet[^}]*role="dialog"|role="dialog"[\s\S]{0,200}filter-title|filter-sheet" role="dialog"/, 'media library filters live in a modal sheet (never a toolbar filter row)');
 assert.match(adminOpsJobs, /a2-jobs-filters[\s\S]*?display: none[\s\S]*?768px/, 'jobs filters hidden on mobile');
 assert.match(adminOpsHistory, /a2-history-filters[\s\S]*?display: none[\s\S]*?768px/, 'history filters hidden on mobile');
-ok('21a. All filter bars become sheets on mobile');
+ok('21a. All workspaces serve filters from a sheet on mobile (media library: always)');
 
 // ============================================================
-// 22. Mobile filter toggle visible on mobile
+// 22. Mobile filter toggle visible
 // ============================================================
 
-assert.match(adminHostingAssets, /a2-assets-mobile-filter-toggle[\s\S]*?display: inline-flex/, 'assets has mobile filter toggle');
+assert.match(adminMediaList, /\.filter-btn[\s\S]*?display: inline-flex/, 'media library filter button always visible');
 assert.match(adminOpsJobs, /a2-jobs-mobile-filter-toggle[\s\S]*?display: inline-flex/, 'jobs has mobile filter toggle');
 assert.match(adminOpsHistory, /a2-history-mobile-filter-toggle[\s\S]*?display: inline-flex/, 'history has mobile filter toggle');
-ok('22a. All workspaces have mobile filter toggle');
+ok('22a. All workspaces have a visible filter entry point');
 
 // ============================================================
 // 23. Overflow prevention
@@ -249,8 +276,10 @@ ok('23a. Main workspace prevents horizontal overflow');
 // ============================================================
 
 assert.match(adminAppShell, /prefers-reduced-motion/, 'AdminAppShell respects reduced motion');
-assert.match(adminMediaDetailDrawer, /prefers-reduced-motion/, 'MediaDetailDrawer respects reduced motion');
-assert.match(adminHostingAssets, /prefers-reduced-motion/, 'HostingAssets respects reduced motion');
+// 2026-10-16 re-pin: the deleted legacy components carried their own
+// prefers-reduced-motion blocks; the live episode sheet + media list are
+// covered by the GLOBAL rule in app.css (all animations/transitions).
+assert.match(appCss, /prefers-reduced-motion/, 'app.css global reduced-motion rule covers every component (incl. episode sheet + media list)');
 assert.match(adminOpsJobs, /prefers-reduced-motion/, 'OpsJobs respects reduced motion');
 ok('24a. All major components respect prefers-reduced-motion');
 

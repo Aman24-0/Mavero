@@ -8,8 +8,9 @@
  *     The server resolves the canonical media_item UUID via
  *     CanonicalMediaService.ensure* (same as the Missing Media link flow).
  *   * Direct UUID: { mediaItemId, providerSourceId, providerAssetId }
- *     For callers that already have the media_items.id UUID (e.g. the
- *     AdminMediaDetailDrawer).
+ *     For callers that already have the media_items.id UUID (historically
+ *     the removed AdminMediaDetailDrawer; the direct-UUID contract stays
+ *     valid for any server-side caller).
  *
  * This endpoint NEVER accepts a prefixed canonical key (e.g. "movie-12345")
  * as a mediaItemId — that was the root cause of the UUID mismatch.

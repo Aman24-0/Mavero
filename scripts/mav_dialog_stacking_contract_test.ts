@@ -150,7 +150,10 @@ ok(/target\.focus\(\)/.test(wizard) && /isConnected/.test(wizard), 'F1b. wizard 
 ok(/aria-modal="true"/.test(wizard) && /role="dialog"/.test(wizard), 'F2a. wizard keeps role=dialog + aria-modal');
 ok(/aria-modal="true"/.test(sheet) && /role="dialog"/.test(sheet), 'F2b. sheet keeps role=dialog + aria-modal');
 ok(/aria-modal="true"/.test(sheet) && /aria-labelledby="bulk-delete-title"/.test(sheet), 'F2c. bulk-delete confirm is labelled');
-ok(/aria-label="Bulk delete the linked episode associations/.test(sheet), 'F2d. bulk-delete button carries its accessible description');
+// 2026-10-16 re-pin: the bulk-delete action became a SELECTED-EPISODE flow
+// (never "delete the whole season by default") — the accessible label now
+// says the admin SELECTS the linked episodes to delete.
+ok(/aria-label="Select linked episodes of this season to delete/.test(sheet), 'F2d. bulk-delete button carries its accessible (selection-based) description');
 
 // ===========================================================================
 console.log('§G — no leaks (listeners, duplicate handlers)');

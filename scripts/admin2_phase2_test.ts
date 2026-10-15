@@ -44,7 +44,9 @@ const contentRulesPage = read('src/routes/admin/system/content-rules/+page.svelt
 const downloadsPage = read('src/routes/admin/system/downloads/+page.svelte');
 const integrationsPage = read('src/routes/admin/system/integrations/+page.svelte');
 const adminAppShell = read('src/lib/components/admin2/AdminAppShell.svelte');
-const adminUploadFlow = read('src/lib/components/admin2/AdminUploadFlow.svelte');
+// [2026-10-16 re-pin] AdminUploadFlow + AdminHostingAssets were DELETED;
+// the live media library surface is AdminMediaList (asserted below).
+const adminMediaList2 = read('src/lib/components/admin2/AdminMediaList.svelte');
 const overviewServer = read('src/routes/admin/+page.server.ts');
 const overviewPage = read('src/routes/admin/+page.svelte');
 const rootLayout = read('src/routes/+layout.svelte');
@@ -54,7 +56,6 @@ const opsService = read('src/lib/server/hosting/operations/service.ts');
 const hostingControlService = read('src/lib/server/hosting/control/service.ts');
 const libraryService = read('src/lib/server/hosting/library/service.ts');
 const adminOpsJobs = read('src/lib/components/admin2/AdminOpsJobs.svelte');
-const adminHostingAssets = read('src/lib/components/admin2/AdminHostingAssets.svelte');
 const adminHostingProviders = read('src/lib/components/admin2/AdminHostingProviders.svelte');
 const adminOpsAttention = read('src/lib/components/admin2/AdminOpsAttention.svelte');
 const adminOpsHistory = read('src/lib/components/admin2/AdminOpsHistory.svelte');
@@ -141,12 +142,11 @@ const adminShellImporters = walkSourceFiles(srcRoot)
 assert.equal(adminShellImporters.length, 0, 'no source file imports AdminShell (AdminAppShell is the sole admin shell)');
 ok('C1. AdminShell.svelte deleted in post-Phase-3 cleanup (no source imports it; AdminAppShell is the sole admin shell)');
 
-// AdminUploadFlow: empty-state link points to Hosting Control (not API & Sources)
-// Phase 6 fix: Vidara/Abyss are hosting providers configured in Hosting Control,
-// NOT playback providers configured in API & Sources.
-assert.match(adminUploadFlow, /href="\/admin\/hosting"/, 'AdminUploadFlow: empty-state link points to Hosting Control (not API & Sources)');
-assert.doesNotMatch(adminUploadFlow, /href="\/admin\/providers"/, 'AdminUploadFlow: no stale /admin/providers link');
-ok('C2. AdminUploadFlow: empty-state "Configure Providers" link points at canonical route');
+// AdminUploadFlow (2026-10-16): the component was DELETED with the
+// Upload/Import workflow — its empty-state "Configure Providers" link
+// contract is retired with it (no upload surface remains to deep-link).
+assert.ok(!existsSync(new URL('../src/lib/components/admin2/AdminUploadFlow.svelte', import.meta.url)), 'AdminUploadFlow deleted (upload workflow removed)');
+ok('C2. AdminUploadFlow removed — the empty-state link contract retired with the workflow');
 
 // api/admin/sources/test: redirectTo is canonical
 assert.match(apiSourceTest, /redirectTo: '\/admin\/system\/api-sources\?tab=sources'/, 'api/admin/sources/test: redirectTo is canonical');
@@ -279,12 +279,15 @@ assert.match(adminOpsJobs, /@media \(max-width: 768px\) \{[\s\S]*?\.a2-jobs-card
 assert.match(adminOpsJobs, /@media \(max-width: 768px\) \{[\s\S]*?\.a2-jobs-table-wrap \{ display: none/, 'AdminOpsJobs: table hidden <768px');
 ok('G1. AdminOpsJobs: 7-column table → mobile card list (no horizontal scroll)');
 
-// AdminHostingAssets: mobile card list + table hidden <768px
-assert.match(adminHostingAssets, /class="a2-assets-card-list"/, 'AdminHostingAssets: mobile card list rendered');
-assert.match(adminHostingAssets, /\.a2-assets-card-list \{ display: none/, 'AdminHostingAssets: card list hidden by default');
-assert.match(adminHostingAssets, /@media \(max-width: 768px\) \{[\s\S]*?\.a2-assets-card-list \{ display: flex/, 'AdminHostingAssets: card list shown <768px');
-assert.match(adminHostingAssets, /@media \(max-width: 768px\) \{[\s\S]*?\.a2-assets-table-wrap \{ display: none/, 'AdminHostingAssets: table hidden <768px');
-ok('G2. AdminHostingAssets: 9-column table → mobile card list (no horizontal scroll)');
+// AdminHostingAssets (2026-10-16): the component was DELETED with the
+// legacy asset-manager UI. The live media library is card-first by design
+// (compact rows + grid at EVERY width — never a table), which is STRONGER
+// than the old <768px card-list switch: there is no table to hide.
+assert.ok(!existsSync(new URL('../src/lib/components/admin2/AdminHostingAssets.svelte', import.meta.url)), 'AdminHostingAssets deleted (legacy file manager removed)');
+assert.doesNotMatch(adminMediaList2, /<table/, 'media library renders NO table element (card-first at every width)');
+assert.match(adminMediaList2, /class="media-row"/, 'media library renders compact rows (list view)');
+assert.match(adminMediaList2, /class="media-grid"/, 'media library renders cards (grid view)');
+ok('G2. Media Library: card-first list/grid (no table, no horizontal scroll — switchable views)');
 
 // media/missing: legacy 8-col table fully migrated to AdminPage + card list
 assert.doesNotMatch(missingPage, /\n\s*<table[^>]*>/, 'media/missing: no rendered <table> element (migrated to card list)');
@@ -311,11 +314,12 @@ assert.match(apiSourcesPage, /\.a2-default-clear \{[^}]*min-height: 44px/, 'api-
 assert.match(apiSourcesPage, /\.a2-default-select \{[^}]*min-height: 44px/, 'api-sources: defaults select ≥ 44px');
 ok('H1. Migrated system pages: primary/secondary/default buttons ≥ 44px touch target');
 
-// AdminOpsJobs/AdminHostingAssets: row-action + page-btn ≥ 44px
+// AdminOpsJobs: row-action + page-btn ≥ 44px; the live media list's row
+// actions (kebab menu triggers) ≥ 44px (raised in this round).
 assert.match(adminOpsJobs, /\.a2-jobs-row-action \{[^}]*min-height: 44px/, 'AdminOpsJobs: row-action ≥ 44px');
 assert.match(adminOpsJobs, /\.a2-jobs-page-btn \{[^}]*min-height: 44px/, 'AdminOpsJobs: page-btn ≥ 44px');
-assert.match(adminHostingAssets, /\.a2-assets-row-action \{[^}]*min-height: 44px/, 'AdminHostingAssets: row-action ≥ 44px');
-assert.match(adminHostingAssets, /\.a2-assets-page-btn \{[^}]*min-height: 44px/, 'AdminHostingAssets: page-btn ≥ 44px');
+assert.match(adminMediaList2, /\.menu-trigger \{[^}]*width: 44px/, 'AdminMediaList: row menu-trigger ≥ 44px');
+assert.match(adminMediaList2, /\.grid-menu-btn \{[^}]*width: 44px/, 'AdminMediaList: grid card menu ≥ 44px');
 assert.match(adminOpsAttention, /\.a2-attention-action \{[^}]*min-height: 44px/, 'AdminOpsAttention: action ≥ 44px');
 assert.match(adminOpsAttention, /\.a2-attention-page-btn \{[^}]*min-height: 44px/, 'AdminOpsAttention: page-btn ≥ 44px');
 assert.match(adminOpsHistory, /\.a2-history-page-btn \{[^}]*min-height: 44px/, 'AdminOpsHistory: page-btn ≥ 44px');

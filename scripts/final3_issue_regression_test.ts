@@ -132,7 +132,6 @@ const syncServiceSrc = read('src/lib/server/hosting/sync/service.ts');
 const vidaraAdapterSrc = read('src/lib/server/hosting/vidara/adapter.ts');
 const vidaraNormalizeSrc = read('src/lib/server/hosting/vidara/normalize.ts');
 const vidaraTypesSrc = read('src/lib/server/hosting/vidara/types.ts');
-const uploadFlowSrc = read('src/lib/components/admin2/AdminUploadFlow.svelte');
 const resolverSrc = read('src/lib/server/resolver/mavero-hosted.ts');
 const appShellSrc = read('src/lib/components/admin2/AdminAppShell.svelte');
 const legacySyncPage = read('src/routes/admin/media/sync/+page.svelte');
@@ -643,10 +642,11 @@ ok('C14. upload poll retired (progress persistence contract retired with the wor
 assert.match(resolverSrc, /\.eq\('status', 'ready'\)[\s\S]{0,120}?\.eq\('mavero_status', 'available'\)/, 'C15 resolver dual gate intact');
 ok('C15. processing != playable: only ready+available sets availability (dual gate intact)');
 
-// C16: the wizard displays the provider progress in the status line.
-assert.match(uploadFlowSrc, /pollProgress = typeof json\.progressPercent === 'number' \? json\.progressPercent : null/, 'C16 poll captures progressPercent');
-assert.match(uploadFlowSrc, /pollProgress != null \? ` · \$\{pollProgress\}%` : ''/, 'C16 status line renders progress');
-ok('C16. upload wizard status line shows real provider progress ("Status: processing · 42%")');
+// C16 (2026-10-16): the upload wizard (AdminUploadFlow) was DELETED with
+// the Upload/Import workflow — the progress status line is retired with
+// it. No live component may poll or display upload progress.
+assert.ok(!existsSync('src/lib/components/admin2/AdminUploadFlow.svelte'), 'C16 upload wizard component deleted (progress display retired with the workflow)');
+ok('C16. upload wizard progress display retired (no live upload-progress surface remains)');
 
 // C17: sync enrichment — a queued-mapped provider asset is re-resolved via
 // getProcessingStatus so a mid-encoding sync does NOT regress processing → queued.

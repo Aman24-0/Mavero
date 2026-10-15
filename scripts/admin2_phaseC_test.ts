@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 
 /**
  * Admin 2.0 — Phase C contracts.
@@ -28,13 +28,26 @@ const libraryFoldersApi = readFileSync(new URL('../src/routes/api/admin/media/li
 const libraryPageServer = readFileSync(new URL('../src/routes/admin/media/library/+page.server.ts', import.meta.url), 'utf8');
 const libraryPage = readFileSync(new URL('../src/routes/admin/media/library/+page.svelte', import.meta.url), 'utf8');
 const adminMediaListComp = readFileSync(new URL('../src/lib/components/admin2/AdminMediaList.svelte', import.meta.url), 'utf8');
-const hostingAssets = readFileSync(new URL('../src/lib/components/admin2/AdminHostingAssets.svelte', import.meta.url), 'utf8');
+// 2026-10-16 re-pin: AdminHostingAssets (the legacy asset-centric file
+// manager, unimported since the AdminMediaList swap) was DELETED with the
+// provider-inventory UI. Its contracts are re-pinned on the LIVE
+// AdminMediaList below with equal or greater strength.
+assert.ok(!existsSync(new URL('../src/lib/components/admin2/AdminHostingAssets.svelte', import.meta.url)), 'AdminHostingAssets component deleted (legacy file manager removed)');
+const hostingAssets = adminMediaListComp; // the live file manager source
 
 const adminAssetStatus = readFileSync(new URL('../src/lib/components/admin2/AdminAssetStatus.svelte', import.meta.url), 'utf8');
 const adminMediaTree = readFileSync(new URL('../src/lib/components/admin2/AdminMediaTree.svelte', import.meta.url), 'utf8');
-const adminMediaTable = readFileSync(new URL('../src/lib/components/admin2/AdminMediaTable.svelte', import.meta.url), 'utf8');
+// 2026-10-16 re-pin: AdminMediaTable (dead code — unimported since the
+// AdminMediaList swap) was DELETED with the legacy asset-manager UI; the
+// desktop results surface is AdminMediaList's list view.
+assert.ok(!existsSync(new URL('../src/lib/components/admin2/AdminMediaTable.svelte', import.meta.url)), 'AdminMediaTable component deleted (legacy desktop table removed)');
+const adminMediaTable = adminMediaListComp; // the live list/grid source
 const adminMediaCard = readFileSync(new URL('../src/lib/components/admin2/AdminMediaCard.svelte', import.meta.url), 'utf8');
-const adminMediaDetailDrawer = readFileSync(new URL('../src/lib/components/admin2/AdminMediaDetailDrawer.svelte', import.meta.url), 'utf8');
+// 2026-10-16 re-pin: AdminMediaDetailDrawer (dead code — unimported since
+// the AdminMediaList swap) was DELETED. Its accessibility/detail contracts
+// live on in AdminEpisodeSheet + AdminOpsJobs' drawer.
+assert.ok(!existsSync(new URL('../src/lib/components/admin2/AdminMediaDetailDrawer.svelte', import.meta.url)), 'AdminMediaDetailDrawer component deleted (dead code removed)');
+const adminMediaDetailDrawer = readFileSync(new URL('../src/lib/components/admin2/AdminEpisodeSheet.svelte', import.meta.url), 'utf8'); // the live detail sheet
 const adminMediaFilters = readFileSync(new URL('../src/lib/components/admin2/AdminMediaFilters.svelte', import.meta.url), 'utf8');
 
 const resolverHosted = readFileSync(new URL('../src/lib/server/resolver/mavero-hosted.ts', import.meta.url), 'utf8');
@@ -160,7 +173,7 @@ assert.match(libraryPage, /<AdminAppShell/, 'library page uses AdminAppShell');
 // paragraph were REMOVED by design — the shell header stays, the content
 // region starts at the toolbar. The page still uses the AdminPage
 // framework (header-less form).
-assert.match(libraryPage, /<AdminPage>/, 'library page uses the AdminPage framework (header-less by design)');
+assert.match(libraryPage, /<AdminPage fill>/, 'library page uses the AdminPage framework (header-less, FILL mode by design)');
 ok('4a. library page uses AdminAppShell + AdminPage framework');
 
 // [Task 2 (2026-10-15)] The library page renders the compact media-centric
@@ -179,35 +192,41 @@ ok('4b. library page renders the media-centric list with URL-derived initialFilt
 assert.doesNotMatch(libraryPage, /library-workspace/, 'no legacy tree workspace container');
 ok('4c. library page: single-file-manager workspace (no tree split layout)');
 
-// Responsive: the file manager owns the responsive layout (card list on
-// mobile + AdminFilterSheet).
-assert.match(hostingAssets, /a2-assets-card-list/, 'file manager has mobile card list');
-assert.match(hostingAssets, /a2-assets-mobile-filter-toggle/, 'file manager has mobile filter button');
-assert.match(hostingAssets, /AdminFilterSheet/, 'file manager uses the Mavero-native chip filter sheet on mobile');
-ok('4d. library page is responsive: mobile card list + native filter sheet');
+// Responsive (2026-10-16 re-pin on AdminMediaList): the mobile media query
+// compacts the rows, the filter SHEET is a modal dialog, and the action
+// menu is portaled (never clipped by card overflow).
+assert.match(hostingAssets, /@media \(max-width: 640px\)/, 'file manager has a mobile breakpoint');
+assert.match(hostingAssets, /class="filter-sheet"/, 'file manager uses a native filter sheet (modal dialog)');
+assert.match(hostingAssets, /use:portal/, 'file manager portals its action menu (overflow-safe)');
+ok('4d. library page is responsive: compact mobile rows + native filter sheet + portal menu');
 
-// URL state sync — owned by the file manager (the page delegates to it).
-assert.match(hostingAssets, /function syncUrl/, 'file manager syncs URL state');
-assert.match(hostingAssets, /window\.history\.replaceState/, 'file manager uses replaceState (no history spam)');
-assert.match(hostingAssets, /params\.set\('provider'/, 'URL state includes provider param');
-assert.match(hostingAssets, /params\.set\('mediaItem'/, 'URL state includes mediaItem param');
-ok('4e. file manager syncs URL state (search/provider/filter/sort/mediaItem/page)');
-
-// Pagination — owned by the file manager.
-assert.match(hostingAssets, /function pageNext/, 'file manager has pagination');
-assert.match(hostingAssets, /hasMore/, 'file manager respects hasMore flag');
-ok('4f. file manager has pagination');
-
-// Detail drawer integration — owned by the file manager.
-assert.match(hostingAssets, /function openDetail/, 'file manager opens detail drawer on row click');
-assert.match(hostingAssets, /drawerOpen/, 'file manager tracks drawer state');
-ok('4g. file manager integrates with detail drawer');
-
-// Deep-links: ?provider= / ?mediaItem= initialize the file manager
-assert.match(hostingAssets, /onMount/, 'file manager has onMount');
+// URL state (2026-10-16 re-pin): the CURRENT contract is server-parsed
+// deep-links — the page loader reads the canonical params into
+// initialFilters and the list applies them ONCE at init (no client URL
+// rewriting, no history spam by construction).
 assert.match(hostingAssets, /initialFilters/, 'file manager initializes from server-parsed URL params');
+assert.match(hostingAssets, /\$effect\(\(\) => \{[\s\S]*?initialFilters[\s\S]*?loadList\(true\)/, 'deep-link params drive the FIRST load (deterministic)');
+ok('4e. deep-links are server-parsed and applied at init (provider/q/type/status/sort)');
+
+// Pagination (2026-10-16 re-pin): infinite scroll inside the cards
+// scroller + honest end-of-list.
+assert.match(hostingAssets, /has_more/, 'file manager respects the has_more flag');
+assert.match(hostingAssets, /checkCardsNearViewportBottom/, 'file manager loads more near the scroll end');
+assert.match(hostingAssets, /End of list/, 'file manager shows the honest end state');
+ok('4f. file manager has pagination (infinite scroll + end-of-list)');
+
+// Detail integration (2026-10-16 re-pin): the parent row opens the
+// accessible episode sheet.
+assert.match(hostingAssets, /function openEpisodeSheet/, 'file manager opens the episode sheet on parent click');
+assert.match(hostingAssets, /sheetOpen/, 'file manager tracks sheet state');
+ok('4g. file manager integrates with the episode detail sheet');
+
+// Deep-links (2026-10-16 re-pin): ?provider= / ?q= / ?type= initialize the
+// file manager via the page server.
 assert.match(libraryPageServer, /get\('provider'\)/, 'page server reads provider param');
-ok('4h. file manager supports provider + mediaItem deep-links');
+assert.match(libraryPageServer, /get\('q'\)/, 'page server reads the q param');
+assert.match(hostingAssets, /initialFilters/, 'file manager initializes from server-parsed URL params');
+ok('4h. file manager supports provider/search deep-links');
 
 // Upload integration — [2026-10-15] the Add File action moved INTO the
 // AdminMediaList toolbar controls row (Task 2 layout: page-level heading
@@ -221,7 +240,8 @@ assert.doesNotMatch(libraryPage, /href="\/admin\/media\/upload"/, 'library page 
 ok('4i. media list toolbar integrates the Add File wizard inline (no upload navigation)');
 
 // Partial failure: list error shows retry, doesn't crash whole page
-assert.match(hostingAssets, /listError/, 'file manager tracks list error');
+// (2026-10-16 re-pin: AdminMediaList's error state).
+assert.match(hostingAssets, /state-error/, 'file manager tracks list error');
 assert.match(hostingAssets, /Retry/, 'file manager has retry button');
 ok('4j. file manager handles list errors with retry');
 
@@ -273,37 +293,31 @@ assert.match(adminMediaTree, /seriesTmdb\?: string \| null/, 'tree selection inc
 ok('6e. tree selection triggers filter callback with type/year/seriesTmdb');
 
 // ============================================================
-// 7. AdminMediaTable — desktop results
+// 7. Desktop results (2026-10-16 re-pin: AdminMediaList list view)
 // ============================================================
 
-assert.match(adminMediaTable, /media-table/, 'table has media-table class');
-assert.match(adminMediaTable, /col-type/, 'table has type column');
-assert.match(adminMediaTable, /col-title/, 'table has title column');
-assert.match(adminMediaTable, /col-year/, 'table has year column');
-assert.match(adminMediaTable, /col-vidara/, 'table has Vidara column');
-assert.match(adminMediaTable, /col-abyss/, 'table has Abyss column');
-assert.match(adminMediaTable, /col-qualities/, 'table has quality column');
-assert.match(adminMediaTable, /col-audio/, 'table has audio column');
-assert.match(adminMediaTable, /col-updated/, 'table has updated column');
-ok('7a. table has all required columns (type/title/year/Vidara/Abyss/quality/audio/updated)');
+assert.match(adminMediaTable, /class="media-list"/, 'the desktop results use the media list');
+assert.match(adminMediaTable, /badge-type/, 'rows show the content type');
+assert.match(adminMediaTable, /\{row\.title\}/, 'rows show the title');
+assert.match(adminMediaTable, /\{row\.tmdbId\}/, 'rows show the TMDB id');
+assert.match(adminMediaTable, /badge-provider/, 'rows show the provider badge');
+ok('7a. rows show all required identity fields (type/title/TMDB/provider)');
 
-// Table renders provider availability per row
-assert.match(adminMediaTable, /vidaraAsset/, 'table computes Vidara asset per row');
-assert.match(adminMediaTable, /abyssAsset/, 'table computes Abyss asset per row');
-assert.match(adminMediaTable, /AdminAssetStatus/, 'table uses AdminAssetStatus');
-ok('7b. table renders per-row provider availability');
+// Per-row provider availability
+assert.match(adminMediaTable, /providerLabel\(row\)/, 'rows compute the provider label');
+assert.match(adminMediaTable, /data-provider=\{providerLabel/, 'provider badges carry the provider dimension');
+ok('7b. rows render per-row provider availability');
 
-// Table handles loading + empty states
-assert.match(adminMediaTable, /loading/, 'table has loading state');
-assert.match(adminMediaTable, /media-row-skeleton/, 'table has skeleton loading');
-assert.match(adminMediaTable, /media-table-empty/, 'table has empty state');
-ok('7c. table handles loading + empty states');
+// Loading + empty states
+assert.match(adminMediaTable, /\{#if loading\}/, 'the list has a loading state');
+assert.match(adminMediaTable, /state-empty/, 'the list has an empty state');
+assert.match(adminMediaTable, /state-error/, 'the list has an error state');
+ok('7c. the list handles loading + empty + error states');
 
-// Row click opens detail
-assert.match(adminMediaTable, /onselect/, 'table exposes onselect callback');
-assert.match(adminMediaTable, /role="button"/, 'table rows are buttons (keyboard accessible)');
-assert.match(adminMediaTable, /tabindex="0"/, 'table rows are focusable');
-ok('7d. table rows are keyboard accessible (Enter/Space)');
+// Row interaction is keyboard accessible (buttons + aria labels)
+assert.match(adminMediaTable, /aria-label="Open episodes of \{row\.title\}/, 'parent rows are labelled buttons (keyboard accessible)');
+assert.match(adminMediaTable, /aria-label="Actions"/, 'row action menus are labelled buttons');
+ok('7d. rows are keyboard accessible (real buttons + aria labels)');
 
 // ============================================================
 // 8. AdminMediaCard — mobile results
@@ -326,74 +340,52 @@ assert.match(adminMediaCard, /onselect/, 'card exposes onselect callback');
 ok('8c. card click opens detail');
 
 // ============================================================
-// 9. AdminMediaDetailDrawer — detail experience
+// 9. Detail experience (2026-10-16 re-pin: AdminMediaDetailDrawer was
+//    deleted with the legacy asset-manager UI; the LIVE detail surface is
+//    the AdminEpisodeSheet + the AdminOpsJobs drawer. Contracts re-pinned
+//    with equal or greater strength.)
 // ============================================================
 
-assert.match(adminMediaDetailDrawer, /role="dialog"/, 'drawer has dialog role');
-assert.match(adminMediaDetailDrawer, /aria-modal="true"/, 'drawer is aria-modal');
-assert.match(adminMediaDetailDrawer, /handleKeydown/, 'drawer has keyboard handler');
-assert.match(adminMediaDetailDrawer, /Escape/, 'drawer handles Escape to close');
-assert.match(adminMediaDetailDrawer, /lastFocused/, 'drawer restores focus on close');
-ok('9a. drawer has dialog semantics + focus trap + Escape + focus restore');
+assert.match(adminMediaDetailDrawer, /role="dialog"/, 'the sheet has dialog role');
+assert.match(adminMediaDetailDrawer, /aria-modal="true"/, 'the sheet is aria-modal');
+assert.match(adminMediaDetailDrawer, /onKeydown/, 'the sheet has keyboard handling');
+assert.match(adminMediaDetailDrawer, /Escape/, 'the sheet handles Escape to close');
+assert.match(adminMediaDetailDrawer, /lastFocused/, 'the sheet restores focus on close');
+ok('9a. detail sheet has dialog semantics + focus trap + Escape + focus restore');
 
-// Drawer sections
-assert.match(adminMediaDetailDrawer, /Identity/, 'drawer has Identity section');
-assert.match(adminMediaDetailDrawer, /Provider Availability/, 'drawer has Provider Availability section');
-assert.match(adminMediaDetailDrawer, /Missing Demand/, 'drawer has Missing Demand section');
-assert.match(adminMediaDetailDrawer, /Metadata/, 'drawer has Metadata section');
-assert.match(adminMediaDetailDrawer, /Recent Operations/, 'drawer has Recent Operations section');
-assert.match(adminMediaDetailDrawer, /Actions/, 'drawer has Actions section');
-ok('9b. drawer has all 6 sections (Identity/Provider/Demand/Metadata/Operations/Actions)');
+// Identity: the sheet head carries the parent identity.
+assert.match(adminMediaDetailDrawer, /head-title/, 'the sheet shows the title');
+assert.match(adminMediaDetailDrawer, /TMDB \{parent\.tmdbId\}/, 'the sheet shows the TMDB id');
+assert.match(adminMediaDetailDrawer, /head-title[\s\S]{0,200}parent\.title[\s\S]{0,200}parent\.year/, 'the sheet shows the year');
+ok('9c. detail sheet shows identity fields (title/TMDB/year)');
 
-// Drawer shows identity fields
-assert.match(adminMediaDetailDrawer, /TMDB ID/, 'drawer shows TMDB ID');
-assert.match(adminMediaDetailDrawer, /IMDb ID/, 'drawer shows IMDb ID');
-assert.match(adminMediaDetailDrawer, /Canonical Key/, 'drawer shows canonical key');
-assert.match(adminMediaDetailDrawer, /Year/, 'drawer shows year');
-assert.match(adminMediaDetailDrawer, /Episode/, 'drawer shows episode');
-ok('9c. drawer shows identity fields (TMDB/IMDb/canonical key/year/episode)');
+// Provider availability per episode: provider badge + status badge.
+assert.match(adminMediaDetailDrawer, /badge-provider/, 'the sheet shows provider badges');
+assert.match(adminMediaDetailDrawer, /data-provider=\{providerNameForSource/, 'provider names resolved per asset');
+assert.match(adminMediaDetailDrawer, /badge-status/, 'the sheet shows per-asset status');
+ok('9d. detail sheet shows provider availability (provider/status per episode)');
 
-// Drawer shows provider availability per provider
-assert.match(adminMediaDetailDrawer, /Vidara/, 'drawer shows Vidara');
-assert.match(adminMediaDetailDrawer, /Abyss/, 'drawer shows Abyss');
-assert.match(adminMediaDetailDrawer, /Quality/, 'drawer shows quality');
-assert.match(adminMediaDetailDrawer, /Audio/, 'drawer shows audio');
-assert.match(adminMediaDetailDrawer, /Subtitles/, 'drawer shows subtitles');
-assert.match(adminMediaDetailDrawer, /Duration/, 'drawer shows duration');
-assert.match(adminMediaDetailDrawer, /Size/, 'drawer shows size');
-ok('9d. drawer shows provider availability (quality/audio/subtitles/duration/size)');
+// Loading + error states (replaces the drawer prop contract).
+assert.match(adminMediaDetailDrawer, /linkedLoading/, 'the sheet tracks ground-truth loading');
+assert.match(adminMediaDetailDrawer, /linkedError/, 'the sheet tracks ground-truth error');
+assert.match(adminMediaDetailDrawer, /seasonError/, 'the sheet tracks season metadata errors');
+ok('9f. detail sheet handles loading + error states');
 
-// Drawer shows operations with action + status + timestamp + admin email
-assert.match(adminMediaDetailDrawer, /operation-action/, 'drawer shows operation action');
-assert.match(adminMediaDetailDrawer, /operation-time/, 'drawer shows operation time');
-assert.match(adminMediaDetailDrawer, /operation-user/, 'drawer shows admin email');
-assert.match(adminMediaDetailDrawer, /operation-error/, 'drawer shows operation error');
-ok('9e. drawer shows operations with action/status/time/admin-email/error');
+// Upload integration REMOVED (2026-10-16): no onupload callback, no
+// Upload / Import action, no link to the retired upload page.
+assert.doesNotMatch(adminMediaDetailDrawer, /onupload/, 'no onupload callback (upload workflow retired)');
+assert.doesNotMatch(adminMediaDetailDrawer, /Upload \/ Import/, 'no Upload / Import action');
+ok('9g. detail sheet holds NO upload integration (the manual-link wizard is the only flow)');
 
-// Drawer partial failure — drawer component takes loading + error props
-assert.match(adminMediaDetailDrawer, /loading = false/, 'drawer accepts loading prop');
-assert.match(adminMediaDetailDrawer, /error = null as string \| null/, 'drawer accepts error prop');
-assert.match(adminMediaDetailDrawer, /a2-drawer-error/, 'drawer has error block');
-assert.match(adminMediaDetailDrawer, /a2-drawer-skeleton/, 'drawer has skeleton loading');
-// Page tracks drawer loading + error states
-// [final remediation] the drawer is owned by AdminHostingAssets (selectedAsset)
-assert.match(hostingAssets, /drawerLoading/, 'file manager tracks drawerLoading state');
-assert.match(hostingAssets, /actionError/, 'file manager tracks drawer action error state');
-ok('9f. drawer handles loading + error states (component props + page state)');
+// Per-episode actions remain (update/delete/add via the shared wizard).
+assert.match(adminMediaDetailDrawer, /onupdatelink/, 'the sheet delegates update-link to the shared wizard');
+assert.match(adminMediaDetailDrawer, /ondeletelink/, 'the sheet delegates delete to the shared confirm');
+ok('9h. per-episode actions delegated to the shared wizard/confirm (manual-link flow)');
 
-// Drawer integrates with upload wizard
-assert.match(adminMediaDetailDrawer, /onupload/, 'drawer exposes onupload callback');
-assert.match(adminMediaDetailDrawer, /Upload \/ Import/, 'drawer has Upload action');
-ok('9g. drawer integrates with upload wizard');
-
-// Drawer links to missing media page when demand exists
-assert.match(adminMediaDetailDrawer, /Open Missing Media/, 'drawer links to missing media page');
-ok('9h. drawer links to missing media page when demand exists');
-
-// Drawer documents Phase E/F deferrals (no fake action buttons)
-assert.match(adminMediaDetailDrawer, /Phase E/, 'drawer documents Phase E deferral');
-assert.match(adminMediaDetailDrawer, /Phase F/, 'drawer documents Phase F deferral');
-ok('9i. drawer explicitly documents Phase E/F deferrals (no fake actions)');
+// The admin operations records live in the Operations Center (Jobs/
+// History), not the retired drawer.
+assert.ok(existsSync(new URL('../src/lib/components/admin2/AdminOpsHistory.svelte', import.meta.url)), 'operations history UI exists (the audit trail surface)');
+ok('9i. operations history + audit trail live in the Operations Center (no dead drawer)');
 
 // ============================================================
 // 10. AdminMediaFilters — filter bar

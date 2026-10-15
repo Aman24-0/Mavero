@@ -30,6 +30,15 @@
    *     every episode carries its OWN provider reference (never a
    *     shared reference copied across episodes). Submit posts to
    *     /api/admin/media/bulk-link and renders per-episode outcomes.
+   *   - BULK DELETE (Task 4; 2026-10-16 selection round): "Bulk delete"
+   *     NEVER deletes by default. With MORE than one linked episode it
+   *     opens an explicit selection view (only the season's LINKED
+   *     episodes are listed; select-all is explicit; Continue opens a
+   *     confirmation naming the exact selection). With EXACTLY ONE
+   *     linked episode it confirms that single episode directly. Submit
+   *     posts { parentId, season, episodeIds } to
+   *     /api/admin/media/bulk-unlink — the server re-derives membership
+   *     and rejects altered selections.
    *
    * Accessibility contract (same as the app's other sheets):
    *   role=dialog + aria-modal, labelled by the sheet title, focus
@@ -128,7 +137,15 @@
   let bulkError = $state<string | null>(null);
   let bulkOutcomes = $state<BulkOutcome[] | null>(null);
 
-  // --- Bulk delete mode (Task 4) ---
+  // --- Bulk delete mode (Task 4; 2026-10-16 selection round) ---
+  // Case A (>1 linked episode): openBulkDelete() opens an explicit
+  // SELECTION view first; nothing is deletable until episodes are
+  // checked and the confirmation names the exact count.
+  // Case B (exactly 1 linked episode): the selection screen is skipped —
+  // the confirmation directly targets the sole linked episode.
+  // Case C (0 linked): the action is disabled.
+  let bulkDeleteSelectOpen = $state(false);
+  let bulkDeleteSelected = $state<Set<number>>(new Set());
   let bulkDeleteConfirmOpen = $state(false);
   let bulkDeleting = $state(false);
   let bulkDeleteError = $state<string | null>(null);
@@ -240,6 +257,10 @@
     bulkOpen = false;
     bulkOutcomes = null;
     bulkError = null;
+    // Season switch leaves the bulk-delete selection view (the selection
+    // belongs to the previous season's linked set).
+    bulkDeleteSelectOpen = false;
+    bulkDeleteSelected = new Set();
     void loadSeasonEpisodes(seasonNumber);
   }
 
@@ -318,6 +339,8 @@
       bulkOpen = false;
       bulkOutcomes = null;
       bulkRefs = {};
+      bulkDeleteSelectOpen = false;
+      bulkDeleteSelected = new Set();
       void loadLinked().then(() => loadSeasons());
       // Focus the sheet (its close button) once rendered.
       requestAnimationFrame(() => {
@@ -330,6 +353,8 @@
     open = false;
     bulkOpen = false;
     bulkOutcomes = null;
+    bulkDeleteSelectOpen = false;
+    bulkDeleteSelected = new Set();
     bulkDeleteConfirmOpen = false;
     bulkDeleteOutcomes = null;
     onclose?.();
@@ -352,13 +377,19 @@
     if (event.key === 'Escape') {
       // Task 3 — only the TOPMOST dialog reacts. The bulk-delete
       // confirmation owns Escape while open; above it, the wizard owns
-      // it (registered later = higher); below, the sheet.
+      // it (registered later = higher); below, the sheet. The in-sheet
+      // selection view backs out of selection mode FIRST (one level per
+      // press — never closes the whole sheet from the selection view).
       if (bulkDeleteConfirmOpen) {
         onBulkDeleteKeydown(event);
         return;
       }
       if (!isTopDialog(SHEET_DIALOG_ID)) return;
       event.stopPropagation();
+      if (bulkDeleteSelectOpen) {
+        closeBulkDeleteSelect();
+        return;
+      }
       closeSheet();
       return;
     }
@@ -565,14 +596,67 @@
   }
 
   // -------------------------------------------------------------
-  // Bulk delete (Task 4) — remove the season's Mavero associations
+  // Bulk delete (Task 4; 2026-10-16 selection round) — remove the
+  // Mavero associations of SELECTED linked episodes.
   // -------------------------------------------------------------
 
-  function openBulkDeleteConfirm() {
+  /** The linked episodes of the current season that are ELIGIBLE for
+   *  bulk deletion (listed in the selection view — nothing else is
+   *  offered for deletion). Eligible = at least one ACTIVE (non-deleted)
+   *  asset — exactly the set the season toolbar's linked count reports. */
+  let bulkDeleteCandidates = $derived.by<EpisodeView[]>(() =>
+    episodeViews.filter((v) => v.linked != null && (v.linked.assets ?? []).some((a) => a.status !== 'deleted'))
+  );
+
+  function openBulkDelete() {
     if (!parent || activeSeason == null) return;
-    if (linkedCountThisSeason === 0) return; // nothing linked — disabled state
+    if (linkedCountThisSeason === 0) return; // Case C — nothing linked, no destructive action
     bulkDeleteError = null;
     bulkDeleteOutcomes = null;
+    if (linkedCountThisSeason === 1) {
+      // Case B — exactly ONE linked episode: skip the selection screen,
+      // confirm the single episode directly.
+      const sole = bulkDeleteCandidates[0];
+      if (!sole) return;
+      bulkDeleteSelected = new Set([sole.number]);
+      bulkDeleteSelectOpen = false;
+      bulkDeleteConfirmOpen = true;
+      return;
+    }
+    // Case A — more than one linked episode: EXPLICIT selection first.
+    bulkDeleteSelected = new Set();
+    bulkDeleteSelectOpen = true;
+  }
+
+  function closeBulkDeleteSelect() {
+    if (bulkDeleting) return;
+    bulkDeleteSelectOpen = false;
+    bulkDeleteSelected = new Set();
+  }
+
+  function toggleBulkDeleteEpisode(number: number, checked: boolean) {
+    const next = new Set(bulkDeleteSelected);
+    if (checked) next.add(number);
+    else next.delete(number);
+    bulkDeleteSelected = next;
+  }
+
+  function toggleBulkDeleteSelectAll() {
+    if (bulkDeleteSelected.size === bulkDeleteCandidates.length) {
+      bulkDeleteSelected = new Set();
+    } else {
+      bulkDeleteSelected = new Set(bulkDeleteCandidates.map((v) => v.number));
+    }
+  }
+
+  function confirmBulkDeleteSelection() {
+    // Continue from the selection view to the confirmation. An empty
+    // selection can never reach this (the button is disabled), but the
+    // guard keeps the contract server-side too.
+    if (bulkDeleteSelected.size === 0) {
+      bulkDeleteError = 'Select at least one linked episode.';
+      return;
+    }
     bulkDeleteConfirmOpen = true;
   }
 
@@ -580,7 +664,25 @@
     if (bulkDeleting) return; // no closing mid-flight
     bulkDeleteConfirmOpen = false;
     bulkDeleteError = null;
-    bulkDeleteOutcomes = null;
+    if (bulkDeleteOutcomes) {
+      // Post-results "Done": leave the flow entirely (selection view +
+      // outcomes) — the episode list and linked counts have already been
+      // refreshed by refreshAfterSave().
+      bulkDeleteOutcomes = null;
+      bulkDeleteSelectOpen = false;
+      bulkDeleteSelected = new Set();
+      return;
+    }
+    // Pre-submit cancel: return to the STILL-OPEN selection view (Case A)
+    // with the selection preserved, or to the episode list (Case B) —
+    // nothing was deleted.
+  }
+
+  function selectedEpisodeLabels(): string[] {
+    return [...bulkDeleteSelected].sort((a, b) => a - b).map((n) => {
+      const view = episodeViews.find((v) => v.number === n);
+      return view ? `E${n} — ${view.title}` : `E${n}`;
+    });
   }
 
   function onBulkDeleteKeydown(event: KeyboardEvent) {
@@ -602,13 +704,24 @@
 
   async function submitBulkDelete() {
     if (!parent || activeSeason == null || bulkDeleting) return;
+    if (bulkDeleteSelected.size === 0) {
+      bulkDeleteError = 'Select at least one linked episode.';
+      return;
+    }
     bulkDeleting = true;
     bulkDeleteError = null;
     try {
       const res = await fetch('/api/admin/media/bulk-unlink', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ parentId: parent.id, season: activeSeason }),
+        body: JSON.stringify({
+          parentId: parent.id,
+          season: activeSeason,
+          // ONLY the explicitly selected episodes — the server rejects
+          // an absent/empty selection and re-verifies every id against
+          // THIS parent + season.
+          episodeIds: [...bulkDeleteSelected].sort((a, b) => a - b),
+        }),
       });
       const json = await res.json();
       if (json.ok) {
@@ -751,18 +864,18 @@
             <button
               type="button"
               class="bulk-btn bulk-btn-danger"
-              onclick={openBulkDeleteConfirm}
+              onclick={openBulkDelete}
               disabled={seasonLoading || linkedCountThisSeason === 0}
-              aria-label="Bulk delete the linked episode associations of this season (Mavero associations only; provider files are preserved)"
+              aria-label="Select linked episodes of this season to delete (Mavero associations only; provider files are preserved)"
             >
               <Trash2 size={13} />
-              <span>Bulk delete season</span>
+              <span>Bulk delete</span>
             </button>
           </div>
         </div>
       {/if}
 
-      <!-- Main area: episode list OR bulk form -->
+      <!-- Main area: episode list, bulk-link form, or bulk-delete selection -->
       <div class="sheet-body">
         {#if bulkOpen}
           <!-- BULK LINK MODE (Task 3): one provider + ONE REFERENCE PER
@@ -838,6 +951,69 @@
               </div>
             {/if}
           </div>
+        {:else if bulkDeleteSelectOpen}
+          <!-- BULK DELETE SELECTION (2026-10-16 round, Case A): ONLY the
+               LINKED episodes of this season are listed; each carries its
+               own checkbox. Nothing is deleted from this view — the
+               Continue action opens the confirmation naming the exact
+               selection. -->
+          <div class="bulk-form" data-bulk-delete-select>
+            <div class="bulk-head">
+              <button type="button" class="back-btn" onclick={closeBulkDeleteSelect} aria-label="Back to episode list">
+                <ChevronLeft size={14} />
+              </button>
+              <div class="bulk-title">
+                <h3>Bulk delete — Season {activeSeason}</h3>
+                <p>Select the linked episodes whose Mavero associations should be removed. Unselected episodes stay linked.</p>
+              </div>
+            </div>
+
+            <div class="bulk-delete-tools">
+              <button
+                type="button"
+                class="select-all-btn"
+                onclick={toggleBulkDeleteSelectAll}
+                aria-pressed={bulkDeleteSelected.size === bulkDeleteCandidates.length && bulkDeleteCandidates.length > 0}
+              >
+                {bulkDeleteSelected.size === bulkDeleteCandidates.length && bulkDeleteCandidates.length > 0 ? 'Clear all' : 'Select all'} ({bulkDeleteCandidates.length})
+              </button>
+              <span class="bulk-count" aria-live="polite">
+                {bulkDeleteSelected.size} of {bulkDeleteCandidates.length} linked episode{bulkDeleteCandidates.length === 1 ? '' : 's'} selected
+              </span>
+            </div>
+
+            <div class="bulk-rows" role="group" aria-label="Episodes eligible for bulk delete in season {activeSeason}">
+              {#each bulkDeleteCandidates as view (view.number)}
+                <label class="bulk-delete-row" data-checked={bulkDeleteSelected.has(view.number)}>
+                  <input
+                    type="checkbox"
+                    class="bulk-delete-check"
+                    checked={bulkDeleteSelected.has(view.number)}
+                    onchange={(e) => toggleBulkDeleteEpisode(view.number, (e.target as HTMLInputElement).checked)}
+                    aria-label="Select episode {view.number}, {view.title}, for bulk delete"
+                  />
+                  <span class="bulk-ep">E{view.number}</span>
+                  <span class="bulk-ep-title" title={view.title}>{view.title}</span>
+                  {#if view.asset}
+                    <span class="badge-provider" data-provider={providerNameForSource(view.asset.provider_source_id).toLowerCase()}>
+                      {providerNameForSource(view.asset.provider_source_id)}
+                    </span>
+                  {/if}
+                </label>
+              {/each}
+            </div>
+
+            {#if bulkDeleteError}
+              <div class="bulk-error" role="alert"><AlertCircle size={14} /> {bulkDeleteError}</div>
+            {/if}
+
+            <div class="bulk-actions">
+              <button type="button" class="bulk-delete-btn" onclick={closeBulkDeleteSelect}>Cancel</button>
+              <button type="button" class="btn btn-apply btn-apply-danger" onclick={confirmBulkDeleteSelection} disabled={bulkDeleteSelected.size === 0}>
+                <Trash2 size={13} /> Continue — {bulkDeleteSelected.size} episode{bulkDeleteSelected.size === 1 ? '' : 's'}
+              </button>
+            </div>
+          </div>
         {:else if seasonLoading}
           <div class="season-state" aria-live="polite"><Loader2 size={14} class="spinner" /> Loading episodes…</div>
         {:else if seasonError}
@@ -892,10 +1068,11 @@
     </div>
   </div>
 
-  <!-- Task 4 — bulk-delete confirmation. Sibling of the sheet overlay,
-       z-index ABOVE the sheet (93) and BELOW the wizard (94): the
-       confirmation renders immediately above the sheet; Escape/Cancel
-       returns to the still-open sheet (season + scroll preserved). -->
+  <!-- 2026-10-16 selection round — bulk-delete confirmation. Sibling of
+       the sheet overlay, z-index ABOVE the sheet (93) and BELOW the
+       wizard (94). Confirms the EXPLICIT selection (Case A) or the single
+       sole linked episode (Case B); Escape/Cancel returns to the
+       still-open flow without deleting anything. -->
   {#if bulkDeleteConfirmOpen}
     <div class="bulk-delete-overlay" onclick={() => { if (!bulkDeleting) closeBulkDeleteConfirm(); }} role="presentation">
       <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -937,12 +1114,26 @@
         {:else}
           <h3 id="bulk-delete-title"><Trash2 size={16} /> Bulk delete — Season {activeSeason}?</h3>
           <p class="bulk-delete-desc">
-            This removes <strong>{linkedCountThisSeason} linked episode association{linkedCountThisSeason === 1 ? '' : 's'}</strong>
-            from season {activeSeason} of {parent.title}.
+            {#if bulkDeleteSelected.size === 1}
+              This will remove <strong>the 1 linked episode association</strong>
+              <strong>{selectedEpisodeLabels()[0]}</strong>
+              from season {activeSeason} of {parent.title}.
+            {:else}
+              This will remove <strong>{bulkDeleteSelected.size} linked episode associations</strong>
+              from season {activeSeason} of {parent.title}:
+            {/if}
           </p>
+          {#if bulkDeleteSelected.size !== 1}
+            <ul class="bulk-delete-episode-list" data-count={bulkDeleteSelected.size}>
+              {#each selectedEpisodeLabels() as label (label)}
+                <li>{label}</li>
+              {/each}
+            </ul>
+          {/if}
           <p class="bulk-delete-note">
             <strong>Files are NOT deleted from Vidara or Abyss.</strong> Only Mavero's media associations are
             removed; the parent series, episode metadata, other seasons, and the provider-hosted files stay intact.
+            {#if linkedCountThisSeason > bulkDeleteSelected.size}Unselected linked episodes stay linked.{/if}
           </p>
           {#if bulkDeleteError}
             <p class="bulk-delete-error" role="alert"><AlertCircle size={13} /> {bulkDeleteError}</p>
@@ -950,7 +1141,7 @@
           <div class="bulk-delete-actions">
             <button type="button" class="bulk-delete-btn" onclick={closeBulkDeleteConfirm} disabled={bulkDeleting}>Cancel</button>
             <button type="button" class="bulk-delete-btn bulk-delete-btn-danger" onclick={submitBulkDelete} disabled={bulkDeleting}>
-              {#if bulkDeleting}<Loader2 size={12} class="spinner" /> Deleting…{:else}<Trash2 size={12} /> Delete {linkedCountThisSeason} association{linkedCountThisSeason === 1 ? '' : 's'}{/if}
+              {#if bulkDeleting}<Loader2 size={12} class="spinner" /> Deleting…{:else}<Trash2 size={12} /> Delete {bulkDeleteSelected.size} association{bulkDeleteSelected.size === 1 ? '' : 's'}{/if}
             </button>
           </div>
         {/if}
@@ -985,7 +1176,7 @@
   .head-title { margin: 0; font-size: 0.95rem; font-weight: 700; color: var(--a2-text-bright, #f0f0f0); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .head-progress { margin: 3px 0 0; font-size: var(--a2-text-xs, 0.7rem); color: var(--a2-text-muted, #888); display: flex; align-items: center; gap: 6px; }
   .head-progress-error { color: var(--a2-red, #e5484d); }
-  .close-button { display: grid; place-items: center; width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--a2-text-muted, #888); cursor: pointer; flex-shrink: 0; }
+  .close-button { display: grid; place-items: center; min-width: 44px; min-height: 44px; border: 0; border-radius: 8px; background: transparent; color: var(--a2-text-muted, #888); cursor: pointer; flex-shrink: 0; }
   .close-button:hover { background: var(--a2-surface-3, #1e1e1e); color: var(--a2-text, #ddd); }
   .close-button:focus-visible { outline: 2px solid var(--a2-cyan, #0ff); outline-offset: 2px; }
 
@@ -1080,6 +1271,20 @@
   .btn-apply { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border: 1px solid rgba(0,200,200,0.3); border-radius: 8px; background: rgba(0,200,200,0.12); color: var(--a2-cyan, #0ff); font-size: 0.75rem; font-weight: 700; cursor: pointer; }
   .btn-apply:hover { background: rgba(0,200,200,0.2); }
   .btn-apply:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-apply-danger { border-color: rgba(220,60,60,0.35); background: rgba(220,60,60,0.12); color: #c44; }
+  .btn-apply-danger:hover:not(:disabled) { background: rgba(220,60,60,0.2); }
+
+  /* 2026-10-16 selection round — the bulk-delete selection view. */
+  .bulk-delete-tools { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 2px 0; }
+  .select-all-btn { padding: 5px 10px; border: 1px solid var(--a2-border, #262626); border-radius: 8px; background: transparent; color: var(--a2-text-muted, #888); font-size: var(--a2-text-xs, 0.7rem); font-weight: 700; cursor: pointer; }
+  .select-all-btn:hover { color: var(--a2-text, #ddd); border-color: var(--a2-border-strong, #333); }
+  .select-all-btn[aria-pressed="true"] { color: var(--a2-cyan, #0ff); border-color: rgba(0,200,200,0.4); }
+  .bulk-delete-row { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 8px; cursor: pointer; }
+  .bulk-delete-row:hover { background: var(--a2-surface-3, #1a1a1a); }
+  .bulk-delete-row[data-checked="true"] { background: rgba(220,60,60,0.06); }
+  .bulk-delete-check { width: 15px; height: 15px; flex-shrink: 0; accent-color: #e5484d; cursor: pointer; }
+  .bulk-delete-episode-list { margin: 0; padding: 10px 12px; list-style: none; border-radius: 8px; background: var(--a2-surface-4, #262626); max-height: 22dvh; overflow-y: auto; display: flex; flex-direction: column; gap: 3px; }
+  .bulk-delete-episode-list li { font-size: var(--a2-text-xs, 0.7rem); color: var(--a2-text, #ddd); font-family: var(--a2-font-mono, monospace); }
 
   .bulk-outcomes { display: flex; flex-direction: column; gap: 4px; }
   .outcome-summary { margin: 0 0 4px; font-size: var(--a2-text-sm, 0.8rem); font-weight: 700; color: var(--a2-text-bright, #eee); }

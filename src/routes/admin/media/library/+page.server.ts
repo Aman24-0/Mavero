@@ -6,7 +6,9 @@
  *   1. Redirects legacy ?view=media / ?view=files URLs to the clean URL
  *      (the old Media / Provider Files split no longer exists).
  *   2. Provides hosting sources (with adapter capabilities) for the
- *      AdminHostingAssets component's capability-gated action buttons.
+ *      AdminMediaList component's provider filters/badges (the legacy
+ *      AdminHostingAssets file manager was removed with the
+ *      provider-inventory UI).
  *   3. Reads the canonical URL params (provider, q, contentType, status,
  *      linked, sort, mediaItem) and passes them as initialFilters so the
  *      file manager initializes in the requested state. This is what

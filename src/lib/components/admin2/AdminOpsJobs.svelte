@@ -2,28 +2,29 @@
   /**
    * Admin 2.0 — Phase F — AdminOpsJobs
    *
-   * The Jobs tab. Shows active + recent upload operations from
-   * media_upload_operations with:
+   * The Jobs tab — the UNIFIED operational stream: legacy upload-pipeline
+   * rows (media_upload_operations, retained as HISTORICAL records) plus
+   * current management operations (media_operations). Shows:
    *   - Status (queued/uploading/uploaded/processing/ready/failed/cancelled)
-   *   - Operation type (upload/upload_remote/retry)
-   *   - Media + provider + asset
-   *   - Timing (queued/started/updated/duration)
-   *   - Error code + message (for failed)
-   *   - Stale badge (for ops stuck > 60 min)
-   *   - Retryable badge (for retryable errors)
+   *   - Operation type (upload/upload_remote/retry + delete/rename/…)
+   *   - Media + provider + asset, timing, error code + message, stale badge
    *
-   * Active jobs (queued/uploading/uploaded/processing) are prioritized
-   * via the 'active' status filter.
+   * Clicking a row opens a detail drawer with the full timeline + the
+   * actions that are actually backed by a LIVE endpoint:
+   *   - Reconcile (if has media_asset_id → /api/admin/media/assets/{id}/reconcile)
+   *   - Open media / asset links
    *
-   * Clicking a row opens a detail drawer with the full timeline + actions:
-   *   - Retry (if failed + retryable)
-   *   - Cancel (if active)
-   *   - Reconcile (if has media_asset_id)
-   *   - Open media / asset
+   * 2026-10-16 upload-removal completion: the upload pipeline's retry and
+   * cancel ROUTES were removed with the workflow, so this component no
+   * longer renders Retry/Cancel buttons for upload-origin jobs — a
+   * historical row keeps its record view (timeline + error detail) and
+   * Reconcile when the asset still exists. Management operations remain
+   * instantaneous (no retry/cancel pipeline); Delete File keeps its
+   * terminal/failed-state guidance.
    */
 
   import { onMount, onDestroy } from 'svelte';
-  import { Search, Filter, X, ChevronLeft, ChevronRight, RefreshCw, AlertCircle, Loader2, Clock, ExternalLink, Film, Tv, Sparkles, Activity, Check, Ban, RotateCcw, Trash2, FileText, Pencil, FolderInput, Unlink, Zap, Link2 } from 'lucide-svelte';
+  import { Search, Filter, X, ChevronLeft, ChevronRight, RefreshCw, AlertCircle, Loader2, ExternalLink, Film, Tv, Sparkles, Activity, Check, Ban, Trash2 } from 'lucide-svelte';
   import AdminStatus from './AdminStatus.svelte';
   import AdminFilterSheet from './AdminFilterSheet.svelte';
   import type { JobRow, JobQuery, JobOperationType } from '$lib/shared/operations-types';
@@ -240,44 +241,6 @@
     (filters.stale !== null ? 1 : 0)
   );
 
-  async function retryJob(job: JobRow) {
-    actionInProgress = true;
-    actionError = null;
-    actionSuccess = null;
-    try {
-      const res = await fetch(`/api/admin/media/upload/${job.id}/retry`, { method: 'POST' });
-      const data = await res.json();
-      if (data.ok) {
-        actionSuccess = 'Retry operation created. The new job is queued.';
-        await loadJobs();
-      } else {
-        actionError = data.error?.message ?? 'Retry failed.';
-      }
-    } catch (err) {
-      actionError = err instanceof Error ? err.message : 'Network error during retry.';
-    }
-    actionInProgress = false;
-  }
-
-  async function cancelJob(job: JobRow) {
-    actionInProgress = true;
-    actionError = null;
-    actionSuccess = null;
-    try {
-      const res = await fetch(`/api/admin/media/upload/${job.id}/cancel`, { method: 'POST' });
-      const data = await res.json();
-      if (data.ok) {
-        actionSuccess = 'Job cancelled.';
-        await loadJobs();
-      } else {
-        actionError = data.error?.message ?? 'Cancel failed.';
-      }
-    } catch (err) {
-      actionError = err instanceof Error ? err.message : 'Network error during cancel.';
-    }
-    actionInProgress = false;
-  }
-
   async function reconcileJob(job: JobRow) {
     if (!job.mediaAssetId) return;
     actionInProgress = true;
@@ -296,10 +259,6 @@
       actionError = err instanceof Error ? err.message : 'Network error during reconcile.';
     }
     actionInProgress = false;
-  }
-
-  function isActive(status: string): boolean {
-    return ['queued', 'uploading', 'uploaded', 'processing'].includes(status);
   }
 </script>
 
@@ -398,7 +357,7 @@
     <div class="a2-jobs-empty">
       <Activity size={32} />
       <h3>No active jobs</h3>
-      <p>{filters.q || activeFilterCount > 0 ? 'Try adjusting your search or filters.' : 'All operations have completed. New uploads will appear here.'}</p>
+      <p>{filters.q || activeFilterCount > 0 ? 'Try adjusting your search or filters.' : 'All operations have completed. New management operations (link, delete, sync…) will appear here.'}</p>
     </div>
   {:else}
     <!-- Phase 2 mobile: card list (visible <768px). Mirrors the table data
@@ -733,28 +692,22 @@
                 {/if}
               </div>
             {:else}
-            <div class="a2-job-drawer-actions">
-              {#if selectedJob.status === 'failed' && selectedJob.isRetryable}
-                <button type="button" class="a2-job-action a2-job-action-primary" onclick={() => retryJob(selectedJob!)} disabled={actionInProgress}>
-                  {#if actionInProgress}<Loader2 size={12} style="animation: a2-spin 1s linear infinite;" />{:else}<RotateCcw size={12} />{/if}
-                  Retry
-                </button>
-              {:else if selectedJob.status === 'failed' && !selectedJob.isRetryable}
-                <div class="a2-job-action-unavailable">
-                  <Ban size={12} /> Retry unavailable — permanent error ({selectedJob.errorCode})
-                </div>
-              {/if}
-              {#if isActive(selectedJob.status)}
-                <button type="button" class="a2-job-action a2-job-action-warn" onclick={() => cancelJob(selectedJob!)} disabled={actionInProgress}>
-                  <Ban size={12} /> Cancel
-                </button>
-              {/if}
-              {#if selectedJob.mediaAssetId}
-                <button type="button" class="a2-job-action" onclick={() => reconcileJob(selectedJob!)} disabled={actionInProgress}>
-                  <RefreshCw size={12} /> Reconcile
-                </button>
-              {/if}
-            </div>
+              <!-- Upload-origin rows are HISTORICAL records: the upload
+                   workflow (and its retry/cancel routes) is retired — no
+                   actions may invoke removed endpoints. The record view
+                   (timeline + error detail above) stays; Reconcile remains
+                   for rows whose media asset still exists. -->
+              <div class="a2-job-drawer-actions">
+                {#if selectedJob.mediaAssetId}
+                  <button type="button" class="a2-job-action" onclick={() => reconcileJob(selectedJob!)} disabled={actionInProgress}>
+                    <RefreshCw size={12} /> Reconcile
+                  </button>
+                {:else}
+                  <div class="a2-job-action-unavailable">
+                    <Ban size={12} /> The upload pipeline is retired — this is a historical record with no actions.
+                  </div>
+                {/if}
+              </div>
             {/if}
           </section>
         </div>
@@ -876,10 +829,6 @@
   .a2-job-action { display: inline-flex; align-items: center; gap: var(--a2-space-2); padding: var(--a2-space-2) var(--a2-space-3); background: var(--a2-surface-3); border: 1px solid var(--a2-border-strong); border-radius: var(--a2-radius-sm); color: var(--a2-text); font-family: var(--a2-font-sans); font-size: var(--a2-text-xs); font-weight: 600; cursor: pointer; text-align: left; transition: all var(--a2-motion-micro, 140ms) var(--a2-ease-out); }
   .a2-job-action:hover:not(:disabled) { background: var(--a2-cyan-soft); border-color: var(--a2-cyan); color: var(--a2-cyan); }
   .a2-job-action:disabled { opacity: 0.5; cursor: not-allowed; }
-  .a2-job-action-primary { background: var(--a2-cyan); color: var(--a2-surface-1); border-color: var(--a2-cyan); }
-  .a2-job-action-primary:hover:not(:disabled) { filter: brightness(1.1); }
-  .a2-job-action-warn { color: var(--a2-amber); }
-  .a2-job-action-warn:hover:not(:disabled) { background: var(--a2-amber-soft); border-color: var(--a2-amber); color: var(--a2-amber); }
   .a2-job-action-unavailable { display: inline-flex; align-items: center; gap: var(--a2-space-2); padding: var(--a2-space-2) var(--a2-space-3); background: var(--a2-surface-3); border: 1px dashed var(--a2-border); border-radius: var(--a2-radius-sm); color: var(--a2-text-muted); font-size: var(--a2-text-2xs); }
 
   @keyframes a2-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }

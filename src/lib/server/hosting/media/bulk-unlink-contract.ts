@@ -1,19 +1,30 @@
 /**
  * Task 4 (2026-10-15) — Bulk season unlink contract.
+ * 2026-10-16 final round — SELECTED-EPISODE semantics.
  *
  * The shared, unit-testable core of POST /api/admin/media/bulk-unlink
  * (the route file is a thin HTTP adapter — route files export only
  * handlers, same convention as manual-link/bulk-link).
  *
- * Removes the Mavero-side media_assets associations of every LINKED
- * episode of ONE season of ONE series/anime:
- *   - The affected episode set is DERIVED server-side from the parent +
- *     season (the client never supplies asset ids — this can never become
- *     an arbitrary-deletion tool).
- *   - Scope: only media_assets rows of the requested series+season. The
- *     parent media identity, episode media_items rows, other seasons, and
- *     unrelated records are untouched. Provider files are NEVER touched
- *     (no adapter calls — Vidara/Abyss keep their files).
+ * Removes the Mavero-side media_assets associations of an EXPLICIT,
+ * CLIENT-SELECTED set of linked episodes of ONE season of ONE
+ * series/anime:
+ *   - The request MUST carry `episodeIds` — the episodes the admin
+ *     explicitly selected. Bulk NEVER defaults to "every episode of the
+ *     season": an absent or empty selection is rejected (400), so
+ *     opening the bulk-delete action can never remove links by itself.
+ *   - Episode membership is still DERIVED server-side from the parent +
+ *     season: for every requested episode number the server looks up the
+ *     actual child row of THAT parent in THAT season. An id that belongs
+ *     to another series, another season, or no row at all is reported as
+ *     a per-episode failure — an altered request can never unlink assets
+ *     outside the requested parent+season.
+ *   - Unselected linked episodes are untouched.
+ *   - Scope: only media_assets rows of the requested series+season
+ *     episodes. The parent media identity, episode media_items rows,
+ *     other seasons, and unrelated records are untouched. Provider files
+ *     are NEVER touched (no adapter calls — Vidara/Abyss keep their
+ *     files).
  *   - Release-eligibility gate: the same contract as the single-episode
  *     DELETE (unreleased episodes offer no actions). ONE season metadata
  *     fetch per call via batchEpisodeEligibility.
@@ -33,14 +44,22 @@ export type BulkUnlinkResult =
   | { episode: number; ok: true; mode: 'deleted' | 'idempotent'; deletedAssets: number }
   | { episode: number; ok: false; code: string; message: string };
 
-export type BulkUnlinkError = { code: 'PARENT_NOT_FOUND' | 'INVALID_PARENT' | 'SEASON_INVALID' | 'EPISODES_QUERY_FAILED'; message: string };
+export type BulkUnlinkError = { code: 'PARENT_NOT_FOUND' | 'INVALID_PARENT' | 'SEASON_INVALID' | 'SELECTION_INVALID' | 'EPISODES_QUERY_FAILED'; message: string };
 
 export type BulkUnlinkOutcome =
   | { ok: true; parentId: string; season: number; total: number; succeeded: number; failed: number; deletedAssets: number; results: BulkUnlinkResult[] }
   | { ok: false; error: BulkUnlinkError };
 
-/** Validates + normalizes the request inputs (400-level rejects). */
-export function validateBulkUnlinkInput(parentId: unknown, season: unknown): { parentId: string; season: number } | { code: 'SEASON_INVALID'; message: string } {
+/**
+ * Validates + normalizes the request inputs (400-level rejects).
+ * `episodeIds` is REQUIRED: bulk unlink only ever deletes an explicitly
+ * selected set — never a derived "everything" set.
+ */
+export function validateBulkUnlinkInput(
+  parentId: unknown,
+  season: unknown,
+  episodeIds: unknown,
+): { parentId: string; season: number; episodeIds: number[] } | { code: 'SEASON_INVALID' | 'SELECTION_INVALID'; message: string } {
   if (typeof parentId !== 'string' || parentId.length < 8) {
     return { code: 'SEASON_INVALID', message: 'parentId is required.' };
   }
@@ -48,20 +67,32 @@ export function validateBulkUnlinkInput(parentId: unknown, season: unknown): { p
   if (!Number.isInteger(seasonNum) || seasonNum <= 0) {
     return { code: 'SEASON_INVALID', message: 'Bulk delete requires a season number of 1 or greater.' };
   }
-  return { parentId, season: seasonNum };
+  if (!Array.isArray(episodeIds) || episodeIds.length === 0) {
+    return { code: 'SELECTION_INVALID', message: 'Select at least one linked episode — bulk delete never removes every episode by default.' };
+  }
+  for (const value of episodeIds) {
+    const num = typeof value === 'number' ? value : Number(value);
+    if (!Number.isInteger(num) || num < 1) {
+      return { code: 'SELECTION_INVALID', message: 'episodeIds must be positive integer episode numbers.' };
+    }
+  }
+  // Normalize: integers, deduplicated, ascending.
+  const unique = [...new Set(episodeIds.map((v) => (typeof v === 'number' ? v : Number(v))))].sort((a, b) => a - b);
+  return { parentId, season: seasonNum, episodeIds: unique };
 }
 
 /**
  * The shared deletion core. Authorization (requireAdmin) and input parsing
  * live in the route adapter; this function assumes an authenticated
  * service-role client and performs the scoped, audited, per-episode
- * deletion.
+ * deletion of EXACTLY the requested episodes.
  */
 export async function bulkUnlinkSeason(
   adminClient: SupabaseClient<Database>,
   adminUserId: string,
   parentId: string,
   season: number,
+  episodeIds: number[],
 ): Promise<BulkUnlinkOutcome> {
   // 1. Parent identity — must be an EPISODIC TOP-LEVEL row (series/anime).
   const { data: parent } = await adminClient
@@ -79,7 +110,9 @@ export async function bulkUnlinkSeason(
   }
 
   // 2. Episode membership — server-derived (children of THIS parent in
-  // THIS season). The client never supplies asset ids.
+  // THIS season). The client's episode numbers are matched against this
+  // map; anything else is reported as a per-episode failure (cross-parent
+  // and cross-season ids can never reach a deletion here).
   const { data: children, error: childrenError } = await adminClient
     .from('media_items')
     .select('id, episode, season')
@@ -90,17 +123,30 @@ export async function bulkUnlinkSeason(
     return { ok: false, error: { code: 'EPISODES_QUERY_FAILED', message: childrenError.message } };
   }
   const childRows = (children ?? []) as Array<{ id: string; episode: number | null; season: number | null }>;
+  const childByEpisode = new Map<number, { id: string; episode: number }>();
+  for (const child of childRows) {
+    if (child.episode != null) childByEpisode.set(child.episode, { id: child.id, episode: child.episode });
+  }
 
   // 3. Release-eligibility for the WHOLE season in ONE metadata fetch —
   // mirrors the single-episode DELETE gate (unreleased = no actions).
-  const episodeNumbers = childRows.map((c) => c.episode).filter((e): e is number => e != null);
+  const membershipEpisodeNumbers = childRows.map((c) => c.episode).filter((e): e is number => e != null);
+  const episodeNumbers = [...new Set([...episodeIds, ...membershipEpisodeNumbers])];
   const eligibility = await batchEpisodeEligibility(parentRow.content_type, parentRow.tmdb_id, season, episodeNumbers);
 
-  // 4. Per-episode deletion.
+  // 4. Per-episode deletion — ONLY the explicitly requested episodes.
   const results: BulkUnlinkResult[] = [];
-  for (const child of childRows) {
-    if (child.episode == null) {
-      results.push({ episode: 0, ok: false, code: 'INVALID_EPISODE', message: 'Episode row has no episode number.' });
+  for (const episodeId of episodeIds) {
+    const child = childByEpisode.get(episodeId);
+    if (!child) {
+      // Not an episode row of THIS parent+season: stale selection, typo,
+      // or a deliberately altered request — reported, never deleted.
+      results.push({
+        episode: episodeId,
+        ok: false,
+        code: 'EPISODE_NOT_IN_SEASON',
+        message: `Episode ${episodeId} is not an episode of this series' season ${season}.`,
+      });
       continue;
     }
 

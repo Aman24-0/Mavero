@@ -97,7 +97,14 @@ console.log('\n--- C. Unified Media Library ---');
 
 const libraryPage = read('src/routes/admin/media/library/+page.svelte');
 const libraryServer = read('src/routes/admin/media/library/+page.server.ts');
-const mediaDrawer = read('src/lib/components/admin2/AdminMediaDetailDrawer.svelte');
+// [2026-10-16 re-pin] AdminMediaDetailDrawer was DELETED with the legacy
+// asset-manager UI. Its contracts are re-pinned on the LIVE surfaces:
+// the management SERVICE (lifecycle semantics — section D), the Add File
+// wizard + episode sheet (the link/unlink UI), and OpsAttention/OpsJobs
+// (the reconcile action).
+assert.ok(!existsSync('src/lib/components/admin2/AdminMediaDetailDrawer.svelte'), 'C0a. AdminMediaDetailDrawer deleted (legacy drawer removed with the asset-manager UI)');
+const directLinkEndpoint = read('src/routes/api/admin/media/assets/link/+server.ts');
+const opsAttentionC = read('src/lib/components/admin2/AdminOpsAttention.svelte');
 
 // Media Library is a single asset-centric file manager (no view toggle)
 assert.match(libraryPage, /AdminMediaList/, 'C1. Library page renders AdminMediaList as the sole file manager');
@@ -109,86 +116,59 @@ assert.match(libraryServer, /getHostingAdapter/, 'C4. Library server uses getHos
 assert.match(libraryServer, /capabilities/, 'C5. Library server adds capabilities to hostingSources');
 ok('C. Unified Media Library: single asset-centric file manager (no view toggle)');
 
-// Drawer has Delete, Rename, Move actions
-assert.match(mediaDrawer, /deleteAsset/, 'C8. Media drawer has deleteAsset handler');
-assert.match(mediaDrawer, /confirmRename/, 'C9. Media drawer has confirmRename handler');
-assert.match(mediaDrawer, /confirmMove/, 'C10. Media drawer has confirmMove handler');
-assert.match(mediaDrawer, /renameModal/, 'C11. Media drawer has renameModal state');
-assert.match(mediaDrawer, /moveModal/, 'C12. Media drawer has moveModal state');
-
-// Delete confirmation dialog
-assert.match(mediaDrawer, /confirmDialog\.action === 'delete'/, 'C13. Media drawer has delete confirmation dialog');
-
-// Delete button is rendered for assets with provider_asset_id
-assert.match(mediaDrawer, /Trash2.*Delete/, 'C14. Media drawer renders Delete button');
-assert.match(mediaDrawer, /Pencil.*Rename/, 'C15. Media drawer renders Rename button');
-assert.match(mediaDrawer, /FolderInput.*Move/, 'C16. Media drawer renders Move button');
-
-// Existing actions preserved
-assert.match(mediaDrawer, /detachAsset/, 'C17. Media drawer still has detachAsset');
-assert.match(mediaDrawer, /reactivateAsset/, 'C18. Media drawer still has reactivateAsset');
-assert.match(mediaDrawer, /reconcileAsset/, 'C19. Media drawer still has reconcileAsset');
-ok('C2. Media drawer: Delete/Rename/Move added, existing actions preserved');
+// [2026-10-16 re-pin] the drawer's Delete/Rename/Move/reactivate UI is
+// retired with the drawer — the per-episode DELETE (unlink) is the live
+// destructive action, with an explicit confirm (owned by AdminMediaList,
+// which renders the confirm dialog the sheet's ondeletelink delegates
+// to); rename/move/reactivate remain service/API-level operations (see
+// section D below). The direct-UUID link endpoint keeps the canonical
+// mediaItemId+providerSourceId+providerAssetId contract the drawer used
+// to send.
+const mediaListC = read('src/lib/components/admin2/AdminMediaList.svelte');
+assert.match(mediaListC, /confirmDelete|deleteTarget/, 'C8. the live list confirms before delete (explicit confirmation dialog)');
+assert.match(mediaListC, /method: 'DELETE'/, 'C9. per-episode delete uses the manual-link DELETE (unlink, provider file preserved)');
+assert.match(directLinkEndpoint, /mediaItemId/, 'C11. the direct-UUID link endpoint accepts mediaItemId');
+assert.match(directLinkEndpoint, /providerSourceId/, 'C12. the direct-UUID link endpoint accepts providerSourceId');
+assert.match(directLinkEndpoint, /providerAssetId/, 'C10. the direct-UUID link endpoint accepts providerAssetId');
+assert.match(directLinkEndpoint, /requireAdmin/, 'C13. the link endpoint is admin-gated (confirmation-grade write path)');
+// The live reconcile action (the drawer's reconcile moved to Ops).
+assert.match(opsAttentionC, /reconcileItem/, 'C17. OpsAttention exposes the live reconcile action');
+assert.match(read('src/lib/components/admin2/AdminOpsJobs.svelte'), /reconcile/, 'C19. OpsJobs keeps the reconcile action (live endpoint-backed)');
+ok('C2. Live surfaces: confirmed unlink, direct-UUID link contract, ops reconcile (rename/move/reactivate remain service-level)');
 
 // ============================================================
-// C3. Provider Files — Complete Lifecycle (Reactivate + Link Existing)
+// C3. Asset lifecycle — service/API surface (2026-10-16 re-pin)
 // ============================================================
-console.log('\n--- C3. Provider Files Complete Lifecycle ---');
+console.log('\n--- C3. Asset lifecycle service + link flow (live surfaces) ---');
 
-const hostingAssets = read('src/lib/components/admin2/AdminHostingAssets.svelte');
+// [2026-10-16 re-pin] the Provider Files UI (AdminHostingAssets) was
+// DELETED with the legacy asset-manager UI. Its lifecycle surface lives
+// on at the SERVICE level (every method intact) and the link flow is the
+// Add File wizard / direct-UUID endpoint. The dead NULL-media_item path
+// stays gone by construction (the component no longer exists).
+assert.ok(!existsSync('src/lib/components/admin2/AdminHostingAssets.svelte'), 'C3-0. AdminHostingAssets deleted (legacy Provider Files UI removed)');
 
-// Reactivate: visible for detached assets (maveroStatus === 'missing')
-assert.match(hostingAssets, /maveroStatus === 'missing'[\s\S]*?reactivate/, 'C3-1. Reactivate button shown for detached assets (maveroStatus=missing)');
-assert.match(hostingAssets, /async function reactivate/, 'C3-2. reactivate function exists');
-assert.match(hostingAssets, /'reactivate'/, 'C3-3. reactivate action in executeAction union');
+// The management service still implements the FULL lifecycle (API surface
+// intact for programmatic/admin-tool use):
+const managementServiceC3 = read('src/lib/server/hosting/management/service.ts');
+assert.match(managementServiceC3, /async renameAsset\(/, 'C3-13. renameAsset service method intact');
+assert.match(managementServiceC3, /async moveAsset\(/, 'C3-14. moveAsset service method intact');
+assert.match(managementServiceC3, /async detachAsset\(/, 'C3-15. detachAsset service method intact');
+assert.match(managementServiceC3, /async deleteAsset\(/, 'C3-16. deleteAsset service method intact');
+assert.match(managementServiceC3, /async reactivateAsset\(/, 'C3-17. reactivateAsset service method intact');
 
-// Reactivate calls the canonical endpoint (via executeAction → POST /:id/reactivate)
-assert.match(hostingAssets, /\/api\/admin\/media\/assets\/\$\{asset\.id\}\/\$\{action\}/, 'C3-4. Reactivate uses canonical endpoint pattern (/:id/reactivate)');
+// Link flow: the direct-UUID endpoint keeps the canonical contract
+// (C10-C13 above) and the wizard-based flow uses manual-link. Neither is
+// gated by provider capabilities (Mavero lifecycle writes, server-side).
+assert.match(directLinkEndpoint, /typeof mediaItemId === 'string'|mediaItemId\?/, 'C3-8. the link endpoint validates its reference fields');
+assert.doesNotMatch(directLinkEndpoint, /caps\?/, 'C3-20. Link NOT gated by provider capabilities (Mavero lifecycle op)');
 
-// Link Existing File (final remediation): header-level action for GENUINE
-// provider-side files with NO media_assets row (discovered via provider
-// sync). The old drawer button gated on !selectedAsset.mediaItem was dead
-// code under the NOT NULL media_item_id constraint and was removed.
-assert.match(hostingAssets, /Link Existing File/, 'C3-5. Link Existing File header action exists');
-assert.match(hostingAssets, /function startLinkExistingFlow/, 'C3-6. startLinkExistingFlow function exists');
-assert.match(hostingAssets, /function confirmLink/, 'C3-7. confirmLink function exists');
-// The dead NULL-media_item drawer path must be GONE:
-assert.doesNotMatch(hostingAssets, /!selectedAsset\.mediaItem[\s\S]{0,400}?Link Existing[\s\S]{0,200}?startLink\(/, 'C3-5b. Dead NULL-media_item Link path removed');
+// Reactivate: only reachable via the guarded API; the service rejects
+// deleted assets (see lifecycle test) — the capability contract survives
+// in the service layer.
+assert.match(managementServiceC3, /asset\.status === 'deleted'[\s\S]{0,300}ASSET_DELETED/, 'C3-1. reactivate service-level gating intact (deleted assets rejected)');
 
-// Link Existing calls the canonical POST /api/admin/media/assets/link endpoint
-assert.match(hostingAssets, /\/api\/admin\/media\/assets\/link/, 'C3-8. Link Existing uses canonical link endpoint');
-assert.match(hostingAssets, /mediaItemId.*providerSourceId.*providerAssetId/, 'C3-9. Link sends mediaItemId + providerSourceId + providerAssetId');
-
-// Link modal: provider-file picker + media-item picker with search
-assert.match(hostingAssets, /linkModalOpen/, 'C3-10. Link modal state exists');
-assert.match(hostingAssets, /function loadProviderInventory/, 'C3-10b. Provider file loader exists (lazy per-provider inventory tabs — untracked files)');
-assert.match(hostingAssets, /searchMediaItems/, 'C3-11. Media-item search function exists');
-assert.match(hostingAssets, /\/api\/admin\/media\/library/, 'C3-12. Link modal searches via canonical library API');
-
-// Existing actions still present in Provider Files
-assert.match(hostingAssets, /function reconcile/, 'C3-13. Reconcile still present');
-assert.match(hostingAssets, /function startRename/, 'C3-14. Rename still present');
-assert.match(hostingAssets, /function startMove/, 'C3-15. Move still present');
-assert.match(hostingAssets, /function startDetach/, 'C3-16. Detach still present');
-assert.match(hostingAssets, /function startDelete/, 'C3-17. Delete still present');
-
-// Detach only shown for linked assets (has mediaItem) — not for unlinked
-assert.match(hostingAssets, /selectedAsset\.mediaItem[\s\S]*?startDetach/, 'C3-18. Detach only shown for linked assets (has mediaItem)');
-
-// Reactivate + Link are NOT gated by provider capabilities
-// (they're Mavero lifecycle operations, no provider call).
-// Check the actual button disabled attributes — Reactivate and Link
-// buttons should NOT have caps?. in their disabled expression.
-const reactivateButtonMatch = hostingAssets.match(/maveroStatus === 'missing'[\s\S]*?reactivate[\s\S]*?<\/button>/);
-assert.ok(reactivateButtonMatch, 'C3-19a. Reactivate button block found');
-assert.doesNotMatch(reactivateButtonMatch[0], /caps\?/, 'C3-19. Reactivate button NOT gated by provider capabilities');
-// [2026-10 redesign] the header action's label is now "Link media" — same
-// startLinkExistingFlow flow (renamed when the modal became tabbed).
-const linkButtonMatch = hostingAssets.match(/a2-assets-link-existing[\s\S]*?<\/button>/);
-assert.ok(linkButtonMatch, 'C3-20a. Link media header action block found');
-assert.doesNotMatch(linkButtonMatch[0], /caps\?/, 'C3-20. Link media (Link Existing File flow) NOT gated by provider capabilities (Mavero lifecycle op)');
-
-ok('C3. Provider Files: Reactivate + Link Existing added, complete lifecycle (Reconcile/Reactivate/Link/Rename/Move/Detach/Delete)');
+ok('C3. Asset lifecycle: full service surface intact + canonical link contract (UI retired with the legacy manager)');
 
 // ============================================================
 // D. Asset Lifecycle Semantics

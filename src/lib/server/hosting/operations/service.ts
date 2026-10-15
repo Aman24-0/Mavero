@@ -647,7 +647,6 @@ export class OperationsService {
         errorCode: op.error_code,
         errorMessage: op.error_message,
         detectedAt: op.updated_at,
-        canRetry: isRetryable,
         canReconcile: false,
       });
     }
@@ -677,7 +676,6 @@ export class OperationsService {
         errorCode: op.error_code,
         errorMessage: op.error_message,
         detectedAt: op.updated_at,
-        canRetry: false,
         canReconcile: Boolean(op.media_asset_id),
       });
     }
@@ -707,7 +705,6 @@ export class OperationsService {
             errorCode: 'MISCONFIGURED',
             errorMessage: `${adapterId.toUpperCase()}_API_KEY is not configured.`,
             detectedAt: new Date().toISOString(),
-            canRetry: false,
             canReconcile: false,
           });
         }
@@ -739,7 +736,6 @@ export class OperationsService {
             errorCode: report.status === 'unavailable' ? 'UNAVAILABLE' : 'DEGRADED',
             errorMessage: report.lastError,
             detectedAt: report.checkedAt,
-            canRetry: false,
             canReconcile: false,
           });
         }

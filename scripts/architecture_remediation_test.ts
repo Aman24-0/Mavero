@@ -12,7 +12,7 @@
  * Run: pnpm exec tsx --tsconfig ./jsconfig.json scripts/architecture_remediation_test.ts
  */
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -31,8 +31,11 @@ console.log('\n=== Architecture Remediation — Regression Tests ===\n');
 const demandService = read('src/lib/server/hosting/demand/service.ts');
 const mgmtService = read('src/lib/server/hosting/management/service.ts');
 const libraryService = read('src/lib/server/hosting/library/service.ts');
-const hostingAssets = read('src/lib/components/admin2/AdminHostingAssets.svelte');
-const mediaDrawer = read('src/lib/components/admin2/AdminMediaDetailDrawer.svelte');
+// [2026-10-16 re-pin] AdminHostingAssets + AdminMediaDetailDrawer were
+// deleted with the legacy asset-manager UI. See §4 below for how the
+// deleted-asset UI rules were re-pinned.
+assert.ok(!existsSync(path.join(REPO_ROOT, 'src/lib/components/admin2/AdminHostingAssets.svelte')), '0a. AdminHostingAssets deleted (legacy file manager removed)');
+assert.ok(!existsSync(path.join(REPO_ROOT, 'src/lib/components/admin2/AdminMediaDetailDrawer.svelte')), '0b. AdminMediaDetailDrawer deleted (legacy drawer removed)');
 const missingServer = read('src/routes/admin/media/missing/+page.server.ts');
 
 // ============================================================
@@ -119,43 +122,59 @@ ok('2. Delete: idempotent (already-deleted→success), 404→success, demand reo
 // ============================================================
 console.log('\n--- 3. Media Library Read Model ---');
 
-// list() uses activeAssets (exclude deleted) for orphan filter
-// [2026-10 Task-2 hierarchy] the "active assets" concept now computes at
-// TWO levels with the same status !== 'deleted' filter: the per-card
-// PARENT UNION (list()'s orphan/pending rule — parents roll up episode
-// assets) and computeHostingState's per-item filter (unchanged below).
+// list() uses activeAssets (exclude deleted) for the zero-link filter
+// [2026-10-16 final round re-pin] the default exclusion is now the ZERO-LINK
+// rule (a library card requires at least one ACTIVE asset in its union) —
+// this supersedes the earlier "demand but no assets kept (pending)" rule.
+// Demand-backed zero-link titles are Missing Media's domain; computeHostingState
+// still computes 'pending' for the episodes(parentId)/debug reads (3d below).
 assert.match(libraryService, /unionAssets\.filter\(a => a\.status !== 'deleted'\)/, '3a. list() computes active union assets excluding deleted (parent rollup)');
 assert.match(libraryService, /const activeAssets = assets\.filter\(a => a\.status !== 'deleted'\);/, '3a-ii. computeHostingState computes activeAssets excluding deleted (same filter, per item)');
-assert.match(libraryService, /activeUnionAssets\.length === 0 && !unionDemand/, '3b. list() drops items with no active assets AND no demand (parent union)');
+assert.match(libraryService, /if \(!includeOrphans && activeUnionAssets\.length === 0\) \{/, '3b. list() drops ZERO-LINK items (no active assets in the union) — demand-backed zero-link rows return to Missing Media, not the library');
 
 // computeHostingState already filtered deleted (verify it still does)
 assert.match(libraryService, /assets\.filter\(a => a\.status !== 'deleted'\)/, '3c. computeHostingState filters deleted assets');
 
-// Items with demand but no active assets are KEPT (pending)
-assert.match(libraryService, /pending/, '3d. computeHostingState returns pending for items with demand but no active assets');
+// The pending state remains COMPUTED for demand-backed rows (episodes read
+// + includeOrphans debug path) even though the default library list now
+// excludes them.
+assert.match(libraryService, /pending/, '3d. computeHostingState returns pending for items with demand but no active assets (episodes read / debug path)');
 
-ok('3. Media Library: deleted-only items excluded, pending items (demand) kept');
+ok('3. Media Library: zero-link items excluded by default; deleted assets never count as active; pending still computed for Missing Media surfaces');
 
 // ============================================================
-// 4. UI State Rules for Deleted Assets
+// 4. UI State Rules for Deleted Assets (re-pinned 2026-10-16)
 // ============================================================
 console.log('\n--- 4. UI State Rules for Deleted Assets ---');
 
-// AdminHostingAssets: deleted assets show terminal notice, no action buttons
-assert.match(hostingAssets, /selectedAsset\.status === 'deleted'/, '4a. AdminHostingAssets checks status=deleted');
-assert.match(hostingAssets, /a2-asset-deleted-notice/, '4b. AdminHostingAssets has deleted-notice class');
-assert.match(hostingAssets, /permanently deleted.*No actions are available/, '4c. AdminHostingAssets shows terminal deleted message');
-assert.match(hostingAssets, /a2-asset-deleted-notice[\s\S]*?\{:else\}/, '4d. AdminHostingAssets uses {:else} for non-deleted actions');
+// [2026-10-16 re-pin] the deleted-asset UI rules (terminal notice, no
+// Rename/Move/Delete/Reactivate) lived in AdminHostingAssets +
+// AdminMediaDetailDrawer, both deleted with the legacy asset-manager UI.
+// The live model enforces the SAME invariant earlier in the chain:
+//  - the library read model never counts a deleted asset as active
+//    (3a/3a-ii/3c) — a deleted-only title has zero active links and is
+//    excluded from the default list entirely;
+//  - the episode sheet only offers per-episode actions for episodes with
+//    a LIVE asset link (ground truth from the episodes API);
+//  - no live component wires any reactivate/rename/move action at all
+//    (verified directory-wide below).
+{
+  const admin2Dir = path.join(REPO_ROOT, 'src/lib/components/admin2');
+  const actionCallers: string[] = [];
+  for (const entry of readdirSync(admin2Dir)) {
+    if (!/\.svelte$/.test(entry)) continue;
+    const src = read(`src/lib/components/admin2/${entry}`);
+    // A live component fetching any asset-lifecycle action endpoint
+    // (reactivate/rename/move/delete) — the legacy action surface.
+    if (/fetch\(\s*[`'"`]\S*\/assets\/\S*\/(reactivate|rename|move|delete)/.test(src)) actionCallers.push(entry);
+  }
+  assert.deepEqual(actionCallers, [], '4a. NO live admin2 component invokes legacy asset-lifecycle action endpoints (surface removed with the drawer; unlink/reconcile are the live actions)');
+}
+const episodeSheet2 = read('src/lib/components/admin2/AdminEpisodeSheet.svelte');
+assert.match(episodeSheet2, /view\.asset[\s\S]{0,600}ondeletelink|ondeletelink[\s\S]{0,600}view\.asset/, '4b. episode-sheet Delete offered only for episodes WITH a live asset (deleted assets render no actions)');
+assert.match(episodeSheet2, /badge-status/, '4c. the episode sheet renders per-asset status badges (deleted/missing states visible without actions)');
 
-// AdminMediaDetailDrawer: deleted assets show notice, no Rename/Move/Delete
-assert.match(mediaDrawer, /asset\.status !== 'deleted'/, '4e. AdminMediaDetailDrawer gates file actions on status !== deleted');
-assert.match(mediaDrawer, /provider-asset-deleted-notice/, '4f. AdminMediaDetailDrawer has deleted-notice class');
-assert.match(mediaDrawer, /permanently deleted/, '4g. AdminMediaDetailDrawer shows terminal deleted message');
-
-// Reactivate still gated (from previous fix)
-assert.match(mediaDrawer, /mavero_status === 'missing' && asset\.status !== 'deleted'/, '4h. AdminMediaDetailDrawer Reactivate gated on status !== deleted');
-
-ok('4. UI: deleted assets show terminal state, no actions offered');
+ok('4. UI: deleted assets surface as status-only records — no lifecycle actions reachable from live components');
 
 // ============================================================
 // 5. Demand State-Transition Matrix

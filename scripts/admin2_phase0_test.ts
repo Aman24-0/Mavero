@@ -70,10 +70,14 @@ assert.match(searchApi, /results: results\.items/, 'search API returns results.i
 assert.doesNotMatch(searchApi, /return json\(\{ ok: true, results \}\)/, 'search API does NOT return raw ContentList');
 ok('C1. TMDB search API returns results: results.items (array, not ContentList object)');
 
-// Verify the frontend expects an array
-const uploadFlow = readFileSync('src/lib/components/admin2/AdminUploadFlow.svelte', 'utf8');
-assert.match(uploadFlow, /\(json\.results \?\? \[\]\)\.map/, 'frontend calls .map() on json.results (expects array)');
-ok('C2. Frontend expects json.results to be an array (contract matches API)');
+// 2026-10-16 re-pin: AdminUploadFlow was deleted with the upload workflow.
+// The array contract is now verified on the LIVE consumers — the Add File
+// wizard (TMDB search) — plus the removal itself is asserted.
+const wizard = readFileSync('src/lib/components/admin2/AdminAddFileWizard.svelte', 'utf8');
+assert.match(wizard, /json\.results \?\? \[\]/, 'the wizard treats json.results as an array');
+ok('C2. Frontend expects json.results to be an array (contract matches API — verified on the live wizard)');
+assert.ok(!existsSync('src/lib/components/admin2/AdminUploadFlow.svelte'), 'AdminUploadFlow component removed (workflow retired)');
+ok('C2b. AdminUploadFlow component deleted (2026-10-16 upload-removal completion)');
 
 // ============================================================
 // D. Media Library detail query uses display_name
@@ -90,11 +94,12 @@ assert.match(libraryService, /op\.admin_user\?\.display_name/, 'consumer accesse
 assert.doesNotMatch(libraryService, /op\.admin_user\?\.email/, 'consumer does NOT access op.admin_user?.email');
 ok('D2. LibraryOperationSummary has admin_user_display_name (consumer updated)');
 
-// Verify the drawer uses display_name
-const detailDrawer = readFileSync('src/lib/components/admin2/AdminMediaDetailDrawer.svelte', 'utf8');
-assert.match(detailDrawer, /admin_user_display_name/, 'detail drawer uses admin_user_display_name');
-assert.doesNotMatch(detailDrawer, /admin_user_email/, 'detail drawer does NOT use admin_user_email');
-ok('D3. AdminMediaDetailDrawer uses admin_user_display_name (not admin_user_email)');
+// 2026-10-16 re-pin: AdminMediaDetailDrawer (dead code, unimported) was
+// deleted with the legacy asset-manager UI. The display_name contract
+// lives in the library read model (D1/D2) and is rendered by the
+// operations history UI; assert the drawer is GONE.
+assert.ok(!existsSync('src/lib/components/admin2/AdminMediaDetailDrawer.svelte'), 'AdminMediaDetailDrawer removed (dead code)');
+ok('D3. AdminMediaDetailDrawer deleted — the display_name contract stays verified on the service (D1/D2)');
 
 // ============================================================
 // E. Dune linkage investigation result
@@ -112,9 +117,12 @@ ok('D3. AdminMediaDetailDrawer uses admin_user_display_name (not admin_user_emai
 assert.match(libraryService, /assetsByItem\.get\(item\.id\) \?\? \[\]/, 'list() returns empty array when no assets exist');
 ok('E1. Dune "Not Linked" is correct behavior — list() returns [] when no media_assets exist (not a bug)');
 
-const mediaTable = readFileSync('src/lib/components/admin2/AdminMediaTable.svelte', 'utf8');
-assert.match(mediaTable, /Not linked/i, 'table renders "Not linked" for items with no assets');
-ok('E2. AdminMediaTable renders "Not linked" for empty asset arrays (correct empty state)');
+// 2026-10-16 re-pin: AdminMediaTable (dead code, unimported) was deleted.
+// The honest empty-state contract now lives in the episode sheet's
+// "Not linked" badge for episodes with no asset.
+const episodeSheet = readFileSync('src/lib/components/admin2/AdminEpisodeSheet.svelte', 'utf8');
+assert.match(episodeSheet, /Not linked/, 'the episode sheet renders the honest "Not linked" state');
+ok('E2. The live episode sheet renders "Not linked" for empty asset arrays (correct empty state)');
 
 // ============================================================
 // F. Upload flow API endpoints REMOVED (2026-10-15)
@@ -136,9 +144,10 @@ for (const endpoint of uploadEndpoints) {
 }
 ok('F1. All 8 upload API endpoints removed from disk (workflow retired)');
 
-// No LIVE source may still import the removed upload service (the dead
-// AdminUploadFlow/AdminOps* components reference endpoints only as fetch
-// strings — they are unreachable, not compile-breaking).
+// No LIVE source may still import the removed upload service. (The dead
+// AdminUploadFlow/AdminMediaDetailDrawer/AdminMediaTable components were
+// DELETED in the 2026-10-16 completion round — no fetch-string references
+// to removed endpoints remain anywhere in src/.)
 const liveSources = [
   'src/lib/server/hosting/media/manual-link-contract.ts',
   'src/lib/server/hosting/management/service.ts',

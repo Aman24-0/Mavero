@@ -36,7 +36,13 @@ const vidaraAdapter = read('src/lib/server/hosting/vidara/adapter.ts');
 const abyssAdapter = read('src/lib/server/hosting/abyss/adapter.ts');
 const managementService = read('src/lib/server/hosting/management/service.ts');
 const deleteRoute = read('src/routes/api/admin/media/assets/[id]/delete/+server.ts');
-const hostingAssets = read('src/lib/components/admin2/AdminHostingAssets.svelte');
+// [2026-10-16 re-pin] AdminHostingAssets was DELETED with the legacy
+// asset-manager UI; its delete-UI contracts (loading state, error display,
+// no-close-on-failure) are re-pinned on the LIVE surfaces (AdminMediaList
+// owns the delete confirm; the episode sheet owns bulk operations).
+assert.ok(!existsSync(path.join(REPO_ROOT, 'src/lib/components/admin2/AdminHostingAssets.svelte')), '0a. AdminHostingAssets deleted (legacy file manager removed)');
+const mediaListDel = read('src/lib/components/admin2/AdminMediaList.svelte');
+const episodeSheetDel = read('src/lib/components/admin2/AdminEpisodeSheet.svelte');
 
 // 1a. Vidara delete uses GET method with filecode query param (correct contract)
 // The fix: GET /v1/video/delete?filecode=<id> (NOT POST, NOT file_code with underscore)
@@ -74,32 +80,35 @@ assert.match(deleteRoute, /result\.ok \? 200 : 502/, '4a. Delete route returns 5
 assert.match(deleteRoute, /error: result\.error/, '4b. Delete route returns error in response');
 ok('4. Delete API route: returns error with 502 status on provider failure');
 
-// 1e. UI: loading state tracked per-action
-assert.match(hostingAssets, /let actionInProgress = \$state<string \| null>\(null\)/, '5a. UI: actionInProgress is string|null (tracks which action)');
-assert.match(hostingAssets, /actionInProgress = action/, '5b. UI: sets action name on start');
-assert.match(hostingAssets, /actionInProgress = null/, '5c. UI: clears on completion');
-assert.match(hostingAssets, /actionInProgress !== null/, '5d. UI: buttons disabled when any action in progress');
-assert.match(hostingAssets, /actionInProgress === 'delete'/, '5e. UI: delete button shows specific loading state');
-ok('5. UI: per-action loading state (tracks which action, disables all buttons)');
+// 1e. [2026-10-16 re-pin] UI: loading state tracked per-action on the
+// LIVE surfaces — the list's delete + the sheet's bulk operations disable
+// their buttons while in flight.
+assert.match(mediaListDel, /deleting = true/, '5a. UI: delete sets the in-flight flag');
+assert.match(mediaListDel, /deleting = false/, '5b. UI: clears on completion (finally)');
+assert.match(mediaListDel, /disabled=\{deleting\}/, '5c. UI: delete buttons disabled while in flight');
+assert.match(episodeSheetDel, /disabled=\{bulkDeleting\}/, '5d. UI: bulk-delete buttons disabled while in flight');
+ok('5. UI: per-action loading state on the live surfaces (buttons disabled in flight)');
 
-// 1f. UI: error display with actionable hint
-assert.match(hostingAssets, /a2-asset-action-error-box/, '6a. UI: error-box rendered for failures');
-assert.match(hostingAssets, /Action failed/, '6b. UI: error box shows "Action failed" heading');
-assert.match(hostingAssets, /asset was NOT deleted.*available for retry/, '6c. UI: error hint says asset NOT deleted, available for retry');
-assert.match(hostingAssets, /Network error/, '6d. UI: network errors handled separately');
-ok('6. UI: error display with actionable hint (asset NOT deleted, available for retry)');
+// 1f. [2026-10-16 re-pin] UI: error display with actionable retry — the
+// live error block carries role=alert + the Retry button (the unlink is
+// provider-preserving by construction, so the NOT-deleted hint is the
+// server contract, not a UI string).
+assert.match(mediaListDel, /state-error" role="alert"/, '6a. UI: error block rendered for failures (role=alert)');
+assert.match(mediaListDel, /retry-btn/, '6b. UI: error block offers Retry (actionable)');
+assert.match(mediaListDel, /Network error during delete/, '6c. UI: network errors handled distinctly');
+ok('6. UI: error display with actionable retry (role=alert + Retry button)');
 
-// 1g. UI: does NOT close drawer on failure — reloads list instead
-assert.match(hostingAssets, /Provider failure — surface the real error/, '7a. UI: comment confirms failure surfacing');
-assert.match(hostingAssets, /Do NOT close the drawer/, '7b. UI: comment confirms drawer stays open on failure');
-assert.match(hostingAssets, /Reload the list anyway so the failed operation/, '7c. UI: reloads list on failure (operation history visible)');
-ok('7. UI: drawer stays open on failure, list reloaded for operation history');
+// 1g. [2026-10-16 re-pin] UI: a FAILED delete surfaces the error WITHOUT
+// a list reload (no silent state change); a SUCCESSFUL delete reloads —
+// pinned in the zero-link suite (F1/F2), verified here on the code shape.
+assert.match(mediaListDel, /json\.ok[\s\S]{0,200}loadList\(true\)/, '7a. UI: list reload happens only on the success path');
+assert.match(mediaListDel, /error = json\.error\?\.message \?\? 'Delete failed\.'/, '7b. UI: failure path sets the error, no reload');
+ok('7. UI: failure surfaces the error (no silent reload); success refreshes the list');
 
-// 1h. UI: loading banner shown while action in progress
-assert.match(hostingAssets, /a2-asset-action-loading/, '8a. UI: loading banner class exists');
-assert.match(hostingAssets, /in progress/, '8b. UI: loading banner shows "in progress" text');
-assert.match(hostingAssets, /aria-live="polite"/, '8c. UI: loading banner has aria-live for a11y');
-ok('8. UI: loading banner shown while action in progress');
+// 1h. [2026-10-16 re-pin] UI: in-flight feedback is announced politely
+// (aria-live) on the live sheet surfaces.
+assert.match(episodeSheetDel, /aria-live="polite"/, '8a. UI: sheet progress lines are aria-live (announced)');
+ok('8. UI: in-flight progress announced politely (aria-live)');
 
 // ============================================================
 // ISSUE 2 — Upload Provider Selector Filtering
