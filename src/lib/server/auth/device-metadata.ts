@@ -75,7 +75,14 @@ export function parseDeviceMetadata(
   const ua = (userAgent ?? '').toLowerCase();
 
   if (!ua) {
-    return { deviceType: 'unknown', deviceName: 'Unknown device', browser: null, os: null, platform: null };
+    // Task 4 (2026-10-15) — HONEST METADATA for a MISSING User-Agent.
+    // An empty UA is a security-relevant signal (scripted clients, email
+    // scanners, broken proxies), not an ordinary unknown browser. The old
+    // label ('Unknown device') collapsed MISSING and UNRECOGNIZED UAs
+    // into one string, hiding the distinction in the Account UI. Both
+    // classes stay deviceType 'unknown' (never privileged, never
+    // identity-bearing) — only the descriptive label differs.
+    return { deviceType: 'unknown', deviceName: 'Unidentified client (no User-Agent)', browser: null, os: null, platform: null };
   }
 
   const browser = detectBrowser(ua, hints);
@@ -193,12 +200,19 @@ function detectPlatform(ua: string, deviceType: DeviceType): string | null {
   return null;
 }
 
-function buildDeviceName(os: string | null, browser: string | null, deviceType: DeviceType): string {
+function buildDeviceName(os: string | null, browser: string | null, deviceType: DeviceType, hadUserAgent = true): string {
   const parts: string[] = [];
   if (os) parts.push(os);
   if (browser) parts.push(browser);
   if (parts.length === 0) {
-    return deviceType === 'unknown' ? 'Unknown device' : `${deviceType.charAt(0).toUpperCase() + deviceType.slice(1)} device`;
+    // Task 4: a NON-EMPTY UA that matches no known pattern is honestly
+    // labelled 'Unrecognized client' — distinct from the missing-UA label
+    // returned by the fast path above. A non-descriptive UA (bots,
+    // scripts, TV webviews with stripped UAs) must remain visible as
+    // such in the Account UI instead of masquerading as an ordinary
+    // unknown browser.
+    if (!hadUserAgent) return 'Unidentified client (no User-Agent)';
+    return deviceType === 'unknown' ? 'Unrecognized client' : `${deviceType.charAt(0).toUpperCase() + deviceType.slice(1)} device`;
   }
   return parts.join(' • ');
 }

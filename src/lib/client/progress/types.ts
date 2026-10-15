@@ -171,7 +171,13 @@ function isFiniteTimestamp(value: unknown): value is number {
 export function isContentSnapshot(value: unknown): value is ContentSnapshot {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const snapshot = value as Partial<ContentSnapshot>;
-  return isBoundedString(snapshot.title, MAX_SNAPSHOT_TITLE_LENGTH)
+  // Task 2: validate the anime discriminator fields when present so a
+  // corrupt payload cannot leak into the classification (the flags are
+  // optional for backward compatibility with pre-discriminator records).
+  const validAnimeFlags = (snapshot.isAnime === undefined || typeof snapshot.isAnime === 'boolean')
+    && (snapshot.animeFormat === undefined || snapshot.animeFormat === 'movie' || snapshot.animeFormat === 'series');
+  return validAnimeFlags
+    && isBoundedString(snapshot.title, MAX_SNAPSHOT_TITLE_LENGTH)
     && isBoundedString(snapshot.poster, MAX_SNAPSHOT_POSTER_LENGTH, true)
     && (snapshot.backdrop === undefined || isBoundedString(snapshot.backdrop, MAX_SNAPSHOT_POSTER_LENGTH, true))
     && (snapshot.year === undefined || (Number.isSafeInteger(snapshot.year) && snapshot.year >= 1800 && snapshot.year <= 3000))

@@ -71,7 +71,8 @@
   import { onDestroy, onMount } from 'svelte';
   import { page as appPage } from '$app/state';
   import { PRODUCTION_ORIGIN } from '$lib/shared/seo';
-  import { Search, X, Radio, RefreshCw, LoaderCircle, SlidersHorizontal, BookOpen } from 'lucide-svelte';
+  import { Search, X, Radio, RefreshCw, LoaderCircle, SlidersHorizontal, BookOpen, ChevronLeft, ChevronRight } from 'lucide-svelte';
+  import { SvelteSet } from 'svelte/reactivity';
   import ScrollToTop from '$components/ScrollToTop.svelte';
   import ErrorState from '$components/ErrorState.svelte';
   import LiveTvPlayer from '$components/live-tv/LiveTvPlayer.svelte';
@@ -89,7 +90,9 @@
   import { isLiveTvError } from '$lib/client/live-tv/errors';
   import { isLiveTvPlaybackError, shouldFallbackToEmbed } from '$lib/client/live-tv/player-errors';
   import { LiveTvPlaybackEngine } from '$lib/client/live-tv/player';
-  import { determineCurrentProgramme } from '$lib/client/live-tv/epg';
+  import { determineCurrentProgramme, channelInitials } from '$lib/client/live-tv/epg';
+  // Task 5 — recently-played channels (local, bounded, channel-id only).
+  import { getRecentChannelIds, recordRecentChannel, removeRecentChannel, clearRecentChannels } from '$lib/client/live-tv/recent-channels';
   import {
     trackLiveTvOpen,
     trackLiveTvChannelAction,
@@ -145,6 +148,10 @@
       if (controller.signal.aborted) return; // superseded/unmounted — silent
       channels = list;
       catalogueState = 'ready';
+      // Task 5: resolve the persisted recent channel IDs against the LIVE
+      // catalogue (graceful: removed/unknown IDs simply drop out of the
+      // row; the stored IDs stay untouched). Zero extra network requests —
+      // this reads the catalogue that was just loaded.
     } catch (err) {
       if (controller.signal.aborted || isSilentAbort(err)) return;
       catalogueMessage = playbackSafeMessage(err);
@@ -217,6 +224,95 @@
     );
     observer.observe(el);
     return () => observer.disconnect();
+  });
+
+  // ---------------------------------------------------------------------
+  // Task 5 — RECENTLY PLAYED CHANNELS (local, bounded, ID-only).
+  //
+  // The row lives immediately BELOW the player and ABOVE the toolbar. The
+  // store persists only catalogue channel IDs (never signed URLs, resolver
+  // responses, tokens or credentials — see recent-channels.ts). The row's
+  // channels are resolved against the ALREADY-LOADED catalogue — removed
+  // IDs disappear gracefully and NO per-row network requests happen.
+  // Selecting a recent channel reuses the existing selectChannel flow
+  // (abort/destroy/resolve/load — no bypass of cancellation, playback-engine
+  // lifecycle, geo/DRM handling or fallback behavior).
+  // ---------------------------------------------------------------------
+  let recentChannelIds = $state<string[]>([]);
+  let recentClearArmed = $state(false);
+
+  // Recent channels that still exist in the loaded catalogue, in recency
+  // order. Derived — never stored — so a catalogue refresh (removed
+  // channel, category change) is honored on the next render.
+  const recentChannels = $derived.by(() => {
+    if (channels.length === 0 || recentChannelIds.length === 0) return [];
+    const byId = new Map(channels.map((channel) => [channel.id, channel]));
+    const resolved: LiveTvChannel[] = [];
+    for (const id of recentChannelIds) {
+      const channel = byId.get(id);
+      if (channel) resolved.push(channel);
+    }
+    return resolved;
+  });
+
+  function loadRecentFromStorage(): void {
+    recentChannelIds = getRecentChannelIds();
+  }
+
+  // A successful PLAYBACK START (engine 'loaded') moves the channel to the
+  // front — a selection that fails to resolve never pollutes the row.
+  function rememberPlayedChannel(channel: LiveTvChannel): void {
+    recentChannelIds = recordRecentChannel(channel.id);
+  }
+
+  function forgetRecentChannel(channelId: string): void {
+    recentChannelIds = removeRecentChannel(channelId);
+  }
+
+  function clearAllRecentChannels(): void {
+    recentChannelIds = clearRecentChannels();
+    recentClearArmed = false;
+  }
+
+  // Task 5 — row overflow + arrow controls. The arrows exist ONLY when the
+  // logos exceed the visible row width (TV/desktop); each press moves the
+  // row by a meaningful amount (~80% of the visible width). The page can
+  // never gain horizontal overflow: the row scrolls WITHIN its own box.
+  let recentRowEl: HTMLElement | undefined = $state();
+  let recentCanScrollLeft = $state(false);
+  let recentCanScrollRight = $state(false);
+  const recentOverflow = $derived(recentCanScrollLeft || recentCanScrollRight);
+  const recentLogoFailed = new SvelteSet<string>();
+
+  function updateRecentArrows(): void {
+    const el = recentRowEl;
+    if (!el) {
+      recentCanScrollLeft = false;
+      recentCanScrollRight = false;
+      return;
+    }
+    recentCanScrollLeft = el.scrollLeft > 4;
+    recentCanScrollRight = el.scrollLeft + el.clientWidth < el.scrollWidth - 4;
+  }
+
+  function scrollRecentRow(direction: -1 | 1): void {
+    const el = recentRowEl;
+    if (!el) return;
+    el.scrollBy({ left: direction * Math.round(el.clientWidth * 0.8), behavior: 'smooth' });
+  }
+
+  // Keep the arrow state honest: when the row first renders, when the
+  // recent list changes, and when the viewport resizes.
+  $effect(() => {
+    // Track the reactive inputs so the effect re-runs on change.
+    void recentChannels.length;
+    void recentRowEl;
+    updateRecentArrows();
+  });
+  $effect(() => {
+    if (typeof window === 'undefined') return;
+    window.addEventListener('resize', updateRecentArrows);
+    return () => window.removeEventListener('resize', updateRecentArrows);
   });
 
   // ---------------------------------------------------------------------
@@ -367,6 +463,10 @@
           return;
         }
         resolving = false;
+        // Task 5: the session reached 'loaded' — this channel is the most
+        // recently PLAYED one. Recording here (not at selection time) means
+        // failed resolutions never enter the recent row.
+        rememberPlayedChannel(channel);
         // 'loaded' has fired; the player component attempts autoplay.
       } catch (err) {
         if (seq !== sessionSeq || controller.signal.aborted || isSilentAbort(err)) {
@@ -470,6 +570,9 @@
     // Analytics (LT-5): page open — a pure page-load event that does NOT
     // count toward the active-user metric (refresh-safe, per plan §11).
     trackLiveTvOpen();
+    // Task 5: restore the persisted recent-channel IDs (channel objects are
+    // resolved against the catalogue once it arrives).
+    loadRecentFromStorage();
     nowTicker = setInterval(() => {
       nowSeconds = Math.floor(Date.now() / 1000);
     }, 30_000);
@@ -546,6 +649,55 @@
         </div>
       {/if}
     </section>
+
+    <!-- Task 5 — RECENTLY PLAYED row: logos ONLY (no visible channel
+         names), immediately below the player and ABOVE the toolbar.
+         Hidden entirely when history is empty (no wasted vertical space).
+         Items resolve against the live catalogue; selection reuses the
+         existing selectChannel playback lifecycle. -->
+    {#if recentChannels.length > 0}
+      <section class="ltv-recent" aria-label="Recently played channels">
+        <div class="recent-head">
+          <span class="recent-title">Recently played</span>
+          <div class="recent-tools">
+            {#if recentClearArmed}
+              <button class="recent-tool confirm" type="button" onclick={clearAllRecentChannels}>Confirm clear</button>
+              <button class="recent-tool" type="button" onclick={() => (recentClearArmed = false)}>Keep</button>
+            {:else}
+              <button class="recent-tool" type="button" onclick={() => (recentClearArmed = true)} aria-label="Clear all recently played channels">Clear all</button>
+            {/if}
+            {#if recentOverflow}
+              <button class="recent-arrow" type="button" onclick={() => scrollRecentRow(-1)} disabled={!recentCanScrollLeft} aria-label="Scroll recently played left"><ChevronLeft size={15} /></button>
+              <button class="recent-arrow" type="button" onclick={() => scrollRecentRow(1)} disabled={!recentCanScrollRight} aria-label="Scroll recently played right"><ChevronRight size={15} /></button>
+            {/if}
+          </div>
+        </div>
+        <div class="recent-row" bind:this={recentRowEl} onscroll={updateRecentArrows}>
+          {#each recentChannels as channel (channel.id)}
+            <div class="recent-item">
+              <button
+                type="button"
+                class="recent-logo-btn"
+                class:selected={channel.id === selectedChannel?.id}
+                onclick={() => void selectChannel(channel)}
+                aria-label={`Play ${channel.name}`}
+                aria-pressed={channel.id === selectedChannel?.id}
+                title={channel.name}
+              >
+                {#if channel.logo && !recentLogoFailed.has(channel.id)}
+                  <img src={channel.logo} alt="" loading="lazy" onerror={() => recentLogoFailed.add(channel.id)} />
+                {:else}
+                  <span class="recent-logo-fallback" aria-hidden="true">{channelInitials(channel.name)}</span>
+                {/if}
+              </button>
+              <button type="button" class="recent-remove" aria-label={`Remove ${channel.name} from recently played`} onclick={() => forgetRecentChannel(channel.id)}>
+                <X size={11} />
+              </button>
+            </div>
+          {/each}
+        </div>
+      </section>
+    {/if}
 
     <!-- LT-18 — the ONE compact toolbar row directly below the player:
          search (majority width) + Filter (active-state aware) + Guide
@@ -805,6 +957,112 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+
+  /* ---- Task 5 — recently played channels row ---- */
+  .ltv-recent {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+  }
+  .recent-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-width: 0;
+  }
+  .recent-title {
+    font-size: .72rem;
+    font-weight: 700;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--muted, #9a93b0);
+  }
+  .recent-tools {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+  .recent-tool {
+    border: 1px solid var(--line, #2a2537);
+    background: transparent;
+    color: var(--muted, #9a93b0);
+    border-radius: 999px;
+    padding: 3px 10px;
+    font-size: .7rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .recent-tool:hover { color: var(--ink, #f2f0f7); border-color: var(--line-strong, #3a3450); }
+  .recent-tool.confirm { color: #ff8fa3; border-color: #ff8fa355; }
+  .recent-arrow {
+    display: grid;
+    place-items: center;
+    width: 26px;
+    height: 26px;
+    border: 1px solid var(--line, #2a2537);
+    border-radius: 50%;
+    background: rgba(0, 0, 0, .35);
+    color: var(--ink, #f2f0f7);
+    cursor: pointer;
+  }
+  .recent-arrow:disabled { opacity: .35; cursor: default; }
+  /* The row scrolls WITHIN its own box — the page never gains horizontal
+     overflow (Task 5). Touch scrolling is native; desktop users get the
+     arrow controls above (shown only when the content overflows). */
+  .recent-row {
+    display: flex;
+    gap: 12px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    padding-bottom: 2px;
+    -webkit-overflow-scrolling: touch;
+  }
+  .recent-row::-webkit-scrollbar { display: none; }
+  .recent-item {
+    position: relative;
+    flex-shrink: 0;
+    width: 64px;
+    height: 64px;
+  }
+  .recent-logo-btn {
+    width: 64px;
+    height: 64px;
+    display: grid;
+    place-items: center;
+    padding: 8px;
+    border: 1px solid var(--line, #2a2537);
+    border-radius: 12px;
+    background: var(--surface, #17131f);
+    cursor: pointer;
+    transition: border-color 120ms ease, transform 120ms ease;
+  }
+  .recent-logo-btn:hover { border-color: var(--accent, #9b87f5); transform: translateY(-1px); }
+  .recent-logo-btn.selected { border-color: var(--accent, #9b87f5); box-shadow: 0 0 0 1px var(--accent, #9b87f5); }
+  .recent-logo-btn img { max-width: 100%; max-height: 100%; object-fit: contain; }
+  .recent-logo-fallback {
+    font-size: .72rem;
+    font-weight: 700;
+    color: var(--muted, #9a93b0);
+  }
+  .recent-remove {
+    position: absolute;
+    top: -5px;
+    right: -5px;
+    display: grid;
+    place-items: center;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    border: 1px solid var(--line, #2a2537);
+    border-radius: 50%;
+    background: rgba(0, 0, 0, .8);
+    color: var(--muted, #9a93b0);
+    cursor: pointer;
+  }
+  .recent-remove:hover { color: #ff8fa3; border-color: #ff8fa355; }
 
   /* ---- LT-18 toolbar: one row, search-first ---- */
   .ltv-toolbar {

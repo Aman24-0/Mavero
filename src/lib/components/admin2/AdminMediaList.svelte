@@ -122,7 +122,140 @@
   let wizardUpdateTarget = $state<UpdateTarget | null>(null);
   let deleteTarget = $state<MediaRow | null>(null);
   let deleting = $state(false);
+
+  // Task 3 (2026-10-15) — PORTAL ACTION MENU.
+  //
+  // The old dropdowns were absolutely positioned INSIDE the card/row
+  // subtree: in grid mode `.grid-card{overflow:hidden}` clipped the menu
+  // on every side, and in list mode the `.media-list{overflow-y:auto}`
+  // scroll container clipped it near the bottom of the scroll area. Both
+  // defects are ancestor-overflow clipping — unfixable from inside the
+  // subtree with any z-index.
+  //
+  // The menu is now a SINGLE floating element portaled to document.body
+  // and positioned with `position:fixed` from the trigger's bounding
+  // rect: below-right of the trigger by default, flipped above when the
+  // viewport bottom is too close, and clamped to an 8px viewport margin
+  // on every edge (bottom/right edges and narrow mobile widths included).
+  // Scrolling repositions (and closes when the trigger leaves the
+  // viewport), outside pointerdown + Escape close it, focus returns to
+  // the trigger, and because the menu lives OUTSIDE the card subtree a
+  // menu click can never bubble into the card/row handlers.
   let openMenuId = $state<string | null>(null);
+  let openMenuRow = $derived<MediaRow | null>(openMenuId ? items.find((r) => r.id === openMenuId) ?? null : null);
+  let menuTriggerEl: HTMLElement | null = null;
+  let menuEl = $state<HTMLElement | null>(null);
+  let menuPos = $state<{ top: number; left: number }>({ top: 0, left: 0 });
+  const MENU_VIEWPORT_MARGIN = 8;
+  const MENU_GAP = 6;
+  const MENU_ESTIMATED_SIZE = { width: 176, height: 88 };
+
+  function portal(node: HTMLElement): { destroy(): void } {
+    document.body.appendChild(node);
+    return { destroy() { node.remove(); } };
+  }
+
+  function clampMenuPosition(top: number, left: number, width: number, height: number): { top: number; left: number } {
+    const maxLeft = Math.max(MENU_VIEWPORT_MARGIN, window.innerWidth - width - MENU_VIEWPORT_MARGIN);
+    const maxTop = Math.max(MENU_VIEWPORT_MARGIN, window.innerHeight - height - MENU_VIEWPORT_MARGIN);
+    return { top: Math.min(Math.max(top, MENU_VIEWPORT_MARGIN), maxTop), left: Math.min(Math.max(left, MENU_VIEWPORT_MARGIN), maxLeft) };
+  }
+
+  function positionMenu(): void {
+    if (!menuTriggerEl || typeof window === 'undefined') return;
+    const rect = menuTriggerEl.getBoundingClientRect();
+    // The trigger scrolled out of the viewport while the menu was open —
+    // an invisible anchor is a stale menu: close it (never float an
+    // orphaned menu mid-viewport).
+    if (rect.bottom < 0 || rect.top > window.innerHeight || rect.left > window.innerWidth || rect.right < 0) {
+      closeMenu(false);
+      return;
+    }
+    const size = menuEl
+      ? { width: menuEl.offsetWidth, height: menuEl.offsetHeight }
+      : MENU_ESTIMATED_SIZE;
+    // Prefer below-right of the trigger (the historical anchor corner);
+    // flip above when the bottom edge would clip. Both axes clamp.
+    let top = rect.bottom + MENU_GAP;
+    if (rect.bottom + MENU_GAP + size.height > window.innerHeight - MENU_VIEWPORT_MARGIN && rect.top - MENU_GAP - size.height >= MENU_VIEWPORT_MARGIN) {
+      top = rect.top - MENU_GAP - size.height;
+    }
+    let left = rect.right - size.width;
+    const clamped = clampMenuPosition(top, left, size.width, size.height);
+    menuPos = clamped;
+  }
+
+  function openMenu(row: MediaRow, trigger: HTMLElement): void {
+    openMenuId = row.id;
+    menuTriggerEl = trigger;
+    // Position SYNCHRONOUSLY from the estimate so the very first paint is
+    // already anchored (a (0,0) first frame would flash the menu at the
+    // viewport corner). The rAF correction below then refines with the
+    // real rendered size.
+    positionMenu();
+    requestAnimationFrame(() => positionMenu());
+  }
+
+  function toggleMenu(row: MediaRow, event: Event): void {
+    event.stopPropagation();
+    const trigger = event.currentTarget as HTMLElement | null;
+    if (openMenuId === row.id) { closeMenu(); return; }
+    if (!trigger) return;
+    openMenu(row, trigger);
+  }
+
+  function closeMenu(refocus = true): void {
+    if (openMenuId === null) return;
+    openMenuId = null;
+    const trigger = menuTriggerEl;
+    menuTriggerEl = null;
+    if (refocus && trigger && typeof trigger.focus === 'function') trigger.focus();
+  }
+
+  function onMenuKeydown(event: KeyboardEvent): void {
+    if (event.key === 'Escape') {
+      event.stopPropagation();
+      closeMenu();
+      return;
+    }
+    // Arrow navigation between the two actions.
+    if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && menuEl) {
+      event.preventDefault();
+      const focusables = Array.from(menuEl.querySelectorAll<HTMLElement>('button[role="menuitem"]'));
+      if (focusables.length === 0) return;
+      const index = focusables.indexOf(document.activeElement as HTMLElement);
+      const next = event.key === 'ArrowDown' ? (index + 1 + focusables.length) % focusables.length : (index - 1 + focusables.length) % focusables.length;
+      focusables[next].focus();
+    }
+  }
+
+  // Global listeners live exactly as long as the menu is open.
+  $effect(() => {
+    if (openMenuId === null || typeof document === 'undefined') return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (menuEl?.contains(target)) return;          // clicks inside the menu are actions
+      if (menuTriggerEl?.contains(target)) return;   // the trigger handles its own toggle
+      closeMenu(false);
+    };
+    const onKeydown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeMenu();
+    };
+    const onReposition = () => positionMenu();
+    // Capture-phase scroll: scroll events do not bubble, and the list/grid
+    // containers scroll independently of the window.
+    document.addEventListener('pointerdown', onPointerDown, true);
+    document.addEventListener('keydown', onKeydown, true);
+    window.addEventListener('scroll', onReposition, { capture: true, passive: true });
+    window.addEventListener('resize', onReposition);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown, true);
+      document.removeEventListener('keydown', onKeydown, true);
+      window.removeEventListener('scroll', onReposition, { capture: true });
+      window.removeEventListener('resize', onReposition);
+    };
+  });
 
   // --- Debounce for search ---
   let searchDebounce: ReturnType<typeof setTimeout> | null = null;
@@ -152,13 +285,9 @@
     }
   });
 
-  $effect(() => {
-    if (openMenuId) {
-      const handler = () => { openMenuId = null; };
-      window.addEventListener('click', handler);
-      return () => window.removeEventListener('click', handler);
-    }
-  });
+  // (The legacy close-on-window-click effect was removed with Task 3 —
+  // the portaled menu owns its lifecycle via the capture-phase
+  // pointerdown + Escape + scroll listeners declared below.)
 
   // --- Load list with filters + pagination ---
   async function loadList(reset: boolean = false) {
@@ -167,6 +296,10 @@
       items = [];
       loading = true;
       error = null;
+      // Task 3: the list is about to change — an open menu would anchor to
+      // an unmounted trigger (the derived row lookup would clear it, but
+      // close it eagerly for deterministic focus handling).
+      closeMenu(false);
     } else {
       loadingMore = true;
     }
@@ -325,6 +458,9 @@
 
   function toggleView(mode: 'grid' | 'list') {
     viewMode = mode;
+    // Task 3: the trigger is unmounted by the view switch — close the
+    // floating menu instead of leaving it anchored to a removed element.
+    closeMenu(false);
     try { if (typeof localStorage !== 'undefined') localStorage.setItem('mav-library-view', mode); } catch { /* ignore */ }
   }
 </script>
@@ -368,15 +504,9 @@
             {:else}
               <div class="grid-poster-fallback">{#if row.contentType === 'movie'}<Film size={24} />{:else if row.contentType === 'anime'}<Sparkles size={24} />{:else}<Tv size={24} />{/if}</div>
             {/if}
-            <div class="grid-menu-btn" onclick={(e) => { e.stopPropagation(); openMenuId = openMenuId === row.id ? null : row.id; }}>
+            <button type="button" class="grid-menu-btn" onclick={(e) => toggleMenu(row, e)} aria-label="Actions" aria-haspopup="menu" aria-expanded={openMenuId === row.id}>
               <MoreVertical size={14} />
-            </div>
-            {#if openMenuId === row.id}
-              <div class="menu-dropdown" role="menu" onclick={(e) => e.stopPropagation()}>
-                <button type="button" class="menu-item" role="menuitem" onclick={() => { openMenuId = null; openUpdateWizard(row); }}><Link2 size={14} /> Update link</button>
-                <button type="button" class="menu-item menu-item-danger" role="menuitem" onclick={() => { openMenuId = null; deleteTarget = row; }}><Trash2 size={14} /> Delete</button>
-              </div>
-            {/if}
+            </button>
           </div>
           <div class="grid-info">
             <div class="grid-title">{row.title}</div>
@@ -408,13 +538,7 @@
             </div>
           </div>
           <div class="media-actions">
-            <button type="button" class="menu-trigger" onclick={(e) => { e.stopPropagation(); openMenuId = openMenuId === row.id ? null : row.id; }} aria-label="Actions" aria-expanded={openMenuId === row.id}><MoreVertical size={16} /></button>
-            {#if openMenuId === row.id}
-              <div class="menu-dropdown" role="menu" onclick={(e) => e.stopPropagation()}>
-                <button type="button" class="menu-item" role="menuitem" onclick={() => { openMenuId = null; openUpdateWizard(row); }}><Link2 size={14} /> Update link</button>
-                <button type="button" class="menu-item menu-item-danger" role="menuitem" onclick={() => { openMenuId = null; deleteTarget = row; }}><Trash2 size={14} /> Delete</button>
-              </div>
-            {/if}
+            <button type="button" class="menu-trigger" onclick={(e) => toggleMenu(row, e)} aria-label="Actions" aria-haspopup="menu" aria-expanded={openMenuId === row.id}><MoreVertical size={16} /></button>
           </div>
         </div>
       {/each}
@@ -427,6 +551,27 @@
   {/if}
   {#if !loading && !loadingMore && !hasMore && items.length > 0}
     <div class="end-of-list">End of list</div>
+  {/if}
+
+  <!-- Task 3 — PORTAL action menu (grid + list share ONE instance).
+       Portaled to document.body so NO ancestor overflow (the grid
+       card's overflow:hidden, the list scroll container) can clip it;
+       position:fixed + viewport clamping keep it fully visible near the
+       bottom/right edges and on narrow mobile widths. -->
+  {#if openMenuRow}
+    <div
+      bind:this={menuEl}
+      use:portal
+      class="menu-dropdown floating"
+      role="menu"
+      tabindex="-1"
+      aria-label="Actions for {openMenuRow.title}"
+      style="top:{menuPos.top}px;left:{menuPos.left}px"
+      onkeydown={onMenuKeydown}
+    >
+      <button type="button" class="menu-item" role="menuitem" onclick={() => { const row = openMenuRow; closeMenu(false); if (row) openUpdateWizard(row); }}><Link2 size={14} /> Update link</button>
+      <button type="button" class="menu-item menu-item-danger" role="menuitem" onclick={() => { const row = openMenuRow; closeMenu(false); if (row) deleteTarget = row; }}><Trash2 size={14} /> Delete</button>
+    </div>
   {/if}
 </section>
 
@@ -581,18 +726,26 @@
   .grid-poster { position: relative; width: 100%; aspect-ratio: 2/3; background: var(--a2-surface-4); display: grid; place-items: center; }
   .grid-poster img { width: 100%; height: 100%; object-fit: cover; }
   .grid-poster-fallback { color: var(--a2-text-dim); }
-  .grid-menu-btn { position: absolute; top: 4px; right: 4px; width: 28px; height: 28px; display: grid; place-items: center; border-radius: var(--a2-radius-xs); background: rgba(0,0,0,0.6); color: var(--a2-text); cursor: pointer; opacity: 0; transition: opacity 140ms ease; }
-  .grid-card:hover .grid-menu-btn { opacity: 1; }
+  .grid-menu-btn { position: absolute; top: 4px; right: 4px; width: 28px; height: 28px; display: grid; place-items: center; padding: 0; border: 0; border-radius: var(--a2-radius-xs); background: rgba(0,0,0,0.6); color: var(--a2-text); cursor: pointer; opacity: 0; transition: opacity 140ms ease; }
+  .grid-card:hover .grid-menu-btn, .grid-menu-btn:focus-visible, .grid-menu-btn[aria-expanded="true"] { opacity: 1; }
+  .grid-menu-btn:focus-visible { outline: 2px solid var(--a2-accent, #9b87f5); outline-offset: 1px; }
   .grid-info { padding: 8px; }
   .grid-title { font-size: var(--a2-text-xs); font-weight: 600; color: var(--a2-text-bright); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .grid-meta { display: flex; gap: 4px; align-items: center; margin-top: 4px; flex-wrap: wrap; }
 
   /* Menu */
+  /* Task 3: the dropdown is PORTALED to document.body (see the script
+     block). The legacy absolute rules below are kept for the `.floating`
+     surface reuse; the floating variant overrides the anchoring with
+     position:fixed + inline top/left and lifts the z-index above the
+     wizard/confirm overlays (90/91) so an open menu is never buried. */
   .media-actions { position: relative; flex-shrink: 0; }
   .menu-trigger { display: grid; place-items: center; width: 32px; height: 32px; border: 0; border-radius: var(--a2-radius-sm); background: transparent; color: var(--a2-text-muted); cursor: pointer; }
   .menu-trigger:hover { background: var(--a2-surface-3); color: var(--a2-text); }
   .menu-dropdown { position: absolute; right: 0; top: 100%; z-index: 10; min-width: 160px; background: var(--a2-surface-3); border: 1px solid var(--a2-border-strong); border-radius: var(--a2-radius-sm); box-shadow: 0 8px 24px rgba(0,0,0,0.3); overflow: hidden; }
+  .menu-dropdown.floating { position: fixed; right: auto; top: 0; left: 0; z-index: 1000; min-width: 176px; padding: 4px 0; }
   .menu-item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 10px 12px; border: 0; background: transparent; color: var(--a2-text); font-size: var(--a2-text-xs); font-weight: 600; cursor: pointer; text-align: left; }
+  .menu-item:focus-visible { outline: 2px solid var(--a2-accent, #9b87f5); outline-offset: -2px; }
   .menu-item:hover { background: var(--a2-surface-4); }
   .menu-item-danger { color: var(--a2-red); }
   .menu-item-danger:hover { background: var(--a2-red-soft); }

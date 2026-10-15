@@ -52,6 +52,20 @@ export function isCloudHistoryEvent(value: unknown): value is CloudHistoryEvent 
 function snapshotFromJson(value: Json): ContentSnapshot {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return { title: 'Untitled', poster: '' };
   const record = value as Record<string, Json | undefined>;
+  // Task 2 (2026-10-15) — PRESERVE THE ANIME IDENTITY across the cloud
+  // round-trip. The write side persists the FULL snapshot JSON (including
+  // the isAnime + animeFormat discriminator written by the watch page and
+  // favorite surfaces); this reader previously whitelisted only the
+  // presentation fields and SILENTLY DROPPED both flags on every cloud
+  // read (/api/account/sync GET, favorites, history). The flag-less
+  // records were then merged (mergeProgress/mergeFavorites) and written
+  // back to IndexedDB, so Continue Watching / My List lost the
+  // /anime-movie/ identity and — for records the merge had re-keyed to
+  // the legacy 'anime' contentType — the presenter's conservative
+  // fallback classified the title as an anime SERIES (the reported
+  // "Infinity Castle becomes /anime-series/... 404").
+  const isAnime = typeof record.isAnime === 'boolean' ? record.isAnime : undefined;
+  const animeFormat = record.animeFormat === 'movie' || record.animeFormat === 'series' ? record.animeFormat : undefined;
   return {
     title: typeof record.title === 'string' ? record.title : 'Untitled',
     poster: typeof record.poster === 'string' ? record.poster : '',
@@ -61,6 +75,8 @@ function snapshotFromJson(value: Json): ContentSnapshot {
     rating: typeof record.rating === 'number' ? record.rating : undefined,
     genres: Array.isArray(record.genres) ? record.genres.filter((entry): entry is string => typeof entry === 'string') : undefined,
     description: typeof record.description === 'string' ? record.description : undefined,
+    isAnime,
+    animeFormat,
   };
 }
 

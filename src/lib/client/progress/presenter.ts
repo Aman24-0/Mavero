@@ -31,8 +31,18 @@ function snapshotClassification(
     return { type: format === 'movie' ? 'movie' : 'anime', isAnime: true, animeFormat: format };
   }
   if (record.contentType === 'anime') {
-    // Legacy record (no snapshot flag): an 'anime' contentType is by
-    // definition an anime series in Mavero's internal identity contract.
+    // Legacy record (no snapshot flag). Deterministic compatibility rule
+    // based on TRUSTED EXISTING DATA (Task 2): the contentId PREFIX is
+    // written by this app and records the TMDB endpoint family — a
+    // 'movie-1311031' id IS a TMDB movie row. A legacy 'anime'-contentType
+    // record carrying the movie prefix is therefore an anime MOVIE (the
+    // historical merge re-keyed anime movies to contentType 'anime' while
+    // keeping the movie contentId); every other legacy 'anime' record is
+    // an anime series (the internal 'anime' contentType was historically
+    // series-only). We never GUESS anime from genre names.
+    if (record.contentId.startsWith('movie-')) {
+      return { type: 'movie', isAnime: true, animeFormat: 'movie' };
+    }
     return { type: 'anime', isAnime: true, animeFormat: 'series' };
   }
   return { type: record.contentType, isAnime: false, animeFormat: undefined };

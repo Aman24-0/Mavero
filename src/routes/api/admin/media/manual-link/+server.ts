@@ -43,6 +43,7 @@ import { requireAdmin } from '$lib/server/streaming/admin-auth';
 import { createSupabaseAdminClient } from '$lib/server/supabase/admin';
 import { NO_STORE } from '$lib/server/http/cache-headers';
 import { CanonicalMediaService } from '$lib/server/hosting/media/service';
+import { resolveMediaItemId } from '$lib/server/hosting/media/manual-link-identity';
 import { getDetail } from '$lib/server/content/service';
 import type { ContentType } from '$lib/server/content/types';
 import { UploadService } from '$lib/server/hosting/upload/service';
@@ -199,42 +200,11 @@ function validateReference(provider: string, reference: string): string | null {
   return null;
 }
 
-// Resolve the canonical media_item UUID, branching on content_type so
-// anime rows are stored with content_type='anime' (not 'series').
-// TMDB itself does not distinguish anime as a separate type, so the
-// upstream `getDetail('series', tmdbId)` call is correct for anime too —
-// only the CanonicalMediaService.ensure* branch differs.
-async function resolveMediaItemId(
-  mediaService: CanonicalMediaService,
-  args: { contentType: string; tmdbId: string; title: string; year: number | null; seasonNum: number | null; episodeNum: number | null; episodeTitle?: string | null; posterPath?: string | null; backdropPath?: string | null },
-): Promise<string> {
-  const { contentType, tmdbId, title, year, seasonNum, episodeNum, episodeTitle, posterPath, backdropPath } = args;
-
-  // Validate season/episode as integers BEFORE calling ensure*, so
-  // NaN strings don't surface as a confusing INVALID_SEASON error.
-  const hasEpisode =
-    seasonNum != null && Number.isInteger(seasonNum) &&
-    episodeNum != null && Number.isInteger(episodeNum);
-
-  if (contentType === 'movie') {
-    return (await mediaService.ensureMovie({ tmdbId, title, year, posterPath, backdropPath })).mediaItemId;
-  }
-  if (contentType === 'anime') {
-    if (hasEpisode) {
-      return (await mediaService.ensureAnimeEpisode({
-        seriesTmdbId: tmdbId, season: seasonNum as number, episode: episodeNum as number, seriesTitle: title, episodeTitle: episodeTitle ?? null,
-      })).mediaItemId;
-    }
-    return (await mediaService.ensureAnime({ tmdbId, title, year, posterPath, backdropPath })).mediaItemId;
-  }
-  // contentType === 'series'
-  if (hasEpisode) {
-    return (await mediaService.ensureEpisode({
-      seriesTmdbId: tmdbId, season: seasonNum as number, episode: episodeNum as number, seriesTitle: title, episodeTitle: episodeTitle ?? null,
-    })).mediaItemId;
-  }
-  return (await mediaService.ensureSeries({ tmdbId, title, year, posterPath, backdropPath })).mediaItemId;
-}
+// Resolve the canonical media_item UUID — the orchestrator lives in
+// src/lib/server/hosting/media/manual-link-identity.ts (shared + unit
+// tested). Task 1: it guarantees the PARENT series/anime row first
+// (parent-ensure-first) so first-time episode saves cannot hit the
+// service's PARENT_NOT_FOUND contract.
 
 export const POST: RequestHandler = async ({ request, locals }) => {
   const { user } = await requireAdmin(locals, { redirectTo: '/admin' });

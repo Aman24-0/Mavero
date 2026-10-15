@@ -406,8 +406,11 @@ const meta = (ua: string, hints?: Parameters<typeof parseDeviceMetadata>[1]) => 
   const firefox = meta(WIN_FIREFOX_UA);
   ok(firefox.deviceType === 'desktop' && firefox.browser === 'Firefox', 'B16a: desktop Firefox detected');
 
+  // PIN UPDATED 2026-10-15 (Task 4): non-empty unrecognized UAs are now
+  // 'Unrecognized client' (honest distinction from the missing-UA label);
+  // deviceType/browser expectations unchanged.
   const unknown = meta('some-weird-client/1.0');
-  ok(unknown.deviceType === 'unknown' && unknown.deviceName === 'Unknown device' && unknown.browser === null, 'B16b: unknown UA → unknown/null browser');
+  ok(unknown.deviceType === 'unknown' && unknown.deviceName === 'Unrecognized client' && unknown.browser === null, 'B16b: unknown UA → unknown/null browser');
 
   // No hardcoded fallback: same parser, different inputs → different names.
   ok(androidChrome.deviceName !== winChrome.deviceName && winChrome.deviceName !== macSafari.deviceName, 'B: device names derive from the UA (no hardcoded single label)');

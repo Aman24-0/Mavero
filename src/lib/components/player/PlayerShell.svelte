@@ -1,14 +1,14 @@
 <script lang="ts">
   import { browser } from '$app/environment';
   import { onDestroy, onMount, tick } from 'svelte';
-  import { AlertTriangle, ArrowLeft, Check, LockOpen, Maximize2, Minimize2, RotateCcw, RotateCcwSquare, RotateCwSquare, Settings2, Sun, Volume2, X } from 'lucide-svelte';
+  import { AlertTriangle, ArrowLeft, Check, Loader2, LockOpen, Maximize2, Minimize2, RotateCcw, RotateCcwSquare, RotateCwSquare, Settings2, Sun, Volume2, X } from 'lucide-svelte';
   // Task 13: safe source icon renderer + centralized badge labels for the
   // source selector (presentation metadata from the public streaming config).
   import SourceIcon from '$lib/components/source/SourceIcon.svelte';
   import { sourceBadgeLabel } from '$lib/shared/source-presentation';
   import PlayerControls from './PlayerControls.svelte';
   import PlayerViewport from './PlayerViewport.svelte';
-  import type { PlayerContentContext, PlayerEpisode, PlayerEpisodeTarget, PlayerInternalQualityOption, PlayerPlaybackState, PlayerProgressEvent, PlayerQualityOption, PlayerSource, PlayerSourceOption } from '$lib/shared/player';
+  import type { PlayerContentContext, PlayerEpisode, PlayerEpisodeTarget, PlayerInternalQualityOption, PlayerPlaybackState, PlayerProgressEvent, PlayerQualityOption, PlayerSeasonOption, PlayerSeasonView, PlayerSource, PlayerSourceOption } from '$lib/shared/player';
   import { PLAYER_AUTO_QUALITY_ID } from '$lib/shared/player';
   import { sourceIsExpired, isEmbedOriginAllowed, isPlayablePlayerSource } from '$lib/shared/player-guards';
   import { adjacentEpisode, adjacentSource, clampSeek } from '$lib/shared/player-state';
@@ -64,6 +64,16 @@
   export let onProgress: (event: PlayerProgressEvent) => void = () => {};
   export let onSourceChange: (sourceId: string, variant?: string) => void = () => {};
   export let onEpisodeChange: (target: PlayerEpisodeTarget) => void = () => {};
+  // Task 6 (2026-10-15) — in-sheet season switching. OPTIONAL props: when
+  // `seasons` is empty (movies, anime movies, single-season shows) the
+  // sheet renders EXACTLY as before. The watch page owns the data (the
+  // existing /api/content/series/[id]/season/[season] contract) and hands
+  // the selected season's episodes to the sheet via `seasonView` — no new
+  // API, no separate playback state system.
+  export let seasons: PlayerSeasonOption[] = [];
+  export let seasonView: PlayerSeasonView | null = null;
+  export let onSeasonSelect: (season: number) => void = () => {};
+  export let onSeasonRetry: () => void = () => {};
   export let onClose: () => void = () => {};
   // svelte-ignore export_let_unused -- accepted by the watch route for API compatibility; the immersive redesign uses a Back FAB instead of a Details button
   export let onDetails: () => void = () => {};
@@ -2214,10 +2224,59 @@
     setTimeout(() => focusSheetCloseButton('source'), 0);
   }
 
+  // ---------------------------------------------------------------------
+  // Task 6 — IN-SHEET SEASON SWITCHING state.
+  //
+  // sheetViewingSeason === null means "the sheet displays the CURRENT
+  // season" (the `episodes` prop — exactly the pre-Task-6 behavior). A
+  // season chip click sets it to that season and asks the watch page for
+  // its episodes (onSeasonSelect → existing season API contract → the
+  // seasonView prop arrives with loading/ready/error state).
+  // (Legacy-mode reactivity — this component is not in runes mode.)
+  // ---------------------------------------------------------------------
+  let sheetViewingSeason: number | null = null;
+
+  // The season the PLAYER is currently in (from the current episode, or
+  // the loaded episode list when no episode has been selected yet).
+  $: currentSheetSeason = currentEpisode?.season ?? (episodes.length > 0 ? episodes[0].season : null);
+
+  // The season whose episodes the sheet displays right now.
+  $: sheetDisplaySeason = sheetViewingSeason ?? currentSheetSeason;
+
+  // The current season is ALWAYS served by the existing `episodes` prop
+  // (same contract as before Task 6 — zero behavior change when the
+  // viewer has not switched seasons). A switched season displays ONLY the
+  // watch page's loaded view for THAT season — never the previous
+  // season's list mislabeled.
+  $: sheetEpisodes = (sheetDisplaySeason === null || sheetDisplaySeason === currentSheetSeason)
+    ? episodes
+    : (seasonView && seasonView.season === sheetDisplaySeason ? seasonView.episodes : []);
+
+  $: sheetState = (sheetDisplaySeason === null || sheetDisplaySeason === currentSheetSeason)
+    ? 'ready' as const
+    : ((seasonView && seasonView.season === sheetDisplaySeason ? seasonView.state : 'loading') as 'loading' | 'error' | 'ready');
+
+  // After an episode navigation completes (the watch page swaps its
+  // `episodes` prop to the newly selected season), the sheet's switch
+  // state dissolves back into "current season".
+  $: if (sheetViewingSeason !== null && currentSheetSeason === sheetViewingSeason) {
+    sheetViewingSeason = null;
+  }
+
+  function selectSheetSeason(season: number): void {
+    if (season === sheetDisplaySeason) return;
+    sheetViewingSeason = season;
+    onSeasonSelect(season);
+  }
+
   function openEpisodeSheet(trigger: HTMLElement) {
     episodeSheetTrigger = trigger;
     sourceMenuOpen = false; // only one sheet at a time
     episodeMenuOpen = true;
+    // Task 6: the sheet ALWAYS opens on the CURRENT season — the episode
+    // list shows the season the player is already in, with the current
+    // episode highlighted (any previous in-sheet season switch is reset).
+    sheetViewingSeason = null;
     setTimeout(() => focusSheetCloseButton('episode'), 0);
   }
 
@@ -2231,6 +2290,9 @@
 
   function closeEpisodeSheet() {
     episodeMenuOpen = false;
+    // Task 6: drop the in-sheet season switch with the sheet — the next
+    // open starts from the current season again.
+    sheetViewingSeason = null;
     restoreFocus(episodeSheetTrigger);
     episodeSheetTrigger = null;
     // FAB auto-hide: closing a sheet restarts the 5s inactivity countdown.
@@ -2744,8 +2806,53 @@
     <div class="sheet-overlay" role="presentation" onclick={() => closeEpisodeSheet()}></div>
     <div class="episode-sheet" role="dialog" aria-modal="true" aria-label="Episode list">
       <div class="sheet-handle" aria-hidden="true"></div>
-      <div class="sheet-head"><span class="eyebrow">Episodes · {episodes.length}</span><button class="close-button" type="button" aria-label="Close episode list" onclick={() => closeEpisodeSheet()}><X size={17} /></button></div>
-      <div class="sheet-list">{#each episodes as episode}<button class="sheet-option" class:active={currentEpisode?.season === episode.season && currentEpisode?.episode === episode.number} type="button" onclick={() => chooseEpisode({ season: episode.season, episode: episode.number, title: episode.title })}><span class="episode-number">{String(episode.number).padStart(2, '0')}</span><span><strong>{episode.title}</strong><small>S{episode.season} · {episode.runtime ?? 'Episode'}</small></span></button>{/each}</div>
+      <div class="sheet-head"><span class="eyebrow">{sheetDisplaySeason !== null && sheetState !== 'ready' ? `Season ${sheetDisplaySeason}` : `Episodes · ${sheetEpisodes.length}`}</span><button class="close-button" type="button" aria-label="Close episode list" onclick={() => closeEpisodeSheet()}><X size={17} /></button></div>
+
+      <!-- Task 6 — in-sheet SEASON SELECTION row. Rendered only for
+           multi-season episodic content (movies/anime movies never carry
+           season UI — `seasons` stays empty for them). Horizontally
+           scrollable on narrow screens; the active season is visually
+           distinct and aria-current marked. -->
+      {#if seasons.length > 1}
+        <div class="season-row" role="tablist" aria-label="Seasons">
+          {#each seasons as season (season.number)}
+            <button
+              type="button"
+              class="season-chip"
+              class:active={sheetDisplaySeason === season.number}
+              role="tab"
+              aria-selected={sheetDisplaySeason === season.number}
+              aria-current={sheetDisplaySeason === season.number ? 'true' : undefined}
+              onclick={() => selectSheetSeason(season.number)}
+            >
+              Season {season.number}{#if season.episodeCount}<span class="season-count">{season.episodeCount}</span>{/if}
+            </button>
+          {/each}
+        </div>
+      {/if}
+
+      <!-- Episode list with loading / error / empty / ready states (Task 6).
+           The PREVIOUS season's list is never shown under a new season —
+           switching clears the list until the new season's data arrives. -->
+      <div class="sheet-list">
+        {#if sheetState === 'loading'}
+          <div class="sheet-season-state" role="status" aria-live="polite">
+            <Loader2 size={16} class="spin" />
+            <span>Loading season {sheetDisplaySeason} episodes…</span>
+          </div>
+        {:else if sheetState === 'error'}
+          <div class="sheet-season-state">
+            <span>Episodes for season {sheetDisplaySeason} could not be loaded.</span>
+            <button type="button" class="season-retry" onclick={() => onSeasonRetry()}>Retry</button>
+          </div>
+        {:else if sheetEpisodes.length === 0}
+          <div class="sheet-season-state"><span>No episodes available for season {sheetDisplaySeason}.</span></div>
+        {:else}
+          {#each sheetEpisodes as episode (episode.id ?? `${episode.season}-${episode.number}`)}
+            <button class="sheet-option" class:active={currentEpisode?.season === episode.season && currentEpisode?.episode === episode.number} type="button" onclick={() => chooseEpisode({ season: episode.season, episode: episode.number, title: episode.title })}><span class="episode-number">{String(episode.number).padStart(2, '0')}</span><span><strong>{episode.title}</strong><small>S{episode.season} · {episode.runtime ?? 'Episode'}</small></span></button>
+          {/each}
+        {/if}
+      </div>
     </div>
   {/if}
 
@@ -3000,6 +3107,73 @@
   .sheet-head .eyebrow { color: var(--muted); }
   .close-button { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid var(--line); border-radius: var(--radius-sm); color: var(--muted); background: rgba(255,255,255,.04); cursor: pointer; }
   .sheet-list { display: grid; gap: 4px; padding: 0 12px 14px; }
+  /* Task 6 — in-sheet season switching */
+  .season-row {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    padding: 0 12px 10px;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .season-row::-webkit-scrollbar { display: none; }
+  .season-chip {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border: 1px solid var(--line-strong);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--ink);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .season-chip:hover { border-color: var(--accent); }
+  .season-chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .season-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .season-count {
+    display: inline-grid;
+    place-items: center;
+    min-width: 18px;
+    padding: 0 5px;
+    height: 18px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.12);
+    font-size: 10px;
+    font-weight: 700;
+  }
+  .season-chip:not(.active) .season-count { background: rgba(255, 255, 255, 0.08); }
+  .sheet-season-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 28px 12px 30px;
+    color: var(--ink);
+    font-size: 13px;
+    opacity: 0.85;
+    text-align: center;
+  }
+  .sheet-season-state :global(svg.spin) { animation: spin 900ms linear infinite; }
+  .season-retry {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 14px;
+    border: 1px solid var(--line-strong);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--ink);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .season-retry:hover { border-color: var(--accent); }
+  .season-retry:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .sheet-group-label { color: var(--muted); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .54rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; padding: 10px 0 4px; border-top: 1px solid var(--line); margin-top: 6px; }
   .sheet-group-label:first-child { border-top: 0; margin-top: 0; padding-top: 0; }
   .sheet-option { display: flex; align-items: center; gap: 11px; min-height: 52px; border: 1px solid transparent; border-radius: var(--radius-sm); padding: 7px 12px; color: var(--ink-soft); background: transparent; cursor: pointer; text-align: left; }

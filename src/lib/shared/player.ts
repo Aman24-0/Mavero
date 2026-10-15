@@ -226,6 +226,19 @@ export type PlayerEpisodeTarget = {
   title?: string;
 };
 
+// Task 6 (2026-10-15) — in-sheet season switching (PlayerShell episode
+// sheet). These types extend the EXISTING episode data contracts — no new
+// API and no separate playback state system:
+export type PlayerSeasonOption = {
+  number: number;
+  episodeCount?: number;
+};
+export type PlayerSeasonView = {
+  season: number;
+  episodes: PlayerEpisode[];
+  state: 'loading' | 'error' | 'ready';
+};
+
 export type PlayerContentContext = {
   id: string;
   type: 'movie' | 'series' | 'anime';

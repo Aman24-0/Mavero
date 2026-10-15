@@ -4,7 +4,7 @@
   import { page } from '$app/state';
   import { onDestroy, onMount } from 'svelte';
   import PlayerShell from '$lib/components/player/PlayerShell.svelte';
-  import type { PlayerEpisode, PlayerEpisodeTarget, PlayerProgressEvent, PlayerSource, PlayerSourceOption } from '$lib/shared/player';
+  import type { PlayerEpisode, PlayerEpisodeTarget, PlayerProgressEvent, PlayerSeasonOption, PlayerSeasonView, PlayerSource, PlayerSourceOption } from '$lib/shared/player';
   import { resolveSandboxRuntime } from '$lib/shared/sandbox-policy';
   import { controlsPositionFromCapabilities } from '$lib/shared/player-controls-position';
   import { appendReturnTo, navigateBackOr, safeReturnTo } from '$lib/shared/navigation';
@@ -15,6 +15,10 @@
   import type { PlaybackContext } from '$lib/client/progress/types';
   import { PlaybackManager, type ResolutionState } from '$lib/client/player/PlaybackManager';
   import { nextEpisodeTarget } from '$lib/shared/player-state';
+  // Task 6 — in-sheet season switching: the SAME eligibility contract the
+  // detail page's season selector uses (unaired seasons filtered; season 0
+  // specials are already excluded by extractSeasonsData upstream).
+  import { getEligibleSeasons } from '$lib/shared/episode-eligibility';
   import { isSourceBadge, parseSourceBadges } from '$lib/shared/source-presentation';
   import { track as trackAnalytics } from '$lib/client/analytics/dispatcher';
   import { markPlayerMilestone } from '$lib/client/player/player-timing';
@@ -598,6 +602,10 @@
     manager.dispose();
     void writer?.flush();
     writer?.dispose();
+    // Task 6: invalidate any in-flight sheet-season fetch.
+    seasonViewSeq += 1;
+    seasonViewController?.abort();
+    seasonViewController = undefined;
   });
 
   async function setupProgressContext() {
@@ -845,7 +853,10 @@
       currentTime,
       duration: currentDuration,
       completionState: eventType === 'completed' ? 'completed' : 'in_progress',
-      snapshot: { title: item.title, poster: item.poster, backdrop: item.backdrop, year: item.year, runtime: item.runtime, rating: item.rating, genres: item.genres, description: item.description },
+      // Task 2: the history snapshot carries the anime discriminator too —
+      // the analytics/account-history projections must be able to rebuild
+      // the /anime-movie/ identity exactly like the progress snapshot.
+      snapshot: { title: item.title, poster: item.poster, backdrop: item.backdrop, year: item.year, runtime: item.runtime, rating: item.rating, genres: item.genres, description: item.description, isAnime: item.isAnime === true, animeFormat: item.animeFormat },
       occurredAt: Date.now()
     });
   }
@@ -939,10 +950,84 @@
     await goto(`${canonicalWatchHref(routeType, bareId, target.season, target.episode)}${forwardedQuery ? `?${forwardedQuery}` : ''}`, { replaceState: true, keepFocus: true, noScroll: true });
   }
 
+  $: sheetSeasonOptions = getEligibleSeasons(item.seasonsData).map((season) => ({ number: season.number, episodeCount: season.episodeCount }));
+
   function isDetailPath(value: string) {
     // Phase 5: recognize both legacy (/movie/, /series/, /anime/) and
     // modern (/tv-show/, /anime-series/, /anime-movie/) route types.
     return /^\/(movie|series|anime|tv-show|anime-series|anime-movie)\/[^/?#]+(?:[?#].*)?$/.test(value);
+  }
+
+  // ---------------------------------------------------------------------
+  // Task 6 — IN-SHEET SEASON SWITCHING (data side).
+  //
+  // The sheet's season row lists the SAME eligible seasons the detail
+  // page's selector shows (getEligibleSeasons over item.seasonsData —
+  // unaired seasons filtered; season 0 specials never reach here because
+  // extractSeasonsData already skips them). Selecting a season fetches its
+  // episodes through the EXISTING /api/content/series/[id]/season/[season]
+  // contract — no new API, no second playback state system. Results are
+  // cached per season; a fast season switch is guarded by a request
+  // sequence + AbortController so a stale response can never replace the
+  // latest season's list.
+  // (Legacy-mode reactivity — this component is not in runes mode.)
+  // ---------------------------------------------------------------------
+  let seasonView: PlayerSeasonView | null = null;
+  let seasonViewSeq = 0;
+  let seasonViewController: AbortController | undefined;
+  let lastRequestedSheetSeason: number | null = null;
+  const seasonEpisodesCache = new Map<number, PlayerEpisode[]>();
+
+  function mapSeasonEpisodes(episodes: Array<{ id: string; number: number; season: number; title: string; overview?: string; runtime?: string; still?: string }>): PlayerEpisode[] {
+    return episodes.map((episode) => ({
+      id: episode.id,
+      number: episode.number,
+      season: episode.season,
+      title: episode.title ?? `Episode ${episode.number}`,
+      overview: episode.overview,
+      runtime: episode.runtime,
+      still: episode.still,
+    }));
+  }
+
+  async function loadSeasonEpisodes(season: number): Promise<void> {
+    if (!Number.isInteger(season) || season < 1) return;
+    const seq = ++seasonViewSeq;
+    seasonViewController?.abort();
+    const controller = new AbortController();
+    seasonViewController = controller;
+    lastRequestedSheetSeason = season;
+    // Cache-first: a revisited season never re-fetches.
+    const cached = seasonEpisodesCache.get(season);
+    if (cached) {
+      seasonView = { season, episodes: cached, state: 'ready' };
+      return;
+    }
+    // Clear the list while loading — the PREVIOUS season's episodes must
+    // never remain on screen as though they belonged to the new season.
+    seasonView = { season, episodes: [], state: 'loading' };
+    try {
+      const res = await fetch(`/api/content/series/${encodeURIComponent(item.id)}/season/${season}`, { signal: controller.signal });
+      if (seq !== seasonViewSeq || controller.signal.aborted) return; // superseded — silent
+      if (!res.ok) throw new Error('season-load-failed');
+      const payload = await res.json() as { ok?: boolean; season?: { episodes?: unknown } };
+      if (seq !== seasonViewSeq || controller.signal.aborted) return;
+      if (!payload?.ok || !Array.isArray(payload.season?.episodes)) throw new Error('season-load-failed');
+      const episodes = mapSeasonEpisodes(payload.season!.episodes as Parameters<typeof mapSeasonEpisodes>[0]);
+      seasonEpisodesCache.set(season, episodes);
+      seasonView = { season, episodes, state: 'ready' };
+    } catch (err) {
+      if (seq !== seasonViewSeq || controller.signal.aborted) return;
+      seasonView = { season, episodes: [], state: 'error' };
+    }
+  }
+
+  function handleSeasonSelect(season: number): void {
+    void loadSeasonEpisodes(season);
+  }
+
+  function handleSeasonRetry(): void {
+    if (lastRequestedSheetSeason !== null) void loadSeasonEpisodes(lastRequestedSheetSeason);
   }
 
   function closePlayer() {
@@ -1007,4 +1092,4 @@
      progress record (Phase 9 contract — resume correctness), and resolution
      starts the moment the selected source is known. The obsolete red
      full-screen loading screen and its duplicate transitions are removed. -->
-<PlayerShell source={resolvedSource} content={playerContent} initialProgress={resumeTime} sourceOptions={sourceOptions} {episodes} currentEpisode={currentEpisode ? { season: currentEpisode.season, episode: currentEpisode.number, title: currentEpisode.title } : null} resolving={resolutionState === 'resolving'} calibrationMode={calibrationMode} resolutionError={resolutionErrorForwarded} resolutionKind={resolutionState === 'unsupported' ? 'unsupported' : resolutionState === 'unavailable' ? 'unavailable' : resolutionState === 'title-unavailable' ? 'title-unavailable' : 'provider-error'} resolutionSourceName={resolutionSourceName} resolutionMessage={resolutionState === 'resolving' ? resolutionMessage : ''} onProgress={handlePlayerProgress} onSourceChange={handleSourceChange} onEpisodeChange={handleEpisodeChange} onClose={closePlayer} onDetails={openDetails} onIframeReady={(iframe) => manager.setIframe(iframe)} {embedPlaybackEvent} />
+<PlayerShell source={resolvedSource} content={playerContent} initialProgress={resumeTime} sourceOptions={sourceOptions} {episodes} currentEpisode={currentEpisode ? { season: currentEpisode.season, episode: currentEpisode.number, title: currentEpisode.title } : null} resolving={resolutionState === 'resolving'} calibrationMode={calibrationMode} resolutionError={resolutionErrorForwarded} resolutionKind={resolutionState === 'unsupported' ? 'unsupported' : resolutionState === 'unavailable' ? 'unavailable' : resolutionState === 'title-unavailable' ? 'title-unavailable' : 'provider-error'} resolutionSourceName={resolutionSourceName} resolutionMessage={resolutionState === 'resolving' ? resolutionMessage : ''} onProgress={handlePlayerProgress} onSourceChange={handleSourceChange} onEpisodeChange={handleEpisodeChange} onClose={closePlayer} onDetails={openDetails} onIframeReady={(iframe) => manager.setIframe(iframe)} {embedPlaybackEvent} seasons={sheetSeasonOptions} {seasonView} onSeasonSelect={handleSeasonSelect} onSeasonRetry={handleSeasonRetry} />

@@ -97,17 +97,40 @@ export function mergeFavorites(local: FavoriteRecord[], cloud: FavoriteRecord[],
   //   - the winner's key/contentType/snapshot anime flags are re-keyed to
   //     that canonical identity.
   // Unrelated content is never merged: the bare TMDB ID must match.
-  const familyKeyOf = (record: { contentType: FavoriteRecord['contentType']; contentId: string }): string => {
-    const bareId = record.contentId.replace(/^(movie|series|anime)-/, '');
-    const family = record.contentType === 'movie' ? 'movie' : 'series';
-    return `${family}:${bareId}`;
+  //
+  // Task 2 (2026-10-15) — two hardening fixes:
+  //   1. PREFIX-AWARE FAMILY: the contentId PREFIX ('movie-1311031' vs
+  //      'series-30984') records which TMDB endpoint family the row
+  //      belongs to and is trusted existing data written by this app. A
+  //      legacy/poisoned record whose contentType no longer matches its
+  //      prefix (e.g. {contentType:'anime', contentId:'movie-1311031'})
+  //      groups with its PREFIX family, so the movie identity converges
+  //      with the movie family instead of forming a phantom series entry.
+  //   2. MOVIE FAMILY IS NEVER RE-KEYED to contentType 'anime': an anime
+  //      MOVIE is a 'movie' record whose anime identity lives in the
+  //      SNAPSHOT flags (isAnime + animeFormat='movie'). The old rule
+  //      re-keyed any anime-flagged winner to contentType 'anime', which
+  //      produced the hybrid {contentType:'anime', contentId:'movie-*'} —
+  //      after one cloud round-trip (which historically dropped the
+  //      snapshot flags) the presenter's conservative fallback classified
+  //      the movie as an anime SERIES (/anime-series/... → 404).
+  const bareIdOf = (contentId: string): string => contentId.replace(/^(movie|series|anime)-/, '');
+  const familyOf = (contentType: FavoriteRecord['contentType'], contentId: string): 'movie' | 'series' => {
+    // Trusted-prefix rule first (canonical ids written by this app),
+    // then the record's own contentType.
+    if (contentId.startsWith('movie-')) return 'movie';
+    if (contentId.startsWith('series-') || contentId.startsWith('anime-')) return 'series';
+    return contentType === 'movie' ? 'movie' : 'series';
   };
+  const familyKeyOf = (record: { contentType: FavoriteRecord['contentType']; contentId: string }): string =>
+    `${familyOf(record.contentType, record.contentId)}:${bareIdOf(record.contentId)}`;
   const isAnimeIdentity = (record: FavoriteRecord): boolean =>
     record.contentType === 'anime' || record.snapshot?.isAnime === true;
 
   interface FamilyGroup {
     newest: FavoriteRecord;
     isAnime: boolean;
+    family: 'movie' | 'series';
   }
   const byFamily = new Map<string, FamilyGroup>();
   for (const rawRecord of [...local, ...cloud]) {
@@ -115,7 +138,7 @@ export function mergeFavorites(local: FavoriteRecord[], cloud: FavoriteRecord[],
     const familyKey = familyKeyOf(record);
     const existing = byFamily.get(familyKey);
     if (!existing) {
-      byFamily.set(familyKey, { newest: record, isAnime: isAnimeIdentity(record) });
+      byFamily.set(familyKey, { newest: record, isAnime: isAnimeIdentity(record), family: familyOf(record.contentType, record.contentId) });
       continue;
     }
     if (isAnimeIdentity(record)) existing.isAnime = true;
@@ -130,9 +153,7 @@ export function mergeFavorites(local: FavoriteRecord[], cloud: FavoriteRecord[],
   // un-deleted legacy key would resurrect the entry on the next sync.
   const suppressionByFamily = new Map<string, number>();
   for (const deletion of deletions) {
-    const bareId = deletion.contentId.replace(/^(movie|series|anime)-/, '');
-    const family = deletion.contentType === 'movie' ? 'movie' : 'series';
-    const key = `${family}:${bareId}`;
+    const key = `${familyOf(deletion.contentType, deletion.contentId)}:${bareIdOf(deletion.contentId)}`;
     const existing = suppressionByFamily.get(key);
     if (existing === undefined || deletion.deletedAt > existing) suppressionByFamily.set(key, deletion.deletedAt);
   }
@@ -142,14 +163,25 @@ export function mergeFavorites(local: FavoriteRecord[], cloud: FavoriteRecord[],
     const suppressedAt = suppressionByFamily.get(familyKey);
     if (suppressedAt !== undefined && group.newest.updatedAt <= suppressedAt) continue;
     const winner = group.newest;
-    if (group.isAnime && winner.contentType !== 'anime') {
-      // Canonical identity override — the family is anime. The record is
-      // re-keyed so the title exists under exactly ONE identity.
+    if (group.isAnime && winner.contentType !== 'anime' && group.family === 'series') {
+      // SERIES family: canonical identity override — re-key to the 'anime'
+      // identity so the title exists under exactly ONE key.
       merged.push({
         ...winner,
         key: favoriteKey('anime', winner.contentId),
         contentType: 'anime',
         snapshot: { ...winner.snapshot, isAnime: true, animeFormat: winner.snapshot?.animeFormat ?? 'series' },
+      });
+    } else if (group.family === 'movie' && group.isAnime && (winner.contentType !== 'movie' || winner.snapshot?.isAnime !== true)) {
+      // MOVIE family: the anime identity lives in the SNAPSHOT flags — the
+      // contentType stays 'movie' (never re-keyed to 'anime'). Also heals
+      // legacy/poisoned winners ({contentType:'anime', contentId:'movie-*'}
+      // or a missing snapshot flag) back to the canonical movie identity.
+      merged.push({
+        ...winner,
+        key: favoriteKey('movie', winner.contentId),
+        contentType: 'movie',
+        snapshot: { ...winner.snapshot, isAnime: true, animeFormat: 'movie' },
       });
     } else {
       merged.push(winner);
@@ -225,8 +257,17 @@ export function continueWatchingRecords(progress: WatchProgressRecord[], favorit
   // so ONE entry per title with the correct, stable category and the
   // correct latest season/episode resume target.
   const bareIdOf = (contentId: string): string => contentId.replace(/^(movie|series|anime)-/, '');
-  const familyOf = (contentType: WatchProgressRecord['contentType']): 'movie' | 'series' =>
-    contentType === 'movie' ? 'movie' : 'series';
+  // Task 2 — PREFIX-AWARE family (mirrors mergeFavorites): the contentId
+  // prefix is trusted existing data recording the TMDB endpoint family.
+  // A legacy/poisoned record {contentType:'anime', contentId:'movie-*'}
+  // belongs to the MOVIE family (it can never render a phantom series
+  // entry), and a legacy {contentType:'series', contentId:'anime-*'}
+  // record belongs to the series family.
+  const familyOf = (contentType: WatchProgressRecord['contentType'], contentId: string): 'movie' | 'series' => {
+    if (contentId.startsWith('movie-')) return 'movie';
+    if (contentId.startsWith('series-') || contentId.startsWith('anime-')) return 'series';
+    return contentType === 'movie' ? 'movie' : 'series';
+  };
   const recordIsAnime = (record: WatchProgressRecord): boolean =>
     record.snapshot?.isAnime === true || record.contentType === 'anime';
   // Only REAL TMDB ids (numeric) are re-keyed to the canonical prefixed
@@ -245,7 +286,7 @@ export function continueWatchingRecords(progress: WatchProgressRecord[], favorit
   for (const record of progress) {
     if (record.completionState === 'completed') continue;
     const bareId = bareIdOf(record.contentId);
-    const family = familyOf(record.contentType);
+    const family = familyOf(record.contentType, record.contentId);
     const familyKey = `${family}:${bareId}`;
     let entry = families.get(familyKey);
     if (!entry) {
@@ -308,11 +349,11 @@ export function continueWatchingRecords(progress: WatchProgressRecord[], favorit
   // (series the user added to My List as "watching" but never started).
   // Family-aware: a legacy 'series:' favorite for an anime show must not
   // duplicate the family entry already contributed by its progress records.
-  const progressFamilyKeys = new Set(result.map((r) => `${familyOf(r.contentType)}:${bareIdOf(r.contentId)}`));
+  const progressFamilyKeys = new Set(result.map((r) => `${familyOf(r.contentType, r.contentId)}:${bareIdOf(r.contentId)}`));
   const syntheticSeen = new Set<string>();
   for (const fav of favorites) {
     if (normalizeWatchlistStatus(fav.status) !== 'watching') continue;
-    const familyKey = `${familyOf(fav.contentType)}:${bareIdOf(fav.contentId)}`;
+    const familyKey = `${familyOf(fav.contentType, fav.contentId)}:${bareIdOf(fav.contentId)}`;
     if (progressFamilyKeys.has(familyKey)) continue;
     if (syntheticSeen.has(familyKey)) continue; // one entry per title family
     syntheticSeen.add(familyKey);
@@ -320,23 +361,26 @@ export function continueWatchingRecords(progress: WatchProgressRecord[], favorit
     // Non-numeric (fixture) ids: the synthetic record keeps the favorite's
     // own identity verbatim (old passthrough behavior).
     const canonical = isCanonicalId(bareIdOf(fav.contentId));
+    const favFamily = familyOf(fav.contentType, fav.contentId);
     const displayType: 'movie' | 'series' | 'anime' = !canonical
       ? fav.contentType
-      : familyOf(fav.contentType) === 'movie'
+      : favFamily === 'movie'
         ? 'movie'
         : (favIsAnime ? 'anime' : 'series');
     const animeFormat: 'movie' | 'series' | undefined = !canonical
       ? fav.snapshot?.animeFormat
-      : favIsAnime
-        ? (familyOf(fav.contentType) === 'movie' ? 'movie' : 'series')
-        : undefined;
+      : favIsAnime && favFamily === 'movie'
+        ? 'movie'
+        : favIsAnime
+          ? 'series'
+          : undefined;
     // Synthetic record for "watching" with no progress — S1E1 for series.
     result.push({
       key: `${familyKey}:watching`,
       contentType: displayType,
-      contentId: canonical ? `${familyOf(fav.contentType) === 'movie' ? 'movie' : 'series'}-${bareIdOf(fav.contentId)}` : fav.contentId,
-      season: familyOf(fav.contentType) !== 'movie' ? 1 : undefined,
-      episode: familyOf(fav.contentType) !== 'movie' ? 1 : undefined,
+      contentId: canonical ? `${favFamily === 'movie' ? 'movie' : 'series'}-${bareIdOf(fav.contentId)}` : fav.contentId,
+      season: favFamily !== 'movie' ? 1 : undefined,
+      episode: favFamily !== 'movie' ? 1 : undefined,
       currentTime: 0,
       duration: 0,
       completionState: 'in_progress' as const,

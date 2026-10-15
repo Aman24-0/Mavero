@@ -124,15 +124,19 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
   ok(tizen.os === 'Tizen', 'Tizen → Tizen OS');
   ok(tizen.platform === 'Samsung TV', 'Tizen → platform = Samsung TV');
 
-  // Unknown UA fallback
+  // Unknown UA fallback — PIN UPDATED 2026-10-15 (Task 4): a non-empty UA
+  // matching no pattern is now honestly labelled 'Unrecognized client'
+  // (distinct from a MISSING UA, which is a security-relevant signal and
+  // gets 'Unidentified client (no User-Agent)'). Both stay deviceType
+  // 'unknown' — the pin tracks the honest-label fix, not a behavior drop.
   const unknown = parseDeviceMetadata('SomeRandomBot/1.0');
   ok(unknown.deviceType === 'unknown', 'Unknown UA → unknown device type');
-  ok(unknown.deviceName === 'Unknown device', 'Unknown UA → Unknown device name');
+  ok(unknown.deviceName === 'Unrecognized client', 'Unknown UA → Unrecognized client name');
 
   // Empty / null UA
   const empty = parseDeviceMetadata(null);
   ok(empty.deviceType === 'unknown', 'null UA → unknown');
-  ok(empty.deviceName === 'Unknown device', 'null UA → Unknown device');
+  ok(empty.deviceName === 'Unidentified client (no User-Agent)', 'null UA → explicit no-User-Agent label');
 
   ok('3. device metadata parser (9 UA scenarios)');
 }

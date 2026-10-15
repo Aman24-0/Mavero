@@ -1176,3 +1176,140 @@ The audit environment has NO valid credentials: the `.env` publishable key retur
 6. Continue Watching: Demon Slayer appears ONCE with the anime-movie link; Bleach (or any anime series) shows ONE entry with the anime-series link.
 7. Media Library: posters render; one compact toolbar row on mobile; Filter opens a sheet; 20/page pagination; delete removes the Mavero link only.
 8. Add file: search → select → edit form directly; series requires season+episode; Change returns to a fresh search; save persists and the row shows the poster.
+
+---
+
+# Six-task round (2026-10-15) — deep root-cause audit + 4 bug fixes + 2 features
+
+Baseline: commit `3a381f6` (= origin/main at start), clean tree after restoring the
+13 filesystem-deleted upload files (same documented restoration as the previous round).
+
+## Verified root causes (one per bug)
+
+1. **Anime-series Add File save** — `/api/admin/media/manual-link` dispatched
+   episodic anime straight to `ensureAnimeEpisode()`; the service's
+   `ensureAnimeEpisode`/`ensureEpisode` are deliberately single-level and throw
+   `PARENT_NOT_FOUND` ("Call ensureAnime first") when the canonical parent does
+   not exist. Every OTHER caller (missing/link, upload/service) performs an
+   idempotent parent ensure first — manual-link was the only violator, so the
+   FIRST episode link for a brand-new title failed exactly as reported.
+   Fix: shared orchestrator `manual-link-identity.ts` — validate season/episode
+   BEFORE any write, then parent-ensure-first, then episode ensure. Series saves
+   had the same latent defect and are fixed the same way.
+
+2. **Anime-movie identity (Infinity Castle)** — two compounding defects:
+   (a) `mergeFavorites` re-keyed MOVIE-family favorites to `contentType:'anime'`
+   whenever the family was anime-flagged, producing the hybrid
+   `{contentType:'anime', contentId:'movie-1311031'}` — an anime movie stored
+   under the series identity;
+   (b) `snapshotFromJson` (cloud row reader) whitelisted snapshot fields and
+   silently dropped `isAnime`/`animeFormat` on EVERY `/api/account/sync` read,
+   so the hybrid lost `animeFormat:'movie'` after one sync (and even overwrote
+   local IndexedDB with the flag-less record).
+   The presenter's conservative legacy fallback then classified the flag-less
+   'anime' record as an anime SERIES → `/anime-series/1311031` (+ a synthetic
+   S1E1 in Continue Watching) → 404 "Title not found" — the exact report.
+   Fix: (a) movie family is NEVER re-keyed — its anime identity lives in the
+   snapshot flags; poisoned records are healed to the canonical movie identity;
+   (b) the cloud reader preserves + validates both flags; (c) a deterministic,
+   prefix-based compatibility rule (contentId prefix = trusted existing data)
+   in the merges + presenter legacy fallback rescues already-poisoned rows;
+   (d) the watch page's history-event snapshot now carries the flags too.
+   No guessing from genres; legacy 'anime' records with a series id stay series.
+
+3. **Media Library action menu** — `.grid-card{overflow:hidden}` clipped the
+   grid dropdown; the `.media-list{overflow-y:auto}` scroll container clipped
+   the list dropdown near the bottom. Ancestor-overflow clipping cannot be
+   fixed from inside the subtree. Fix: ONE floating menu portaled to
+   document.body (`use:portal`), `position:fixed` from the trigger rect,
+   below-right default with flip-above and 8px viewport-edge clamping,
+   capture-phase outside-pointerdown + Escape (focus restored) + scroll
+   reposition (stale-anchor close), ArrowUp/Down inside the menu, real
+   `<button>` grid trigger with aria-expanded/haspopup. The legacy
+   close-on-window-click effect was removed (superseded).
+
+4. **Unknown device sessions** — `extractSessionId` reads the STABLE Supabase
+   `session_id` JWT claim (no jti/token-hash fallback): 28 distinct rows = 28
+   genuinely distinct Supabase auth sessions, each registered exactly once
+   (last_seen_at = created_at) and never heartbeated again. The
+   `register_device_session` RPC is race-safe (FOR UPDATE + unique-violation
+   catch + no-resurrect) and registration runs only for fully authenticated,
+   non-revoked requests — no code path creates phantom rows. "Unknown device"
+   collapsed two different populations: MISSING User-Agent and UNRECOGNIZED
+   User-Agent. Fix: honest, distinct labels ('Unidentified client (no
+   User-Agent)' / 'Unrecognized client') so future forensics can separate them;
+   two stale pins updated with documented justification. ORIGIN of the 28 rows
+   cannot be established from this environment (no live DB credentials) — the
+   owner-run `scripts/mav_task4_session_forensics_probe.mjs` (READ-ONLY,
+   aggregate-only: counts, per-day buckets, name distribution — never ids,
+   tokens, IPs) provides the evidence trail. NO sessions were revoked, deleted
+   or modified. The UI-count reconciliation: `/api/account/sessions` returns
+   listUserSessions (revoked + >30d-stale filtered); the settings page renders
+   every returned row with no pagination/caching — a 14-vs-28 difference can
+   only be a time or user difference, not a code filter.
+
+5. **Live TV recently played** — new bounded local store
+   (`src/lib/client/live-tv/recent-channels.ts`, `mavero:live-tv-recent-channels`,
+   max 12, ID-only, SSR-safe, best-effort persistence) following the
+   recent-searches convention. The row renders between the player and the
+   toolbar; channels resolve against the ALREADY-LOADED catalogue (removed IDs
+   drop out gracefully; zero per-row network requests); logos-only items with
+   initials fallback + failed-logo fallback; left/right arrows appear only on
+   overflow and scroll ~80% per press; touch scrolling is native with no page
+   horizontal overflow; per-channel remove + two-step Clear all (local history
+   only — playback untouched). Recording happens at engine 'loaded' — failed
+   resolutions never pollute the row; a replay moves the channel to the front.
+   Selecting a recent channel reuses the existing selectChannel lifecycle
+   (abort → destroy → fresh resolve → load; embed-fallback teardown intact).
+
+6. **Episode sheet season switching** — PlayerShell gains optional
+   `seasons`/`seasonView`/`onSeasonSelect`/`onSeasonRetry` props; the sheet
+   renders a horizontally scrollable season chip row ONLY for multi-season
+   content (movies/anime movies never show season UI). The watch page owns the
+   data: season options come from `getEligibleSeasons(item.seasonsData)` (the
+   SAME helper the detail page's selector uses; unaired seasons filtered;
+   season 0 specials are already excluded by extractSeasonsData upstream), and
+   episode lists load through the EXISTING `/api/content/series/[id]/season/
+   [season]` contract (cache-first, request-seq + AbortController stale guard,
+   loading/error+retry/empty states, the previous season's list is cleared
+   while loading). Episode selection reuses chooseEpisode → onEpisodeChange →
+   the canonical path route; the sheet opens on the CURRENT season with the
+   current episode highlighted and dissolves back to "current" after
+   navigation. Legacy-mode reactivity preserved in both touched files
+   (no runes migration).
+
+## Verification
+
+- `pnpm check` → 0 errors (warnings at or below the 23-warning pre-existing
+  baseline; the three NEW warnings introduced during the work were fixed:
+  menu tabindex, menuEl $state, spinner selector).
+- `pnpm build` → success (Netlify adapter + build executor).
+- New suites (all registered in the `pnpm test` chain):
+  - `mav_task1_anime_parent_ensure_test` — 29/29 (REAL CanonicalMediaService +
+    in-memory postgrest emulation; orchestration-order spy)
+  - `mav_task2_anime_movie_identity_test` — 42/42 (row-mapper round-trip,
+    merge healing, exact reported scenario, legacy compat, validators)
+  - `mav_task4_device_session_forensics_test` — 34/34
+  - `mav_task5_live_tv_recent_channels_test` — 25/25
+  - `mav_task6_episode_sheet_seasons_test` — 29/29
+  - `mav_task3_media_menu_dom_qa` (Playwright, real Chromium) — 23/23:
+    grid/list first+last, viewport-edge clamping, scroll-while-open,
+    outside-click/Escape/focus, action targeting (Update link / Delete
+    confirm), mobile 375px (no horizontal overflow, menu fully visible),
+    view-switch close. Harness uses a stubbed-fetch Vite build — no Supabase
+    or admin auth required.
+- Related regression suites re-run green: mav_deep_audit_regression_test 68/68,
+  cross_device_progress_conflict 20/20, progress_duration 45/45,
+  phase2_session_projection 77/77, device_session_registry (125 groups),
+  device_session_registry_v2 (95 checks).
+- Full `pnpm test` chain: see the final report for the complete result.
+
+## Database / production notes
+
+- NO Supabase migration was needed for this round (no schema changes; all
+  fixes are code-level). The poster migration from the previous round
+  (20261015000000) remains owner-applied if not yet applied.
+- Live DB verification (device-session origin, aggregate counts) is
+  owner-side via the read-only probe above; no credentials exist in the
+  audit environment. Nothing was claimed verified beyond this boundary.
+- No Netlify deploy was performed (owner deploys).
