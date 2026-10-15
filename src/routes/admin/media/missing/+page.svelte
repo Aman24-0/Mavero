@@ -64,6 +64,11 @@
     const tmdbId = String(req.tmdb_id ?? '');
     const season = req.season != null ? Number(req.season) : null;
     const episode = req.episode != null ? Number(req.episode) : null;
+    // Task 5 — the server-enriched poster (media_items.poster_path, a
+    // RELATIVE TMDB path persisted by prior links). The wizard's
+    // posterUrl() prefixes it exactly once; when absent the wizard
+    // backfills from the content detail endpoints.
+    const posterPath = typeof req.poster_path === 'string' && req.poster_path.trim() ? req.poster_path.trim() : null;
 
     preselectedMediaItem = {
       title: String(req.title_snapshot ?? '') + (req.episode_title_snapshot ? ` — ${req.episode_title_snapshot}` : ''),
@@ -72,6 +77,7 @@
       season,
       episode,
       episodeTitle: req.episode_title_snapshot ? String(req.episode_title_snapshot) : null,
+      poster: posterPath,
     };
     wizardOpen = true;
   }

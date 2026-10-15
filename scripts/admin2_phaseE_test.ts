@@ -424,7 +424,7 @@ ok('17b. Detached assets correctly distinguished from missing media + untracked 
 // ============================================================
 
 // All management actions record operations
-assert.match(managementService, /recordOperation/, 'ManagementService records operations');
+assert.match(managementService, /recordMediaOperation\(this\.client,/, 'ManagementService records operations via the rehomed audit writer (2026-10-15)');
 assert.match(managementService, /action: 'rename'/, 'rename recorded');
 assert.match(managementService, /action: 'move'/, 'move recorded');
 assert.match(managementService, /action: 'detach'/, 'detach recorded');

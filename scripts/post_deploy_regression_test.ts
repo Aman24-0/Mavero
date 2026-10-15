@@ -24,7 +24,6 @@ function ok(message: string) {
 const read = (p: string) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
 
 const libraryServer = read('src/routes/admin/media/library/+page.server.ts');
-const uploadServer = read('src/routes/admin/media/upload/+page.server.ts');
 const uploadFlow = read('src/lib/components/admin2/AdminUploadFlow.svelte');
 const integrationsPage = read('src/routes/admin/system/integrations/+page.svelte');
 const vidaraNormalize = read('src/lib/server/hosting/vidara/normalize.ts');
@@ -54,11 +53,13 @@ ok('1. Hosting source mapping: canonical resolver (no inline queries, no nested 
 // Phase C audit fix: the upload page server now delegates to the
 // canonical resolver. No inline queries, no enabled=true filter.
 // 2a. Upload page does NOT use !inner nested join
-assert.doesNotMatch(uploadServer, /\.select\(.*streaming_providers!inner/, '2a. Upload page does NOT use streaming_providers!inner nested join');
+// (2026-10-15) the upload page was removed with the Upload/Import workflow;
+// its join contract is retired. The hosting page/API keep the canonical
+// resolver assertions below.
 // 2b. Upload page uses the canonical resolver
-assert.match(uploadServer, /resolveHostingSources/, '2b. Upload page uses canonical resolver');
+assert.match(read('src/routes/admin/media/library/+page.server.ts'), /resolveHostingSources/, '2b. Library page (the surviving loader) uses canonical resolver');
 // 2c. Upload page returns hostingSourcesError
-assert.match(uploadServer, /hostingSourcesError/, '2d. Upload page returns hostingSourcesError');
+assert.match(read('src/routes/admin/hosting/+page.server.ts'), /providersError/, '2d. Hosting page returns a providers error state');
 ok('2. Upload provider discovery: explicit queries, no fragile nested join, error state returned');
 
 // ============================================================

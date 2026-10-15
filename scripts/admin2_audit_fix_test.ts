@@ -9,7 +9,7 @@
  * Run: pnpm exec tsx --tsconfig ./jsconfig.json scripts/admin2_audit_fix_test.ts
  */
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -34,59 +34,31 @@ console.log('\n=== Admin 2.0 Deep Audit Fix — Regression Tests ===\n');
 // ============================================================
 console.log('--- Phase A: Upload State Machine ---');
 
-const uploadService = read('src/lib/server/hosting/upload/service.ts');
 const errorsFile = read('src/lib/server/hosting/errors.ts');
-const statusRoute = read('src/routes/api/admin/media/upload/[id]/status/+server.ts');
-const completeRoute = read('src/routes/api/admin/media/upload/[id]/complete/+server.ts');
-const adminUploadFlow = read('src/lib/components/admin2/AdminUploadFlow.svelte');
+// (2026-10-15) The Upload/Import workflow was REMOVED: the upload service,
+// its status/complete/execute-remote routes, and the AdminUploadFlow entry
+// points no longer exist. The upload-lifecycle FINDINGS (001/002/013/014/
+// 015/016) pinned behaviors of that removed surface and are retired with
+// it. Their surviving invariants are re-pinned below:
+//   - the error model keeps the extended codes (defensive contract),
+//   - no live source imports the removed service.
+const uploadServiceRemoved = !existsSync('src/lib/server/hosting/upload/service.ts');
 
-// FINDING-001: createMediaAsset inspects the full Supabase response
-assert.match(uploadService, /const \{ data: assetRow, error: insertError \}/, 'A1. createMediaAsset destructures error field');
-assert.match(uploadService, /if \(insertError \|\| !assetRow\)/, 'A2. createMediaAsset checks insertError');
-assert.match(uploadService, /throw new HostingProviderError\(code/, 'A3. createMediaAsset throws on insert failure');
-assert.match(uploadService, /DUPLICATE_PROVIDER_ASSET|FK_VIOLATION|CHECK_VIOLATION|ASSET_INSERT_FAILED/, 'A4. createMediaAsset maps DB error codes');
-assert.doesNotMatch(uploadService, /\n    if \(assetRow\) \{\n      const assetId/, 'A5. createMediaAsset no longer has silent-skip if(assetRow) pattern in code');
-ok('FINDING-001: createMediaAsset inspects full Supabase response + throws on insert failure');
-
-// FINDING-002: pollProcessingStatus returns error field
-assert.match(uploadService, /error: \{ code: string; message: string \} \| null/, 'B1. pollProcessingStatus return type includes error field');
-assert.match(uploadService, /code: 'STALE_OPERATION'[\s\S]*?return \{ status: 'failed'[\s\S]*?error \}/, 'B2. STALE_OPERATION path returns error');
-assert.match(uploadService, /code: 'MISSING_ASSET_ID'[\s\S]*?return \{ status: 'failed'[\s\S]*?error \}/, 'B3. MISSING_ASSET_ID path returns error');
-assert.match(uploadService, /const error = procStatus\.status === 'failed'[\s\S]*?code: procStatus\.providerErrorCode/, 'B4. Provider-failed path returns error');
-ok('FINDING-002: pollProcessingStatus returns error code/message on all failure paths');
-
-// Status API spreads error
-assert.match(statusRoute, /json\(\{ ok: true, \.\.\.result \}/, 'B5. Status API spreads result (includes error)');
-ok('FINDING-002: /status API propagates error field');
-
-// AdminUploadFlow displays real error + actionable hints
-assert.match(adminUploadFlow, /json\.error\?\.message \?\? 'Processing failed\.'/, 'B6. AdminUploadFlow reads error.message');
-assert.match(adminUploadFlow, /json\.error\?\.code \?\? 'FAILED'/, 'B7. AdminUploadFlow reads error.code');
-assert.match(adminUploadFlow, /result-hint/, 'B8. AdminUploadFlow has actionable hint for error codes');
-assert.match(adminUploadFlow, /STALE_OPERATION|MISSING_ASSET_ID|DUPLICATE_PROVIDER_ASSET|PROVIDER_PROCESSING/, 'B9. AdminUploadFlow hint covers specific error codes');
-ok('FINDING-002: AdminUploadFlow displays real error + actionable hints');
-
-// FINDING-014: /complete recovers from concurrent STALE_OPERATION
-assert.match(completeRoute, /FINDING-014 fix[\s\S]*?STALE_OPERATION/, 'C1. Complete route has FINDING-014 recovery');
-assert.match(completeRoute, /operation\.status === 'failed' && operation\.error_code === 'STALE_OPERATION'/, 'C2. Complete route checks for failed+STALE_OPERATION');
-assert.match(completeRoute, /updateOperationState\(params\.id, 'uploading'/, 'C3. Complete route transitions back to uploading');
-ok('FINDING-014: /complete recovers from concurrent STALE_OPERATION auto-fail');
-
-// FINDING-013: execute-remote endpoint exists
-const executeRemoteRoute = read('src/routes/api/admin/media/upload/[id]/execute-remote/+server.ts');
-assert.match(executeRemoteRoute, /FINDING-013 fix/, 'D1. Execute-remote route has FINDING-013 comment');
-assert.match(executeRemoteRoute, /uploadService\.executeRemoteUpload\(params\.id\)/, 'D2. Execute-remote calls executeRemoteUpload');
-assert.match(adminUploadFlow, /\/execute-remote/, 'D3. AdminUploadFlow uses execute-remote endpoint');
-assert.doesNotMatch(adminUploadFlow, /reCreateForRetry/, 'D4. reCreateForRetry removed (no more third operation)');
-ok('FINDING-013: execute-remote endpoint eliminates orphan retry operation');
-
-// FINDING-015 + 016: reaper method
-assert.match(uploadService, /reapStaleOperations/, 'E1. Reaper method exists');
-assert.match(uploadService, /STALE_TIMEOUT/, 'E2. Reaper uses STALE_TIMEOUT error code');
-assert.match(uploadService, /30 \* 60 \* 1000/, 'E3. Reaper default threshold is 30 minutes');
-const opsPageServer = read('src/routes/admin/operations/+page.server.ts');
-assert.match(opsPageServer, /redirect\(303/, 'E4. Operations Center page redirects to Hosting Control (reaper moved there)');
-ok('FINDING-015 + 016: reaper auto-fails stale operations (30min threshold)');
+assert.ok(uploadServiceRemoved, 'A-E. upload service removed (upload-lifecycle FINDINGS retired with the workflow)');
+{
+  const liveImporters = [
+    'src/lib/server/hosting/media/manual-link-contract.ts',
+    'src/lib/server/hosting/management/service.ts',
+    'src/routes/api/admin/media/manual-link/+server.ts',
+    'src/routes/api/admin/media/bulk-link/+server.ts',
+    'src/routes/api/admin/media/bulk-unlink/+server.ts',
+    'src/routes/admin/hosting/+page.server.ts',
+  ];
+  for (const file of liveImporters) {
+    assert.doesNotMatch(read(file), /hosting\/upload|\.\.\/upload\/service/, `no upload import: ${file}`);
+  }
+}
+ok('UPLOAD RETIRED: no live source imports the removed upload service (write paths audit via recordMediaOperation)');
 
 // Error codes extended
 assert.match(errorsFile, /STALE_OPERATION[\s\S]*MISSING_ASSET_ID[\s\S]*DUPLICATE_PROVIDER_ASSET[\s\S]*FK_VIOLATION[\s\S]*CHECK_VIOLATION[\s\S]*ASSET_INSERT_FAILED/, 'F1. HostingErrorCode extended with upload-lifecycle codes');
@@ -118,7 +90,6 @@ console.log('\n--- Phase C: Canonical Provider Resolver ---');
 const resolver = read('src/lib/server/hosting/provider-resolver.ts');
 const helpers = read('src/lib/shared/hosting-source-helpers.ts');
 const libraryPageServer = read('src/routes/admin/media/library/+page.server.ts');
-const uploadPageServer = read('src/routes/admin/media/upload/+page.server.ts');
 const managementService = read('src/lib/server/hosting/management/service.ts');
 
 // Resolver module exists with the right exports
@@ -137,14 +108,17 @@ assert.match(helpers, /export function providerNameForSource/, 'I3. Shared provi
 assert.match(helpers, /HostingSourceLike/, 'I4. Helpers accept minimal HostingSourceLike shape');
 ok('Shared client-safe helpers created');
 
-// Page servers use the resolver
+// Page servers use the resolver — (2026-10-15) the upload page server was
+// removed with the Upload/Import workflow; the LIBRARY page server is the
+// surviving resolver consumer.
 assert.match(libraryPageServer, /resolveHostingSources/, 'J1. Library page server uses resolver');
-assert.match(uploadPageServer, /resolveHostingSources/, 'J2. Upload page server uses resolver');
+assert.ok(!existsSync('src/routes/admin/media/upload/+page.server.ts'), 'J2. Upload page server removed with the workflow');
 ok('Page servers use canonical resolver');
 
-// FINDING-004: upload page no longer filters by enabled=true (in code, not comments)
-assert.doesNotMatch(uploadPageServer, /\n\s+\.eq\('enabled', true\)/, 'K1. Upload page server has no enabled=true filter in code');
-ok('FINDING-004: upload page server no longer filters by enabled=true');
+// FINDING-004 (enabled=true filter) — the upload page is gone; the resolver
+// itself keeps the no-enabled-filter invariant (H6 above pins it).
+assert.match(resolver, /NEVER filters by.*enabled/, 'K1. Resolver never filters by enabled (surviving invariant)');
+ok('FINDING-004: no enabled=true filter anywhere (resolver contract)');
 
 // FINDING-005: hostingSourcesError surfaced
 assert.match(libraryPageServer, /hostingSourcesError/, 'L1. Library page server surfaces hostingSourcesError');

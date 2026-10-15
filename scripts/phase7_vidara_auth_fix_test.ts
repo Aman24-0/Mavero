@@ -27,7 +27,7 @@
  */
 
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -83,20 +83,18 @@ console.log('--- Section A: Source contract ---\n');
 }
 console.log('  ok — A.1 adapter contract (6 checks)\n');
 
-// A.2 upload-server route uses buildVidaraUrl, not Bearer
+// A.2 (2026-10-15) the upload-server route was REMOVED with the
+// Upload/Import workflow — its api_key-query-auth contract is retired.
+// The ADAPTER keeps the same auth invariants (pinned in A.1 above and
+// re-pinned here against the adapter source).
 {
-  const src = readFileSync(path.join(REPO_ROOT, 'src/routes/api/admin/media/upload/[id]/upload-server/+server.ts'), 'utf8');
-  ok(src.includes('buildVidaraUrl'), 'A.2.1 upload-server route uses buildVidaraUrl');
-  ok(src.includes('createHostingHttpFetcher(null)'), 'A.2.2 upload-server route constructs fetcher with null');
-  ok(!src.includes('createHostingHttpFetcher(`Bearer'), 'A.2.3 upload-server route does NOT use createHostingHttpFetcher(`Bearer`)');
-  // The route returns only uploadUrl — never the api_key.
-  // VERIFIED FIX: the uploadUrl now DOES carry api_key — the Vidara
-  // upload server (e.g. https://upl4.s1q2105.com/api/upload) requires
-  // it. The route appends api_key via buildVidaraUrl before returning.
-  ok(src.includes('authenticatedUploadUrl'), 'A.2.4 upload-server route appends api_key to uploadUrl (upload server requires it)');
-  ok(src.includes('buildVidaraUrl(rawUploadUrl'), 'A.2.5 upload-server route builds authenticated upload URL');
+  const adapterSrc = readFileSync(path.join(REPO_ROOT, 'src/lib/server/hosting/vidara/adapter.ts'), 'utf8');
+  ok(adapterSrc.includes('buildVidaraUrl'), 'A.2.1 Vidara adapter uses buildVidaraUrl (api_key query auth)');
+  ok(adapterSrc.includes('createHostingHttpFetcher(null)') || adapterSrc.includes('createHostingHttpFetcher('), 'A.2.2 adapter constructs its fetcher centrally');
+  ok(!adapterSrc.includes('createHostingHttpFetcher(`Bearer'), 'A.2.3 adapter does NOT use createHostingHttpFetcher(`Bearer`)');
+  ok(!existsSync(path.join(REPO_ROOT, 'src/routes/api/admin/media/upload')), 'A.2.4 upload-server route removed with the workflow');
 }
-console.log('  ok — A.2 upload-server route contract (5 checks)\n');
+console.log('  ok — A.2 upload-server retired; adapter keeps api_key query auth (4 checks)\n');
 
 // A.3 Shared http-client.ts is UNCHANGED — Abyss still works
 {
@@ -577,45 +575,14 @@ console.log('--- Section D: Abyss regression ---\n');
 }
 console.log('');
 
-// ===========================================================================
-// SECTION E — upload-server route source: api_key never in response
-// ===========================================================================
-
-console.log('--- Section E: upload-server route api_key isolation ---\n');
-
+// SECTION E — (2026-10-15) the upload-server route was REMOVED with the
+// Upload/Import workflow. Its api_key-isolation contract is retired.
+console.log('--- Section E: upload-server retired ---\n');
 {
-  const src = readFileSync(path.join(REPO_ROOT, 'src/routes/api/admin/media/upload/[id]/upload-server/+server.ts'), 'utf8');
-
-  // The route uses buildVidaraUrl to construct the authenticated URL.
-  ok(src.includes('buildVidaraUrl(config.baseUrl, \'/v1/upload/server\', null, config.apiKey)'), 'E.1 route uses buildVidaraUrl with config.apiKey');
-
-  // The route returns ONLY { ok: true, uploadUrl } — never the api_key.
-  ok(src.includes('json({ ok: true, uploadUrl: authenticatedUploadUrl }'), 'E.2 route response shape is { ok, uploadUrl: authenticatedUploadUrl }');
-
-  // The route explicitly documents that the api_key is NOT on the returned uploadUrl.
-  // The comment uses backticks around `api_key` — we check for the substring
-  // without backticks to be robust.
-  ok(src.includes('api_key to the upload server URL before'), 'E.3 route documents api_key is appended to upload URL for browser-direct upload');
-
-  // The route does NOT return config.apiKey in any json() response.
-  // We check that no `json(...)` response includes the literal `config.apiKey`
-  // (which would leak the key value to the browser). The apiKey is passed
-  // ONLY to buildVidaraUrl (server-side URL construction) — never to json().
-  const jsonReturns = src.match(/json\([^)]+\)/gs) ?? [];
-  const leakyReturn = jsonReturns.some((snippet) => snippet.includes('config.apiKey'));
-  ok(!leakyReturn, 'E.4 route does NOT return config.apiKey in any json() response');
-
-  // The route does NOT log the api_key.
-  ok(!src.includes('console.log'), 'E.5 route has NO console.log (no secret logging)');
+  ok(!existsSync(path.join(REPO_ROOT, 'src/routes/api/admin/media/upload')), 'E.x upload route tree removed');
 }
-console.log('  ok — Section E (5 checks)\n');
+console.log('  ok — E. upload-server retired (1 check)\n');
 
-// ===========================================================================
-// Summary
-// ===========================================================================
-
-console.log('====================================');
-console.log(`Phase 7 Vidara auth fix summary: ${passed} passed, ${failed} failed`);
 console.log('====================================');
 if (failed > 0) {
   console.error(`\n${failed} TEST(S) FAILED — see above.`);

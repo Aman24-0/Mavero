@@ -58,7 +58,7 @@ import {
 } from '$lib/server/hosting/media/manual-link-contract';
 import { getDetail } from '$lib/server/content/service';
 import type { ContentType } from '$lib/server/content/types';
-import { UploadService } from '$lib/server/hosting/upload/service';
+import { recordMediaOperation } from '$lib/server/hosting/media/operation-audit';
 
 const NO_STORE_HEADERS = { 'cache-control': NO_STORE } as const;
 
@@ -66,7 +66,6 @@ export const POST: RequestHandler = async ({ request, locals }) => {
   const { user } = await requireAdmin(locals, { redirectTo: '/admin' });
   const adminClient = createSupabaseAdminClient();
   const mediaService = new CanonicalMediaService(adminClient);
-  const uploadService = new UploadService(adminClient, mediaService);
 
   let body: {
     contentType?: string;
@@ -191,7 +190,6 @@ export const POST: RequestHandler = async ({ request, locals }) => {
   try {
     const result = await upsertLinkAsset({
       adminClient,
-      uploadService,
       adminUserId: user.id,
       resolvedMediaItemId,
       providerSourceId,
@@ -228,8 +226,6 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 export const DELETE: RequestHandler = async ({ request, locals }) => {
   const { user } = await requireAdmin(locals, { redirectTo: '/admin' });
   const adminClient = createSupabaseAdminClient();
-  const mediaService = new CanonicalMediaService(adminClient);
-  const uploadService = new UploadService(adminClient, mediaService);
 
   let body: { mediaAssetId?: string };
   try {
@@ -291,7 +287,7 @@ export const DELETE: RequestHandler = async ({ request, locals }) => {
     if (deleteError) {
       // Failure audit: the asset row still exists at this point (the
       // delete failed), so we CAN reference media_asset_id.
-      await uploadService.recordOperation({
+      await recordMediaOperation(adminClient, {
         action: 'unlink', status: 'failed', media_item_id: ex.media_item_id, media_asset_id: mediaAssetId,
         provider_source_id: ex.provider_source_id ?? undefined, admin_user_id: user.id,
         error_code: 'DELETE_FAILED', error_message: deleteError.message,
@@ -310,7 +306,7 @@ export const DELETE: RequestHandler = async ({ request, locals }) => {
     // the canonical media_items row is never deleted here) plus the
     // provider_asset_id in the details JSON, so the audit trail still
     // carries full context.
-    await uploadService.recordOperation({
+    await recordMediaOperation(adminClient, {
       action: 'unlink', status: 'success', media_item_id: ex.media_item_id,
       provider_source_id: ex.provider_source_id ?? undefined, admin_user_id: user.id,
       details: {

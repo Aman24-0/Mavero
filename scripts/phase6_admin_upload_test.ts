@@ -31,6 +31,16 @@ const serviceKey = process.env.PRIVATE_SUPABASE_SERVICE_ROLE_KEY;
 const PAT = process.env.SUPABASE_PAT || '';
 const PROJ_REF = 'whekhqimzrafhsrmswbn';
 
+// (2026-10-15) The Upload/Import workflow was REMOVED. The DB-backed
+// upload state-machine tests below are inert (the pipeline no longer
+// exists); the removal contract itself is verified FIRST, unconditionally,
+// so the suite stays meaningful in every environment.
+import { existsSync } from 'node:fs';
+assert.ok(!existsSync(path.join(REPO_ROOT, 'src/lib/server/hosting/upload/service.ts')), 'upload service removed with the Upload/Import workflow');
+assert.ok(!existsSync(path.join(REPO_ROOT, 'src/routes/api/admin/media/upload')), 'upload API route tree removed');
+assert.ok(!existsSync(path.join(REPO_ROOT, 'src/routes/admin/media/upload')), 'upload page route tree removed');
+console.log('  ok - upload workflow removed (service + routes + pages)');
+
 if (!serviceKey) {
   console.log('SKIPPED: PRIVATE_SUPABASE_SERVICE_ROLE_KEY not set.');
   process.exit(0);

@@ -78,7 +78,11 @@ console.log('\n§1 — Endpoint exists and imports required services');
 ok(/import\s+\{\s*requireAdmin\s*\}/.test(server), '1a. imports requireAdmin');
 ok(/import\s+\{\s*createSupabaseAdminClient\s*\}/.test(server), '1b. imports createSupabaseAdminClient');
 ok(/import\s+\{\s*CanonicalMediaService\s*\}/.test(server), '1c. imports CanonicalMediaService');
-ok(/import\s+\{\s*UploadService\s*\}/.test(server), '1d. imports UploadService (for audit log)');
+// (2026-10-15) the UploadService import was removed with the Upload/Import
+// workflow; the audit writer is now recordMediaOperation from
+// operation-audit.ts, imported and called by BOTH route + contract.
+ok(/import\s+\{\s*recordMediaOperation\s*\}\s+from\s+'\$lib\/server\/hosting\/media\/operation-audit'/.test(server), '1d. imports recordMediaOperation (rehomed audit writer)');
+ok(!/UploadService/.test(server), '1d2. no UploadService reference remains (upload workflow removed)');
 ok(/manual-link-contract/.test(server), '1e. route imports the SHARED manual-link-contract module (one definition, two callers — bulk-link shares it)');
 ok(/upsertLinkAsset/.test(server), '1f. route delegates the asset write to the shared upsertLinkAsset');
 ok(/resolveProviderSource/.test(server), '1g. route delegates provider/source resolution to the shared resolveProviderSource');
@@ -203,7 +207,7 @@ if (deleteHandlerMatch) {
   // MUST be the FIRST property (so the regex doesn't accidentally capture
   // the failure-path call which has action='unlink', status='failed' first,
   // then spans into the success path).
-  const successAuditMatch = deleteHandler.match(/await uploadService\.recordOperation\(\{\s*action:\s*'unlink',\s*status:\s*'success'[\s\S]*?\}\);/);
+  const successAuditMatch = deleteHandler.match(/await recordMediaOperation\(adminClient, \{\s*action:\s*'unlink',\s*status:\s*'success'[\s\S]*?\}\);/);
   ok(successAuditMatch !== null, '7h. success-path unlink recordOperation call found');
   if (successAuditMatch) {
     const call = successAuditMatch[0];

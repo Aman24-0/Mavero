@@ -75,7 +75,6 @@ let resolveProviderSource: (typeof import('../src/lib/server/hosting/media/manua
 let upsertLinkAsset: (typeof import('../src/lib/server/hosting/media/manual-link-contract'))['upsertLinkAsset'];
 let resolveMediaItemId: (typeof import('../src/lib/server/hosting/media/manual-link-identity'))['resolveMediaItemId'];
 let CanonicalMediaService: (typeof import('../src/lib/server/hosting/media/service'))['CanonicalMediaService'];
-let UploadService: (typeof import('../src/lib/server/hosting/upload/service'))['UploadService'];
 let clearCache: (typeof import('../src/lib/server/content/cache'))['clearCache'];
 
 // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
@@ -83,14 +82,16 @@ const modules = await Promise.all([
   import('../src/lib/server/hosting/media/manual-link-contract'),
   import('../src/lib/server/hosting/media/manual-link-identity'),
   import('../src/lib/server/hosting/media/service'),
-  import('../src/lib/server/hosting/upload/service'),
   import('../src/lib/server/content/cache'),
 ]);
 ({ validateReference, normalizeReference, batchEpisodeEligibility, resolveProviderSource, upsertLinkAsset } = modules[0]);
 ({ resolveMediaItemId } = modules[1]);
 ({ CanonicalMediaService } = modules[2]);
-({ UploadService } = modules[3]);
-({ clearCache } = modules[4]);
+({ clearCache } = modules[3]);
+// (2026-10-15) the UploadService was removed with the Upload/Import
+// workflow; the audit writer it provided is rehomed as
+// recordMediaOperation(adminClient, params) — upsertLinkAsset now calls it
+// internally with the same media_operations insert contract.
 
 let passed = 0;
 let failed = 0;
@@ -218,7 +219,6 @@ type BulkOutcome =
 
 let mock: MockSupabase;
 let mediaService: InstanceType<typeof CanonicalMediaService>;
-let uploadService: InstanceType<typeof UploadService>;
 let providerSourceId: string;
 
 // Every link operation recorded across ALL section databases (§G asserts
@@ -233,7 +233,6 @@ async function freshDb(): Promise<void> {
   }
   mock = new MockSupabase();
   mediaService = new CanonicalMediaService(mock as never);
-  uploadService = new UploadService(mock as never, mediaService as never);
   // Provider + source registration (the Phase 4 shape resolveProviderSource reads).
   mock.tables.find((t) => t.name === 'streaming_providers')!.rows.push({ id: 'prov-vidara-1', adapter_id: 'vidara' });
   mock.tables.find((t) => t.name === 'streaming_sources')!.rows.push({ id: 'src-vidara-1', provider_id: 'prov-vidara-1' });
@@ -263,7 +262,7 @@ async function runBulkBatch(items: BulkItem[]): Promise<BulkOutcome[]> {
       seasonNum: SEASON_NUMBER, episodeNum: item.episode, episodeTitle: item.episodeTitle ?? null,
     });
     const upsert = await upsertLinkAsset({
-      adminClient: mock as never, uploadService, adminUserId: 'admin-user-1',
+      adminClient: mock as never, adminUserId: 'admin-user-1',
       resolvedMediaItemId, providerSourceId,
       providerAssetId: normalized.providerAssetId, playbackUrl: normalized.playbackUrl,
       via: 'bulk-link',

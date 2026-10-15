@@ -131,7 +131,8 @@ const e1Files = [
   'src/routes/admin/hosting/+page.server.ts',
   'src/routes/admin/media/library/+page.server.ts',
   'src/routes/admin/media/missing/+page.server.ts',
-  'src/routes/admin/media/upload/+page.server.ts',
+  // (2026-10-15) the upload page server was removed with the Upload/Import
+  // workflow — its createSupabaseAdminClient try/catch contract is retired.
   // NOTE (final remediation): /admin/operations/+page.server.ts is now a pure
   // 303 redirect to /admin/hosting — it intentionally loads no data; the
   // hosting page server (listed above) owns the try/createSupabaseAdminClient

@@ -64,7 +64,12 @@
     children
   }: {
     eyebrow?: string;
-    title: string;
+    /** Page title. When EVERY header input (eyebrow/title/description/
+     *  actions/header) is absent the page header block is skipped
+     *  entirely — Task 2: the Media Library page drops its heading +
+     *  explanatory paragraph so the content region starts at the
+     *  toolbar. The Admin Panel shell header is unaffected. */
+    title?: string;
     accent?: 'cyan' | 'green' | 'amber' | 'red' | 'blue';
     /** Optional snippet rendered under the title. Use `<p slot="description">…</p>`. */
     description?: Snippet;
@@ -80,7 +85,7 @@
 <section class="a2-page">
   {#if header}
     {@render header()}
-  {:else}
+  {:else if eyebrow || title || description || actions}
     <header class="a2-page-header">
       <div class="a2-page-header-left">
         {#if eyebrow}

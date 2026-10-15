@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 
 /**
  * Admin 2.0 — Phase F contracts.
@@ -33,6 +33,7 @@ function ok(message: string) {
 
 const opsTypes = readFileSync(new URL('../src/lib/shared/operations-types.ts', import.meta.url), 'utf8');
 const opsService = readFileSync(new URL('../src/lib/server/hosting/operations/service.ts', import.meta.url), 'utf8');
+const operationAuditFor28b = readFileSync(new URL('../src/lib/server/hosting/media/operation-audit.ts', import.meta.url), 'utf8');
 const jobsApi = readFileSync(new URL('../src/routes/api/admin/operations/jobs/+server.ts', import.meta.url), 'utf8');
 const historyApi = readFileSync(new URL('../src/routes/api/admin/operations/history/+server.ts', import.meta.url), 'utf8');
 const attentionApi = readFileSync(new URL('../src/routes/api/admin/operations/attention/+server.ts', import.meta.url), 'utf8');
@@ -50,7 +51,6 @@ const adminOpsAttention = readFileSync(new URL('../src/lib/components/admin2/Adm
 
 const syncService = readFileSync(new URL('../src/lib/server/hosting/sync/service.ts', import.meta.url), 'utf8');
 const managementService = readFileSync(new URL('../src/lib/server/hosting/management/service.ts', import.meta.url), 'utf8');
-const uploadService = readFileSync(new URL('../src/lib/server/hosting/upload/service.ts', import.meta.url), 'utf8');
 const errorsFile = readFileSync(new URL('../src/lib/server/hosting/errors.ts', import.meta.url), 'utf8');
 const resolverHosted = readFileSync(new URL('../src/lib/server/resolver/mavero-hosted.ts', import.meta.url), 'utf8');
 const adminAppShell = readFileSync(new URL('../src/lib/components/admin2/AdminAppShell.svelte', import.meta.url), 'utf8');
@@ -276,12 +276,12 @@ ok('17b. Retry unavailable message shown for permanent errors');
 // 18. Retry operation
 // ============================================================
 
-assert.match(adminOpsJobs, /retryJob/, 'Jobs UI has retryJob function');
-assert.match(adminOpsJobs, /\/api\/admin\/media\/upload\/.*\/retry/, 'Jobs UI calls retry endpoint');
-assert.match(uploadService, /async retryOperation/, 'UploadService has retryOperation');
-assert.match(uploadService, /parent_operation_id: operationId/, 'retry links to parent_operation_id');
-assert.match(uploadService, /attempt_number: op.attempt_number \+ 1/, 'retry increments attempt_number');
-ok('18a. Retry creates new operation linked to parent, increments attempt');
+// (2026-10-15) the Upload/Import workflow and its retry pipeline were REMOVED:
+// UploadService.retryOperation no longer exists and the retry endpoint the
+// Jobs UI called is gone. Upload-op retries can no longer occur; manual
+// link/unlink remains the durable write path.
+assert.ok(!existsSync('../src/lib/server/hosting/upload/service.ts'), 'upload service removed — retry pipeline retired with it');
+ok('18a. Upload retry pipeline removed with the workflow (no orphaned retry path)');
 
 // ============================================================
 // 19. Reconcile action
@@ -325,7 +325,7 @@ ok('21a. ReconcileAsset records audit event with status transition (Phase F fix)
 
 assert.match(managementService, /action: 'rename'/, 'ManagementService records rename');
 assert.match(managementService, /adapter.renameAsset/, 'rename calls adapter first');
-assert.match(managementService, /recordOperation[\s\S]*?action: 'rename'[\s\S]*?status: 'success'/, 'rename records success after adapter');
+assert.match(managementService, /recordMediaOperation\(this\.client,[\s\S]*?action: 'rename'[\s\S]*?status: 'success'/, 'rename records success after adapter (rehomed audit writer)');
 ok('22a. Rename records audit event AFTER adapter succeeds');
 
 // ============================================================
@@ -417,8 +417,9 @@ assert.ok(!hasProviderMetadataInSelect, 'OperationsService does NOT select provi
 assert.ok(!hasPlaybackUrlInSelect, 'OperationsService does NOT select playback_url');
 ok('28a. OperationsService does NOT expose provider_metadata or playback_url');
 
-// Sync audit details are safe (no credentials)
-assert.match(uploadService, /SECURITY.*never store credentials.*details/, 'upload service documents details safety');
+// Audit details are safe (no credentials) — the contract moved to the
+// rehomed audit writer (same doc, same table).
+assert.match(operationAuditFor28b, /SECURITY.*never store credentials.*details/, 'rehomed audit writer documents details safety');
 ok('28b. Audit details are documented as safe (no credentials)');
 
 // ============================================================

@@ -13,7 +13,7 @@
  */
 
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -49,53 +49,25 @@ console.log('--- 1. SyncService source contract ---');
 console.log('  ok — 1. SyncService contract (10 checks)\n');
 
 // ===========================================================================
-// 2. executeRemoteUpload validates providerAssetId
 // ===========================================================================
-console.log('--- 2. executeRemoteUpload validates providerAssetId ---');
+// 2-4. Upload pipeline contracts — RETIRED (2026-10-15)
+// ===========================================================================
+// The Upload/Import workflow was deliberately removed: executeRemoteUpload,
+// pollProcessingStatus, and the upload recordOperation method no longer
+// exist. The audit-writing capability survives as recordMediaOperation in
+// hosting/media/operation-audit.ts (sections below keep pinning the SYNC /
+// OPERATIONS / RECONCILE surface that remains).
+console.log('--- 2-4. upload pipeline retired with the workflow ---');
 {
-  const src = readFileSync(path.join(REPO_ROOT, 'src/lib/server/hosting/upload/service.ts'), 'utf8');
-  ok(src.includes('CRITICAL FIX (Phase 8): validate that the upload result contains a'), '2.1 documents the Phase 8 fix');
-  ok(src.includes('if (!result.providerAssetId)'), '2.2 validates providerAssetId before createMediaAsset');
-  ok(src.includes('Remote upload succeeded but the provider response did not contain a provider asset ID'), '2.3 clear error message for missing asset ID');
-  ok(src.includes("throw new HostingProviderError('VALIDATION'"), '2.4 throws VALIDATION error');
+  ok(!existsSync(path.join(REPO_ROOT, 'src/lib/server/hosting/upload/service.ts')), '2-4.1 upload service removed');
+  const audit = readFileSync(path.join(REPO_ROOT, 'src/lib/server/hosting/media/operation-audit.ts'), 'utf8');
+  ok(audit.includes('async function recordMediaOperation'), '4.2 audit writer rehomed as recordMediaOperation');
+  ok(audit.includes('Silently absorb'), '4.6 best-effort (does not break main operation)');
+  ok(audit.includes('never store credentials'), '4.7 documents security: no credentials in details');
+  ok(!/password|api_key.*=.*['"][a-f0-9]{20}/i.test(audit), '4.8 NO hardcoded secrets');
 }
-console.log('  ok — 2. executeRemoteUpload validation (4 checks)\n');
+console.log('  ok — 2-4. upload pipeline retired + audit writer rehomed (5 checks)\n');
 
-// ===========================================================================
-// 3. pollProcessingStatus auto-fails stale operations
-// ===========================================================================
-console.log('--- 3. pollProcessingStatus auto-fails stale operations ---');
-{
-  const src = readFileSync(path.join(REPO_ROOT, 'src/lib/server/hosting/upload/service.ts'), 'utf8');
-  ok(src.includes('stale-operation safety'), '3.1 documents stale-operation safety');
-  ok(src.includes('if (!op.media_asset_id)'), '3.2 checks for missing media_asset_id');
-  ok(src.includes('STALE_OPERATION'), '3.3 uses STALE_OPERATION error code');
-  ok(src.includes('MISSING_ASSET_ID'), '3.4 uses MISSING_ASSET_ID error code');
-  ok(src.includes('auto-fail operations with no provider_asset_id'), '3.5 documents auto-fail for missing provider_asset_id');
-  ok(src.includes("status: 'failed'"), '3.6 marks operation as failed');
-  ok(src.includes("mavero_status: 'failed'"), '3.7 marks media_asset as failed');
-}
-console.log('  ok — 3. Stale operation handling (7 checks)\n');
-
-// ===========================================================================
-// 4. recordOperation records audit history
-// ===========================================================================
-console.log('--- 4. recordOperation audit history ---');
-{
-  const src = readFileSync(path.join(REPO_ROOT, 'src/lib/server/hosting/upload/service.ts'), 'utf8');
-  ok(src.includes('Phase 8 — Records a management operation'), '4.1 documents Phase 8 audit recording');
-  ok(src.includes('async recordOperation'), '4.2 recordOperation method exists');
-  ok(src.includes("action: 'ready'"), '4.3 records ready transitions');
-  ok(src.includes("action: 'failed'"), '4.4 records failed transitions');
-  ok(src.includes("'upload_remote'"), '4.5 records remote upload actions');
-  ok(src.includes('Silently absorb'), '4.6 best-effort (does not break main operation)');
-  ok(src.includes('never store credentials'), '4.7 documents security: no credentials in details');
-  ok(!/password|api_key.*=.*['"][a-f0-9]{20}/i.test(src), '4.8 NO hardcoded secrets');
-}
-console.log('  ok — 4. Audit history (8 checks)\n');
-
-// ===========================================================================
-// 5. Sync API route source contract
 // ===========================================================================
 console.log('--- 5. Sync API route contract ---');
 {

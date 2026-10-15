@@ -78,14 +78,23 @@
 
 <script lang="ts">
   import { X, Loader2, AlertCircle, RotateCw, Tv, Sparkles, Film, Link2, Trash2, Layers, CheckCircle2, ChevronLeft, ListPlus } from 'lucide-svelte';
+  import { untrack } from 'svelte';
   import { isEpisodeReleased } from '$lib/shared/episode-eligibility';
   import type { UpdateTarget as WizardUpdateTarget } from './AdminAddFileWizard.svelte';
+  import { dialogOpened, dialogClosed, isTopDialog } from './dialog-stack.svelte';
+
+  const SHEET_DIALOG_ID = 'admin-episode-sheet';
+  const BULK_DELETE_DIALOG_ID = 'admin-episode-sheet-bulk-delete';
 
   // --- Props ---
   let {
     open = $bindable(false),
     parent = null as EpisodeSheetParent | null,
     providers = [] as Array<{ adapterId: string; name: string; sourceId: string }>,
+    /** Task 3: bump after a wizard save / delete confirm that happened
+     * ABOVE this sheet — the sheet reloads its linked ground truth without
+     * closing (selected season + scroll position preserved). */
+    refreshKey = 0 as number,
     onclose = undefined as (() => void) | undefined,
     onsaved = undefined as (() => void) | undefined,
     onaddlink = undefined as ((target: { tmdbId: string; contentType: string; title: string; year?: number | null; season: number; episode: number; episodeTitle?: string | null; posterPath?: string | null }) => void) | undefined,
@@ -118,6 +127,12 @@
   let bulkSubmitting = $state(false);
   let bulkError = $state<string | null>(null);
   let bulkOutcomes = $state<BulkOutcome[] | null>(null);
+
+  // --- Bulk delete mode (Task 4) ---
+  let bulkDeleteConfirmOpen = $state(false);
+  let bulkDeleting = $state(false);
+  let bulkDeleteError = $state<string | null>(null);
+  let bulkDeleteOutcomes = $state<BulkOutcome[] | null>(null);
 
   // --- Focus management ---
   let sheetEl = $state<HTMLElement | null>(null);
@@ -271,8 +286,30 @@
   }
 
   // -------------------------------------------------------------
-  // Open / close lifecycle (focus trap + restore)
+  // Open / close lifecycle (focus trap + restore + dialog stack)
   // -------------------------------------------------------------
+
+  // Task 3 — register this sheet in the shared dialog stack so Escape and
+  // backdrop interactions are owned by the TOPMOST dialog only (the wizard
+  // and the delete confirmation open ABOVE this sheet).
+  $effect(() => {
+    if (open && parent) {
+      dialogOpened(SHEET_DIALOG_ID);
+      return () => dialogClosed(SHEET_DIALOG_ID);
+    }
+  });
+
+  // Task 3 — external refresh signal: a wizard save / delete confirmation
+  // that happened above this sheet bumps refreshKey; reload the linked
+  // ground truth WITHOUT closing (season + scroll position preserved).
+  $effect(() => {
+    const key = refreshKey;
+    if (key > 0) {
+      untrack(() => {
+        if (open && parent) void loadLinked();
+      });
+    }
+  });
 
   $effect(() => {
     if (open && parent) {
@@ -293,6 +330,8 @@
     open = false;
     bulkOpen = false;
     bulkOutcomes = null;
+    bulkDeleteConfirmOpen = false;
+    bulkDeleteOutcomes = null;
     onclose?.();
     // Restore focus to the opener. If the list refreshed while the sheet
     // was open (a save triggered loadList), the captured node is detached —
@@ -311,6 +350,14 @@
 
   function onKeydown(event: KeyboardEvent) {
     if (event.key === 'Escape') {
+      // Task 3 — only the TOPMOST dialog reacts. The bulk-delete
+      // confirmation owns Escape while open; above it, the wizard owns
+      // it (registered later = higher); below, the sheet.
+      if (bulkDeleteConfirmOpen) {
+        onBulkDeleteKeydown(event);
+        return;
+      }
+      if (!isTopDialog(SHEET_DIALOG_ID)) return;
       event.stopPropagation();
       closeSheet();
       return;
@@ -367,6 +414,39 @@
 
   let linkedCountThisSeason = $derived.by(() => episodeViews.filter((v) => v.linked && (v.linked.assets ?? []).some((a) => a.status !== 'deleted')).length);
   let seasonChipLabel = (s: TmdbSeasonInfo) => `Season ${s.number}${s.episodeCount ? `, ${s.episodeCount} episodes` : ''}`;
+
+  // -------------------------------------------------------------
+  // Task 1 — honest header counts.
+  //
+  // linked = episodes with at least one ACTIVE asset (NOT the raw row
+  // count — an unlinked episode keeps its media_items row, so the row
+  // count over-reports after a delete).
+  //
+  // total = the COMPLETE TMDB season metadata sum (the same denominator
+  // the library service serves). Local rows in seasons TMDB does not
+  // know about are added so linked<=total always holds. When the season
+  // metadata is unavailable, no denominator is shown — a total is never
+  // invented.
+  // -------------------------------------------------------------
+  let linkedActiveCount = $derived.by(() =>
+    linkedEpisodes.filter((ep) => (ep.assets ?? []).some((a) => a.status !== 'deleted')).length
+  );
+  let headerTotalEpisodes = $derived.by(() => {
+    if (seasons.length === 0) return null;
+    const metadataSeasons = new Set(seasons.map((s) => s.number));
+    const metadataTotal = seasons.reduce((sum, s) => sum + (s.episodeCount || 0), 0);
+    const localOutsideMetadata = linkedEpisodes.filter(
+      (ep) => ep.season != null && !metadataSeasons.has(ep.season)
+    ).length;
+    return metadataTotal + localOutsideMetadata;
+  });
+  let headerSeasonCount = $derived.by(() => {
+    const seen = new Set<number>(seasons.map((s) => s.number));
+    for (const ep of linkedEpisodes) {
+      if (ep.season != null) seen.add(ep.season);
+    }
+    return seen.size;
+  });
 
   // -------------------------------------------------------------
   // Actions (delegate to the parent list's wizard / delete dialog)
@@ -483,6 +563,85 @@
       bulkSubmitting = false;
     }
   }
+
+  // -------------------------------------------------------------
+  // Bulk delete (Task 4) — remove the season's Mavero associations
+  // -------------------------------------------------------------
+
+  function openBulkDeleteConfirm() {
+    if (!parent || activeSeason == null) return;
+    if (linkedCountThisSeason === 0) return; // nothing linked — disabled state
+    bulkDeleteError = null;
+    bulkDeleteOutcomes = null;
+    bulkDeleteConfirmOpen = true;
+  }
+
+  function closeBulkDeleteConfirm() {
+    if (bulkDeleting) return; // no closing mid-flight
+    bulkDeleteConfirmOpen = false;
+    bulkDeleteError = null;
+    bulkDeleteOutcomes = null;
+  }
+
+  function onBulkDeleteKeydown(event: KeyboardEvent) {
+    if (event.key === 'Escape' && bulkDeleteConfirmOpen) {
+      if (!isTopDialog(BULK_DELETE_DIALOG_ID)) return;
+      event.stopPropagation();
+      closeBulkDeleteConfirm();
+    }
+  }
+  // The single window-level handler routes Escape to the topmost dialog:
+  // the bulk-delete confirmation when it is open, otherwise the sheet.
+
+  $effect(() => {
+    if (bulkDeleteConfirmOpen) {
+      dialogOpened(BULK_DELETE_DIALOG_ID);
+      return () => dialogClosed(BULK_DELETE_DIALOG_ID);
+    }
+  });
+
+  async function submitBulkDelete() {
+    if (!parent || activeSeason == null || bulkDeleting) return;
+    bulkDeleting = true;
+    bulkDeleteError = null;
+    try {
+      const res = await fetch('/api/admin/media/bulk-unlink', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ parentId: parent.id, season: activeSeason }),
+      });
+      const json = await res.json();
+      if (json.ok) {
+        bulkDeleteOutcomes = (json.results ?? []).map((r: any) => ({
+          episode: r.episode,
+          ok: r.ok === true,
+          message: r.message,
+          code: r.code,
+          mode: r.mode,
+        }));
+        await refreshAfterSave();
+      } else {
+        bulkDeleteError = json?.error?.message ?? 'Bulk delete failed.';
+      }
+    } catch (err) {
+      bulkDeleteError = err instanceof Error ? err.message : 'Network error during bulk delete.';
+    } finally {
+      bulkDeleting = false;
+    }
+  }
+
+  function bulkDeleteFailedCount(): number {
+    return (bulkDeleteOutcomes ?? []).filter((o) => !o.ok).length;
+  }
+
+  /** Retry round: only episodes that STILL have associations are
+   * re-processed (the server derives the set; successful ones report
+   * idempotent). */
+  function retryBulkDeleteFailed() {
+    bulkDeleteOutcomes = null;
+    bulkDeleteError = null;
+    void submitBulkDelete();
+  }
 </script>
 
 <svelte:window onkeydown={onKeydown} />
@@ -515,10 +674,15 @@
             <p class="head-progress" aria-live="polite"><Loader2 size={12} class="spinner" /> Loading episodes…</p>
           {:else if linkedError}
             <p class="head-progress head-progress-error">{linkedError}</p>
+          {:else if headerTotalEpisodes != null}
+            <p class="head-progress" aria-live="polite">
+              {linkedActiveCount}/{headerTotalEpisodes} linked
+              · {headerSeasonCount} season{headerSeasonCount === 1 ? '' : 's'}
+            </p>
           {:else}
-            <p class="head-progress">
-              {linkedEpisodes.length} linked episode{linkedEpisodes.length === 1 ? '' : 's'}
-              · {seasons.length} season{seasons.length === 1 ? '' : 's'}
+            <p class="head-progress" aria-live="polite">
+              {linkedActiveCount} linked episode{linkedActiveCount === 1 ? '' : 's'}
+              · {headerSeasonCount} season{headerSeasonCount === 1 ? '' : 's'}
             </p>
           {/if}
         </div>
@@ -557,23 +721,44 @@
         </div>
       {/if}
 
-      <!-- Season toolbar: progress + bulk-link entry (Task 3) -->
+      <!-- Season toolbar: progress + bulk actions (Task 3 + Task 4).
+           The two bulk actions are GROUPED (link + delete) and wrap on
+           narrow viewports. -->
       {#if activeSeason != null && !bulkOpen}
         <div class="season-toolbar">
-          <span class="season-progress">
-            {linkedCountThisSeason}/{seasonEpisodes.length} linked
-            {#if seasonEpisodes.length === 0}{/if}
+          <span class="season-progress" aria-live="polite">
+            {#if seasonLoading}
+              <Loader2 size={11} class="spinner" /> Loading…
+            {:else}
+              {#if seasonEpisodes.length > 0}
+                {linkedCountThisSeason}/{seasonEpisodes.length} linked
+              {:else}
+                {linkedCountThisSeason} linked
+              {/if}
+            {/if}
           </span>
-          <button
-            type="button"
-            class="bulk-btn"
-            onclick={openBulkMode}
-            disabled={seasonLoading || seasonEpisodes.length === 0}
-            aria-label="Bulk link multiple episodes of this season, each with its own provider reference"
-          >
-            <ListPlus size={13} />
-            <span>Bulk link season</span>
-          </button>
+          <div class="bulk-actions" role="group" aria-label="Bulk actions for season {activeSeason}">
+            <button
+              type="button"
+              class="bulk-btn"
+              onclick={openBulkMode}
+              disabled={seasonLoading || seasonEpisodes.length === 0}
+              aria-label="Bulk link multiple episodes of this season, each with its own provider reference"
+            >
+              <ListPlus size={13} />
+              <span>Bulk link season</span>
+            </button>
+            <button
+              type="button"
+              class="bulk-btn bulk-btn-danger"
+              onclick={openBulkDeleteConfirm}
+              disabled={seasonLoading || linkedCountThisSeason === 0}
+              aria-label="Bulk delete the linked episode associations of this season (Mavero associations only; provider files are preserved)"
+            >
+              <Trash2 size={13} />
+              <span>Bulk delete season</span>
+            </button>
+          </div>
         </div>
       {/if}
 
@@ -706,6 +891,72 @@
       </div>
     </div>
   </div>
+
+  <!-- Task 4 — bulk-delete confirmation. Sibling of the sheet overlay,
+       z-index ABOVE the sheet (93) and BELOW the wizard (94): the
+       confirmation renders immediately above the sheet; Escape/Cancel
+       returns to the still-open sheet (season + scroll preserved). -->
+  {#if bulkDeleteConfirmOpen}
+    <div class="bulk-delete-overlay" onclick={() => { if (!bulkDeleting) closeBulkDeleteConfirm(); }} role="presentation">
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <div
+        class="bulk-delete-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="bulk-delete-title"
+        tabindex="-1"
+        onclick={(e) => e.stopPropagation()}
+      >
+        {#if bulkDeleteOutcomes}
+          <h3 id="bulk-delete-title"><Trash2 size={16} /> Bulk delete — results</h3>
+          <p class="bulk-delete-desc">
+            {bulkDeleteOutcomes.filter((o) => o.ok).length} episode{(bulkDeleteOutcomes.filter((o) => o.ok).length === 1 ? '' : 's')} processed
+            · {bulkDeleteFailedCount()} failed
+          </p>
+          <div class="bulk-delete-outcomes" role="status">
+            {#each bulkDeleteOutcomes as outcome (outcome.episode)}
+              <div class="outcome-row" class:outcome-ok={outcome.ok} class:outcome-fail={!outcome.ok}>
+                {#if outcome.ok}
+                  <CheckCircle2 size={13} />
+                  <span>E{outcome.episode} {outcome.mode === 'idempotent' ? 'already unlinked' : 'unlinked'}.</span>
+                {:else}
+                  <AlertCircle size={13} />
+                  <span>E{outcome.episode}: {outcome.message}</span>
+                {/if}
+              </div>
+            {/each}
+          </div>
+          <div class="bulk-delete-actions">
+            {#if bulkDeleteFailedCount() > 0}
+              <button type="button" class="bulk-delete-btn" onclick={retryBulkDeleteFailed} disabled={bulkDeleting}>
+                {#if bulkDeleting}<Loader2 size={12} class="spinner" /> Retrying…{:else}<RotateCw size={12} /> Retry failed{/if}
+              </button>
+            {/if}
+            <button type="button" class="bulk-delete-btn bulk-delete-btn-primary" onclick={closeBulkDeleteConfirm} disabled={bulkDeleting}>Done</button>
+          </div>
+        {:else}
+          <h3 id="bulk-delete-title"><Trash2 size={16} /> Bulk delete — Season {activeSeason}?</h3>
+          <p class="bulk-delete-desc">
+            This removes <strong>{linkedCountThisSeason} linked episode association{linkedCountThisSeason === 1 ? '' : 's'}</strong>
+            from season {activeSeason} of {parent.title}.
+          </p>
+          <p class="bulk-delete-note">
+            <strong>Files are NOT deleted from Vidara or Abyss.</strong> Only Mavero's media associations are
+            removed; the parent series, episode metadata, other seasons, and the provider-hosted files stay intact.
+          </p>
+          {#if bulkDeleteError}
+            <p class="bulk-delete-error" role="alert"><AlertCircle size={13} /> {bulkDeleteError}</p>
+          {/if}
+          <div class="bulk-delete-actions">
+            <button type="button" class="bulk-delete-btn" onclick={closeBulkDeleteConfirm} disabled={bulkDeleting}>Cancel</button>
+            <button type="button" class="bulk-delete-btn bulk-delete-btn-danger" onclick={submitBulkDelete} disabled={bulkDeleting}>
+              {#if bulkDeleting}<Loader2 size={12} class="spinner" /> Deleting…{:else}<Trash2 size={12} /> Delete {linkedCountThisSeason} association{linkedCountThisSeason === 1 ? '' : 's'}{/if}
+            </button>
+          </div>
+        {/if}
+      </div>
+    </div>
+  {/if}
 {/if}
 
 <style>
@@ -756,12 +1007,17 @@
   .season-chip:focus-visible { outline: 2px solid var(--a2-cyan, #0ff); outline-offset: 2px; }
 
   /* Season toolbar */
-  .season-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 16px 8px; flex: 0 0 auto; }
-  .season-progress { font-size: var(--a2-text-xs, 0.7rem); color: var(--a2-text-muted, #888); font-weight: 600; }
+  .season-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 16px 8px; flex: 0 0 auto; flex-wrap: wrap; }
+  .season-progress { font-size: var(--a2-text-xs, 0.7rem); color: var(--a2-text-muted, #888); font-weight: 600; display: inline-flex; align-items: center; gap: 6px; }
+  /* Task 4 — the two bulk actions grouped; wrap to a second row on
+     narrow viewports so both stay usable at mobile width. */
+  .bulk-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
   .bulk-btn { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border: 1px solid rgba(0,200,200,0.35); border-radius: 8px; background: rgba(0,200,200,0.08); color: var(--a2-cyan, #0ff); font-size: var(--a2-text-xs, 0.7rem); font-weight: 700; cursor: pointer; }
   .bulk-btn:hover { background: rgba(0,200,200,0.16); }
   .bulk-btn:disabled { opacity: 0.5; cursor: not-allowed; }
   .bulk-btn:focus-visible { outline: 2px solid var(--a2-cyan, #0ff); outline-offset: 2px; }
+  .bulk-btn-danger { border-color: rgba(229,72,77,0.4); background: rgba(229,72,77,0.08); color: var(--a2-red, #e5484d); }
+  .bulk-btn-danger:hover { background: rgba(229,72,77,0.16); }
 
   /* Body */
   .sheet-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0 0 max(14px, env(safe-area-inset-bottom)); }
@@ -834,6 +1090,25 @@
 
   .spinner { animation: spin 1s linear infinite; }
   @keyframes spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
+
+  /* Task 4 — bulk-delete confirmation: ABOVE the sheet (93), BELOW the
+     wizard (94). Fixed overlay + centered dialog, same visual language
+     as the delete confirmation in AdminMediaList. */
+  .bulk-delete-overlay { position: fixed; inset: 0; z-index: 93; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; }
+  .bulk-delete-dialog { width: min(420px, calc(100vw - 32px)); max-height: calc(100dvh - 64px); overflow-y: auto; background: var(--a2-surface-2, #1a1a1a); border: 1px solid var(--a2-border-strong, #333); border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,0.5); padding: 20px; display: flex; flex-direction: column; gap: 10px; }
+  .bulk-delete-dialog:focus-visible { outline: 2px solid var(--a2-cyan, #0ff); }
+  .bulk-delete-dialog h3 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 0.9rem; color: var(--a2-text-bright, #f0f0f0); }
+  .bulk-delete-desc { margin: 0; font-size: 0.8rem; color: var(--a2-text, #ddd); line-height: 1.5; }
+  .bulk-delete-note { margin: 0; padding: 10px 12px; border-radius: 8px; background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.25); font-size: 0.7rem; color: #d3a95c; line-height: 1.5; }
+  .bulk-delete-error { margin: 0; display: flex; align-items: flex-start; gap: 6px; font-size: 0.72rem; color: var(--a2-red, #e5484d); }
+  .bulk-delete-outcomes { display: flex; flex-direction: column; gap: 4px; max-height: 40dvh; overflow-y: auto; }
+  .bulk-delete-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+  .bulk-delete-btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; border: 1px solid transparent; border-radius: 8px; font-size: 0.78rem; font-weight: 700; cursor: pointer; background: var(--a2-surface-3, #1a1a1a); border-color: var(--a2-border, #222); color: var(--a2-text-muted, #888); }
+  .bulk-delete-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .bulk-delete-btn-danger { background: rgba(220,60,60,0.12); border-color: rgba(220,60,60,0.3); color: #c44; }
+  .bulk-delete-btn-danger:hover:not(:disabled) { background: rgba(220,60,60,0.2); }
+  .bulk-delete-btn-primary { background: rgba(0,200,200,0.12); border-color: rgba(0,200,200,0.3); color: var(--a2-cyan, #0ff); }
+  .bulk-delete-btn:focus-visible { outline: 2px solid var(--a2-cyan, #0ff); outline-offset: 1px; }
 
   @media (max-width: 640px) {
     .episode-sheet { max-height: calc(100dvh - 12px); }

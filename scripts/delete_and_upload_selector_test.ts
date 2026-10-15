@@ -7,7 +7,7 @@
  * Run: pnpm exec tsx --tsconfig ./jsconfig.json scripts/delete_and_upload_selector_test.ts
  */
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -106,18 +106,19 @@ ok('8. UI: loading banner shown while action in progress');
 // ============================================================
 console.log('\n--- Issue 2: Upload Provider Selector ---');
 
-const uploadPageServer = read('src/routes/admin/media/upload/+page.server.ts');
 const registry = read('src/lib/server/hosting/registry.ts');
 
-// 2a. Upload page server filters by getHostingAdapter() != null
-assert.match(uploadPageServer, /getHostingAdapter\(s\.adapterId\)/, '9a. Upload page uses getHostingAdapter() to check hosting capability');
-assert.match(uploadPageServer, /\.filter\(\(s\) => \{[\s\S]*?getHostingAdapter[\s\S]*?return adapter !== null/, '9b. Upload page filters sources where getHostingAdapter() returns non-null');
-assert.match(uploadPageServer, /ISSUE 2 fix/, '9c. Upload page has ISSUE 2 fix comment');
-ok('9. Upload page server: filters by canonical getHostingAdapter() check');
+// 2a. (2026-10-15) the upload page was REMOVED with the Upload/Import
+// workflow — its provider-selector filtering contract is retired. The
+// canonical capability check survives in the hosting registry itself
+// (getHostingAdapter) and the LIBRARY page's resolver wiring.
+assert.ok(!existsSync('src/routes/admin/media/upload/+page.server.ts'), '9a. Upload page removed with the workflow');
+assert.match(registry, /export function getHostingAdapter/, '9b. Hosting registry keeps the canonical getHostingAdapter capability check');
+ok('9. Upload selector retired; canonical getHostingAdapter() check survives in the registry');
 
-// 2b. No hardcoded Vidara/Abyss-only filtering
-assert.doesNotMatch(uploadPageServer, /adapterId === 'vidara' \|\| .* === 'abyss'/, '10a. No hardcoded Vidara/Abyss string matching');
-assert.doesNotMatch(uploadPageServer, /in\('adapter_id', \['vidara', 'abyss'\]\)/, '10b. No hardcoded adapter_id IN list');
+// 2b. No hardcoded Vidara/Abyss-only filtering in the surviving registry.
+assert.doesNotMatch(registry, /adapterId === 'vidara' \|\| .* === 'abyss'/, '10a. No hardcoded Vidara/Abyss string matching');
+assert.doesNotMatch(registry, /in\('adapter_id', \['vidara', 'abyss'\]\)/, '10b. No hardcoded adapter_id IN list');
 ok('10. No hardcoded Vidara/Abyss filtering — future hosting adapters auto-included');
 
 // 2c. Registry is the canonical source of truth
@@ -126,16 +127,17 @@ assert.match(registry, /export function getHostingAdapter/, '11b. Registry expor
 assert.match(registry, /returns null/, '11c. Registry returns null for non-hosting adapters');
 ok('11. Registry is canonical source of truth for hosting adapter distinction');
 
-// 2d. The filter is future-proof: adding a new adapter to the registry
-// automatically makes it appear in the upload selector
-assert.match(uploadPageServer, /new hosting adapter is registered[\s\S]*?automatically appears/, '12a. Upload page comment confirms future-proof behavior');
-assert.match(uploadPageServer, /no hardcoded adapter_id list, no name matching/, '12b. Upload page comment confirms no hardcoded filtering');
-ok('12. Filter is future-proof (new registry entries auto-appear in selector)');
+// 2d. (2026-10-15) the upload page is REMOVED; the future-proof filter
+// contract survives in the registry: any newly registered adapter is
+// served by getHostingAdapter with no adapter-id list anywhere.
+assert.match(registry, /export function getHostingAdapter/, '12a. Registry serves every registered adapter via getHostingAdapter');
+assert.doesNotMatch(registry, /\['vidara',\s*'abyss'\]/, '12b. No hardcoded adapter list in the registry');
+ok('12. Capability check is future-proof (registry-driven, no hardcoded lists)');
 
-// 2e. The filter excludes providers with unconfigured credentials
-// (getHostingAdapter returns null if config is missing)
-assert.match(uploadPageServer, /adapter's credentials are not configured/, '13a. Upload page comment confirms credentials check');
-ok('13. Filter excludes providers with unconfigured credentials (correct — can\'t upload without creds)');
+// 2e. getHostingAdapter returns null when an adapter's credentials are
+// not configured — the registry keeps that behavior.
+assert.match(registry, /return null/, '13a. getHostingAdapter returns null for unconfigured adapters');
+ok('13. Unconfigured adapters resolve to null (registry contract)');
 
 // ============================================================
 // Regression: existing behavior preserved

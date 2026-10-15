@@ -22,7 +22,7 @@
  *  15. Legacy routes still redirect (operations/view=assets)
  */
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { strict as assert } from 'node:assert';
 
 const read = (p: string) => readFileSync(new URL(p, import.meta.url), 'utf8');
@@ -40,7 +40,7 @@ const opsService = read('../src/lib/server/hosting/operations/service.ts');
 const demandService = read('../src/lib/server/hosting/demand/service.ts');
 const managementService = read('../src/lib/server/hosting/management/service.ts');
 const syncService = read('../src/lib/server/hosting/sync/service.ts');
-const uploadService = read('../src/lib/server/hosting/upload/service.ts');
+const operationAuditWriter = read('../src/lib/server/hosting/media/operation-audit.ts');
 const vidaraAdapter = read('../src/lib/server/hosting/vidara/adapter.ts');
 const resolverHosted = read('../src/lib/server/resolver/mavero-hosted.ts');
 
@@ -242,12 +242,13 @@ run('8a. provider sync preserves mavero_status=missing', () => {
 run('8b. reconcile preserves mavero_status=missing', () => {
   assert.match(syncService, /procStatus\.status === 'ready' && ar\.mavero_status !== 'missing' \? 'available' : ar\.mavero_status/);
 });
-run('8c. upload poll guards the available flip with neq(missing)', () => {
-  assert.match(uploadService, /\.neq\('mavero_status', 'missing'\)/);
-});
-run('8d. upload poll skips demand resolution for detached assets', () => {
-  assert.match(uploadService, /mavero_status === 'missing'/);
-  assert.match(uploadService, /Demand stays open/);
+// 8c/8d (2026-10-15): the upload pipeline was REMOVED with the
+// Upload/Import workflow — its 'missing'-guard poll path is retired.
+// The detach-durability invariant that remains lives in the SYNC/
+// RECONCILE paths (8a/8b above) and in the rehomed audit writer.
+run('8c/8d. upload poll path retired with the workflow (guards preserved by sync/reconcile)', () => {
+  assert.ok(!existsSync('../src/lib/server/hosting/upload/service.ts'));
+  assert.match(operationAuditWriter, /recordMediaOperation/);
 });
 
 console.log('--- 9. Vidara delete NOT_FOUND terminal mapping ---');

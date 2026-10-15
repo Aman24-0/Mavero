@@ -30,7 +30,7 @@
  */
 
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -100,21 +100,10 @@ console.log('  ok — A. frontend error handling contract (Phase D — 5 checks)
 console.log('--- Section B: upload-server route source contract ---\n');
 
 {
-  const src = readFileSync(path.join(REPO_ROOT, 'src/routes/api/admin/media/upload/[id]/upload-server/+server.ts'), 'utf8');
-  // CRITICAL FIX: handle null res.json before calling extractVidaraUploadServerUrl.
-  ok(src.includes('if (!res.json)'), 'B.1 handles null res.json (empty/non-JSON Vidara response)');
-  ok(src.includes('INVALID_PROVIDER_RESPONSE'), 'B.2 returns INVALID_PROVIDER_RESPONSE for null json');
-  ok(src.includes('Vidara upload-server response was empty'), 'B.3 error message for empty response');
-  ok(src.includes('Vidara upload-server response was not valid JSON'), 'B.4 error message for non-JSON response');
-  // CRITICAL FIX: return actual HTTP status from error, not always 502.
-  ok(src.includes('return the actual HTTP status code from the error'), 'B.5 documents actual HTTP status return');
-  ok(src.includes('err.httpStatus'), 'B.6 uses err.httpStatus for HTTP response status');
-  ok(src.includes("err.code === 'TIMEOUT' ? 504"), 'B.7 TIMEOUT → 504');
-  ok(src.includes("err.code === 'UNSUPPORTED' || err.code === 'VALIDATION' ? 400"), 'B.8 UNSUPPORTED/VALIDATION → 400');
-  // The error code is always in the JSON body.
-  ok(src.includes('error: { code: err.code, message: err.message }'), 'B.9 error code in JSON body');
-  // The old pattern (always 502) must NOT remain as the sole return.
-  ok(!/return json\(\{ ok: false, error: \{ code: err\.code, message: err\.message \} \}, \{ status: 502/g.test(src), 'B.10 no unconditional 502 return');
+  // (2026-10-15) the upload-server route was REMOVED with the Upload/Import
+  // workflow. Its status-code/error-shape contract is retired; the pattern
+  // lives on in the surviving provider adapters' error handling.
+  ok(!existsSync(path.join(REPO_ROOT, 'src/routes/api/admin/media/upload')), 'B.0 upload route tree removed with the workflow');
 }
 console.log('  ok — B. upload-server route contract (10 checks)\n');
 
@@ -125,22 +114,10 @@ console.log('  ok — B. upload-server route contract (10 checks)\n');
 console.log('--- Section C: proxy-upload route source contract ---\n');
 
 {
-  const src = readFileSync(path.join(REPO_ROOT, 'src/routes/api/admin/media/upload/[id]/proxy-upload/+server.ts'), 'utf8');
-  // CRITICAL FIX: MAX_PROXY_FILE_SIZE lowered from 26 MB to 5 MB.
-  ok(src.includes('5 * 1024 * 1024'), 'C.1 MAX_PROXY_FILE_SIZE = 5 MB (not 26 MB)');
-  // The old value must NOT be used as the actual constant. It may appear
-  // in comments documenting the old value, but not as the live assignment.
-  ok(!/const MAX_PROXY_FILE_SIZE = 26 \* 1024 \* 1024/.test(src), 'C.2 old 26 MB value not used as MAX_PROXY_FILE_SIZE');
-  ok(src.includes('Netlify serverless function body limit'), 'C.3 documents Netlify serverless function body limit');
-  ok(src.includes('free/Starter plan'), 'C.4 documents free/Starter plan limit');
-  ok(src.includes('multipart form-data encoding adds overhead'), 'C.5 documents multipart overhead');
-  // Error message uses the actual limit value.
-  ok(src.includes('MAX_PROXY_FILE_SIZE / 1024 / 1024'), 'C.6 error message uses actual limit value');
-  ok(src.includes('Vidara'), 'C.7 suggests Vidara for larger files');
-  // Old patterns removed.
-  ok(!src.includes('platform constraints'), 'C.8 old "platform constraints" phrasing removed');
+  // (2026-10-15) the proxy-upload route was REMOVED with the Upload/Import
+  // workflow. Its 5 MB body-limit documentation contract is retired with it.
+  ok(!existsSync(path.join(REPO_ROOT, 'src/routes/api/admin/media/upload')), 'C.0 proxy-upload route removed with the workflow');
 }
-console.log('  ok — C. proxy-upload route contract (8 checks)\n');
 
 // ===========================================================================
 // SECTION D — safeJsonParse behavioral tests

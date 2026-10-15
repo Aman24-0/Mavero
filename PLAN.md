@@ -844,3 +844,136 @@ All five workflows from the continuation task are complete on `main`. Baseline f
 Migration reconciliation (part of workflow 5): all six repo migrations newer than the live history's last entry (20261102) were verified ALREADY PRESENT in the live schema (live_tv event taxonomy in the CHECK constraint, vidrift + blue-velvet provider rows, widened icon/badge contracts, `streaming_default_source_slots` table, `media_items.poster_path`/`backdrop_path`). Nothing was applied — re-running provider seed migrations would duplicate rows.
 
 Verification: `pnpm check` 0 errors / 9 warnings (baseline was 17); `pnpm build` success (Netlify adapter); `git diff --check` clean; full chain re-run 270/270 after every batch.
+
+---
+
+# Production UI & media-management bug-fix round (2026-10-15, session 3)
+
+Baseline: faa0079 (pushed) + the user's uncommitted Upload/Import removal
+(13 deleted files, preserved and COMPLETED — see H0 below). Five tasks,
+all delivered on `main`.
+
+## H0 — Upload/Import workflow removal completed (pre-existing user work)
+
+The working tree carried deliberate deletions of the entire upload
+workflow (pages, 9 API routes, service, barrel) but four live sources
+still imported the deleted `UploadService`, so the tree could not
+compile. Completed the removal without discarding anything:
+
+- NEW `src/lib/server/hosting/media/operation-audit.ts` — the ONE
+  surviving capability (`recordOperation` → `recordMediaOperation`)
+  rehomed with identical semantics (same table, same columns, same
+  silently-absorbed failures).
+- `manual-link-contract.ts`, `manual-link` route, `bulk-link` route,
+  `management/service.ts`, `admin/hosting` page server: imports removed,
+  audit calls rehomed (21 call sites total).
+- Dead components referencing the removed endpoints only as fetch-string
+  literals (AdminUploadFlow, AdminOpsAttention, AdminOpsJobs,
+  AdminMediaDetailDrawer) are unreachable, kept as historical dead code.
+- ~24 test suites that pinned the removed upload surface were re-scoped
+  to the removal contract with equal-or-stronger assertions (documented
+  per-suite; see WORKLOG).
+
+## Task 1 — honest linked-episode counts ("1/28", not "1/1")
+
+Root cause: `episode_count` was derived from local media_items rows
+(only linked episodes have rows). Fix: NEW
+`src/lib/server/hosting/library/season-metadata.ts` — injectable
+season-metadata resolver (default: the cached TMDB TV detail path);
+`episode_summary` gains `metadata_available`; the denominator is the
+COMPLETE TMDB season total; local rows in unknown seasons are added so
+linked<=total always holds; when metadata is unavailable the UI renders
+"N linked" with NO denominator (a total is never invented). The episode
+sheet header counts episodes with ACTIVE assets (rows persist after
+unlink). One resolver call per parent per page (bounded; the TMDB detail
+path is cached + in-flight-deduplicated). Movies get no episode counts.
+
+## Task 2 — Media Library layout redesign
+
+Removed the page heading + explanatory paragraph (AdminPage now skips
+its header block when every header input is absent — the Admin Panel
+shell header is untouched). Toolbar is two rows in the required order:
+full-width search, then Add File (left) + view toggle + filter (right).
+The toolbar is sticky inside the scrolling admin content region
+(top: --a2-topbar-h-safe); the list/grid's nested scroll containers are
+REMOVED (cards scroll naturally beneath the toolbar; the last row clears
+the fixed bottom nav via the shell's existing padding). Infinite scroll
+survives via a capture-phase window listener (sees both the desktop
+.a2-main scroller and the mobile document). URL-driven initialFilters,
+search debounce, filter sheet, view toggle, Add File, episode sheets,
+and row/card actions all preserved.
+
+## Task 3 — child dialogs above the episode sheet
+
+Root cause: the wizard/delete overlays were z-90 UNDER the sheet (z-92),
+and Escape closed both dialogs (two window-level keydown handlers). Fix:
+NEW `src/lib/components/admin2/dialog-stack.svelte.ts` — a global open
+stack giving every admin overlay deterministic ownership: only the
+TOPMOST dialog reacts to Escape/backdrop. Z-index ladder: sheet 92 <
+bulk-delete 93 < wizard/delete/filter 94 < portaled menu 1000. The
+wizard captures + restores focus into the still-open sheet; a
+`refreshKey` prop reloads the sheet's linked rows after a wizard save or
+delete confirmation without closing it (season + scroll preserved). No
+new body scroll-locks were introduced (none existed; the shell owns
+scrolling — zero leak surface).
+
+## Task 4 — safe bulk season deletion
+
+NEW `POST /api/admin/media/bulk-unlink` (thin HTTP adapter) +
+`src/lib/server/hosting/media/bulk-unlink-contract.ts` (the shared,
+unit-testable core). The affected episode set is DERIVED server-side
+from parent+season (the client cannot enumerate asset ids — never an
+arbitrary-deletion tool). Only media_assets associations of the
+requested series+season are deleted; parent identity, episode rows,
+other seasons, and provider files are untouched (no adapter calls).
+Release-eligibility gate mirrors the single-episode DELETE (ONE season
+metadata fetch). Per-episode outcomes; retries idempotent; audit rows
+per deleted asset (action 'unlink', details.via 'bulk-unlink',
+FK-safe success shape). UI: "Bulk delete season" beside "Bulk link
+season" (grouped, wraps at mobile width), explicit confirmation showing
+the association count + the files-not-deleted note, disabled when
+nothing is linked, no double submission, per-episode outcomes with
+retry-failed, refresh after completion.
+
+## Task 5 — poster in the Missing Media linking wizard
+
+Root cause: the demand row carries no poster and the page built
+`preselectedMediaItem` without one (the wizard fully supports
+`PreselectedMediaItem.poster`). Fix at the shared-contract level: NEW
+`src/lib/server/hosting/demand/poster-enrichment.ts` — the page loader
+attaches `poster_path` from the canonical media_items row (ONE batched
+top-level lookup, exact (tmdb_id, content_type) match, null when absent
+— never invented); the page passes it into the wizard; episodic
+preselections backfill the PARENT poster from the same seasons response
+`loadSeasons()` already fetches (zero extra requests); poster-less
+movie preselections fetch the detail once by id (never a title search).
+posterUrl prefixes only relative paths (no double prefixing); the
+relative poster path persists via the existing save flow; missing
+posters keep the neutral placeholder.
+
+## Verification (this round)
+
+- New focused suites: `mav_episode_metadata_counts_test` (35),
+  `mav_library_layout_contract_test` (42),
+  `mav_dialog_stacking_contract_test` (52),
+  `mav_bulk_unlink_behavioral_test` (57),
+  `mav_missing_poster_contract_test` (23) — all registered in the chain.
+- FULL non-browser chain: **275/275 tsx suites PASS** (270 prior + 5 new).
+- Browser suites (`mav_task2_episode_sheet_dom_qa`,
+  `mav_phase1_season_chip_contract_test`) were NOT run this round — the
+  user explicitly excluded browser testing.
+- `pnpm check`: **0 errors, 9 warnings** (all pre-existing, unchanged
+  from the faa0079 baseline).
+- `pnpm build`: **success** (Netlify adapter + executor function).
+- `git diff --check`: clean. Secrets scan over the full diff: clean.
+- No production deployment; no live HTTP verification (owner deploys).
+
+## Known boundaries
+
+- `folderSummary()` (content-tree sidebar) still uses local row counts —
+  it is a navigation tree of the local catalog, not an episode-progress
+  display; metadata denominators were scoped to cards + the sheet.
+- The dead upload-era components remain on disk (unreachable; no
+  importer). Deleting them is a separate cleanup decision.
+- `media_upload_operations` and related tables remain in the live schema
+  (historical data); no migration was added or applied this round.

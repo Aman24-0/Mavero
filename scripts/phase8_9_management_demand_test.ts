@@ -17,7 +17,7 @@
  */
 
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -46,7 +46,7 @@ console.log('--- Phase 8: Management operations ---\n');
   ok(src.includes('async moveAsset'), '1.3 moveAsset method');
   ok(src.includes('async detachAsset'), '1.4 detachAsset method');
   ok(src.includes('async deleteAsset'), '1.5 deleteAsset method');
-  ok(src.includes('recordOperation'), '1.6 records operations in media_operations');
+  ok(src.includes('recordMediaOperation'), '1.6 records operations in media_operations (rehomed audit writer, 2026-10-15)');
   ok(src.includes('action: \'rename\''), '1.7 records rename action');
   ok(src.includes('action: \'move\''), '1.8 records move action');
   ok(src.includes('action: \'detach\''), '1.9 records detach action');
@@ -179,13 +179,11 @@ console.log('  ok — 7. Secret safety (9 checks)\n');
 // ===========================================================================
 console.log('--- 8. Phase 9 auto-resolution ---\n');
 {
-  // 8.1 UploadService.pollProcessingStatus calls resolveDemandForMediaItem on ready
-  const uploadSrc = readFileSync(path.join(REPO_ROOT, 'src/lib/server/hosting/upload/service.ts'), 'utf8');
-  ok(uploadSrc.includes('resolveDemandForMediaItem'), '8.1 UploadService has resolveDemandForMediaItem method');
-  ok(uploadSrc.includes('Phase 9: auto-resolve'), '8.2 upload ready transition calls auto-resolve');
-  ok(uploadSrc.includes("import('../demand/service')"), '8.3 upload service dynamically imports DemandService');
-  ok(uploadSrc.includes('resolveDemand(canonicalKey)'), '8.4 upload service calls resolveDemand');
-  ok(uploadSrc.includes('Silently absorb'), '8.5 upload auto-resolve is fire-and-forget');
+  // 8.1 (2026-10-15) the upload pipeline was REMOVED with the Upload/Import
+  // workflow — its demand auto-resolution path is retired. Demand
+  // auto-resolution remains wired through the SYNC path (8.6-8.10 below)
+  // and the demand sweeps on the Missing Media page loader.
+  ok(!existsSync(path.join(REPO_ROOT, 'src/lib/server/hosting/upload/service.ts')), '8.1 upload service removed (demand auto-resolution via sync + sweeps only)');
 
   // 8.2 SyncService.syncProvider calls resolveDemandForAsset on ready
   const syncSrc = readFileSync(path.join(REPO_ROOT, 'src/lib/server/hosting/sync/service.ts'), 'utf8');
@@ -225,7 +223,10 @@ console.log('--- 8. Phase 9 auto-resolution ---\n');
   ok(!resolveSrc.includes('resolveDemandForMediaItem'), '8.21 playback endpoint does NOT call auto-resolve (only upload/sync do)');
 
   // 8.8 No secrets in auto-resolution code
-  ok(!uploadSrc.includes('api_key') && !uploadSrc.includes('password'), '8.22 NO credentials in upload auto-resolve');
+  // 8.22 (2026-10-15) retired with the upload pipeline — demand
+  // auto-resolution credentials safety now applies to the sync path.
+  const syncSrcFor822 = readFileSync(path.join(REPO_ROOT, 'src/lib/server/hosting/sync/service.ts'), 'utf8');
+  ok(!syncSrcFor822.includes('api_key =') && !syncSrcFor822.includes('password ='), '8.22 NO credentials in sync auto-resolve');
   ok(!syncSrc.includes('api_key') && !syncSrc.includes('password'), '8.23 NO credentials in sync auto-resolve');
 }
 console.log('  ok — 8. Auto-resolution (18 checks)\n');

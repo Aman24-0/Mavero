@@ -65,7 +65,7 @@
  */
 
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -141,17 +141,16 @@ console.log('  ok — A.2 Abyss adapter contract (10 checks)\n');
 }
 console.log('  ok — A.3 normalizer contract (3 checks)\n');
 
-// A.4 proxy-upload route always returns JSON
+// A.4 (2026-10-15) the proxy-upload route was REMOVED with the
+// Upload/Import workflow — its always-JSON + error-persistence contract
+// is retired. The surviving manual-link family keeps structured JSON
+// errors on every failure path (pinned against manual-link).
 {
-  const src = readFileSync(path.join(REPO_ROOT, 'src/routes/api/admin/media/upload/[id]/proxy-upload/+server.ts'), 'utf8');
-  ok(src.includes('ALWAYS return a structured JSON error'), 'A.4.1 documents always-JSON contract');
-  ok(src.includes('Unexpected end of JSON'), 'A.4.2 documents prevention of "Unexpected end of JSON input"');
-  ok(src.includes('adapter.uploadFile'), 'A.4.3 uses adapter.uploadFile');
-  ok(src.includes('completeUploadFromResult'), 'A.4.4 uses completeUploadFromResult');
-  ok(src.includes('error_code: err.code'), 'A.4.5 persists error_code on failure');
-  ok(src.includes('error_message: err.message'), 'A.4.6 persists error_message on failure');
+  const manualLinkSrc = readFileSync(path.join(REPO_ROOT, 'src/routes/api/admin/media/manual-link/+server.ts'), 'utf8');
+  ok(manualLinkSrc.includes('json({ ok: false, error:'), 'A.4.1 manual-link always returns structured JSON errors');
+  ok(!existsSync(path.join(REPO_ROOT, 'src/routes/api/admin/media/upload')), 'A.4.2 upload route tree removed with the workflow');
 }
-console.log('  ok — A.4 proxy-upload route contract (6 checks)\n');
+console.log('  ok — A.4 proxy-upload retired; structured JSON errors live on in manual-link (2 checks)\n');
 
 // A.5 frontend handles JSON parse errors safely (Phase D update)
 //
@@ -161,10 +160,11 @@ console.log('  ok — A.4 proxy-upload route contract (6 checks)\n');
 // contract: a non-JSON or empty response never crashes the UI with
 // "Unexpected end of JSON input".
 {
-  const pageSrc = readFileSync(path.join(REPO_ROOT, 'src/routes/admin/media/upload/+page.svelte'), 'utf8');
   const flowSrc = readFileSync(path.join(REPO_ROOT, 'src/lib/components/admin2/AdminUploadFlow.svelte'), 'utf8');
-  // The page delegates to AdminUploadFlow.
-  ok(pageSrc.includes('AdminUploadFlow'), 'A.5.1 page delegates to AdminUploadFlow');
+  // (2026-10-15) the upload page was removed with the workflow; the flow
+  // component survives as unreachable dead code. Its defensive JSON
+  // handling contract remains a valid pattern reference.
+  ok(!existsSync(path.join(REPO_ROOT, 'src/routes/admin/media/upload/+page.svelte')), 'A.5.1 upload page removed with the workflow');
   // The flow handles fetch errors via try/catch (never propagates raw JSON parse errors).
   ok(flowSrc.includes('try {') && flowSrc.includes('catch'), 'A.5.2 flow wraps fetch calls in try/catch (never throws raw parse errors)');
   // The flow surfaces error messages to the user (no silent swallowing).
@@ -923,65 +923,34 @@ console.log('--- Section C: Abyss adapter mock fetcher tests ---\n');
   // ===========================================================================
   console.log('  --- PROXY source-contract tests (21-27) ---');
 
-  // 21-27. proxy-upload route source contract
+  // (2026-10-15) the proxy-upload route was REMOVED with the Upload/Import
+  // workflow — its source contract is retired (A.4 above re-pins the
+  // surviving structured-JSON invariant).
   {
-    const src = readFileSync(path.join(REPO_ROOT, 'src/routes/api/admin/media/upload/[id]/proxy-upload/+server.ts'), 'utf8');
-    ok(src.includes('MAX_PROXY_FILE_SIZE'), '21.1 proxy has file size constant');
-    ok(src.includes('26 * 1024 * 1024'), '21.2 26 MB limit');
-    ok(src.includes('FILE_TOO_LARGE'), '22.1 FILE_TOO_LARGE error code');
-    ok(src.includes('file.name'), '22.2 filename preserved (file.name used)');
-    ok(src.includes('file.arrayBuffer'), '23.1 file content extracted as ArrayBuffer');
-    ok(src.includes('filename: file.name'), '24.1 filename passed to adapter');
-    ok(src.includes('adapter.uploadFile'), '25.1 uses adapter.uploadFile');
-    ok(src.includes('completeUploadFromResult'), '26.1 completes via UploadService');
-    ok(src.includes('status: 502'), '27.1 returns 502 on provider failure');
-    ok(src.includes('error_code: err.code'), '27.2 persists error_code');
-    ok(src.includes('error_message: err.message'), '27.3 persists error_message');
-    ok(src.includes('json({ ok: false'), '27.4 ALWAYS returns JSON (never non-JSON)');
-    ok(src.includes('ALWAYS return a structured JSON error'), '27.5 documents always-JSON contract');
-    ok(src.includes('platform limitation') || src.includes('Netlify'), '27.6 documents Netlify limitation');
+    ok(!existsSync(path.join(REPO_ROOT, 'src/routes/api/admin/media/upload/[id]/proxy-upload/+server.ts')), '21-27.1 proxy-upload route removed');
   }
-  console.log('  ok — 21-27. proxy-upload route contract (14 checks)');
 
-  // 26-27. oversized request behavior (source-contract)
+  // (2026-10-15) oversized-request behavior retired with the proxy route.
   {
-    const src = readFileSync(path.join(REPO_ROOT, 'src/routes/api/admin/media/upload/[id]/proxy-upload/+server.ts'), 'utf8');
-    ok(src.includes('file.size > MAX_PROXY_FILE_SIZE'), '26.1 checks file size against limit');
-    ok(src.includes('413'), '26.2 returns 413 for oversized files');
-    ok(src.includes('Server-proxied upload is limited'), '27.1 error message documents the limit');
-    ok(src.includes('remote URL upload'), '27.2 suggests remote URL upload as alternative');
+    ok(!existsSync(path.join(REPO_ROOT, 'src/routes/api/admin/media/upload/[id]/proxy-upload/+server.ts')), '26-27.1 proxy-upload removed (oversized-request contract retired)');
   }
-  console.log('  ok — 26-27. oversized request behavior (4 checks)');
 
   // ===========================================================================
-  // STATE (34-37) — source-contract tests
+  // STATE (34-37) — (2026-10-15) the upload service was REMOVED with the
+  // Upload/Import workflow; its state machine is retired. Error-code +
+  // error-message persistence survives in the rehomed audit writer.
   // ===========================================================================
-  console.log('  --- STATE source-contract tests (34-37) ---');
-
   {
-    const uploadSrc = readFileSync(path.join(REPO_ROOT, 'src/lib/server/hosting/upload/service.ts'), 'utf8');
-    ok(uploadSrc.includes("'failed'"), '34.1 service has failed state');
-    ok(uploadSrc.includes('failed_at'), '34.2 persists failed_at timestamp');
-    ok(uploadSrc.includes('error_code'), '34.3 persists error_code');
-    ok(uploadSrc.includes('error_message'), '34.4 persists error_message');
-    ok(uploadSrc.includes('createMediaAsset'), '36.1 creates media_asset on success');
-    ok(uploadSrc.includes('completeUploadFromResult'), '36.2 completeUploadFromResult is the success path');
-    ok(uploadSrc.includes('retryOperation'), '37.1 has retryOperation');
-    ok(uploadSrc.includes('parent_operation_id'), '37.2 retry links to parent operation');
-    ok(uploadSrc.includes('attempt_number: op.attempt_number + 1'), '37.3 retry increments attempt_number');
+    const auditSrc = readFileSync(path.join(REPO_ROOT, 'src/lib/server/hosting/media/operation-audit.ts'), 'utf8');
+    ok(auditSrc.includes('error_code'), '34.3 audit writer persists error_code');
+    ok(auditSrc.includes('error_message'), '34.4 audit writer persists error_message');
+    ok(!existsSync(path.join(REPO_ROOT, 'src/lib/server/hosting/upload/service.ts')), '36-37. upload state machine + retry retired with the workflow');
   }
-  console.log('  ok — 34-37. state machine contract (9 checks)');
 
-  // 35. no invalid media_asset on failed upload (proxy route marks failed BEFORE createMediaAsset)
+  // 35. (2026-10-15) retired with the proxy route.
   {
-    const proxySrc = readFileSync(path.join(REPO_ROOT, 'src/routes/api/admin/media/upload/[id]/proxy-upload/+server.ts'), 'utf8');
-    ok(proxySrc.includes('catch (error)'), '35.1 catch block present');
-    ok(proxySrc.includes("updateOperationState(params.id, 'failed'"), '35.2 marks operation as failed on error');
-    ok(proxySrc.includes('failed_at'), '35.3 persists failed_at');
-    // The createMediaAsset call is in the try block, NOT the catch block.
-    ok(!/catch.*createMediaAsset/s.test(proxySrc), '35.4 createMediaAsset NOT in catch block');
+    ok(!existsSync(path.join(REPO_ROOT, 'src/routes/api/admin/media/upload/[id]/proxy-upload/+server.ts')), '35.1 proxy-upload removed (no invalid-asset path to guard)');
   }
-  console.log('  ok — 35. no invalid media_asset on failed upload (4 checks)');
 
   // ===========================================================================
   // Concurrent login guard (extra)

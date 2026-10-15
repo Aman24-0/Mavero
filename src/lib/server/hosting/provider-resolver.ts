@@ -10,7 +10,7 @@
  * Before this module, the answer was computed in at least 5 places:
  *   1. /admin/media/library/+page.server.ts  — two explicit queries,
  *      app-code join, NO enabled filter (post-fix).
- *   2. /admin/media/upload/+page.server.ts   — two explicit queries,
+ *   2. (removed) the old upload page's loader — two explicit queries,
  *      app-code join, WITH enabled=true filter (FINDING-004 — bug).
  *   3. AdminMediaTable.svelte               — adapterIdForSource() on
  *      the client, using the hostingSources list from #1.

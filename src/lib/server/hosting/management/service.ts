@@ -16,7 +16,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '$lib/server/supabase/database.types';
 import { getHostingAdapter } from '../registry';
 import { HostingProviderError } from '../errors';
-import { UploadService } from '../upload/service';
+import { recordMediaOperation } from '../media/operation-audit';
 import { CanonicalMediaService } from '../media/service';
 import { resolveAdapterForSource, ProviderResolutionError } from '../provider-resolver';
 
@@ -29,14 +29,10 @@ export type ManagementResult = {
 };
 
 export class ManagementService {
-  private uploadService: UploadService;
-
   constructor(
     private client: SupabaseClient<Database>,
     private mediaService: CanonicalMediaService,
-  ) {
-    this.uploadService = new UploadService(client, mediaService);
-  }
+  ) {}
 
   /**
    * Renames a provider-side asset and updates the Mavero media_asset.
@@ -67,7 +63,7 @@ export class ManagementService {
         last_synced_at: new Date().toISOString(),
       }).eq('id', mediaAssetId);
 
-      await this.uploadService.recordOperation({
+      await recordMediaOperation(this.client, {
         action: 'rename',
         status: 'success',
         media_item_id: asset.media_item_id,
@@ -80,7 +76,7 @@ export class ManagementService {
       return { ok: true, action: 'rename', mediaAssetId, providerAssetId: asset.provider_asset_id };
     } catch (error) {
       const err = error instanceof HostingProviderError ? error : new HostingProviderError('UNKNOWN', { cause: error });
-      await this.uploadService.recordOperation({
+      await recordMediaOperation(this.client, {
         action: 'rename',
         status: 'failed',
         media_item_id: asset.media_item_id,
@@ -124,7 +120,7 @@ export class ManagementService {
         last_synced_at: new Date().toISOString(),
       }).eq('id', mediaAssetId);
 
-      await this.uploadService.recordOperation({
+      await recordMediaOperation(this.client, {
         action: 'move',
         status: 'success',
         media_item_id: asset.media_item_id,
@@ -137,7 +133,7 @@ export class ManagementService {
       return { ok: true, action: 'move', mediaAssetId, providerAssetId: asset.provider_asset_id };
     } catch (error) {
       const err = error instanceof HostingProviderError ? error : new HostingProviderError('UNKNOWN', { cause: error });
-      await this.uploadService.recordOperation({
+      await recordMediaOperation(this.client, {
         action: 'move',
         status: 'failed',
         media_item_id: asset.media_item_id,
@@ -175,7 +171,7 @@ export class ManagementService {
         last_synced_at: new Date().toISOString(),
       }).eq('id', mediaAssetId);
 
-      await this.uploadService.recordOperation({
+      await recordMediaOperation(this.client, {
         action: 'detach',
         status: 'success',
         media_item_id: asset.media_item_id,
@@ -195,7 +191,7 @@ export class ManagementService {
       return { ok: true, action: 'detach', mediaAssetId, providerAssetId: asset.provider_asset_id };
     } catch (error) {
       const err = error instanceof HostingProviderError ? error : new HostingProviderError('UNKNOWN', { cause: error });
-      await this.uploadService.recordOperation({
+      await recordMediaOperation(this.client, {
         action: 'detach',
         status: 'failed',
         media_item_id: asset.media_item_id,
@@ -257,7 +253,7 @@ export class ManagementService {
       // distinguishes this from 'detach' (which has the same DB effect
       // but a different admin intent — temporary hide vs remove
       // incorrect association).
-      await this.uploadService.recordOperation({
+      await recordMediaOperation(this.client, {
         action: 'unlink',
         status: 'success',
         media_item_id: asset.media_item_id,
@@ -277,7 +273,7 @@ export class ManagementService {
       return { ok: true, action: 'unlink', mediaAssetId, providerAssetId: asset.provider_asset_id };
     } catch (error) {
       const err = error instanceof HostingProviderError ? error : new HostingProviderError('UNKNOWN', { cause: error });
-      await this.uploadService.recordOperation({
+      await recordMediaOperation(this.client, {
         action: 'unlink',
         status: 'failed',
         media_item_id: asset.media_item_id,
@@ -337,7 +333,7 @@ export class ManagementService {
         last_synced_at: new Date().toISOString(),
       }).eq('id', mediaAssetId);
 
-      await this.uploadService.recordOperation({
+      await recordMediaOperation(this.client, {
         action: 'provider_delete',
         status: 'success',
         media_item_id: asset.media_item_id,
@@ -359,7 +355,7 @@ export class ManagementService {
     } catch (error) {
       const err = error instanceof HostingProviderError ? error : new HostingProviderError('UNKNOWN', { cause: error });
       // Provider delete failed — do NOT mark the Mavero asset as deleted.
-      await this.uploadService.recordOperation({
+      await recordMediaOperation(this.client, {
         action: 'provider_delete',
         status: 'failed',
         media_item_id: asset.media_item_id,
@@ -466,7 +462,7 @@ export class ManagementService {
 
       // Case (c): already linked to the same media_item + available → idempotent.
       if (existingRow.media_item_id === mediaItemId && existingRow.mavero_status !== 'missing') {
-        await this.uploadService.recordOperation({
+        await recordMediaOperation(this.client, {
           action: 'link',
           status: 'success',
           media_item_id: mediaItemId,
@@ -508,7 +504,7 @@ export class ManagementService {
             });
           }
 
-          await this.uploadService.recordOperation({
+          await recordMediaOperation(this.client, {
             action: 'link',
             status: 'success',
             media_item_id: mediaItemId,
@@ -609,7 +605,7 @@ export class ManagementService {
       const assetId = (assetRow as { id: string }).id;
 
       // 6. Record the operation.
-      await this.uploadService.recordOperation({
+      await recordMediaOperation(this.client, {
         action: 'link',
         status: 'success',
         media_item_id: mediaItemId,
@@ -631,7 +627,7 @@ export class ManagementService {
       return { ok: true, action: 'link', mediaAssetId: assetId, providerAssetId };
     } catch (error) {
       const err = error instanceof HostingProviderError ? error : new HostingProviderError('UNKNOWN', { cause: error });
-      await this.uploadService.recordOperation({
+      await recordMediaOperation(this.client, {
         action: 'link',
         status: 'failed',
         media_item_id: mediaItemId,
@@ -667,7 +663,7 @@ export class ManagementService {
     // backend MUST enforce it independently — never rely only on UI gating.
     if (asset.status === 'deleted') {
       const error = { code: 'ASSET_DELETED', message: 'Deleted provider assets cannot be reactivated. The remote file has been permanently deleted.' };
-      await this.uploadService.recordOperation({
+      await recordMediaOperation(this.client, {
         action: 'reactivate',
         status: 'failed',
         media_item_id: asset.media_item_id,
@@ -691,7 +687,7 @@ export class ManagementService {
         last_synced_at: new Date().toISOString(),
       }).eq('id', mediaAssetId);
 
-      await this.uploadService.recordOperation({
+      await recordMediaOperation(this.client, {
         action: 'reactivate',
         status: 'success',
         media_item_id: asset.media_item_id,
@@ -721,7 +717,7 @@ export class ManagementService {
       return { ok: true, action: 'reactivate', mediaAssetId, providerAssetId: asset.provider_asset_id };
     } catch (error) {
       const err = error instanceof HostingProviderError ? error : new HostingProviderError('UNKNOWN', { cause: error });
-      await this.uploadService.recordOperation({
+      await recordMediaOperation(this.client, {
         action: 'reactivate',
         status: 'failed',
         media_item_id: asset.media_item_id,
@@ -877,8 +873,9 @@ export class ManagementService {
    * REMOVED (final remediation): linkExistingAssetRow() — the "Link
    * Existing" path that UPDATED a media_assets row with media_item_id IS
    * NULL. The live schema declares media_item_id NOT NULL and provider
-   * sync never creates media_assets rows (only UploadService.createMediaAsset
-   * and linkAsset INSERT rows, always with a media_item_id), so the
+   * sync never creates media_assets rows (only the removed upload
+   * pipeline's createMediaAsset and linkAsset INSERTed rows, always with a
+   * media_item_id), so the
    * NULL-media_item state is architecturally impossible and the path was
    * dead code. linkAsset() now REJECTS such a row with a deterministic
    * ASSET_STATE error (schema-drift guard) instead of silently updating it.

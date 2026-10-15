@@ -132,7 +132,6 @@ const syncServiceSrc = read('src/lib/server/hosting/sync/service.ts');
 const vidaraAdapterSrc = read('src/lib/server/hosting/vidara/adapter.ts');
 const vidaraNormalizeSrc = read('src/lib/server/hosting/vidara/normalize.ts');
 const vidaraTypesSrc = read('src/lib/server/hosting/vidara/types.ts');
-const uploadServiceSrc = read('src/lib/server/hosting/upload/service.ts');
 const uploadFlowSrc = read('src/lib/components/admin2/AdminUploadFlow.svelte');
 const resolverSrc = read('src/lib/server/resolver/mavero-hosted.ts');
 const appShellSrc = read('src/lib/components/admin2/AdminAppShell.svelte');
@@ -629,33 +628,17 @@ async function statusWith(script: ScriptedResponse[]): Promise<{ status: string;
 // enrichment, wizard display, Abyss untouched, no migration
 // ============================================================
 
-// C14: the upload poll persists the provider progress on the operation row.
-assert.match(uploadServiceSrc, /procStatus\.status === 'processing' && procStatus\.progressPercent != null/, 'C14 progress persistence guard');
-assert.match(uploadServiceSrc, /progress_percent: procStatus\.progressPercent/, 'C14 progress_percent written via updateOperationState');
-ok('C14. upload poll persists REAL provider progress (media_upload_operations.progress_percent)');
+// C14 (2026-10-15): the upload poll was REMOVED with the Upload/Import
+// workflow — its progress-persistence contract is retired with it.
+assert.ok(!existsSync('src/lib/server/hosting/upload/service.ts'), 'C14 upload poll retired with the workflow');
+ok('C14. upload poll retired (progress persistence contract retired with the workflow)');
 
-// C15: processing must NOT make the asset playable — only the ready path
-// sets mavero_status='available' (the dual-gate is preserved).
+// C15 (2026-10-15): the upload poll was REMOVED with the Upload/Import
+// workflow — the poll-branch dual-gate inspection is retired. The
+// availability dual gate that REMAINS is pinned by the resolver assertion
+// right below (ready + available both required).
 {
-  // Extract the poll's mavero_status update: it must be in the ready branch only.
-  const readyBranch = uploadServiceSrc.match(/if \(procStatus\.status === 'ready'\) \{[\s\S]{0,900}?await this\.client[\s\S]{0,200}?update\(\{ mavero_status: 'available' \}\)/);
-  assert.ok(readyBranch, 'C15 mavero_status=available only inside the ready branch');
-  // The processing-persist block: strip comments, then verify no update
-  // payload inside it writes mavero_status (docs text mentioning the gate
-  // is fine — actual mutations are what matter).
-  const processingPersist = uploadServiceSrc.match(/PERSIST PROVIDER PROGRESS[\s\S]{0,1400}?Update the operation state\./);
-  assert.ok(processingPersist, 'C15 processing-persist block bounded before the ready branch');
-  const codeOnly = processingPersist![0]
-    .split('\n')
-    .filter((line) => !line.trim().startsWith('//'))
-    .join('\n');
-  assert.doesNotMatch(codeOnly, /mavero_status/, 'C15 processing path never mutates mavero_status');
-  // The media_assets update in the poll writes status/provider_status ONLY
-  // (availability remains governed exclusively by the ready branch below).
-  const assetUpdate = uploadServiceSrc.match(/Poll the provider\.[\s\S]{0,700}?\.eq\('id', op\.media_asset_id\);/);
-  assert.ok(assetUpdate, 'C15 poll asset update found');
-  const assetUpdateCode = assetUpdate![0].split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
-  assert.doesNotMatch(assetUpdateCode, /mavero_status/, 'C15 the poll status update never writes mavero_status');
+  assert.ok(!existsSync('src/lib/server/hosting/upload/service.ts'), 'C15 upload poll retired with the workflow');
 }
 assert.match(resolverSrc, /\.eq\('status', 'ready'\)[\s\S]{0,120}?\.eq\('mavero_status', 'available'\)/, 'C15 resolver dual gate intact');
 ok('C15. processing != playable: only ready+available sets availability (dual gate intact)');

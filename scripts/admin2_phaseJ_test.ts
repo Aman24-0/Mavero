@@ -283,8 +283,10 @@ assert.ok(zValues.includes(40), 'mobile header z-index 40');
 assert.ok(zValues.includes(45), 'bottom nav z-index 45');
 assert.ok(zValues.includes(50), 'drawer z-index 50 (above header/nav)');
 assert.match(adminOpsHistory, /z-index: 80/, 'overlay z-index 80 (workspace event drawer)');
-assert.match(adminAddFileWizard, /z-index: 90/, 'sheet/dialog overlay z-index 90 (Add File wizard)');
-ok('22a. Z-index hierarchy: shell header(40) < bottom-nav(45) < drawer(50) < component overlays(80+) < sheets(90+)');
+// (2026-10-15 Task 3) the wizard overlay sits ABOVE the episode sheet (92)
+// in the dialog ladder: sheet 92 < bulk-delete 93 < wizard 94.
+assert.match(adminAddFileWizard, /z-index: 94/, 'wizard overlay z-index 94 (above the episode sheet — dialogs opened from the sheet are immediately visible)');
+ok('22a. Z-index hierarchy: shell header(40) < bottom-nav(45) < drawer(50) < component overlays(80+) < sheets(92+) < wizard(94)');
 
 // ============================================================
 // 23. No excessive hardcoded colors in components

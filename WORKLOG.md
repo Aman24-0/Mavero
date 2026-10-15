@@ -1414,3 +1414,110 @@ provider seed migrations would duplicate rows).
 No deploy (owner deploys). No live HTTP traffic tests against the deployed
 site. The Supabase investigation was read-only; no writes, no revocations,
 no migrations applied.
+
+---
+
+## Round: Production UI & media-management bug-fixes (2026-10-15, session 3)
+
+Baseline: faa0079 (clean, in sync with origin) + the user's uncommitted
+Upload/Import removal. All five tasks delivered; 275/275 non-browser
+suites green; check/build/diff clean.
+
+### H0 — upload removal completed (preserving the user's deletions)
+
+- Baseline `pnpm check` with the user's deletions: 5 errors (dangling
+  `hosting/upload` imports) / 9 warnings. After completion: 0 / 9.
+- `operation-audit.ts` rehomes `recordOperation` as
+  `recordMediaOperation(client, params)` — byte-for-byte insert semantics.
+- Rehomed 21 audit call sites: manual-link-contract (6), manual-link
+  route (2), bulk-link (0 — arg removed), management/service (17 ->
+  recordMediaOperation via python replace), hosting page (reaper removed).
+- Stale comments referencing the deleted page updated (provider-resolver,
+  management service).
+
+### Per-suite dispositions for the upload-pinning tests (stale because
+the workflow removal was a deliberate contract change; each re-pinned
+with equal or greater strength, reasons documented in-file)
+
+- `admin2_phase0` — sections A/F flipped to removal + rehomed-writer +
+  no-live-importer assertions (14 groups).
+- `admin2_phaseB` — upload page read removed; section 7 asserts removal +
+  missing-page wrapping (30 groups).
+- `admin2_phaseC` — T2 layout re-pins: AdminPage header-less form,
+  Add File in toolbar controls row (56 groups).
+- `admin2_phaseD` — fully re-scoped to the removal contract: route trees
+  gone, audit writer shape, no live importer (walks src/), write paths
+  audit every terminal outcome (7 groups).
+- `admin2_phaseE` — recordOperation → recordMediaOperation re-pin (76).
+- `admin2_phaseF` — retry-pipeline section retired (service removed);
+  management audit call form re-pinned (66).
+- `admin2_phase2`, `post_deploy` — upload loader joins retired; resolver
+  assertions moved to the surviving library-page loader.
+- `post_phase6` — upload page server dropped from the E-1 file list.
+- `hosting_lifecycle` — upload API resolver assertions retired.
+- `phase6_completion` — sections 1-5/7-9 re-scoped to removal + surviving
+  write-path auth/secret-safety (26 checks).
+- `phase6_admin_upload` — removal check runs UNCONDITIONALLY before the
+  DB-key skip (the suite was previously a no-op in CI).
+- `phase7_vidara_auth` — upload-server sections retired; adapter keeps
+  api_key-query-auth assertions (A.1 live, A.2/E re-pinned).
+- `phase7_abyss_upload` — proxy-upload + page + service sections retired;
+  abyss adapter contracts untouched (123 checks).
+- `phase7_live_upload` — upload-server/proxy sections retired (38).
+- `phase8_sync_history` — sections 2-4 retired; audit-writer re-pin (37).
+- `phase8_9_management` — upload demand-resolution retired; sync path
+  keeps the contract; 1.6 re-pinned to the rehomed writer (98).
+- `phase10_11` — upload demand + stale-operation sections retired; the
+  9.3 directory assertion now asserts ABSENCE (81).
+- `admin2_audit_fix` — upload FINDINGS retired; removal + surviving
+  resolver/error contracts re-pinned (30 tests).
+- `delete_and_upload_selector` — upload selector retired; registry
+  capability-check assertions (17).
+- `consolidation` — G3/G4 moved to manual-link; C1/G6 re-pinned to
+  AdminMediaList (the old assertions matched a docstring comment) (10).
+- `final_remediation_contract` — 8c/8d retired; rehomed writer re-pin.
+- `abyss_inventory` — part J re-pinned to manual-link-identity (119).
+- `final3_issue` — C14/C15 upload-poll blocks retired; the resolver
+  dual-gate assertion kept (46).
+- `mav_task3_bulk_link_behavioral` — UploadService mock removed; the
+  contract's upsertLinkAsset no longer takes an audit-service param
+  (33).
+- `mav_focused_manual_link_contract` — 1d imports recordMediaOperation +
+  no UploadService; 7h call-form regex updated (114, +1 net).
+
+### Task implementation notes
+
+- T1: `season-metadata.ts` (resolver + mergeSeasonMetadata), library
+  service list()/episodes() metadata denominators with in-place summary
+  patching after ONE bounded Promise.allSettled batch; sheet header
+  counts ACTIVE assets + metadata totals; cards branch on
+  metadata_available. folderSummary intentionally left local (nav tree).
+- T2: AdminPage header-skip; library page slimmed; two-row sticky
+  toolbar; nested scroll containers removed; capture-phase infinite
+  scroll; `registerAddFile` prop retained (unused by the page now).
+- T3: `dialog-stack.svelte.ts`; ladder 92/93/94/1000; escape routed by
+  isTopDialog in sheet/wizard/mediaList; wizard focus capture/restore;
+  refreshKey wiring both directions; single svelte:window per component.
+- T4: `bulk-unlink-contract.ts` + thin route; server-derived episode
+  set; per-episode outcomes; FK-safe success audits; UI group + confirm
+  + outcomes + retry; sheet toolbar wraps at mobile.
+- T5: `poster-enrichment.ts` (exact (tmdb_id, content_type) match);
+  page passes poster; wizard backfills from the seasons response;
+  movie-only one-shot detail fetch; no double-prefix guards verified.
+
+### Verification matrix (this round)
+
+| Gate | Result |
+|------|--------|
+| New focused suites | 35 + 42 + 52 + 57 + 23 = 209 checks, all green |
+| Full non-browser chain | 275/275 tsx suites PASS (270 prior + 5 new) |
+| Browser suites | NOT RUN (explicitly excluded this round) |
+| pnpm check | 0 errors / 9 warnings (pre-existing baseline) |
+| pnpm build | success (Netlify adapter + executor) |
+| git diff --check | clean |
+| Secrets scan (full diff) | clean |
+| Assertion audit | 19 upload-pinning suites re-scoped with documented reasons; 0 skipped, 0 deleted files, 0 weakened truthiness |
+
+Production deployment and live-HTTP verification were NOT performed
+(owner deploys). The live Supabase schema was not touched; no
+migrations added or applied.

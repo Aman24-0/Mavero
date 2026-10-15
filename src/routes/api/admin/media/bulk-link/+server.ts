@@ -70,7 +70,6 @@ import {
 } from '$lib/server/hosting/media/manual-link-contract';
 import { getDetail } from '$lib/server/content/service';
 import type { ContentType } from '$lib/server/content/types';
-import { UploadService } from '$lib/server/hosting/upload/service';
 
 const NO_STORE_HEADERS = { 'cache-control': NO_STORE } as const;
 
@@ -87,7 +86,6 @@ export const POST: RequestHandler = async ({ request, locals }) => {
   const { user } = await requireAdmin(locals, { redirectTo: '/admin' });
   const adminClient = createSupabaseAdminClient();
   const mediaService = new CanonicalMediaService(adminClient);
-  const uploadService = new UploadService(adminClient, mediaService);
 
   let body: {
     contentType?: string;
@@ -255,7 +253,6 @@ export const POST: RequestHandler = async ({ request, locals }) => {
     try {
       const upsert = await upsertLinkAsset({
         adminClient,
-        uploadService,
         adminUserId: user.id,
         resolvedMediaItemId,
         providerSourceId,

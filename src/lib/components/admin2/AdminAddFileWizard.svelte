@@ -99,6 +99,9 @@
 <script lang="ts">
   import { Search, X, Loader2, Film, Tv, Sparkles, AlertCircle, Check, RotateCw, Image as ImageIcon } from 'lucide-svelte';
   import { untrack } from 'svelte';
+  import { dialogOpened, dialogClosed, isTopDialog } from './dialog-stack.svelte';
+
+  const WIZARD_DIALOG_ID = 'admin-add-file-wizard';
 
   // --- Props ---
   let {
@@ -254,6 +257,13 @@
               };
             }
             void loadSeasons();
+          } else {
+            // Task 5 — preselected movie/anime-movie WITHOUT a poster: fetch
+            // the detail ONCE by id (never a title search) so the
+            // selected-title summary shows the same poster the normal
+            // Add File flow shows. Series/anime get theirs from the seasons
+            // response loadSeasons() already fetches (zero extra requests).
+            void ensurePreselectedPoster();
           }
         } else {
           mode = 'search';
@@ -361,6 +371,28 @@
   }
 
   // --- Season + Episode loading (REAL TMDB data — Issue A contract) ---
+  // Task 5 — backfill the PARENT SERIES POSTER from the SAME response:
+  // the detail payload carries the poster, so an episodic preselection
+  // (Missing Media link flow) shows the parent poster with ZERO extra
+  // requests. posterUrl() handles full URLs and relative paths without
+  // double-prefixing.
+  async function ensurePreselectedPoster() {
+    if (!selectedTmdb || selectedTmdb.poster) return;
+    if (kindMeta(kind).episodic) return; // covered by loadSeasons backfill
+    try {
+      const endpoint = `/api/content/movie/movie-${encodeURIComponent(selectedTmdb.tmdbId)}`;
+      const res = await fetch(endpoint);
+      if (!res.ok) return;
+      const json = await res.json();
+      const poster = json?.item?.poster;
+      if (poster && selectedTmdb && !selectedTmdb.poster) {
+        selectedTmdb = { ...selectedTmdb, poster };
+      }
+    } catch {
+      // Poster is decorative — the neutral placeholder stays.
+    }
+  }
+
   async function loadSeasons() {
     if (!selectedTmdb) return;
     const token = ++seasonFetchToken;
@@ -393,6 +425,11 @@
         episodeCount: s.episodeCount ?? s.episode_count ?? 0,
         airDate: s.airDate ?? s.air_date,
       }));
+      // Task 5 — parent poster from the same response (full URL or
+      // relative path — posterUrl handles both, no double prefix).
+      if (selectedTmdb && !selectedTmdb.poster && json?.item?.poster) {
+        selectedTmdb = { ...selectedTmdb, poster: json.item.poster };
+      }
       // Default selection: the first REGULAR season (number > 0) — never
       // a fabricated list. If the preselected demand season exists in the
       // list, keep it selected and load its episodes.
@@ -571,10 +608,39 @@
     open = false;
     resetSheet();
     onclose?.();
+    // Task 3 — restore focus to the opener. When the wizard was opened
+    // FROM the episode sheet, the opener lives INSIDE the still-open
+    // sheet (its DOM persists), so focus returns to the sheet — the user
+    // never lands on the page behind it.
+    const target = lastFocused;
+    lastFocused = null;
+    if (target && target.isConnected && typeof target.focus === 'function') {
+      requestAnimationFrame(() => target.focus());
+    }
   }
+
+  // Task 3 — dialog-stack registration + focus capture. The wizard is a
+  // TOP-LEVEL overlay (z 94, above the episode sheet's 92): Escape and
+  // backdrop clicks are owned only while this wizard is the topmost
+  // dialog; closing it returns focus INTO the still-open episode sheet.
+  let wizardEl = $state<HTMLElement | null>(null);
+  let lastFocused: HTMLElement | null = null;
+  $effect(() => {
+    if (open) {
+      dialogOpened(WIZARD_DIALOG_ID);
+      lastFocused = document.activeElement as HTMLElement | null;
+      requestAnimationFrame(() => {
+        wizardEl?.querySelector<HTMLElement>('.wizard-close')?.focus();
+      });
+      return () => dialogClosed(WIZARD_DIALOG_ID);
+    }
+  });
 
   function onKeydown(event: KeyboardEvent) {
     if (event.key === 'Escape' && open) {
+      // Task 3 — only the TOPMOST dialog reacts to Escape. Below the
+      // episode sheet (or another dialog) this wizard ignores it.
+      if (!isTopDialog(WIZARD_DIALOG_ID)) return;
       event.stopPropagation();
       closeSheet();
     }
@@ -586,7 +652,7 @@
 {#if open}
   <div class="wizard-overlay" onclick={closeSheet} role="presentation">
     <!-- svelte-ignore a11y_click_events_have_key_events -->
-    <div class="wizard" role="dialog" aria-modal="true" aria-labelledby="wizard-title" tabindex="-1" onclick={(e) => e.stopPropagation()}>
+    <div bind:this={wizardEl} class="wizard" role="dialog" aria-modal="true" aria-labelledby="wizard-title" tabindex="-1" onclick={(e) => e.stopPropagation()}>
       <div class="wizard-head">
         <h2 id="wizard-title">{updateTarget ? 'Update link' : 'Add file'}</h2>
         <button type="button" class="wizard-close" onclick={closeSheet} aria-label="Close"><X size={16} /></button>
@@ -795,7 +861,7 @@
 {/if}
 
 <style>
-  .wizard-overlay { position: fixed; inset: 0; z-index: 90; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; }
+  .wizard-overlay { position: fixed; inset: 0; z-index: 94; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; }
   .wizard { position: relative; z-index: 91; width: min(560px, calc(100vw - 32px)); max-height: calc(100dvh - 64px); display: flex; flex-direction: column; background: var(--a2-surface-2, #1a1a1a); border: 1px solid var(--a2-border-strong, #333); border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,0.5); overflow: hidden; }
   .wizard-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--a2-border, #222); }
   .wizard-head h2 { margin: 0; font-size: 1rem; font-weight: 700; color: var(--a2-text-bright, #f0f0f0); }

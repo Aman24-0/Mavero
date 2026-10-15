@@ -39,6 +39,10 @@
     seasonCount?: number;
     episodeCount?: number;
     linkedEpisodeCount?: number;
+    /** Task 1 — true when episodeCount is the COMPLETE TMDB total (the
+     *  "1/28" denominator). False = metadata unavailable: the card shows
+     *  "N ep linked" WITHOUT a denominator (a total is never invented). */
+    metadataAvailable?: boolean;
     year?: number | null;
   };
 </script>
@@ -50,6 +54,10 @@
   import type { UpdateTarget, PreselectedMediaItem } from './AdminAddFileWizard.svelte';
   import AdminEpisodeSheet from './AdminEpisodeSheet.svelte';
   import type { EpisodeSheetParent } from './AdminEpisodeSheet.svelte';
+  import { dialogOpened, dialogClosed, isTopDialog } from './dialog-stack.svelte';
+
+  const DELETE_DIALOG_ID = 'admin-media-delete-confirm';
+  const FILTER_DIALOG_ID = 'admin-media-filter-sheet';
 
   // --- Props ---
   let {
@@ -140,11 +148,40 @@
   }
 
   function onFilterKeydown(event: KeyboardEvent) {
-    if (event.key === 'Escape' && filterSheetOpen) {
-      event.stopPropagation();
-      closeFilterSheet();
+    if (event.key !== 'Escape') return;
+    // Task 3 — Escape closes the TOPMOST dialog only. The delete
+    // confirmation and the filter sheet are owned here; the episode sheet
+    // and the wizard handle theirs (registered in the shared stack).
+    if (deleteTarget) {
+      if (isTopDialog(DELETE_DIALOG_ID)) {
+        event.stopPropagation();
+        if (!deleting) deleteTarget = null;
+      }
+      return;
+    }
+    if (filterSheetOpen) {
+      if (isTopDialog(FILTER_DIALOG_ID)) {
+        event.stopPropagation();
+        closeFilterSheet();
+      }
     }
   }
+
+  // Task 3 — register the two locally-owned dialogs in the shared stack
+  // so the topmost-dialog routing is deterministic.
+  $effect(() => {
+    if (deleteTarget) {
+      dialogOpened(DELETE_DIALOG_ID);
+      return () => dialogClosed(DELETE_DIALOG_ID);
+    }
+  });
+
+  $effect(() => {
+    if (filterSheetOpen) {
+      dialogOpened(FILTER_DIALOG_ID);
+      return () => dialogClosed(FILTER_DIALOG_ID);
+    }
+  });
 
   // --- Wizard + delete state ---
   let wizardOpen = $state(false);
@@ -156,6 +193,9 @@
   // --- Task 2: episode sheet state ---
   let sheetOpen = $state(false);
   let sheetParent = $state<EpisodeSheetParent | null>(null);
+  // Task 3 — bumped after a wizard save / delete that happened ABOVE the
+  // episode sheet; the sheet reloads its linked rows without closing.
+  let sheetRefreshKey = $state(0);
 
   function openEpisodeSheet(row: MediaRow) {
     if (!row.isParent) return;
@@ -431,7 +471,17 @@
     searchDebounce = setTimeout(() => { void loadList(true); }, 300);
   }
 
+  // Section element ref (Task 2 infinite-scroll proximity check).
+  let sectionEl = $state<HTMLElement | null>(null);
+
   // --- Infinite scroll ---
+  // Task 2 — the cards scroll NATURALLY beneath the sticky toolbar (the
+  // admin shell's main region on desktop, the document on mobile) — the
+  // list/grid containers are no longer nested scroll boxes. Scroll events
+  // do not bubble, so the proximity check runs on a CAPTURE-phase window
+  // listener (the same pattern the portaled menu uses), which sees BOTH
+  // scroll containers. The per-container onscroll stays as a harmless
+  // fallback.
   function onScroll(event: Event) {
     const target = event.target as HTMLElement;
     if (!target) return;
@@ -442,11 +492,36 @@
     }
   }
 
+  function checkCardsNearViewportBottom(): void {
+    if (loadingMore || loading || !hasMore) return;
+    const cards = sectionEl?.querySelector<HTMLElement>('[data-media-cards]');
+    if (!cards) return;
+    const rect = cards.getBoundingClientRect();
+    // Load more when the cards area's bottom is within 600px of the
+    // viewport bottom (works for both scroll architectures).
+    if (rect.bottom < window.innerHeight + 600) {
+      currentPage++;
+      void loadList(false);
+    }
+  }
+
+  $effect(() => {
+    if (typeof window === 'undefined') return;
+    const onWindowScroll = () => { checkCardsNearViewportBottom(); };
+    window.addEventListener('scroll', onWindowScroll, { capture: true, passive: true });
+    return () => {
+      window.removeEventListener('scroll', onWindowScroll, { capture: true } as AddEventListenerOptions);
+    };
+  });
+
   function mapLibraryItem(item: any): MediaRow {
     // Task 2 — PARENT rows (series/anime with episode_summary): one card,
     // identity = the series; the episode rollup drives the subtitle and
     // the card opens the episode sheet. Episode rows NEVER reach this
     // mapper (the server returns top-level rows only).
+    // Task 1 — the rollup carries metadata_available: true = the TOTAL
+    // is the complete TMDB episode count ("1/28"); false = local-only
+    // (no denominator is rendered).
     const isParent = (item.content_type === 'series' || item.content_type === 'anime')
       && item.episode_summary != null;
     if (isParent) {
@@ -467,6 +542,7 @@
         seasonCount: summary.season_count ?? 0,
         episodeCount: summary.episode_count ?? 0,
         linkedEpisodeCount: summary.linked_episode_count ?? 0,
+        metadataAvailable: summary.metadata_available === true,
         year: item.year ?? null,
       };
     }
@@ -508,6 +584,9 @@
       if (json.ok) {
         deleteTarget = null;
         await loadList(true);
+        // Task 3 — the delete may have been confirmed ABOVE the open
+        // episode sheet: refresh its linked rows without closing it.
+        sheetRefreshKey++;
       } else {
         error = json.error?.message ?? 'Delete failed.';
       }
@@ -593,24 +672,38 @@
 
 <svelte:window onkeydown={onFilterKeydown} />
 
-<section class="media-library" aria-label="Media Library">
-  <!-- Compact toolbar: ONE horizontal row on every viewport — search
-       input (flex) + view toggle + Filter button. Filters open in a
-       sheet; they never stack as toolbar rows. -->
-  <div class="toolbar">
-    <div class="search-input-wrap">
-      <Search size={14} class="search-icon" />
-      <input type="text" class="search-input" placeholder="Search by title or TMDB ID…" bind:value={searchQuery} oninput={onFilterChange} autocomplete="off" aria-label="Search media library" />
+<section class="media-library" aria-label="Media Library" bind:this={sectionEl} data-media-library>
+  <!-- Task 2 — TWO toolbar rows, in this exact order:
+         Row 1: search — full available row width.
+         Row 2: Add File (left) + view toggle + filter (right).
+       The toolbar block is STICKY inside the scrolling admin content
+       region; the cards scroll naturally beneath it (no nested scroll
+       containers). The page-level heading/description were removed with
+       the same task. -->
+  <div class="toolbar" data-media-toolbar>
+    <div class="search-row">
+      <div class="search-input-wrap">
+        <Search size={14} class="search-icon" />
+        <input type="text" class="search-input" placeholder="Search by title or TMDB ID…" bind:value={searchQuery} oninput={onFilterChange} autocomplete="off" aria-label="Search media library" />
+      </div>
     </div>
-    <div class="view-toggle" role="group" aria-label="View mode">
-      <button type="button" class:active={viewMode === 'list'} onclick={() => toggleView('list')} aria-label="List view" aria-pressed={viewMode === 'list'}><ListIcon size={15} /></button>
-      <button type="button" class:active={viewMode === 'grid'} onclick={() => toggleView('grid')} aria-label="Grid view" aria-pressed={viewMode === 'grid'}><LayoutGrid size={15} /></button>
+    <div class="controls-row">
+      <button type="button" class="add-file-btn" onclick={openAddWizard} disabled={loading} aria-label="Add file — link a new title">
+        <Plus size={14} />
+        <span>Add file</span>
+      </button>
+      <div class="controls-right">
+        <div class="view-toggle" role="group" aria-label="View mode">
+          <button type="button" class:active={viewMode === 'list'} onclick={() => toggleView('list')} aria-label="List view" aria-pressed={viewMode === 'list'}><ListIcon size={15} /></button>
+          <button type="button" class:active={viewMode === 'grid'} onclick={() => toggleView('grid')} aria-label="Grid view" aria-pressed={viewMode === 'grid'}><LayoutGrid size={15} /></button>
+        </div>
+        <button type="button" class="filter-btn" class:filters-active={activeFilterCount() > 0} onclick={openFilterSheet} aria-haspopup="dialog" aria-expanded={filterSheetOpen}>
+          <SlidersHorizontal size={14} />
+          <span>Filter</span>
+          {#if activeFilterCount() > 0}<span class="filter-count" aria-label="{activeFilterCount()} active filters">{activeFilterCount()}</span>{/if}
+        </button>
+      </div>
     </div>
-    <button type="button" class="filter-btn" class:filters-active={activeFilterCount() > 0} onclick={openFilterSheet} aria-haspopup="dialog" aria-expanded={filterSheetOpen}>
-      <SlidersHorizontal size={14} />
-      <span>Filter</span>
-      {#if activeFilterCount() > 0}<span class="filter-count" aria-label="{activeFilterCount()} active filters">{activeFilterCount()}</span>{/if}
-    </button>
   </div>
 
   <!-- Loading / Error / Empty / List -->
@@ -621,7 +714,7 @@
   {:else if items.length === 0}
     <div class="state-msg state-empty"><Film size={32} /><p>No media linked yet. Click "Add file" to link your first video.</p></div>
   {:else if viewMode === 'grid'}
-    <div class="media-grid" onscroll={onScroll}>
+    <div class="media-grid" data-media-cards onscroll={onScroll}>
       {#each items as row (row.id)}
         {#if row.isParent}
           <!-- Task 2 — ONE parent card per series/anime: opens the episode
@@ -641,9 +734,11 @@
               <div class="grid-title">{row.title}</div>
               <div class="grid-meta">
                 <span class="badge-type">{contentTypeLabel(row.contentType)}</span>
-                <span class="badge-progress">{row.linkedEpisodeCount}/{row.episodeCount} ep</span>
+                <span class="badge-progress" data-metadata={row.metadataAvailable ? 'tmdb' : 'local'}>
+                  {#if row.metadataAvailable}{row.linkedEpisodeCount}/{row.episodeCount} ep{:else}{row.linkedEpisodeCount} ep linked{/if}
+                </span>
               </div>
-              <button type="button" class="grid-open-episodes" onclick={() => openEpisodeSheet(row)} aria-label="View episodes of {row.title}">
+              <button type="button" class="grid-open-episodes" onclick={() => openEpisodeSheet(row)} aria-label="View episodes of {row.title} — {row.linkedEpisodeCount} of {row.episodeCount} episodes linked">
                 <Layers size={11} /> Episodes
               </button>
             </div>
@@ -676,7 +771,7 @@
       {/each}
     </div>
   {:else}
-    <div class="media-list" onscroll={onScroll}>
+    <div class="media-list" data-media-cards onscroll={onScroll}>
       {#each items as row (row.id)}
         {#if row.isParent}
           <!-- Task 2 — ONE parent row per series/anime; the whole row is a
@@ -695,7 +790,9 @@
               <div class="media-meta">
                 <span class="badge-type">{contentTypeLabel(row.contentType)}</span>
                 <span class="badge-progress">{row.seasonCount} season{row.seasonCount === 1 ? '' : 's'}</span>
-                <span class="badge-progress">{row.linkedEpisodeCount}/{row.episodeCount} episodes linked</span>
+                <span class="badge-progress" data-metadata={row.metadataAvailable ? 'tmdb' : 'local'}>
+                  {#if row.metadataAvailable}{row.linkedEpisodeCount}/{row.episodeCount} episodes linked{:else}{row.linkedEpisodeCount} linked episode{row.linkedEpisodeCount === 1 ? '' : 's'}{/if}
+                </span>
                 {#if row.maveroStatus === 'pending'}<span class="badge-unlinked">Requested</span>{/if}
               </div>
             </button>
@@ -776,7 +873,13 @@
   {providers}
   updateTarget={wizardUpdateTarget}
   preselectedMediaItem={wizardPreselected}
-  onsaved={() => { void loadList(true); }}
+  onsaved={() => {
+    void loadList(true);
+    // Task 3 — the save may have happened ABOVE the open episode sheet
+    // (Add/Update from inside the sheet): refresh its linked rows +
+    // counts WITHOUT closing it.
+    sheetRefreshKey++;
+  }}
 />
 
 <!-- Task 2 — the accessible episode sheet for a parent series/anime card.
@@ -788,6 +891,7 @@
   bind:open={sheetOpen}
   parent={sheetParent}
   {providers}
+  refreshKey={sheetRefreshKey}
   onsaved={() => { void loadList(true); }}
   onaddlink={(target) => { openPreselectedWizard(target); }}
   onupdatelink={(target) => {
@@ -891,15 +995,36 @@
 <style>
   .media-library { display: flex; flex-direction: column; gap: var(--a2-space-3); }
 
-  /* Compact toolbar — ONE row on every viewport (deep-audit Section 7):
-     search takes the available width, the view toggle + Filter button
-     stay compact and adjacent. Filters live in the sheet, not here. */
-  .toolbar { display: flex; gap: var(--a2-space-2); align-items: center; }
-  .search-input-wrap { display: flex; align-items: center; gap: 8px; padding: 0 12px; height: 36px; background: var(--a2-surface-3); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); flex: 1; min-width: 0; }
+  /* Task 2 — TWO-row toolbar:
+       row 1 = full-width search,
+       row 2 = Add File (left) + view toggle + filter (right).
+     STICKY within the scrolling admin content region (the admin shell's
+     .a2-main on desktop / the document on mobile) — it sticks below the
+     fixed admin header, keeps an opaque background so cards scrolling
+     beneath it never show through, and stays clear of the mobile bottom
+     nav (different axis). */
+  .toolbar {
+    position: sticky;
+    top: var(--a2-topbar-h-safe, 52px);
+    z-index: 30;
+    display: flex;
+    flex-direction: column;
+    gap: var(--a2-space-2);
+    padding: var(--a2-space-2) 0 var(--a2-space-2);
+    background: var(--a2-bg);
+  }
+  .search-row { display: flex; }
+  .search-input-wrap { display: flex; align-items: center; gap: 8px; padding: 0 12px; height: 38px; background: var(--a2-surface-3); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); flex: 1; min-width: 0; }
   .search-input-wrap:focus-within { border-color: var(--a2-cyan); }
   .search-input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--a2-text); font-size: var(--a2-text-sm); }
   .search-input::placeholder { color: var(--a2-text-dim); }
   .search-icon { color: var(--a2-text-dim); flex-shrink: 0; }
+  .controls-row { display: flex; align-items: center; justify-content: space-between; gap: var(--a2-space-2); }
+  .controls-right { display: flex; align-items: center; gap: var(--a2-space-2); flex-shrink: 0; }
+  .add-file-btn { display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 14px; border: 1px solid var(--a2-cyan-border); border-radius: var(--a2-radius-sm); background: var(--a2-cyan-soft); color: var(--a2-cyan); font-size: var(--a2-text-sm); font-weight: 600; cursor: pointer; transition: background var(--a2-motion-micro) var(--a2-ease-out), border-color var(--a2-motion-micro) var(--a2-ease-out); }
+  .add-file-btn:hover:not(:disabled) { background: var(--a2-surface-3); border-color: var(--a2-cyan); }
+  .add-file-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .add-file-btn:focus-visible { outline: 2px solid var(--a2-cyan); outline-offset: 2px; }
   .view-toggle { display: inline-flex; gap: 2px; border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); overflow: hidden; flex-shrink: 0; }
   .view-toggle button { padding: 7px 10px; border: 0; background: transparent; color: var(--a2-text-muted); cursor: pointer; display: grid; place-items: center; }
   .view-toggle button.active { background: rgba(0,200,200,0.12); color: var(--a2-cyan); }
@@ -933,8 +1058,12 @@
   .loading-more { display: flex; align-items: center; justify-content: center; gap: 8px; padding: var(--a2-space-3); color: var(--a2-text-muted); font-size: var(--a2-text-xs); }
   .end-of-list { text-align: center; padding: var(--a2-space-2); color: var(--a2-text-dim); font-size: var(--a2-text-2xs); }
 
-  /* List view */
-  .media-list { display: flex; flex-direction: column; gap: 2px; max-height: calc(100dvh - 280px); overflow-y: auto; }
+  /* List view — Task 2: natural page scroll beneath the sticky toolbar.
+     No nested scroll container (the previous max-height/overflow box is
+     gone); the shell's main region / document scrolls the cards, and the
+     last row clears the fixed bottom nav via the shell's existing
+     .a2-main padding-bottom. */
+  .media-list { display: flex; flex-direction: column; gap: 2px; }
   .media-row { display: flex; align-items: center; gap: var(--a2-space-3); padding: var(--a2-space-3); background: var(--a2-surface-2); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); transition: border-color 140ms ease; }
   .media-row:hover { border-color: var(--a2-border-strong); }
   .media-row[data-status="missing"] { opacity: 0.6; }
@@ -959,8 +1088,8 @@
   .grid-open-episodes:hover { background: rgba(0,200,200,0.14); }
   .grid-open-episodes:focus-visible { outline: 2px solid var(--a2-cyan); outline-offset: 1px; }
 
-  /* Grid view */
-  .media-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: var(--a2-space-3); max-height: calc(100dvh - 280px); overflow-y: auto; }
+  /* Grid view — same Task 2 natural-scroll contract as the list. */
+  .media-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: var(--a2-space-3); }
   .grid-card { display: flex; flex-direction: column; background: var(--a2-surface-2); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); overflow: hidden; transition: border-color 140ms ease; }
   .grid-card:hover { border-color: var(--a2-border-strong); }
   .grid-card[data-status="missing"] { opacity: 0.6; }
@@ -992,7 +1121,11 @@
   .menu-item-danger:hover { background: var(--a2-red-soft); }
 
   /* Delete confirmation */
-  .wizard-overlay { position: fixed; inset: 0; z-index: 90; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; }
+  /* Task 3 — the delete confirmation and filter sheet render ABOVE the
+     episode sheet (z 92) so dialogs opened FROM the sheet are always
+     visible immediately. Ladder: sheet 92 < bulk-delete 93 < these 94
+     < portaled menu 1000. */
+  .wizard-overlay { position: fixed; inset: 0; z-index: 94; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; }
   .confirm-dialog { position: relative; z-index: 91; width: min(420px, calc(100vw - 32px)); background: var(--a2-surface-2, #1a1a1a); border: 1px solid var(--a2-border-strong, #333); border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,0.5); overflow: hidden; padding: 20px; }
   .confirm-dialog h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; font-size: 0.9rem; color: var(--a2-text-bright, #f0f0f0); }
   .confirm-desc { margin: 0 0 8px; font-size: 0.8rem; color: var(--a2-text, #ddd); }
@@ -1008,10 +1141,12 @@
   @keyframes spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
 
   @media (max-width: 640px) {
-    /* The toolbar REMAINS one compact row on mobile — search flexes, the
-       Filter button stays a compact fixed-width control. Filters open in
-       the sheet (no stacked dropdown rows). */
-    .toolbar { gap: 6px; }
+    /* The toolbar rows adapt: search stays full-width; Add File and the
+       right-aligned controls share the second row (Add File may shrink
+       to icon+label, the filter button to its icon). */
+    .toolbar { gap: 6px; padding: var(--a2-space-1) 0 var(--a2-space-2); }
+    .controls-row { gap: 6px; }
+    .add-file-btn { padding: 0 10px; }
     .filter-btn { min-width: 44px; padding: 0 10px; }
     .filter-btn span:not(.filter-count) { display: none; }
     .media-grid { grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); }

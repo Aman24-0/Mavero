@@ -40,6 +40,11 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '$lib/server/supabase/database.types';
+import {
+  tmdbSeasonMetadataResolver,
+  mergeSeasonMetadata,
+  type SeasonMetadataResolver,
+} from './season-metadata';
 
 // ============================================================
 // Types — public surface of the read model
@@ -80,6 +85,15 @@ export type EpisodeSummary = {
   season_count: number;
   episode_count: number;
   linked_episode_count: number;
+  /**
+   * Task 1 (2026-10-15): true when season_count/episode_count come from
+   * the COMPLETE TMDB season metadata (the honest "1/28" denominator).
+   * False = metadata unavailable: episode_count is the local-row count
+   * (a lower bound of LINKED episodes only) and the UI must NOT render a
+   * "linked/total" fraction from it — it shows "N linked" instead.
+   * A total is never invented.
+   */
+  metadata_available: boolean;
 };
 
 export type LibraryMediaItem = {
@@ -233,7 +247,16 @@ const ASSET_PROJECTION =
   'id, media_item_id, provider_source_id, provider_asset_id, status, mavero_status, source_quality, available_qualities, audio_languages, has_subtitles, duration_seconds, size_bytes, last_synced_at, created_at, updated_at';
 
 export class MediaLibraryService {
-  constructor(private client: SupabaseClient<Database>) {}
+  private seasonMetadata: SeasonMetadataResolver;
+
+  constructor(
+    private client: SupabaseClient<Database>,
+    /** Injectable for tests / alternate metadata sources; defaults to the
+     * TMDB-backed public detail path (cached, in-flight-deduplicated). */
+    seasonMetadataResolver?: SeasonMetadataResolver,
+  ) {
+    this.seasonMetadata = seasonMetadataResolver ?? tmdbSeasonMetadataResolver;
+  }
 
   // ------------------------------------------------------------
   // Paginated, filtered, joined read — TOP-LEVEL rows only (Task 2:
@@ -414,6 +437,14 @@ export class MediaLibraryService {
     // are all unlinked orphans is itself an orphan.
     const includeOrphans = query.includeOrphans === true;
     const resultItems: LibraryMediaItem[] = [];
+    // Task 1: parents whose episode_summary needs the TMDB metadata
+    // denominator (patched in place after ONE bounded batch below).
+    const pendingMetadata: Array<{
+      item: MediaItemRow;
+      local: { seasonCount: number; episodeCount: number; episodesBySeason: Map<number, number> };
+      linked: number;
+      summary: EpisodeSummary;
+    }> = [];
     for (const item of topLevel) {
       const isParent = isEpisodicParent(item);
       const ownChildren = isParent ? childrenByParent.get(item.id) ?? [] : [];
@@ -452,17 +483,36 @@ export class MediaLibraryService {
       let episodeSummary: EpisodeSummary | null = null;
       if (isParent) {
         const seasons = new Set<number>();
+        const episodesBySeason = new Map<number, number>();
         let linked = 0;
         for (const child of ownChildren) {
-          if (child.season != null) seasons.add(child.season);
+          if (child.season != null) {
+            seasons.add(child.season);
+            episodesBySeason.set(child.season, (episodesBySeason.get(child.season) ?? 0) + 1);
+          }
           const childActive = (assetsByItem.get(child.id) ?? []).filter(a => a.status !== 'deleted');
           if (childActive.length > 0) linked++;
         }
+        // Task 1: the DENOMINATOR comes from the complete TMDB season
+        // metadata (never from the linked rows). Metadata is resolved in
+        // ONE bounded batch after the loop — see below. The placeholder
+        // object is pushed by reference and patched in place.
         episodeSummary = {
           season_count: seasons.size,
           episode_count: ownChildren.length,
           linked_episode_count: linked,
+          metadata_available: false,
         };
+        pendingMetadata.push({
+          item,
+          local: {
+            seasonCount: seasons.size,
+            episodeCount: ownChildren.length,
+            episodesBySeason,
+          },
+          linked,
+          summary: episodeSummary,
+        });
       }
 
       resultItems.push({
@@ -476,6 +526,26 @@ export class MediaLibraryService {
         hosting_state: computeHostingState(unionAssets, unionDemand),
         episode_summary: episodeSummary,
       });
+    }
+
+    // TASK 1 — metadata denominators for every surviving parent card:
+    // ONE bounded batch (one resolver call per parent, all-settled — a
+    // failure for one series never blocks the page; the cached TMDB
+    // detail path deduplicates repeat loads). Local counts are kept as
+    // the honest fallback when metadata is unavailable.
+    if (pendingMetadata.length > 0) {
+      const resolved = await Promise.allSettled(
+        pendingMetadata.map((entry) => this.seasonMetadata(entry.item.content_type, entry.item.tmdb_id)),
+      );
+      for (let i = 0; i < pendingMetadata.length; i++) {
+        const entry = pendingMetadata[i];
+        const settled = resolved[i];
+        const metadata = settled.status === 'fulfilled' ? settled.value : null;
+        const merged = mergeSeasonMetadata(entry.local, metadata);
+        entry.summary.season_count = merged.season_count;
+        entry.summary.episode_count = merged.episode_count;
+        entry.summary.metadata_available = merged.metadata_available;
+      }
     }
 
     const total = count ?? 0;
@@ -555,15 +625,27 @@ export class MediaLibraryService {
     const firstDemandRow = allRows.find(r => demandByKey.has(r.canonical_key));
     const unionDemand = firstDemandRow ? demandByKey.get(firstDemandRow.canonical_key) ?? null : null;
     const seasons = new Set<number>();
+    const episodesBySeason = new Map<number, number>();
     let linked = 0;
     for (const child of childRows) {
-      if (child.season != null) seasons.add(child.season);
+      if (child.season != null) {
+        seasons.add(child.season);
+        episodesBySeason.set(child.season, (episodesBySeason.get(child.season) ?? 0) + 1);
+      }
       if ((assetsByItem.get(child.id) ?? []).some(a => a.status !== 'deleted')) linked++;
     }
+    // Task 1: same metadata denominator contract as list() — ONE resolver
+    // call for this parent; local counts are the honest fallback.
+    const metadata = await this.seasonMetadata(parentRow.content_type, parentRow.tmdb_id).catch(() => null);
+    const merged = mergeSeasonMetadata(
+      { seasonCount: seasons.size, episodeCount: childRows.length, episodesBySeason },
+      metadata,
+    );
     const summary: EpisodeSummary = {
-      season_count: seasons.size,
-      episode_count: childRows.length,
+      season_count: merged.season_count,
+      episode_count: merged.episode_count,
       linked_episode_count: linked,
+      metadata_available: merged.metadata_available,
     };
 
     return {

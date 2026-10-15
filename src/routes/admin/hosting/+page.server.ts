@@ -22,8 +22,6 @@ import { requireAdmin } from '$lib/server/streaming/admin-auth';
 import { createSupabaseAdminClient } from '$lib/server/supabase/admin';
 import { HostingControlService } from '$lib/server/hosting/control/service';
 import { OperationsService } from '$lib/server/hosting/operations/service';
-import { UploadService } from '$lib/server/hosting/upload/service';
-import { CanonicalMediaService } from '$lib/server/hosting/media/service';
 import type { HostingProviderOverview } from '$lib/shared/hosting-types';
 import type { OpsBadgeCounts } from '$lib/shared/operations-types';
 import { error, redirect } from '@sveltejs/kit';
@@ -72,14 +70,10 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   try {
     const adminClient = createSupabaseAdminClient();
 
-    // Run the stale-operation reaper + badge counts + provider list.
-    try {
-      const mediaService = new CanonicalMediaService(adminClient);
-      const uploadService = new UploadService(adminClient, mediaService);
-      await uploadService.reapStaleOperations();
-    } catch {
-      // Reaper failure must NOT break the page.
-    }
+    // (2026-10-15) The stale-upload-operation reaper was removed together
+    // with the Upload/Import workflow — no upload operations can exist
+    // anymore, so there is nothing to reap. Badge counts + provider list
+    // remain.
 
     try {
       const opsService = new OperationsService(adminClient);

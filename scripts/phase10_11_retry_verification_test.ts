@@ -22,7 +22,7 @@
  */
 
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -185,7 +185,9 @@ console.log('  ok — 8. Resolver behavior (3 checks)\n');
     .map((d) => d.name);
   ok(hostingDir.includes('vidara'), '9.1 Vidara adapter directory exists');
   ok(hostingDir.includes('abyss'), '9.2 Abyss adapter directory exists');
-  ok(hostingDir.includes('upload'), '9.3 Upload service directory exists');
+  // (2026-10-15) the upload service directory was removed with the
+  // Upload/Import workflow.
+  ok(!hostingDir.includes('upload'), '9.3 Upload service directory removed with the workflow');
   ok(hostingDir.includes('sync'), '9.4 Sync service directory exists');
   ok(hostingDir.includes('management'), '9.5 Management service directory exists');
   ok(hostingDir.includes('demand'), '9.6 Demand service directory exists');
@@ -252,10 +254,10 @@ console.log('  ok — 12. Error model completeness (11 checks)\n');
   ok(demandSrc.includes('buildEntry'), '13.3 buildEntry exists');
   ok(demandSrc.includes('canonical_key'), '13.4 uses canonical_key for dedup');
 
-  const uploadSrc = readSrc('src/lib/server/hosting/upload/service.ts');
-  ok(uploadSrc.includes('resolveDemandForMediaItem'), '13.5 Upload auto-resolution wired');
-  // resolveDemandForMediaItem is in upload, resolveDemandForAsset is in sync — NOT cross-contaminated
-  ok(!uploadSrc.includes('resolveDemandForAsset'), '13.6 Upload uses resolveDemandForMediaItem (NOT resolveDemandForAsset from sync)');
+  // (2026-10-15) the upload pipeline was removed with the Upload/Import
+  // workflow; its demand auto-resolution path is retired. Sync keeps
+  // resolveDemandForAsset (13.7).
+  ok(!existsSync(path.join(REPO_ROOT, 'src/lib/server/hosting/upload/service.ts')), '13.5 Upload auto-resolution retired with the workflow');
 
   const syncSrc = readSrc('src/lib/server/hosting/sync/service.ts');
   ok(syncSrc.includes('resolveDemandForAsset'), '13.7 Sync auto-resolution wired');
@@ -264,10 +266,8 @@ console.log('  ok — 13. Phase 9 demand tracking preserved (7 checks)\n');
 
 // 14. Stale operation handling
 {
-  const uploadSrc = readSrc('src/lib/server/hosting/upload/service.ts');
-  ok(uploadSrc.includes('STALE_OPERATION'), '14.1 Upload stale-operation handling');
-  ok(uploadSrc.includes('MISSING_ASSET_ID'), '14.2 Upload missing-asset-id handling');
-  ok(uploadSrc.includes('auto-fail'), '14.3 Upload documents auto-fail behavior');
+  // (2026-10-15) upload stale-operation handling retired with the workflow.
+  ok(!existsSync(path.join(REPO_ROOT, 'src/lib/server/hosting/upload/service.ts')), '14.1 Upload stale-operation handling retired with the workflow');
 
   const staleSrc = readSrc('src/routes/api/admin/media/stale/+server.ts');
   ok(staleSrc.includes('STALE_THRESHOLD_MINUTES'), '14.4 Stale API has threshold');

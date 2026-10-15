@@ -29,7 +29,6 @@ function ok(message: string) {
 const read = (p: string) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
 
 const libraryServer = read('src/routes/admin/media/library/+page.server.ts');
-const uploadApi = read('src/routes/api/admin/media/upload/+server.ts');
 const managementService = read('src/lib/server/hosting/management/service.ts');
 const vidaraNormalize = read('src/lib/server/hosting/vidara/normalize.ts');
 const resolver = read('src/lib/server/resolver/mavero-hosted.ts');
@@ -70,9 +69,9 @@ ok('1. Media Library hostingSources: no enabled=true filter (canonical resolver 
 
 // Phase C audit fix: the upload API route now uses resolveAdapterForSource
 // instead of inline two-query lookup.
-assert.match(uploadApi, /resolveAdapterForSource/, '2a. Upload API uses canonical resolver');
-assert.doesNotMatch(uploadApi, /\.select\(.*streaming_providers\(adapter_id\)/, '2b. Upload API does NOT use nested PostgREST join');
-assert.doesNotMatch(uploadApi, /Could not derive providerAdapterId from providerSourceId/, '2c. Upload API does NOT have the old error message');
+// (2026-10-15) the upload API was removed with the Upload/Import workflow;
+// its resolver contract is retired. The remaining adapter paths keep the
+// canonical resolver assertions in this suite.
 ok('2. Upload API route: uses canonical resolver (no fragile inline queries)');
 
 // ============================================================

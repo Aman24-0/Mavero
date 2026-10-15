@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 
 /**
  * Admin 2.0 — Phase B contracts.
@@ -28,7 +28,6 @@ const adminToolbar = readFileSync(new URL('../src/lib/components/admin2/AdminToo
 const adminPlaceholder = readFileSync(new URL('../src/lib/components/admin2/AdminPlaceholder.svelte', import.meta.url), 'utf8');
 
 const adminIndex = readFileSync(new URL('../src/routes/admin/+page.svelte', import.meta.url), 'utf8');
-const uploadPage = readFileSync(new URL('../src/routes/admin/media/upload/+page.svelte', import.meta.url), 'utf8');
 const missingPage = readFileSync(new URL('../src/routes/admin/media/missing/+page.svelte', import.meta.url), 'utf8');
 const libraryPage = readFileSync(new URL('../src/routes/admin/media/library/+page.svelte', import.meta.url), 'utf8');
 const assetsPage = readFileSync(new URL('../src/routes/admin/media/assets/+page.svelte', import.meta.url), 'utf8');
@@ -237,16 +236,13 @@ assert.match(stalePage, /\/admin\/operations\?tab=attention/, 'stale page redire
 ok('6g. /admin/media/stale redirects to /admin/operations?tab=attention (Phase F)');
 
 // ============================================================
-// 7. Orphaned pages (upload, missing) now wrapped in AdminAppShell
-//
-// Phase D refactor: the upload page no longer passes an explicit
-// `active="upload"` prop — it relies on Phase B's route-aware active
-// state detection (derived from `page.url.pathname`). The Missing
-// Media page still passes the explicit prop. Both patterns are valid.
+// 7. Shell wrapping — (2026-10-15) the upload page was REMOVED with the
+// Upload/Import workflow, so its AdminAppShell contract is now the
+// ABSENCE of the route; Missing Media keeps its explicit-prop wrapping.
 // ============================================================
-assert.match(uploadPage, /<AdminAppShell>/, 'upload wizard wraps in AdminAppShell');
+assert.ok(!existsSync('../src/routes/admin/media/upload/+page.svelte'), 'upload page removed with the Upload/Import workflow');
 assert.match(missingPage, /<AdminAppShell active="missing-media">/, 'missing media page wraps in AdminAppShell');
-ok('7a. Upload wizard + Missing media page now wrap in AdminAppShell (no longer orphaned)');
+ok('7a. Upload page removed (workflow retired) + Missing media page wraps in AdminAppShell');
 
 // ============================================================
 // 8. Workspace transition on route change

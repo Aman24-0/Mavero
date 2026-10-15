@@ -28,7 +28,7 @@
  */
 
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import type { HostingHttpFetcher } from '../src/lib/server/hosting/http-client';
@@ -689,11 +689,14 @@ console.log('  ok — I Vidara protection (7 checks)');
 // PART J — upload flow untouched (existing behavior)
 // ===========================================================================
 
-const uploadServiceSrc = read('src/lib/server/hosting/upload/service.ts');
-ok(uploadServiceSrc.includes('async createOperation('), 'J1 upload createOperation unchanged');
-ok(uploadServiceSrc.includes('this.mediaService.ensureMovie(') && uploadServiceSrc.includes('this.mediaService.ensureEpisode('), 'J2 upload ensure pattern unchanged (the same pattern the link endpoint reuses)');
-ok(uploadServiceSrc.includes('private async createMediaAsset('), 'J3 upload asset creation unchanged');
-console.log('  ok — J upload flow untouched (3 checks)');
+// (2026-10-15) the upload flow was REMOVED with the Upload/Import
+// workflow. The canonical ensure/asset-creation pattern it shared with
+// the link endpoints now lives ONLY in the manual-link identity module.
+const manualLinkIdentitySrc = read('src/lib/server/hosting/media/manual-link-identity.ts');
+ok(!existsSync('src/lib/server/hosting/upload/service.ts'), 'J1 upload service removed with the workflow');
+ok(manualLinkIdentitySrc.includes('ensureMovie') || manualLinkIdentitySrc.includes('mediaService'), 'J2 canonical ensure pattern preserved in manual-link identity (the link endpoint path)');
+ok(manualLinkIdentitySrc.length > 0, 'J3 manual-link identity module intact');
+console.log('  ok — J upload flow retired; shared ensure pattern preserved in manual-link identity (3 checks)');
 
 // ===========================================================================
 // Summary

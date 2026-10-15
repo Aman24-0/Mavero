@@ -5,12 +5,14 @@ import { readFileSync, existsSync } from 'node:fs';
  * Admin 2.0 — Phase 0 — Recovery & P0 Stabilization tests.
  *
  * Verifies:
- * A. Upload route exists and is internally consistent
+ * A. The Upload/Import workflow is REMOVED (2026-10-15 deliberate
+ *    removal: pages, routes, service, and barrel are gone; the audit
+ *    writer survives in hosting/media/operation-audit.ts)
  * B. Analytics trend uses correct field name (points, not series)
  * C. TMDB search API returns array (not ContentList object)
  * D. Media Library detail query uses display_name (not email)
  * E. Dune linkage investigation — verified as correct DB state
- * F. Upload flow API endpoints exist
+ * F. Upload flow API endpoints are REMOVED (no orphaned routes)
  */
 
 let passed = 0;
@@ -20,24 +22,30 @@ function ok(message: string) {
 }
 
 // ============================================================
-// A. Upload route exists and imports successfully
+// A. Upload/Import workflow REMOVED (2026-10-15)
 // ============================================================
+// The workflow was deliberately removed: no upload page, no upload
+// service, no barrel. The ONE surviving capability — the media_operations
+// audit writer — is rehomed in src/lib/server/hosting/media/
+// operation-audit.ts (same table, same best-effort semantics).
 
-assert.ok(existsSync('src/routes/admin/media/upload/+page.svelte'), 'upload page exists');
-assert.ok(existsSync('src/routes/admin/media/upload/+page.server.ts'), 'upload page server exists');
-assert.ok(existsSync('src/lib/server/hosting/upload/service.ts'), 'upload service exists');
-assert.ok(existsSync('src/lib/server/hosting/upload/index.ts'), 'upload index exists');
-ok('A1. Upload route files exist (page + page.server + service + index)');
+assert.ok(!existsSync('src/routes/admin/media/upload/+page.svelte'), 'upload page removed');
+assert.ok(!existsSync('src/routes/admin/media/upload/+page.server.ts'), 'upload page server removed');
+assert.ok(!existsSync('src/lib/server/hosting/upload/service.ts'), 'upload service removed');
+assert.ok(!existsSync('src/lib/server/hosting/upload/index.ts'), 'upload index removed');
+ok('A1. Upload workflow files removed (page + page.server + service + index)');
 
-const uploadPage = readFileSync('src/routes/admin/media/upload/+page.svelte', 'utf8');
-assert.match(uploadPage, /AdminUploadFlow/, 'upload page imports AdminUploadFlow');
-assert.match(uploadPage, /AdminAppShell/, 'upload page uses AdminAppShell');
-ok('A2. Upload page imports AdminUploadFlow + uses AdminAppShell');
+assert.ok(existsSync('src/lib/server/hosting/media/operation-audit.ts'), 'rehomed audit writer exists');
+const operationAudit = readFileSync('src/lib/server/hosting/media/operation-audit.ts', 'utf8');
+assert.match(operationAudit, /recordMediaOperation/, 'audit writer exports recordMediaOperation');
+assert.match(operationAudit, /media_operations/, 'audit writer inserts into media_operations');
+assert.match(operationAudit, /silently absorb|Silently absorb/, 'audit writer keeps best-effort semantics');
+ok('A2. media_operations audit writer rehomed (recordMediaOperation, best-effort)');
 
-const uploadPageServer = readFileSync('src/routes/admin/media/upload/+page.server.ts', 'utf8');
-assert.match(uploadPageServer, /requireAdmin/, 'upload page server requires admin');
-assert.match(uploadPageServer, /hostingSources/, 'upload page server loads hosting sources');
-ok('A3. Upload page server requires admin + loads hosting sources');
+const manualLinkContract = readFileSync('src/lib/server/hosting/media/manual-link-contract.ts', 'utf8');
+assert.doesNotMatch(manualLinkContract, /upload\/service/, 'manual-link contract no longer imports the upload service');
+assert.match(manualLinkContract, /recordMediaOperation/, 'manual-link contract audits via the rehomed writer');
+ok('A3. Manual-link contract uses the rehomed audit writer (no upload dependency)');
 
 // ============================================================
 // B. Analytics trend uses correct field name
@@ -109,7 +117,7 @@ assert.match(mediaTable, /Not linked/i, 'table renders "Not linked" for items wi
 ok('E2. AdminMediaTable renders "Not linked" for empty asset arrays (correct empty state)');
 
 // ============================================================
-// F. Upload flow API endpoints exist
+// F. Upload flow API endpoints REMOVED (2026-10-15)
 // ============================================================
 
 const uploadEndpoints = [
@@ -124,26 +132,24 @@ const uploadEndpoints = [
 ];
 
 for (const endpoint of uploadEndpoints) {
-  assert.ok(existsSync(endpoint), `upload endpoint exists: ${endpoint}`);
+  assert.ok(!existsSync(endpoint), `upload endpoint removed: ${endpoint}`);
 }
-ok('F1. All 8 upload API endpoints exist on disk');
+ok('F1. All 8 upload API endpoints removed from disk (workflow retired)');
 
-// Verify endpoints use requireAdmin
-for (const endpoint of uploadEndpoints) {
-  const src = readFileSync(endpoint, 'utf8');
-  assert.match(src, /requireAdmin/, `endpoint uses requireAdmin: ${endpoint}`);
+// No LIVE source may still import the removed upload service (the dead
+// AdminUploadFlow/AdminOps* components reference endpoints only as fetch
+// strings — they are unreachable, not compile-breaking).
+const liveSources = [
+  'src/lib/server/hosting/media/manual-link-contract.ts',
+  'src/lib/server/hosting/management/service.ts',
+  'src/routes/api/admin/media/manual-link/+server.ts',
+  'src/routes/api/admin/media/bulk-link/+server.ts',
+  'src/routes/admin/hosting/+page.server.ts',
+];
+for (const src of liveSources) {
+  const content = readFileSync(src, 'utf8');
+  assert.doesNotMatch(content, /hosting\/upload|\.\.\/upload\/service/, `no upload import: ${src}`);
 }
-ok('F2. All 8 upload API endpoints use requireAdmin');
-
-// Verify AdminUploadFlow references all endpoints
-assert.match(uploadFlow, /\/api\/admin\/media\/upload'/, 'flow references POST /api/admin/media/upload');
-assert.match(uploadFlow, /\/api\/admin\/media\/upload\/.*\/status/, 'flow references status endpoint');
-assert.match(uploadFlow, /\/api\/admin\/media\/upload\/.*\/cancel/, 'flow references cancel endpoint');
-assert.match(uploadFlow, /\/api\/admin\/media\/upload\/.*\/retry/, 'flow references retry endpoint');
-assert.match(uploadFlow, /\/api\/admin\/media\/upload\/.*\/upload-server/, 'flow references upload-server endpoint');
-assert.match(uploadFlow, /\/api\/admin\/media\/upload\/.*\/complete/, 'flow references complete endpoint');
-assert.match(uploadFlow, /\/api\/admin\/media\/upload\/.*\/proxy-upload/, 'flow references proxy-upload endpoint');
-assert.match(uploadFlow, /\/api\/admin\/media\/upload\/.*\/subtitle/, 'flow references subtitle endpoint');
-ok('F3. AdminUploadFlow references all 8 upload API endpoints');
+ok('F2. No live source imports the removed upload service (removal complete)');
 
 console.log(`\nPhase 0 tests passed (${passed} check groups).`);

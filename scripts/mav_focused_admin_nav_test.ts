@@ -128,13 +128,16 @@ console.log('\n§6 — Mobile bottom-nav has NO "more" item (no duplicate naviga
   ok(!/<button[^>]*aria-label="More navigation"/.test(shell), '6b. the bottom-nav has no "More navigation" button');
 }
 
-console.log('\n§7 — Media Library page header carries "Link media" (Upload/Import removed)');
+console.log('\n§7 — Media Library add-file lives in the toolbar (Upload/Import removed)');
 {
   const library = readCode('src/routes/admin/media/library/+page.svelte');
-  ok(!/Upload \/ Import/.test(library), '7a. Upload/Import REMOVED from Media Library header');
-  ok(/Add file/.test(library), '7b. Media Library header has "Add file" action (replaces Link media)');
+  const mediaList = readCode('src/lib/components/admin2/AdminMediaList.svelte');
+  ok(!/Upload \/ Import/.test(library), '7a. Upload/Import REMOVED from Media Library page');
+  // (2026-10-15 Task 2) the page-level heading + action button were removed
+  // by design; Add File is a toolbar control inside AdminMediaList.
+  ok(/add-file-btn/.test(mediaList), '7b. AdminMediaList toolbar has the "Add file" button (controls row)');
   ok(/AdminMediaList/.test(library), '7c. Media Library uses AdminMediaList (new compact list component)');
-  ok(/registerAddFile/.test(library), '7d. Media Library uses registerAddFile callback for the add-file trigger');
+  ok(/function openAddWizard/.test(mediaList), '7d. Add File opens the shared wizard from the list component');
 }
 
 console.log('\n§8 — AdminHostingAssets exposes the link flow via registerLinkTrigger');

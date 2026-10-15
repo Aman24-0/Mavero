@@ -12,7 +12,7 @@
  * Run: pnpm exec tsx --tsconfig ./jsconfig.json scripts/consolidation_regression_test.ts
  */
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -100,7 +100,7 @@ const libraryServer = read('src/routes/admin/media/library/+page.server.ts');
 const mediaDrawer = read('src/lib/components/admin2/AdminMediaDetailDrawer.svelte');
 
 // Media Library is a single asset-centric file manager (no view toggle)
-assert.match(libraryPage, /AdminHostingAssets/, 'C1. Library page renders AdminHostingAssets as sole component');
+assert.match(libraryPage, /AdminMediaList/, 'C1. Library page renders AdminMediaList as the sole file manager');
 assert.doesNotMatch(libraryPage, /currentView/, 'C2. Library page has no view toggle (single file manager)');
 assert.doesNotMatch(libraryPage, /viewTabs/, 'C3. Library page has no view tabs');
 
@@ -274,16 +274,18 @@ ok('E2. Hosting: 5 tabs (Providers/Sync/Jobs/Activity/Attention), Operations red
 // ============================================================
 console.log('\n--- F. Upload Selector ---');
 
-const uploadServer = read('src/routes/admin/media/upload/+page.server.ts');
 const registry = read('src/lib/server/hosting/registry.ts');
 
-// Upload page filters by getHostingAdapter() != null
-assert.match(uploadServer, /getHostingAdapter\(s\.adapterId\)/, 'F1. Upload page uses getHostingAdapter to check hosting capability');
-assert.match(uploadServer, /return adapter !== null/, 'F2. Upload page filters where getHostingAdapter returns non-null');
+// (2026-10-15) the upload page was REMOVED with the Upload/Import
+// workflow. Its provider-selector contract is retired; the canonical
+// capability check survives in the hosting registry (getHostingAdapter)
+// and the library page's resolver wiring.
+assert.ok(!existsSync('src/routes/admin/media/upload/+page.server.ts'), 'F1. Upload page removed with the workflow');
+assert.match(registry, /export function getHostingAdapter/, 'F2. Hosting registry keeps the canonical getHostingAdapter capability check');
 
-// No hardcoded Vidara/Abyss-only filtering
-assert.doesNotMatch(uploadServer, /adapterId === 'vidara' \|\| .* === 'abyss'/, 'F3. No hardcoded Vidara/Abyss string matching');
-ok('F. Upload selector: canonical getHostingAdapter() filter, future-proof');
+// No hardcoded Vidara/Abyss-only filtering in the surviving registry.
+assert.doesNotMatch(registry, /adapterId === 'vidara' \|\| .* === 'abyss'/, 'F3. No hardcoded Vidara/Abyss string matching');
+ok('F. Upload selector retired; canonical capability check survives in the registry');
 
 // ============================================================
 // G. Regression Checks — Existing Systems Preserved
@@ -298,12 +300,15 @@ assert.match(vidaraNormalize, /vidara\.to\/e\//, 'G1. Vidara embed URL still vid
 assert.match(managementService, /resolveAdapterForSource/, 'G2. Management service uses canonical resolver');
 
 // Upload route still works (kept for deep links)
-const uploadRoute = read('src/routes/api/admin/media/upload/+server.ts');
-assert.match(uploadRoute, /requireAdmin/, 'G3. Upload API route still requires admin');
-assert.match(uploadRoute, /resolveAdapterForSource/, 'G4. Upload API route uses canonical resolver');
+// (2026-10-15) the upload API route was REMOVED with the Upload/Import
+// workflow (no deep links remain). The surviving write path (manual-link)
+// keeps both invariants:
+const manualLinkRoute = read('src/routes/api/admin/media/manual-link/+server.ts');
+assert.match(manualLinkRoute, /requireAdmin/, 'G3. Manual-link route requires admin (surviving write path)');
+assert.match(manualLinkRoute, /upsertLinkAsset/, 'G4. Manual-link route uses the shared canonical contract');
 
 // Media Library renders AdminHostingAssets as the sole file manager
-assert.match(libraryPage, /AdminHostingAssets/, 'G6. Library page renders AdminHostingAssets');
+assert.match(libraryPage, /AdminMediaList/, 'G6. Library page renders AdminMediaList');
 
 // Operations endpoints still work
 const opsCountsEndpoint = read('src/routes/api/admin/operations/counts/+server.ts');

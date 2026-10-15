@@ -52,7 +52,6 @@ const appCss = read('src/app.css');
 const analyticsOverview = read('src/lib/server/analytics/overview.ts');
 const opsService = read('src/lib/server/hosting/operations/service.ts');
 const hostingControlService = read('src/lib/server/hosting/control/service.ts');
-const uploadServer = read('src/routes/admin/media/upload/+page.server.ts');
 const libraryService = read('src/lib/server/hosting/library/service.ts');
 const adminOpsJobs = read('src/lib/components/admin2/AdminOpsJobs.svelte');
 const adminHostingAssets = read('src/lib/components/admin2/AdminHostingAssets.svelte');
@@ -226,9 +225,11 @@ ok('E5. HostingControl.listProviders: 3 media_assets/media_operations queries â†
 // Post-deploy fix + Phase C audit: replaced fragile streaming_providers!inner
 // nested join, then replaced inline two-query pattern with canonical
 // resolver call. The resolver lives in $lib/server/hosting/provider-resolver.
-assert.match(uploadServer, /resolveHostingSources/, 'Upload page: uses canonical resolveHostingSources');
-assert.doesNotMatch(uploadServer, /\.select\(.*streaming_providers!inner/, 'Upload page: does NOT use fragile !inner nested join (post-deploy fix)');
-assert.doesNotMatch(uploadServer, /\n\s+\.eq\('enabled', true\)/, 'Upload page: does NOT filter by enabled=true in code (Phase C fix â€” disabled providers may have linked assets)');
+// (2026-10-15) The upload page was REMOVED with the Upload/Import
+// workflow; its loader contract is retired with it. The resolver
+// contract (resolveHostingSources, no !inner join, no enabled=true
+// filter) remains pinned by the hosting page + API tests.
+assert.ok(!existsSync('src/routes/admin/media/upload/+page.server.ts'), 'Upload page removed with the workflow');
 ok('E6. Upload page: uses canonical provider resolver (no inline queries, no enabled filter)');
 
 // Library service: assets + demands parallelized

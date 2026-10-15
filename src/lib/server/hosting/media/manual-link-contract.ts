@@ -29,7 +29,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '$lib/server/supabase/database.types';
 import { getSeriesSeason } from '$lib/server/content/service';
 import { isEpisodeReleased } from '$lib/shared/episode-eligibility';
-import type { UploadService } from '$lib/server/hosting/upload/service';
+import { recordMediaOperation } from './operation-audit';
 
 // ---------------------------------------------------------------------------
 // Provider constants
@@ -336,7 +336,6 @@ export async function resolveProviderSource(
 
 export type UpsertLinkAssetArgs = {
   adminClient: SupabaseClient<Database>;
-  uploadService: UploadService;
   adminUserId: string;
   resolvedMediaItemId: string;
   providerSourceId: string;
@@ -369,7 +368,7 @@ export type UpsertLinkAssetResult =
  * discriminator records which endpoint performed the write.
  */
 export async function upsertLinkAsset(args: UpsertLinkAssetArgs): Promise<UpsertLinkAssetResult> {
-  const { adminClient, uploadService, adminUserId, resolvedMediaItemId, providerSourceId, providerAssetId, playbackUrl, mediaAssetId, via } = args;
+  const { adminClient, adminUserId, resolvedMediaItemId, providerSourceId, providerAssetId, playbackUrl, mediaAssetId, via } = args;
 
   if (mediaAssetId) {
     // UPDATE existing association (the "Update link" flow).
@@ -387,14 +386,14 @@ export async function upsertLinkAsset(args: UpsertLinkAssetArgs): Promise<Upsert
       })
       .eq('id', mediaAssetId);
     if (updateError) {
-      await uploadService.recordOperation({
+      await recordMediaOperation(adminClient, {
         action: 'link', status: 'failed', media_item_id: resolvedMediaItemId, media_asset_id: mediaAssetId,
         provider_source_id: providerSourceId, admin_user_id: adminUserId,
         error_code: 'UPDATE_FAILED', error_message: updateError.message,
       });
       return { ok: false, code: 'UPDATE_FAILED', message: updateError.message };
     }
-    await uploadService.recordOperation({
+    await recordMediaOperation(adminClient, {
       action: 'link', status: 'success', media_item_id: resolvedMediaItemId, media_asset_id: mediaAssetId,
       provider_source_id: providerSourceId, admin_user_id: adminUserId,
       details: { provider_asset_id: providerAssetId, playback_url: playbackUrl, mode: 'update', via, note: `Manual link updated via /api/admin/media/${via}.` },
@@ -427,14 +426,14 @@ export async function upsertLinkAsset(args: UpsertLinkAssetArgs): Promise<Upsert
       })
       .eq('id', ex.id);
     if (updateError) {
-      await uploadService.recordOperation({
+      await recordMediaOperation(adminClient, {
         action: 'link', status: 'failed', media_item_id: resolvedMediaItemId, media_asset_id: ex.id,
         provider_source_id: providerSourceId, admin_user_id: adminUserId,
         error_code: 'UPDATE_FAILED', error_message: updateError.message,
       });
       return { ok: false, code: 'UPDATE_FAILED', message: updateError.message };
     }
-    await uploadService.recordOperation({
+    await recordMediaOperation(adminClient, {
       action: 'link', status: 'success', media_item_id: resolvedMediaItemId, media_asset_id: ex.id,
       provider_source_id: providerSourceId, admin_user_id: adminUserId,
       details: { provider_asset_id: providerAssetId, playback_url: playbackUrl, mode: 'relink', via, note: `Existing provider asset re-linked to a different media item via /api/admin/media/${via}.` },
@@ -462,7 +461,7 @@ export async function upsertLinkAsset(args: UpsertLinkAssetArgs): Promise<Upsert
     .single();
 
   if (insertError || !newRow) {
-    await uploadService.recordOperation({
+    await recordMediaOperation(adminClient, {
       action: 'link', status: 'failed', media_item_id: resolvedMediaItemId,
       provider_source_id: providerSourceId, admin_user_id: adminUserId,
       error_code: 'INSERT_FAILED', error_message: insertError?.message ?? 'No row returned.',
@@ -470,7 +469,7 @@ export async function upsertLinkAsset(args: UpsertLinkAssetArgs): Promise<Upsert
     return { ok: false, code: 'INSERT_FAILED', message: insertError?.message ?? 'No row returned.' };
   }
   const newId = (newRow as { id: string }).id;
-  await uploadService.recordOperation({
+  await recordMediaOperation(adminClient, {
     action: 'link', status: 'success', media_item_id: resolvedMediaItemId, media_asset_id: newId,
     provider_source_id: providerSourceId, admin_user_id: adminUserId,
     details: { provider_asset_id: providerAssetId, playback_url: playbackUrl, mode: 'insert', via, note: `Manual link created via /api/admin/media/${via}.` },

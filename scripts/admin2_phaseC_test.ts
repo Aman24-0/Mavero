@@ -156,7 +156,11 @@ ok('3b. page server parses URL state for deep links (provider + mediaItem + view
 
 // Uses AdminAppShell + AdminPage framework
 assert.match(libraryPage, /<AdminAppShell/, 'library page uses AdminAppShell');
-assert.match(libraryPage, /<AdminPage eyebrow="Content" title="Media Library"/, 'library page uses AdminPage framework');
+// Task 2 (2026-10-15): the Media Library page heading + explanatory
+// paragraph were REMOVED by design — the shell header stays, the content
+// region starts at the toolbar. The page still uses the AdminPage
+// framework (header-less form).
+assert.match(libraryPage, /<AdminPage>/, 'library page uses the AdminPage framework (header-less by design)');
 ok('4a. library page uses AdminAppShell + AdminPage framework');
 
 // [Task 2 (2026-10-15)] The library page renders the compact media-centric
@@ -205,14 +209,16 @@ assert.match(hostingAssets, /initialFilters/, 'file manager initializes from ser
 assert.match(libraryPageServer, /get\('provider'\)/, 'page server reads provider param');
 ok('4h. file manager supports provider + mediaItem deep-links');
 
-// Upload integration — [MAV-FOCUSED 2026-10 redesign] the library page no
-// longer NAVIGATES to /admin/media/upload (the header link was removed in
-// the manual hosting workflow redesign): the "Add file" action opens the
-// AdminAddFileWizard INLINE (the manual-link flow — no upload round-trip).
-assert.match(libraryPage, /addFileTrigger/, 'library page wires the Add file action');
+// Upload integration — [2026-10-15] the Add File action moved INTO the
+// AdminMediaList toolbar controls row (Task 2 layout: page-level heading
+// and action button removed). The action still opens the shared
+// AdminAddFileWizard inline (manual-link flow — no upload round-trip,
+// and the upload page itself is REMOVED).
+assert.match(adminMediaListComp, /class="add-file-btn"/, 'media list toolbar owns the Add File button (controls row, left)');
+assert.match(adminMediaListComp, /function openAddWizard/, 'Add File button opens the shared wizard');
 assert.match(adminMediaListComp, /AdminAddFileWizard/, 'the media list embeds the Add File wizard (manual-link flow)');
 assert.doesNotMatch(libraryPage, /href="\/admin\/media\/upload"/, 'library page no longer links out to the upload wizard (Add file is inline)');
-ok('4i. library page integrates the Add File wizard inline (no upload navigation)');
+ok('4i. media list toolbar integrates the Add File wizard inline (no upload navigation)');
 
 // Partial failure: list error shows retry, doesn't crash whole page
 assert.match(hostingAssets, /listError/, 'file manager tracks list error');
