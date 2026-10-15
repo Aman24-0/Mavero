@@ -161,7 +161,7 @@ assert.match(hostingAssets, /mediaItemId.*providerSourceId.*providerAssetId/, 'C
 
 // Link modal: provider-file picker + media-item picker with search
 assert.match(hostingAssets, /linkModalOpen/, 'C3-10. Link modal state exists');
-assert.match(hostingAssets, /function loadProviderFilesForLink/, 'C3-10b. Provider file loader exists (untracked files)');
+assert.match(hostingAssets, /function loadProviderInventory/, 'C3-10b. Provider file loader exists (lazy per-provider inventory tabs — untracked files)');
 assert.match(hostingAssets, /searchMediaItems/, 'C3-11. Media-item search function exists');
 assert.match(hostingAssets, /\/api\/admin\/media\/library/, 'C3-12. Link modal searches via canonical library API');
 
@@ -182,9 +182,11 @@ assert.match(hostingAssets, /selectedAsset\.mediaItem[\s\S]*?startDetach/, 'C3-1
 const reactivateButtonMatch = hostingAssets.match(/maveroStatus === 'missing'[\s\S]*?reactivate[\s\S]*?<\/button>/);
 assert.ok(reactivateButtonMatch, 'C3-19a. Reactivate button block found');
 assert.doesNotMatch(reactivateButtonMatch[0], /caps\?/, 'C3-19. Reactivate button NOT gated by provider capabilities');
-const linkButtonMatch = hostingAssets.match(/a2-assets-link-existing[\s\S]*?Link Existing File[\s\S]*?<\/button>/);
-assert.ok(linkButtonMatch, 'C3-20a. Link Existing File header action block found');
-assert.doesNotMatch(linkButtonMatch[0], /caps\?/, 'C3-20. Link Existing File NOT gated by provider capabilities (Mavero lifecycle op)');
+// [2026-10 redesign] the header action's label is now "Link media" — same
+// startLinkExistingFlow flow (renamed when the modal became tabbed).
+const linkButtonMatch = hostingAssets.match(/a2-assets-link-existing[\s\S]*?<\/button>/);
+assert.ok(linkButtonMatch, 'C3-20a. Link media header action block found');
+assert.doesNotMatch(linkButtonMatch[0], /caps\?/, 'C3-20. Link media (Link Existing File flow) NOT gated by provider capabilities (Mavero lifecycle op)');
 
 ok('C3. Provider Files: Reactivate + Link Existing added, complete lifecycle (Reconcile/Reactivate/Link/Rename/Move/Detach/Delete)');
 
@@ -233,12 +235,12 @@ assert.match(appShell, /id: 'media-library'.*label: 'Media'.*href: '\/admin\/med
 // Operations is NOT a separate nav item — merged into Hosting Control as tabs
 assert.doesNotMatch(appShell, /id: 'operations'.*label: 'Operations'/, 'E5. Operations is not a separate nav item (merged into Hosting Control)');
 
-// Hosting group has only Hosting Control (no separate Operations entry)
-const hostingGroupMatch = appShell.match(/id: 'hosting'[\s\S]*?items: \[([\s\S]*?)\]\s*\}/);
-assert.ok(hostingGroupMatch, 'E6. Hosting nav group found');
-assert.match(hostingGroupMatch[1], /id: 'hosting'.*label: 'Hosting Control'/, 'E7. Hosting group has Hosting Control');
-assert.doesNotMatch(hostingGroupMatch[1], /id: 'operations'/, 'E8. Hosting group does NOT have separate Operations item');
-ok('E. Navigation: Upload removed, Operations merged into Hosting Control (no separate nav item)');
+// [MAV-FOCUSED 2026-10 redesign] there is NO Hosting nav group at all —
+// the sidebar intentionally dropped Hosting Control (Media Library is the
+// hosting surface; /admin/hosting remains reachable by URL). The merged
+// Operations contract is still pinned by E5 + the hosting route files.
+assert.doesNotMatch(appShell, /id: 'hosting'[\s\S]*?items: \[/, 'E6. No Hosting nav group in the sidebar (MAV-FOCUSED redesign — Media Library is the hosting surface)');
+ok('E. Navigation: Upload removed, Operations not a nav item, no Hosting group (all workspaces reachable by URL)');
 
 // Hosting page: Assets tab removed, redirects to Media Library
 assert.match(hostingServer, /tab === 'assets'/, 'E9. Hosting server checks for assets tab');

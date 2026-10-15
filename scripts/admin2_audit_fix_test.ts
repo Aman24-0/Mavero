@@ -101,7 +101,10 @@ const libraryService = read('src/lib/server/hosting/library/service.ts');
 
 // FINDING-003: orphan filtering + hosting_state
 assert.match(libraryService, /includeOrphans/, 'G1. Library query has includeOrphans flag');
-assert.match(libraryService, /if \(!includeOrphans && activeAssets\.length === 0 && !itemDemand\)/, 'G2. Orphans (no active assets + no demand) filtered by default');
+// [2026-10 Task-2 hierarchy] the orphan rule now applies to the PARENT-level
+// asset/demand UNION (a series card rolls up its episodes' assets + demand);
+// same invariant — no active assets AND no demand anywhere → filtered.
+assert.match(libraryService, /if \(!includeOrphans && activeUnionAssets\.length === 0 && !unionDemand\)/, 'G2. Orphans (no active assets + no demand, parent union) filtered by default');
 assert.match(libraryService, /hosting_state/, 'G3. LibraryMediaItem has hosting_state field');
 assert.match(libraryService, /computeHostingState/, 'G4. computeHostingState helper exists');
 assert.match(libraryService, /'hosted' \| 'processing' \| 'failed' \| 'pending' \| 'catalog_only'/, 'G5. hosting_state has 5 values');

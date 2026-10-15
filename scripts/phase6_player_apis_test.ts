@@ -55,10 +55,11 @@ assert.match(shell, /pictureInPicture = false/, 'PiP active state cleared when v
 // when nothing is in PiP; the old bare `void document.exitPictureInPicture?.()`
 // leaked that rejection as an unhandled pageerror, exposed by the MAVP
 // browser QA source-switch flow).
-assert.match(shell, /if \(document\.pictureInPictureElement === videoElement\)[\s\S]{0,80}exitPipQuietly/, 'PiP exit on source switch (quiet helper — rejection-safe)');
+// [2026-10] the guard gained a `browser &&` SSR prefix — same contract.
+assert.match(shell, /if \((?:browser && )?document\.pictureInPictureElement === videoElement\)[\s\S]{0,80}exitPipQuietly/, 'PiP exit on source switch (quiet helper — rejection-safe)');
 assert.match(shell, /function exitPipQuietly\(\)[\s\S]{0,200}\.catch\(\(\) =>/, 'PiP exit helper absorbs the expected async rejection');
 // PiP cleanup on destroy.
-assert.match(shell, /if \(document\.pictureInPictureElement === videoElement\) exitPipQuietly\(\);[\s\S]*?releaseWakeLock/, 'PiP exit on destroy (in onMount cleanup, rejection-safe)');
+assert.match(shell, /if \((?:browser && )?document\.pictureInPictureElement === videoElement\) exitPipQuietly\(\);[\s\S]*?releaseWakeLock/, 'PiP exit on destroy (in onMount cleanup, rejection-safe)');
 // No iframe PiP invocation.
 assert.doesNotMatch(shell, /iframeElement[\s\S]{0,30}requestPictureInPicture/, 'no iframe PiP invocation (cross-origin safety)');
 

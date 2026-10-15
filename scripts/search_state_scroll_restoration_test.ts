@@ -162,8 +162,11 @@ await assert.rejects(
   // MediaCard must still use appendReturnTo (the contract DetailPage.goBack relies on).
   assert.match(mediaCardSource, /import \{ appendReturnTo \} from '\$lib\/shared\/navigation'/,
     'MediaCard must still import appendReturnTo');
-  assert.match(mediaCardSource, /appendReturnTo\(`\/\$\{item\.type\}\/\$\{item\.id\}`, returnTo\)/,
-    'MediaCard must still build the detail href via appendReturnTo');
+  // [2026-10 canonical routes] MediaCard builds hrefs through the shared
+  // detailPath()/watchPath() helpers (tv-show/anime-series/anime-movie
+  // canonical forms) — the appendReturnTo contract is unchanged.
+  assert.match(mediaCardSource, /appendReturnTo\(detailPath\(item\.id, item\.type, item\.isAnime, item\.animeFormat\), returnTo\)/,
+    'MediaCard must still build the detail href via appendReturnTo (canonical detailPath helper)');
 
   // DetailPage.goBack must use history.back() when `from` is a valid internal URL.
   assert.match(detailPageSource, /function goBack\(event: MouseEvent\)/,

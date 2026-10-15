@@ -142,8 +142,12 @@ console.log('  ok — 5. Missing media admin API (7 checks)\n');
   ok(pageSrc.includes('Ignore'), '6.7 has Ignore action');
   ok(pageSrc.includes('Resolve'), '6.8 has Resolve action');
   ok(pageSrc.includes('Reopen'), '6.9 has Reopen action');
-  ok(pageSrc.includes('Upload'), '6.10 has Upload action (links to upload workflow)');
-  ok(pageSrc.includes('uploadUrl'), '6.11 Upload link preserves TMDB/season/episode identity');
+  // [Phase 3 redesign, 2026-10] the Upload action was replaced by the
+  // shared Add File wizard (manual-link flow): the card's 'Link media'
+  // action opens the wizard PRESELECTED with the demand's TMDB id +
+  // season/episode identity (no upload round-trip by design).
+  ok(pageSrc.includes('Link media'), '6.10 has Link media action (opens the shared manual-link wizard)');
+  ok(pageSrc.includes('preselectedMediaItem'), '6.11 the link action preserves TMDB/season/episode identity (wizard preselection)');
 
   const serverSrc = readFileSync(path.join(REPO_ROOT, 'src/routes/admin/media/missing/+page.server.ts'), 'utf8');
   ok(serverSrc.includes('requireAdmin'), '6.12 page server has requireAdmin');

@@ -556,7 +556,7 @@ assert.match(detailPage, /watchType=\{type === 'anime' \? 'anime' : 'series'\}/,
 assert.match(detailPage, /const validReturnTo = returnTo\?\.startsWith\('\/'\) && !returnTo\.startsWith\('\/\/'\) \? returnTo : null;/, 'back: from-validation preserved');
 assert.match(detailPage, /const fallbackDestination = validReturnTo \?\? '\/discover';/, 'back: fallback destination preserved');
 assert.match(detailPage, /navigateBackOr\(\(\) => \{/, 'back: shared policy preserved');
-assert.match(detailPage, /const watchHref = \$derived\(appendReturnTo\(watchPath, `\$\{page\.url\.pathname\}\$\{page\.url\.search\}\$\{page\.url\.hash\}`\)\);/, 'watch link carries the origin');
+assert.match(detailPage, /const watchHrefVal = \$derived\(appendReturnTo\(watchRoutePath, `\$\{page\.url\.pathname\}\$\{page\.url\.search\}\$\{page\.url\.hash\}`\)\);/, 'watch link carries the origin');
 assert.match(detailPage, /<link rel="canonical" href=\{canonicalUrl\} \/>/, 'canonical URL preserved');
 assert.match(detailPage, /<script type="application\/ld\+json">\{structuredData\}<\/script>/, 'structured data preserved');
 // MAV-23 supersession: the inline player has no dialog chrome — focus

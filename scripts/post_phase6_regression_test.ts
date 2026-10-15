@@ -49,8 +49,15 @@ ok('2. Link API endpoint: admin-only, validates params, delegates to ManagementS
 // 1c. ManagementService has listUnlinkedProviderFiles method
 assert.match(managementService, /async listUnlinkedProviderFiles\(/, '2a. ManagementService has listUnlinkedProviderFiles method');
 assert.match(managementService, /adapter\.listAssets/, '2b. listUnlinkedProviderFiles calls adapter.listAssets');
-assert.match(managementService, /filter\(f => f\.providerAssetId && !linkedIds/, '2c. listUnlinkedProviderFiles filters out already-linked files');
-ok('3. ManagementService.listUnlinkedProviderFiles: lists unlinked provider files for the admin UI');
+// [MAV-FOCUSED 2026-10 fix] the service no longer FILTERS OUT already-linked
+// files — it surfaces each file's link state via linkedToMediaItemId so the
+// UI can show WHY a file cannot be linked again (linkAsset's guard rejects
+// duplicates with a clear error; mavero_status='missing' rows stay linkable
+// to a different media item; terminal deleted rows are marked '<deleted>').
+assert.match(managementService, /linkedToMediaItemId/, '2c. listUnlinkedProviderFiles surfaces per-file link state (linkedToMediaItemId) instead of hiding linked files');
+assert.match(managementService, /const linkedMap = new Map/, '2c1. per-file linked state resolved from a single batched media_assets query');
+assert.match(managementService, /mavero_status: 'missing'/, '2c2. detached (mavero_status=missing) files remain linkable to another media item');
+ok('3. ManagementService.listUnlinkedProviderFiles: per-file link state for the Link Media UI');
 
 // ============================================================
 // 2. Missing Media sweep — mavero_status='available' filter

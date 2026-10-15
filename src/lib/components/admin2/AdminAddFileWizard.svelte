@@ -51,6 +51,10 @@
     episode?: number | null;
     episodeTitle?: string | null;
     year?: number | null;
+    /** Task 2: relative TMDB poster path (or full TMDB image URL) —
+     *  preselection from the episode sheet keeps the parent's poster so
+     *  the first episode link persists it on the parent media_items row. */
+    poster?: string | null;
   };
 
   export type UpdateTarget = {
@@ -60,6 +64,11 @@
     tmdbId: string;
     providerName: string;
     providerAssetId: string;
+    /** Task 2 (2026-10-15): optional episode identity for per-episode
+     *  "Update link" opens from the episode sheet — pre-selects the
+     *  season/episode dropdowns the same way preselectedMediaItem does. */
+    season?: number | null;
+    episode?: number | null;
   };
 
   export type TmdbResult = {
@@ -89,6 +98,7 @@
 
 <script lang="ts">
   import { Search, X, Loader2, Film, Tv, Sparkles, AlertCircle, Check, RotateCw, Image as ImageIcon } from 'lucide-svelte';
+  import { untrack } from 'svelte';
 
   // --- Props ---
   let {
@@ -180,46 +190,75 @@
   }
 
   // --- React to open / preselectedMediaItem / updateTarget changes ---
+  //
+  // This is an IMPERATIVE INIT effect: it must depend ONLY on the three
+  // trigger props (open / updateTarget / preselectedMediaItem) — everything
+  // else it touches (resetSheet, selectedTmdb, loadSeasons, selectedSeason,
+  // …) is $state it WRITES, and if those writes/reads leak into the effect's
+  // dependency set the effect re-triggers itself in an infinite loop
+  // (loadSeasons reads selectedTmdb + writes seasonsLoading/seasons — each
+  // completion re-armed the effect: 1000+ fetches until Svelte's loop guard
+  // wedged the component and the sheet could no longer close). untrack()
+  // scopes the effect to exactly the trigger props.
   $effect(() => {
     if (open) {
-      resetSheet();
-      if (updateTarget) {
-        kind = kindFromInternalType(updateTarget.contentType, updateTarget.contentType !== 'movie');
-        selectedTmdb = {
-          id: `tmdb-${updateTarget.tmdbId}`,
-          tmdbId: updateTarget.tmdbId,
-          title: updateTarget.title,
-          type: updateTarget.contentType === 'movie' ? 'movie' : 'series',
-        };
-        selectedProvider = updateTarget.providerName.toLowerCase().includes('vidara') ? 'vidara'
-          : updateTarget.providerName.toLowerCase().includes('abyss') ? 'abyss' : null;
-        providerReference = updateTarget.providerAssetId;
-        enterEdit();
-      } else if (preselectedMediaItem) {
-        kind = kindFromInternalType(preselectedMediaItem.contentType, false);
-        selectedTmdb = {
-          id: `tmdb-${preselectedMediaItem.tmdbId}`,
-          tmdbId: preselectedMediaItem.tmdbId,
-          title: preselectedMediaItem.title,
-          year: preselectedMediaItem.year ?? undefined,
-          type: preselectedMediaItem.contentType === 'movie' ? 'movie' : 'series',
-        };
-        enterEdit();
-        // Preselect the demand's season/episode, then load the season list
-        // so the dropdowns render real data around the preselection.
-        if (kindMeta(kind).episodic) {
-          if (preselectedMediaItem.season != null) selectedSeason = preselectedMediaItem.season;
-          if (preselectedMediaItem.episode != null) {
-            selectedEpisode = {
-              number: preselectedMediaItem.episode,
-              title: preselectedMediaItem.episodeTitle ?? `Episode ${preselectedMediaItem.episode}`,
-            };
+      const target = updateTarget;
+      const preselected = preselectedMediaItem;
+      untrack(() => {
+        resetSheet();
+        if (target) {
+          kind = kindFromInternalType(target.contentType, target.contentType !== 'movie');
+          selectedTmdb = {
+            id: `tmdb-${target.tmdbId}`,
+            tmdbId: target.tmdbId,
+            title: target.title,
+            type: target.contentType === 'movie' ? 'movie' : 'series',
+          };
+          selectedProvider = target.providerName.toLowerCase().includes('vidara') ? 'vidara'
+            : target.providerName.toLowerCase().includes('abyss') ? 'abyss' : null;
+          providerReference = target.providerAssetId;
+          enterEdit();
+          // Task 2: episode-level update opens (from the episode sheet)
+          // pre-select the season/episode and load the real dropdown data,
+          // mirroring the preselectedMediaItem path. Movie updates have
+          // no episode identity and stay on the plain edit form.
+          if (kindMeta(kind).episodic) {
+            if (target.season != null) selectedSeason = target.season;
+            if (target.episode != null) {
+              selectedEpisode = {
+                number: target.episode,
+                title: `Episode ${target.episode}`,
+              };
+            }
+            void loadSeasons();
           }
-          void loadSeasons();
+        } else if (preselected) {
+          kind = kindFromInternalType(preselected.contentType, false);
+          selectedTmdb = {
+            id: `tmdb-${preselected.tmdbId}`,
+            tmdbId: preselected.tmdbId,
+            title: preselected.title,
+            year: preselected.year ?? undefined,
+            poster: preselected.poster ?? undefined,
+            type: preselected.contentType === 'movie' ? 'movie' : 'series',
+          };
+          enterEdit();
+          // Preselect the demand's season/episode, then load the season list
+          // so the dropdowns render real data around the preselection.
+          if (kindMeta(kind).episodic) {
+            if (preselected.season != null) selectedSeason = preselected.season;
+            if (preselected.episode != null) {
+              selectedEpisode = {
+                number: preselected.episode,
+                title: preselected.episodeTitle ?? `Episode ${preselected.episode}`,
+              };
+            }
+            void loadSeasons();
+          }
+        } else {
+          mode = 'search';
         }
-      } else {
-        mode = 'search';
-      }
+      });
     }
   });
 

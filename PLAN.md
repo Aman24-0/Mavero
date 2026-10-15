@@ -826,3 +826,21 @@ Four bugs + two features, all root-caused from code/DB evidence before fixing.
 | 4 | 28 "Unknown device" sessions | extractSessionId reads the STABLE Supabase session_id claim → 28 distinct rows = 28 genuine distinct Supabase sessions; registry code is race-safe; 'Unknown device' collapsed missing-UA and unrecognized-UA into one label | CODE FIX — honest distinct labels ('Unidentified client (no User-Agent)' / 'Unrecognized client'); owner-run read-only aggregate probe (`mav_task4_session_forensics_probe.mjs`); 34-check invariants suite (`mav_task4_device_session_forensics_test`); NO auto-revocation |
 | 5 | Live TV recently-played channels | (feature) | DONE — bounded local store (12 IDs, no URLs/tokens), row between player and toolbar, logos-only + initials fallback, arrows on overflow, per-channel remove + confirmed Clear all, records at engine 'loaded', selection reuses the existing selectChannel lifecycle; 25-check suite (`mav_task5_live_tv_recent_channels_test`) |
 | 6 | Season switching in the player episode sheet | (feature) | DONE — optional seasons/seasonView props on PlayerShell; season chips (multi-season only), loading/error/retry/empty states, previous-season list cleared while loading, stale-guarded fetch through the EXISTING /api/content/series/[id]/season/[season] contract, getEligibleSeasons filter (unaired excluded, season 0 already excluded upstream), canonical path navigation preserved; 29-check suite (`mav_task6_episode_sheet_seasons_test`) |
+
+---
+
+# Five-workflow completion round (2026-10-15, continued session)
+
+All five workflows from the continuation task are complete on `main`. Baseline for this round: f83c34d + the uncommitted in-progress tree (preserved, verified, extended).
+
+| Workflow | State |
+|----------|-------|
+| 1. Season-chip sizing | VERIFIED — Phase-1 contract suite 32/32 at 375px + 1280px (sheet flex-column, chips flex 0 0 auto + fixed 36px height, count via aria-label, rail scrolls) |
+| 2. Parent-level Media Library | DONE — one parent card per series/anime (`parent_media_id IS NULL`), episode_summary rollup, episodes(parentId) read + `/api/admin/media/library/[id]/episodes`, accessible AdminEpisodeSheet; hierarchy suite 27/27, DOM QA 48/48 |
+| 3. Bulk episode linking | DONE — shared `manual-link-contract.ts` (one definition, two endpoints), `POST /api/admin/media/bulk-link` with per-episode references (duplicates rejected), per-episode outcomes, ONE season-metadata fetch per batch, `via=bulk-link` audit; behavioral suite 33/33 (`mav_task3_bulk_link_behavioral_test`, registered in the chain) |
+| 4. The 27 baseline test failures | ALL FIXED — see WORKLOG for per-suite dispositions. Final chain: 270/270 tsx suites + 48/48 + 32/32 node suites, 0 failures |
+| 5. Supabase device-session forensic audit | COMPLETE — read-only, aggregate-only investigation with live DB access; see WORKLOG for evidence and conclusion |
+
+Migration reconciliation (part of workflow 5): all six repo migrations newer than the live history's last entry (20261102) were verified ALREADY PRESENT in the live schema (live_tv event taxonomy in the CHECK constraint, vidrift + blue-velvet provider rows, widened icon/badge contracts, `streaming_default_source_slots` table, `media_items.poster_path`/`backdrop_path`). Nothing was applied — re-running provider seed migrations would duplicate rows.
+
+Verification: `pnpm check` 0 errors / 9 warnings (baseline was 17); `pnpm build` success (Netlify adapter); `git diff --check` clean; full chain re-run 270/270 after every batch.

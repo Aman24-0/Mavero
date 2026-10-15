@@ -1313,3 +1313,104 @@ Baseline: commit `3a381f6` (= origin/main at start), clean tree after restoring 
   owner-side via the read-only probe above; no credentials exist in the
   audit environment. Nothing was claimed verified beyond this boundary.
 - No Netlify deploy was performed (owner deploys).
+
+---
+
+## Five-workflow completion round (2026-10-15, continued session)
+
+Continued from the interrupted session at the exact working tree (f83c34d +
+uncommitted Phase 1–3 work, all preserved). Started by re-running every one
+of the 27 original baseline failures fresh: 22 already passed; 5 remained.
+
+### Remaining 5 failures — root causes and dispositions
+
+| Suite | Root cause | Disposition |
+|-------|-----------|-------------|
+| phase1_analytics_foundation | **REAL production bug**: the Google-OAuth rewrite (8677538) silently dropped /auth/callback's `signup_completed` emission for the email-confirmation path (documented contract in sign-up/+page.server.ts: "the actual signup_completed is emitted in the /auth/callback handler on email click") AND mislabeled that path's method as `'google'` | Production fix — dedicated email-confirmation emission block restored (`method: 'email_confirmation'`); Google paths unchanged; test untouched |
+| upcoming | Stale route assertions (pre-Phase-5) + two masked assertions behind them | Test updates pinned to the canonical routes (`/tv-show/{id}`, `/anime-series/{id}` — legacy routes are verified 308 shells); the import-boundary guard scoped to import lines (a comment legitimately says "playback"); MediaCard detail-link assertion pinned to the shared `detailHref` helper |
+| player_v2_corrections | Stale exact-string assertion vs. the intentional `browser &&` SSR guard (79f2f2c) | Test updated to the guarded form — the assertion still requires the exact PiP-exit branch before the media stop |
+| player_v2_final_remediation | Stale `indexOf` anchor for the teardown slice (same guard) | Test anchor updated to the guarded line; the exit PiP → pause → release-src sequence still verified verbatim |
+| seo_canonical_sitemap | Stale literal for the canonical template vs. the Phase-5 `detailPath()` shared-helper migration | Test pins the exact helper-based construction + import + absence of the raw internal-type template |
+
+### Session regressions found and fixed (caused by this session's own work)
+
+1. `jsconfig.json` `$env` path-mapping (added for the abyss/cloudstream suites) made the env stub resolve `$env/dynamic/private` BEFORE the node-hooks shim in the upcoming pipeline tests → **upcoming_chronological + upcoming_stream_identity silently regressed to 503**. Fix: the stub now merges `globalThis.__MAVERO_UPCOMING_TEST_ENV__` over `process.env` (test-only; production resolution is unaffected — build verified).
+2. Five suites pinned the OLD flat-library internals (orphan-filter variable names, inline select literals): admin2_audit_fix, architecture_remediation, mav_deep_audit_regression, phase3_classification_cache (tmdb cache-key template), cloudstream_downloader_api (N2/N4 boundary moved: the env stub now loads the import chain, the adult guard passes via the fixture fallback, and the request dies deeper at the admin-client config gate with 503). Each assertion re-pinned to the new verified location with the same invariant strength — none weakened (112 assertion lines removed vs. 166 added).
+3. mav_focused_issue1_dummy_routes (out-of-chain diagnostic): route list updated to the canonical detail routes (legacy shells redirect before any 404).
+
+### New behavioral coverage
+
+- `scripts/mav_task3_bulk_link_behavioral_test.ts` (33 checks, registered in the chain): §A ONE season-metadata fetch per batch (+cache); §B mixed batch with per-episode outcomes and zero writes for failures; §C distinct per-episode asset rows + canonical embed URLs (share-URL inputs reconstructed); §D retry idempotency (no duplicate rows, `mode=idempotent` surfaced); §E cross-request relink re-points ONE row; §F server-side release gate unbypassable; §G audit trail `via=bulk-link`.
+
+### Supabase device-session forensic audit (read-only, aggregate-only)
+
+Evidence (all queries privacy-safe; no identifiers printed):
+- 45 device_sessions rows: 34 active, 11 revoked (all revoked rows are named
+  devices — normal owner revocations via the Account UI).
+- The 28 "Unknown device" rows: all created 2026-10-14 UTC (05:48–19:19 =
+  11:18–00:49 IST), all belonging to the single existing owner account
+  (2 users total in the project), all metadata columns NULL, `last_seen_at =
+  created_at` for every one, 28 DISTINCT device_id cookies (zero reuse),
+  zero overlap (device_id/ip_hash) with the 17 named rows, zero refreshes,
+  zero post-creation updates on their auth sessions.
+- auth.sessions: 30 rows created that day, ALL with auth-side UA `node`
+  (expected — every app sign-in path runs server-side under Node). The app's
+  own analytics recorded exactly ONE `login` event that day (method
+  password, 11:00 UTC — matching the owner's Windows•Brave session at
+  11:34). The app's sign-in action therefore did NOT create the other ~29.
+- No pairing requests that day (QR flow ruled out); auth.audit_log_entries
+  is empty (audit logging not enabled); no new users; no cross-account
+  activity.
+
+**Conclusion (documented, not guessed):** the burst was produced by a
+Node-based client signing in DIRECTLY against the Supabase Auth API with
+the owner's valid credentials ~28–30 times, each session presenting exactly
+ONE authenticated request to the app ~0.9–2.2s later with a fresh cookie jar
+and NO User-Agent header (hence the old 'Unknown device' label + null
+metadata), then never used again. This matches a scripted login smoke /
+verification cycle (e.g. owner-side or prior-session tooling using the
+owner's credentials), NOT a browser, NOT the app's own flows, and not an
+attack profile (an attacker with valid credentials keeps and uses the
+session; nothing here was refreshed or consumed; no other accounts exist).
+**Honest uncertainty:** aggregate-only evidence cannot identify WHICH node
+process it was. **Remediation: NONE applied** — no proven unauthorized
+access; no session was revoked, deleted, or relabeled. The owner can review
+and revoke any unrecognized session from the Account UI (which now, with
+this round's honest-metadata labels, would show these as "Unidentified
+client (no User-Agent)"). Recommended owner actions if the activity is
+unrecognized: rotate the account password, revoke sessions, enable
+Supabase audit logging.
+
+### Migration reconciliation (read-only)
+
+Repo 89 unique migration versions vs. 35 live history entries: the early
+gap is explained by renamed versions (live history uses second-precision
+timestamps). All six repo migrations NEWER than the live history's last
+entry (20261103–20261112) were object-verified as ALREADY APPLIED:
+live_tv event names inside the live `analytics_events_event_name_check`,
+vidrift + blue-velvet rows in streaming_providers, the widened
+icon/badge CHECK contracts on streaming_sources, the
+`streaming_default_source_slots` table, `media_items.poster_path` +
+`backdrop_path`. The critical bulk-link contract — `UNIQUE
+(provider_source_id, provider_asset_id)` on media_assets + the 200-char
+provider_asset_id CHECK — verified live. **Nothing applied** (re-running
+provider seed migrations would duplicate rows).
+
+### Final verification
+
+- Full `pnpm test` chain (270 tsx suites incl. the 3 newly registered this
+  round): **270/270 PASS**.
+- Browser suites: episode-sheet + bulk-link DOM QA **48/48**; season-chip
+  contract **32/32** (375px + 1280px).
+- `pnpm check`: **0 errors, 9 warnings** (recorded baseline 17; the prior
+  round reduced 28 → 9).
+- `pnpm build`: **success** (Netlify adapter + executor function).
+- `git diff --check`: clean. Secrets scan of all new files: clean.
+- Assertion-strength audit: 112 removed vs. 166 added assertion lines; no
+  loose-truthiness replacements (spot-audited every edited suite).
+
+### Production checks NOT performed
+
+No deploy (owner deploys). No live HTTP traffic tests against the deployed
+site. The Supabase investigation was read-only; no writes, no revocations,
+no migrations applied.

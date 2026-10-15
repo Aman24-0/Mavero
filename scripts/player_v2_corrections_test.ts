@@ -64,7 +64,13 @@ ok(/class="utility-zone"/.test(controls) && /class="center-cluster"/.test(contro
 const cleanupIdx = shell.indexOf('document.documentElement.removeAttribute(\'data-player-open\')');
 const cleanupBody = cleanupIdx > -1 ? shell.slice(cleanupIdx, shell.indexOf('landscapePresentationIntent = false;', cleanupIdx)) : '';
 ok(cleanupBody.length > 0, '2. the onMount cleanup body is located');
-ok(/if \(document\.pictureInPictureElement === videoElement\) exitPipQuietly\(\);/.test(cleanupBody), '2. cleanup exits PiP (the window must not keep the element alive across navigation)');
+// [2026-10 Phase-5 SSR guard] 79f2f2c added the `browser &&` guard to
+// every document.pictureInPictureElement access (the sibling reactive
+// statements DO execute during SSR of watch pages). The cleanup guard
+// is behavior-neutral (onMount teardown only runs client-side) — the
+// assertion still requires the exact PiP-exit branch tied to the video
+// element, before the media stop.
+ok(/if \(browser && document\.pictureInPictureElement === videoElement\) exitPipQuietly\(\);/.test(cleanupBody), '2. cleanup exits PiP (the window must not keep the element alive across navigation; SSR-guarded since Phase 5)');
 ok(cleanupBody.indexOf('exitPipQuietly()') < cleanupBody.indexOf('videoElement.pause()'), '2. PiP exits BEFORE the media stop (window released first)');
 ok(/if \(videoElement\) \{\s*try \{ videoElement\.pause\(\); \} catch \{ \/\* already stopped \*\/ \}\s*try \{\s*videoElement\.removeAttribute\('src'\);\s*videoElement\.load\(\);\s*\} catch \{ \/\* element already reset \*\/ \}\s*\}/.test(cleanupBody), '2. cleanup PAUSES the element and RELEASES the resource (removeAttribute src + load) — a detached <video> keeps playing otherwise (the reported background-audio bug)');
 ok(/removeAttribute\('src'\)/.test(cleanupBody) && /videoElement\.load\(\)/.test(cleanupBody), '2. the media resource is released (no detached streaming after Back)');

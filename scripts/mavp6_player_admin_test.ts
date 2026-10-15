@@ -105,9 +105,14 @@ function rejectingSupabaseClient(): any {
   const { describeWatchLoadFailure, logWatchLoadStageFailure } = (await import('../src/lib/server/content/watch-load-diagnostics.ts')) as any;
   const { handleError } = (await import('../src/hooks.client.ts')) as { handleError: (input: unknown) => void };
 
-  const url = { searchParams: { get: () => '1' } };
+  // [2026-10 canonical-watch-path contract] the query-form loader now 307-
+  // canonicalizes legacy internal types ('series'/'anime') to the modern
+  // public route type ('tv-show') — so the hermetic harness uses the
+  // MODERN type directly (no redirect, straight to the fixture success
+  // path the test pins) and a REAL URL instance so url.search exists.
+  const url = new URL('http://localhost/watch/tv-show/fixture?season=1');
   const baseEvent = (id: string, supabase: unknown) => ({
-    params: { type: 'series', id },
+    params: { type: 'tv-show', id },
     locals: { supabase, user: null },
     cookies: { get: () => undefined },
     url,
@@ -216,9 +221,12 @@ function rejectingSupabaseClient(): any {
     }
   }
 
-  // --- Structural: the four boundaries are wired in the load (source-level truth).
+  // --- Structural: the four boundaries are wired in the load (source-level
+  // truth). [2026-10 refactor] the load logic lives in the SHARED
+  // watch-loader.ts (serving both the query-form and canonical path-form
+  // routes); the boundaries are pinned there.
   {
-    const watchServer = codeOnly(read('../src/routes/watch/[type]/[id]/+page.server.ts'));
+    const watchServer = codeOnly(read('../src/routes/watch/[type]/[id]/watch-loader.ts'));
     ok(watchServer.includes("logWatchLoadStageFailure(logger, 'watch:detail'"), 'I1: the detail boundary is wired to the stage logger');
     ok(watchServer.includes("logWatchLoadStageFailure(logger, 'watch:streaming-config'"), 'I1: the streaming-config boundary is wired to the stage logger');
     ok(watchServer.includes("logWatchLoadStageFailure(logger, 'watch:season'"), 'I1: the season boundary is wired to the stage logger');

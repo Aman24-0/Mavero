@@ -169,28 +169,53 @@ export const GET: RequestHandler = async ({ url, locals }) => {
   }
 
   // ── sign-in / sign-up success ──────────────────────────────────────
-  // Phase 1 Analytics Foundation — server-authoritative `login` event.
-  // The intent discriminates Google sign-in (existing user) from Google
-  // sign-up (new user). For 'sign-up', we emit `signup_completed`
-  // (mirrors the email-confirmation path). For 'sign-in', we emit
-  // `login` (mirrors the password sign-in path). Both carry only
-  // `method: 'google'` — no tokens, no identity payloads.
+  // Phase 1 Analytics Foundation — server-authoritative events. Two
+  // distinct contracts meet here:
+  //
+  //   * EMAIL CONFIRMATION (no signed state → intent === null): this
+  //     callback is where a pending sign-up COMPLETES (the sign-up
+  //     action only emits `signup_completed` for the auto-session path
+  //     — its own comment defers the confirmation case to this route).
+  //     Emits `signup_completed` with `method: 'email_confirmation'`.
+  //     [2026-10 fix] the Google rewrite accidentally dropped this
+  //     emission and labeled the email path `method: 'google'` — both
+  //     the event name and the method are restored to the documented
+  //     foundation contract (funnel counts + honest method metadata).
+  //
+  //   * GOOGLE flows discriminate on the signed intent: 'sign-up' (new
+  //     user) → `signup_completed`, 'sign-in' (existing user) →
+  //     `login`. Both carry `method: 'google'` — no tokens, no
+  //     identity payloads.
   try {
     const user = data.user;
     if (user && locals.anonymousId) {
       const admin = createSupabaseAdminClient();
-      const eventName = intent === 'sign-up' ? 'signup_completed' : 'login';
-      void recordServerEvent(
-        admin,
-        {
-          event_id: crypto.randomUUID(),
-          event_name: eventName,
-          anonymous_id: locals.anonymousId,
-          user_id: user.id,
-          metadata: { method: 'google' },
-        },
-        { requestId: locals.requestId }
-      );
+      if (intent === 'sign-in' || intent === 'sign-up') {
+        const eventName = intent === 'sign-up' ? 'signup_completed' : 'login';
+        void recordServerEvent(
+          admin,
+          {
+            event_id: crypto.randomUUID(),
+            event_name: eventName,
+            anonymous_id: locals.anonymousId,
+            user_id: user.id,
+            metadata: { method: 'google' },
+          },
+          { requestId: locals.requestId }
+        );
+      } else {
+        void recordServerEvent(
+          admin,
+          {
+            event_id: crypto.randomUUID(),
+            event_name: 'signup_completed',
+            anonymous_id: locals.anonymousId,
+            user_id: user.id,
+            metadata: { method: 'email_confirmation' },
+          },
+          { requestId: locals.requestId }
+        );
+      }
     }
   } catch {
     // Analytics must not break the callback redirect.

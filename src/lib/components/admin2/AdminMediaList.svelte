@@ -7,9 +7,18 @@
   //   * 20-item incremental pagination with infinite scroll.
   //   * Three-dot menu: Delete (Mavero-side only) + Update link.
   //
+  // TASK 2 (2026-10-15) — PARENT/EPISODE HIERARCHY:
+  //   * Series and anime-series render ONE parent card (never one card
+  //     per episode). The card shows the episode rollup (seasons, linked
+  //     episodes) and OPENS the accessible episode sheet (season chips +
+  //     full TMDB episode list merged with linked ground truth).
+  //   * Movies stay flat one-card-per-movie cards.
+  //
   // Uses the /api/admin/media/manual-link endpoint for create/update/delete.
+  // Uses the /api/admin/media/bulk-link endpoint for per-episode bulk links.
   // Uses the /api/admin/media/search endpoint for TMDB search (via the wizard).
-  // Uses the /api/admin/media/library endpoint for the list.
+  // Uses the /api/admin/media/library endpoint for the list (top-level rows
+  // only — the server rolls episode children into episode_summary).
 
   export type MediaRow = {
     id: string;
@@ -23,21 +32,41 @@
     maveroStatus: string;
     mediaAssetId: string;
     posterPath?: string | null;
+    /** Task 2 — true for parent series/anime rows: the card opens the
+     *  episode sheet instead of the flat-episode actions. */
+    isParent: boolean;
+    /** Task 2 — episode rollup for parent rows. */
+    seasonCount?: number;
+    episodeCount?: number;
+    linkedEpisodeCount?: number;
+    year?: number | null;
   };
 </script>
 
 <script lang="ts">
-  import { Plus, MoreVertical, Trash2, Link2, Loader2, Film, Tv, Sparkles, AlertCircle, Search, LayoutGrid, List as ListIcon, SlidersHorizontal, X } from 'lucide-svelte';
+  import { Plus, MoreVertical, Trash2, Link2, Loader2, Film, Tv, Sparkles, AlertCircle, Search, LayoutGrid, List as ListIcon, SlidersHorizontal, X, Layers } from 'lucide-svelte';
+  import { untrack } from 'svelte';
   import AdminAddFileWizard from './AdminAddFileWizard.svelte';
-  import type { UpdateTarget } from './AdminAddFileWizard.svelte';
+  import type { UpdateTarget, PreselectedMediaItem } from './AdminAddFileWizard.svelte';
+  import AdminEpisodeSheet from './AdminEpisodeSheet.svelte';
+  import type { EpisodeSheetParent } from './AdminEpisodeSheet.svelte';
 
   // --- Props ---
   let {
     providers = [] as Array<{ adapterId: string; name: string; sourceId: string }>,
     registerAddFile = undefined as ((fn: (() => void) | null) => void) | undefined,
+    /** Task 2 fix (2026-10-15) — URL-derived deep-link filters from the
+     *  library page server (Hosting Control provider navigation, Jobs/
+     *  Activity/Attention mediaItem links, shared URLs). Applied ONCE at
+     *  component init so the FIRST loadList() request already carries
+     *  them (previously the swap from AdminHostingAssets to AdminMediaList
+     *  dropped this contract — ?provider=vidara landed on an unfiltered
+     *  list even though the page server still parsed it). */
+    initialFilters = null as { q?: string; provider?: string; contentType?: string; status?: string; sort?: string } | null,
   }: {
     providers?: Array<{ adapterId: string; name: string; sourceId: string }>;
     registerAddFile?: ((fn: (() => void) | null) => void) | undefined;
+    initialFilters?: { q?: string; provider?: string; contentType?: string; status?: string; sort?: string } | null;
   } = $props();
 
   // --- State ---
@@ -120,8 +149,26 @@
   // --- Wizard + delete state ---
   let wizardOpen = $state(false);
   let wizardUpdateTarget = $state<UpdateTarget | null>(null);
-  let deleteTarget = $state<MediaRow | null>(null);
+  let wizardPreselected = $state<PreselectedMediaItem | null>(null);
+  let deleteTarget = $state<(MediaRow & { episodeLabel?: string }) | null>(null);
   let deleting = $state(false);
+
+  // --- Task 2: episode sheet state ---
+  let sheetOpen = $state(false);
+  let sheetParent = $state<EpisodeSheetParent | null>(null);
+
+  function openEpisodeSheet(row: MediaRow) {
+    if (!row.isParent) return;
+    sheetParent = {
+      id: row.id,
+      title: row.title,
+      contentType: row.contentType,
+      tmdbId: row.tmdbId,
+      year: row.year ?? null,
+      posterPath: row.posterPath ?? null,
+    };
+    sheetOpen = true;
+  }
 
   // Task 3 (2026-10-15) — PORTAL ACTION MENU.
   //
@@ -269,14 +316,34 @@
     return `${TMDB_IMAGE_BASE}${path}`;
   }
 
-  // --- Lifecycle ---
-  let prevOpen = false;
-
+  // --- Lifecycle — mount + deep-link filter application (Task 2 fix) ---
+  //
+  // The effect tracks ONLY `initialFilters` (referenced at the top): it
+  // runs on mount AND whenever a navigation changes the URL params
+  // (SvelteKit re-runs load → new initialFilters object identity → the
+  // new deep-link state is applied and the list reloads — Hosting
+  // Control's ?provider=<id> navigation now works end-to-end).
+  //
+  // The filter STATE reads/writes and loadList() run inside untrack()
+  // so the effect does not accidentally depend on the filter state it
+  // just wrote (which would loop). Closed-vocabulary mapping with
+  // graceful fallbacks: anything invalid/absent keeps the defaults.
   $effect(() => {
-    if (!prevOpen) {
-      loadList(true);
-    }
-    prevOpen = true;
+    const init = initialFilters;
+    untrack(() => {
+      if (init) {
+        if (typeof init.q === 'string' && init.q.trim()) {
+          searchQuery = init.q.trim();
+        } else {
+          searchQuery = '';
+        }
+        filterType = (init.contentType === 'movie' || init.contentType === 'series' || init.contentType === 'anime') ? init.contentType : 'all';
+        filterProvider = (init.provider === 'vidara' || init.provider === 'abyss') ? init.provider : 'all';
+        filterStatus = (init.status === 'available' || init.status === 'missing' || init.status === 'ready') ? init.status : 'all';
+        sortBy = (init.sort === 'recently_updated' || init.sort === 'recently_added' || init.sort === 'title') ? init.sort : 'recently_updated';
+      }
+      void loadList(true);
+    });
   });
 
   $effect(() => {
@@ -326,13 +393,19 @@
       if (token !== searchToken) return; // stale response
 
       if (json.ok) {
-        const newItems = (json.items ?? []).map(mapLibraryItem).filter((i: MediaRow) => i.mediaAssetId);
+        // Task 2: NO client-side mediaAssetId filter — the server now owns
+        // the orphan/pending rules (top-level rows only; parents roll up
+        // their episodes). A movie with demand but no assets (pending)
+        // shows here with an "Add link" action; a parent shows even
+        // though it has no assets of its own (its episodes do).
+        const newItems = (json.items ?? []).map(mapLibraryItem);
         if (reset) {
           items = newItems;
         } else {
-          // Deduplicate by mediaAssetId.
-          const existingIds = new Set(items.map(i => i.mediaAssetId));
-          const filtered = newItems.filter((i: MediaRow) => !existingIds.has(i.mediaAssetId));
+          // Deduplicate by row id (parent cards + movie cards share the
+          // media_items id space — one identity, one card).
+          const existingIds = new Set(items.map(i => i.id));
+          const filtered = newItems.filter((i: MediaRow) => !existingIds.has(i.id));
           items = [...items, ...filtered];
         }
         hasMore = json.has_more ?? false;
@@ -370,6 +443,33 @@
   }
 
   function mapLibraryItem(item: any): MediaRow {
+    // Task 2 — PARENT rows (series/anime with episode_summary): one card,
+    // identity = the series; the episode rollup drives the subtitle and
+    // the card opens the episode sheet. Episode rows NEVER reach this
+    // mapper (the server returns top-level rows only).
+    const isParent = (item.content_type === 'series' || item.content_type === 'anime')
+      && item.episode_summary != null;
+    if (isParent) {
+      const summary = item.episode_summary;
+      return {
+        id: item.id,
+        title: item.title,
+        contentType: item.content_type,
+        tmdbId: item.tmdb_id,
+        providerAssetId: '',
+        providerSourceId: '',
+        providerName: '',
+        status: item.hosting_state ?? 'unknown',
+        maveroStatus: item.hosting_state ?? 'unknown',
+        mediaAssetId: '',
+        posterPath: item.poster_path ?? null,
+        isParent: true,
+        seasonCount: summary.season_count ?? 0,
+        episodeCount: summary.episode_count ?? 0,
+        linkedEpisodeCount: summary.linked_episode_count ?? 0,
+        year: item.year ?? null,
+      };
+    }
     const asset = (item.assets ?? []).find((a: any) => a.status !== 'deleted') ?? item.assets?.[0];
     const providerName = asset ? providerNameForSource(asset.provider_source_id) : 'Unknown';
     return {
@@ -380,10 +480,12 @@
       providerAssetId: asset?.provider_asset_id ?? '',
       providerSourceId: asset?.provider_source_id ?? '',
       providerName,
-      status: asset?.status ?? 'unknown',
-      maveroStatus: asset?.mavero_status ?? 'unknown',
+      status: asset?.status ?? (item.hosting_state === 'pending' ? 'pending' : 'unknown'),
+      maveroStatus: asset?.mavero_status ?? item.hosting_state ?? 'unknown',
       mediaAssetId: asset?.id ?? '',
       posterPath: item.poster_path ?? null,
+      isParent: false,
+      year: item.year ?? null,
     };
   }
 
@@ -419,10 +521,33 @@
   // --- Wizard control ---
   function openAddWizard() {
     wizardUpdateTarget = null;
+    wizardPreselected = null;
     wizardOpen = true;
   }
 
-  function openUpdateWizard(row: MediaRow) {
+  // Task 2 — open the wizard PRESELECTED to one episode (the episode
+  // sheet's "Add link" action) or to a movie (the pending-card action).
+  // The wizard skips search entirely and lands on the edit form with
+  // the season/episode chosen (episodic) or the plain movie form.
+  function openPreselectedWizard(target: {
+    tmdbId: string; contentType: string; title: string; year?: number | null;
+    season?: number; episode?: number; episodeTitle?: string | null; posterPath?: string | null;
+  }) {
+    wizardUpdateTarget = null;
+    wizardPreselected = {
+      title: target.title,
+      contentType: target.contentType,
+      tmdbId: target.tmdbId,
+      year: target.year ?? null,
+      season: target.season ?? null,
+      episode: target.episode ?? null,
+      episodeTitle: target.episodeTitle ?? null,
+      poster: target.posterPath ?? null,
+    };
+    wizardOpen = true;
+  }
+
+  function openUpdateWizard(row: MediaRow & { episodeLabel?: string }) {
     wizardUpdateTarget = {
       mediaAssetId: row.mediaAssetId,
       title: row.title,
@@ -431,6 +556,7 @@
       providerName: row.providerName,
       providerAssetId: row.providerAssetId,
     };
+    wizardPreselected = null;
     wizardOpen = true;
   }
 
@@ -497,50 +623,112 @@
   {:else if viewMode === 'grid'}
     <div class="media-grid" onscroll={onScroll}>
       {#each items as row (row.id)}
-        <div class="grid-card" data-status={row.maveroStatus}>
-          <div class="grid-poster">
-            {#if posterUrl(row.posterPath)}
-              <img src={posterUrl(row.posterPath)} alt={row.title} loading="lazy" />
-            {:else}
-              <div class="grid-poster-fallback">{#if row.contentType === 'movie'}<Film size={24} />{:else if row.contentType === 'anime'}<Sparkles size={24} />{:else}<Tv size={24} />{/if}</div>
-            {/if}
-            <button type="button" class="grid-menu-btn" onclick={(e) => toggleMenu(row, e)} aria-label="Actions" aria-haspopup="menu" aria-expanded={openMenuId === row.id}>
-              <MoreVertical size={14} />
-            </button>
-          </div>
-          <div class="grid-info">
-            <div class="grid-title">{row.title}</div>
-            <div class="grid-meta">
-              <span class="badge-type">{contentTypeLabel(row.contentType)}</span>
-              <span class="badge-provider" data-provider={providerLabel(row).toLowerCase()}>{providerLabel(row)}</span>
+        {#if row.isParent}
+          <!-- Task 2 — ONE parent card per series/anime: opens the episode
+               sheet; the menu offers the same entry plus Add file. -->
+          <div class="grid-card" data-status={row.maveroStatus}>
+            <div class="grid-poster">
+              {#if posterUrl(row.posterPath)}
+                <img src={posterUrl(row.posterPath)} alt={row.title} loading="lazy" />
+              {:else}
+                <div class="grid-poster-fallback">{#if row.contentType === 'anime'}<Sparkles size={24} />{:else}<Tv size={24} />{/if}</div>
+              {/if}
+              <button type="button" class="grid-menu-btn" onclick={(e) => toggleMenu(row, e)} aria-label="Actions" aria-haspopup="menu" aria-expanded={openMenuId === row.id}>
+                <MoreVertical size={14} />
+              </button>
+            </div>
+            <div class="grid-info">
+              <div class="grid-title">{row.title}</div>
+              <div class="grid-meta">
+                <span class="badge-type">{contentTypeLabel(row.contentType)}</span>
+                <span class="badge-progress">{row.linkedEpisodeCount}/{row.episodeCount} ep</span>
+              </div>
+              <button type="button" class="grid-open-episodes" onclick={() => openEpisodeSheet(row)} aria-label="View episodes of {row.title}">
+                <Layers size={11} /> Episodes
+              </button>
             </div>
           </div>
-        </div>
+        {:else}
+          <div class="grid-card" data-status={row.maveroStatus}>
+            <div class="grid-poster">
+              {#if posterUrl(row.posterPath)}
+                <img src={posterUrl(row.posterPath)} alt={row.title} loading="lazy" />
+              {:else}
+                <div class="grid-poster-fallback">{#if row.contentType === 'movie'}<Film size={24} />{:else if row.contentType === 'anime'}<Sparkles size={24} />{:else}<Tv size={24} />{/if}</div>
+              {/if}
+              <button type="button" class="grid-menu-btn" onclick={(e) => toggleMenu(row, e)} aria-label="Actions" aria-haspopup="menu" aria-expanded={openMenuId === row.id}>
+                <MoreVertical size={14} />
+              </button>
+            </div>
+            <div class="grid-info">
+              <div class="grid-title">{row.title}</div>
+              <div class="grid-meta">
+                <span class="badge-type">{contentTypeLabel(row.contentType)}</span>
+                {#if row.mediaAssetId}
+                  <span class="badge-provider" data-provider={providerLabel(row).toLowerCase()}>{providerLabel(row)}</span>
+                {:else if row.status === 'pending'}
+                  <span class="badge-progress">Requested</span>
+                {/if}
+              </div>
+            </div>
+          </div>
+        {/if}
       {/each}
     </div>
   {:else}
     <div class="media-list" onscroll={onScroll}>
       {#each items as row (row.id)}
-        <div class="media-row" data-status={row.maveroStatus}>
-          <div class="media-poster">
-            {#if posterUrl(row.posterPath)}
-              <img src={posterUrl(row.posterPath)} alt={row.title} loading="lazy" />
-            {:else}
-              {#if row.contentType === 'movie'}<Film size={18} />{:else if row.contentType === 'anime'}<Sparkles size={18} />{:else}<Tv size={18} />{/if}
-            {/if}
-          </div>
-          <div class="media-info">
-            <div class="media-title">{row.title}</div>
-            <div class="media-meta">
-              <span class="badge-type">{contentTypeLabel(row.contentType)}</span>
-              <span class="badge-provider" data-provider={providerLabel(row).toLowerCase()}>{providerLabel(row)}</span>
-              <span class="tmdb-id">TMDB: {row.tmdbId}</span>
+        {#if row.isParent}
+          <!-- Task 2 — ONE parent row per series/anime; the whole row is a
+               button that opens the accessible episode sheet (season chips
+               + per-episode links + bulk link). -->
+          <div class="media-row media-row-parent" data-status={row.maveroStatus}>
+            <div class="media-poster">
+              {#if posterUrl(row.posterPath)}
+                <img src={posterUrl(row.posterPath)} alt="" loading="lazy" />
+              {:else}
+                {#if row.contentType === 'anime'}<Sparkles size={18} />{:else}<Tv size={18} />{/if}
+              {/if}
+            </div>
+            <button type="button" class="media-info media-open" data-episode-sheet-opener={row.id} onclick={() => openEpisodeSheet(row)} aria-label="Open episodes of {row.title} — {row.seasonCount} season{row.seasonCount === 1 ? '' : 's'}, {row.linkedEpisodeCount} of {row.episodeCount} episodes linked">
+              <div class="media-title">{row.title}</div>
+              <div class="media-meta">
+                <span class="badge-type">{contentTypeLabel(row.contentType)}</span>
+                <span class="badge-progress">{row.seasonCount} season{row.seasonCount === 1 ? '' : 's'}</span>
+                <span class="badge-progress">{row.linkedEpisodeCount}/{row.episodeCount} episodes linked</span>
+                {#if row.maveroStatus === 'pending'}<span class="badge-unlinked">Requested</span>{/if}
+              </div>
+            </button>
+            <div class="media-actions">
+              <button type="button" class="menu-trigger" onclick={(e) => toggleMenu(row, e)} aria-label="Actions" aria-haspopup="menu" aria-expanded={openMenuId === row.id}><MoreVertical size={16} /></button>
             </div>
           </div>
-          <div class="media-actions">
-            <button type="button" class="menu-trigger" onclick={(e) => toggleMenu(row, e)} aria-label="Actions" aria-haspopup="menu" aria-expanded={openMenuId === row.id}><MoreVertical size={16} /></button>
+        {:else}
+          <div class="media-row" data-status={row.maveroStatus}>
+            <div class="media-poster">
+              {#if posterUrl(row.posterPath)}
+                <img src={posterUrl(row.posterPath)} alt="" loading="lazy" />
+              {:else}
+                {#if row.contentType === 'movie'}<Film size={18} />{:else if row.contentType === 'anime'}<Sparkles size={18} />{:else}<Tv size={18} />{/if}
+              {/if}
+            </div>
+            <div class="media-info">
+              <div class="media-title">{row.title}</div>
+              <div class="media-meta">
+                <span class="badge-type">{contentTypeLabel(row.contentType)}</span>
+                {#if row.mediaAssetId}
+                  <span class="badge-provider" data-provider={providerLabel(row).toLowerCase()}>{providerLabel(row)}</span>
+                {:else if row.status === 'pending'}
+                  <span class="badge-progress">Requested — link needed</span>
+                {/if}
+                <span class="tmdb-id">TMDB: {row.tmdbId}</span>
+              </div>
+            </div>
+            <div class="media-actions">
+              <button type="button" class="menu-trigger" onclick={(e) => toggleMenu(row, e)} aria-label="Actions" aria-haspopup="menu" aria-expanded={openMenuId === row.id}><MoreVertical size={16} /></button>
+            </div>
           </div>
-        </div>
+        {/if}
       {/each}
     </div>
   {/if}
@@ -569,8 +757,15 @@
       style="top:{menuPos.top}px;left:{menuPos.left}px"
       onkeydown={onMenuKeydown}
     >
-      <button type="button" class="menu-item" role="menuitem" onclick={() => { const row = openMenuRow; closeMenu(false); if (row) openUpdateWizard(row); }}><Link2 size={14} /> Update link</button>
-      <button type="button" class="menu-item menu-item-danger" role="menuitem" onclick={() => { const row = openMenuRow; closeMenu(false); if (row) deleteTarget = row; }}><Trash2 size={14} /> Delete</button>
+      {#if openMenuRow.isParent}
+        <button type="button" class="menu-item" role="menuitem" onclick={() => { const row = openMenuRow; closeMenu(false); if (row) openEpisodeSheet(row); }}><Layers size={14} /> View episodes</button>
+        <button type="button" class="menu-item" role="menuitem" onclick={() => { const row = openMenuRow; closeMenu(false); if (row) openPreselectedWizard({ tmdbId: row.tmdbId, contentType: row.contentType, title: row.title, year: row.year }); }}><Link2 size={14} /> Add file</button>
+      {:else if openMenuRow.mediaAssetId}
+        <button type="button" class="menu-item" role="menuitem" onclick={() => { const row = openMenuRow; closeMenu(false); if (row) openUpdateWizard(row); }}><Link2 size={14} /> Update link</button>
+        <button type="button" class="menu-item menu-item-danger" role="menuitem" onclick={() => { const row = openMenuRow; closeMenu(false); if (row) deleteTarget = row; }}><Trash2 size={14} /> Delete</button>
+      {:else}
+        <button type="button" class="menu-item" role="menuitem" onclick={() => { const row = openMenuRow; closeMenu(false); if (row) openPreselectedWizard({ tmdbId: row.tmdbId, contentType: row.contentType, title: row.title, year: row.year }); }}><Link2 size={14} /> Add link</button>
+      {/if}
     </div>
   {/if}
 </section>
@@ -580,7 +775,43 @@
   bind:open={wizardOpen}
   {providers}
   updateTarget={wizardUpdateTarget}
+  preselectedMediaItem={wizardPreselected}
   onsaved={() => { void loadList(true); }}
+/>
+
+<!-- Task 2 — the accessible episode sheet for a parent series/anime card.
+     All per-episode actions delegate back here: Add link → the wizard
+     (preselected to that episode), Update link → the wizard (update
+     mode, season/episode preselected), Delete → the shared confirm
+     dialog. Bulk link lives INSIDE the sheet (Task 3). -->
+<AdminEpisodeSheet
+  bind:open={sheetOpen}
+  parent={sheetParent}
+  {providers}
+  onsaved={() => { void loadList(true); }}
+  onaddlink={(target) => { openPreselectedWizard(target); }}
+  onupdatelink={(target) => {
+    wizardUpdateTarget = target;
+    wizardPreselected = null;
+    wizardOpen = true;
+  }}
+  ondeletelink={(target) => {
+    deleteTarget = {
+      id: target.mediaAssetId,
+      title: target.title,
+      episodeLabel: target.episodeLabel,
+      contentType: sheetParent?.contentType ?? 'series',
+      tmdbId: sheetParent?.tmdbId ?? '',
+      providerAssetId: '',
+      providerSourceId: '',
+      providerName: '',
+      status: '',
+      maveroStatus: '',
+      mediaAssetId: target.mediaAssetId,
+      posterPath: sheetParent?.posterPath ?? null,
+      isParent: false,
+    };
+  }}
 />
 
 <!-- Filter sheet: ALL filters in ONE modal — never stacked toolbar rows.
@@ -645,8 +876,8 @@
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <div class="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-title" tabindex="-1" onclick={(e) => e.stopPropagation()}>
       <h3 id="delete-title"><Trash2 size={16} /> Delete media link?</h3>
-      <p class="confirm-desc">This will remove <strong>{deleteTarget.title}</strong> from the Media Library.</p>
-      <p class="confirm-note"><strong>The hosted file on {providerLabel(deleteTarget)} will NOT be deleted.</strong> It remains on the provider and can be re-linked later.</p>
+      <p class="confirm-desc">This will remove <strong>{deleteTarget.episodeLabel ? `${deleteTarget.title} — ${deleteTarget.episodeLabel}` : deleteTarget.title}</strong> from the Media Library.</p>
+      <p class="confirm-note"><strong>The hosted file{deleteTarget.providerName ? ` on ${providerLabel(deleteTarget)}` : ''} will NOT be deleted.</strong> It remains on the provider and can be re-linked later.</p>
       <div class="confirm-actions">
         <button type="button" class="btn btn-cancel" onclick={() => { deleteTarget = null; }} disabled={deleting}>Cancel</button>
         <button type="button" class="btn btn-danger" onclick={confirmDelete} disabled={deleting}>
@@ -716,7 +947,17 @@
   .badge-provider { padding: 1px 6px; border-radius: var(--a2-radius-xs); font-size: var(--a2-text-2xs); font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
   .badge-provider[data-provider="vidara"] { background: rgba(99, 102, 241, 0.15); color: #818cf8; }
   .badge-provider[data-provider="abyss"] { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
+  .badge-progress { padding: 1px 6px; border-radius: var(--a2-radius-xs); background: rgba(0,200,200,0.08); font-size: var(--a2-text-2xs); font-weight: 700; color: var(--a2-text-muted); letter-spacing: 0.04em; }
+  .badge-unlinked { padding: 1px 6px; border-radius: var(--a2-radius-xs); background: var(--a2-surface-4); font-size: var(--a2-text-2xs); font-weight: 700; text-transform: uppercase; color: var(--a2-text-muted); letter-spacing: 0.04em; }
   .tmdb-id { font-family: var(--a2-font-mono); font-size: var(--a2-text-2xs); color: var(--a2-text-dim); }
+
+  /* Task 2 — parent rows/cards: the open-episodes control. */
+  .media-row-parent .media-open { text-align: left; border: 0; background: transparent; cursor: pointer; padding: 0; font: inherit; color: inherit; }
+  .media-row-parent .media-open:hover .media-title { color: var(--a2-cyan); }
+  .media-row-parent .media-open:focus-visible { outline: 2px solid var(--a2-cyan); outline-offset: 2px; border-radius: var(--a2-radius-xs); }
+  .grid-open-episodes { display: inline-flex; align-items: center; gap: 5px; margin-top: 6px; height: 24px; padding: 0 8px; border: 1px solid rgba(0,200,200,0.3); border-radius: 6px; background: rgba(0,200,200,0.06); color: var(--a2-cyan); font-size: var(--a2-text-2xs); font-weight: 700; cursor: pointer; }
+  .grid-open-episodes:hover { background: rgba(0,200,200,0.14); }
+  .grid-open-episodes:focus-visible { outline: 2px solid var(--a2-cyan); outline-offset: 1px; }
 
   /* Grid view */
   .media-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: var(--a2-space-3); max-height: calc(100dvh - 280px); overflow-y: auto; }

@@ -27,6 +27,7 @@ const libraryDetailApi = readFileSync(new URL('../src/routes/api/admin/media/lib
 const libraryFoldersApi = readFileSync(new URL('../src/routes/api/admin/media/library/folders/+server.ts', import.meta.url), 'utf8');
 const libraryPageServer = readFileSync(new URL('../src/routes/admin/media/library/+page.server.ts', import.meta.url), 'utf8');
 const libraryPage = readFileSync(new URL('../src/routes/admin/media/library/+page.svelte', import.meta.url), 'utf8');
+const adminMediaListComp = readFileSync(new URL('../src/lib/components/admin2/AdminMediaList.svelte', import.meta.url), 'utf8');
 const hostingAssets = readFileSync(new URL('../src/lib/components/admin2/AdminHostingAssets.svelte', import.meta.url), 'utf8');
 
 const adminAssetStatus = readFileSync(new URL('../src/lib/components/admin2/AdminAssetStatus.svelte', import.meta.url), 'utf8');
@@ -158,14 +159,17 @@ assert.match(libraryPage, /<AdminAppShell/, 'library page uses AdminAppShell');
 assert.match(libraryPage, /<AdminPage eyebrow="Content" title="Media Library"/, 'library page uses AdminPage framework');
 ok('4a. library page uses AdminAppShell + AdminPage framework');
 
-// [final remediation] The library page renders ONE canonical file manager
-// (AdminHostingAssets). The old Phase C component set (Tree/Table/Card/
-// DetailDrawer/Filters) was the media_items-centric read model — removed
-// from the active architecture at the consolidation commit.
-assert.match(libraryPage, /AdminHostingAssets/, 'library page renders AdminHostingAssets (the single file manager)');
+// [Task 2 (2026-10-15)] The library page renders the compact media-centric
+// list (AdminMediaList + Add File wizard + episode sheet) — the successor
+// of the AdminHostingAssets asset-centric file manager. The URL-derived
+// initialFilters contract is PRESERVED: the page server parses the
+// canonical params and the page passes them to AdminMediaList (restored
+// deep-link wiring — ?provider=vidara initializes the Provider filter).
+assert.match(libraryPage, /AdminMediaList/, 'library page renders AdminMediaList (the media-centric list)');
 assert.doesNotMatch(libraryPage, /AdminMediaTree|AdminMediaTable|AdminMediaCard|AdminMediaDetailDrawer|AdminMediaFilters/, 'library page does NOT render the old Phase C component set');
-assert.match(libraryPage, /initialFilters=\{data\.initialFilters\}/, 'library page passes URL-derived initialFilters to the file manager');
-ok('4b. library page renders the single asset-centric file manager with initialFilters');
+assert.match(libraryPage, /initialFilters=\{data\.initialFilters\}/, 'library page passes URL-derived initialFilters to the media list (deep-link wiring restored)');
+assert.match(adminMediaListComp, /initialFilters/, 'AdminMediaList accepts initialFilters');
+ok('4b. library page renders the media-centric list with URL-derived initialFilters');
 
 // Workspace is the file manager itself — no split tree layout.
 assert.doesNotMatch(libraryPage, /library-workspace/, 'no legacy tree workspace container');
@@ -201,9 +205,14 @@ assert.match(hostingAssets, /initialFilters/, 'file manager initializes from ser
 assert.match(libraryPageServer, /get\('provider'\)/, 'page server reads provider param');
 ok('4h. file manager supports provider + mediaItem deep-links');
 
-// Upload integration: link to the upload wizard
-assert.match(libraryPage, /\/admin\/media\/upload/, 'library page links to the upload wizard');
-ok('4i. library page integrates with upload wizard');
+// Upload integration — [MAV-FOCUSED 2026-10 redesign] the library page no
+// longer NAVIGATES to /admin/media/upload (the header link was removed in
+// the manual hosting workflow redesign): the "Add file" action opens the
+// AdminAddFileWizard INLINE (the manual-link flow — no upload round-trip).
+assert.match(libraryPage, /addFileTrigger/, 'library page wires the Add file action');
+assert.match(adminMediaListComp, /AdminAddFileWizard/, 'the media list embeds the Add File wizard (manual-link flow)');
+assert.doesNotMatch(libraryPage, /href="\/admin\/media\/upload"/, 'library page no longer links out to the upload wizard (Add file is inline)');
+ok('4i. library page integrates the Add File wizard inline (no upload navigation)');
 
 // Partial failure: list error shows retry, doesn't crash whole page
 assert.match(hostingAssets, /listError/, 'file manager tracks list error');
@@ -455,14 +464,17 @@ ok('12a. no credentials leak: provider_metadata + playback_url excluded; all end
 // 13. No N+1 patterns
 // ============================================================
 
-// list() performs exactly 3 queries: items, assets (batch by media_item_id), demand (batch by canonical_key).
+// list() performs exactly 4 bounded queries (Task 2): items (top-level
+// rows only), episode children (batch by parent_media_id), assets (batch
+// by media_item_id), demand (batch by canonical_key) — STILL no N+1
+// regardless of page size.
 // Extract the list() method body and count queries inside it.
 const listMethodMatch = libraryService.match(/async list\(query: LibraryQuery\): Promise<LibraryListResult> \{[\s\S]*?\n  \}/);
 assert.ok(listMethodMatch, 'list() method body extracted');
 const listMethodBody = listMethodMatch![0];
 const listDbQueries = (listMethodBody.match(/\.from\('media_/g) ?? []).length;
-assert.equal(listDbQueries, 3, `list() performs exactly 3 DB queries (items, assets batch, demand batch) — found ${listDbQueries}`);
-ok('13a. list() performs bounded DB queries (3 queries, no N+1)');
+assert.equal(listDbQueries, 4, `list() performs exactly 4 DB queries (items, children batch, assets batch, demand batch) — found ${listDbQueries}`);
+ok('13a. list() performs bounded DB queries (4 batched queries, no N+1)');
 
 // detail() uses Promise.all (parallel)
 assert.match(libraryService, /Promise\.all\(\[/, 'detail() parallelizes fetches');

@@ -17,6 +17,19 @@
  *   - Without this read model, the client would need 1 + N requests
  *     (one for media_items, then one for media_assets per item).
  *
+ * TASK 2 (2026-10-15) — PARENT/EPISODE HIERARCHY.
+ *
+ * list() now returns TOP-LEVEL rows only (`parent_media_id IS NULL`):
+ * every movie, every parent series row, every parent anime row. A
+ * series/anime NEVER renders one card per episode — its episodes are
+ * aggregated onto the parent card as `episode_summary`
+ * (season_count / episode_count / linked_episode_count) and listed on
+ * demand via episodes(parentId) for the accessible episode sheet.
+ *
+ * Query budget: list() performs exactly FOUR bounded batch queries
+ * regardless of page size (items, episode children by parent id,
+ * assets by media_item_id, demand by canonical_key) — still no N+1.
+ *
  * Authorization: caller is responsible for `requireAdmin()` — this
  * module uses the service-role client and bypasses RLS by design.
  *
@@ -57,6 +70,18 @@ export type LibraryAssetSummary = {
   updated_at: string;
 };
 
+/**
+ * TASK 2 — rollup of a parent series/anime's episodes onto the parent
+ * card. `linked_episode_count` counts episodes with at least one
+ * ACTIVE (non-deleted) provider asset — the number the parent card's
+ * progress line renders.
+ */
+export type EpisodeSummary = {
+  season_count: number;
+  episode_count: number;
+  linked_episode_count: number;
+};
+
 export type LibraryMediaItem = {
   id: string;
   canonical_key: string;
@@ -93,8 +118,18 @@ export type LibraryMediaItem = {
    *
    * The UI uses this to render a clear status badge instead of letting
    * orphaned items blend in with hosted content.
+   *
+   * TASK 2: for parent series/anime rows this is the ROLLUP over the
+   * parent's own assets (usually none) UNION all its episodes' assets —
+   * a series with one hosted episode is 'hosted'.
    */
   hosting_state: 'hosted' | 'processing' | 'failed' | 'pending' | 'catalog_only';
+  /**
+   * TASK 2 — present (non-null) ONLY on top-level series/anime rows
+   * returned by list(): the episode rollup described in EpisodeSummary.
+   * Movies and episode rows carry null.
+   */
+  episode_summary: EpisodeSummary | null;
 };
 
 export type LibraryListResult = {
@@ -119,6 +154,16 @@ export type LibraryOperationSummary = {
 export type LibraryDetailResult = {
   item: LibraryMediaItem;
   recent_operations: LibraryOperationSummary[];
+};
+
+/**
+ * TASK 2 — the episodes() read for the episode sheet: a parent series
+ * or anime row plus ALL its episode rows (each with its own assets and
+ * hosting state), ordered by season then episode.
+ */
+export type LibraryEpisodesResult = {
+  parent: LibraryMediaItem;
+  episodes: LibraryMediaItem[];
 };
 
 // ============================================================
@@ -162,11 +207,37 @@ export type LibraryQuery = {
 const DEFAULT_LIMIT = 25;
 const MAX_LIMIT = 100;
 
+/** Row shape shared by the items/children fetches (identical projection). */
+type MediaItemRow = {
+  id: string;
+  canonical_key: string;
+  content_type: string;
+  tmdb_id: string;
+  imdb_id: string | null;
+  title: string;
+  year: number | null;
+  season: number | null;
+  episode: number | null;
+  episode_title: string | null;
+  parent_media_id: string | null;
+  poster_path: string | null;
+  backdrop_path: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+const ITEM_PROJECTION =
+  'id, canonical_key, content_type, tmdb_id, imdb_id, title, year, season, episode, episode_title, parent_media_id, poster_path, backdrop_path, created_at, updated_at';
+
+const ASSET_PROJECTION =
+  'id, media_item_id, provider_source_id, provider_asset_id, status, mavero_status, source_quality, available_qualities, audio_languages, has_subtitles, duration_seconds, size_bytes, last_synced_at, created_at, updated_at';
+
 export class MediaLibraryService {
   constructor(private client: SupabaseClient<Database>) {}
 
   // ------------------------------------------------------------
-  // Paginated, filtered, joined read.
+  // Paginated, filtered, joined read — TOP-LEVEL rows only (Task 2:
+  // movies + parent series/anime; episodes roll up onto the parent).
   // ------------------------------------------------------------
   async list(query: LibraryQuery): Promise<LibraryListResult> {
     const page = clampPage(query.page);
@@ -177,9 +248,14 @@ export class MediaLibraryService {
     // Build the media_items query.
     // Deep-audit Issue B: poster_path + backdrop_path are REQUIRED in the
     // projection — the Media Library grid/list views render them.
+    // TASK 2: `parent_media_id IS NULL` restricts the page to TOP-LEVEL
+    // rows — one card per movie, one card per series/anime PARENT. The
+    // episode rows are fetched as children (second query below) and
+    // rolled up into episode_summary.
     let itemsQuery = this.client
       .from('media_items')
-      .select('id, canonical_key, content_type, tmdb_id, imdb_id, title, year, season, episode, episode_title, parent_media_id, poster_path, backdrop_path, created_at, updated_at', { count: 'exact' });
+      .select(ITEM_PROJECTION, { count: 'exact' })
+      .is('parent_media_id', null);
 
     // Text search — supports title / tmdb_id / imdb_id / canonical_key
     if (query.q && query.q.trim()) {
@@ -208,12 +284,18 @@ export class MediaLibraryService {
     // Phase 5: filter by series/anime parent TMDB ID. Both the parent row
     // and all its episode rows share the same tmdb_id, so a single .eq()
     // filters to exactly that series + its episodes. The existing index
-    // media_items_content_type_tmdb_id_idx covers this lookup.
+    // media_items_content_type_tmdb_id_idx covers this lookup. (Task 2:
+    // with the top-level filter this now matches the parent row only —
+    // which is the one card the tree click should show.)
     if (query.seriesTmdb) {
       itemsQuery = itemsQuery.eq('tmdb_id', query.seriesTmdb);
     }
 
-    // Sorting — applied at the items layer
+    // Sorting — applied at the items layer. Note for 'recently_updated':
+    // every episode save upserts the parent row first (parent-ensure-first
+    // in resolveMediaItemId) and the media_items_set_updated_at trigger
+    // refreshes the parent's updated_at, so a parent with a newly linked
+    // episode correctly floats up in this sort.
     switch (sort) {
       case 'recently_updated': itemsQuery = itemsQuery.order('updated_at', { ascending: false }); break;
       case 'recently_added':   itemsQuery = itemsQuery.order('created_at', { ascending: false }); break;
@@ -228,6 +310,7 @@ export class MediaLibraryService {
 
     itemsQuery = itemsQuery.range(offset, offset + limit - 1);
 
+    // QUERY 1/4 — the top-level items page.
     const { data: items, error: itemsError, count } = await itemsQuery;
     if (itemsError) {
       throw new Error(`MediaLibraryService.list: ${itemsError.message}`);
@@ -235,16 +318,43 @@ export class MediaLibraryService {
     if (!items || items.length === 0) {
       return { items: [], total: count ?? 0, page, limit, has_more: false };
     }
+    const topLevel = items as MediaItemRow[];
+
+    // QUERY 2/4 — episode children of the series/anime parents in this
+    // page (ONE batched query; episode rows are never returned as
+    // top-level cards).
+    const parentIds = topLevel.filter(isEpisodicParent).map((i) => i.id);
+    const childrenByParent = new Map<string, MediaItemRow[]>();
+    if (parentIds.length > 0) {
+      const { data: children, error: childrenError } = await this.client
+        .from('media_items')
+        .select(ITEM_PROJECTION)
+        .in('parent_media_id', parentIds)
+        .order('season', { ascending: true })
+        .order('episode', { ascending: true });
+      if (childrenError) {
+        throw new Error(`MediaLibraryService.list (children): ${childrenError.message}`);
+      }
+      for (const child of (children ?? []) as MediaItemRow[]) {
+        if (!child.parent_media_id) continue;
+        const list = childrenByParent.get(child.parent_media_id) ?? [];
+        list.push(child);
+        childrenByParent.set(child.parent_media_id, list);
+      }
+    }
+    const children = [...childrenByParent.values()].flat();
 
     // Batch-fetch assets AND demand rows for this page in parallel (Phase 2 perf).
     // Both depend only on the items page already fetched — no dependency on
     // each other. Previously these were two sequential awaits.
-    const mediaItemIds = items.map(i => i.id);
-    const canonicalKeys = items.map(i => i.canonical_key);
+    // TASK 2: the asset/demand id sets now include the episode CHILDREN so
+    // the parent rollup sees every episode's provider availability.
+    const mediaItemIds = [...topLevel, ...children].map(i => i.id);
+    const canonicalKeys = [...topLevel, ...children].map(i => i.canonical_key);
     const [assetsRes, demandsRes] = await Promise.all([
       this.client
         .from('media_assets')
-        .select('id, media_item_id, provider_source_id, provider_asset_id, status, mavero_status, source_quality, available_qualities, audio_languages, has_subtitles, duration_seconds, size_bytes, last_synced_at, created_at, updated_at')
+        .select(ASSET_PROJECTION)
         .in('media_item_id', mediaItemIds)
         .order('updated_at', { ascending: false }),
       this.client
@@ -252,6 +362,7 @@ export class MediaLibraryService {
         .select('canonical_key, request_count, last_requested_at, status')
         .in('canonical_key', canonicalKeys),
     ]);
+    // QUERY 3/4 — assets batch; QUERY 4/4 — demand batch.
     if (assetsRes.error) {
       throw new Error(`MediaLibraryService.list (assets): ${assetsRes.error.message}`);
     }
@@ -296,66 +407,170 @@ export class MediaLibraryService {
     // (if it has demand) or in Operations Activity (historical record).
     // This uses the same "active assets" concept as computeHostingState():
     // assets with status !== 'deleted'.
+    //
+    // TASK 2: for a PARENT row these rules apply to the ROLLUP — the
+    // union of the parent's own assets and its episodes' assets, and the
+    // union of the parent's + episodes' demand. A parent whose episodes
+    // are all unlinked orphans is itself an orphan.
     const includeOrphans = query.includeOrphans === true;
-    const filteredItems: typeof items = [];
-    for (const item of items) {
-      let itemAssets = assetsByItem.get(item.id) ?? [];
-      const itemDemand = demandByKey.get(item.canonical_key) ?? null;
+    const resultItems: LibraryMediaItem[] = [];
+    for (const item of topLevel) {
+      const isParent = isEpisodicParent(item);
+      const ownChildren = isParent ? childrenByParent.get(item.id) ?? [] : [];
+      // The asset/demand view of this card: movies use their own row;
+      // parents use the union of their row and all episode rows (unionRows[0]
+      // is the parent itself, so the parent's own demand wins priority).
+      const unionRows = isParent ? [item, ...ownChildren] : [item];
+      const unionAssets = unionRows.flatMap((r) => assetsByItem.get(r.id) ?? []);
+      const firstDemandRow = unionRows.find((r) => demandByKey.has(r.canonical_key));
+      const unionDemand = firstDemandRow ? demandByKey.get(firstDemandRow.canonical_key) ?? null : null;
+      const activeUnionAssets = unionAssets.filter(a => a.status !== 'deleted');
 
-      // Compute "active" assets (exclude deleted) for the orphan filter.
-      // This must match computeHostingState()'s definition of active.
-      const activeAssets = itemAssets.filter(a => a.status !== 'deleted');
-
-      // ARCHITECTURE FIX: drop items with no active assets AND no demand
-      // (orphan). This catches both:
-      //   - items with zero assets (pure orphan)
-      //   - items with only deleted assets (effectively orphan — the
-      //     provider file is gone and the item is not playable)
-      // Items WITH demand but no active assets are kept (they're "pending"
-      // — users requested them, admin should see them to know an upload
-      // is needed).
-      if (!includeOrphans && activeAssets.length === 0 && !itemDemand) {
+      // Orphan filter (parents: no linked episode + no demand anywhere).
+      if (!includeOrphans && activeUnionAssets.length === 0 && !unionDemand) {
         continue;
       }
 
+      // Provider/status filters (parents: matched against episode assets).
+      let filteredAssets = unionAssets;
       if (query.provider_source_id) {
-        itemAssets = itemAssets.filter(a => a.provider_source_id === query.provider_source_id);
+        filteredAssets = filteredAssets.filter(a => a.provider_source_id === query.provider_source_id);
       }
       if (query.status && query.status !== 'all') {
         // The status filter applies to either the asset's `status` OR `mavero_status`
         // — both columns use overlapping vocabularies ('ready'/'failed'/'processing').
-        itemAssets = itemAssets.filter(a => a.status === query.status || a.mavero_status === query.status);
+        filteredAssets = filteredAssets.filter(a => a.status === query.status || a.mavero_status === query.status);
       }
-      // If a filter was applied and the item has no matching assets, skip it.
+      // If a filter was applied and the card has no matching assets, skip it.
       // If no filter is applied, keep all items (including those with no active assets
       // but demand — they're "pending" media which is a useful signal in the library).
-      if ((query.provider_source_id || (query.status && query.status !== 'all')) && itemAssets.length === 0) {
+      if ((query.provider_source_id || (query.status && query.status !== 'all')) && filteredAssets.length === 0) {
         continue;
       }
-      filteredItems.push(item);
-      // Replace the assets array on the item with the filtered one.
-      assetsByItem.set(item.id, itemAssets);
+
+      // Episode rollup (parents only).
+      let episodeSummary: EpisodeSummary | null = null;
+      if (isParent) {
+        const seasons = new Set<number>();
+        let linked = 0;
+        for (const child of ownChildren) {
+          if (child.season != null) seasons.add(child.season);
+          const childActive = (assetsByItem.get(child.id) ?? []).filter(a => a.status !== 'deleted');
+          if (childActive.length > 0) linked++;
+        }
+        episodeSummary = {
+          season_count: seasons.size,
+          episode_count: ownChildren.length,
+          linked_episode_count: linked,
+        };
+      }
+
+      resultItems.push({
+        ...item,
+        content_type: item.content_type as MediaContentType,
+        // Movies keep their own asset list; parents carry the FILTERED
+        // union (the badges/rollup need it; episode-level detail is
+        // served by episodes()).
+        assets: (isParent ? filteredAssets : (assetsByItem.get(item.id) ?? []).filter(a => a.status !== 'deleted')),
+        demand: demandByKey.get(item.canonical_key) ?? null,
+        hosting_state: computeHostingState(unionAssets, unionDemand),
+        episode_summary: episodeSummary,
+      });
     }
 
     const total = count ?? 0;
-    const resultItems: LibraryMediaItem[] = filteredItems.map(item => {
-      const itemAssets = assetsByItem.get(item.id) ?? [];
-      const itemDemand = demandByKey.get(item.canonical_key) ?? null;
-      return {
-        ...item,
-        content_type: item.content_type as MediaContentType,
-        assets: itemAssets,
-        demand: itemDemand,
-        hosting_state: computeHostingState(itemAssets, itemDemand),
-      };
-    });
-
     return {
       items: resultItems,
       total,
       page,
       limit,
       has_more: offset + limit < total,
+    };
+  }
+
+  // ------------------------------------------------------------
+  // TASK 2 — episode children of a parent series/anime, for the
+  // accessible episode sheet. ONE batched query for the children plus
+  // one for their assets (+ demand, tolerated).
+  // ------------------------------------------------------------
+  async episodes(parentMediaItemId: string): Promise<LibraryEpisodesResult | null> {
+    // 1. The parent row (must be an episodic top-level row).
+    const { data: parent, error: parentError } = await this.client
+      .from('media_items')
+      .select(ITEM_PROJECTION)
+      .eq('id', parentMediaItemId)
+      .maybeSingle();
+    if (parentError) throw new Error(`MediaLibraryService.episodes (parent): ${parentError.message}`);
+    if (!parent) return null;
+    const parentRow = parent as MediaItemRow;
+    if (!isEpisodicParent(parentRow)) {
+      // Movies (and stray episode rows) have no episode sheet.
+      return { parent: this.toLibraryItem(parentRow, [], null, null), episodes: [] };
+    }
+
+    // 2. Children ordered by season then episode.
+    const { data: children, error: childrenError } = await this.client
+      .from('media_items')
+      .select(ITEM_PROJECTION)
+      .eq('parent_media_id', parentMediaItemId)
+      .order('season', { ascending: true })
+      .order('episode', { ascending: true });
+    if (childrenError) throw new Error(`MediaLibraryService.episodes (children): ${childrenError.message}`);
+    const childRows = (children ?? []) as MediaItemRow[];
+
+    // 3. Assets + demand for the parent and every child (batched).
+    const allRows = [parentRow, ...childRows];
+    const [assetsRes, demandsRes] = await Promise.all([
+      this.client
+        .from('media_assets')
+        .select(ASSET_PROJECTION)
+        .in('media_item_id', allRows.map(r => r.id))
+        .order('updated_at', { ascending: false }),
+      this.client
+        .from('media_availability_requests')
+        .select('canonical_key, request_count, last_requested_at, status')
+        .in('canonical_key', allRows.map(r => r.canonical_key)),
+    ]);
+    if (assetsRes.error) throw new Error(`MediaLibraryService.episodes (assets): ${assetsRes.error.message}`);
+    if (demandsRes.error) console.warn('[MediaLibrary] demand query failed', demandsRes.error.message);
+
+    const assetsByItem = new Map<string, LibraryAssetSummary[]>();
+    for (const a of (assetsRes.data ?? []) as Array<LibraryAssetSummary & { media_item_id: string }>) {
+      const list = assetsByItem.get(a.media_item_id) ?? [];
+      list.push(a);
+      assetsByItem.set(a.media_item_id, list);
+    }
+    const demandByKey = new Map<string, { request_count: number; last_requested_at: string; status: string }>();
+    for (const d of (demandsRes.data ?? [])) {
+      demandByKey.set(d.canonical_key, {
+        request_count: d.request_count,
+        last_requested_at: d.last_requested_at,
+        status: d.status,
+      });
+    }
+
+    // 4. Parent rollup (allRows[0] is the parent itself, so the parent's
+    // own demand wins priority in the find()).
+    const unionAssets = allRows.flatMap(r => assetsByItem.get(r.id) ?? []);
+    const firstDemandRow = allRows.find(r => demandByKey.has(r.canonical_key));
+    const unionDemand = firstDemandRow ? demandByKey.get(firstDemandRow.canonical_key) ?? null : null;
+    const seasons = new Set<number>();
+    let linked = 0;
+    for (const child of childRows) {
+      if (child.season != null) seasons.add(child.season);
+      if ((assetsByItem.get(child.id) ?? []).some(a => a.status !== 'deleted')) linked++;
+    }
+    const summary: EpisodeSummary = {
+      season_count: seasons.size,
+      episode_count: childRows.length,
+      linked_episode_count: linked,
+    };
+
+    return {
+      parent: this.toLibraryItem(parentRow, unionAssets, unionDemand, summary),
+      episodes: childRows.map(child =>
+        this.toLibraryItem(child, (assetsByItem.get(child.id) ?? []).filter(a => a.status !== 'deleted'), demandByKey.get(child.canonical_key) ?? null, null)
+      ),
     };
   }
 
@@ -367,23 +582,24 @@ export class MediaLibraryService {
     // Deep-audit Issue B: poster fields included (same contract as list()).
     const { data: item, error: itemError } = await this.client
       .from('media_items')
-      .select('id, canonical_key, content_type, tmdb_id, imdb_id, title, year, season, episode, episode_title, parent_media_id, poster_path, backdrop_path, created_at, updated_at')
+      .select(ITEM_PROJECTION)
       .eq('id', mediaItemId)
       .maybeSingle();
     if (itemError) throw new Error(`MediaLibraryService.detail (item): ${itemError.message}`);
     if (!item) return null;
+    const row = item as MediaItemRow;
 
     // 2. Fetch its assets in parallel with demand + recent operations.
     const [assetsRes, demandRes, opsRes] = await Promise.all([
       this.client
         .from('media_assets')
-        .select('id, media_item_id, provider_source_id, provider_asset_id, status, mavero_status, source_quality, available_qualities, audio_languages, has_subtitles, duration_seconds, size_bytes, last_synced_at, created_at, updated_at')
+        .select(ASSET_PROJECTION)
         .eq('media_item_id', mediaItemId)
         .order('updated_at', { ascending: false }),
       this.client
         .from('media_availability_requests')
         .select('canonical_key, request_count, last_requested_at, status')
-        .eq('canonical_key', item.canonical_key)
+        .eq('canonical_key', row.canonical_key)
         .maybeSingle(),
       this.client
         .from('media_operations')
@@ -407,13 +623,7 @@ export class MediaLibraryService {
         }
       : null;
 
-    const libraryItem: LibraryMediaItem = {
-      ...item,
-      content_type: item.content_type as MediaContentType,
-      assets,
-      demand,
-      hosting_state: computeHostingState(assets, demand),
-    };
+    const libraryItem = this.toLibraryItem(row, assets, demand, null);
 
     const recent_operations: LibraryOperationSummary[] = (opsRes.data ?? []).map((op: any) => ({
       id: op.id,
@@ -521,11 +731,49 @@ export class MediaLibraryService {
       },
     };
   }
+
+  // ------------------------------------------------------------
+  // Shared row → LibraryMediaItem mapper (Task 2: one projection, one
+  // mapping contract for list/episodes/detail).
+  // ------------------------------------------------------------
+  private toLibraryItem(
+    row: MediaItemRow,
+    assets: LibraryAssetSummary[],
+    demand: { request_count: number; last_requested_at: string; status: string } | null,
+    episodeSummary: EpisodeSummary | null,
+  ): LibraryMediaItem {
+    return {
+      id: row.id,
+      canonical_key: row.canonical_key,
+      content_type: row.content_type as MediaContentType,
+      tmdb_id: row.tmdb_id,
+      imdb_id: row.imdb_id,
+      title: row.title,
+      year: row.year,
+      season: row.season,
+      episode: row.episode,
+      episode_title: row.episode_title,
+      parent_media_id: row.parent_media_id,
+      poster_path: row.poster_path,
+      backdrop_path: row.backdrop_path,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+      assets,
+      demand,
+      hosting_state: computeHostingState(assets, demand),
+      episode_summary: episodeSummary,
+    };
+  }
 }
 
 // ============================================================
 // Helpers
 // ============================================================
+
+/** A top-level series/anime row (the one-card-per-show contract). */
+function isEpisodicParent(row: { content_type: string; parent_media_id: string | null }): boolean {
+  return (row.content_type === 'series' || row.content_type === 'anime') && row.parent_media_id == null;
+}
 
 function clampPage(page: unknown): number {
   const n = typeof page === 'number' ? page : parseInt(String(page ?? '1'), 10);

@@ -250,6 +250,10 @@ function section_registry(): void {
   // download_providers or any registry/cloudstream table — see
   // BLUEVELVET_INTEGRATION_REPORT.md.
   const blueVelvetProviderMigration = '20261112000000_blue_velvet_provider.sql';
+  // POSTER TO MEDIA ITEMS (20261015000000, sanctioned): additive nullable
+  // poster_path/backdrop_path columns on media_items only — never touches
+  // any registry/download_provider/cloudstream table.
+  const posterToMediaItemsMigration = '20261015000000_add_poster_to_media_items.sql';
   const added = migrations.filter((name) => !pristineMigrations.includes(name));
   const phase2Sql = read(`supabase/migrations/${phase2Migration}`);
   const phase2SqlNoComments = phase2Sql.replace(/--[^\n]*/g, '');
@@ -258,7 +262,7 @@ function section_registry(): void {
   const unifiedSql = read(`supabase/migrations/${unifiedMigration}`);
   const unifiedSqlNoComments = unifiedSql.replace(/--[^\n]*/g, '');
   ok(
-    added.length === 12
+    added.length === 14
       && added.includes(migrationName)
       && added.includes(phase2Migration)
       && added.includes(phase3Migration)
@@ -270,7 +274,9 @@ function section_registry(): void {
       && added.includes(mavp4IconBadgeMigration)
       && added.includes(mavp5DefaultSlotsMigration)
       && added.includes(mavp7UniqueAssignmentMigration)
-      && added.includes(blueVelvetProviderMigration),
+      && added.includes(blueVelvetProviderMigration)
+      && added.includes(posterToMediaItemsMigration)
+      && added.includes('20261014000000_add_unlink_action.sql'),
     `§A10: exactly the CS-5 + Phase 2 + Phase 3 + FINAL TASK + build-lifecycle + LT-5-analytics + LT-15-fallback-event + VidRift-provider + MAVP-4-icon-badge + MAVP-5-default-slots + MAVP-7-unique-assignment + BlueVelvet-provider migrations were added (${added.join(', ') || 'none'})`,
   );
   // VIDRIFT (sanctioned): insert-only registration — no destructive verbs,
@@ -875,11 +881,19 @@ function section_regression(): void {
   for (const adminFile of [
     'src/routes/admin/system/downloads/+page.server.ts',
     'src/routes/admin/system/downloads/+page.svelte',
-    'src/lib/components/admin2/AdminAppShell.svelte',
   ]) {
     const current = read(adminFile);
     const pristine = pristineFile(adminFile);
     ok(pristine === null || pristine === current, `§F4: ${adminFile} is untouched (the generic admin CRUD lists the new row automatically)`);
+  }
+  // AdminAppShell legitimately evolved AFTER the registry integration (the
+  // 2026-10 nav redesign removed Hosting/upload nav items) — the
+  // "no admin modification REQUIRED by the registry" intent is asserted by
+  // the shell carrying NO registry-specific code (generic nav only).
+  {
+    const shell = read('src/lib/components/admin2/AdminAppShell.svelte');
+    ok(!/cloudstream|registry|extension/i.test(shell.replace(/^[ \t]*\/\/[^\n]*$/gm, '').replace(/^[ \t]*\*[^\n]*$/gm, '')),
+      '§F4: AdminAppShell carries no registry/cloudstream-specific code (generic nav — the integration required no admin shell changes)');
   }
 
   // §F5 the existing mavero2 API + Downloader 2 service evolved ONLY additively.

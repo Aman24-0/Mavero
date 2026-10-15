@@ -174,13 +174,14 @@ assert.doesNotMatch(adminAppShell, /closeConfig/, 'AdminAppShell: closeConfig fu
 assert.doesNotMatch(adminAppShell, /handleConfigKeydown/, 'AdminAppShell: handleConfigKeydown function removed');
 ok('D1. Configure dropdown fully removed (button, popup, state, functions, CSS)');
 
-// Mobile bottom nav: Hosting + Media Library are both present
-// Phase 2C consolidation: Upload removed from mobile nav, Media Library
-// added as the primary content entry point.
-assert.match(adminAppShell, /\{ id: 'hosting', label: 'Hosting', href: '\/admin\/hosting'/, 'AdminAppShell: mobile nav has Hosting');
+// Mobile bottom nav — [MAV-FOCUSED 2026-10 redesign] the Hosting item was
+// INTENTIONALLY removed (commit 24705a1) and replaced with Missing Media;
+// the bottom nav is Home / Media / Missing / Analytics.
+assert.doesNotMatch(adminAppShell, /\{ id: 'hosting', label: 'Hosting', href: '\/admin\/hosting'/, 'AdminAppShell: mobile nav has no Hosting item (MAV-FOCUSED redesign)');
 assert.match(adminAppShell, /\{ id: 'media-library', label: 'Media', href: '\/admin\/media\/library'/, 'AdminAppShell: mobile nav has Media Library (primary content entry)');
+assert.match(adminAppShell, /\{ id: 'missing-media', label: 'Missing', href: '\/admin\/media\/missing'/, 'AdminAppShell: mobile nav has Missing Media (the Hosting slot replacement)');
 assert.doesNotMatch(adminAppShell, /\{ id: 'upload', label: 'Upload', href: '\/admin\/media\/upload'/, 'AdminAppShell: mobile nav no longer has Upload (removed in Phase 2C)');
-ok('D2. Mobile bottom nav: Media Library replaces Upload (Phase 2C consolidation)');
+ok('D2. Mobile bottom nav: Media + Missing Media (Hosting intentionally removed; Upload removed in Phase 2C)');
 
 // Overview: duplicate "Hosting & Media" quick-grid removed
 // (the comment in the file header still mentions it for context — that's OK.

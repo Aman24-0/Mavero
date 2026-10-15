@@ -59,15 +59,15 @@ assert.match(adminAppShell, /\{ id: 'missing-media', label: 'Missing Media', hre
 assert.doesNotMatch(adminAppShell, /\{ id: 'upload', label: 'Upload \/ Import', href: '\/admin\/media\/upload'/, 'nav: Content group no longer has top-level Upload (Phase 2C)');
 ok('1b. nav group CONTENT has Media Library + Missing Media (Upload moved to Media Library header action)');
 
-// HOSTING
-// Phase E restructured the Hosting group: the unified Hosting Control
-// workspace at /admin/hosting replaces the old separate Assets + Sync
-// placeholders. Phase 1 removed the "Provider Registry" nav item —
-// providers are now managed in API & Sources (/admin/system/api-sources).
-assert.match(adminAppShell, /\{ id: 'hosting', label: 'Hosting Control', href: '\/admin\/hosting'/, 'nav: Hosting → Hosting Control');
+// HOSTING — [MAV-FOCUSED 2026-10 redesign] the Hosting Control nav item
+// was INTENTIONALLY REMOVED (commit 24705a1, "complete manual hosting
+// workflow redesign"): Media Library is now the hosting surface and
+// /admin/hosting remains reachable by direct URL only (the route, the
+// services, and the API endpoints were all preserved).
+assert.doesNotMatch(adminAppShell, /\{ id: 'hosting', label: 'Hosting Control', href: '\/admin\/hosting'/, 'nav: Hosting Control item removed from the sidebar (MAV-FOCUSED redesign — Media Library is the hosting surface)');
 // Phase 1: the standalone Provider Registry nav item is gone (managed in API & Sources).
 assert.doesNotMatch(adminAppShell, /id: 'providers', label: 'Provider Registry'/, 'nav: Provider Registry item removed (Phase 1 — managed in API & Sources)');
-ok('1c. nav group HOSTING has Hosting Control only (Phase 1 removed Provider Registry — managed in API & Sources)');
+ok('1c. nav has NO Hosting group (MAV-FOCUSED redesign) and NO Provider Registry (managed in API & Sources)');
 
 // OPERATIONS — [final remediation] the standalone Operations workspace no
 // longer exists as a nav item: Operations merged into Hosting Control
@@ -75,8 +75,8 @@ ok('1c. nav group HOSTING has Hosting Control only (Phase 1 removed Provider Reg
 // /admin/operations is a legacy redirect. The nav has NO Operations entry.
 assert.doesNotMatch(adminAppShell, /\{ id: 'operations', label: 'Operations Center', href: '\/admin\/operations'/, 'nav: no standalone Operations Center item (merged into Hosting Control)');
 assert.doesNotMatch(adminAppShell, /matchPrefix: '\/admin\/operations'/, 'no Operations matchPrefix');
-assert.match(adminAppShell, /\{ id: 'hosting', label: 'Hosting Control', href: '\/admin\/hosting', icon: Server, matchPrefix: '\/admin\/hosting' \}/, 'nav: Hosting group has Hosting Control (owns Jobs/Activity/Attention)');
-ok('1d. nav group HOSTING has Hosting Control only (Operations merged in — no duplicate workspace)');
+assert.doesNotMatch(adminAppShell, /matchPrefix: '\/admin\/hosting'/, 'nav: no Hosting matchPrefix either (MAV-FOCUSED redesign — the sidebar owns no hosting entry)');
+ok('1d. nav has NO Operations item and NO Hosting item (both workspaces reachable by URL; Media Library owns the linking workflow)');
 
 // SYSTEM — 4 primary items only (Defaults + Feature Control removed
 // from the primary SYSTEM nav group). They live in `configItems`

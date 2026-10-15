@@ -598,7 +598,7 @@ console.log('  ok — E1 unconfigured adapter is an honest error');
 const mgmtSrc = read('src/lib/server/hosting/management/service.ts');
 ok(mgmtSrc.includes(`throw new HostingProviderError('UNSUPPORTED'`) && mgmtSrc.includes('hosting adapter is not configured'), 'E2.1 unconfigured adapter throws UNSUPPORTED with a reason');
 ok(mgmtSrc.includes(`throw new HostingProviderError('NOT_FOUND'`) && mgmtSrc.includes('No streaming source row is registered'), 'E2.2 missing source row throws NOT_FOUND');
-ok(mgmtSrc.includes('!linkedIds.has(f.providerAssetId)'), 'E2.3 already-linked provider files filtered out');
+ok(mgmtSrc.includes('linkedToMediaItemId'), 'E2.3 already-linked provider files SURFACED with per-file link state (MAV-FOCUSED fix — the Link Media UI shows why a file cannot be linked again instead of hiding it; terminal deleted rows are marked <deleted>)');
 console.log('  ok — E2 honest errors + link filter (3 checks)');
 
 // ===========================================================================
@@ -633,13 +633,17 @@ ok(missingLinkRoute.includes('providerSourceId (the hosting provider source id')
 console.log('  ok — G missing/link endpoint contract (9 checks)');
 
 const missingPage = read('src/routes/admin/media/missing/+page.svelte');
-ok(missingPage.includes('Link existing'), 'G10 Missing Media card exposes the Link existing action');
-ok(missingPage.includes("'/api/admin/media/missing/link'"), 'G11 UI posts to the link endpoint');
-ok(missingPage.includes('/api/admin/hosting/providers/'), 'G12 file picker consumes the generic unlinked-files API');
+// [Phase 3 redesign, 2026-10] Missing Media uses the SAME shared
+// AdminAddFileWizard as Media Library — the old provider-inventory file
+// picker (AdminLinkMediaModal + /api/admin/media/missing/link) was
+// replaced by the secure manual-link workflow: no provider inventory
+// API calls, no upload.
+ok(missingPage.includes('openLinkModal') && missingPage.includes('Link media'), 'G10 Missing Media card exposes the Link media action (opens the shared wizard)');
+ok(missingPage.includes('AdminAddFileWizard'), 'G11 the shared wizard owns the save — manual-link flow, no provider inventory picker');
+ok(missingPage.includes('preselectedMediaItem'), 'G12 the demand row preselects the wizard (TMDB id + season/episode from the request — no unlinked-files API round-trip)');
 ok(missingPage.includes('await invalidateAll();'), 'G13 invalidateAll refreshes demand/library/counts');
-ok(missingPage.includes('uploadUrl(req)'), 'G14 Upload action preserved (distinct from Link)');
-ok(missingPage.includes('no re-upload') || missingPage.includes('no re-upload') || missingPage.includes('WITHOUT re-uploading'), 'G15 UX distinguishes link from upload');
-ok(missingPage.includes('Escape'), 'G16 sheet closes on Escape');
+ok(missingPage.includes('no upload') || read('src/lib/components/admin2/AdminAddFileWizard.svelte').includes('Does NOT call provider APIs') || read('src/lib/components/admin2/AdminAddFileWizard.svelte').includes('no provider API'), 'G14/G15 manual-link wizard performs NO upload and NO provider inventory calls (link ≠ upload by design)');
+ok(read('src/lib/components/admin2/AdminAddFileWizard.svelte').includes("key === 'Escape'"), 'G16 the wizard sheet closes on Escape');
 console.log('  ok — G Missing Media UI contract (7 checks)');
 
 // ===========================================================================

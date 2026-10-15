@@ -696,15 +696,20 @@ const VALID_SERIES_QUERY = 'mediaType=series&contentId=afterlight&tmdbId=70523&s
 }
 
 // N2: valid shape passes validation + rate limiting and reaches the adult-guard
-// boundary. Under tsx the guard deterministically fails CLOSED with its
-// non-disclosing 404 (the content-service import chain requires SvelteKit's
-// $env virtual module, which does not exist outside the SvelteKit runtime —
-// the same boundary the 4K endpoint tests observe). What matters here: the
-// request is NOT rejected by validation (400) or rate limiting (429).
+// boundary. [2026-10-15 env-stub update] the documented tsx boundary moved:
+// `$env/dynamic/private` now resolves in tests (scripts/env-stubs via
+// jsconfig paths), so the import chain loads, the adult guard classifies
+// `afterlight` through getDetail's CONFIG_MISSING fixture fallback (a
+// NON-adult fixture → the guard PASSES), and the request dies deeper — at
+// createSupabaseAdminClient's missing-config throw inside the resolution
+// try, which the endpoint maps to its non-disclosing 503 INTERNAL_ERROR.
+// What still matters (unchanged): the request is NOT rejected by
+// validation (400) or rate limiting (429), and the deepest reachable
+// credential-less boundary is a fail-closed 503 — never a partial success.
 {
   const { status } = await endpointStatus(mavero2Get as unknown as EndpointFn, `/api/downloader/mavero2?${VALID_MOVIE_QUERY}`);
   ok(status !== 400 && status !== 429, 'N2: valid request shape is not rejected by validation/rate limit');
-  ok(status === 404, `N2: request reaches the adult-guard boundary (got ${status})`);
+  ok(status === 404 || status === 503, `N2: request reaches past validation/rate-limit to a fail-closed boundary (got ${status})`);
 }
 
 // N3: rate limiting (brief item 22 — per-identity buckets, 429 + retry-after).
@@ -735,14 +740,15 @@ const VALID_SERIES_QUERY = 'mediaType=series&contentId=afterlight&tmdbId=70523&s
 }
 
 // N4: tabs + extension endpoints pass validation and reach the same
-// adult-guard boundary (404 under tsx — see N2).
+// fail-closed boundary (see the N2 env-stub note: 503 once past the
+// adult guard in the credential-less tsx environment).
 {
   const { status: tabsStatus } = await endpointStatus(mavero2TabsGet as unknown as EndpointFn, `/api/downloader/mavero2/tabs?${VALID_SERIES_QUERY}`);
   ok(tabsStatus !== 400 && tabsStatus !== 429, 'N4: tabs endpoint accepts a valid series-episode request');
-  ok(tabsStatus === 404, 'N4: tabs request reaches the adult-guard boundary');
+  ok(tabsStatus === 404 || tabsStatus === 503, 'N4: tabs request reaches past validation/rate-limit to a fail-closed boundary');
   const { status: extStatus } = await endpointStatus(mavero2ExtensionGet as unknown as EndpointFn, `/api/downloader/mavero2/extension?extensionId=Bollyflix&${VALID_MOVIE_QUERY}`);
   ok(extStatus !== 400 && extStatus !== 429, 'N4: extension endpoint accepts a valid request');
-  ok(extStatus === 404, 'N4: extension request reaches the adult-guard boundary');
+  ok(extStatus === 404 || extStatus === 503, 'N4: extension request reaches past validation/rate-limit to a fail-closed boundary');
 }
 
 // ---------------------------------------------------------------------------

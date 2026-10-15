@@ -102,7 +102,14 @@ console.log('\n4 — canonical/og:url policy');
   ok(!/rel="canonical" href=\{`\/`\}/.test(explorer), '4e. the old relative-"/" canonical is gone');
 
   const detail = read('src/lib/components/DetailPage.svelte');
-  ok(detail.includes('`${PRODUCTION_ORIGIN}/${type}/${item.id}`'), '4f. DetailPage canonical = production origin + canonical detail path');
+  // [2026-10 Phase-5 route contract] the canonical is now built through the
+  // shared route helper (detailHref: movie/tv-show/anime-series/anime-movie)
+  // instead of the raw internal `/${type}/` template — the public canonical
+  // path must reflect the migrated route family. The assertion still pins
+  // the EXACT production-origin + helper construction (strong, not loose).
+  ok(detail.includes('const canonicalUrl = $derived(`${PRODUCTION_ORIGIN}${detailPath(item.id, type, item.isAnime, item.animeFormat)}`)'), '4f. DetailPage canonical = production origin + canonical detail path (shared Phase-5 route helper maps type to the public route family)');
+  ok(detail.includes("import { detailHref as detailPath") && detail.includes("from '$lib/shared/routes'"), '4f-ii. the canonical detail path comes from the shared route helper (single source of route truth)');
+  ok(!detail.includes('`${PRODUCTION_ORIGIN}/${type}/${item.id}`'), '4f-iii. the raw internal-type canonical template is gone (legacy /series/+/anime/ paths can no longer leak into canonicals)');
   ok(!detail.includes('page.url.origin'), '4g. DetailPage no longer derives the canonical host from the request');
 
   const search = read('src/routes/search/+page.svelte');

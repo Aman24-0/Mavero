@@ -782,11 +782,16 @@ assert.doesNotMatch(upcomingSrc, /season: 1[,}]/, 'no hardcoded season: 1');
 assert.doesNotMatch(upcomingSrc, /episode: 1[,}]/, 'no hardcoded episode: 1');
 
 // --- 15. NAVIGATION — strict canonical detail-ID extraction ---
+// [2026-10 Phase-5 route contract] series → /tv-show/{id}, anime →
+// /anime-series/{id} (legacy /series/ and /anime/ are 308 redirect
+// shells — the Upcoming policy module maps to the CANONICAL public
+// routes directly, verified against src/routes/tv-show/[id] and
+// src/routes/anime-series/[id]).
 assert.equal(upcomingDetailPath('movie-789'), '/movie/789', 'movie event -> /movie/{numericId}');
-assert.equal(upcomingDetailPath('series-123-s58e294'), '/series/123', 'series event with season/episode suffix -> /series/{numericId}');
-assert.equal(upcomingDetailPath('anime-456-s01e22'), '/anime/456', 'anime event with suffix -> /anime/{numericId}');
-assert.equal(upcomingDetailPath('series-99-s1e10'), '/series/99', 'single-digit season/episode suffixes parse');
-assert.equal(upcomingDetailPath('anime-456'), '/anime/456', 'suffixless event IDs still resolve to the parent detail route');
+assert.equal(upcomingDetailPath('series-123-s58e294'), '/tv-show/123', 'series event with season/episode suffix -> /tv-show/{numericId} (canonical public route)');
+assert.equal(upcomingDetailPath('anime-456-s01e22'), '/anime-series/456', 'anime event with suffix -> /anime-series/{numericId} (canonical public route)');
+assert.equal(upcomingDetailPath('series-99-s1e10'), '/tv-show/99', 'single-digit season/episode suffixes parse to the canonical series route');
+assert.equal(upcomingDetailPath('anime-456'), '/anime-series/456', 'suffixless event IDs still resolve to the canonical parent detail route');
 // Malformed IDs fail SAFE (null) instead of routing to a guaranteed 404
 assert.equal(upcomingDetailPath('series-123-junk'), null, 'junk suffix fails safe');
 assert.equal(upcomingDetailPath('movie-abc'), null, 'non-numeric ID fails safe');
@@ -926,7 +931,15 @@ assert.match(authShellSrc, /\.auth-card \{[\s\S]*?margin: auto/, 'auth-card cent
 
 // --- 18. PROTECTED ARCHITECTURE (Phase F.1) ---
 // Upcoming must not import resolver/player/search/discover internals.
-assert.doesNotMatch(upcomingSrc, /resolver|PlayerShell|playback|adult-discover|popular-tv-policy|discover-load/i, 'upcoming.ts imports NO protected-system modules (resolver/player/popular-tv/discover)');
+// [2026-10 scoping fix] the negative guard targets IMPORT STATEMENTS
+// ONLY: a comment above the anime-movie event-id rule legitimately uses
+// the word "playback" to DOCUMENT the design ("the provider playback
+// contract IS the movie pipeline"). Scanning the entire file for those
+// words misfires on prose; scanning the import lines keeps the boundary
+// fully enforced — a real protected-module import still fails the suite.
+const upcomingImportLines = upcomingSrc.split('\n').filter((l) => /^import\b/.test(l)).join('\n');
+assert.ok(upcomingImportLines.length > 0, 'upcoming.ts import lines extracted for the architecture-boundary guard');
+assert.doesNotMatch(upcomingImportLines, /resolver|PlayerShell|playback|adult-discover|popular-tv-policy|discover-load/i, 'upcoming.ts imports NO protected-system modules (resolver/player/popular-tv/discover)');
 assert.doesNotMatch(policySrc, /import /, 'upcoming-policy.ts is import-free (pure module, no coupling)');
 assert.doesNotMatch(upcomingSrc, /with_type/, 'TMDB with_type is deliberately NOT used as a web-series filter (type enums are not a web-series signal)');
 // DetailPage's existing back behavior is UNCHANGED: `from` param +
@@ -942,7 +955,12 @@ assert.match(navigationPolicySrc, /window\.history\.back\(\)/, 'navigateBackOr p
 assert.match(detailPageSrc, /const fallbackDestination = validReturnTo \?\? '\/discover';/, 'DetailPage keeps its direct-visit /discover fallback (from-aware, /discover default)');
 assert.match(detailPageSrc, /void goto\(fallbackDestination, \{ replaceState: true, keepFocus: true \}\);/, 'the fallback navigates with replaceState (deep-link entry replaced)');
 // MediaCard's return-state architecture is UNCHANGED.
-assert.match(mediaCardSrc, /appendReturnTo\(`\/\$\{item\.type\}\/\$\{item\.id\}`/, 'MediaCard still builds detail links through appendReturnTo');
+// [2026-10 Phase-5 route contract] MediaCard now derives the detail path
+// through the shared route helper (detailPath maps the internal type to
+// the public route family movie/tv-show/anime-series/anime-movie). The
+// appendReturnTo + return-state contract is unchanged — pinned below.
+assert.match(mediaCardSrc, /appendReturnTo\(detailPath\(item\.id, item\.type, item\.isAnime, item\.animeFormat\), returnTo\)/, 'MediaCard still builds detail links through appendReturnTo (shared Phase-5 detailPath helper)');
+assert.match(mediaCardSrc, /import \{ detailHref as detailPath[^\}]*\} from '\$lib\/shared\/routes';/, 'MediaCard imports the shared detailHref helper (aliased, single source of route truth)');
 assert.match(mediaCardSrc, /page\.url\.pathname\}\$\{page\.url\.search\}\$\{page\.url\.hash/, 'MediaCard return context shape unchanged (pathname+search+hash)');
 // The shared navigation helpers are UNCHANGED.
 assert.match(navigationSrc, /export function appendReturnTo\(href: string, returnTo: string\)/, 'appendReturnTo contract unchanged');

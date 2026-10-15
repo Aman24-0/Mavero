@@ -67,7 +67,12 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // 1. The adult verdict is computed ONCE per detail fetch + cached with the detail.
 // ============================================================
 const tmdb = read('src/lib/server/content/adapters/tmdb.ts');
-ok(/const key = `tmdb:detail:\$\{type\}:\$\{numericId\}`;/.test(tmdb), '1a. detail cache key is tmdb:detail:{type}:{numericId}');
+// [2026-10-15 MAV-FOCUSED Issue-1] the key template uses the raw externalId:
+// for every valid numeric id the key is byte-identical to the old
+// `${numericId}` form ('27205' === String(27205)); only the no-credentials
+// slug fall-through differs (previously 'NaN', now the slug — the loader
+// throws CONFIG_MISSING either way, so nothing is ever cached there).
+ok(/const key = `tmdb:detail:\$\{type\}:\$\{externalId\}`;/.test(tmdb), '1a. detail cache key is tmdb:detail:{type}:{externalId} (identical keys for numeric ids; NaN-key impossible since the credential-order fix)');
 ok(/const \{ value, stale \} = await getOrSet\(key, detailPolicy, async \(\) => \{/.test(tmdb), '1b. detail fetch goes through getOrSet (cached)');
 ok(/if \(isAdultContent\(item\.tags, providerIds, tmdbAdult, item\.isAnime, networks, attribution\)\)/.test(tmdb), '1c. adult classification computed inside the cache-loader (computed ONCE per cache miss; 2026-10-07: with the orphan/homepage/overview attribution evidence)');
 ok(/item\.tags = \[\.\.\.\(item\.tags \?\? \[\]\), 'Adult'\];/.test(tmdb), '1d. verdict stored in the detail tags array (cached with the detail)');
@@ -78,7 +83,7 @@ ok(/item\.tags = \[\.\.\.\(item\.tags \?\? \[\]\), 'Adult'\];/.test(tmdb), '1d. 
 ok(!/tmdb:detail:\$\{.*user/.test(tmdb), '2a. detail cache key does NOT contain user id');
 ok(!/tmdb:detail:\$\{.*session/.test(tmdb), '2b. detail cache key does NOT contain session id');
 ok(!/tmdb:detail:\$\{.*adult/.test(tmdb), '2c. detail cache key does NOT contain adult-mode authorization');
-ok(/tmdb:detail:\$\{type\}:\$\{numericId\}/.test(tmdb), '2d. detail cache key is purely (type, numericId) — content identity only');
+ok(/tmdb:detail:\$\{type\}:\$\{externalId\}/.test(tmdb), '2d. detail cache key is purely (type, externalId) — content identity only (byte-identical to the numeric form for every valid id)');
 
 // ============================================================
 // 3. The classification verdict NEVER replaces the Adult Mode authorization check.

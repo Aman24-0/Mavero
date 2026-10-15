@@ -137,9 +137,12 @@ ok('9a. Global focus-visible ring utility class defined');
 
 // Focus-visible on nav links
 assert.match(adminAppShell, /\.a2-nav-link:focus-visible/, 'nav links have focus-visible');
-assert.match(adminAppShell, /\.a2-more-link:focus-visible/, 'more links have focus-visible');
+// [MAV-FOCUSED 2026-10 redesign] the mobile More sheet (and its
+// .a2-more-link items) was intentionally removed — the bottom nav owns
+// mobile navigation, and its items carry the focus-visible contract.
+assert.doesNotMatch(adminAppShell, /\.a2-more-link/, 'more links removed with the More sheet (no dead surface)');
 assert.match(adminAppShell, /\.a2-bottom-item:focus-visible/, 'bottom nav items have focus-visible');
-ok('9b. AdminAppShell nav items have focus-visible styles');
+ok('9b. AdminAppShell nav items have focus-visible styles (sidebar + bottom nav — More sheet intentionally removed)');
 
 // Focus-visible on tabs
 assert.match(adminPage, /\.a2-tab:focus-visible/, 'tabs have focus-visible');
@@ -266,14 +269,22 @@ ok('21a. Body scroll lock for drawers, sheets, and dialogs');
 // 22. Z-index hierarchy
 // ============================================================
 
+// [MAV-FOCUSED 2026-10] the shell's own ≥80 overlays left with the More
+// sheet; overlays/sheets now live in the workspace components (the
+// Add File wizard at 90/91, event drawers at 80). The shell keeps the
+// base layers: mobile header 40, drawer 50, bottom nav 45.
+const adminAddFileWizard = readFileSync(new URL('../src/lib/components/admin2/AdminAddFileWizard.svelte', import.meta.url), 'utf8');
+const adminOpsHistory = readFileSync(new URL('../src/lib/components/admin2/AdminOpsHistory.svelte', import.meta.url), 'utf8');
+
 // Check z-index values are consistent
 const zIndices = adminAppShell.match(/z-index: (\d+)/g) ?? [];
 const zValues = zIndices.map(z => parseInt(z.match(/\d+/)![0]));
 assert.ok(zValues.includes(40), 'mobile header z-index 40');
 assert.ok(zValues.includes(45), 'bottom nav z-index 45');
-assert.ok(zValues.some(z => z >= 80), 'overlay z-index ≥80');
-assert.ok(zValues.some(z => z >= 90), 'sheet/dialog overlay z-index ≥90');
-ok('22a. Z-index hierarchy: header(40) < bottom-nav(45) < overlays(80+) < sheets(90+)');
+assert.ok(zValues.includes(50), 'drawer z-index 50 (above header/nav)');
+assert.match(adminOpsHistory, /z-index: 80/, 'overlay z-index 80 (workspace event drawer)');
+assert.match(adminAddFileWizard, /z-index: 90/, 'sheet/dialog overlay z-index 90 (Add File wizard)');
+ok('22a. Z-index hierarchy: shell header(40) < bottom-nav(45) < drawer(50) < component overlays(80+) < sheets(90+)');
 
 // ============================================================
 // 23. No excessive hardcoded colors in components

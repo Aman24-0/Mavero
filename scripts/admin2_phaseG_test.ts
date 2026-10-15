@@ -395,11 +395,15 @@ ok('32a. Resolver gating preserved (Phase G does not touch resolver)');
 // 33. Hosting/configuration separation
 // ============================================================
 
-// Phase E Hosting Control is at /admin/hosting (operational)
-// Phase G System configuration is at /admin/system/* (configuration)
-// They are different routes with different purposes.
-assert.match(adminAppShell, /id: 'hosting'.*href: '\/admin\/hosting'/s, 'Hosting Control is at /admin/hosting (Phase E — operational)');
+// Phase E Hosting Control workspace lives at /admin/hosting (operational).
+// [MAV-FOCUSED 2026-10 redesign] its SIDEBAR nav item was removed (commit
+// 24705a1 — Media Library is the hosting surface) but the ROUTE remains:
+// the separation of concerns below is asserted against the ROUTE FILE,
+// not the nav. Phase G System configuration is at /admin/system/*.
+const hostingRoute = readFileSync(new URL('../src/routes/admin/hosting/+page.svelte', import.meta.url), 'utf8');
+assert.match(hostingRoute, /AdminAppShell|hosting/i, 'Hosting Control workspace route /admin/hosting remains operational (Phase E)');
 assert.match(adminAppShell, /id: 'api-sources'.*href: '\/admin\/system\/api-sources'/s, 'API & Sources is at /admin/system/api-sources (Phase G — configuration)');
-ok('33a. Hosting (Phase E, operational) and System (Phase G, configuration) are separate workspaces');
+assert.doesNotMatch(adminAppShell, /id: 'hosting'.*href: '\/admin\/hosting'/s, 'nav: the sidebar intentionally carries no Hosting item (MAV-FOCUSED redesign — route reachable by URL)');
+ok('33a. Hosting (Phase E, operational route) and System (Phase G, configuration) remain separate workspaces');
 
 console.log(`\nAdmin 2.0 Phase G tests passed (${passed} check groups).`);

@@ -282,7 +282,11 @@ console.log('\nISSUE 7 — regression safety');
   ok(!/download/i.test(viewport), '7h. NO downloader surface exists in PlayerViewport');
   // The unmount cleanup: exit PiP → pause → release the resource (the
   // sequence lives in the onMount teardown around the videoElement stop).
-  const teardown = shell.slice(shell.indexOf('if (document.pictureInPictureElement === videoElement) exitPipQuietly();\n      if (document.fullscreenElement'), shell.indexOf('wakeLockDestroyed = true;'));
+  // [2026-10 Phase-5 SSR guard] the PiP-exit line carries the `browser &&`
+  // guard added by 79f2f2c (sibling reactive statements run during SSR);
+  // the anchor matches the exact guarded line, followed by the fullscreen
+  // exit, so the slice still begins at the lifecycle sequence itself.
+  const teardown = shell.slice(shell.indexOf('if (browser && document.pictureInPictureElement === videoElement) exitPipQuietly();\n      if (document.fullscreenElement'), shell.indexOf('wakeLockDestroyed = true;'));
   ok(teardown.includes('exitPipQuietly();') && teardown.includes('videoElement.pause();') && teardown.includes("videoElement.removeAttribute('src');"), '7i. the Back/PiP playback-stop lifecycle fix remains (exit PiP → pause → release resource)');
   ok(/castAvailable=\{castReady && Boolean\(castEligibility\?\.eligible\)\}/.test(shell), '7j. Cast stays capability-gated');
 }

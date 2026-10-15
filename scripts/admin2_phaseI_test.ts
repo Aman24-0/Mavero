@@ -47,11 +47,19 @@ assert.match(adminAppShell, /min-width: 44px.*min-height: 44px/s, 'bottom nav it
 ok('2a. Mobile bottom nav has safe-area + 44px touch targets');
 
 // ============================================================
-// 3. More menu — safe-area + touch targets
+// 3. More menu — REMOVED (MAV-FOCUSED 2026-10 redesign)
 // ============================================================
 
-assert.match(adminAppShell, /safe-area-inset-bottom.*a2-more-sheet|a2-more-sheet[\s\S]*?safe-area-inset-bottom/, 'More sheet padding includes safe-area-inset-bottom');
-ok('3a. More sheet has safe-area-inset-bottom');
+// The mobile "More" sheet + the More bottom-nav item were intentionally
+// removed (AdminAppShell docblock: every route that was in the More sheet
+// is reachable through the sidebar/drawer + mobile bottom nav). Pin the
+// REMOVAL so the dead UI never comes back, and keep the intent of this
+// section (safe-area handling on mobile surfaces) asserted against the
+// bottom nav, which now owns mobile navigation.
+assert.doesNotMatch(adminAppShell, /a2-more-sheet/, 'Mobile More sheet removed (MAV-FOCUSED redesign — no dead sheet surface)');
+assert.doesNotMatch(adminAppShell, /a2-more-link/, 'Mobile More sheet links removed with it');
+assert.match(adminAppShell, /a2-bottom-nav[\s\S]*?padding-bottom: env\(safe-area-inset-bottom/s, 'bottom nav owns the safe-area-inset-bottom padding (the successor surface)');
+ok('3a. More sheet intentionally removed; safe-area-inset-bottom lives on the bottom nav');
 
 // ============================================================
 // 4. Mobile header touch targets
@@ -255,15 +263,18 @@ ok('24a. All major components respect prefers-reduced-motion');
 // placeholder until Phase C ships.
 // ============================================================
 
-// [Phase 2C consolidation] Upload was removed from the top-level mobile nav
-// (reachable via Media Library header action + the More sheet) — the nav is
-// Home / Media / Hosting / Analytics / More.
+// [MAV-FOCUSED 2026-10 redesign] the mobile bottom nav is 4 primary
+// destinations (Home / Media / Missing / Analytics) — the "More" item,
+// the More sheet, and the Hosting item were INTENTIONALLY removed
+// (commit 24705a1: Media Library is the hosting surface; Missing Media
+// took Hosting's slot as the demand-tracking surface admins need).
 assert.match(adminAppShell, /mobileNav[\s\S]*?Home.*\/admin'/, 'mobile nav has Home');
 assert.match(adminAppShell, /\{ id: 'media-library', label: 'Media', href: '\/admin\/media\/library'/, 'mobile nav has Media (Media Library)');
-assert.match(adminAppShell, /mobileNav[\s\S]*?Hosting.*\/admin\/hosting'/, 'mobile nav has Hosting');
+assert.match(adminAppShell, /mobileNav[\s\S]*?Missing.*\/admin\/media\/missing'/, 'mobile nav has Missing (Missing Media — the Hosting slot replacement)');
 assert.match(adminAppShell, /mobileNav[\s\S]*?Analytics.*\/admin\/analytics'/, 'mobile nav has Analytics');
-assert.match(adminAppShell, /mobileNav[\s\S]*?More/, 'mobile nav has More');
+assert.doesNotMatch(adminAppShell, /mobileNav[\s\S]*?label: 'More'/, 'mobile nav has no More item (sheet removed with it)');
+assert.doesNotMatch(adminAppShell, /mobileNav[\s\S]*?\/admin\/hosting'/, 'mobile nav has no Hosting item (MAV-FOCUSED redesign)');
 assert.doesNotMatch(adminAppShell, /id: 'upload', label: 'Upload[^']*',[^\n]*matchPrefix[^\n]*\n[\s\S]{0,400}?a2-bottom-nav/, 'mobile nav no longer has top-level Upload (Phase 2C consolidation)');
-ok('25a. Mobile bottom nav has 5 primary destinations (Home/Media/Hosting/Analytics/More)');
+ok('25a. Mobile bottom nav has 4 primary destinations (Home/Media/Missing/Analytics) — More + Hosting intentionally removed');
 
 console.log(`\nAdmin 2.0 Phase I tests passed (${passed} check groups).`);

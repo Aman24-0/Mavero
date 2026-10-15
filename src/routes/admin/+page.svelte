@@ -194,57 +194,18 @@
     margin-top: var(--a2-space-1);
   }
 
-  /* MAV-FOCUSED (2026-10): Quick-action cards for the destinations the
-     mobile bottom-nav no longer carries (the More sheet was removed).
-     Same surface as the metric cards but compact (icon + label + desc). */
-  .a2-quick-grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: var(--a2-space-3);
-  }
-  .a2-quick-card {
-    display: flex;
-    align-items: center;
-    gap: var(--a2-space-3);
-    padding: var(--a2-space-3) var(--a2-space-4);
-    background: var(--a2-surface-3);
-    border: 1px solid var(--a2-border);
-    border-radius: var(--a2-radius-md);
-    text-decoration: none;
-    color: inherit;
-    transition: background var(--a2-motion-micro) var(--a2-ease-out),
-                border-color var(--a2-motion-micro) var(--a2-ease-out),
-                transform var(--a2-motion-micro) var(--a2-ease-out);
-  }
-  a.a2-quick-card:hover {
-    background: var(--a2-surface-4);
-    border-color: var(--a2-border-strong);
-    transform: translateY(-1px);
-  }
-  .a2-quick-icon {
-    display: grid;
-    place-items: center;
-    width: 28px;
-    height: 28px;
-    border-radius: var(--a2-radius-sm);
-    background: var(--a2-cyan-soft);
-    color: var(--a2-cyan);
-    flex-shrink: 0;
-  }
-  .a2-quick-copy { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-  .a2-quick-copy strong { font-size: var(--a2-text-sm); color: var(--a2-text-bright); font-weight: 600; }
-  .a2-quick-copy small { font-size: var(--a2-text-2xs); color: var(--a2-text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* MAV-FOCUSED (2026-10): the quick-action card CSS was removed together
+     with its markup (the svelte-check unused-selector warnings were the
+     dead-code signal). The metric cards below carry the overview grid. */
 
   /* Responsive */
   @media (max-width: 1024px) {
     .a2-metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .a2-quick-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
 
   @media (max-width: 640px) {
     .a2-metric-grid,
     .a2-metric-grid.a2-secondary { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--a2-space-2); }
-    .a2-quick-grid { grid-template-columns: 1fr; gap: var(--a2-space-2); }
     .a2-section { margin-bottom: var(--a2-space-6); }
   }
 

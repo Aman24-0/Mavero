@@ -135,8 +135,14 @@ assert.match(shell, /@keyframes sheet-up \{ from \{ transform: translateY\(100%\
 // ============================================================
 
 // The old centered popover (translate(-50%, -50%)) was removed outright —
-// there is no rule that could center the sheet in any context.
-assert.doesNotMatch(shell, /translate\(-50%, -50%\)/, 'no centered popover transform anywhere');
+// no SHEET/drawer rule centers itself. [2026-10] the playback LOADING card
+// legitimately centers in the viewport (top/left 50% + translate) — that is
+// not the episode sheet; scope the negative guard to the sheet family.
+const sheetRules = shell.match(/\.(episode-sheet|source-sheet|sheet-head)[^\{]*\{[^\}]*\}/g ?? []);
+// Line 3052 is a COMMENT describing the loading card; line 3082 is the
+// loading-card rule itself — both refer to the SAME legitimate centering.
+assert.ok((shell.match(/translate\(-50%, -50%\)/g) ?? []).length <= 2, 'no centered popover transform beyond the loading-card centering (rule + its comment)');
+assert.ok(!/episode-sheet[^\{]*\{[^\}]*translate\(-50%/.test(shell) && !/source-sheet[^\{]*\{[^\}]*translate\(-50%/.test(shell), 'no centered popover transform on any sheet (drawer forms only)');
 
 // ============================================================
 // 7. Drawer list is scrollable and respects the safe area (wide context)

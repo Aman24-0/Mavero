@@ -52,7 +52,7 @@
       </button>
     {/snippet}
 
-    <AdminMediaList {providers} {registerAddFile} />
+    <AdminMediaList {providers} {registerAddFile} initialFilters={data.initialFilters} />
   </AdminPage>
 </AdminAppShell>
 

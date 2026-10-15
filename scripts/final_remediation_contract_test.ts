@@ -270,8 +270,10 @@ run('10c. deleted rows rejected for linking (ASSET_DELETED)', () => {
   assert.match(managementService, /existingRow\.status === 'deleted'/);
 });
 run('10d. Media Library Link Existing File targets untracked provider files', () => {
-  assert.match(hostingAssets, /Link Existing File/);
-  assert.match(hostingAssets, /providers\/\$\{encodeURIComponent\(p\.adapterId\)\}\/files/);
+  // [2026-10 redesign] the flow is the same; the header action label became
+  // "Link media" and the loader fetches per-provider tab inventory.
+  assert.match(hostingAssets, /Link media|Link Existing File/);
+  assert.match(hostingAssets, /providers\/\$\{encodeURIComponent\(adapterId\)\}\/files/);
 });
 
 console.log('--- 11. Delete success → terminal drawer state ---');

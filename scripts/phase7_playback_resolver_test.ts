@@ -166,11 +166,14 @@ console.log('  ok — A.4 Phase 4 capability contract (7 checks)\n');
 }
 console.log('  ok — A.5 Phase 5 canonical key contract (3 checks)\n');
 
-// A.6 Watch page server load is unchanged (no Phase 7-specific changes needed)
+// A.6 Watch page server load is unchanged (no Phase 7-specific changes needed).
+// [2026-10 refactor] the load logic moved to the SHARED watch-loader.ts
+// (serving both the query-form and canonical path-form routes) — the
+// integration is pinned in the loader.
 {
-  const src = readFileSync(path.join(REPO_ROOT, 'src/routes/watch/[type]/[id]/+page.server.ts'), 'utf8');
-  ok(src.includes('getPublicStreamingConfig'), 'A.6.1 watch route uses getPublicStreamingConfig (existing source list)');
-  ok(src.includes('streamingConfig'), 'A.6.2 watch route returns streamingConfig to client (source selector)');
+  const src = readFileSync(path.join(REPO_ROOT, 'src/routes/watch/[type]/[id]/watch-loader.ts'), 'utf8');
+  ok(src.includes('getPublicStreamingConfig'), 'A.6.1 watch loader uses getPublicStreamingConfig (existing source list)');
+  ok(src.includes('streamingConfig'), 'A.6.2 watch loader returns streamingConfig to client (source selector)');
 }
 console.log('  ok — A.6 watch route integration (2 checks)\n');
 

@@ -120,8 +120,13 @@ ok('2. Delete: idempotent (already-deleted→success), 404→success, demand reo
 console.log('\n--- 3. Media Library Read Model ---');
 
 // list() uses activeAssets (exclude deleted) for orphan filter
-assert.match(libraryService, /activeAssets = itemAssets\.filter\(a => a\.status !== 'deleted'\)/, '3a. list() computes activeAssets excluding deleted');
-assert.match(libraryService, /activeAssets\.length === 0 && !itemDemand/, '3b. list() drops items with no active assets AND no demand');
+// [2026-10 Task-2 hierarchy] the "active assets" concept now computes at
+// TWO levels with the same status !== 'deleted' filter: the per-card
+// PARENT UNION (list()'s orphan/pending rule — parents roll up episode
+// assets) and computeHostingState's per-item filter (unchanged below).
+assert.match(libraryService, /unionAssets\.filter\(a => a\.status !== 'deleted'\)/, '3a. list() computes active union assets excluding deleted (parent rollup)');
+assert.match(libraryService, /const activeAssets = assets\.filter\(a => a\.status !== 'deleted'\);/, '3a-ii. computeHostingState computes activeAssets excluding deleted (same filter, per item)');
+assert.match(libraryService, /activeUnionAssets\.length === 0 && !unionDemand/, '3b. list() drops items with no active assets AND no demand (parent union)');
 
 // computeHostingState already filtered deleted (verify it still does)
 assert.match(libraryService, /assets\.filter\(a => a\.status !== 'deleted'\)/, '3c. computeHostingState filters deleted assets');

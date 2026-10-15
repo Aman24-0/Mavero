@@ -649,10 +649,13 @@ ok('28a. Per-provider sync outcome contract preserved (service + API + card acti
 // 29. Admin nav updated for Phase E
 // ============================================================
 
-// AdminAppShell has new Hosting Control nav item
-assert.match(adminAppShell, /id: 'hosting', label: 'Hosting Control', href: '\/admin\/hosting'/, 'nav has Hosting Control item');
-assert.match(adminAppShell, /matchPrefix: '\/admin\/hosting'/, 'Hosting Control has matchPrefix');
-ok('29a. AdminAppShell nav has Hosting Control item with matchPrefix');
+// Admin nav — [MAV-FOCUSED 2026-10 redesign] the Hosting Control nav item
+// was INTENTIONALLY REMOVED from the sidebar (commit 24705a1): Media
+// Library is the hosting surface; /admin/hosting stays reachable by URL.
+// The workspace itself (this test's §1–§28) remains fully operational.
+assert.doesNotMatch(adminAppShell, /id: 'hosting', label: 'Hosting Control', href: '\/admin\/hosting'/, 'nav: Hosting Control item intentionally removed from the sidebar (MAV-FOCUSED redesign)');
+assert.doesNotMatch(adminAppShell, /matchPrefix: '\/admin\/hosting'/, 'nav: no /admin/hosting matchPrefix in the sidebar');
+ok('29a. AdminAppShell nav has NO Hosting Control item (MAV-FOCUSED redesign — Media Library is the hosting surface; /admin/hosting reachable by URL)');
 
 // Old assets/sync nav items removed
 assert.doesNotMatch(adminAppShell, /id: 'assets', label: 'Assets', href: '\/admin\/media\/assets'/, 'old Assets nav item removed');

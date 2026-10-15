@@ -34,6 +34,11 @@
  *     reject references longer than that with a clean 400 instead of
  *     letting Postgres raise a constraint-violation 500.
  *
+ * Task 2 (2026-10-15): the normalization/validation/eligibility/asset-
+ * upsert logic now lives in src/lib/server/hosting/media/manual-link-contract.ts
+ * (shared with the bulk-link endpoint — one definition, two callers).
+ * This route file is a thin HTTP adapter.
+ *
  * Security: admin-only (requireAdmin). Service-role client.
  */
 
@@ -44,167 +49,18 @@ import { createSupabaseAdminClient } from '$lib/server/supabase/admin';
 import { NO_STORE } from '$lib/server/http/cache-headers';
 import { CanonicalMediaService } from '$lib/server/hosting/media/service';
 import { resolveMediaItemId } from '$lib/server/hosting/media/manual-link-identity';
+import {
+  validateReference,
+  normalizeReference,
+  episodeLinkEligibilityError,
+  resolveProviderSource,
+  upsertLinkAsset,
+} from '$lib/server/hosting/media/manual-link-contract';
 import { getDetail } from '$lib/server/content/service';
 import type { ContentType } from '$lib/server/content/types';
 import { UploadService } from '$lib/server/hosting/upload/service';
 
 const NO_STORE_HEADERS = { 'cache-control': NO_STORE } as const;
-
-const VIDARA_EMBED_BASE = 'https://vidara.to/e/';
-const ABYSS_PLAYER_BASE = 'https://player.abyssplayer.com/';
-
-// The provider_asset_id column CHECK constraint allows up to 200 chars.
-// We enforce the same limit at the API boundary so a too-long reference
-// returns a clean 400 instead of a DB constraint-violation 500.
-const PROVIDER_ASSET_ID_MAX = 200;
-
-// Embed-origin allowlist per provider — MUST match the values registered
-// in `streaming_providers.capabilities.allowed_embed_origins` by the
-// Phase 4 migration (and updated by the Phase 6 vidara-URL fix).
-// These are checked at write time so the admin gets immediate feedback
-// if the constructed URL would be rejected by the resolver at playback.
-const PROVIDER_ALLOWED_ORIGINS: Record<string, string[]> = {
-  vidara: ['https://vidara.to', 'https://vidara.so'],
-  abyss: ['https://player.abyssplayer.com'],
-};
-
-/**
- * Splits a user-supplied reference into:
- *   - `providerAssetId`: the SHORT code (e.g. "Vw0hY4n13k83"), suitable
- *     for the `media_assets.provider_asset_id` column and the
- *     `(provider_source_id, provider_asset_id)` UNIQUE constraint.
- *   - `playbackUrl`: the FULL canonical embed URL that the resolver
- *     will return to the player iframe.
- *
- * Reference forms accepted:
- *
- *   Vidara:
- *     - Short code: "Vw0hY4n13k83"
- *     - Embed URL:  https://vidara.to/e/Vw0hY4n13k83     (canonical)
- *     - Share URL:  https://vidara.to/Vw0hY4n13k83       (share page)
- *     - Legacy URL: https://vidara.so/v/Vw0hY4n13k83    (legacy share page)
- *
- *   Abyss:
- *     - Short code: "-7DfAqb5s"  (slugs may start with a hyphen)
- *     - Player URL: https://player.abyssplayer.com/-7DfAqb5s  (canonical)
- *
- * CANONICAL URL RECONSTRUCTION (Phase 2 acceptance fix):
- *
- *   For full URLs, we ALWAYS reconstruct the canonical embed URL from
- *   the extracted short code — we do NOT preserve the input URL as-is.
- *
- *   Why: the admin may paste a Vidara SHARE URL
- *   (`https://vidara.so/v/<code>` or `https://vidara.to/<code>`),
- *   which renders the Vidara landing/share page in the iframe instead
- *   of the embedded player (confirmed by the Phase 6 fix migration
- *   `20261010000000_vidara_embed_url_fix.sql`). Storing the share URL
- *   as `playback_url` produces a non-playable iframe — the URL "looks
- *   valid" against the origin allowlist but doesn't actually play.
- *
- *   The canonical embed forms are:
- *     - Vidara: `https://vidara.to/e/<code>`     (Phase 6 fix)
- *     - Abyss:  `https://player.abyssplayer.com/<code>`
- *
- *   The origin allowlist still applies — it's checked against the
- *   reconstructed canonical URL, not the input URL.
- */
-function normalizeReference(provider: string, reference: string): {
-  providerAssetId: string;
-  playbackUrl: string;
-} | null {
-  const ref = reference.trim();
-  if (!ref) return null;
-
-  if (ref.startsWith('http://') || ref.startsWith('https://')) {
-    let url: URL;
-    try { url = new URL(ref); } catch { return null; }
-
-    // Reject non-HTTPS, credentials, and private/loopback hosts at the
-    // API boundary — same posture as the resolver's `validatePlaybackUrl`.
-    if (url.protocol !== 'https:') return null;
-    if (url.username || url.password) return null;
-
-    // Extract the short code = last non-empty path segment.
-    //
-    // This handles every known URL form for both providers:
-    //   - https://vidara.so/v/<code>     → "/v/<code>"     → "<code>"
-    //   - https://vidara.to/e/<code>     → "/e/<code>"     → "<code>"
-    //   - https://vidara.to/<code>       → "/<code>"       → "<code>"
-    //   - https://player.abyssplayer.com/<slug>  → "/<slug>"  → "<slug>"
-    const segments = url.pathname.split('/').filter(Boolean);
-    const code = segments.length > 0 ? decodeURIComponent(segments[segments.length - 1]) : '';
-    if (!code) return null;
-
-    // ALWAYS reconstruct the canonical embed URL. See the function
-    // docstring for why the input URL is not preserved.
-    if (provider === 'vidara') {
-      return { providerAssetId: code, playbackUrl: `${VIDARA_EMBED_BASE}${code}` };
-    }
-    if (provider === 'abyss') {
-      return { providerAssetId: code, playbackUrl: `${ABYSS_PLAYER_BASE}${code}` };
-    }
-    return null;
-  }
-
-  // Short-code form.
-  if (provider === 'vidara') return { providerAssetId: ref, playbackUrl: `${VIDARA_EMBED_BASE}${ref}` };
-  if (provider === 'abyss') return { providerAssetId: ref, playbackUrl: `${ABYSS_PLAYER_BASE}${ref}` };
-  return null;
-}
-
-function validateReference(provider: string, reference: string): string | null {
-  const ref = reference.trim();
-  if (!ref) return 'Provider reference is required.';
-  if (ref.length > 2000) return 'Provider reference is too long (max 2000 characters).';
-  if (!/^[a-zA-Z0-9_-]+$/.test(ref) && !ref.startsWith('http')) {
-    return `${provider === 'vidara' ? 'Vidara' : 'Abyss'} reference must be a filecode/ID (alphanumeric) or a full URL.`;
-  }
-
-  const normalized = normalizeReference(provider, reference);
-  if (!normalized) {
-    return 'Provider reference could not be normalized. Expected a short code or a valid HTTPS URL.';
-  }
-  if (normalized.providerAssetId.length > PROVIDER_ASSET_ID_MAX) {
-    return `Derived provider_asset_id is too long (max ${PROVIDER_ASSET_ID_MAX} characters). Use the short filecode/ID instead of the full URL.`;
-  }
-  if (!/^[a-zA-Z0-9_-]+$/.test(normalized.providerAssetId)) {
-    return 'Derived provider_asset_id must be alphanumeric (filecode/ID).';
-  }
-
-  // Allowlist check at write time — matches the resolver's
-  // `validatePlaybackUrl('embed', allowedEmbedOrigins, allowDynamic=false)`.
-  // We check BOTH the input URL's origin AND the reconstructed canonical
-  // URL's origin against the allowlist. The input check catches the
-  // mistake of pasting an Abyss URL when Vidara is selected (and
-  // vice-versa) — without it, the admin would silently get a
-  // non-playable iframe because we always reconstruct the canonical URL.
-  const allowed = PROVIDER_ALLOWED_ORIGINS[provider] ?? [];
-  const allowedLower = allowed.map((o) => o.toLowerCase());
-
-  // Input-URL origin check (only when the admin pasted a URL).
-  if (ref.startsWith('http://') || ref.startsWith('https://')) {
-    let inputUrl: URL;
-    try { inputUrl = new URL(ref); } catch { return 'Input URL is invalid.'; }
-    if (!allowedLower.includes(inputUrl.origin.toLowerCase())) {
-      return `Input URL origin ${inputUrl.origin} is not in the ${provider} allowlist (${allowed.join(', ')}). Did you select the wrong provider?`;
-    }
-  }
-
-  // Reconstructed-URL origin check (always — defense in depth).
-  let canonicalUrl: URL;
-  try { canonicalUrl = new URL(normalized.playbackUrl); } catch { return 'Constructed playback URL is invalid.'; }
-  if (!allowedLower.includes(canonicalUrl.origin.toLowerCase())) {
-    return `Playback URL origin ${canonicalUrl.origin} is not in the ${provider} allowlist (${allowed.join(', ')}).`;
-  }
-
-  return null;
-}
-
-// Resolve the canonical media_item UUID — the orchestrator lives in
-// src/lib/server/hosting/media/manual-link-identity.ts (shared + unit
-// tested). Task 1: it guarantees the PARENT series/anime row first
-// (parent-ensure-first) so first-time episode saves cannot hit the
-// service's PARENT_NOT_FOUND contract.
 
 export const POST: RequestHandler = async ({ request, locals }) => {
   const { user } = await requireAdmin(locals, { redirectTo: '/admin' });
@@ -266,6 +122,16 @@ export const POST: RequestHandler = async ({ request, locals }) => {
     return json({ ok: false, error: { code: 'INVALID_REQUEST', message: refError } }, { status: 400, headers: NO_STORE_HEADERS });
   }
 
+  // Phase 2: server-side release-eligibility gate — unreleased episodes
+  // can NEVER be linked or updated, even by a direct API call. Movies
+  // and fixture ids are exempt (see episodeLinkEligibilityError docs).
+  if (contentType === 'series' || contentType === 'anime') {
+    const eligibilityError = await episodeLinkEligibilityError(contentType, tmdbId, seasonNum!, episodeNum!);
+    if (eligibilityError) {
+      return json({ ok: false, error: { code: 'EPISODE_NOT_RELEASED', message: eligibilityError } }, { status: 400, headers: NO_STORE_HEADERS });
+    }
+  }
+
   const normalized = normalizeReference(provider, reference)!;
   const playbackUrl = normalized.playbackUrl;
   const providerAssetId = normalized.providerAssetId;
@@ -316,132 +182,38 @@ export const POST: RequestHandler = async ({ request, locals }) => {
   }
 
   // Resolve provider_source_id.
-  const { data: providerRow } = await adminClient
-    .from('streaming_providers')
-    .select('id')
-    .eq('adapter_id', provider)
-    .maybeSingle();
-  if (!providerRow) {
-    return json({ ok: false, error: { code: 'PROVIDER_NOT_FOUND', message: `Provider "${provider}" is not registered.` } }, { status: 400, headers: NO_STORE_HEADERS });
+  const providerSource = await resolveProviderSource(adminClient, provider);
+  if (!providerSource.ok) {
+    return json({ ok: false, error: { code: providerSource.code, message: providerSource.message } }, { status: 400, headers: NO_STORE_HEADERS });
   }
-
-  const { data: sourceRow } = await adminClient
-    .from('streaming_sources')
-    .select('id')
-    .eq('provider_id', providerRow.id)
-    .maybeSingle();
-  if (!sourceRow) {
-    return json({ ok: false, error: { code: 'SOURCE_NOT_FOUND', message: `No source row for provider "${provider}".` } }, { status: 400, headers: NO_STORE_HEADERS });
-  }
-
-  const providerSourceId = sourceRow.id;
+  const providerSourceId = providerSource.providerSourceId;
 
   try {
-    if (mediaAssetId) {
-      // UPDATE existing association (the "Update link" flow).
-      const { error: updateError } = await adminClient
-        .from('media_assets')
-        .update({
-          media_item_id: resolvedMediaItemId,
-          provider_source_id: providerSourceId,
-          provider_asset_id: providerAssetId,
-          playback_url: playbackUrl,
-          status: 'ready',
-          provider_status: 'active',
-          mavero_status: 'available',
-          last_synced_at: new Date().toISOString(),
-        })
-        .eq('id', mediaAssetId);
-      if (updateError) {
-        await uploadService.recordOperation({
-          action: 'link', status: 'failed', media_item_id: resolvedMediaItemId, media_asset_id: mediaAssetId,
-          provider_source_id: providerSourceId, admin_user_id: user.id,
-          error_code: 'UPDATE_FAILED', error_message: updateError.message,
-        });
-        return json({ ok: false, error: { code: 'UPDATE_FAILED', message: updateError.message } }, { status: 500, headers: NO_STORE_HEADERS });
-      }
-      await uploadService.recordOperation({
-        action: 'link', status: 'success', media_item_id: resolvedMediaItemId, media_asset_id: mediaAssetId,
-        provider_source_id: providerSourceId, admin_user_id: user.id,
-        details: { provider_asset_id: providerAssetId, playback_url: playbackUrl, mode: 'update', note: 'Manual link updated via /api/admin/media/manual-link.' },
-      });
-      return json({ ok: true, mediaAssetId }, { headers: NO_STORE_HEADERS });
-    }
-
-    // Check for existing row (UNIQUE constraint on provider_source_id + provider_asset_id).
-    const { data: existing } = await adminClient
-      .from('media_assets')
-      .select('id, media_item_id, mavero_status')
-      .eq('provider_source_id', providerSourceId)
-      .eq('provider_asset_id', providerAssetId)
-      .maybeSingle();
-
-    if (existing) {
-      const ex = existing as { id: string; media_item_id: string; mavero_status: string };
-      if (ex.media_item_id === resolvedMediaItemId && ex.mavero_status === 'available') {
-        return json({ ok: true, mediaAssetId: ex.id, idempotent: true }, { headers: NO_STORE_HEADERS });
-      }
-      const { error: updateError } = await adminClient
-        .from('media_assets')
-        .update({
-          media_item_id: resolvedMediaItemId,
-          playback_url: playbackUrl,
-          status: 'ready',
-          provider_status: 'active',
-          mavero_status: 'available',
-          last_synced_at: new Date().toISOString(),
-        })
-        .eq('id', ex.id);
-      if (updateError) {
-        await uploadService.recordOperation({
-          action: 'link', status: 'failed', media_item_id: resolvedMediaItemId, media_asset_id: ex.id,
-          provider_source_id: providerSourceId, admin_user_id: user.id,
-          error_code: 'UPDATE_FAILED', error_message: updateError.message,
-        });
-        return json({ ok: false, error: { code: 'UPDATE_FAILED', message: updateError.message } }, { status: 500, headers: NO_STORE_HEADERS });
-      }
-      await uploadService.recordOperation({
-        action: 'link', status: 'success', media_item_id: resolvedMediaItemId, media_asset_id: ex.id,
-        provider_source_id: providerSourceId, admin_user_id: user.id,
-        details: { provider_asset_id: providerAssetId, playback_url: playbackUrl, mode: 'relink', note: 'Existing provider asset re-linked to a different media item via /api/admin/media/manual-link.' },
-      });
-      return json({ ok: true, mediaAssetId: ex.id, relinked: true }, { headers: NO_STORE_HEADERS });
-    }
-
-    // INSERT new association.
-    const { data: newRow, error: insertError } = await adminClient
-      .from('media_assets')
-      .insert({
-        media_item_id: resolvedMediaItemId,
-        provider_source_id: providerSourceId,
-        provider_asset_id: providerAssetId,
-        playback_url: playbackUrl,
-        status: 'ready',
-        provider_status: 'active',
-        mavero_status: 'available',
-        available_qualities: [],
-        audio_languages: [],
-        has_subtitles: false,
-        last_synced_at: new Date().toISOString(),
-      })
-      .select('id')
-      .single();
-
-    if (insertError || !newRow) {
-      await uploadService.recordOperation({
-        action: 'link', status: 'failed', media_item_id: resolvedMediaItemId,
-        provider_source_id: providerSourceId, admin_user_id: user.id,
-        error_code: 'INSERT_FAILED', error_message: insertError?.message ?? 'No row returned.',
-      });
-      return json({ ok: false, error: { code: 'INSERT_FAILED', message: insertError?.message ?? 'No row returned.' } }, { status: 500, headers: NO_STORE_HEADERS });
-    }
-    const newId = (newRow as { id: string }).id;
-    await uploadService.recordOperation({
-      action: 'link', status: 'success', media_item_id: resolvedMediaItemId, media_asset_id: newId,
-      provider_source_id: providerSourceId, admin_user_id: user.id,
-      details: { provider_asset_id: providerAssetId, playback_url: playbackUrl, mode: 'insert', note: 'Manual link created via /api/admin/media/manual-link.' },
+    const result = await upsertLinkAsset({
+      adminClient,
+      uploadService,
+      adminUserId: user.id,
+      resolvedMediaItemId,
+      providerSourceId,
+      providerAssetId,
+      playbackUrl,
+      mediaAssetId,
+      via: 'manual-link',
     });
-    return json({ ok: true, mediaAssetId: newId }, { headers: NO_STORE_HEADERS });
+    if (!result.ok) {
+      return json({ ok: false, error: { code: result.code, message: result.message } }, { status: 500, headers: NO_STORE_HEADERS });
+    }
+    // Response parity with the pre-refactor endpoint: idempotent / relinked
+    // flags preserved as booleans for older clients that branch on them.
+    return json(
+      {
+        ok: true,
+        mediaAssetId: result.mediaAssetId,
+        ...(result.mode === 'idempotent' ? { idempotent: true } : {}),
+        ...(result.mode === 'relink' ? { relinked: true } : {}),
+      },
+      { headers: NO_STORE_HEADERS }
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     return json({ ok: false, error: { code: 'UNKNOWN', message } }, { status: 500, headers: NO_STORE_HEADERS });
@@ -486,6 +258,26 @@ export const DELETE: RequestHandler = async ({ request, locals }) => {
   }
 
   const ex = existing as { id: string; media_item_id: string; provider_source_id: string | null; provider_asset_id: string | null };
+
+  // Phase 2: release-eligibility gate on DELETE too — an unreleased
+  // episode must not offer ANY action (Add link / Update link / Delete).
+  // The episode identity is resolved from the asset's media_items row
+  // (server-derived, never client-supplied).
+  {
+    const { data: linkItem } = await adminClient
+      .from('media_items')
+      .select('content_type, tmdb_id, season, episode')
+      .eq('id', ex.media_item_id)
+      .maybeSingle();
+    const linked = linkItem as { content_type: string; tmdb_id: string; season: number | null; episode: number | null } | null;
+    if (linked && (linked.content_type === 'series' || linked.content_type === 'anime')
+      && linked.season != null && linked.episode != null) {
+      const eligibilityError = await episodeLinkEligibilityError(linked.content_type, linked.tmdb_id, linked.season, linked.episode);
+      if (eligibilityError) {
+        return json({ ok: false, error: { code: 'EPISODE_NOT_RELEASED', message: eligibilityError } }, { status: 400, headers: NO_STORE_HEADERS });
+      }
+    }
+  }
 
   try {
     // Delete the media_assets row. This removes the Mavero-side association.

@@ -2823,9 +2823,10 @@
               role="tab"
               aria-selected={sheetDisplaySeason === season.number}
               aria-current={sheetDisplaySeason === season.number ? 'true' : undefined}
+              aria-label={`Season ${season.number}${season.episodeCount ? `, ${season.episodeCount} episodes` : ''}`}
               onclick={() => selectSheetSeason(season.number)}
             >
-              Season {season.number}{#if season.episodeCount}<span class="season-count">{season.episodeCount}</span>{/if}
+              Season {season.number}
             </button>
           {/each}
         </div>
@@ -3107,46 +3108,62 @@
   .sheet-head .eyebrow { color: var(--muted); }
   .close-button { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid var(--line); border-radius: var(--radius-sm); color: var(--muted); background: rgba(255,255,255,.04); cursor: pointer; }
   .sheet-list { display: grid; gap: 4px; padding: 0 12px 14px; }
-  /* Task 6 — in-sheet season switching */
+  /* Task 6 — in-sheet season switching.
+
+     PHASE-1 SIZING FIX (2026-10-15): the chips follow a STRICT layout
+     contract so every season chip renders at the SAME height and a
+     width derived ONLY from its label + padding:
+       - flex: 0 0 auto — chips never grow, shrink, or share the rail's
+         free space (no viewport-remainder redistribution, no flex-shrink
+         compression of later seasons).
+       - FIXED height (36px, box-sizing border-box) + fixed vertical
+         padding 0 — a chip's height can never depend on its badge or on
+         the rail's track height (the old grid-template-rows: auto auto
+         1fr + implicit 4th child made the season row a 1fr track whose
+         height depended on the EPISODE LIST length — chips stretched to
+         hundreds of px on short lists and compressed on long ones).
+       - Width comes from the "Season N" text + horizontal padding only.
+         The episode COUNT is deliberately NOT rendered inside the chip
+         (a 3-digit count made one chip wider than its neighbours); the
+         count stays available via the chip's aria-label and in the
+         sheet header for the displayed season.
+       - The rail scrolls horizontally (never the page), keeps a single
+         8px gap, and centers chips vertically with align-items center
+         so the fixed chip height cannot stretch to the rail cross
+         size. */
   .season-row {
     display: flex;
-    gap: 6px;
+    align-items: center;
+    gap: 8px;
     overflow-x: auto;
     padding: 0 12px 10px;
+    flex: 0 0 auto;
     scrollbar-width: none;
     -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
   }
   .season-row::-webkit-scrollbar { display: none; }
   .season-chip {
-    flex-shrink: 0;
+    flex: 0 0 auto;
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    padding: 6px 12px;
+    justify-content: center;
+    height: 36px;
+    box-sizing: border-box;
+    padding: 0 14px;
     border: 1px solid var(--line-strong);
     border-radius: 999px;
     background: transparent;
     color: var(--ink);
     font-size: 12px;
     font-weight: 600;
+    line-height: 1;
     cursor: pointer;
     white-space: nowrap;
   }
   .season-chip:hover { border-color: var(--accent); }
   .season-chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
   .season-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  .season-count {
-    display: inline-grid;
-    place-items: center;
-    min-width: 18px;
-    padding: 0 5px;
-    height: 18px;
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.12);
-    font-size: 10px;
-    font-weight: 700;
-  }
-  .season-chip:not(.active) .season-count { background: rgba(255, 255, 255, 0.08); }
   .sheet-season-state {
     display: flex;
     flex-direction: column;
@@ -3212,9 +3229,23 @@
      viewport — a full-height drawer sliding in from the left edge with a
      consistent open/close animation, mirroring the right-edge source sheet
      on wide viewports. Same surface system (z-21, blur, border, safe-area
-     bottom padding); same focus trap, Escape and focus-restore contracts. */
-  .episode-sheet { position: absolute; z-index: 21; top: 0; bottom: 0; left: 0; right: auto; width: min(360px, 88vw); max-height: none; overflow: hidden; display: grid; grid-template-rows: auto auto 1fr; border-top: 0; border-right: 1px solid var(--line-strong); border-radius: 0; background: rgba(13,13,13,.98); box-shadow: var(--shadow-lg); backdrop-filter: blur(28px); padding-bottom: 0; animation: sheet-left var(--motion-normal) var(--ease-out); }
-  .episode-sheet .sheet-list { max-height: 100%; overflow-y: auto; padding-bottom: max(14px, env(safe-area-inset-bottom)); }
+     bottom padding); same focus trap, Escape and focus-restore contracts.
+
+     PHASE-1 LAYOUT FIX (2026-10-15): the sheet is now a FLEX COLUMN, not a
+     3-row grid. The old `grid-template-rows: auto auto 1fr` was written
+     for THREE children (handle, head, list); when the Task-6 season row
+     was added the sheet gained a FOURTH child, so the grid silently
+     assigned the season row to the `1fr` track and pushed the episode
+     list into an IMPLICIT auto track. The season row's height then
+     depended on the episode-list length (chips stretched vertically on
+     short lists; the list overflowed its implicit track without
+     scrolling on long ones). A flex column sizes the handle/head/season
+     row to content (flex: 0 0 auto) and gives the list the remaining
+     space with min-height: 0 + overflow-y: auto — the correct contract
+     for BOTH three- and four-child sheets. */
+  .episode-sheet { position: absolute; z-index: 21; top: 0; bottom: 0; left: 0; right: auto; width: min(360px, 88vw); max-height: none; overflow: hidden; display: flex; flex-direction: column; border-top: 0; border-right: 1px solid var(--line-strong); border-radius: 0; background: rgba(13,13,13,.98); box-shadow: var(--shadow-lg); backdrop-filter: blur(28px); padding-bottom: 0; animation: sheet-left var(--motion-normal) var(--ease-out); }
+  .episode-sheet .sheet-head { flex: 0 0 auto; }
+  .episode-sheet .sheet-list { flex: 1 1 auto; min-height: 0; max-height: none; overflow-y: auto; padding-bottom: max(14px, env(safe-area-inset-bottom)); }
   @keyframes sheet-left { from { transform: translateX(-100%); } to { transform: translateX(0); } }
 
   /* Wide viewport (landscape/desktop/TV): the source sheet becomes a

@@ -48,8 +48,16 @@ const typesSrc = read('../src/lib/server/content/types.ts');
 const presenterSrc = read('../src/lib/server/content/presenter.ts');
 const contentTypesSrc = read('../src/lib/data/content.ts');
 const movieRoute = read('../src/routes/movie/[id]/+page.svelte');
-const seriesRoute = read('../src/routes/series/[id]/+page.svelte');
-const animeRoute = read('../src/routes/anime/[id]/+page.svelte');
+// [2026-10 canonical-series-UI] /series/[id] is now a legacy REDIRECT shell
+// (the server loader redirects to /tv-show/[id] before render); the
+// canonical series detail markup lives at /tv-show/[id]. Both are pinned.
+const seriesRoute = read('../src/routes/tv-show/[id]/+page.svelte');
+const legacySeriesRoute = read('../src/routes/series/[id]/+page.svelte');
+const legacySeriesServer = read('../src/routes/series/[id]/+page.server.ts');
+// [2026-10 canonical-series-UI] /anime/[id] is a legacy REDIRECT shell to
+// /anime-series/[id]; the canonical anime detail markup lives there.
+const animeRoute = read('../src/routes/anime-series/[id]/+page.svelte');
+const legacyAnimeServer = read('../src/routes/anime/[id]/+page.server.ts');
 const movieServer = read('../src/routes/movie/[id]/+page.server.ts');
 
 // ============================================================
@@ -271,10 +279,12 @@ console.log('\n9. Detail route wrappers');
 assert.match(movieRoute, /<DetailPage id=\{data\.item\.id\} type="movie" dataItem=\{data\.item\} recommendationItems=\{data\.recommendations\} \/>/,
   'movie route: type="movie" + SSR item');
 assert.match(seriesRoute, /<DetailPage id=\{data\.item\.id\} type="series" dataItem=\{data\.item\} recommendationItems=\{data\.recommendations\} \/>/,
-  'series route: type="series" + SSR item');
-assert.match(animeRoute, /<DetailPage id=\{data\.item\.id\} type=\{data\.item\.type\} dataItem=\{data\.item\} recommendationItems=\{data\.recommendations\} \/>/,
-  'anime route: type derived from the loaded item (canonical series UI)');
-assert.match(movieServer, /const detail = await getDetail\('movie', params\.id\);/,
+  'series route (canonical /tv-show/[id]): type="series" + SSR item');
+assert.match(legacySeriesServer, /tv-show/, 'legacy /series/[id] redirects to /tv-show/[id] (never renders its own markup)');
+assert.match(animeRoute, /<DetailPage id=\{data\.item\.id\} type="anime" dataItem=\{data\.item\} recommendationItems=\{data\.recommendations\} \/>/,
+  'anime route (canonical /anime-series/[id]): shared DetailPage with SSR item (type literal "anime")');
+assert.match(legacyAnimeServer, /anime-series/, 'legacy /anime/[id] redirects to /anime-series/[id] (never renders its own markup)');
+assert.match(movieServer, /const detail = await getDetail\('movie', (?:params\.id|id)\);/,
   'server load fetches the PARENT detail only (MAV-20 Phase D preserved)');
 assert.match(movieServer, /recommendations: \[\]/,
   'recommendations load client-side (empty SSR array)');
@@ -291,7 +301,7 @@ assert.match(detailPage, /const fallbackDestination = validReturnTo \?\? '\/disc
   'fallback destination = valid origin ?? /discover');
 assert.match(detailPage, /navigateBackOr\(\(\) => \{/,
   'goBack delegates to the shared back policy');
-assert.match(detailPage, /const watchHref = \$derived\(appendReturnTo\(watchPath, `\$\{page\.url\.pathname\}\$\{page\.url\.search\}\$\{page\.url\.hash\}`\)\);/,
+assert.match(detailPage, /const watchHrefVal = \$derived\(appendReturnTo\(watchRoutePath, `\$\{page\.url\.pathname\}\$\{page\.url\.search\}\$\{page\.url\.hash\}`\)\);/,
   'watch link carries the origin (from param)');
 assert.match(detailPage, /<link rel="canonical" href=\{canonicalUrl\} \/>/,
   'canonical URL preserved');

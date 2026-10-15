@@ -177,10 +177,12 @@ console.log('\n--- UI state-aware visibility (Provider Files) ---');
 // Link Existing File (final remediation): a header-level action for genuine
 // untracked provider files (no media_assets row). The drawer button gated on
 // !mediaItem was dead code under the NOT NULL constraint and was removed.
-const unlinkedBlock = hostingAssets.match(/a2-assets-link-existing[\s\S]*?Link Existing File[\s\S]*?<\/button>/);
-assert.ok(unlinkedBlock, '6a. Link Existing File header action present');
+// [2026-10 redesign] the button label is "Link media" (the flow is the same
+// startLinkExistingFlow → tabbed provider inventory → confirmLink).
+const unlinkedBlock = hostingAssets.match(/a2-assets-link-existing[\s\S]*?<\/button>/);
+assert.ok(unlinkedBlock, '6a. Link Existing File header action present (label: Link media)');
 // Reactivate should NOT appear in the header action block
-assert.doesNotMatch(unlinkedBlock[0], /reactivate/i, '6b. Header action: Reactivate NOT shown there');
+assert.doesNotMatch(unlinkedBlock![0], /reactivate/i, '6b. Header action: Reactivate NOT shown there');
 // Detach should NOT appear for unlinked (no mediaItem to detach from)
 const detachBlock = hostingAssets.match(/selectedAsset\.mediaItem[\s\S]*?startDetach/);
 assert.ok(detachBlock, '6c. Detach only shown when mediaItem exists (linked)');

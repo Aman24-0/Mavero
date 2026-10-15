@@ -111,7 +111,11 @@ console.log('\n5 — detail page routes still 404 on thrown service errors (exis
   // it to a 404. This is what makes `/movie/afterlight` 404 in production
   // after the `getDetail` fix above (TMDB returns NOT_FOUND, service throws,
   // route catches → 404).
-  for (const route of ['movie', 'series', 'anime']) {
+  // [2026-10 Phase-5 route contract] series/anime detail MARKUP lives at the
+  // canonical /tv-show/[id] and /anime-series/[id] routes — legacy /series/[id]
+  // and /anime/[id] are 308 redirect shells (verified), so the 404 handler is
+  // pinned on the canonical routes.
+  for (const route of ['movie', 'tv-show', 'anime-series']) {
     const server = read(`src/routes/${route}/[id]/+page.server.ts`);
     ok(/throw error\(404,/.test(server), `5a. /${route}/[id]/+page.server.ts throws 404 on a service error (the existing 404 handler is preserved)`);
   }

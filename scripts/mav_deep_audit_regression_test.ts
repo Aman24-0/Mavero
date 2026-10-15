@@ -455,15 +455,20 @@ section('§6 — Media Library read model + UI contract');
 
 {
   // Issue B — the poster columns are part of the read model.
+  // [2026-10 Task-2 hierarchy] list()/detail()/episodes() share ONE named
+  // projection constant (ITEM_PROJECTION) instead of inline select
+  // literals — the projection is pinned directly, and every read path is
+  // required to use it (single source of the read-model truth).
   const library = src('src/lib/server/hosting/library/service.ts');
-  const listSelect = library.match(/from\('media_items'\)\s*\.\s*select\('([^']+)'/);
-  assert.ok(listSelect, 'library list select found');
-  assert.match(listSelect![1], /poster_path/, 'list() selects poster_path');
-  assert.match(listSelect![1], /backdrop_path/, 'list() selects backdrop_path');
-  const detailSelect = library.match(/from\('media_items'\)\s*\.\s*select\('([^']+)'\)\s*\.\s*eq\('id', mediaItemId\)/);
-  assert.ok(detailSelect, 'library detail select found');
-  assert.match(detailSelect![1], /poster_path/, 'detail() selects poster_path');
-  ok(true, '6a. library read model (list + detail) returns poster_path/backdrop_path');
+  const projection = library.match(/const ITEM_PROJECTION =\s*\n?\s*'([^']+)'/);
+  assert.ok(projection, 'ITEM_PROJECTION read-model constant found');
+  assert.match(projection![1], /poster_path/, 'the read-model projection includes poster_path');
+  assert.match(projection![1], /backdrop_path/, 'the read-model projection includes backdrop_path');
+  const projectionUses = (library.match(/\.select\(ITEM_PROJECTION\)/g) ?? []).length;
+  assert.ok(projectionUses >= 3, `list/detail/episodes all select through ITEM_PROJECTION (${projectionUses} call sites)`);
+  assert.match(library, /\.from\('media_items'\)\s*\n?\s*\.select\(ITEM_PROJECTION, \{ count: 'exact' \}\)/, 'list() counts through the shared projection');
+  assert.match(library, /\.from\('media_items'\)\s*\n?\s*\.select\(ITEM_PROJECTION\)\s*\n?\s*\.eq\('id', mediaItemId\)/, 'detail() selects through the shared projection');
+  ok(true, '6a. library read model (list + detail + episodes) returns poster_path/backdrop_path');
 
   const apiRoute = src('src/routes/api/admin/media/library/+server.ts');
   assert.match(apiRoute, /service\.list\(query\)/, 'library API passes through the read model');

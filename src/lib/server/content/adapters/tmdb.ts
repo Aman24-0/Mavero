@@ -798,11 +798,25 @@ export async function searchTmdb(query: string, type: Exclude<ContentType, 'anim
 }
 
 export async function getTmdbDetail(type: Exclude<ContentType, 'anime'>, externalId: string): Promise<ContentDetail> {
+  // MAV-FOCUSED Issue-1 order fix (2026-10-15): the numeric-id validation
+  // must run ONLY when TMDB credentials are configured (the production
+  // posture — dummy slugs like 'nocturne-city' 404 at this gate). WITHOUT
+  // credentials (local dev / CI), a non-numeric slug must fall through to
+  // tmdbRequest, which throws CONFIG_MISSING so getDetail's fixture
+  // fallback keeps the documented local-dev behavior — the SAME order
+  // getSeriesSeason already follows ("fixture ids stay available in
+  // local-dev; in production those detail pages 404 at the getDetail gate").
+  // (Previously the unconditional validation made every fixture detail page
+  // 404 even with no credentials configured.)
   const numericId = Number(externalId);
   if (!Number.isInteger(numericId) || numericId <= 0) {
-    throw new ContentServiceError('The TMDB content identifier is invalid.', { code: 'NOT_FOUND', status: 404 });
+    if (env.TMDB_READ_ACCESS_TOKEN || env.TMDB_API_KEY) {
+      throw new ContentServiceError('The TMDB content identifier is invalid.', { code: 'NOT_FOUND', status: 404 });
+    }
+    // No credentials: force the CONFIG_MISSING path so the caller's
+    // fixture fallback (if any) runs. tmdbRequest will throw it on entry.
   }
-  const key = `tmdb:detail:${type}:${numericId}`;
+  const key = `tmdb:detail:${type}:${externalId}`;
   const { value, stale } = await getOrSet(key, detailPolicy, async () => {
     const path = type === 'movie' ? `/movie/${numericId}` : `/tv/${numericId}`;
     // MAV-21: the certification append rides the SAME detail request
