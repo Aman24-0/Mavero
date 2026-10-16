@@ -1087,3 +1087,31 @@ The migration `20261117000000_vidstuck_cc_embed_origins.sql` is created and **NO
 - Vixolity playback for hls.js browsers is blocked by the PROVIDER's missing CORS allowlist (external action required; evidence above). Native-HLS browsers play today. The live source row stays as the admin set it (enabled) — the error screen with retry/switch-source is the designed degradation until the provider allowlists the origin.
 - The VidStuck postMessage protocol is assumed UNCHANGED from the verified `.xyz`-era shapes (VIDEO_PROGRESS object/JSON-string forms) — the `.cc` page bundle was verified to serve the same player contract for URL/params, but a live browser message capture on `.cc` is still the strongest possible confirmation and remains recommended.
 - Download-provider ordering (downloads page) is the one found ordering system intentionally NOT migrated to the bulk editor this round (different subsystem; documented for a follow-up round to keep this round's blast radius controlled).
+
+---
+
+## Vixolity HLS Playback — Evidence-Based Audit & Targeted Fix (2026-10-16, follow-up round)
+
+Scope: re-audit Vixolity against fresh Termux-style evidence, fix every CONFIRMED Mavero-side blocker, verify in a real browser as far as the environment permits. Baseline: main @ 0894a24, clean, origin/main in sync; deployed build proven ≥ 3f9a49d (live static CSP already carries https://ha.vixolity.com) and the direct-HLS player files byte-identical to HEAD.
+
+### Confirmed findings (full evidence in VIXOLITY_PLAYBACK_AUDIT_REPORT.md)
+
+- **Upstream CORS = the hls.js blocker (provider-side, unchanged):** master + variant playlists on `ha.vixolity.com` return NO `Access-Control-Allow-Origin` (any Origin, OPTIONS 204 without ACAO — re-verified from this environment); segment hosts (`hs1.nodedatastream.top`, `hs1.storagegridlink.top`) are CORS-open (`*`, 206 Range OK) and the "`.jpg`" segments are MPEG-TS (sync byte `0x47` verified). A CSP entry cannot create upstream headers; a proxy is forbidden.
+- **Client routing is already correct — no code change was the smallest safe fix:** `metadata.protocol === 'hls'` (stamped by the server adapter) is the ONLY thing that classifies the extensionless Vixolity URL as HLS; routing then goes NATIVE on native-HLS browsers (no-cors `<video src>`, no `crossorigin` attribute — upstream ACAO irrelevant) and hls.js elsewhere. No Vixolity-specific override, no global native preference.
+- **CSP delivery gap (documented, NOT patched):** `netlify.toml` is the repo's only CSP source, and its header rules reach STATIC assets on production (verified: full CSP incl. ha.vixolity.com on favicon + immutable bundles) but NOT SvelteKit SSR responses (`/`, `/discover`, `/settings` return no CSP at all — cache-busted probes). So CSP is not blocking anything today (zero CSP violations in the browser run), and the intended policy never governs pages. Emitting the headers app-side is a site-wide posture change — proposed for its own reviewed round (report §10.4).
+- Side-finding: `api.theintrodb.org` is CORS-blocked on production (Skip Intro) — separate upstream issue, untouched.
+
+### Changes (test-only; zero src/ changes)
+
+- NEW `scripts/vixolity_playback_routing_test.ts` (19 checks) — pins: Vixolity → native on native-capable browsers / hls.js on `canPlayType('')` browsers; the extensionless URL is classified ONLY via `metadata.protocol` (negative case pins the load-bearing field); Blue Velvet + generic `.m3u8` keep routing hls.js on non-native browsers (no global native preference). Registered in the chain after `vixolity_provider_test`.
+- NEW `scripts/vixolity_browser_playback_verification.mjs` — real-browser evidence harness on the production watch page with the resolver response replaced by the exact documented resolver contract (production endpoint never hit; nothing written). NOT in the test chain (needs internet + browser).
+- NEW `VIXOLITY_PLAYBACK_AUDIT_REPORT.md` — the 10-section evidence report.
+
+### Verification (this round)
+
+- Browser-level (headless Chromium on production): NATIVE mode selected (`<video src>` bound, media requests without Origin) pulling the REAL Vixolity stream — master 200 → 1080p variant 200 → segments 206 (`acao:*`) on both hosts; `readyState=4` (HAVE_ENOUGH_DATA) reached; the exact CORS console error captured for CORS-mode fetches (cast probe — cast correctly disabled); ZERO CSP errors. Positive control (CORS-open Mux stream through the same pipeline): full request chain, zero CORS/CSP errors. Playback (currentTime advance) NOT observed in headless even for the control — Android verification remains pending (manual checklist in the report §5).
+- Gates: `pnpm check` 0 errors / 5 warnings (= baseline); `pnpm build` exit 0; full chain green to the PRE-EXISTING DOM-QA failure (documented at baseline); post-chain season-chip 32/32; routing suite 19/19 + vixolity 119/119 + bluevelvet 128/128 in-chain.
+
+### Known boundaries
+
+- Vixolity for hls.js browsers stays blocked by the PROVIDER's missing CORS allowlist (external action; error screen is the designed degradation). Native-HLS browsers are expected to play (network-level proof captured; real-device confirmation pending). No deploy, no live-Supabase change, no migration in this round.
