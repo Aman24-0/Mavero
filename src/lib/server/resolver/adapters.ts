@@ -7,6 +7,7 @@ import { vidsrcProviderAdapter } from './vidsrc';
 import { vidlinkProviderAdapter } from './vidlink';
 import { createMaveroHostedAdapter, MAVERO_HOSTED_ADAPTER_ID_VIDARA, MAVERO_HOSTED_ADAPTER_ID_ABYSS } from './mavero-hosted';
 import { blueVelvetProviderAdapter, BLUEVELVET_ADAPTER_ID } from './bluevelvet';
+import { vixolityProviderAdapter, VIXOLITY_ADAPTER_ID } from './vixolity';
 import type { Json } from '$lib/server/supabase/database.types';
 
 function resultTypeFromCapabilities(context: ResolverContext): 'direct' | 'embed' {
@@ -117,6 +118,12 @@ export function createDefaultAdapterIds(): Record<string, ProviderAdapter> {
     // dispatches here. The source is seeded DISABLED until upstream CORS
     // allowlisting is verified (see bluevelvet.ts module doc).
     [BLUEVELVET_ADAPTER_ID]: blueVelvetProviderAdapter,
+    // Vixolity (2026-10): IMDb-keyed direct HLS source. Registered under
+    // the same adapter_id the provider migration sets on
+    // streaming_providers.adapter_id — the resolver's adapterFor(config)
+    // dispatches here. The source is seeded DISABLED until end-to-end
+    // browser playback is verified (see vixolity.ts module doc).
+    [VIXOLITY_ADAPTER_ID]: vixolityProviderAdapter,
   };
 }
 

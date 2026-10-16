@@ -1633,3 +1633,233 @@ performed (owner deploys; browser testing explicitly excluded). The
 live Supabase schema was not touched — the historical
 `media_upload_operations` rows and tables are retained intentionally
 (no destructive migration).
+
+## Vixolity + TGVID + ZXCStream provider integration (2026-10-16)
+
+Baseline: `219b058` on `main` (in sync with `origin/main`, clean tree).
+This round integrates three NEW streaming providers through the EXISTING
+resolver/registry/player architecture — no player rewrite, no resolver
+refactor, no change to any existing provider's semantics:
+
+1. **Vixolity** — direct HLS keyed by IMDb ids (`ha.vixolity.com/vs/{imdbId}`
+   and `/vs/{imdbId}/s{season}/e{episode}` with the episode padded to at
+   least two digits, season unpadded — formatting verified from the supplied
+   examples). Dedicated server adapter (`vixolity.ts`) following the Blue
+   Velvet direct-HLS pattern, registered in `createDefaultAdapterIds()` and
+   dispatched by `streaming_providers.adapter_id`.
+2. **TGVID** — TMDB-keyed embed (TGFLIX player). Contract verified against
+   the official documentation (https://tgvid.lovable.app/docs, fetched
+   2026-10-16). Server side: two template rows + capability rows (the
+   established embed mechanism). Client side: a new `TgvidPlayerAdapter`
+   normalizing the documented `TGFLIX_EVENT` stream into the existing
+   `PlayerEvent` union and issuing documented `TGFLIX_CMD` commands.
+3. **ZXCStream** — TMDB-keyed embed. Contract verified against the
+   provider's own in-site API documentation (zxcstream.cc embed builder,
+   fetched 2026-10-16). Server side: template rows. Client side: a minimal
+   `ZxcStreamPlayerAdapter` providing only the verified runtime `color`
+   accent hook (no message protocol is documented — the embed stays a
+   black box, honestly modeled).
+
+### Root causes addressed / integration decisions (evidence-based)
+
+1. **IMDb identifier integrity (Vixolity)** — `requireImdbId` enforces the
+   canonical `tt + 7-8 digits` shape, so a TMDB numeric id is STRUCTURALLY
+   impossible to substitute into the IMDb position and a missing mapping
+   fails with the typed `MISSING_IDENTIFIER` into the existing bounded
+   fallback walk (never fabricated). Series REQUIRE both season and
+   episode (guessing episode 1 is refused — the Blue Velvet convention).
+   Template placeholders render season/episode UNPADDED, which is why a
+   dedicated adapter (not a template row) is required for the `e01` shape.
+2. **Engine routing for extensionless direct HLS** — the Vixolity URL has
+   no `.m3u8` suffix, so the adapter stamps `protocol: 'hls'` in
+   `metadata.protocol` (the resolver-core-propagated field, Blue Velvet
+   convention); the existing engine then routes native HLS / hls.js
+   (lazy dynamic import — never forced eagerly) per its own architecture.
+   Audio tracks + quality levels are discovered dynamically by the engine;
+   NOTHING is advertised statically. There is deliberately NO server-side
+   playlist fetch (unlike Blue Velvet, which validates an upstream JSON
+   envelope and needed server-side variant discovery ONLY because its
+   verified CORS contract blocks browser hls.js — Vixolity supplies the
+   media URL directly and no CORS restriction is verified; inventing a
+   probe would add an undocumented upstream dependency to every resolve).
+3. **Audio selector completed end-to-end (GOAL 18 headless piece)** — the
+   Phase 10 wiring (engine `getAudioTracks`/`selectAudioTrack` → viewport
+   bridge → shell `engineQuality` state + `setAudioTrack`) existed but no
+   UI consumed it. `PlayerControls` now renders an Audio entry + option
+   sheet ONLY when the ACTIVE engine really exposes >1 track (labels are
+   the manifest-provided name/lang verbatim — never invented; honest-empty
+   mirrors the subtitle/quality patterns). Wired via the new
+   `PlayerAudioTrackOption` shared type; direct sources only.
+4. **TGVID episode/progress integrity** — `TGFLIX_EVENT` carries
+   tmdbId/mediaType but NO season/episode, so an in-iframe episode switch
+   would advance playback while Mavero's route + per-episode progress
+   records still point at the previous episode. The seeded templates set
+   `episodeSelector=false` + `autoplayNextEp=false` (documented params) so
+   the iframe always plays exactly the episode Mavero resolved; episode
+   navigation stays Mavero's. `back=false` hides the provider back button
+   (navigation chrome is Mavero's shell — documented param, docs' own
+   example). `lang=hi` baked in (documented: "Preferred audio language…
+   Hindi-dub servers are listed first"); per-title Hindi availability
+   stays the provider's decision — never promised. Resume uses the
+   documented `?t=` seconds param via the existing `startAtParam()` hook
+   (overrides the provider-side saved position — Mavero's resume wins);
+   progress flows through `TGFLIX_EVENT` → normalized events → the
+   EXISTING progress writer (no second writer, no override).
+5. **TGVID command honesty** — `TGFLIX_CMD` play/pause/seek/volume are
+   implemented with the EXACT target origin (the docs' example uses "*";
+   Mavero deliberately never does). A command is reported sent only after
+   the postMessage call itself succeeded; success INSIDE the embed is
+   never assumed or faked; `getState` is NOT implemented (no documented
+   response correlation — a fabricated answer would violate the contract);
+   malformed seeks/volumes are rejected at the boundary.
+6. **Stale-iframe event protection (TGVID)** — five layers: base-class
+   `destroyed` flag (source changes destroy the adapter), strict
+   `event.origin` equality, `event.source` validated against the ACTIVE
+   iframe's contentWindow, content-tag validation (tmdbId/mediaType parsed
+   from the ACTIVE source URL — mismatching messages dropped), and shape
+   validation (non-finite/negative times, unknown event names dropped).
+7. **ZXCStream documented omissions** — templates carry ONLY documented
+   params: `dubLang=hi` (documented Hindi value; "If the requested dubLang
+   is not available, the player falls back to the original audio") and
+   `server=1` (the documented favorite-server example; internal selection
+   stays in the iframe — VidStuck precedent). Deliberately NOT sent:
+   `domainAd` (documented intro splash), `autoplay` (documented MUTED
+   autoplay — conflicts with Mavero's player UX), `back` (documented to
+   SHOW the provider back button; the omitted default hides it). No
+   startAt/message protocol is documented — none invented; progress does
+   not flow for this black-box embed (honest, like the generic embeds).
+8. **Theme accent (both embeds)** — the documented `color` param (hex
+   WITHOUT '#') is injected at LOAD time by `finalizeEmbedUrl` from the
+   live `--color-primary` token (the established VidStuck/VidRift
+   pattern); invalid/missing tokens leave the URL unchanged. Theme changes
+   are picked up on the next embed (re)mount — rewriting mid-session would
+   remount the iframe and disrupt playback.
+9. **Migration ledger tripwire honored** — the two Cloudstream suites pin
+   the EXACT set of sanctioned migration files (§A10 / F3). The new
+   migration was registered in BOTH ledgers (14→15 and 11→12 entries) with
+   sanction comments, plus the same insert-only posture checks the VidRift
+   migration carries (no UPDATE/DELETE/ALTER/DROP/TRUNCATE, never touches
+   `download_providers`). No existing assertion was weakened.
+
+### Changed files (this round)
+
+**Server (resolver)**
+- `src/lib/server/resolver/vixolity.ts` — NEW: direct-HLS adapter (strict
+  IMDb validation, fixed origin, path contract, `protocol: 'hls'`, no
+  upstream fetch).
+- `src/lib/server/resolver/adapters.ts` — register `vixolity` in
+  `createDefaultAdapterIds()` (single integration point).
+
+**Client (player)**
+- `src/lib/shared/player-capabilities.ts` — NEW verified capability truth
+  tables `TGVID_CAPABILITIES` + `ZXCSTREAM_CAPABILITIES`; `vixolity` maps
+  to the generic direct contract (Blue Velvet precedent); PROVIDER_CAPABILITY_MAP
+  entries for all three adapter ids.
+- `src/lib/shared/player.ts` — NEW `PlayerAudioTrackOption` shared type.
+- `src/lib/client/player/providers/tgvid-adapter.ts` — NEW: TGFLIX_EVENT
+  normalization, five-layer stale protection, exact-origin TGFLIX_CMD
+  commands, `?t=` resume, runtime color accent.
+- `src/lib/client/player/providers/zxcstream-adapter.ts` — NEW: minimal
+  black-box adapter with the runtime color hook only.
+- `src/lib/client/player/adapter-registry.ts` — register both adapters
+  BEFORE the generic embed fallback (registry-order contract).
+- `src/lib/client/player/capabilities.ts` — re-export the two new
+  capability constants (single-source-of-truth re-export module).
+- `src/lib/components/player/PlayerControls.svelte` — audio-track button +
+  option sheet (>1 engine track only), `audio` sheet kind, honest labels.
+- `src/lib/components/player/PlayerShell.svelte` — pass
+  `audioTracks`/`selectedAudioTrack`/`onAudioTrack` into PlayerControls
+  (the existing engine→viewport→shell wiring finally reaches the UI).
+
+**Database (NOT applied to production)**
+- `supabase/migrations/20261113000000_vixolity_tgvid_zxcstream_providers.sql`
+  — NEW: three providers + three sources, ALL seeded
+  `experimental` + `enabled=false` (zero production impact; an admin
+  enables per source after live verification — `allow_experimental_playback: true`
+  makes a trial enable possible without further SQL). Insert-only,
+  on-conflict-do-nothing everywhere, orderings 410/420/430 (staged band
+  behind Blue Velvet's 400). identifier_mode: `imdb_id` (Vixolity),
+  `tmdb_id` (TGVID, ZXCStream). Embed origin allowlists pinned exactly.
+  Capability flags match the IMPLEMENTATION (language selection false
+  everywhere — a fixed lang/dubLang preference is not a picker; subtitles
+  false — no parent-facing API; server selection true only for ZXCStream).
+
+**CSP (netlify.toml)**
+- `media-src` + `connect-src` gained the FIXED `https://ha.vixolity.com`
+  origin (native-HLS media element + hls.js XHR — the MAV-BV-PLAYBACK
+  two-directive precedent). NO wildcards added, NO existing entry removed;
+  `frame-src *` already covers admin-configured embeds (TGVID/ZXCStream
+  need no entry — documented in the file).
+
+**Tests**
+- `scripts/vixolity_provider_test.ts` — NEW (119 checks): URL construction
+  + padding truth table, identifier safety (15 malformed/TMDB-shaped
+  rejections, no-substitution proof), strict URL validation (13 hostile
+  URLs), resolver integration + lifecycle gates, bounded-fallback
+  continue-on-missing-IMDb, adapter-registration + regression guards,
+  capability matrix, migration contract, CSP pinning.
+- `scripts/tgvid_provider_test.ts` — NEW (82 checks): capability truth
+  table, canHandle + registry ordering, full TGFLIX_EVENT normalization
+  (incl. pause→timeupdate+pause ordering, buffering state machine),
+  security (wrong origin, malformed, tag mismatch, foreign event.source,
+  post-destroy drops), resume + accent hooks, command payload + EXACT
+  origin + boundary rejections + not-ready paths, template resolution
+  (exact URLs, missing id, tampered template, gates, sandbox provenance),
+  migration contract.
+- `scripts/zxcstream_provider_test.ts` — NEW (34 checks): conservative
+  capability truth table, canHandle + no-normalization proof, accent hook,
+  template resolution (exact URLs, missing/IMDb-shaped ids, tampered
+  template, sandbox), migration contract incl. the three documented
+  omissions (domainAd/autoplay/back).
+- `scripts/cloudstream_registry_integration_test.ts` — §A10 migration
+  ledger 14→15 with sanction comment + insert-only checks for the new
+  migration (tripwire honored, nothing weakened).
+- `scripts/cloudstream_phase4_integration_manager_test.ts` — F3 ledger
+  11→12 with sanction comment (same).
+- `package.json` — the three new suites registered in the `test` chain
+  immediately after `bluevelvet_provider_test.ts` (279→282 commands).
+- `scripts/chain_runner.mjs` — NEW local helper (NOT in the test chain):
+  splits the test script on '&&' and runs each suite in a child process
+  with per-suite logging; used only to obtain the full-chain matrix in
+  this environment.
+
+### Verification matrix (this round)
+
+| Gate | Result |
+|------|--------|
+| New focused suites | vixolity 119/119; tgvid 82/82; zxcstream 34/34 |
+| Full non-browser chain | 282 commands: 281 PASS, 1 FAIL — `mav_task2_episode_sheet_dom_qa.mjs` reproduces IDENTICALLY at baseline `219b058` (verified via stash: exit 1 both; Playwright strict-mode `.bulk-btn` resolves to 2 elements — pre-existing, unrelated to providers) |
+| Regression guards | bluevelvet 128/128 (CSP §10 retained every prior origin); phase3 adapter registry ordering PASS; cloudstream registry 170/170; cloudstream phase4 222/222 (both after the sanctioned ledger update) |
+| pnpm check | 0 errors / 5 warnings (identical to the pre-round baseline — unused-CSS-selector families, pre-existing) |
+| pnpm build | success (Netlify adapter + executor) |
+| Migration classification | The two Cloudstream ledger failures observed mid-round were caused by the NEW migration file (the tripwire's designed behavior) and were resolved by the sanctioned ledger registration; re-verified green |
+
+### Mocks vs verified reality (honest boundary)
+
+- VERIFIED against real sources: the TGVID contract was read from the
+  official documentation page (fetched live 2026-10-16); the ZXCStream
+  contract was extracted from the provider's own built-in API
+  documentation (site bundle, fetched live 2026-10-16); the Vixolity
+  contract is the user-supplied direct URL format (no API documentation
+  exists — none invented).
+- MOCKED (never misrepresented as live playback): every playback/message
+  scenario in the three suites (simulated MessageEvents / config
+  fixtures). No browser playback of any of the three providers was
+  performed — the sources are therefore seeded DISABLED, and real-device
+  verification (esp. Vixolity CORS behavior for hls.js and TGVID/ZXC
+  in-iframe behavior) remains the explicit gate before enabling.
+- NOT DONE (out of scope per the task): production deployment; any live
+  Supabase mutation — the migration file is delivered for review and a
+  deliberate admin-driven application.
+
+### Remaining blockers / assumptions
+
+1. Vixolity CORS for `ha.vixolity.com` is UNVERIFIED (no live browser
+   probe in scope). If hls.js is blocked (the Blue Velvet situation),
+   native-HLS browsers still play, and Blue Velvet's server-side variant
+   discovery can be ported later WITHOUT contract changes.
+2. TGVID/ZXCStream in-iframe behavior (Hindi availability per title,
+   provider-side fallbacks) is the provider's own runtime decision —
+   Mavero models only the documented parent-side contract.
+3. The DOM-QA `.mjs` browser suite failure is pre-existing (strict-mode
+   `.bulk-btn` ambiguity) — left untouched per the no-weakening rule.

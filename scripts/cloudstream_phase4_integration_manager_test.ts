@@ -1179,8 +1179,13 @@ function pristineFile(relative: string): string | null {
   // HLS provider registration — insert-only provider/source rows (both
   // seeded DISABLED). No cloudstream/downloader/registry tables touched —
   // see BLUEVELVET_INTEGRATION_REPORT.md.
+  // VIXOLITY + TGVID + ZXCSTREAM PROVIDERS (20261113000000, sanctioned):
+  // insert-only provider/source rows for three new playback providers (all
+  // six rows seeded DISABLED/experimental). No
+  // cloudstream/downloader/registry tables touched — see the migration
+  // header and WORKLOG.md for the verified provider contracts.
   ok(
-    addedMigrations.length === 11
+    addedMigrations.length === 12
       && addedMigrations.includes('20261004000000_unified_downloader_global_order.sql')
       && addedMigrations.includes('20261102000000_adapter_build_lifecycle.sql')
       && addedMigrations.includes('20261103000000_live_tv_analytics_events.sql')
@@ -1190,9 +1195,10 @@ function pristineFile(relative: string): string | null {
       && addedMigrations.includes('20261107000000_default_source_slots.sql')
       && addedMigrations.includes('20261012000000_source_category_unique_assignment.sql')
       && addedMigrations.includes('20261112000000_blue_velvet_provider.sql')
+      && addedMigrations.includes('20261113000000_vixolity_tgvid_zxcstream_providers.sql')
       && addedMigrations.includes('20261015000000_add_poster_to_media_items.sql')
       && addedMigrations.includes('20261014000000_add_unlink_action.sql'),
-    `F3: the ONLY added migrations are the FINAL TASK unified-order + build-lifecycle + LT-5-analytics + LT-15-fallback-event + VidRift-provider + MAVP-4-icon-badge + MAVP-5-default-slots + MAVP-7-unique-assignment + BlueVelvet-provider migrations (${addedMigrations.join(', ') || 'none'})`,
+    `F3: the ONLY added migrations are the FINAL TASK unified-order + build-lifecycle + LT-5-analytics + LT-15-fallback-event + VidRift-provider + MAVP-4-icon-badge + MAVP-5-default-slots + MAVP-7-unique-assignment + BlueVelvet-provider + Vixolity/TGVID/ZXCStream-provider migrations (${addedMigrations.join(', ') || 'none'})`,
   );
   ok(removedMigrations.length === 0, 'F3: no migration was removed');
 

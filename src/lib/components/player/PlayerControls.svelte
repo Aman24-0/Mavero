@@ -26,8 +26,8 @@
   // Subtitle Settings sheet (track list + sync offset + appearance —
   // Issues 1+2). Only REAL values are ever offered: the tracks, quality
   // levels and speeds of the ACTIVE source.
-  import { Captions, Cast, Check, Expand, Lock, LockOpen, Maximize2, Minimize2, Pause, PictureInPicture2, Play, RotateCcwSquare, RotateCwSquare, Settings2, Volume1, Volume2, VolumeX } from 'lucide-svelte';
-  import type { PlayerInternalQualityOption, PlayerQualityOption, PlayerSubtitleTrack } from '$lib/shared/player';
+  import { AudioLines, Captions, Cast, Check, Expand, Lock, LockOpen, Maximize2, Minimize2, Pause, PictureInPicture2, Play, RotateCcwSquare, RotateCwSquare, Settings2, Volume1, Volume2, VolumeX } from 'lucide-svelte';
+  import type { PlayerAudioTrackOption, PlayerInternalQualityOption, PlayerQualityOption, PlayerSubtitleTrack } from '$lib/shared/player';
   import { formatPlayerTime, playbackSpeeds, PLAYER_AUTO_QUALITY_ID } from '$lib/shared/player';
   import PlayerOptionSheet from './PlayerOptionSheet.svelte';
   import PlayerSubtitleSheet from './PlayerSubtitleSheet.svelte';
@@ -62,6 +62,15 @@
   // the per-stream quality select when present — exactly ONE quality menu.
   export let internalQualities: PlayerInternalQualityOption[] = [];
   export let selectedInternalQuality: string = PLAYER_AUTO_QUALITY_ID;
+  // Phase 10 (GOAL 18) completion (2026-10-16): the HLS engine's REAL audio
+  // tracks (hls.js audioTracks — e.g. Turkish + original-language renditions
+  // on multi-audio manifests). Only tracks the ACTIVE engine actually
+  // exposes are offered; the control renders ONLY when there is a real
+  // choice (>1 track) — a missing menu can never be mistaken for a working
+  // feature, mirroring the honest-empty subtitle/quality patterns.
+  export let audioTracks: PlayerAudioTrackOption[] = [];
+  export let selectedAudioTrack: number | null = null;
+  export let onAudioTrack: (index: number) => void = () => {};
   // Display mode (Fit/Fill/Stretch) — CSS object-fit on the video element.
   export let displayMode: 'fit' | 'fill' | 'stretch' = 'fit';
   // Focused fixes (Issues 1+2): subtitle preference state + writer (the
@@ -99,8 +108,8 @@
   // Exactly ONE sheet open at a time. openMenu/closeMenu are the SINGLE
   // writers of the shell's open flag (deterministic — no mount/destroy
   // ordering dependence).
-  let openSheet: 'subtitles' | 'quality' | 'speed' | 'display' | null = null;
-  function openMenu(kind: 'subtitles' | 'quality' | 'speed' | 'display') {
+  let openSheet: 'subtitles' | 'quality' | 'audio' | 'speed' | 'display' | null = null;
+  function openMenu(kind: 'subtitles' | 'quality' | 'audio' | 'speed' | 'display') {
     openSheet = kind;
     onMenuOpenChange(true);
   }
@@ -147,6 +156,26 @@
       ? (selectedQuality ? (qualities.find((option) => option.url === selectedQuality) ? qualityLabel(qualities.find((option) => option.url === selectedQuality)!) : 'Auto') : 'Auto')
       : '';
   $: singleQualityLabel = internalQualities.length === 1 ? internalQualities[0].label : '';
+
+  // Audio track selector (GOAL 18 completion): REAL engine tracks only —
+  // the control renders ONLY when the active HLS manifest actually exposes
+  // more than one audio track. Labels are the manifest-provided name/lang
+  // verbatim (never invented); with no selection reported yet, the engine
+  // default stays active and the menu simply does not mark any row.
+  $: audioMode = audioTracks.length > 1 ? 'menu' : 'none';
+  function audioTrackLabel(track: PlayerAudioTrackOption): string {
+    const name = typeof track.name === 'string' ? track.name.trim() : '';
+    if (name) return name;
+    const lang = typeof track.lang === 'string' ? track.lang.trim() : '';
+    return lang || `Track ${track.id + 1}`;
+  }
+  $: audioButtonLabel = selectedAudioTrack !== null && audioTracks[selectedAudioTrack]
+    ? audioTrackLabel(audioTracks[selectedAudioTrack])
+    : 'Audio';
+  function chooseAudioTrack(index: number) {
+    if (index !== selectedAudioTrack) onAudioTrack(index);
+    closeMenu();
+  }
 
   function chooseQuality(id: string) {
     if (qualityMode === 'internal') {
@@ -256,6 +285,17 @@
             <span class="control-label">{singleQualityLabel}</span>
           </button>
         {/if}
+        {#if audioMode === 'menu'}
+          <!-- Engine audio tracks (GOAL 18 completion): renders ONLY when the
+               active HLS manifest REALLY exposes multiple audio tracks
+               (e.g. Turkish + original). Selection routes through the
+               shell → viewport → engine controller — the engine is never
+               recreated and playback position is untouched. -->
+          <button class="select-control audio sheet-trigger" type="button" aria-label={`Audio track: ${audioButtonLabel}`} aria-haspopup="dialog" onclick={() => openMenu('audio')}>
+            <AudioLines size={15} aria-hidden="true" />
+            <span class="control-label">{audioButtonLabel}</span>
+          </button>
+        {/if}
         <!-- Display mode: Fit preserves aspect with letterboxing, Fill
              preserves aspect and crops, Stretch fills both axes. CSS-only —
              switching never restarts the stream or moves the playhead. -->
@@ -287,6 +327,18 @@
           <button class="option-row" class:selected={option.selected} type="button" onclick={() => chooseQuality(option.id)}>
             <span class="row-mark">{#if option.selected}<Check size={15} />{/if}</span>
             <span class="row-copy"><strong>{option.label}</strong></span>
+          </button>
+        {/each}
+      </div>
+    </PlayerOptionSheet>
+  {/if}
+  {#if openSheet === 'audio'}
+    <PlayerOptionSheet title="Audio" onClose={closeMenu}>
+      <div class="option-list" role="group" aria-label="Audio track">
+        {#each audioTracks as track (track.id)}
+          <button class="option-row" class:selected={track.id === selectedAudioTrack} type="button" onclick={() => chooseAudioTrack(track.id)}>
+            <span class="row-mark">{#if track.id === selectedAudioTrack}<Check size={15} />{/if}</span>
+            <span class="row-copy"><strong>{audioTrackLabel(track)}</strong>{#if track.default}<small>Default</small>{/if}</span>
           </button>
         {/each}
       </div>

@@ -501,6 +501,101 @@ export const VIDRIFT_CAPABILITIES: ProviderPlaybackCapabilities = {
   nextEpisode: true,
 };
 
+/**
+ * TGVID — tgvid.lovable.app (https://tgvid.lovable.app/docs, official
+ * documentation, verified 2026-10-16).
+ *
+ * VERIFIED (official documentation):
+ *   URL:   https://tgvid.lovable.app/embed/movie/{tmdbId}
+ *          https://tgvid.lovable.app/embed/tv/{tmdbId}/{season}/{episode}
+ *   Params: color (hex WITHOUT '#', accent of the player UI), back
+ *          (default true), episodeSelector (TV, default true),
+ *          autoplayNextEp (TV, default true), lang (hi|eng|jap|tam|tel —
+ *          "Preferred audio language … Hindi-dub servers are listed
+ *          first"), server (start with a specific server), loading (1-3),
+ *          t (seconds — "Start the video at a specific time … Overrides
+ *          the saved resume position" → the resume parameter).
+ *   postMessage (player → parent, origin https://tgvid.lovable.app):
+ *     {type:"TGFLIX_EVENT", event: ready|play|pause|timeupdate|seeked|
+ *     buffering|playing|ended|error|volume|source|state, currentTime,
+ *     duration, paused, tmdbId, mediaType, source}.
+ *   Commands (parent → player): iframe.contentWindow.postMessage(
+ *     {type:"TGFLIX_CMD", cmd, value}) with cmd: play|pause|seek(seconds)|
+ *     volume(0-1)|mute|unmute|getState. The documentation posts with a
+ *     wildcard target origin — Mavero deliberately targets the EXACT
+ *     https://tgvid.lovable.app origin instead. Commands carry NO
+ *     documented ack/response — the adapter reports a command as sent and
+ *     NEVER fabricates success or local playback state from it.
+ *   iframe attrs (documented snippet): allow="autoplay; encrypted-media;
+ *     fullscreen; picture-in-picture" + allowfullscreen.
+ * NOT VERIFIED / NOT USED: subtitles + quality as parent-facing APIs (both
+ *   exist only INSIDE the provider's own player UI), PiP, nextEpisode (the
+ *   Mavero integration sets episodeSelector=false + autoplayNextEp=false —
+ *   Mavero's own episode navigation + progress attribution stay
+ *   authoritative), app-name/custom-branding parameter (none documented —
+ *   none invented).
+ */
+export const TGVID_CAPABILITIES: ProviderPlaybackCapabilities = {
+  progressEvents: true,
+  currentTime: true,
+  duration: true,
+  seek: true,
+  startAt: true,
+  play: true,
+  pause: true,
+  volume: true,
+  subtitles: false,
+  quality: false,
+  fullscreen: true,
+  pictureInPicture: false,
+  postMessage: true,
+  nextEpisode: false,
+};
+
+/**
+ * ZXCStream — zxcstream.cc (official in-site API documentation, extracted
+ * from the site's own embed builder, verified 2026-10-16).
+ *
+ * VERIFIED (official documentation):
+ *   URL:   https://zxcstream.cc/player/movie/{tmdbId}
+ *          https://zxcstream.cc/player/tv/{tmdbId}/{season}/{episode}
+ *          (the site's own URL builder emits exactly this host + routes;
+ *           its own embed example uses a plain iframe + allowFullScreen).
+ *   Params: server ("Set your favorite server as default.", example `1`),
+ *          color ("Changes the accent color … Pass a hex code without the
+ *          #"), dubLang (NEW UPDATE section: "Sets the audio dub language
+ *          when the player loads" — values en|fr|hi|id|pt|ru|es|tl|ta|te|
+ *          esla|ptbr; "If the requested dubLang is not available, the
+ *          player falls back to the original audio"), domainAd ("Displays
+ *          a domain intro splash" — deliberately NOT sent by Mavero),
+ *          autoplay ("Automatically plays the movie but muted" —
+ *          deliberately NOT sent: muted autoplay conflicts with Mavero's
+ *          player UX), back ("Shows a back button inside the player" —
+ *          OMITTED: the documented default hides it and Mavero owns
+ *          navigation chrome).
+ * NOT DOCUMENTED: any postMessage/event protocol, any startAt/resume URL
+ *   parameter, any parent→player command. The adapter is therefore a
+ *   black-box embed with ONE verified runtime hook: the `color` accent
+ *   parameter (same pattern as VidStuck). All capabilities are
+ *   conservatively false except fullscreen.
+ */
+export const ZXCSTREAM_CAPABILITIES: ProviderPlaybackCapabilities = {
+  progressEvents: false,
+  currentTime: false,
+  duration: false,
+  seek: false,
+  startAt: false,
+  play: false,
+  pause: false,
+  volume: false,
+  subtitles: false,
+  quality: false,
+  fullscreen: true,
+  pictureInPicture: false,
+  postMessage: false,
+  nextEpisode: false,
+};
+
 // ----- Phase 7: adapter_id → capabilities lookup -----
 //
 // The admin capability matrix uses this map to display per-adapter
@@ -543,6 +638,17 @@ export const PROVIDER_CAPABILITY_MAP: Record<string, ProviderPlaybackCapabilitie
   // provider-side concepts direct playback does not use). Seeded source is
   // DISABLED until upstream CORS allowlisting is verified.
   'blue-velvet': DIRECT_PLAYBACK_CAPABILITIES,
+  // Vixolity (2026-10): IMDb-keyed DIRECT HLS source — direct playback is
+  // fully observable by Mavero's own player (the generic direct contract,
+  // same as Blue Velvet). Seeded source is DISABLED until end-to-end
+  // browser playback is verified.
+  'vixolity': DIRECT_PLAYBACK_CAPABILITIES,
+  // TGVID (2026-10): verified TGFLIX_EVENT/TGFLIX_CMD contract (see
+  // TGVID_CAPABILITIES above).
+  'tgvid': TGVID_CAPABILITIES,
+  // ZXCStream (2026-10): no documented message protocol — black-box embed
+  // with the verified `color` accent hook only.
+  'zxcstream': ZXCSTREAM_CAPABILITIES,
 };
 
 /**

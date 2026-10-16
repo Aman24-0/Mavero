@@ -96,7 +96,20 @@
     # the VDRK upstreams are populated for the reported titles). The origins
     # are the adapters' fixed HTTPS constants (never user input) and carry
     # no credentials — adding them reveals nothing new.
-    Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://image.tmdb.org; media-src 'self' https://zcdn.bluevelvet.space; font-src 'self'; connect-src 'self' https://*.supabase.co https://image.tmdb.org https://zcdn.bluevelvet.space https://sub.vdrk.site https://api.theintrodb.org; frame-src *; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'"
+    #
+    # NOTE on Vixolity (2026-10-16): the third direct-HLS provider plays
+    # from the FIXED origin https://ha.vixolity.com and needs the same
+    # two-directive treatment Blue Velvet already has (MAV-BV-PLAYBACK
+    # precedent, verified live then):
+    #   * media-src — the native-HLS media element load (<video src>) would
+    #     otherwise fall back to default-src 'self' and be rejected;
+    #   * connect-src — the hls.js XHR route (manifest + playlists +
+    #     segments) would otherwise be rejected by connect-src.
+    # No wildcard is introduced and no existing entry is removed. The two
+    # NEW EMBED providers added in the same round (TGVID tgvid.lovable.app,
+    # ZXCStream zxcstream.cc) need NO entry: frame-src * deliberately covers
+    # admin-configured provider embeds (see the frame-src rationale above).
+    Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://image.tmdb.org; media-src 'self' https://zcdn.bluevelvet.space https://ha.vixolity.com; font-src 'self'; connect-src 'self' https://*.supabase.co https://image.tmdb.org https://zcdn.bluevelvet.space https://ha.vixolity.com https://sub.vdrk.site https://api.theintrodb.org; frame-src *; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'"
 
 [[headers]]
   for = "/sw.js"

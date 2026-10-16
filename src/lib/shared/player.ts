@@ -72,6 +72,19 @@ export type PlayerInternalQualityOption = {
 };
 
 /**
+ * Phase 10 (GOAL 18) audio-track surface (2026-10-16): one HLS audio track
+ * as the engine reports it (hls.js audioTracks). `id` is the engine track
+ * index; name/lang are the manifest-provided labels used verbatim (never
+ * invented). Consumed by the player shell's audio selector.
+ */
+export type PlayerAudioTrackOption = {
+  id: number;
+  lang?: string;
+  name?: string;
+  default?: boolean;
+};
+
+/**
  * Phase 6: generic quality-controller contract (spec §31). The active
  * playback engine exposes its internal quality selection through THIS
  * shape — currently implemented by PlayerViewport on top of the Phase 5

@@ -13,6 +13,8 @@ import { VidPhantomPlayerAdapter } from './providers/vidphantom-adapter';
 import { MoviesNexusPlayerAdapter } from './providers/moviesnexus-adapter';
 import { VidStuckPlayerAdapter } from './providers/vidstuck-adapter';
 import { VidRiftPlayerAdapter } from './providers/vidrift-adapter';
+import { TgvidPlayerAdapter } from './providers/tgvid-adapter';
+import { ZxcStreamPlayerAdapter } from './providers/zxcstream-adapter';
 
 /**
  * Adapter registry — Phase 1 + Phase 3.
@@ -40,7 +42,14 @@ import { VidRiftPlayerAdapter } from './providers/vidrift-adapter';
  *      (movie/TV/anime embeds; progress + paused/unpaused + ended +
  *      next-up via the documented vidrift: postMessage contract; resume
  *      via the documented vidrift:resume message — no URL param).
- *  13. EmbedPlayerAdapter — generic fallback for all other embed sources.
+ *  13. TgvidPlayerAdapter — handles `https://tgvid.lovable.app`
+ *      (2026-10 integration; documented TGFLIX_EVENT progress events,
+ *      TGFLIX_CMD commands with exact-origin targeting, ?t= resume,
+ *      runtime color accent).
+ *  14. ZxcStreamPlayerAdapter — handles `https://zxcstream.cc`
+ *      (2026-10 integration; no documented message protocol — black-box
+ *      embed with the documented runtime `color` accent hook).
+ *  15. EmbedPlayerAdapter — generic fallback for all other embed sources.
  *
  * Provider-specific adapters are registered BEFORE the generic EmbedPlayerAdapter
  * so that `pickAdapter(source)` matches the provider-specific adapter first
@@ -116,6 +125,10 @@ export function createDefaultAdapterRegistry(): PlayerAdapterRegistry {
     new VidStuckPlayerAdapter(),
     // Verified event-emitting adapter (2026-11-05 integration).
     new VidRiftPlayerAdapter(),
+    // Verified event-emitting adapter (2026-10-16 integration).
+    new TgvidPlayerAdapter(),
+    // Black-box embed with the documented color hook (2026-10-16).
+    new ZxcStreamPlayerAdapter(),
     // Generic fallback for all other embed sources (black-box).
     new EmbedPlayerAdapter(),
   ]);

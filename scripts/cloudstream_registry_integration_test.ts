@@ -250,6 +250,14 @@ function section_registry(): void {
   // download_providers or any registry/cloudstream table — see
   // BLUEVELVET_INTEGRATION_REPORT.md.
   const blueVelvetProviderMigration = '20261112000000_blue_velvet_provider.sql';
+  // VIXOLITY + TGVID + ZXCSTREAM PROVIDERS (20261113000000, sanctioned):
+  // insert-only streaming_providers + streaming_sources rows for three new
+  // playback providers (Vixolity direct HLS — IMDb ids; TGVID + ZXCStream
+  // embeds — TMDB ids). All six rows seeded DISABLED/experimental (nothing
+  // enters resolution until an admin enables it); never touches
+  // download_providers or any registry/cloudstream table — see the
+  // migration header and WORKLOG.md for the verified provider contracts.
+  const vixolityTgvidZxcstreamMigration = '20261113000000_vixolity_tgvid_zxcstream_providers.sql';
   // POSTER TO MEDIA ITEMS (20261015000000, sanctioned): additive nullable
   // poster_path/backdrop_path columns on media_items only — never touches
   // any registry/download_provider/cloudstream table.
@@ -262,7 +270,7 @@ function section_registry(): void {
   const unifiedSql = read(`supabase/migrations/${unifiedMigration}`);
   const unifiedSqlNoComments = unifiedSql.replace(/--[^\n]*/g, '');
   ok(
-    added.length === 14
+    added.length === 15
       && added.includes(migrationName)
       && added.includes(phase2Migration)
       && added.includes(phase3Migration)
@@ -275,9 +283,10 @@ function section_registry(): void {
       && added.includes(mavp5DefaultSlotsMigration)
       && added.includes(mavp7UniqueAssignmentMigration)
       && added.includes(blueVelvetProviderMigration)
+      && added.includes(vixolityTgvidZxcstreamMigration)
       && added.includes(posterToMediaItemsMigration)
       && added.includes('20261014000000_add_unlink_action.sql'),
-    `§A10: exactly the CS-5 + Phase 2 + Phase 3 + FINAL TASK + build-lifecycle + LT-5-analytics + LT-15-fallback-event + VidRift-provider + MAVP-4-icon-badge + MAVP-5-default-slots + MAVP-7-unique-assignment + BlueVelvet-provider migrations were added (${added.join(', ') || 'none'})`,
+    `§A10: exactly the CS-5 + Phase 2 + Phase 3 + FINAL TASK + build-lifecycle + LT-5-analytics + LT-15-fallback-event + VidRift-provider + MAVP-4-icon-badge + MAVP-5-default-slots + MAVP-7-unique-assignment + BlueVelvet-provider + Vixolity/TGVID/ZXCStream-provider migrations were added (${added.join(', ') || 'none'})`,
   );
   // VIDRIFT (sanctioned): insert-only registration — no destructive verbs,
   // no download_providers / registry-table references.
@@ -285,6 +294,11 @@ function section_registry(): void {
     const vidriftSqlNoComments = read(`supabase/migrations/${vidriftProviderMigration}`).replace(/--[^\n]*/g, '');
     ok(!/\b(update|delete|alter|drop|truncate)\b/i.test(vidriftSqlNoComments), '§A10: the VidRift migration contains no UPDATE/DELETE/ALTER/DROP/TRUNCATE (insert-only)');
     ok(!vidriftSqlNoComments.includes('download_providers'), '§A10: the VidRift migration never touches download_providers');
+    // VIXOLITY/TGVID/ZXCSTREAM (sanctioned): same insert-only posture —
+    // registry rows only, on conflict do nothing, no destructive verbs.
+    const vixolityTgvidZxcstreamSqlNoComments = read(`supabase/migrations/${vixolityTgvidZxcstreamMigration}`).replace(/--[^\n]*/g, '');
+    ok(!/\b(update|delete|alter|drop|truncate)\b/i.test(vixolityTgvidZxcstreamSqlNoComments), '§A10: the Vixolity/TGVID/ZXCStream migration contains no UPDATE/DELETE/ALTER/DROP/TRUNCATE (insert-only)');
+    ok(!vixolityTgvidZxcstreamSqlNoComments.includes('download_providers'), '§A10: the Vixolity/TGVID/ZXCStream migration never touches download_providers');
   }
   const liveTvAnalyticsSql = read(`supabase/migrations/${liveTvAnalyticsMigration}`);
   const liveTvAnalyticsSqlNoComments = liveTvAnalyticsSql.replace(/--[^\n]*/g, '');
