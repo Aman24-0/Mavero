@@ -279,6 +279,13 @@ function section_registry(): void {
   // behaviorally proven by scripts/supabase_remediation_migration_test.ts,
   // 115 checks on the real chain). See SUPABASE_REMEDIATION_REPORT.md.
   const supabaseRemediationMigration = '20261118000000_supabase_remediation_security_performance.sql';
+  // FINAL AUDIT (20261119000000, sanctioned): server-only RLS-enablement guard
+  // (idempotent `enable row level security` on the two server-only tables) +
+  // the final audit's one provable index redundancy removal (guarded drop of
+  // streaming_public_source_categories_order_idx — exact duplicate of the
+  // valid unique constraint index). No data writes, no table create/drop.
+  // Behaviorally proven by scripts/supabase_final_audit_test.ts (107 checks).
+  const finalAuditHardeningMigration = '20261119000000_supabase_final_audit_hardening.sql';
   const added = migrations.filter((name) => !pristineMigrations.includes(name));
   const phase2Sql = read(`supabase/migrations/${phase2Migration}`);
   const phase2SqlNoComments = phase2Sql.replace(/--[^\n]*/g, '');
@@ -287,7 +294,7 @@ function section_registry(): void {
   const unifiedSql = read(`supabase/migrations/${unifiedMigration}`);
   const unifiedSqlNoComments = unifiedSql.replace(/--[^\n]*/g, '');
   ok(
-    added.length === 17
+    added.length === 18
       && added.includes(migrationName)
       && added.includes(phase2Migration)
       && added.includes(phase3Migration)
@@ -304,8 +311,9 @@ function section_registry(): void {
       && added.includes(posterToMediaItemsMigration)
       && added.includes(vidstuckCcOriginsMigration)
       && added.includes(supabaseRemediationMigration)
+      && added.includes(finalAuditHardeningMigration)
       && added.includes('20261014000000_add_unlink_action.sql'),
-    `§A10: exactly the CS-5 + Phase 2 + Phase 3 + FINAL TASK + build-lifecycle + LT-5-analytics + LT-15-fallback-event + VidRift-provider + MAVP-4-icon-badge + MAVP-5-default-slots + MAVP-7-unique-assignment + BlueVelvet-provider + Vixolity/TGVID/ZXCStream-provider + VidStuck-cc-origins + Supabase-remediation migrations were added (${added.join(', ') || 'none'})`,
+    `§A10: exactly the CS-5 + Phase 2 + Phase 3 + FINAL TASK + build-lifecycle + LT-5-analytics + LT-15-fallback-event + VidRift-provider + MAVP-4-icon-badge + MAVP-5-default-slots + MAVP-7-unique-assignment + BlueVelvet-provider + Vixolity/TGVID/ZXCStream-provider + VidStuck-cc-origins + Supabase-remediation + Supabase-final-audit migrations were added (${added.join(', ') || 'none'})`,
   );
   // VIDRIFT (sanctioned): insert-only registration — no destructive verbs,
   // no download_providers / registry-table references.
@@ -341,6 +349,22 @@ function section_registry(): void {
     ok(!/\bdelete\s+from\b/i.test(remediationSqlNoComments), '§A10: the Supabase remediation migration contains no DELETE FROM (no data writes)');
     ok(!/\btruncate\b/i.test(remediationSqlNoComments), '§A10: the Supabase remediation migration contains no TRUNCATE');
     ok(!/\b(create|drop)\s+(table|schema)\b/i.test(remediationSqlNoComments), '§A10: the Supabase remediation migration creates/drops no tables');
+  }
+  // SUPABASE FINAL AUDIT (sanctioned): same security posture — no data writes
+  // (no INSERT INTO / UPDATE … SET / DELETE FROM / TRUNCATE), no table
+  // create/drop; the single DROP INDEX is guarded by a covering-unique-index
+  // existence check and the ALTER verbs are `enable row level security`
+  // (idempotent server-only posture guard).
+  {
+    const finalAuditSqlNoComments = read(`supabase/migrations/${finalAuditHardeningMigration}`).replace(/--[^\n]*/g, '');
+    ok(!/\binsert\s+into\b/i.test(finalAuditSqlNoComments), '§A10: the final-audit migration contains no INSERT INTO (no data writes)');
+    ok(!/\bupdate\s+\S+\s+set\b/i.test(finalAuditSqlNoComments), '§A10: the final-audit migration contains no UPDATE … SET (no data writes)');
+    ok(!/\bdelete\s+from\b/i.test(finalAuditSqlNoComments), '§A10: the final-audit migration contains no DELETE FROM (no data writes)');
+    ok(!/\btruncate\b/i.test(finalAuditSqlNoComments), '§A10: the final-audit migration contains no TRUNCATE');
+    ok(!/\b(create|drop)\s+(table|schema)\b/i.test(finalAuditSqlNoComments), '§A10: the final-audit migration creates/drops no tables');
+    ok((finalAuditSqlNoComments.match(/\bdrop\s+index\b/gi) ?? []).length === 1, '§A10: the final-audit migration contains exactly ONE DROP INDEX');
+    ok(finalAuditSqlNoComments.includes('streaming_public_source_categories_order_idx'), '§A10: the final-audit DROP INDEX targets exactly the audited redundant index');
+    ok(finalAuditSqlNoComments.includes('enable row level security'), '§A10: the final-audit migration only enables RLS (no other ALTER action)');
   }
   const liveTvAnalyticsSql = read(`supabase/migrations/${liveTvAnalyticsMigration}`);
   const liveTvAnalyticsSqlNoComments = liveTvAnalyticsSql.replace(/--[^\n]*/g, '');

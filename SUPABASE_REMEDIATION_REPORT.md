@@ -1,8 +1,8 @@
 # MAVERO — Supabase Security, Performance & Migration Remediation Report
 
-**Branch:** `supabase-remediation` (from `main` @ `ed90050`)
-**Migration:** `supabase/migrations/20261118000000_supabase_remediation_security_performance.sql`
 **Production project:** Supabase ref `whekhqimzrafhsrmswbn` (Data API `https://whekhqimzrafhsrmswbn.supabase.co`)
+**Round 1 (advisor remediation):** `supabase/migrations/20261118000000_supabase_remediation_security_performance.sql` — committed `c1ec26d` (+ docs follow-up `2ede139`) on the `supabase-remediation` branch, merged to `main` via PR #3 (merge commit `504bc7e`); **applied to production by the project owner via the Dashboard SQL Editor** (verified — see §6/§9).
+**Round 2 (final audit, this round):** `supabase/migrations/20261119000000_supabase_final_audit_hardening.sql` + corrected `docs/supabase-remediation-verification.sql` + `scripts/supabase_final_audit_test.ts` (107-check behavioral suite). See §9–§17.
 **Scope discipline:** Vixolity untouched (deliberately disabled); leaked-password protection untouched (plan limitation); no production reset/drop/truncate; no history fabrication; no unrelated UX/provider work.
 
 ---
@@ -148,14 +148,20 @@ Every drop is **guarded**: it executes only while the covering constraint index 
 
 ## 6. Production deployment status
 
-**The migration has NOT been applied to production.** This environment has no SQL execution channel (§1), and the project's own runbook (`docs/supabase-migration-runbook.md`) prescribes manual Dashboard SQL Editor application. Production is therefore **not yet remediated** — the deliverables are the committed migration, the behavioral proof, and the verification tooling below.
+**Round-1 migration `20261118000000` HAS been applied to production** by the project owner via the Dashboard SQL Editor (the project's documented manual procedure), between the round-1 delivery and this round. Evidence, strongest first:
 
-**Apply procedure (when approved):**
+1. **Behavioral (live, this round):** a service-role Data-API call to `set_downloader_source_position` returns PostgreSQL's function-privilege error (`42501 permission denied for function set_downloader_source_position`) instead of the in-body `is_admin()` gate message — only possible if the §3 `service_role` EXECUTE revocation is live in production.
+2. **Behavioral (live, this round):** all four pairing RPC dry-calls (§9 of the verification SQL) return 0 rows with no error — server-side pairing paths unaffected.
+3. **User-reported advisor state:** both advisors show no findings except the leaked-password-protection plan warning — the advisor catalog checks (RLS-no-policies, mutable search_path, SECURITY DEFINER, overlapping policies, missing FK indexes) only go quiet when the migration's catalog changes are live.
+4. The remediation branch was merged to `main` (PR #3, merge commit `504bc7e`).
 
-1. Supabase Dashboard → SQL Editor → paste `supabase/migrations/20261118000000_supabase_remediation_security_performance.sql` in full → Run (single implicit transaction; idempotent — safe to re-run on partial failure).
-2. Run every block of `docs/supabase-remediation-verification.sql` — every row must show `ok = t` (and the four pairing dry-calls must return 0 rows without error).
-3. Manually exercise the admin paths once: `/admin/system/content-rules` category reorder, `/admin/system/integrations` addon + downloader ordering, downloader admin CRUD, and a non-admin account's downloader-config read.
-4. Re-run **both advisors** (Dashboard → Advisors) and record before/after in this report's log; the remaining expected findings are exactly: leaked-password protection (plan limitation) and the retained unused-index set.
+**Round-2 migration `20261119000000` is committed and pushed but NOT yet applied to production** — the application is a single idempotent SQL-Editor run of the file (procedure identical to §6 of round 1), followed by the corrected `docs/supabase-remediation-verification.sql` (now covering both migrations) and an advisor re-run. Until that run, production retains: the (correct but not self-contained) deny-all-policies-without-enablement-guard on `direct_play_sources`, and the provably-redundant `streaming_public_source_categories_order_idx` index — neither is a defect introduction, both are closed by the round-2 migration.
+
+### Apply procedure (round 2, when approved)
+
+1. Supabase Dashboard → SQL Editor → paste `supabase/migrations/20261119000000_supabase_final_audit_hardening.sql` in full → Run (single implicit transaction; idempotent — safe to re-run).
+2. Run every block of `docs/supabase-remediation-verification.sql` — every row must show `ok = t` (16 checks), the trigger-attached column must be `t`, and the four pairing dry-calls must return 0 rows without error.
+3. Re-run both advisors (Dashboard → Advisors) and record before/after in this report's log; the remaining expected findings are exactly: leaked-password protection (plan limitation). The removed `streaming_public_source_categories_order_idx` should also disappear from any unused-index listing.
 
 ---
 
@@ -192,3 +198,150 @@ Every drop is **guarded**: it executes only while the covering constraint index 
 - `WORKLOG.md` (round entry)
 
 **Commit SHA:** c1ec26d on the `supabase-remediation` branch (parent `ed90050` on `main`), pushed to `origin/supabase-remediation`.
+
+---
+
+## 9. Final audit round — baseline, access channels and method
+
+**Round-2 baseline (verified fresh, not assumed):** repository `main` @ `504bc7e` (merge of PR #3 — the round-1 remediation branch), working tree clean and synced with `origin/main` after `git fetch`; local `supabase-remediation` branch (already merged) retained untouched.
+
+**Live access channel available to this round:** the Data API (PostgREST) with the service-role key, read-only. **Not available:** the Management API (advisors, migration-history table), a direct Postgres connection, or any SQL execution channel. Consequences, recorded rather than papered over:
+
+- Advisors could not be re-run from here. The advisor state used is the one reported by the project owner ("both advisors previously displayed no issues, except the leaked-password-protection warning") plus the round-1 advisor-derived candidate list supplied in the task. Catalog-level facts are proven on the real migration chain under embedded PostgreSQL (`@electric-sql/pglite`) — the repository's established pattern — and cross-checked against the live Data API wherever the API can see the object (tables, columns, RPC signatures, row counts).
+- Anon-role behavior could not be probed live (the anon key is server-side env-injected; the production browser bundle contains no Supabase client — the app is fully server-side). Anon denial is therefore proven behaviorally on the chain (privilege revocation + restrictive deny-all, both verified in the suites) instead of live.
+- `supabase_migrations.schema_migrations` remains unreachable; the migration-history reconciliation below is unchanged from round 1's evidence and re-derived from the repository inventory.
+
+**Live Data-API verification performed this round (read-only):**
+
+- 41 public tables inventoried with row counts (all shapes current with the repository head; `direct_play_sources` still 0 rows; `device_pairing_requests` 2 rows; no unexpected growth).
+- 16 exposed RPC signatures enumerated.
+- `set_downloader_source_position` via service role → `42501 permission denied for function set_downloader_source_position` — **live behavioral proof that round-1 §3's EXECUTE revocation is applied in production** (pre-migration, the call would have reached the function body and failed with the in-body admin-gate message instead).
+- `reorder_category_sources` via service role → the in-body `42501 You are not authorized to change the streaming registry.` — the admin gate unchanged.
+- `is_admin()` via service role → `false` (correct: no `auth.uid()` in service contexts).
+- All four pairing dry-calls → `[]` / HTTP 200 (0 rows, no error) — server-side pairing paths intact.
+
+## 10. Final unused-index matrix (every candidate classified)
+
+Method: for each advisor-listed candidate — exact definition from the applied chain (catalog dump: 139 indexes, 571 constraints, 36 FKs, 38 tables), constraint-backed status, covering-index equivalence, application query paths (`src/lib/server/**`, RPC bodies in `supabase/migrations/**`), and the documented statistics limitation (**no `pg_stat_user_indexes` access — usage counts are unobservable from this environment**, which is why "advisor says unused" alone is not evidence). Live-only indexes cannot be introspected at all; they are retained.
+
+### 10.1 REMOVE — provable redundancy
+
+| Index | Definition | Proof | Action |
+|---|---|---|---|
+| `streaming_public_source_categories_order_idx` | `(category_id, ordering)` non-unique on `streaming_public_source_categories` | The table carries `unique (category_id, ordering)` (constraint `streaming_public_source_categories_category_id_ordering_key`) whose backing index is a **valid unique btree over the exact same columns** — the secondary index is an exact duplicate. The mirror is wholesale-rebuilt by `refresh_streaming_public_config()` (delete + insert-select), the base table enforces the same uniqueness, and nothing references the secondary index by name. | **Dropped** by round-2 migration `20261119000000` §2, guarded: executes only while the covering constraint index verifies `indisunique/indisvalid/indisready`. Regression-pinned in `supabase_final_audit_test.ts` (absence + covering valid + refresh end-to-end + duplicate-rejection 23505). The stale `phase6_ops_audit_test.ts` 6.6-1b "required" pin superseded with a documented note. |
+| `media_items_content_type_tmdb_id_season_episode_idx` | `(content_type, tmdb_id, season, episode)` | Exact duplicate of `media_items_content_tmdb_season_episode_key` UNIQUE. | Already dropped by round-1 `20261118000000` §7 — verified **absent** post-migration this round; covering unique verified present/valid. |
+| `media_availability_requests_content_type_tmdb_id_idx` | `(content_type, tmdb_id)` | Strict column prefix of `media_availability_requests_content_type_tmdb_id_season_episode_idx` (retained). | Already dropped by round 1 — verified absent; 4-column covering index verified present. |
+| (round-1's other five drops) | see §4.D | exact duplicates / prefixes of constraint-backed indexes | Verified absent with coverings intact (matrix pins in the final-audit suite). |
+
+### 10.2 KEEP — foreign-key support (created by round 1, verified present and valid)
+
+| Index | Definition | Why kept |
+|---|---|---|
+| `device_pairing_requests_approved_by_user_id_idx` | `(approved_by_user_id)` | FK to `auth.users(id)`; verified present. |
+| `media_assets_provider_folder_mapping_id_idx` | `(provider_folder_mapping_id)` | FK to `provider_folder_mappings(id)`. |
+| `media_operations_upload_operation_id_idx` | `(upload_operation_id)` | FK to `media_upload_operations(id)`. |
+| `streaming_default_source_slots_source_idx` | `(source_id)` | FK to `streaming_sources(id) ON DELETE CASCADE` **and** a confirmed application filter (`admin-service.ts:224 eq('source_id')`). |
+
+### 10.3 KEEP — hot-path or code-confirmed read paths
+
+| Index | Definition | Evidence |
+|---|---|---|
+| `device_pairing_secret_hash_idx` | `(secret_hash) WHERE status='pending'` | Pairing claim hot path (server-side RPCs filter `secret_hash` + pending status). |
+| `device_pairing_secret_hash_all_idx` | `(secret_hash)` full | Lease/exchange/consume RPC paths filter `secret_hash` across statuses (`status='exchanging'` branches in `20261003000000`). |
+| `device_pairing_short_code_idx` | `(short_code) WHERE status='pending'` | Pending-pairing lookup path (server-only). |
+| `device_pairing_manual_handle_idx` | `(manual_handle_hash) WHERE manual_handle_hash IS NOT NULL` | Manual-handle branch (`where manual_handle_hash is not NULL` in the lease migration). |
+| `media_items_imdb_id_idx` | `(imdb_id) WHERE imdb_id IS NOT NULL` | Confirmed admin search: `control/service.ts:467,670 eq('media_item.imdb_id', …)`. |
+| `analytics_sessions_user_active_idx` | `(user_id, last_activity_at) WHERE ended_at IS NULL` | Confirmed: `analytics/users.ts:703-709` filters `user_id` + selects `last_activity_at` (active sessions). |
+| `analytics_sessions_anon_active_idx` | `(anonymous_id, last_activity_at) WHERE ended_at IS NULL` | Same access pattern for anonymous sessions. |
+| `streaming_categories_public_idx` | `(enabled, ordering)` | Public-config refresh reads categories by enabled+ordering. |
+| `cloudstream_repositories_listing_idx` | `(enabled, status, created_at)` | Admin repository listing (enabled/status filters, `order('created_at')` confirmed in `repository/service.ts:267`). |
+| `media_assets_mavero_status_idx` | `(mavero_status)` | 8+ confirmed filter sites (`demand/service.ts:257,316,391`, `control/service.ts:442-444,650-652`). |
+| `media_upload_operations_status_idx` | `(status)` | Confirmed status-driven upload-operation filters (`demand` / `operations` services). |
+
+### 10.4 UNCERTAIN — retained pending usage statistics (documented limitation)
+
+No `pg_stat_user_indexes` access means scan counts are unobservable; none of these is provably redundant, each has a plausible documented purpose, and per the task rule ("do not remove an index used by rare but important … queries solely because idx_scan = 0"; "if the observation window is insufficient, classify UNCERTAIN and retain") all are **kept**:
+
+| Index | Definition | Plausible path (why retained) |
+|---|---|---|
+| `streaming_provider_health_state_idx` | `(status, cooldown_until)` | Health-sweep lookups (documented in its creating migration `202607f`); in-app eligibility is JS-computed today, but the index matches the sweep shape. |
+| `analytics_sessions_started_at_idx` | `(started_at)` | Time-range/cleanup analytics queries. |
+| `analytics_events_session_time_idx` | `(session_id, event_time) WHERE session_id IS NOT NULL` | Per-session event timelines (session drill-down). |
+| `media_assets_provider_source_media_item_id_idx` | `(provider_source_id, media_item_id)` | Per-provider asset lookups (`management/service.ts:440` filters `provider_source_id`; sync service likewise). |
+| `media_assets_provider_asset_id_idx` | `(provider_asset_id) WHERE provider_asset_id IS NOT NULL` | Dedup/lookup by provider asset id. |
+| `media_assets_last_synced_at_idx` | `(last_synced_at) WHERE last_synced_at IS NOT NULL` | Sync-sweep windows. |
+| `media_upload_operations_provider_source_created_at_idx` | `(provider_source_id, created_at)` | Per-provider upload listing (admin upload UI). |
+| `media_upload_operations_requested_by_user_id_idx` | `(requested_by_user_id) WHERE … IS NOT NULL` | User-scoped upload queries **and** FK support (see §12). |
+| `media_operations_admin_user_id_occurred_at_idx` | `(admin_user_id, occurred_at)` | Admin audit-trail reads (~8 confirmed write sites; read path plausible). |
+| `media_operations_provider_source_id_occurred_at_idx` | `(provider_source_id, occurred_at) WHERE … IS NOT NULL` | Per-source audit trail + FK support (see §12). |
+| `media_folders_kind_idx` | `(kind)` | Folder taxonomy listing. |
+| `direct_play_sources_active_lookup` | live-only (definition not introspectable via the Data API; stub shape `(media_type, tmdb_id) WHERE status='active'`) | Out-of-band table, 0 rows, sealed server-only. Retained — dropping an uninspectable index on a live table is not safe from here. |
+
+**Additional observation (documented, not acted on — no advisor finding):** `provider_folder_mappings_provider_source_id_idx` (partial, `provider_source_id`) is shadowed by the full composite `provider_folder_mappings_provider_source_canonical_idx` which leads with the same column. Redundancy candidate for the future cleanup phase; left untouched because the advisor does not flag it and the round's mandate is evidence-driven action only.
+
+## 11. Final security / RLS / grant / RPC / function audit
+
+Scope: every public-schema table (38 on the applied chain; 41 live incl. the three out-of-band/mirror extras), all 61 chain policies, all grant rows, all 54 functions, 35 triggers.
+
+- **RLS enablement:** enabled on every public table **except** the out-of-band `direct_play_sources` on the chain replay — because the round-1 migration created its deny-all *policy* without ensuring the *flag*. Production currently has RLS enabled on it (that is why the original advisor finding was "RLS enabled with no policies" and why today's advisors are green). Round-2 migration §1 closes the gap: an idempotent `enable row level security` guard (guarded by `to_regclass`, `FORCE` deliberately not used so SQL-Editor maintenance stays possible) makes the server-only posture self-contained instead of dependent on how the out-of-band table happened to be created.
+- **Server-only tables:** `device_pairing_requests` (RLS enabled, restrictive deny-all, client privileges revoked) and `direct_play_sources` (same, plus the §1 enablement guard) — all verified behaviorally on the chain: anon/authenticated every operation denied (42501 via revocation; SELECT still filtered to zero rows even with privileges re-granted; INSERT raises the RLS-policy violation), `service_role` CRUD intact.
+- **Grant posture:** `anon`/`authenticated` hold Supabase-default write privileges on nine read-only-by-design tables (`streaming_public_*` mirrors, `*_config_meta`, `app_settings`, `streaming_provider_health`). Every one carries SELECT-only RLS policies, so no write path exists; this is documented as verified-and-accepted (defense-in-depth noise, not an access boundary). Genuinely sensitive tables are sealed: `user_streaming_credentials` has **no** client grants at all; the two server-only tables are revoked.
+- **RPCs:** the three ordering RPCs remain SECURITY INVOKER with `authenticated`-only EXECUTE (plus owner); the unused round-1 `service_role` revocation is live (proven in production this round, §9). Pairing RPCs remain SECURITY DEFINER with explicit safe `search_path` and `service_role`-only EXECUTE. `is_admin()` is SECURITY INVOKER, `authenticated`-only. Trigger function `update_direct_play_sources_updated_at()` remains INVOKER + `search_path = pg_catalog`, trigger attached (verification check `trigger_attached = true`).
+- **Views:** `download_providers_public` is `security_invoker` with an enabled-only filter; the `streaming_public_*` views were superseded by mirror **tables** with allowlisted SELECT policies. No sensitive table is exposed through any view or RPC.
+- **Admin authorization:** enforced server-side (in-body `is_admin()` gates + `*_admin_all` RLS policies + EXECUTE posture), not by UI visibility — re-verified from the catalog dump and the round-1 behavioral suite (which remains green).
+
+## 12. Final foreign-key audit (full-schema sweep)
+
+Every FK on the applied chain (36) checked for a **valid leading-column index**, distinguishing non-partial from partial coverage (an `x IS NOT NULL` partial index IS usable for RI lookups — the planner proves `fk = const ⟹ fk IS NOT NULL`; a predicate like `revoked_at IS NULL` is not implied):
+
+- **31/36 fully covered** (non-partial leading-column or constraint-backed indexes) — including all three round-1 remediation FK indexes (verified present/valid).
+- **3 accepted partial-only exceptions** (documented, not fixed — "avoid speculative changes"): `device_sessions(user_id)` (both supporting indexes partial on `revoked_at IS NULL`), `analytics_sessions(user_id)` (partial on `ended_at IS NULL`), `cloudstream_adapter_build_jobs(extension_id)` (unique partial on active job states). Rationale: personal-scale tables (46 / 496 / 2 live rows), parent deletes are rare account-deletion/admin events, and the production advisor does not flag them. Pinned as the exact exception set in `supabase_final_audit_test.ts` so any future FK drift fails the suite.
+- The round-1 three remain the only FK indexes ever advisor-flagged; no other gaps exist under the strict rule.
+
+## 13. Migration reconciliation — current state
+
+- Repository: **94 migration files** (93 at round-1 baseline + `20261119000000`). Live history table: unreachable from this environment (Data API cannot see `supabase_migrations`); the round-1 reconciliation stands: ~34 recorded entries vs repository files, root cause = manual SQL-Editor applications that do not write history; production schema verified current with the repository head via object-presence evidence (round 1) + this round's 41-table/16-RPC live inventory.
+- Round-1 findings unchanged and still documented: duplicate version prefixes ×2 (`20261004000000_*`, `20261012000000_*`); the `20260820015000` duplicate that errors after its twin (runbook's "harmless no-op" claim inaccurate); the `20261004000000` backfill reading later-versioned cloudstream tables. All are historical and left untouched per the constraints.
+- The round-2 migration follows the established versioning rule (sorts immediately after `20261118000000`; machine clock not used — repository files are future-dated relative to it).
+- No migration was renamed, rewritten, deleted, or replayed; no history entries were fabricated.
+
+## 14. Round-2 migration — `20261119000000_supabase_final_audit_hardening.sql`
+
+Additive, idempotent, single-transaction, two sections:
+
+1. **§1 — server-only RLS enablement guard:** idempotent `enable row level security` on `direct_play_sources` (guarded by `to_regclass`; NOTICE on fresh replays where the table does not exist) and on `device_pairing_requests` (no-op; keeps the posture file self-contained). No `FORCE`.
+2. **§2 — guarded redundant-index drop:** `streaming_public_source_categories_order_idx`, dropped only while the covering unique constraint index verifies valid (same guard pattern as round 1's seven drops).
+
+Posture (asserted by the updated ledgers): no `INSERT INTO` / `UPDATE … SET` / `DELETE FROM` / `TRUNCATE`; no table create/drop; exactly one guarded `DROP INDEX`; the only ALTER action is `enable row level security`.
+
+## 15. Tests and gates (round 2)
+
+**New suite:** `scripts/supabase_final_audit_test.ts` — **107 checks, all passing** — registered in the `pnpm test` chain immediately after the round-1 remediation suite. It applies the real chain (35 files, dependency-ordered) + round-1 migration + round-2 migration to embedded PostgreSQL and verifies: pre-state findings reproduced (inert-policy gap, exact-duplicate index, the ORIGINAL verification counter's false failure), corrective migration applies + idempotent re-apply with a byte-identical catalog, §1 enforcement behaviorally (0-row filtering with re-granted privileges; 42501 policy-violation INSERT; service-role intact), §2 removal + refresh end-to-end + unique-constraint rejection, **the corrected verification SQL executed statement-for-statement against the real chain with every check green**, the 36-FK sweep with the exact documented exception set, and index-matrix pins for every candidate.
+
+**Ledger updates (sanctioned):** `cloudstream_registry_integration_test.ts` 17→18 (+ final-audit posture block); `cloudstream_phase4_integration_manager_test.ts` 14→15. `phase6_ops_audit_test.ts` 6.6-1b superseded with a documented note (creation text remains pinned; the live index was removed as provably redundant). All three re-run green (188 / 222 / 46 checks).
+
+| Gate | Result |
+|---|---|
+| `pnpm check` | **0 errors / 5 warnings** — identical to the recorded baseline |
+| `pnpm test` (full chain incl. both Supabase suites) | **Green through 286 of 288 suites** — including `supabase_remediation_migration_test` (**115/115**) and `supabase_final_audit_test` (**107/107**) run in-chain — stopping at the documented **pre-existing** DOM-QA failure (`mav_task2_episode_sheet_dom_qa.mjs`, Playwright strict-mode `.bulk-btn` ambiguity — identical at baseline commits 219b058/3f9a49d; no `src/` change this round). The post-chain season-chip contract suite passes **32/32** (run separately, house convention) |
+| `pnpm build` | **exit 0** (vite build + Netlify adapter) |
+| Secrets scan | no keys/tokens in any changed file (the service key used for the live probes lives outside the repository and is never printed or committed) |
+
+## 16. Production status, verification and limitations (round 2)
+
+1. **Repository changes committed:** yes — this round's commit (SHA in §17) on `main`.
+2. **Changes pushed to GitHub:** yes (pushed directly to `main`; no force-push).
+3. **SQL prepared but not applied:** `20261119000000` (round 2) — idempotent, guarded, ready for the SQL Editor.
+4. **SQL applied to production:** `20261118000000` (round 1) — applied by the project owner; verified live this round (§6, §9).
+5. **Production verification completed:** partial-by-necessity — Data-API behavioral proofs + user-reported advisor state recorded; the remaining SQL-Editor steps (round-2 application, corrected verification run, advisor re-run) are documented in §6 with exact expected outcomes. The corrected verification SQL is additionally proven meaningful on the real chain (all 16 checks green in the new suite).
+
+**Limitations (unchanged):** no Management API (advisors), no direct Postgres (catalog/usage statistics), no SQL execution channel, no anon-key behavioral probes. Every limitation is stated where it affects a conclusion; nothing was claimed as live-verified that was only chain-verified.
+
+## 17. Round-2 execution log
+
+- Baseline re-established: `main` @ `504bc7e`, clean/synced; PR #3 merge confirmed; prior remediation commits `c1ec26d`/`2ede139` contents reviewed.
+- Live read-only probes: 41 tables + counts, 16 RPCs, application-probe evidence (§9).
+- Full index/constraint/FK/policy/grant/function/trigger catalog dump on the real chain (35 files) + both migrations.
+- Final-audit index matrix (§10), security audit (§11), FK sweep (§12) produced; one new actionable removal + one enforceability gap identified.
+- `20261119000000` written; `docs/supabase-remediation-verification.sql` corrected (block 6 OR-vs-AND defect fixed with coverage-based assertions; block 5 strengthened with role/WITH-CHECK checks; block 8 extended for the new drop; new block 0 for RLS enablement); new 107-check suite written and registered; ledgers 17→18 / 14→15; phase6 pin superseded.
+- Gates: `pnpm check` 0e/5w (= baseline); `pnpm test` full chain green through 286/288 suites — both Supabase suites pass in-chain (115 + 107 checks) before the documented PRE-EXISTING DOM-QA failure (.bulk-btn strict-mode, identical at baseline); post-chain season-chip 32/32; `pnpm build` exit 0; secrets scan + `git diff --check` clean.

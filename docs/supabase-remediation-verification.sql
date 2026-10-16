@@ -1,9 +1,10 @@
 -- ============================================================================
--- MAVERO — Post-Apply Live Verification for migration
+-- MAVERO — Post-Apply Live Verification for migrations
 --   20261118000000_supabase_remediation_security_performance.sql
+--   20261119000000_supabase_final_audit_hardening.sql
 --
--- Run EVERY block below in the Supabase Dashboard SQL Editor AFTER the
--- remediation migration has been applied, then re-run the Security and
+-- Run EVERY block below in the Supabase Dashboard SQL Editor AFTER both
+-- migrations have been applied, then re-run the Security and
 -- Performance advisors (Dashboard → Advisors) and confirm:
 --   * "RLS enabled with no policies" no longer lists device_pairing_requests
 --     or direct_play_sources
@@ -20,6 +21,15 @@
 -- Expected result: EVERY query returns a row with ok = t / expected values.
 -- Any ok = f row names the exact object to investigate before proceeding.
 -- ============================================================================
+
+-- 0. Server-only tables: RLS ENABLED (enforceability guard, 20261119000000) --
+select 'server-only tables RLS enabled' as check,
+    (select c.relrowsecurity from pg_class c
+      join pg_namespace n on n.oid = c.relnamespace
+      where n.nspname = 'public' and c.relname = 'device_pairing_requests') = true
+    and coalesce((select c.relrowsecurity from pg_class c
+      join pg_namespace n on n.oid = c.relnamespace
+      where n.nspname = 'public' and c.relname = 'direct_play_sources'), true) = true as ok;
 
 -- 1. Server-only tables: restrictive deny-all policies in place -------------
 select 'device_pairing_requests deny-all' as check, pol.polname = 'device_pairing_requests_deny_client'
@@ -86,26 +96,52 @@ from pg_proc p join pg_namespace n on n.oid = p.pronamespace
 where n.nspname = 'public' and p.proname = 'set_downloader_source_position';
 
 -- 5. device_sessions_select_own: init-plan form, same name/role/command -----
+-- Role (authenticated only), command (SELECT) and the absence of WITH CHECK
+-- are part of the contract and verified alongside the expression.
 select 'device_sessions_select_own init-plan' as check,
     pol.polname = 'device_sessions_select_own'
     and pol.polcmd = 'r'
+    and pol.polroles @> array[to_regrole('authenticated')::oid]
+    and (select count(*) from unnest(pol.polroles) r(rol)) = 1
     and pg_get_expr(pol.polqual, pol.polrelid) ~* 'select\s+auth\.uid\(\)'
-    and pg_get_expr(pol.polqual, pol.polrelid) !~* '^\s*auth\.uid\(\)' as ok
+    and pg_get_expr(pol.polqual, pol.polrelid) !~* '^\s*auth\.uid\(\)'
+    and pg_get_expr(pol.polwithcheck, pol.polrelid) is null as ok
 from pg_policy pol
 join pg_class c on c.oid = pol.polrelid
 join pg_namespace n on n.oid = c.relnamespace
 where n.nspname = 'public' and c.relname = 'device_sessions';
 
 -- 6. Policy consolidations: exactly one permissive SELECT per role ----------
+-- download_providers deliberately uses TWO role-specific permissive SELECT
+-- policies (one TO anon, one TO authenticated): the remediation split them
+-- BY ROLE so the anon policy contains no is_admin() reference (anon has no
+-- EXECUTE on is_admin(), and a shared expression would break every anon
+-- read). The correct assertion is therefore COVERAGE-based, not a single
+-- total count — the original version of this check used an OR over both
+-- role arrays with "= 0", which counted BOTH correct policies and reported
+-- a false failure. Verify instead:
+--   * exactly one permissive SELECT policy covers anon
+--   * exactly one permissive SELECT policy covers authenticated
+--   * no single permissive SELECT policy covers both roles (no overlap)
+--   * no PUBLIC ({0}) policy silently covers everything
 select 'download_providers one permissive select per role' as check,
     (select count(*) from pg_policy pol
       where pol.polrelid = 'public.download_providers'::regclass
         and pol.polcmd = 'r' and pol.polpermissive
-        and (pol.polroles @> array[to_regrole('anon')::oid] or pol.polroles @> array[to_regrole('authenticated')::oid])
-    ) = 0  -- the per-role policies are role-specific; overlap check: no policy lists BOTH roles for SELECT
+        and (pol.polroles && array[0::oid] or pol.polroles @> array[to_regrole('anon')::oid])
+    ) = 1
     and (select count(*) from pg_policy pol
       where pol.polrelid = 'public.download_providers'::regclass
-        and pol.polcmd = 'r' and pol.polpermissive) = 2 as ok;
+        and pol.polcmd = 'r' and pol.polpermissive
+        and (pol.polroles && array[0::oid] or pol.polroles @> array[to_regrole('authenticated')::oid])
+    ) = 1
+    and not exists (
+      select 1 from pg_policy pol
+      where pol.polrelid = 'public.download_providers'::regclass
+        and pol.polcmd = 'r' and pol.polpermissive
+        and (pol.polroles && array[0::oid]
+             or (pol.polroles @> array[to_regrole('anon')::oid]
+                 and pol.polroles @> array[to_regrole('authenticated')::oid]))) as ok;
 
 select 'streaming_default_source_slots one permissive select' as check,
     (select count(*) from pg_policy pol
@@ -131,6 +167,9 @@ select 'FK indexes present' as check,
         'media_operations_upload_operation_id_idx')) = 3 as ok;
 
 -- 8. Redundant indexes dropped, coverings intact ----------------------------
+-- Includes the final-audit drop of streaming_public_source_categories_order_idx
+-- (migration 20261119000000): exact duplicate of the constraint-backed unique
+-- index streaming_public_source_categories_category_id_ordering_key.
 select 'redundant indexes dropped' as check,
     (select count(*) from pg_indexes
       where schemaname = 'public' and indexname in (
@@ -140,7 +179,8 @@ select 'redundant indexes dropped' as check,
         'media_folders_canonical_key_idx',
         'media_availability_requests_canonical_key_idx',
         'media_availability_requests_content_type_tmdb_id_idx',
-        'provider_folder_mappings_canonical_folder_id_idx')) = 0
+        'provider_folder_mappings_canonical_folder_id_idx',
+        'streaming_public_source_categories_order_idx')) = 0
     and (select count(*) from pg_index i
       join pg_class ic on ic.oid = i.indexrelid
       where ic.relname in (
@@ -151,7 +191,12 @@ select 'redundant indexes dropped' as check,
         and i.indisunique and i.indisvalid and i.indisready) = 4
     and (select count(*) from pg_constraint con
       where con.conname = 'provider_folder_mappings_canonical_provider_key'
-        and con.contype = 'u') = 1 as ok;
+        and con.contype = 'u') = 1
+    and (select count(*) from pg_constraint con
+      join pg_index i on i.indexrelid = con.conindid
+      where con.conname = 'streaming_public_source_categories_category_id_ordering_key'
+        and con.contype = 'u'
+        and i.indisunique and i.indisvalid and i.indisready) = 1 as ok;
 
 -- 9. Server-side operations still work (service-role perspective) -----------
 --    Pairing RPC dry-calls: expect 0 rows, no error.

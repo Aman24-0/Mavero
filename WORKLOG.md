@@ -2035,3 +2035,102 @@ refactor, no change to any existing provider's semantics:
   docs/supabase-remediation-verification.sql + advisor re-run documented in
   SUPABASE_REMEDIATION_REPORT.md §6); advisors not re-runnable from this
   environment. Production is NOT claimed fixed.
+
+---
+## FINAL SUPABASE AUDIT & REMEDIATION (round 2) — main @ 504bc7e baseline
+
+- Baseline re-verified fresh: main @ 504bc7e (PR #3 merge of the round-1
+  supabase-remediation branch; round-1 commits c1ec26d + 2ede139 contents
+  reviewed). Round-1 migration 20261118000000 confirmed APPLIED to production
+  by the owner (SQL Editor): live behavioral proof — service-role call to
+  set_downloader_source_position now fails with PostgreSQL's function-
+  privilege error ("permission denied for function") instead of the in-body
+  admin-gate message, i.e. the §3 EXECUTE revocation is live; pairing
+  dry-calls 0 rows/no error; is_admin()=false in service contexts.
+- Live read-only access this round = Data API only (service-role REST):
+  41 tables + counts, 16 RPC signatures inventoried. NOT available (documented
+  limitation, stated wherever it matters): Management API/advisors, direct
+  Postgres (pg_stat_user_indexes → usage statistics unobservable),
+  supabase_migrations history, anon-key behavioral probes (anon key is
+  server-side env-injected; the production browser bundle has no Supabase
+  client). Advisors cited as user-reported: no findings except the
+  leaked-password-protection plan limitation.
+- PHASE 1 — complete unused-index audit (every advisor candidate + repo
+  inventory of 91 create-index statements, catalog dump on the real chain:
+  139 indexes / 571 constraints / 36 FKs / 38 tables): exactly ONE new
+  provable redundancy — streaming_public_source_categories_order_idx is an
+  exact duplicate of the valid unique constraint index over the same
+  (category_id, ordering) columns (mirror table wholesale-rebuilt by
+  refresh_streaming_public_config; base table enforces the same uniqueness;
+  nothing references the secondary index by name). Two candidates verified
+  already-dropped by round 1 (absent + coverings valid). 4 KEEP (FK support,
+  incl. streaming_default_source_slots_source_idx = FK CASCADE + confirmed
+  eq('source_id') admin query). 11 KEEP code-confirmed hot paths (pairing
+  partials, imdb admin search, analytics user/anon active, mavero_status,
+  repositories listing, etc.). 12 UNCERTAIN retained (no usage statistics;
+  each with documented plausible path; direct_play_sources_active_lookup is
+  live-only and uninspectable → retained). BONUS observation documented (not
+  acted): provider_folder_mappings_provider_source_id_idx partial is shadowed
+  by the full composite — cleanup-phase candidate, no advisor finding.
+- PHASE 2 — security audit of all tables/policies/grants/functions/triggers:
+  policies correct on the consolidated four (per-role SELECT split, merged
+  user_preferences SELECT, slots/sources admin writes); server-only tables
+  sealed (user_streaming_credentials has NO client grants at all). FINDING:
+  the round-1 migration created direct_play_sources' deny-all POLICY without
+  ensuring the RLS FLAG — production has it enabled out-of-band (why advisors
+  are green) but the posture was not self-contained; a policy is inert while
+  RLS is off. Grants noise (Supabase-default write privs on nine read-only
+  tables) verified RLS-denied everywhere → documented accepted, no path.
+  RPCs: all three ordering RPCs INVOKER + authenticated-only EXECUTE (live
+  proof above); pairing RPCs definer + safe search_path + service-only;
+  trigger fn invoker + pg_catalog, attached; views security_invoker.
+- PHASE 4 — FK sweep, strict rule (non-partial leading-column, or IS-NOT-NULL
+  partial — planner-provable for RI): 31/36 covered incl. the round-1 trio;
+  THREE documented partial-only exceptions accepted (device_sessions.user_id,
+  analytics_sessions.user_id, cloudstream_adapter_build_jobs.extension_id —
+  personal-scale tables, rare parent deletes, advisor-green; "avoid
+  speculative changes"); the exact exception set is pinned in the new suite.
+- PHASE 3/5 — docs/supabase-remediation-verification.sql FIXED: block 6's
+  OR-over-both-roles "= 0" counter counted BOTH correct role-specific
+  download_providers SELECT policies and reported a false failure — replaced
+  with coverage-based assertions (exactly 1 per-role permissive SELECT, zero
+  dual-role, zero PUBLIC {0}); block 5 strengthened (role + single-role +
+  no WITH CHECK alongside the init-plan expression); block 8 extended with
+  the new drop + its covering unique; new block 0 (RLS-enablement guard).
+  Migration reconciliation re-derived: 94 repo files; history table still
+  unreachable; root cause and round-1 integrity findings unchanged; no
+  history fabrication, no replays, no renames.
+- NEW MIGRATION 20261119000000_supabase_final_audit_hardening.sql (additive,
+  idempotent, single transaction): §1 RLS-enablement guard (to_regclass-
+  guarded enable on direct_play_sources; idempotent re-statement on
+  device_pairing_requests; FORCE deliberately NOT used — SQL-Editor
+  maintenance stays possible); §2 guarded drop of the redundant index (only
+  while the covering unique verifies valid — round-1 guard pattern).
+- NEW SUITE scripts/supabase_final_audit_test.ts (107 checks, registered in
+  the chain right after the round-1 suite): real 35-file chain + both
+  migrations on pglite; pre-state findings reproduced (inert-policy gap,
+  exact-duplicate index, ORIGINAL verification counter's false failure);
+  corrective migration applies + re-applies byte-identical; §1 enforced
+  behaviorally (granted SELECT still filters to 0 rows; granted INSERT
+  raises 42501 policy violation; service-role CRUD intact); §2 removal +
+  refresh end-to-end + duplicate-rejection 23505; the CORRECTED verification
+  SQL executed statement-for-statement with every check green; 36-FK sweep
+  with the exact documented exceptions; full index-matrix pins.
+- Ledgers updated (sanctioned): registry_integration 17→18 + final-audit
+  posture block (no data writes; exactly ONE guarded DROP INDEX; only ALTER
+  is enable row level security); phase4_integration_manager 14→15;
+  phase6_ops_audit 6.6-1b superseded with a documented note (creation text
+  stays pinned in the historical migration; the live index was removed).
+  All three re-run green (188 / 222 / 46).
+- Gates: pnpm check 0e/5w (= baseline); pnpm test full chain green through
+  286/288 suites — supabase_remediation 115/115 + supabase_final_audit
+  107/107 in-chain — stopping at the documented PRE-EXISTING DOM-QA failure
+  (.bulk-btn strict-mode ambiguity, identical at baseline; no src/ change);
+  post-chain season-chip 32/32; pnpm build exit 0; secrets scan + git diff
+  --check clean; scratch files removed before staging.
+- Production status: round-2 migration committed+pushed but NOT applied
+  (no SQL channel here); exact SQL-Editor procedure + corrected verification
+  SQL (16 checks) + advisor re-run documented in
+  SUPABASE_REMEDIATION_REPORT.md §6/§16. Production NOT claimed remediated
+  for round 2. Leaked-password protection untouched (plan exception);
+  Vixolity untouched (disabled).

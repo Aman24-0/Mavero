@@ -117,7 +117,13 @@ ok(/NOT called from any production request path/.test(appCode), '6.5-3a. helper 
 // ============================================================
 // 5 "unused" indexes reviewed: ALL KEPT (each supports a real query path).
 ok(/streaming_public_sources_order_idx/.test(read('supabase/migrations/20260820015000_phase7a_public_mirror_tables.sql')), '6.6-1a. streaming_public_sources_order_idx (reviewed: required for ORDER BY)');
-ok(/streaming_public_source_categories_order_idx/.test(read('supabase/migrations/20260820015000_phase7a_public_mirror_tables.sql')), '6.6-1b. streaming_public_source_categories_order_idx (reviewed: required)');
+// SUPERSEDED (final audit, 20261119000000): the historical migration file still
+// contains the CREATE INDEX text (applied history is never rewritten), but the
+// index itself was removed from the live schema as a provable redundancy — an
+// exact duplicate of the valid unique constraint index over the same
+// (category_id, ordering) columns. See supabase_final_audit_test.ts (which pins
+// the removal and the covering unique index) and SUPABASE_REMEDIATION_REPORT.md.
+ok(/streaming_public_source_categories_order_idx/.test(read('supabase/migrations/20260820015000_phase7a_public_mirror_tables.sql')), '6.6-1b. streaming_public_source_categories_order_idx (creation text pinned in the historical migration; the index was REMOVED by 20261119000000 as provably redundant — exact duplicate of the unique constraint index)');
 ok(/streaming_provider_health_state_idx/.test(read('supabase/migrations/20260822000000_phase7f_provider_health.sql')), '6.6-1c. streaming_provider_health_state_idx (reviewed: required for health-state filter)');
 ok(/watch_history_occurred_at_idx/.test(read('supabase/migrations/20260922000000_phase3_watch_history_retention.sql')), '6.6-1d. watch_history_occurred_at_idx (reviewed: required for prune DELETE)');
 ok(/streaming_categories_public_idx/.test(read('supabase/migrations/20260820010000_phase7a_streaming_registry.sql')), '6.6-1e. streaming_categories_public_idx (reviewed: required for enabled + ordering)');
