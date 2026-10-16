@@ -1184,8 +1184,13 @@ function pristineFile(relative: string): string | null {
   // six rows seeded DISABLED/experimental). No
   // cloudstream/downloader/registry tables touched — see the migration
   // header and WORKLOG.md for the verified provider contracts.
+  // VIDSTUCK CC ORIGINS (20261117000000, sanctioned): ONE id/slug/adapter
+  // guarded, stale-origin-guarded jsonb_set UPDATE swapping the DEAD
+  // vidstuck.xyz allowlist entries for the verified https://vidstuck.cc
+  // origin on the VidStuck provider row ONLY. No cloudstream/downloader/
+  // registry tables touched — live verification evidence in WORKLOG.md.
   ok(
-    addedMigrations.length === 12
+    addedMigrations.length === 13
       && addedMigrations.includes('20261004000000_unified_downloader_global_order.sql')
       && addedMigrations.includes('20261102000000_adapter_build_lifecycle.sql')
       && addedMigrations.includes('20261103000000_live_tv_analytics_events.sql')
@@ -1197,8 +1202,9 @@ function pristineFile(relative: string): string | null {
       && addedMigrations.includes('20261112000000_blue_velvet_provider.sql')
       && addedMigrations.includes('20261113000000_vixolity_tgvid_zxcstream_providers.sql')
       && addedMigrations.includes('20261015000000_add_poster_to_media_items.sql')
+      && addedMigrations.includes('20261117000000_vidstuck_cc_embed_origins.sql')
       && addedMigrations.includes('20261014000000_add_unlink_action.sql'),
-    `F3: the ONLY added migrations are the FINAL TASK unified-order + build-lifecycle + LT-5-analytics + LT-15-fallback-event + VidRift-provider + MAVP-4-icon-badge + MAVP-5-default-slots + MAVP-7-unique-assignment + BlueVelvet-provider + Vixolity/TGVID/ZXCStream-provider migrations (${addedMigrations.join(', ') || 'none'})`,
+    `F3: the ONLY added migrations are the FINAL TASK unified-order + build-lifecycle + LT-5-analytics + LT-15-fallback-event + VidRift-provider + MAVP-4-icon-badge + MAVP-5-default-slots + MAVP-7-unique-assignment + BlueVelvet-provider + Vixolity/TGVID/ZXCStream-provider + VidStuck-cc-origins migrations (${addedMigrations.join(', ') || 'none'})`,
   );
   ok(removedMigrations.length === 0, 'F3: no migration was removed');
 

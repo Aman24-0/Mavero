@@ -402,17 +402,24 @@ export const MOVIESNEXUS_CAPABILITIES: ProviderPlaybackCapabilities = {
 };
 
 /**
- * VidStuck — embed.vidstuck.xyz/documentation + live/code verification
- * (2026-09-26).
+ * VidStuck — vidstuck.cc (2026-10 domain migration) + live/code verification
+ * (originally verified 2026-09-26 at the .xyz era; RE-VERIFIED 2026-10-16).
+ *
+ * 2026-10-16 RE-VERIFICATION (live probes): the provider moved from
+ * vidstuck.xyz to **vidstuck.cc**. The .cc embed URLs (movie + tv) return
+ * HTTP 200 with ZERO redirects — the player STAYS on vidstuck.cc, so the
+ * embed origin and the postMessage origin are the SAME host. The old
+ * vidstuck.xyz / embed.vidstuck.xyz hosts are DEAD (connection failures).
+ * The documented query parameters (branding/server/dubLang/dubType/loading/
+ * back) are consumed by the .cc app bundle — none rejected.
  *
  * VERIFIED (live postMessage capture AND provider player bundle code):
  *   VIDEO_PROGRESS — posted as an OBJECT (the provider's own docs describe
  *   an outdated JSON-string form; the live/bundle contract is
  *   {type:"VIDEO_PROGRESS", payload:{currentTime,duration,tmdbId,
  *   media_type,season,episode}}). The adapter accepts both shapes.
- *   Message origin: https://embed.vidstuck.xyz (the documented
- *   https://vidstuck.xyz/embed/... URL 302-redirects there; messages arrive
- *   from the post-redirect origin).
+ *   Message origin: https://vidstuck.cc (the only verified origin — no
+ *   redirect target exists anymore).
  * VERIFIED (live): ?progress= seeds playback position (currentTime started
  *   at exactly 120 with progress=120) — the resume parameter.
  * VERIFIED (documentation): ?branding= (loading-screen text),

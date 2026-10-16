@@ -35,9 +35,9 @@ import { ZxcStreamPlayerAdapter } from './providers/zxcstream-adapter';
  *   9. VidPhantomPlayerAdapter — handles `https://vidphantom.com` (skeleton).
  *  10. MoviesNexusPlayerAdapter — handles `https://www.moviesnexus.fun`
  *      (the sv=4k and sv=multiaudio2 sources share one origin/adapter).
- *  11. VidStuckPlayerAdapter — handles `https://vidstuck.xyz` /
- *      `https://embed.vidstuck.xyz` (single source; internal server
- *      selection stays inside the iframe).
+ *  11. VidStuckPlayerAdapter — handles `https://vidstuck.cc`
+ *      (2026-10 domain migration from the dead vidstuck.xyz pair; single
+ *      source; internal server selection stays inside the iframe).
  *  12. VidRiftPlayerAdapter — handles `https://embed.vidrift.net`
  *      (movie/TV/anime embeds; progress + paused/unpaused + ended +
  *      next-up via the documented vidrift: postMessage contract; resume

@@ -19,10 +19,11 @@ import {
   upsertDefaultSource, setDefaultSourceSlots,
   createProvider, updateProvider, deleteProvider,
   createSource, updateSource, deleteSource,
+  reorderSourceOrderings,
 } from '$lib/server/streaming/admin-service';
 import { classifyAdminMutationError } from '$lib/server/streaming/mutation-result';
 import { lookupProviderCapabilities } from '$lib/shared/player-capabilities';
-import { parseProviderForm, parseSourceForm, parseId } from '$lib/server/streaming/validation';
+import { parseProviderForm, parseSourceForm, parseId, parseBulkOrderings } from '$lib/server/streaming/validation';
 
 const VALID_TABS = new Set(['providers', 'sources']);
 
@@ -73,7 +74,7 @@ export const actions: Actions = {
   createProvider: async ({ request, locals }) => {
     await requireAdmin(locals, { redirectTo: '/admin/system/api-sources' });
     try {
-      const provider = await createProvider(locals.supabase, parseProviderForm(await request.formData()));
+      const provider = await createProvider(locals.supabase, await parseProviderForm(await request.formData()));
       throw redirect(303, `/admin/system/api-sources?tab=providers&notice=${encodeURIComponent(`Created ${provider.name}.`)}`);
     } catch (error) {
       if (isRedirect(error)) throw error;
@@ -86,7 +87,11 @@ export const actions: Actions = {
     try {
       const form = await request.formData();
       const id = parseId(form, 'Provider');
-      const parsed = parseProviderForm(form);
+      // 2026-10-16 round: forUpdate semantics — an empty icon field on the
+      // edit path means NO CHANGE (upload file > explicit icon_remove flag >
+      // submitted URL > no-change). "No new file selected" can never erase a
+      // saved icon.
+      const parsed = await parseProviderForm(form, { forUpdate: true });
       const { id: _ignored, ...input } = { id, ...parsed };
       const { data: existing } = await locals.supabase.from('streaming_providers').select('capabilities').eq('id', id).maybeSingle();
       const existingCapabilities = (existing?.capabilities && typeof existing.capabilities === 'object' && !Array.isArray(existing.capabilities))
@@ -145,7 +150,17 @@ export const actions: Actions = {
     try {
       const form = await request.formData();
       const id = parseId(form, 'Source');
-      const parsed = await parseSourceForm(form);
+      // 2026-10-16 round: forUpdate semantics — an EMPTY icon field on the
+      // edit path means NO CHANGE (upload file > explicit icon_remove flag >
+      // submitted value > no-change). This is the root-cause fix for the
+      // reported "editing an unrelated field erases the saved icon": the
+      // upload input mode submits '' when no NEW file is picked, which the
+      // previous contract interpreted as removal. The form also no longer
+      // submits a global ordering field (the dedicated bulk-reposition
+      // editor is authoritative) — an absent ordering key on update is
+      // OMITTED from the payload so unrelated saves can never clobber the
+      // saved global ordering.
+      const parsed = await parseSourceForm(form, { forUpdate: true });
 
       // FINDING-006 fix: MERGE capabilities with existing instead of
       // wiping. parseSourceForm() reads `capabilities` from the form,
@@ -212,6 +227,27 @@ export const actions: Actions = {
     } catch (error) {
       if (isRedirect(error)) throw error;
       const result = classifyAdminMutationError(error, 'Unable to delete source.');
+      return fail(result.status === 'unknown' ? 503 : 400, { message: result.message, mutationStatus: result.status });
+    }
+  },
+
+  // 2026-10-16 round (Issue 5): UNIFIED BULK REPOSITION for the GLOBAL
+  // source ordering — the authoritative ordering workflow for sources (the
+  // per-sheet Ordering field was REMOVED). The client submits
+  // `ordering_<source_id>` for EVERY source (prefilled from the saved
+  // values); the service re-validates completeness, integer bounds and
+  // duplicate orderings server-side before any write. The interactive form
+  // uses use:enhance — success invalidates the load in place (no full-page
+  // reload); a failed save keeps the admin's edits visible.
+  reorderSources: async ({ request, locals }) => {
+    await requireAdmin(locals, { redirectTo: '/admin/system/api-sources' });
+    try {
+      const positions = parseBulkOrderings(await request.formData(), 'ordering_', 'Source');
+      await reorderSourceOrderings(locals.supabase, positions.map(({ id, ordering }) => ({ sourceId: id, ordering })));
+      throw redirect(303, `/admin/system/api-sources?tab=sources&notice=Source%20order%20saved.`);
+    } catch (error) {
+      if (isRedirect(error)) throw error;
+      const result = classifyAdminMutationError(error, 'Unable to reorder sources.');
       return fail(result.status === 'unknown' ? 503 : 400, { message: result.message, mutationStatus: result.status });
     }
   },

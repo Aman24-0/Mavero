@@ -562,17 +562,29 @@ function rejectingSupabaseClient(): any {
     // full ordering — it derives the final order SERVER-SIDE from the
     // database's current assignments (numeric position workflow).
     ok(server.includes('applyCategorySourcePositions(locals.supabase, categoryId, positions)'), 'I4 (superseded MAVP-7): the reorder action derives the order server-side via applyCategorySourcePositions (numeric position workflow)');
-    ok(!server.includes('reorderCategorySources'), 'I4 (superseded MAVP-7): the action no longer trusts a client-assembled full ordering (reorderCategorySources import removed)');
+    // 2026-10-16 round RE-PIN (Issue 5, unified bulk reposition): a bulk
+    // action (reorderSourcesBulk) now accepts the COMPLETE intended order —
+    // the trust concern is closed SERVER-SIDE: the service validates the
+    // submitted set against the category's REAL assignments (every assigned
+    // source exactly once, no unknown ids) and persists through the ATOMIC
+    // reorder_category_sources RPC (single transaction, two-phase renumber).
+    // The client can never inject an order for rows it does not own.
+    ok(server.includes('reorderSourcesBulk'), 'I4 (re-pinned 2026-10-16): the bulk reorder action exists');
+    ok(server.includes('parseBulkOrderedIds'), 'I4 (re-pinned 2026-10-16): the bulk payload is strictly parsed (UUID shapes, no duplicate entries)');
+    ok(server.includes('reorderCategorySources(locals.supabase, categoryId, orderedSourceIds)'), 'I4 (re-pinned 2026-10-16): the bulk order persists through the ATOMIC service/RPC path');
     ok(server.includes('assignSourceToCategory') && server.includes('deleteSourceCategory'), 'I4: the assign/remove actions reuse the EXISTING service-layer methods (no competing data model)');
 
     const page = read('../src/routes/admin/system/content-rules/+page.svelte');
     const pageCode = codeOnly(page);
     ok(pageCode.includes('action="?/assignSource"'), 'I4: the category editor renders the assign form');
     ok(pageCode.includes('action="?/removeSource"'), 'I4: the category editor renders the remove form');
-    ok(pageCode.includes('action="?/reorderSources"'), 'I4: the category editor renders the reorder forms');
-    // MAVP-7 supersession: the numeric position workflow submits ONE
-    // position_<sourceId> target per row (the server derives the rest).
-    ok(pageCode.includes('name={`position_${row.sourceId}`}') || pageCode.includes('position_${row.sourceId}'), 'I4 (superseded MAVP-7): the reorder form submits the documented position_<sourceId> target field');
+    // 2026-10-16 round (Issue 5): the per-row reorder forms were REPLACED by
+    // the unified bulk reposition editor (one Reposition action, prefilled
+    // saved values, live shared validation, ONE request). The single-row
+    // move API remains server-side (no UI caller, tests unchanged).
+    ok(pageCode.includes('action="?/reorderSourcesBulk"'), 'I4 (re-pinned 2026-10-16): the category editor renders the BULK reorder form');
+    ok(pageCode.includes('Reposition'), 'I4 (re-pinned 2026-10-16): the editor exposes the one clear Reposition action');
+    ok(pageCode.includes('use:enhance'), 'I4 (re-pinned 2026-10-16): mutations are enhanced (no full-page reload)');
     ok(pageCode.includes('Sources in this category'), 'I4: the source-management section has a clear heading');
     ok(pageCode.includes('No sources assigned to this category yet.'), 'I4: the section shows a clear EMPTY state');
     ok(pageCode.includes('No unassigned sources remain'), 'I4 (superseded MAVP-7): the assign select shows its exhausted state (global-uniqueness wording)');

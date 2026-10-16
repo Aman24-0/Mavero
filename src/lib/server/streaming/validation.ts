@@ -49,6 +49,60 @@ function nonNegativeInteger(value: FormDataEntryValue | null, label: string, fal
   return parsed;
 }
 
+/**
+ * Icon/badge persistence contract (2026-10-16 round — "no-change ≠ erase"):
+ *
+ * The edit sheet ALWAYS submits the hidden presentation fields (icon, badge),
+ * so an untouched field cannot be detected by ABSENCE from the payload. The
+ * previously shipped semantics treated a submitted EMPTY icon as "remove" —
+ * which silently erased a saved PNG-upload icon whenever an administrator
+ * edited an UNRELATED field (the upload input mode submits '' when no NEW
+ * file is picked; every configured production source stores a PNG data URL).
+ *
+ * The corrected contract (mirrored by the Admin form):
+ *   * an UPLOADED FILE (`icon_file`) always wins — replace;
+ *   * an explicit removal flag (`icon_remove=true`) → null — removal;
+ *   * a non-empty submitted value → validated and stored — replace;
+ *   * an EMPTY submitted value → on CREATE null (no icon), on UPDATE
+ *     `undefined` (NO CHANGE — supabase-js drops undefined keys from the
+ *     update payload, exactly like the {enabled}-only toggle path).
+ * "No new file selected" can therefore never mean "delete the saved icon",
+ * and explicit removal remains a deliberate, visible action.
+ */
+async function resolvedSourceIconValue(form: FormData, forUpdate: boolean): Promise<string | null | undefined> {
+  const uploaded = await iconFileValue(form);
+  if (uploaded) return uploaded;
+  if (booleanValue(form.get('icon_remove'))) return null;
+  const submitted = String(form.get('icon') ?? '').trim();
+  if (submitted) return iconValue(submitted);
+  return forUpdate ? undefined : null;
+}
+
+/**
+ * Provider icon resolution — the SAME no-change-≠-erase contract as sources
+ * (resolvedSourceIconValue above), plus the provider-specific accepted
+ * shapes: the established https(s) URL contract (parseProviderIconField /
+ * icon-url.ts) OR a bounded data URL (the shared upload pipeline — PNG
+ * magic bytes / sanitized SVG — stored by the SAME mechanism as source
+ * icons). Legacy source-icon KEYS are intentionally NOT accepted for
+ * providers (providers never had a key grid; their icon is a URL or an
+ * uploaded data URL).
+ */
+async function resolvedProviderIconValue(form: FormData, forUpdate: boolean): Promise<string | null | undefined> {
+  const uploaded = await iconFileValue(form);
+  if (uploaded) return uploaded;
+  if (booleanValue(form.get('icon_remove'))) return null;
+  const submitted = String(form.get('icon') ?? '').trim();
+  if (submitted) {
+    if (/^data:image\/(png|svg\+xml);base64,/.test(submitted)) {
+      // Bounded revalidation of a stored upload (same contract as sources).
+      return iconValue(submitted);
+    }
+    return parseProviderIconField(submitted);
+  }
+  return forUpdate ? undefined : null;
+}
+
 function jsonObject(value: FormDataEntryValue | null, label: string): JsonObject {
   const raw = String(value ?? '').trim();
   if (!raw) return {};
@@ -221,7 +275,16 @@ export function validateSlug(value: string, label = 'Slug'): string {
   return slug;
 }
 
-export function parseProviderForm(form: FormData) {
+/**
+ * Provider create/update form (2026-10-16 round): the icon field now goes
+ * through resolvedProviderIconValue — URL contract preserved, UPLOAD added
+ * (same pipeline/validation as source icons), explicit removal flag added,
+ * and an EMPTY icon field on UPDATE means NO CHANGE (never an erase).
+ * ASYNC (like parseSourceForm): an uploaded icon file is validated and
+ * normalized (PNG magic bytes / SVG sanitization) before it becomes the
+ * stored data-URL value.
+ */
+export async function parseProviderForm(form: FormData, options: { forUpdate?: boolean } = {}) {
   const adapterId = text(form.get('adapter_id'), 'Adapter ID', 80);
   if (adapterId && !adapterPattern.test(adapterId)) throw new StreamingValidationError('Adapter ID must use lowercase letters, numbers, hyphens, underscores, or periods.');
   return {
@@ -231,8 +294,10 @@ export function parseProviderForm(form: FormData) {
     // FINDING-017 fix: validate provider icon as a URL (http/https only).
     // Previously this was loose `text()` validation that accepted
     // arbitrary strings — the same vulnerability as download_providers.icon.
-    // Now: the icon must be a valid http/https URL (or null/empty).
-    icon: parseProviderIconField(form.get('icon')),
+    // Now: the icon must be a valid http/https URL, a validated upload data
+    // URL, an explicit removal, or empty (null on create / no-change on
+    // update).
+    icon: await resolvedProviderIconValue(form, options.forUpdate === true),
     status: enumValue(form.get('status'), 'Provider status', providerStatuses, 'experimental') as ProviderStatus,
     enabled: booleanValue(form.get('enabled')),
     integration_type: enumValue(form.get('integration_type'), 'Integration type', integrationTypes, 'template') as IntegrationType,
@@ -506,10 +571,24 @@ function withPlayerControlsPosition(capabilities: JsonObject, position: JsonObje
  * SVG sanitization) before it becomes the stored data-URL value. When a
  * file is present it takes precedence over the `icon` field; without one
  * the `icon` field carries a legacy key, data URL, pasted markup or URL.
+ *
+ * 2026-10-16 round: options.forUpdate switches the ICON and ORDERING
+ * semantics for the EDIT path:
+ *   * icon — resolvedSourceIconValue (upload > explicit icon_remove >
+ *     submitted value > NO CHANGE on empty). On the create path an empty
+ *     icon stays null exactly as before.
+ *   * ordering — the sheet no longer submits a global-ordering field (the
+ *     authoritative ordering workflow is the dedicated bulk-reposition
+ *     editor); when the form carries NO ordering field on an update the
+ *     key is OMITTED from the payload (undefined) so an unrelated save can
+ *     never clobber the saved global ordering. A form that DOES submit an
+ *     ordering value is validated exactly as before.
  */
-export async function parseSourceForm(form: FormData) {
+export async function parseSourceForm(form: FormData, options: { forUpdate?: boolean } = {}) {
+  const forUpdate = options.forUpdate === true;
   const providerId = requiredText(form.get('provider_id'), 'Provider', 80);
   if (!/^[0-9a-f-]{36}$/i.test(providerId)) throw new StreamingValidationError('Provider is invalid.');
+  const orderingRaw = form.get('ordering');
   return {
     provider_id: providerId,
     name: requiredText(form.get('name'), 'Source name', 120),
@@ -517,13 +596,15 @@ export async function parseSourceForm(form: FormData) {
     description: text(form.get('description'), 'Description', 500),
     // Task 13 / MAVP-4: presentation metadata — constrained values only,
     // parsed by badgeValue/iconValue/iconFileValue above. The uploaded file
-    // (when present) wins over the icon field.
+    // (when present) wins over the icon field. 2026-10-16: an EMPTY icon on
+    // update means NO CHANGE (never an erase); removal is the explicit
+    // icon_remove flag.
     badge: badgeValue(form.get('badge')),
-    icon: (await iconFileValue(form)) ?? iconValue(form.get('icon')),
+    icon: await resolvedSourceIconValue(form, forUpdate),
     enabled: booleanValue(form.get('enabled')),
     visibility: enumValue(form.get('visibility'), 'Visibility', sourceVisibilities, 'public') as SourceVisibility,
     status: enumValue(form.get('status'), 'Source status', providerStatuses, 'experimental') as ProviderStatus,
-    ordering: nonNegativeInteger(form.get('ordering'), 'Ordering'),
+    ordering: (forUpdate && orderingRaw === null) ? undefined : nonNegativeInteger(orderingRaw, 'Ordering'),
     integration_type: (() => {
       const value = String(form.get('integration_type') ?? '').trim();
       return value ? enumValue(form.get('integration_type'), 'Integration type', integrationTypes, 'template') as IntegrationType : null;
@@ -553,13 +634,21 @@ export async function parseSourceForm(form: FormData) {
   };
 }
 
-export function parseCategoryForm(form: FormData) {
+/**
+ * Category create/update form. 2026-10-16 round: options.forUpdate makes
+ * the ordering key OPTIONAL on the edit path (omitted from the payload when
+ * the form no longer submits it — the authoritative ordering workflow is
+ * the dedicated bulk-reposition editor, so an unrelated category save can
+ * never clobber the saved ordering).
+ */
+export function parseCategoryForm(form: FormData, options: { forUpdate?: boolean } = {}) {
+  const orderingRaw = form.get('ordering');
   return {
     name: requiredText(form.get('name'), 'Category name', 120),
     slug: validateSlug(requiredText(form.get('slug'), 'Category slug', 120), 'Category slug'),
     description: text(form.get('description'), 'Description', 500),
     enabled: booleanValue(form.get('enabled'), true),
-    ordering: nonNegativeInteger(form.get('ordering'), 'Ordering'),
+    ordering: (options.forUpdate === true && orderingRaw === null) ? undefined : nonNegativeInteger(orderingRaw, 'Ordering'),
   };
 }
 
@@ -567,6 +656,47 @@ export function parseId(form: FormData, label: string): string {
   const id = requiredText(form.get('id'), label, 80);
   if (!/^[0-9a-f-]{36}$/i.test(id)) throw new StreamingValidationError(`${label} is invalid.`);
   return id;
+}
+
+/**
+ * 2026-10-16 round (Issue 5): parse a BULK REORDER payload — the COMPLETE
+ * intended order of one list submitted as a repeated form field
+ * (`ordered_source_ids`), first entry = position 1. Every entry must be a
+ * UUID; the SERVICE layer validates completeness against the database's
+ * actual rows (this parser only checks shapes) and persists atomically.
+ */
+export function parseBulkOrderedIds(form: FormData, field: string, label: string): string[] {
+  const ids: string[] = [];
+  for (const value of form.getAll(field)) {
+    const id = String(value ?? '').trim();
+    if (!/^[0-9a-f-]{36}$/i.test(id)) throw new StreamingValidationError(`${label} contains an invalid identifier.`);
+    ids.push(id);
+  }
+  if (new Set(ids).size !== ids.length) throw new StreamingValidationError(`${label} contains a duplicate entry.`);
+  return ids;
+}
+
+/**
+ * 2026-10-16 round (Issue 5): parse a BULK ORDERING payload —
+ * `<prefix>_<uuid>` repeated fields carrying the intended position for
+ * EVERY row of a global list (e.g. `ordering_<category_id>`). Values are
+ * non-negative integers (global orderings permit gaps); the SERVICE layer
+ * validates completeness + duplicate orderings against the database's
+ * actual rows before any write.
+ */
+export function parseBulkOrderings(form: FormData, fieldPrefix: string, label: string): Array<{ id: string; ordering: number }> {
+  const positions: Array<{ id: string; ordering: number }> = [];
+  const seen = new Set<string>();
+  for (const [key, value] of form.entries()) {
+    if (!key.startsWith(fieldPrefix)) continue;
+    const id = key.slice(fieldPrefix.length);
+    if (!/^[0-9a-f-]{36}$/i.test(id)) throw new StreamingValidationError(`${label} is invalid.`);
+    if (seen.has(id)) throw new StreamingValidationError(`${label} has more than one ordering value.`);
+    seen.add(id);
+    positions.push({ id, ordering: nonNegativeInteger(value, 'Ordering') });
+  }
+  if (!positions.length) throw new StreamingValidationError(`${label} reposition payload is empty.`);
+  return positions;
 }
 
 export function parseSourceCategoryForm(form: FormData) {

@@ -24,6 +24,11 @@ function throwsStreamingValidation(action: () => unknown, label: string) {
   passed += 1;
 }
 
+async function rejectsStreamingValidation(action: () => unknown, label: string) {
+  await assert.rejects(action, StreamingValidationError, label);
+  passed += 1;
+}
+
 function form(values: Record<string, string | boolean>): FormData {
   const form = new FormData();
   for (const [key, value] of Object.entries(values)) form.append(key, String(value));
@@ -168,7 +173,9 @@ const VALID_DRAFT = {
 // 8. Existing streaming provider/source types remain unchanged
 // ---------------------------------------------------------------------------
 {
-  const provider = parseProviderForm(form({ name: 'Fixture Provider', slug: 'fixture-provider', status: 'experimental', integration_type: 'template', capabilities: '{"movies":true}', enabled: false }));
+  // 2026-10-16 round supersession (documented, Issue 4): parseProviderForm is
+  // now ASYNC (multipart icon-file processing) — the field contract is unchanged.
+  const provider = await parseProviderForm(form({ name: 'Fixture Provider', slug: 'fixture-provider', status: 'experimental', integration_type: 'template', capabilities: '{"movies":true}', enabled: false }));
   assert.deepEqual(provider.capabilities, { movies: true, sandbox_policy: 'required' });
   passed += 1;
   ok(provider.slug === 'fixture-provider', 'provider form contract unchanged');
@@ -177,7 +184,7 @@ const VALID_DRAFT = {
   // (multipart icon-file processing) — the field contract is unchanged.
   const source = await parseSourceForm(form({ provider_id: '3e7181a3-3999-4844-92bf-4f0afbc5b70f', name: 'Fixture Source', slug: 'fixture-source', identifier_mode: 'tmdb_id', status: 'experimental', visibility: 'public', ordering: '2' }));
   ok(source.identifier_mode === 'tmdb_id', 'source form contract unchanged');
-  throwsStreamingValidation(() => parseProviderForm(form({ name: 'Bad', slug: 'BAD_SLUG', status: 'experimental', integration_type: 'template' })), 'provider slug contract unchanged');
+  await rejectsStreamingValidation(() => parseProviderForm(form({ name: 'Bad', slug: 'BAD_SLUG', status: 'experimental', integration_type: 'template' })), 'provider slug contract unchanged');
 
   const dbTypes = readFileSync(new URL('../src/lib/server/supabase/database.types.ts', import.meta.url), 'utf8');
   for (const table of ['streaming_providers', 'streaming_sources', 'streaming_categories', 'streaming_default_sources', 'streaming_config_meta']) {

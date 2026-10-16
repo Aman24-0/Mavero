@@ -12,6 +12,7 @@
 
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
+  import { enhance } from '$app/forms';
   import AdminAppShell from '$lib/components/admin2/AdminAppShell.svelte';
   import AdminPage from '$lib/components/admin2/AdminPage.svelte';
   import AdminStatus from '$lib/components/admin2/AdminStatus.svelte';
@@ -36,6 +37,10 @@
   // parser and mapped by the shared preview geometry helper, so the preview
   // can never diverge from the runtime interpretation.
   import { CONTROLS_SIZE_MIN_PX, CONTROLS_SIZE_MAX_PX, BACK_CONTROL_DEFAULT_SIZE_PX, LANDSCAPE_CONTROL_DEFAULT_SIZE_PX, parsePlayerControlsPosition, controlsPreviewMarkerStyle, CONTROLS_PREVIEW_REFERENCE_PORTRAIT, CONTROLS_PREVIEW_REFERENCE_LANDSCAPE } from '$lib/shared/player-controls-position';
+  // 2026-10-16 round (Issue 5): the unified bulk-reposition validation
+  // contract shared by every Admin ordering list (live duplicate/blank/
+  // zero/negative/decimal rejection with the server as the authority).
+  import { validateRepositionSet, repositionDraftFromEntries, repositionDraftIsDirty } from '$lib/shared/bulk-reposition';
   import type { PageData, ActionData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -67,14 +72,69 @@
   let editingProvider: any = $state(null);
   let providerSheetTrigger: HTMLElement | null = null;
 
+  // Issue 4 (2026-10-16 round): PROVIDER ICON editor — URL field PRESERVED,
+  // file UPLOAD added through the SAME server pipeline as source icons
+  // (`icon_file` multipart; PNG magic-byte check / SVG sanitization server-
+  // side), explicit remove checkbox, live preview, and the SAME precedence
+  // rule the source editor uses (an uploaded file wins over the URL; the
+  // selected result is visible before save). "No file selected" never
+  // erases a saved icon — the server's update contract treats an empty icon
+  // field as NO CHANGE; removal is the explicit checkbox.
+  let providerIconUrlDraft = $state('');
+  let providerIconFileDataUrl = $state('');
+  let providerIconFileName = $state('');
+  let providerIconRemove = $state(false);
+  let providerIconPreviewFailed = $state(false);
+
+  function resetProviderIconDrafts() {
+    providerIconPreviewFailed = false;
+    providerIconFileDataUrl = '';
+    providerIconFileName = '';
+    providerIconRemove = false;
+    const stored = typeof editingProvider?.icon === 'string' ? editingProvider.icon.trim() : '';
+    providerIconUrlDraft = /^https?:\/\//.test(stored) ? stored : '';
+  }
+
+  function handleProviderIconFileChange(event: Event) {
+    const input = event.currentTarget instanceof HTMLInputElement ? event.currentTarget : null;
+    const file = input?.files?.[0];
+    providerIconPreviewFailed = false;
+    if (!file) {
+      providerIconFileName = '';
+      providerIconFileDataUrl = '';
+      return;
+    }
+    providerIconFileName = file.name;
+    const reader = new FileReader();
+    reader.onload = () => {
+      providerIconFileDataUrl = typeof reader.result === 'string' ? reader.result : '';
+    };
+    reader.readAsDataURL(file);
+  }
+
+  /** The preview the admin sees BEFORE save — upload > URL draft > stored value. */
+  const providerIconPreviewUrl = $derived.by(() => {
+    if (providerIconRemove) return '';
+    if (providerIconFileDataUrl) return providerIconFileDataUrl;
+    const url = providerIconUrlDraft.trim();
+    if (url) return url;
+    const stored = typeof editingProvider?.icon === 'string' ? editingProvider.icon.trim() : '';
+    return /^(https?:\/\/|data:image\/)/.test(stored) ? stored : '';
+  });
+
+  /** Hidden `icon` field value: '' in upload mode / explicit removal, else the URL draft. */
+  const providerIconSubmitValue = $derived(providerIconFileDataUrl ? '' : providerIconUrlDraft.trim());
+
   function openCreateProvider(event?: Event) {
     if (event) providerSheetTrigger = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
     editingProvider = null;
+    resetProviderIconDrafts();
     providerSheetOpen = true;
   }
   function openEditProvider(provider: any, event?: Event) {
     if (event) providerSheetTrigger = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
     editingProvider = provider;
+    resetProviderIconDrafts();
     providerSheetOpen = true;
   }
   function closeProviderSheet() {
@@ -223,6 +283,7 @@
     iconSvgDraft = '';
     iconUrlDraft = '';
     iconPreviewDataUrl = '';
+    iconRemoveChecked = false;
     if (kind === 'svg-data') {
       iconMode = 'svg';
       iconSvgDraft = decodeSvgDataUrl(storedIcon);
@@ -508,6 +569,48 @@
     editingSource = null;
   }
 
+  // Issue 3 (2026-10-16 round): explicit icon-removal control for the source
+  // sheet. The server's update contract now treats an EMPTY icon field as
+  // NO CHANGE (the root-cause fix for "editing an unrelated field erases the
+  // saved icon"), so removal must be a deliberate, visible action: this
+  // checkbox submits icon_remove=true → the server stores null. Offered
+  // ONLY when an icon is actually saved.
+  let iconRemoveChecked = $state(false);
+  const storedSourceIconExists = $derived(Boolean(typeof editingSource?.icon === 'string' && editingSource.icon.trim()));
+
+  // Issue 5 (2026-10-16 round): UNIFIED BULK REPOSITION for the GLOBAL source
+  // ordering — the authoritative workflow (the per-sheet Ordering field is
+  // REMOVED below). One “Reposition” action over the Sources list; prefilled
+  // saved values; live shared validation (blank/zero/negative/decimal/
+  // duplicate values disable Apply immediately); ONE request; enhanced
+  // submission (no full-page reload; failed saves keep the edits visible).
+  // Global ordering contract: gaps permitted, values may start at 0.
+  let sourcesListRepositioning = $state(false);
+  let sourcesListDrafts = $state<Record<string, string>>({});
+  let sourcesListSaving = $state(false);
+
+  const sourcesListEntries = $derived(
+    (data.sources as any[])
+      .slice()
+      .sort((a, b) => (a.ordering ?? 0) - (b.ordering ?? 0))
+      .map((source) => ({ id: source.id, savedPosition: source.ordering ?? 0 })),
+  );
+  const sourcesListValidation = $derived(
+    sourcesListRepositioning
+      ? validateRepositionSet(sourcesListEntries, sourcesListDrafts, { minPosition: 0 })
+      : null,
+  );
+  const sourcesListDirty = $derived(sourcesListRepositioning && repositionDraftIsDirty(sourcesListEntries, sourcesListDrafts));
+
+  function startSourcesListReposition() {
+    sourcesListDrafts = repositionDraftFromEntries(sourcesListEntries);
+    sourcesListRepositioning = true;
+  }
+  function cancelSourcesListReposition() {
+    sourcesListRepositioning = false;
+    sourcesListDrafts = {};
+  }
+
   // --- Helpers ---
   function statusTone(status: string): 'good' | 'warn' | 'bad' | 'neutral' {
     if (status === 'active' || status === 'experimental') return 'good';
@@ -615,7 +718,17 @@
           {#each data.providers as provider (provider.id)}
             <div class="a2-provider-row" data-enabled={provider.enabled}>
               <div class="a2-provider-row-main">
-                <span class="a2-provider-row-icon">{provider.icon ?? '🔧'}</span>
+                <span class="a2-provider-row-icon">
+                  <!-- Issue 4 (2026-10-16 round): rich provider icons render as
+                       script-inert <img> surfaces (uploaded data URLs / https
+                       URLs); legacy emoji/text values keep rendering exactly
+                       as before. -->
+                  {#if typeof provider.icon === 'string' && /^(https?:\/\/|data:image\/)/.test(provider.icon.trim())}
+                    <img src={provider.icon.trim()} alt="" width="22" height="22" loading="lazy" onerror={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
+                  {:else}
+                    {provider.icon ?? '🔧'}
+                  {/if}
+                </span>
                 <div class="a2-provider-row-info">
                   <div class="a2-provider-row-name">{provider.name}</div>
                   <div class="a2-provider-row-meta">
@@ -660,7 +773,57 @@
           <p>Create the first playback source to expose content to the application.</p>
           <AdminAddButton label="Add source" onclick={openCreateSource} />
         </div>
+      {:else if sourcesListRepositioning}
+        <!-- 2026-10-16 round (Issue 5): the UNIFIED bulk reposition editor —
+             the authoritative global ordering workflow for sources. Every
+             input is prefilled with the SAVED ordering; the complete set is
+             validated live by the shared helper (gaps permitted — the saved
+             values are shown verbatim, never renumbered); Apply submits ONE
+             request and the enhanced submission updates the list in place
+             (no full-page reload). Cancel discards only the unsaved edits. -->
+        <form
+          method="POST"
+          action="?/reorderSources"
+          class="a2-reposition-form"
+          use:enhance={() => {
+            sourcesListSaving = true;
+            return async ({ update, result }) => {
+              await update({ reset: false });
+              sourcesListSaving = false;
+              if (result.type === 'success' || result.type === 'redirect') {
+                sourcesListRepositioning = false;
+                sourcesListDrafts = {};
+              }
+            };
+          }}
+        >
+          <p class="a2-field-hint">Edit the numbers to reposition the global source order (used by resolver ranking and the default-source fallback). Values are validated live — Apply stays disabled until the whole set is valid. Cancel discards unsaved edits.</p>
+          {#if sourcesListValidation?.setError}
+            <div class="a2-form-error" role="alert">{sourcesListValidation.setError}</div>
+          {/if}
+          <div class="a2-assigned-list">
+            {#each sourcesListEntries as entry (entry.id)}
+              {@const source = (data.sources as any[]).find((candidate) => candidate.id === entry.id)}
+              {@const rowError = sourcesListValidation?.errors[entry.id] ?? null}
+              <div class="a2-assigned-row">
+                <label class="a2-position-field">
+                  <span>Order</span>
+                  <input type="number" name={`ordering_${entry.id}`} value={sourcesListDrafts[entry.id] ?? String(entry.savedPosition)} min="0" step="1" inputmode="numeric" class:invalid={Boolean(rowError)} aria-invalid={rowError ? 'true' : undefined} aria-label={`Ordering for ${source?.name ?? 'source'}`} oninput={(e) => { sourcesListDrafts = { ...sourcesListDrafts, [entry.id]: (e.currentTarget as HTMLInputElement).value }; }} />
+                </label>
+                <span class="a2-assigned-name">{source?.name ?? 'Unknown source'}</span>
+                {#if rowError}<span class="a2-position-row-error" role="alert">{rowError}</span>{/if}
+              </div>
+            {/each}
+          </div>
+          <div class="a2-form-actions">
+            <button type="submit" class="a2-btn-primary" disabled={!sourcesListValidation?.valid || !sourcesListDirty || sourcesListSaving}>{sourcesListSaving ? 'Saving…' : 'Apply'}</button>
+            <button type="button" class="a2-btn-secondary" onclick={cancelSourcesListReposition} disabled={sourcesListSaving}>Cancel</button>
+          </div>
+        </form>
       {:else}
+        <div class="a2-reposition-bar">
+          <button type="button" class="a2-btn-secondary a2-reposition-trigger" onclick={startSourcesListReposition}>Reposition</button>
+        </div>
         <div class="a2-source-list">
           {#each data.sources as source (source.id)}
             {@const provider = providerForSource(source)}
@@ -772,7 +935,7 @@
 <!-- Provider create/edit sheet -->
 {#if providerSheetOpen}
   <AdminSheet open={providerSheetOpen} title={editingProvider ? `Edit ${editingProvider.name}` : 'Add Provider'} onClose={closeProviderSheet}>
-    <form method="POST" action={editingProvider ? '?/updateProvider' : '?/createProvider'} class="a2-crud-form">
+    <form method="POST" action={editingProvider ? '?/updateProvider' : '?/createProvider'} class="a2-crud-form" enctype="multipart/form-data">
       {#if editingProvider}
         <input type="hidden" name="id" value={editingProvider.id} />
       {/if}
@@ -792,7 +955,40 @@
         </label>
       </AdminFormSection>
       <AdminFormSection heading="Configuration">
-        <label class="a2-field"><span>Icon URL</span><input name="icon" type="url" value={editingProvider?.icon ?? ''} placeholder="https://example.com/icon.svg" /></label>
+        <!-- Issue 4 (2026-10-16 round): provider icon editor. The URL field
+             is PRESERVED; an optional PNG/SVG upload (same server pipeline
+             and validation as source icons) takes precedence when a file is
+             selected; removal is the explicit checkbox. The hidden `icon`
+             field submits '' when a file is selected (the file wins) or —
+             for an update with no file and no URL — means NO CHANGE (the
+             saved icon is never erased by an unrelated edit). The preview
+             always shows the result that will be saved. -->
+        <div class="a2-field">
+          <span>Icon</span>
+          <input type="hidden" name="icon" value={providerIconSubmitValue} />
+          <div class="a2-icon-editor">
+            <div class="a2-icon-preview" aria-hidden="true">
+              {#if providerIconRemove || !providerIconPreviewUrl}
+                <span class="a2-provider-icon-fallback" aria-hidden="true">🔧</span>
+              {:else if !providerIconPreviewFailed}
+                <img src={providerIconPreviewUrl} alt="" width="22" height="22" onerror={() => (providerIconPreviewFailed = true)} />
+              {:else}
+                <span class="a2-provider-icon-fallback" aria-hidden="true">🔧</span>
+              {/if}
+            </div>
+            <div class="a2-provider-icon-inputs">
+              <label class="a2-field"><span>Icon URL (https)</span><input name="icon_url_visible" type="url" bind:value={providerIconUrlDraft} placeholder="https://example.com/icon.svg" oninput={() => (providerIconPreviewFailed = false)} /></label>
+              <label class="a2-field"><span>Upload PNG / SVG file (PNG ≤ 64 KB or SVG ≤ 48 KB — a selected file replaces the URL)</span><input type="file" name="icon_file" accept="image/png,image/svg+xml" onchange={handleProviderIconFileChange} /></label>
+              {#if providerIconFileName}<small class="a2-field-hint">Selected: {providerIconFileName} — this file will be saved as the icon.</small>{/if}
+              {#if editingProvider && typeof editingProvider.icon === 'string' && editingProvider.icon.trim()}
+                <label class="a2-field a2-icon-remove-row">
+                  <input type="checkbox" bind:checked={providerIconRemove} oninput={() => (providerIconPreviewFailed = false)} />
+                  <span class="a2-icon-remove-label">Remove the saved icon on save</span>
+                </label>
+              {/if}
+            </div>
+          </div>
+        </div>
         <label class="a2-field"><span>Description</span><input name="description" value={editingProvider?.description ?? ''} /></label>
         <label class="a2-field"><span>Notes</span><input name="notes" value={editingProvider?.notes ?? ''} /></label>
         <label class="a2-field">
@@ -883,6 +1079,17 @@
           {:else}
             <label class="a2-field"><span>Image URL (https)</span><input type="url" bind:value={iconUrlDraft} placeholder="https://example.com/icon.png" oninput={() => (iconPreviewFailed = false)} /></label>
           {/if}
+          <!-- Issue 3 (2026-10-16 round): EXPLICIT icon removal. An empty
+               icon field / no new file can no longer erase a saved icon (the
+               server treats it as NO CHANGE) — removal is this deliberate,
+               visible checkbox, offered only when an icon is actually saved. -->
+          {#if editingSource && storedSourceIconExists}
+            <label class="a2-field a2-icon-remove-row">
+              <input type="checkbox" name="icon_remove" value="true" bind:checked={iconRemoveChecked} />
+              <span class="a2-icon-remove-label">Remove the saved icon on save</span>
+            </label>
+            {#if iconRemoveChecked}<small class="a2-field-hint" role="status">The saved icon will be REMOVED when you press Save.</small>{/if}
+          {/if}
         </div>
         <label class="a2-field"><span>Visibility</span>
           <select name="visibility">
@@ -891,7 +1098,6 @@
             <option value="hidden" selected={editingSource?.visibility === 'hidden'}>Hidden</option>
           </select>
         </label>
-        <label class="a2-field"><span>Ordering</span><input type="number" name="ordering" value={editingSource?.ordering ?? 0} /></label>
         <label class="a2-field"><span>Identifier Mode</span>
           <select name="identifier_mode">
             <option value="tmdb_id" selected={editingSource?.identifier_mode === 'tmdb_id'}>TMDB ID</option>
@@ -1100,7 +1306,29 @@
 
   /* MAVP-4 Issue 4: icon editor (restored picker + rich inputs) and the
      extensible badge picker. Admin tokens only. */
-  .a2-icon-editor { display: flex; align-items: center; gap: var(--a2-space-2); }
+  .a2-icon-editor { display: flex; align-items: flex-start; gap: var(--a2-space-2); }
+  /* 2026-10-16 round (Issue 5): unified bulk-reposition editor (Sources tab)
+     — mirrors the content-rules surface so both lists behave identically. */
+  .a2-reposition-bar { display: flex; align-items: center; justify-content: flex-end; gap: var(--a2-space-2); margin-bottom: var(--a2-space-2); }
+  .a2-reposition-trigger { min-height: 44px; }
+  .a2-reposition-form { display: flex; flex-direction: column; gap: var(--a2-space-2); }
+  .a2-assigned-list { display: flex; flex-direction: column; gap: var(--a2-space-1); }
+  .a2-assigned-row { display: flex; align-items: center; gap: var(--a2-space-2); padding: var(--a2-space-1) var(--a2-space-2); background: var(--a2-surface-2); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); flex-wrap: wrap; }
+  .a2-assigned-name { font-size: var(--a2-text-sm); font-weight: 600; color: var(--a2-text-bright); }
+  .a2-position-field { display: flex; flex-direction: column; gap: 2px; }
+  .a2-position-field span { font-size: var(--a2-text-2xs); color: var(--a2-text-dim); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; }
+  .a2-position-field input { width: 4.5rem; min-height: 44px; padding: 6px 8px; background: var(--a2-surface-3); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); color: var(--a2-text); font-size: var(--a2-text-sm); text-align: center; }
+  .a2-position-field input:focus { outline: none; border-color: var(--a2-cyan); }
+  .a2-position-field input.invalid { border-color: var(--a2-red); color: var(--a2-red); }
+  .a2-position-field input.invalid:focus { border-color: var(--a2-red); }
+  .a2-position-row-error { font-size: var(--a2-text-2xs); color: var(--a2-red); }
+  /* Issue 4 (2026-10-16 round): provider icon editor inputs + explicit
+     remove rows (shared by the provider and source sheets). */
+  .a2-provider-icon-inputs { display: flex; flex-direction: column; gap: var(--a2-space-2); flex: 1 1 auto; min-width: 0; }
+  .a2-icon-remove-row { flex-direction: row; align-items: center; gap: var(--a2-space-1); }
+  .a2-icon-remove-row input[type='checkbox'] { width: 16px; height: 16px; accent-color: var(--a2-cyan); }
+  .a2-icon-remove-label { font-size: var(--a2-text-xs); color: var(--a2-text); text-transform: none; letter-spacing: 0; font-weight: 500; }
+  .a2-provider-icon-fallback { font-size: 18px; }
   .a2-icon-editor select { flex: 1; }
   .a2-icon-preview { display: grid; place-items: center; width: 40px; height: 40px; flex: 0 0 40px; border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); background: var(--a2-surface-3); color: var(--a2-text); }
   .a2-icon-preview img { border-radius: 4px; }

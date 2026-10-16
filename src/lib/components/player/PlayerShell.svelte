@@ -47,6 +47,10 @@
   // Phase 10 (GOALS 12–15): honest badges for uncertain formats.
   import { checkMediaCompatibility, type MediaCompatibilityDecision } from '$lib/client/player/media-capabilities';
   import { markPlayerMilestone, measurePlayerStartup } from '$lib/client/player/player-timing';
+  // Embed message defense-in-depth: postMessage provider adapters drop any
+  // message whose event.source is not the ACTIVE embed iframe's window while
+  // this shell has one bound (origin validation stays the primary gate).
+  import { setActiveIframeWindowResolver } from '$lib/client/player/providers/post-message-utils';
   // Per-source Landscape-control positioning (Admin "Player Controls Position").
   import { landscapeControlInlineStyle, controlsPlacementInlineStyle, controlsSizeInlineStyle, resolveControlPlacement, resolveControlSize, resolveLandscapeControlPlacement } from '$lib/shared/player-controls-position';
   // MAVP-3 Issue 1: the MAVP-2 landscape-first presentation (click-time
@@ -1205,6 +1209,13 @@
     // are DEV-only logged; marks remain inspectable in production.
     markPlayerMilestone('mavero:shell');
     measurePlayerStartup();
+    // Embed message defense-in-depth: register the resolver that lets every
+    // PostMessageAdapterBase listener verify event.source against THIS
+    // shell's active iframe. The closure reads the LIVE iframeElement binding
+    // on every message (source switches rebind it via the keyed remount);
+    // no iframe bound (direct sources, teardown) → the check is skipped and
+    // event.origin remains the authoritative gate. Cleared on destroy.
+    setActiveIframeWindowResolver(() => iframeElement?.contentWindow ?? null);
     // Focused fixes (Issues 1+2): load the saved subtitle preferences once
     // (safe defaults on SSR/private mode/corrupt payloads — never throws).
     subtitlePrefs = loadSubtitlePreferences();
@@ -1499,6 +1510,9 @@
       // MAVP-5 (Issue 5): the presentation intent dies with the shell — no
       // stale landscape intent can leak into the next playback session.
       landscapePresentationIntent = false;
+      // Embed message defense-in-depth: clear the resolver with the shell —
+      // after teardown no adapter may validate against a dead iframe binding.
+      setActiveIframeWindowResolver(null);
     };
   });
 

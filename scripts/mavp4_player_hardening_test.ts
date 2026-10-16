@@ -522,10 +522,19 @@ function rawRegionCode(source: string, startMarker: string, endMarker: string): 
   ok(adminPageCode.includes('iconMode === \'svg\'') && adminPageCode.includes('decodeSvgDataUrl(storedIcon)'), '4.12q an existing sanitized SVG icon prefills the paste editor for re-editing');
 
   // 4.13 The server pipeline is wired (async parseSourceForm call sites).
+  // (2026-10-16 round RE-PIN: updateSource now passes { forUpdate: true } —
+  // the no-change-≠-erase icon contract; the precedence rule moved INTO
+  // resolvedSourceIconValue, which still validates the uploaded file FIRST.
+  // Same intent, stronger contract.)
   ok(adminServer.includes('await parseSourceForm(await request.formData())'), '4.13a createSource awaits the async form parse');
-  ok(adminServer.includes('const parsed = await parseSourceForm(form);'), '4.13b updateSource awaits the async form parse');
+  ok(adminServer.includes('const parsed = await parseSourceForm(form, { forUpdate: true });'), '4.13b updateSource awaits the async form parse with the forUpdate contract');
   ok(read('../src/lib/server/streaming/validation.ts').includes('export async function parseSourceForm'), '4.13c parseSourceForm is async (icon_file processing)');
-  ok(read('../src/lib/server/streaming/validation.ts').includes("(await iconFileValue(form)) ?? iconValue(form.get('icon'))"), '4.13d the uploaded file takes precedence over the icon field');
+  {
+    const validation = read('../src/lib/server/streaming/validation.ts');
+    ok(validation.includes('async function resolvedSourceIconValue'), '4.13d-1 the icon resolver centralizes upload-vs-field precedence');
+    ok(validation.indexOf('const uploaded = await iconFileValue(form);') < validation.indexOf("if (booleanValue(form.get('icon_remove')))"), '4.13d-2 the uploaded file takes precedence over the icon field / remove flag');
+    ok(validation.includes("return forUpdate ? undefined : null;"), '4.13d-3 an empty icon field on update means NO CHANGE (never an erase)');
+  }
 }
 
 console.log('MAVP-4 player & admin hardening regression tests passed:');

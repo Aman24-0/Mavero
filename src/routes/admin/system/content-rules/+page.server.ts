@@ -13,9 +13,10 @@ import {
   listAdminCategories, listAdminSources, listSourceCategories,
   createCategory, updateCategory, deleteCategory,
   assignSourceToCategory, deleteSourceCategory, applyCategorySourcePositions,
+  reorderCategorySources, reorderCategoryOrderings,
 } from '$lib/server/streaming/admin-service';
 import { classifyAdminMutationError } from '$lib/server/streaming/mutation-result';
-import { parseCategoryForm, parseId, parseSourceAssignmentForm, parseCategoryReorderForm } from '$lib/server/streaming/validation';
+import { parseCategoryForm, parseId, parseSourceAssignmentForm, parseCategoryReorderForm, parseBulkOrderedIds, parseBulkOrderings } from '$lib/server/streaming/validation';
 import { StreamingValidationError } from '$lib/server/streaming/validation';
 
 const VALID_TABS = new Set(['categories', 'features']);
@@ -66,7 +67,12 @@ export const actions: Actions = {
     try {
       const form = await request.formData();
       const id = parseId(form, 'Category');
-      await updateCategory(locals.supabase, id, parseCategoryForm(form));
+      // 2026-10-16 round: forUpdate semantics — the edit sheet no longer
+      // submits a global ordering field (the authoritative workflow is the
+      // bulk reposition editor on the category list). An absent ordering
+      // key on update is OMITTED from the payload, so saving the category's
+      // name/description can never clobber the saved ordering.
+      await updateCategory(locals.supabase, id, parseCategoryForm(form, { forUpdate: true }));
       throw redirect(303, `/admin/system/content-rules?tab=categories&notice=Category%20updated.`);
     } catch (error) {
       if (isRedirect(error)) throw error;
@@ -165,11 +171,57 @@ export const actions: Actions = {
       // the rest, dense 1..N) — the client can never inject an arbitrary
       // ordering, and out-of-range/malformed targets are rejected with an
       // admin-facing error before any write.
+      // 2026-10-16 round: the interactive UI now uses the UNIFIED bulk
+      // reposition workflow (reorderSourcesBulk below — the complete
+      // intended order in ONE request); this single-row move action remains
+      // a valid API (no UI caller) and its contract/tests are unchanged.
       await applyCategorySourcePositions(locals.supabase, categoryId, positions);
       throw redirect(303, `/admin/system/content-rules?tab=categories&notice=Sources%20reordered.`);
     } catch (error) {
       if (isRedirect(error)) throw error;
       return fail(400, { message: messageFrom(error, 'Unable to reorder sources.') });
+    }
+  },
+
+  // 2026-10-16 round (Issue 5): UNIFIED BULK REPOSITION — the category's
+  // complete intended source order in ONE request. The client submits
+  // `ordered_source_ids` (repeated field, first = position 1); the service
+  // re-validates the set against the category's REAL assignments (every
+  // assigned source exactly once, no unknown ids) and persists through the
+  // ATOMIC reorder_category_sources RPC (single transaction, row lock,
+  // two-phase renumber that can never violate unique(category_id, ordering))
+  // with the constraint-safe fallback. There is no partially applied order
+  // when a write fails.
+  reorderSourcesBulk: async ({ request, locals }) => {
+    await requireAdmin(locals, { redirectTo: '/admin/system/content-rules' });
+    try {
+      const form = await request.formData();
+      const categoryId = parseId(form, 'Category');
+      const orderedSourceIds = parseBulkOrderedIds(form, 'ordered_source_ids', 'Source order');
+      if (!orderedSourceIds.length) return fail(400, { message: 'The reorder payload is empty.' });
+      await reorderCategorySources(locals.supabase, categoryId, orderedSourceIds);
+      throw redirect(303, `/admin/system/content-rules?tab=categories&notice=Sources%20reordered.`);
+    } catch (error) {
+      if (isRedirect(error)) throw error;
+      return fail(400, { message: messageFrom(error, 'Unable to reorder sources.') });
+    }
+  },
+
+  // 2026-10-16 round (Issue 5): UNIFIED BULK REPOSITION for the GLOBAL
+  // category list ordering. The client submits `ordering_<category_id>` for
+  // EVERY category (prefilled from the saved values); the service
+  // re-validates completeness, integer bounds and uniqueness server-side
+  // before any write. The interactive form uses use:enhance — success
+  // invalidates the load in place (no full-page reload, list state kept).
+  reorderCategories: async ({ request, locals }) => {
+    await requireAdmin(locals, { redirectTo: '/admin/system/content-rules' });
+    try {
+      const positions = parseBulkOrderings(await request.formData(), 'ordering_', 'Category');
+      await reorderCategoryOrderings(locals.supabase, positions.map(({ id, ordering }) => ({ categoryId: id, ordering })));
+      throw redirect(303, `/admin/system/content-rules?tab=categories&notice=Category%20order%20saved.`);
+    } catch (error) {
+      if (isRedirect(error)) throw error;
+      return fail(400, { message: messageFrom(error, 'Unable to reorder categories.') });
     }
   },
 };

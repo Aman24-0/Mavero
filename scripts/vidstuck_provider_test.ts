@@ -12,18 +12,21 @@ import { VidStuckPlayerAdapter } from '$lib/client/player/providers/vidstuck-ada
 import { VIDSTUCK_CAPABILITIES, PROVIDER_CAPABILITY_MAP } from '$lib/client/player/capabilities';
 import type { PlayerEvent } from '$lib/client/player/events';
 
-// VidStuck provider integration tests (2026-09-26 production integration).
+// VidStuck provider integration tests (2026-09-26 production integration;
+// 2026-10-16 domain migration .xyz → .cc — re-verified live).
 //
-// Verified provider contract (https://embed.vidstuck.xyz/documentation +
-// live capture + player-bundle code):
-//   Movie: https://vidstuck.xyz/embed/movie/{tmdbId}
-//   TV:    https://vidstuck.xyz/embed/tv/{tmdbId}/{season}/{episode}
-//          (vidstuck.xyz 302-redirects to embed.vidstuck.xyz — the origin
-//           that serves the player AND sends postMessage)
+// Verified provider contract (original docs + live capture + player-bundle
+// code; RE-VERIFIED LIVE 2026-10-16 at the .cc era):
+//   Movie: https://vidstuck.cc/embed/movie/{tmdbId}
+//   TV:    https://vidstuck.cc/embed/tv/{tmdbId}/{season}/{episode}
+//          (VERIFIED live: HTTP 200 with ZERO redirects — the player STAYS
+//           on vidstuck.cc. The old vidstuck.xyz → embed.vidstuck.xyz
+//           redirect pair is DEAD — both .xyz hosts fail connections — so
+//           .cc is the ONLY trusted origin, for embeds AND messages.)
 //   ?branding=Mavero (fixed), ?server=centaurus (default internal server),
 //   ?color=<hex without #> (accent, injected dynamically client-side),
 //   ?progress=N (resume seconds — verified live)
-//   postMessage (origin https://embed.vidstuck.xyz):
+//   postMessage (origin https://vidstuck.cc):
 //     VIDEO_PROGRESS {type, payload:{currentTime, duration, tmdbId,
 //       media_type, season, episode}} (live/bundle object form) and the
 //       documented legacy JSON-string form {id, type, progress, timestamp,
@@ -31,8 +34,8 @@ import type { PlayerEvent } from '$lib/client/player/events';
 //   ONE Mavero source; internal servers stay provider-internal.
 
 const providerId = '00000000-0000-4000-8000-0000000000vs1';
-const EMBED_HOST = 'https://vidstuck.xyz';
-const MESSAGE_ORIGIN = 'https://embed.vidstuck.xyz';
+const EMBED_HOST = 'https://vidstuck.cc';
+const MESSAGE_ORIGIN = 'https://vidstuck.cc';
 
 // Mirrors migration 20261006000000_vidstuck_provider.sql exactly.
 const capabilities = {
@@ -41,7 +44,7 @@ const capabilities = {
   supports_server_selection: true, automatic_server_fallback: false,
   supports_subtitles: false, supports_language_selection: false, supports_download: false,
   allow_experimental_playback: false,
-  allowed_embed_origins: [EMBED_HOST, MESSAGE_ORIGIN],
+  allowed_embed_origins: [EMBED_HOST],
 };
 const config: TrustedResolutionConfig = {
   provider: { id: providerId, name: 'VidStuck', status: 'active', enabled: true, integration_type: 'template', adapter_id: 'vidstuck', capabilities },
@@ -78,14 +81,14 @@ const movie = await resolveSourceFromConfig(
   config, content('movie', '299534'), { adapters },
 );
 assert.equal(movie.type, 'embed');
-assert.equal(movie.url, 'https://vidstuck.xyz/embed/movie/299534?branding=Mavero&server=centaurus');
+assert.equal(movie.url, 'https://vidstuck.cc/embed/movie/299534?branding=Mavero&server=centaurus');
 
 // Test 10: TV 1399 S2E5 → season/episode in path + branding + server preserved.
 const tv = await resolveSourceFromConfig(
   { sourceId: 's1', contentId: '1399', mediaType: 'series', season: 2, episode: 5 },
   config, content('series', '1399'), { adapters },
 );
-assert.equal(tv.url, 'https://vidstuck.xyz/embed/tv/1399/2/5?branding=Mavero&server=centaurus');
+assert.equal(tv.url, 'https://vidstuck.cc/embed/tv/1399/2/5?branding=Mavero&server=centaurus');
 assert.ok(tv.url.includes('/tv/1399/2/5'), 'season=2 episode=5 in path (never 1/1)');
 
 // --- Migration content assertions ---
@@ -105,12 +108,26 @@ assert.ok(brandingValues.every((v) => v === 'branding=Mavero'), `every branding 
 assert.ok(migration.includes("'vidstuck-embed'"), 'single source slug');
 assert.ok(migration.includes("jsonb_build_array('https://vidstuck.xyz', 'https://embed.vidstuck.xyz')"), 'both documented origins allowlisted');
 
+// --- 2026-10-16 domain migration (.xyz → .cc) content assertions ---
+
+const ccMigration = readFileSync(resolve('supabase/migrations/20261117000000_vidstuck_cc_embed_origins.sql'), 'utf-8');
+const ccMigrationNoComments = ccMigration.replace(/--[^\n]*/g, '');
+assert.ok(ccMigrationNoComments.includes("jsonb_set"), 'cc migration: jsonb_set on the capabilities key');
+assert.ok(ccMigrationNoComments.includes("'[\"https://vidstuck.cc\"]'"), 'cc migration: allowlists the verified .cc origin');
+assert.ok(ccMigrationNoComments.includes("'dfb0c33c-038d-40b8-abcf-e89651d5d64e'"), 'cc migration: id-guarded to the VidStuck provider row');
+assert.ok(ccMigrationNoComments.includes("slug = 'vidstuck'") && ccMigrationNoComments.includes("adapter_id = 'vidstuck'"), 'cc migration: slug + adapter_id guarded');
+assert.ok(ccMigrationNoComments.includes('capabilities @>'), 'cc migration: stale-origin guard (idempotent — never clobbers a hand-corrected list)');
+assert.equal((ccMigrationNoComments.match(/\bupdate\b/gi) ?? []).length, 1, 'cc migration: exactly ONE UPDATE');
+assert.ok(!/\b(delete|alter|drop|truncate)\b/i.test(ccMigrationNoComments), 'cc migration: no DELETE/ALTER/DROP/TRUNCATE');
+assert.ok(!ccMigrationNoComments.includes('download_providers'), 'cc migration: never touches download_providers');
+assert.ok(ccMigrationNoComments.includes('"https://vidstuck.xyz"'), 'cc migration: the dead .xyz origin appears ONLY inside the stale-origin guard (never allowlisted again)');
+
 // --- Adapter contract (window/document/getComputedStyle mocks) ---
 
 class MockMessageEvent {
-  type: string; origin: string; data: unknown;
-  constructor(type: string, init: { origin?: string; data?: unknown } = {}) {
-    this.type = type; this.origin = init.origin ?? ''; this.data = init.data;
+  type: string; origin: string; data: unknown; source: unknown;
+  constructor(type: string, init: { origin?: string; data?: unknown; source?: unknown } = {}) {
+    this.type = type; this.origin = init.origin ?? ''; this.data = init.data; this.source = init.source ?? null;
   }
 }
 const messageListeners = new Set<(event: { type: string; origin: string; data: unknown }) => void>();
@@ -130,8 +147,8 @@ const mockWindow = {
 (globalThis as unknown as { window: unknown }).window = mockWindow;
 (globalThis as unknown as { MessageEvent: unknown }).MessageEvent = MockMessageEvent;
 (globalThis as unknown as { document: unknown }).document = { documentElement: {} };
-function simulateMessage(origin: string, data: unknown): void {
-  mockWindow.dispatchEvent(new MockMessageEvent('message', { origin, data }));
+function simulateMessage(origin: string, data: unknown, source?: unknown): void {
+  mockWindow.dispatchEvent(new MockMessageEvent('message', { origin, data, source }));
 }
 function makeSource(url: string): PlayerSource {
   return { type: 'embed', url, providerId, sourceId: 's1', mediaType: 'movie' };
@@ -139,17 +156,21 @@ function makeSource(url: string): PlayerSource {
 
 const adapter = new VidStuckPlayerAdapter();
 const events: PlayerEvent[] = [];
-adapter.load({ source: makeSource('https://vidstuck.xyz/embed/movie/299534?branding=Mavero&server=centaurus') });
+adapter.load({ source: makeSource('https://vidstuck.cc/embed/movie/299534?branding=Mavero&server=centaurus') });
 adapter.onEvent((e) => events.push(e));
 
 assert.deepEqual(adapter.getCapabilities(), VIDSTUCK_CAPABILITIES);
 assert.equal(PROVIDER_CAPABILITY_MAP['vidstuck'], VIDSTUCK_CAPABILITIES);
 assert.equal(adapter.startAtParam(), 'progress', 'resume parameter is progress (seconds)');
 
-// canHandle: documented host (302 origin) + post-redirect host.
-assert.ok(adapter.canHandle(makeSource('https://vidstuck.xyz/embed/movie/299534?branding=Mavero&server=centaurus')), 'canHandle vidstuck.xyz embed');
-assert.ok(adapter.canHandle(makeSource('https://embed.vidstuck.xyz/embed/movie/299534')), 'canHandle embed.vidstuck.xyz embed');
+// canHandle: the verified .cc host only. The dead .xyz hosts are NOT
+// matched (they can never reach a live player; accepting them would only
+// guarantee a playback error).
+assert.ok(adapter.canHandle(makeSource('https://vidstuck.cc/embed/movie/299534?branding=Mavero&server=centaurus')), 'canHandle vidstuck.cc embed');
+assert.ok(!adapter.canHandle(makeSource('https://vidstuck.xyz/embed/movie/299534')), 'rejects the DEAD vidstuck.xyz host');
+assert.ok(!adapter.canHandle(makeSource('https://embed.vidstuck.xyz/embed/movie/299534')), 'rejects the DEAD embed.vidstuck.xyz host');
 assert.ok(!adapter.canHandle(makeSource('https://www.moviesnexus.fun/movie/27205?sv=4k')), 'rejects other providers');
+assert.ok(!adapter.canHandle(makeSource('https://vidstuck.cc.evil.example.com/embed/movie/299534')), 'rejects lookalike host (suffix spoof)');
 
 // Test 13: VIDEO_PROGRESS (live object form) → canonical timeupdate.
 events.length = 0;
@@ -178,11 +199,45 @@ simulateMessage(MESSAGE_ORIGIN, JSON.stringify({ id: '299534', type: 'movie', pr
 assert.equal(events.length, 1);
 assert.equal(events[0].type, 'timeupdate', 'completion stays explicit — progress never becomes ended');
 
-// Test 16: invalid origin ignored — ONLY the post-redirect origin is trusted.
-for (const badOrigin of ['https://vidstuck.xyz', 'https://evil.example.com', 'https://www.moviesnexus.fun', '']) {
+// Test 16: invalid origin ignored — ONLY the verified .cc origin is trusted.
+// The dead .xyz origins are now REJECTED too (the 2026-10-16 re-verification
+// proved no .xyz host can serve the player anymore).
+for (const badOrigin of ['https://vidstuck.xyz', 'https://embed.vidstuck.xyz', 'https://evil.example.com', 'https://www.moviesnexus.fun', '']) {
   events.length = 0;
   simulateMessage(badOrigin, { type: 'VIDEO_PROGRESS', payload: { currentTime: 5, duration: 100 } });
   assert.equal(events.length, 0, `message origin rejected: ${badOrigin || '(empty)'}`);
+}
+
+// Test 16b (2026-10-16 round): event.source defense-in-depth. When the host
+// player has a bound embed iframe, a message from ANY OTHER window — even
+// with a perfectly matching origin string — is dropped.
+{
+  const { setActiveIframeWindowResolver } = await import('$lib/client/player/providers/post-message-utils');
+  const fakeActiveWindow = { postMessage: () => {} } as unknown as Window;
+  const staleWindow = { postMessage: () => {} } as unknown as Window;
+  setActiveIframeWindowResolver(() => fakeActiveWindow);
+  try {
+    events.length = 0;
+    // From the ACTIVE iframe's window (source identity matches) → accepted.
+    mockWindow.dispatchEvent(new MockMessageEvent('message', { origin: MESSAGE_ORIGIN, source: fakeActiveWindow, data: { type: 'VIDEO_PROGRESS', payload: { currentTime: 7, duration: 100 } } }));
+    assert.equal(events.length, 1, 'message from the ACTIVE iframe window is accepted');
+    // From a STALE window (previous iframe) with the SAME origin → dropped.
+    events.length = 0;
+    mockWindow.dispatchEvent(new MockMessageEvent('message', { origin: MESSAGE_ORIGIN, source: staleWindow, data: { type: 'VIDEO_PROGRESS', payload: { currentTime: 8, duration: 100 } } }));
+    assert.equal(events.length, 0, 'message from a stale same-origin window is dropped');
+    // No source at all while a window is bound → dropped (defense holds).
+    events.length = 0;
+    mockWindow.dispatchEvent(new MockMessageEvent('message', { origin: MESSAGE_ORIGIN, data: { type: 'VIDEO_PROGRESS', payload: { currentTime: 9, duration: 100 } } }));
+    assert.equal(events.length, 0, 'message without a window source is dropped while an iframe is bound');
+    // Resolver cleared (no iframe bound — direct playback/teardown) → the
+    // origin check alone governs (backward-compatible behavior restored).
+    setActiveIframeWindowResolver(null);
+    events.length = 0;
+    mockWindow.dispatchEvent(new MockMessageEvent('message', { origin: MESSAGE_ORIGIN, data: { type: 'VIDEO_PROGRESS', payload: { currentTime: 10, duration: 100 } } }));
+    assert.equal(events.length, 1, 'without a bound iframe the origin check alone governs');
+  } finally {
+    setActiveIframeWindowResolver(null);
+  }
 }
 
 // Test 17: invalid event payloads ignored.
@@ -215,30 +270,30 @@ assert.equal(events.length, 0, 'no events after destroy');
 // Test 19: accent color is generated dynamically from the theme token.
 // (a) exact token value → color param WITHOUT '#'.
 assert.equal(
-  adapter.finalizeEmbedUrl('https://vidstuck.xyz/embed/movie/299534?branding=Mavero&server=centaurus'),
-  'https://vidstuck.xyz/embed/movie/299534?branding=Mavero&server=centaurus&color=00ff9c',
+  adapter.finalizeEmbedUrl('https://vidstuck.cc/embed/movie/299534?branding=Mavero&server=centaurus'),
+  'https://vidstuck.cc/embed/movie/299534?branding=Mavero&server=centaurus&color=00ff9c',
 );
 // (b) token without '#' also accepted.
 accentTokenValue = '00ff9c';
-assert.ok(adapter.finalizeEmbedUrl('https://vidstuck.xyz/embed/movie/299534')!.endsWith('color=00ff9c'));
+assert.ok(adapter.finalizeEmbedUrl('https://vidstuck.cc/embed/movie/299534')!.endsWith('color=00ff9c'));
 // (c) invalid token → URL unchanged (null).
 accentTokenValue = 'not-a-color';
-assert.equal(adapter.finalizeEmbedUrl('https://vidstuck.xyz/embed/movie/299534'), null);
+assert.equal(adapter.finalizeEmbedUrl('https://vidstuck.cc/embed/movie/299534'), null);
 accentTokenValue = '';
-assert.equal(adapter.finalizeEmbedUrl('https://vidstuck.xyz/embed/movie/299534'), null);
+assert.equal(adapter.finalizeEmbedUrl('https://vidstuck.cc/embed/movie/299534'), null);
 // (d) invalid URL input → null, never throws.
 accentTokenValue = '#00ff9c';
 assert.equal(adapter.finalizeEmbedUrl('not a url'), null);
 // (e) no dupes — an existing color param is replaced, not duplicated.
 accentTokenValue = '#00ff9c';
 assert.equal(
-  adapter.finalizeEmbedUrl('https://vidstuck.xyz/embed/movie/299534?color=FF0000'),
-  'https://vidstuck.xyz/embed/movie/299534?color=00ff9c',
+  adapter.finalizeEmbedUrl('https://vidstuck.cc/embed/movie/299534?color=FF0000'),
+  'https://vidstuck.cc/embed/movie/299534?color=00ff9c',
 );
 // (f) non-browser environment → null (URL unchanged).
 const realWindow = (globalThis as unknown as { window: unknown }).window;
 delete (globalThis as unknown as { window?: unknown }).window;
-assert.equal(adapter.finalizeEmbedUrl('https://vidstuck.xyz/embed/movie/299534'), null);
+assert.equal(adapter.finalizeEmbedUrl('https://vidstuck.cc/embed/movie/299534'), null);
 (globalThis as unknown as { window: unknown }).window = realWindow;
 
 // --- PlaybackManager end-to-end: resume + dynamic color on the final URL ---
@@ -253,24 +308,24 @@ function makeFetch(source: PlayerSource): typeof fetch {
 // dynamic accent color injected (order: template params, progress, color).
 {
   const manager = new PlaybackManager({
-    fetcher: makeFetch(makeSource('https://vidstuck.xyz/embed/movie/299534?branding=Mavero&server=centaurus')),
+    fetcher: makeFetch(makeSource('https://vidstuck.cc/embed/movie/299534?branding=Mavero&server=centaurus')),
     registry: createDefaultAdapterRegistry(),
   });
   await manager.loadSource({ sourceId: 's', contentId: '299534', mediaType: 'movie' }, 120, true);
   const url = manager.getSource()!.url!;
-  assert.equal(url, 'https://vidstuck.xyz/embed/movie/299534?branding=Mavero&server=centaurus&progress=120&color=00ff9c');
+  assert.equal(url, 'https://vidstuck.cc/embed/movie/299534?branding=Mavero&server=centaurus&progress=120&color=00ff9c');
   manager.dispose();
 }
 
 // Test 12: series resume — S2E5 path + progress + color.
 {
   const manager = new PlaybackManager({
-    fetcher: makeFetch(makeSource('https://vidstuck.xyz/embed/tv/1399/2/5?branding=Mavero&server=centaurus')),
+    fetcher: makeFetch(makeSource('https://vidstuck.cc/embed/tv/1399/2/5?branding=Mavero&server=centaurus')),
     registry: createDefaultAdapterRegistry(),
   });
   await manager.loadSource({ sourceId: 's', contentId: '1399', mediaType: 'series', season: 2, episode: 5 }, 1200, true);
   const url = manager.getSource()!.url!;
-  assert.ok(url.startsWith('https://vidstuck.xyz/embed/tv/1399/2/5?'), 'saved episode context preserved (2/5)');
+  assert.ok(url.startsWith('https://vidstuck.cc/embed/tv/1399/2/5?'), 'saved episode context preserved (2/5)');
   assert.ok(url.includes('branding=Mavero'), 'branding preserved');
   assert.ok(url.includes('server=centaurus'), 'server preserved');
   assert.ok(url.includes('progress=1200'), 'saved currentTime became the resume parameter');
@@ -281,7 +336,7 @@ function makeFetch(source: PlayerSource): typeof fetch {
 // No resume (startPosition 0) → no progress param; color still injected.
 {
   const manager = new PlaybackManager({
-    fetcher: makeFetch(makeSource('https://vidstuck.xyz/embed/movie/299534?branding=Mavero&server=centaurus')),
+    fetcher: makeFetch(makeSource('https://vidstuck.cc/embed/movie/299534?branding=Mavero&server=centaurus')),
     registry: createDefaultAdapterRegistry(),
   });
   await manager.loadSource({ sourceId: 's', contentId: '299534', mediaType: 'movie' }, 0, true);
@@ -291,11 +346,11 @@ function makeFetch(source: PlayerSource): typeof fetch {
   manager.dispose();
 }
 
-// Registry: VidStuck adapter is picked for vidstuck embed URLs.
+// Registry: VidStuck adapter is picked for vidstuck.cc embed URLs.
 {
   const registry = createDefaultAdapterRegistry();
-  assert.ok(registry.pickAdapter(makeSource('https://vidstuck.xyz/embed/movie/299534')) instanceof VidStuckPlayerAdapter, 'registry picks VidStuck adapter');
-  assert.ok(registry.pickAdapter(makeSource('https://embed.vidstuck.xyz/embed/movie/299534')) instanceof VidStuckPlayerAdapter, 'registry picks VidStuck adapter (post-redirect host)');
+  assert.ok(registry.pickAdapter(makeSource('https://vidstuck.cc/embed/movie/299534')) instanceof VidStuckPlayerAdapter, 'registry picks VidStuck adapter');
+  assert.ok(!(registry.pickAdapter(makeSource('https://vidstuck.xyz/embed/movie/299534')) instanceof VidStuckPlayerAdapter), 'registry does NOT pick VidStuck for the dead .xyz host');
 }
 
-console.log('VidStuck provider integration tests passed: exact URLs (movie/TV with branding=Mavero & server=centaurus), progress resume verified live-style, dynamic theme-token color (no hardcoding), single Mavero source (internal servers stay internal), VIDEO_PROGRESS → canonical timeupdate (both live + legacy forms), duration flow, no ended fabrication, strict origin (embed.vidstuck.xyz only) + payload rejection, registry wiring.');
+console.log('VidStuck provider integration tests passed: exact .cc URLs (movie/TV with branding=Mavero & server=centaurus), cc-origins migration content (id-guarded, idempotent, least-privilege), progress resume verified live-style, dynamic theme-token color (no hardcoding), single Mavero source (internal servers stay internal), VIDEO_PROGRESS → canonical timeupdate (both live + legacy forms), duration flow, no ended fabrication, strict origin (vidstuck.cc ONLY — dead .xyz rejected) + payload rejection, event.source defense-in-depth (active-iframe identity), registry wiring.');

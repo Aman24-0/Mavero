@@ -262,6 +262,12 @@ function section_registry(): void {
   // poster_path/backdrop_path columns on media_items only — never touches
   // any registry/download_provider/cloudstream table.
   const posterToMediaItemsMigration = '20261015000000_add_poster_to_media_items.sql';
+  // VIDSTUCK CC ORIGINS (20261117000000, sanctioned): ONE-key capabilities
+  // update on the VidStuck provider row ONLY (dead vidstuck.xyz allowlist →
+  // the verified https://vidstuck.cc origin). Idempotent WHERE-guarded
+  // jsonb_set; no other row/table/key touched — see the migration header
+  // and WORKLOG.md for the live verification evidence.
+  const vidstuckCcOriginsMigration = '20261117000000_vidstuck_cc_embed_origins.sql';
   const added = migrations.filter((name) => !pristineMigrations.includes(name));
   const phase2Sql = read(`supabase/migrations/${phase2Migration}`);
   const phase2SqlNoComments = phase2Sql.replace(/--[^\n]*/g, '');
@@ -270,7 +276,7 @@ function section_registry(): void {
   const unifiedSql = read(`supabase/migrations/${unifiedMigration}`);
   const unifiedSqlNoComments = unifiedSql.replace(/--[^\n]*/g, '');
   ok(
-    added.length === 15
+    added.length === 16
       && added.includes(migrationName)
       && added.includes(phase2Migration)
       && added.includes(phase3Migration)
@@ -285,8 +291,9 @@ function section_registry(): void {
       && added.includes(blueVelvetProviderMigration)
       && added.includes(vixolityTgvidZxcstreamMigration)
       && added.includes(posterToMediaItemsMigration)
+      && added.includes(vidstuckCcOriginsMigration)
       && added.includes('20261014000000_add_unlink_action.sql'),
-    `§A10: exactly the CS-5 + Phase 2 + Phase 3 + FINAL TASK + build-lifecycle + LT-5-analytics + LT-15-fallback-event + VidRift-provider + MAVP-4-icon-badge + MAVP-5-default-slots + MAVP-7-unique-assignment + BlueVelvet-provider + Vixolity/TGVID/ZXCStream-provider migrations were added (${added.join(', ') || 'none'})`,
+    `§A10: exactly the CS-5 + Phase 2 + Phase 3 + FINAL TASK + build-lifecycle + LT-5-analytics + LT-15-fallback-event + VidRift-provider + MAVP-4-icon-badge + MAVP-5-default-slots + MAVP-7-unique-assignment + BlueVelvet-provider + Vixolity/TGVID/ZXCStream-provider + VidStuck-cc-origins migrations were added (${added.join(', ') || 'none'})`,
   );
   // VIDRIFT (sanctioned): insert-only registration — no destructive verbs,
   // no download_providers / registry-table references.
@@ -299,6 +306,16 @@ function section_registry(): void {
     const vixolityTgvidZxcstreamSqlNoComments = read(`supabase/migrations/${vixolityTgvidZxcstreamMigration}`).replace(/--[^\n]*/g, '');
     ok(!/\b(update|delete|alter|drop|truncate)\b/i.test(vixolityTgvidZxcstreamSqlNoComments), '§A10: the Vixolity/TGVID/ZXCStream migration contains no UPDATE/DELETE/ALTER/DROP/TRUNCATE (insert-only)');
     ok(!vixolityTgvidZxcstreamSqlNoComments.includes('download_providers'), '§A10: the Vixolity/TGVID/ZXCStream migration never touches download_providers');
+    // VIDSTUCK CC ORIGINS (sanctioned): the ONE-key provider-capabilities
+    // update is REVIEWED and scoped: exactly one UPDATE over the VidStuck
+    // provider row (id + slug + adapter_id guarded + stale-origin guard),
+    // no DELETE/ALTER/DROP/TRUNCATE, never touches download_providers.
+    const vidstuckCcSqlNoComments = read(`supabase/migrations/${vidstuckCcOriginsMigration}`).replace(/--[^\n]*/g, '');
+    ok(!/\b(delete|alter|drop|truncate)\b/i.test(vidstuckCcSqlNoComments), '§A10: the VidStuck cc-origins migration contains no DELETE/ALTER/DROP/TRUNCATE');
+    ok(!vidstuckCcSqlNoComments.includes('download_providers'), '§A10: the VidStuck cc-origins migration never touches download_providers');
+    ok((vidstuckCcSqlNoComments.match(/\bUPDATE\b/gi) ?? []).length === 1, '§A10: the VidStuck cc-origins migration contains exactly ONE UPDATE');
+    ok(vidstuckCcSqlNoComments.includes("'[\"https://vidstuck.cc\"]'"), '§A10: the VidStuck cc-origins migration allowlists the verified .cc origin');
+    ok(vidstuckCcSqlNoComments.includes("'dfb0c33c-038d-40b8-abcf-e89651d5d64e'"), '§A10: the VidStuck cc-origins migration is id-guarded to the VidStuck provider row');
   }
   const liveTvAnalyticsSql = read(`supabase/migrations/${liveTvAnalyticsMigration}`);
   const liveTvAnalyticsSqlNoComments = liveTvAnalyticsSql.replace(/--[^\n]*/g, '');

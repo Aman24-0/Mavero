@@ -276,14 +276,21 @@ const lettersOf = (db: { mappings: MappingRow[] }) => {
       ok(/positive whole number/.test(threw), `I2: position "${bad}" is rejected (positions below 1 and non-integers are invalid)`);
     }
   }
-  // Structural: the editor carries the numeric input + Apply and NO Up/Down.
+  // Structural (2026-10-16 round RE-PIN, Issue 5 — unified bulk reposition):
+  // the per-row position+Apply forms were REPLACED by ONE Reposition editor
+  // over the category's assigned rows. Every row still carries a numeric
+  // position input keyed by its source id (the shared draft map), prefilled
+  // with the SAVED position, bounds mirrored from the server contract,
+  // per-source labels, an explicit Apply (disabled until the WHOLE set is
+  // valid) — and the complete intended order is submitted in ONE request.
   {
     const page = markupOnly(read('../src/routes/admin/system/content-rules/+page.svelte'));
-    ok(page.includes('type="number" name={`position_${row.sourceId}`}') && page.includes('inputmode="numeric"'), 'I2: each assigned row renders a numeric position input keyed by the source id');
-    ok(page.includes('min="1" max={listLength} step="1"'), 'I2: the input bounds mirror the server contract (1..list length)');
-    ok(page.includes('aria-label={`Position for ${row.name}`}'), 'I2: the position input is labelled per source');
-    ok(/action="\?\/reorderSources"[^>]*class="a2-position-form"/.test(page) || page.includes('action="?/reorderSources" class="a2-position-form"'), 'I2: the numeric position form posts to reorderSources');
-    ok(page.includes('Apply new position for'), 'I2: an explicit Apply control confirms the edit (nothing persists until then)');
+    ok(page.includes('sourceDrafts = { ...sourceDrafts, [entry.id]'), 'I2 (re-pinned 2026-10-16): each assigned row edits a numeric draft keyed by the source id');
+    ok(page.includes('min="1" max={sourceRepositionEntries.length} step="1"'), 'I2 (re-pinned 2026-10-16): the input bounds mirror the server contract (1..list length)');
+    ok(page.includes('aria-label={`Position for ${row?.name'), 'I2 (re-pinned 2026-10-16): the position input is labelled per source');
+    ok(page.includes('action="?/reorderSourcesBulk"'), 'I2 (re-pinned 2026-10-16): the bulk form posts the complete intended order to reorderSourcesBulk');
+    ok(page.includes('disabled={!sourceRepositionValidation?.valid'), 'I2 (re-pinned 2026-10-16): Apply is disabled until the WHOLE proposed set is valid (nothing persists until then)');
+    ok(page.includes('repositionDraftFromEntries'), 'I2 (re-pinned 2026-10-16): the editor prefills the SAVED positions (never blank, never renumbered)');
     ok(!page.includes('Move up') && !page.includes('Move down'), 'I2: the obsolete Up/Down controls are removed');
     ok(!page.includes('reorderedIds') && !page.includes('assignedIds('), 'I2: no dead reorder helpers remain');
     ok(page.includes('category_id" value={editingCategory.id}'), 'I2: the position form carries the category id');

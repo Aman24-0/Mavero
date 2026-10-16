@@ -1023,3 +1023,67 @@ posters keep the neutral placeholder.
 - Vixolity CORS for `ha.vixolity.com` unverified; if hls.js is blocked (Blue Velvet situation), native-HLS browsers still play and server-side variant discovery can be ported later without contract changes.
 - Hindi availability per title (both embeds) is the provider's own runtime decision; Mavero expresses a documented preference only.
 - The pre-existing DOM-QA browser-suite failure is out of scope (documented above).
+
+---
+
+## Production Fix Round — Vixolity blocker + VidStuck .cc + icon/badge persistence + provider icon upload + unified bulk repositioning (2026-10-16)
+
+**Objective**: five user-reported issue groups fixed with the smallest safe change set — absolute priority zero regressions. Baseline for this round: `main` @ `3f9a49d`, clean tree, `pnpm check` 0 errors / 5 warnings, chain green except the pre-existing DOM-QA failure, build success.
+
+**Files affected**: `src/lib/client/player/providers/vidstuck-adapter.ts`, `src/lib/client/player/providers/post-message-utils.ts`, `src/lib/components/player/PlayerShell.svelte`, `src/lib/shared/player-capabilities.ts`, `src/lib/client/player/adapter-registry.ts`, `supabase/migrations/20261117000000_vidstuck_cc_embed_origins.sql` (NEW, NOT applied), `src/lib/server/streaming/validation.ts`, `src/lib/server/streaming/admin-service.ts`, `src/routes/admin/system/api-sources/+page.svelte` (+server), `src/routes/admin/system/content-rules/+page.svelte` (+server), `src/lib/shared/bulk-reposition.ts` (NEW), `scripts/vidstuck_provider_test.ts`, `scripts/cloudstream_registry_integration_test.ts`, `scripts/cloudstream_phase4_integration_manager_test.ts`, `scripts/mavp4_player_hardening_test.ts`, `scripts/stremio_addons_phase1_test.ts`, `scripts/mav_fix_round_icons_reorder_test.ts` (NEW), `package.json` (chain 282→283).
+
+### Issue 1 — Vixolity: external blocker PROVEN (no Mavero code defect)
+
+End-to-end reproduction through the REAL resolver with the LIVE provider/source config (content mocked with real public IMDb ids; TMDB credential not available locally):
+
+| Case | Result |
+|------|--------|
+| movie-550 (tt0137523) | `https://ha.vixolity.com/vs/tt0137523` ✓ |
+| series-1399 s1e1 (tt0903747) | `https://ha.vixolity.com/vs/tt0903747/s1/e01` ✓ (episode ≥2-digit padding) |
+| series s1e12 | `/s1/e12` ✓ (season unpadded) |
+| missing IMDb id | typed `MISSING_IDENTIFIER` → existing bounded fallback ✓ |
+| TMDB id in the IMDb slot | rejected ✓ (structurally impossible) |
+
+The upstream endpoint returns a VALID HLS master playlist (`application/x-mpegURL`, audio tr/en + subtitles; series URLs serve HLS too), but `https://ha.vixolity.com` returns **NO `access-control-allow-origin` under any condition** — for `https://maveroweb.space`, a foreign origin, no origin, with a browser UA — and the OPTIONS preflight returns 204 without CORS headers. The master/variant/audio/subtitle PLAYLISTS are all on ha.vixolity.com, so hls.js is blocked on EVERY browser origin → the player's error screen. The media SEGMENTS live on `hs1.nodedatastream.top` which IS CORS-open (`access-control-allow-origin: *`); native-HLS browsers (Safari/iOS) can play (media-element fetch is not CORS-governed; the player sets no `crossorigin` attribute). This is the exact Blue Velvet situation with the same house policy: **no proxy/bypass**. The provider must allowlist the deployed origin for hls.js browsers — the resolver's URL generation is NOT proof of playback and is not reported as such.
+
+### Issue 2 — VidStuck: verified `.cc` domain end-to-end
+
+Live verification (2026-10-16): `https://vidstuck.cc/embed/movie/550?…` and `/embed/tv/1399/1/1?…` return HTTP 200 with ZERO redirects (player stays on vidstuck.cc — Next.js/Cloudflare; the documented query params are consumed by the app bundle); `vidstuck.xyz` + `embed.vidstuck.xyz` are DEAD (connection failures). Changes:
+- **Client adapter** → the verified `.cc` origin only (dead `.xyz` hosts and lookalike suffix hosts are REJECTED); strict message-origin validation preserved.
+- **Defense-in-depth** (`post-message-utils.ts` + `PlayerShell.svelte`): a module-level active-iframe-window resolver — while the shell has a bound embed iframe, `event.source` must BE that iframe's window even when the origin string matches (stale iframes, same-origin interlopers dropped). Origin validation remains the primary boundary; tests cover active/stale/no-bound cases.
+- **Migration `20261117000000_vidstuck_cc_embed_origins.sql`** (NOT applied): ONE id/slug/adapter-guarded, stale-origin-guarded `jsonb_set` replacing the dead `.xyz` allowlist entries with exactly `["https://vidstuck.cc"]` on the VidStuck provider row. Both Cloudstream migration ledgers updated with the sanctioned posture checks (one UPDATE, no destructive verbs, never touches download_providers).
+
+### Issue 3 — source icon/badge reset: root cause fixed ("no-change ≠ erase")
+
+Root cause: the sheet's upload input mode submits `icon=''` when no NEW file is picked; the server treated a submitted empty icon as removal → every unrelated edit of a PNG-icon source (all configured production sources) erased the saved icon. The corrected contract (`resolvedSourceIconValue`): uploaded file > explicit `icon_remove` flag > submitted value > **empty = NO CHANGE on update** (`undefined` key — dropped from the update payload; create keeps null). The sheet gains an explicit "Remove the saved icon on save" checkbox (offered only when an icon exists) with a visible confirmation hint. Badges: untouched drafts serialize back to the stored canonical JSON (preserved; empty collection remains an explicit clear through the chip UI). The sheet no longer submits a global `ordering` field at all — an absent ordering key on update is omitted, so unrelated saves can never clobber the saved ordering.
+
+### Issue 4 — provider icon upload (reuses the EXISTING source pipeline)
+
+`parseProviderForm` is now async and resolves the icon through the SAME pipeline as source icons (`icon_file` multipart → PNG magic-byte check / SVG sanitization → bounded data URL stored in `streaming_providers.icon`), with the https-URL contract preserved, an explicit remove flag, upload-wins precedence (visible in the live preview before save), empty-on-update = no-change, and rejection of non-URL text / non-image data URLs / oversized files. The provider sheet renders existing URL/data icons through script-inert `<img>` surfaces (legacy emoji/text values unchanged). Storage behavior: data-URL-in-row (the established source-icon mechanism — no second upload system, no storage bucket).
+
+### Issue 5 — unified bulk repositioning + no full-page refreshes
+
+Inventory (complete Admin search): category-source positions (dense 1..N per category, atomic `reorder_category_sources` RPC), global source ordering (gaps permitted), global category ordering (gaps permitted), provider ordering (NO persisted column — list is name-sorted; nothing to build), default-source slots (dropdown model, untouched), download-provider ordering (same numeric model, different subsystem — documented as the one remaining list for a follow-up round).
+
+- **Shared validator** (`src/lib/shared/bulk-reposition.ts`): one contract for every ordering list — prefill from SAVED values verbatim (never blank, never auto-renumbered), live validation of the COMPLETE proposed set (blank / zero / negative / decimal / non-numeric / duplicate / out-of-range are invalid; invalid fields are marked and Apply is disabled), dense 1..N bounds for category-source positions, min-0 gap-permitting bounds for global orderings, dirty tracking, and the sorted intended order for submission.
+- **Category sources** (content-rules sheet): the per-row position+Apply forms are REPLACED by ONE "Reposition" action → prefilled numeric inputs → live shared validation → Apply submits the COMPLETE intended order in ONE request (`reorderSourcesBulk` → the atomic RPC; server re-validates the set against the real assignments). No partially applied order on failure.
+- **Global category ordering**: a "Reposition" editor on the category list (`reorderCategories` action → `reorderCategoryOrderings` service: completeness, integer bounds, duplicate rejection server-side; gaps preserved).
+- **Global source ordering**: a "Reposition" editor on the Sources list (`reorderSources` action → `reorderSourceOrderings` service). The Ordering field was REMOVED from the source edit sheet and the category edit sheet (the bulk editors are the authoritative workflow; the server omits absent ordering keys on update). The single-row move API (`reorderSources` move semantics + `applyCategorySourcePositions`) remains a valid API — its tests are unchanged.
+- **No full-page refreshes**: assign / remove / bulk reorder / category save use `use:enhance` (the repo's established in-place pattern) — same-page invalidation, sheet state preserved, no `window.location.reload()`, duplicate submissions prevented while in flight, failed saves keep the admin's unsaved edits visible with actionable errors, and only a CONFIRMED success exits reposition mode.
+
+### Migration status
+
+The migration `20261117000000_vidstuck_cc_embed_origins.sql` is created and **NOT applied** to the live Supabase project (documented application path in the migration header). LIVE SUPABASE WAS NOT TOUCHED by this round.
+
+### Verification (this round)
+
+- New suite `mav_fix_round_icons_reorder_test` (42 checks): icon no-change/erase/upload/remove semantics, provider upload bounds + precedence, bulk validator rules, parsers, service completeness/uniqueness gates (mock client), action/UI wiring pins. Registered in the chain after `zxcstream_provider_test` (282→283 commands).
+- Updated suites: `vidstuck_provider_test` (the `.cc` contract + cc-migration pins + stale-window tests), both Cloudstream ledgers (15→16, 12→13 sanctioned), `mavp4_player_hardening_test` §4.13 re-pinned to the forUpdate contract (intent unchanged, documented), `stremio_addons_phase1_test` adapted to the async `parseProviderForm` signature (the documented MAVP-4 async supersession precedent).
+- `pnpm check`: **0 errors / 5 warnings** (identical to baseline). Full chain + build results recorded in WORKLOG.md.
+- Mocked vs real: every playback/message scenario remains MOCKED; the VidStuck `.cc` domain, the Vixolity CORS matrix and the URL contracts were verified with LIVE server probes. No browser playback session was performed (no staging environment) — real-device verification remains the gate before relying on Vixolity for hls.js users.
+
+### Known boundaries
+
+- Vixolity playback for hls.js browsers is blocked by the PROVIDER's missing CORS allowlist (external action required; evidence above). Native-HLS browsers play today. The live source row stays as the admin set it (enabled) — the error screen with retry/switch-source is the designed degradation until the provider allowlists the origin.
+- The VidStuck postMessage protocol is assumed UNCHANGED from the verified `.xyz`-era shapes (VIDEO_PROGRESS object/JSON-string forms) — the `.cc` page bundle was verified to serve the same player contract for URL/params, but a live browser message capture on `.cc` is still the strongest possible confirmation and remains recommended.
+- Download-provider ordering (downloads page) is the one found ordering system intentionally NOT migrated to the bulk editor this round (different subsystem; documented for a follow-up round to keep this round's blast radius controlled).

@@ -9,6 +9,7 @@
   import { onMount } from 'svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
+  import { enhance } from '$app/forms';
   import AdminAppShell from '$lib/components/admin2/AdminAppShell.svelte';
   import AdminPage from '$lib/components/admin2/AdminPage.svelte';
   import AdminStatus from '$lib/components/admin2/AdminStatus.svelte';
@@ -17,6 +18,10 @@
   import AdminStatusBadge from '$lib/components/admin/AdminStatusBadge.svelte';
   import AdminAddButton from '$lib/components/admin/AdminAddButton.svelte';
   import { Layers, ExternalLink, Check, AlertCircle, Loader2, ShieldCheck, ToggleLeft, ToggleRight, Plus, Edit3, Trash2, Power, X } from 'lucide-svelte';
+  // 2026-10-16 round (Issue 5): ONE shared bulk-reposition validation
+  // contract for every Admin ordering list (the interactive behavior can
+  // never drift between surfaces; the server re-validates authoritatively).
+  import { validateRepositionSet, repositionDraftFromEntries, repositionDraftIsDirty } from '$lib/shared/bulk-reposition';
   import type { PageData, ActionData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -93,16 +98,86 @@
     return (data.sources as any[]).filter((candidate) => !assignedAnywhere.has(candidate.id));
   }
 
-  // MAVP-7 (Issue 2): the Up/Down reorder controls were REPLACED by a numeric
-  // position workflow. Each row carries ONE numeric input + an explicit Apply
-  // button that submits `position_<sourceId>` for that source only. The FINAL
-  // order is derived SERVER-SIDE from the database's current assignments
-  // (applyCategorySourcePositions → shared applyPositionEdits move semantics:
-  // move-to-position-N, shift everything in between, dense 1..N). The client
-  // can never inject an arbitrary ordering, out-of-range targets are rejected
-  // with "Positions run from 1 to N.", and nothing is persisted until the
-  // administrator presses Apply. No-JS fallback: the plain form POST works
-  // without any client script.
+  // MAVP-7 (Issue 2): the per-row position workflow was REPLACED (2026-10-16
+  // round, Issue 5) by the UNIFIED BULK REPOSITION editor shared with the
+  // other Admin ordering lists:
+  //   * Normal mode shows the saved order with ONE clear “Reposition”
+  //     action (the redundant per-row position+Apply forms are gone).
+  //   * Reposition mode prefills EVERY numeric input with that item's
+  //     currently saved position (never blank, never auto-renumbered), and
+  //     the complete proposed set is validated LIVE on every keystroke via
+  //     the shared helper (blank / zero / negative / decimal / non-numeric /
+  //     duplicate / out-of-range values mark the field red immediately and
+  //     disable Apply — a duplicate never waits for a page reload or a
+  //     database error).
+  //   * Apply submits the COMPLETE intended ordering in ONE request
+  //     (ordered_source_ids → reorderSourcesBulk → the ATOMIC
+  //     reorder_category_sources RPC). The service re-validates the set
+  //     against the database's real assignments server-side; there is no
+  //     partially applied order when a write fails.
+  //   * use:enhance keeps the admin on the same page — no full-document
+  //     reload, the category sheet stays open, unsaved sheet state is
+  //     preserved; duplicate submissions are prevented while in flight.
+  //   * Cancel discards ONLY the unsaved position edits and returns to
+  //     normal mode.
+
+  // --- Bulk reposition: the category's assigned sources (sheet) ---
+  let sourcesRepositioning = $state(false);
+  let sourceDrafts = $state<Record<string, string>>({});
+  let sourceReorderSaving = $state(false);
+
+  const sourceRepositionEntries = $derived(
+    editingCategory
+      ? assignedSourcesForCategory(editingCategory.id).map((row) => ({ id: row.sourceId, savedPosition: row.position }))
+      : [],
+  );
+  // Dense 1..N contract: positions must stay within the list length.
+  const sourceRepositionValidation = $derived(
+    sourcesRepositioning
+      ? validateRepositionSet(sourceRepositionEntries, sourceDrafts, { maxPosition: sourceRepositionEntries.length })
+      : null,
+  );
+  const sourceRepositionDirty = $derived(sourcesRepositioning && repositionDraftIsDirty(sourceRepositionEntries, sourceDrafts));
+
+  function startSourcesReposition() {
+    // Prefill from the SAVED positions — never blank, never renumbered.
+    sourceDrafts = repositionDraftFromEntries(sourceRepositionEntries);
+    sourcesRepositioning = true;
+  }
+  function cancelSourcesReposition() {
+    // Discards ONLY the unsaved position edits.
+    sourcesRepositioning = false;
+    sourceDrafts = {};
+  }
+
+  // --- Bulk reposition: the GLOBAL category ordering (categories tab) ---
+  let categoriesRepositioning = $state(false);
+  let categoryDrafts = $state<Record<string, string>>({});
+  let categoryReorderSaving = $state(false);
+
+  const categoryRepositionEntries = $derived(
+    (data.categories as any[])
+      .slice()
+      .sort((a, b) => (a.ordering ?? 0) - (b.ordering ?? 0))
+      .map((cat) => ({ id: cat.id, savedPosition: cat.ordering ?? 0 })),
+  );
+  // Global ordering contract: gaps permitted, values may start at 0 (the
+  // prefill shows the SAVED values verbatim — never silently renumbered).
+  const categoryRepositionValidation = $derived(
+    categoriesRepositioning
+      ? validateRepositionSet(categoryRepositionEntries, categoryDrafts, { minPosition: 0 })
+      : null,
+  );
+  const categoryRepositionDirty = $derived(categoriesRepositioning && repositionDraftIsDirty(categoryRepositionEntries, categoryDrafts));
+
+  function startCategoriesReposition() {
+    categoryDrafts = repositionDraftFromEntries(categoryRepositionEntries);
+    categoriesRepositioning = true;
+  }
+  function cancelCategoriesReposition() {
+    categoriesRepositioning = false;
+    categoryDrafts = {};
+  }
 
   function statusTone(status: string | null): 'good' | 'warn' | 'bad' | 'neutral' {
     if (status === 'active' || status === 'experimental') return 'good';
@@ -198,38 +273,93 @@
           <AdminAddButton label="Add category" onclick={openCreateCategory} />
         </div>
       {:else}
-        <div class="a2-category-list">
-          {#each data.categories as cat (cat.id)}
-            <div class="a2-category-row" data-enabled={cat.enabled}>
-              <div class="a2-category-row-main">
-                <span class="a2-category-row-icon">📂</span>
-                <div class="a2-category-row-info">
-                  <div class="a2-category-row-name">{cat.name}</div>
-                  <div class="a2-category-row-meta">
-                    <span class="mono">{cat.slug}</span>
-                    <span>·</span>
-                    <span>{sourceCountForCategory(cat.id)} source(s)</span>
-                    <span>·</span>
-                    <span>order: {cat.ordering}</span>
+        <!-- 2026-10-16 round (Issue 5): unified BULK REPOSITION for the global
+             category ordering. Normal mode shows the saved order with ONE
+             “Reposition” action; reposition mode prefills every input with
+             the SAVED value and validates the complete set live (the shared
+             helper) — Apply stays disabled while any value is invalid, and
+             the enhanced submission updates the list in place (no
+             full-page reload). -->
+        {#if categoriesRepositioning}
+          <form
+            method="POST"
+            action="?/reorderCategories"
+            class="a2-reposition-bar"
+            use:enhance={() => {
+              categoryReorderSaving = true;
+              return async ({ update, result }) => {
+                await update({ reset: false });
+                categoryReorderSaving = false;
+                // Only a CONFIRMED success exits reposition mode — a failed
+                // save keeps the admin's unsaved edits visible + fixable.
+                if (result.type === 'success' || result.type === 'redirect') {
+                  categoriesRepositioning = false;
+                  categoryDrafts = {};
+                }
+              };
+            }}
+          >
+            <p class="a2-reposition-hint">Edit the numbers to reposition. Every value is validated live — Apply stays disabled until the whole set is valid. Cancel discards unsaved edits.</p>
+            {#if categoryRepositionValidation?.setError}
+              <p class="a2-reposition-error" role="alert"><AlertCircle size={13} /> {categoryRepositionValidation.setError}</p>
+            {/if}
+            <div class="a2-assigned-list">
+              {#each categoryRepositionEntries as entry (entry.id)}
+                {@const cat = (data.categories as any[]).find((c) => c.id === entry.id)}
+                {@const rowError = categoryRepositionValidation?.errors[entry.id] ?? null}
+                <div class="a2-assigned-row">
+                  <label class="a2-position-field">
+                    <span>Position</span>
+                    <input type="number" name={`ordering_${entry.id}`} value={categoryDrafts[entry.id] ?? String(entry.savedPosition)} min="0" step="1" inputmode="numeric" class:invalid={Boolean(rowError)} aria-invalid={rowError ? 'true' : undefined} aria-label={`Position for ${cat?.name ?? 'category'}`} oninput={(e) => { categoryDrafts = { ...categoryDrafts, [entry.id]: (e.currentTarget as HTMLInputElement).value }; }} />
+                  </label>
+                  <span class="a2-assigned-name">{cat?.name ?? 'Unknown category'}</span>
+                  <AdminStatusBadge label={cat?.enabled ? 'Enabled' : 'Disabled'} tone={cat?.enabled ? 'good' : 'neutral'} />
+                  {#if rowError}<span class="a2-position-row-error" role="alert">{rowError}</span>{/if}
+                </div>
+              {/each}
+            </div>
+            <div class="a2-form-actions">
+              <button type="submit" class="a2-btn-primary" disabled={!categoryRepositionValidation?.valid || !categoryRepositionDirty || categoryReorderSaving}>{categoryReorderSaving ? 'Saving…' : 'Apply'}</button>
+              <button type="button" class="a2-btn-secondary" onclick={cancelCategoriesReposition} disabled={categoryReorderSaving}>Cancel</button>
+            </div>
+          </form>
+        {:else}
+          <div class="a2-reposition-bar">
+            <button type="button" class="a2-btn-secondary a2-reposition-trigger" onclick={startCategoriesReposition}>Reposition</button>
+          </div>
+          <div class="a2-category-list">
+            {#each data.categories as cat (cat.id)}
+              <div class="a2-category-row" data-enabled={cat.enabled}>
+                <div class="a2-category-row-main">
+                  <span class="a2-category-row-icon">📂</span>
+                  <div class="a2-category-row-info">
+                    <div class="a2-category-row-name">{cat.name}</div>
+                    <div class="a2-category-row-meta">
+                      <span class="mono">{cat.slug}</span>
+                      <span>·</span>
+                      <span>{sourceCountForCategory(cat.id)} source(s)</span>
+                      <span>·</span>
+                      <span>order: {cat.ordering}</span>
+                    </div>
                   </div>
                 </div>
+                <div class="a2-category-row-actions">
+                  <AdminStatusBadge label={cat.enabled ? 'Enabled' : 'Disabled'} tone={cat.enabled ? 'good' : 'neutral'} />
+                  <form method="POST" action="?/toggleCategory" style="display:inline">
+                    <input type="hidden" name="id" value={cat.id} />
+                    <input type="hidden" name="enabled" value={String(!cat.enabled)} />
+                    <button type="submit" class="a2-icon-btn" title={cat.enabled ? 'Disable' : 'Enable'}><Power size={14} /></button>
+                  </form>
+                  <button type="button" class="a2-icon-btn" onclick={() => openEditCategory(cat)} title="Edit"><Edit3 size={14} /></button>
+                  <form method="POST" action="?/deleteCategory" style="display:inline" onsubmit={(e) => { if (!confirm('Delete this category? This cannot be undone.')) e.preventDefault(); }}>
+                    <input type="hidden" name="id" value={cat.id} />
+                    <button type="submit" class="a2-icon-btn a2-icon-btn-danger" title="Delete"><Trash2 size={14} /></button>
+                  </form>
+                </div>
               </div>
-              <div class="a2-category-row-actions">
-                <AdminStatusBadge label={cat.enabled ? 'Enabled' : 'Disabled'} tone={cat.enabled ? 'good' : 'neutral'} />
-                <form method="POST" action="?/toggleCategory" style="display:inline">
-                  <input type="hidden" name="id" value={cat.id} />
-                  <input type="hidden" name="enabled" value={String(!cat.enabled)} />
-                  <button type="submit" class="a2-icon-btn" title={cat.enabled ? 'Disable' : 'Enable'}><Power size={14} /></button>
-                </form>
-                <button type="button" class="a2-icon-btn" onclick={() => openEditCategory(cat)} title="Edit"><Edit3 size={14} /></button>
-                <form method="POST" action="?/deleteCategory" style="display:inline" onsubmit={(e) => { if (!confirm('Delete this category? This cannot be undone.')) e.preventDefault(); }}>
-                  <input type="hidden" name="id" value={cat.id} />
-                  <button type="submit" class="a2-icon-btn a2-icon-btn-danger" title="Delete"><Trash2 size={14} /></button>
-                </form>
-              </div>
-            </div>
-          {/each}
-        </div>
+            {/each}
+          </div>
+        {/if}
       {/if}
 
     {:else if currentTab === 'features'}
@@ -265,14 +395,21 @@
 {#if categorySheetOpen}
   <AdminSheet open={categorySheetOpen} title={editingCategory ? `Edit ${editingCategory.name}` : 'Add Category'} onClose={closeCategorySheet}>
     <div class="a2-crud-form">
-      <form method="POST" action={editingCategory ? '?/updateCategory' : '?/createCategory'}>
+      <form method="POST" action={editingCategory ? '?/updateCategory' : '?/createCategory'} use:enhance={() => {
+        return async ({ update }) => { await update({ reset: false }); };
+      }}>
         {#if editingCategory}<input type="hidden" name="id" value={editingCategory.id} />{/if}
         <AdminFormSection heading="Identity">
           <label class="a2-field"><span>Name</span><input name="name" required value={editingCategory?.name ?? ''} /></label>
           <label class="a2-field"><span>Slug</span><input name="slug" required value={editingCategory?.slug ?? ''} /></label>
           <!-- FINDING-007 fix: removed dead Icon emoji input. streaming_categories has no icon column. -->
 
-          <label class="a2-field"><span>Ordering</span><input type="number" name="ordering" value={editingCategory?.ordering ?? 0} /></label>
+          <!-- 2026-10-16 round (Issue 5): the individual Ordering field was
+               REMOVED from this sheet — the authoritative workflow is the
+               bulk reposition editor on the category list (one ordering
+               system, one control). The server omits an absent ordering key
+               on update, so saving unrelated category fields can never
+               change the saved ordering. -->
           <label class="a2-field"><span>Enabled</span><input type="checkbox" name="enabled" value="true" checked={editingCategory ? editingCategory.enabled : true} /></label>
         </AdminFormSection>
         <AdminFormSection heading="Metadata">
@@ -285,57 +422,122 @@
       </form>
 
       {#if editingCategory}
-        <!-- MAVP-6 (Issue 4): category source management — a SEPARATE section
-             with its own forms (never nested inside the category form, so a
-             source mutation can never submit category fields and category
-             CRUD can never overwrite source metadata/capabilities). The
-             service layer (assignSourceToCategory / deleteSourceCategory /
-             reorderCategorySources) remains the sole authority over the
-             streaming_source_categories mapping. -->
+        <!-- 2026-10-16 round (Issue 5): category source management — a
+             SEPARATE section with its own forms (never nested inside the
+             category form). The per-row position+Apply controls were
+             REPLACED by the unified BULK reposition workflow (one
+             “Reposition” action; prefilled saved positions; live shared
+             validation; ONE request carrying the complete intended order;
+             atomic RPC persistence; enhanced submission → no full-page
+             reload, this sheet stays open). Assign/remove are also enhanced
+             in-place mutations. -->
         <AdminFormSection heading="Sources in this category">
-          <p class="a2-field-hint">Assign an unassigned source to this category and set each source's numeric position (1 = first). Nothing is persisted until you press Apply; removing never deletes the source itself.</p>
-          {#if assignedSourcesForCategory(editingCategory.id).length === 0}
-            <p class="a2-sources-empty" role="status">No sources assigned to this category yet.</p>
-          {:else}
-            <div class="a2-assigned-list">
-              {#each assignedSourcesForCategory(editingCategory.id) as row, i (row.sourceId)}
-                {@const listLength = assignedSourcesForCategory(editingCategory.id).length}
-                <div class="a2-assigned-row">
-                  <span class="a2-assigned-pos">{row.position}</span>
-                  <span class="a2-assigned-name">{row.name}</span>
-                  <AdminStatusBadge label={row.status ?? 'unknown'} tone={statusTone(row.status)} />
-                  {#if row.enabled === false}
-                    <AdminStatusBadge label="Disabled" tone="neutral" />
-                  {/if}
-                  <span class="a2-assigned-spacer"></span>
-                  <!-- MAVP-7 (Issue 2): numeric position — ONE edit per row,
-                       applied only when the administrator presses Apply. The
-                       server derives the final order from the database's
-                       current assignments; positions below 1 or above the
-                       list length are rejected server-side. The native
-                       min/max attributes give an instant no-JS hint while
-                       the server stays the authority. -->
-                  <form method="POST" action="?/reorderSources" class="a2-position-form">
-                    <input type="hidden" name="category_id" value={editingCategory.id} />
+          {#if sourcesRepositioning && sourceRepositionEntries.length > 0}
+            <form
+              method="POST"
+              action="?/reorderSourcesBulk"
+              class="a2-reposition-form"
+              use:enhance={() => {
+                sourceReorderSaving = true;
+                return async ({ update, result }) => {
+                  await update({ reset: false });
+                  sourceReorderSaving = false;
+                  // Only a CONFIRMED success exits reposition mode — a
+                  // failed save keeps the admin's unsaved edits visible.
+                  if (result.type === 'success' || result.type === 'redirect') {
+                    sourcesRepositioning = false;
+                    sourceDrafts = {};
+                  }
+                };
+              }}
+            >
+              <input type="hidden" name="category_id" value={editingCategory.id} />
+              {#if sourceRepositionValidation?.valid}
+                {#each sourceRepositionValidation.orderedIds as orderedId (orderedId)}
+                  <input type="hidden" name="ordered_source_ids" value={orderedId} />
+                {/each}
+              {/if}
+              <p class="a2-field-hint">Edit the numbers to reposition (1 = first). Values are validated live — Apply stays disabled until the whole set is valid. Cancel discards unsaved edits.</p>
+              {#if sourceRepositionValidation?.setError}
+                <p class="a2-reposition-error" role="alert"><AlertCircle size={13} /> {sourceRepositionValidation.setError}</p>
+              {/if}
+              <div class="a2-assigned-list">
+                {#each sourceRepositionEntries as entry (entry.id)}
+                  {@const row = assignedSourcesForCategory(editingCategory.id).find((candidate) => candidate.sourceId === entry.id)}
+                  {@const rowError = sourceRepositionValidation?.errors[entry.id] ?? null}
+                  <div class="a2-assigned-row">
                     <label class="a2-position-field">
                       <span>Position</span>
-                      <input type="number" name={`position_${row.sourceId}`} value={row.position} min="1" max={listLength} step="1" inputmode="numeric" aria-label={`Position for ${row.name}`} />
+                      <input type="number" value={sourceDrafts[entry.id] ?? String(entry.savedPosition)} min="1" max={sourceRepositionEntries.length} step="1" inputmode="numeric" class:invalid={Boolean(rowError)} aria-invalid={rowError ? 'true' : undefined} aria-label={`Position for ${row?.name ?? 'source'}`} oninput={(e) => { sourceDrafts = { ...sourceDrafts, [entry.id]: (e.currentTarget as HTMLInputElement).value }; }} />
                     </label>
-                    <button type="submit" class="a2-btn-secondary a2-position-apply" aria-label={`Apply new position for ${row.name}`}>Apply</button>
-                  </form>
-                  <form method="POST" action="?/removeSource" class="a2-inline-form" onsubmit={(e) => { if (!confirm(`Remove ${row.name} from this category? The source itself is not deleted.`)) e.preventDefault(); }}>
-                    <input type="hidden" name="category_id" value={editingCategory.id} />
-                    <input type="hidden" name="source_id" value={row.sourceId} />
-                    <button type="submit" class="a2-icon-btn a2-icon-btn-danger" title="Remove from category" aria-label={`Remove ${row.name} from this category`}><Trash2 size={14} /></button>
-                  </form>
-                </div>
-              {/each}
-            </div>
+                    <span class="a2-assigned-name">{row?.name ?? 'Unknown source'}</span>
+                    {#if row?.enabled === false}
+                      <AdminStatusBadge label="Disabled" tone="neutral" />
+                    {/if}
+                    {#if rowError}<span class="a2-position-row-error" role="alert">{rowError}</span>{/if}
+                  </div>
+                {/each}
+              </div>
+              <div class="a2-form-actions">
+                <button type="submit" class="a2-btn-primary" disabled={!sourceRepositionValidation?.valid || !sourceRepositionDirty || sourceReorderSaving}>{sourceReorderSaving ? 'Saving…' : 'Apply'}</button>
+                <button type="button" class="a2-btn-secondary" onclick={cancelSourcesReposition} disabled={sourceReorderSaving}>Cancel</button>
+              </div>
+            </form>
+          {:else}
+            <p class="a2-field-hint">Assign an unassigned source to this category. Positions (1 = first) are edited through the shared Reposition workflow — nothing is persisted until you apply it there; removing never deletes the source itself.</p>
+            {#if sourceRepositionEntries.length > 0}
+              <div class="a2-reposition-bar">
+                <button type="button" class="a2-btn-secondary a2-reposition-trigger" onclick={startSourcesReposition}>Reposition</button>
+              </div>
+              <div class="a2-assigned-list">
+                {#each assignedSourcesForCategory(editingCategory.id) as row (row.sourceId)}
+                  <div class="a2-assigned-row">
+                    <span class="a2-assigned-pos">{row.position}</span>
+                    <span class="a2-assigned-name">{row.name}</span>
+                    <AdminStatusBadge label={row.status ?? 'unknown'} tone={statusTone(row.status)} />
+                    {#if row.enabled === false}
+                      <AdminStatusBadge label="Disabled" tone="neutral" />
+                    {/if}
+                    <span class="a2-assigned-spacer"></span>
+                    <!-- In-place removal (enhanced): deletes ONLY the mapping
+                         row — the source itself is never deleted — and the
+                         load invalidation refreshes this sheet's list without
+                         a full-page reload. -->
+                    <form method="POST" action="?/removeSource" class="a2-inline-form" use:enhance={({ cancel }) => {
+                      // The confirm runs in the PRE-SUBMIT phase: declining
+                      // cancels the request outright (no navigation, no POST).
+                      if (!confirm('Remove this source from the category? The source itself is not deleted.')) { cancel(); return; }
+                      return async ({ update }) => {
+                        await update({ reset: false });
+                        cancelSourcesReposition();
+                      };
+                    }}>
+                      <input type="hidden" name="category_id" value={editingCategory.id} />
+                      <input type="hidden" name="source_id" value={row.sourceId} />
+                      <button type="submit" class="a2-icon-btn a2-icon-btn-danger" title="Remove from category" aria-label={`Remove ${row.name} from this category`}><Trash2 size={14} /></button>
+                    </form>
+                  </div>
+                {/each}
+              </div>
+            {:else}
+              <p class="a2-sources-empty" role="status">No sources assigned to this category yet.</p>
+            {/if}
           {/if}
           {#if assignableSourcesForCategory(editingCategory.id).length === 0}
             <p class="a2-sources-empty" role="status">No unassigned sources remain — every existing source already belongs to a category.</p>
           {:else}
-            <form method="POST" action="?/assignSource" class="a2-assign-row">
+            <!-- In-place assignment (enhanced): the sheet stays open, the
+                 assigned list refreshes from the reloaded data, and other
+                 unsaved sheet state is preserved (no document reload). -->
+            <form method="POST" action="?/assignSource" class="a2-assign-row" use:enhance={() => {
+              return async ({ update, formElement, result }) => {
+                await update({ reset: false });
+                if (result.type === 'success' || result.type === 'redirect') {
+                  formElement.reset();
+                  cancelSourcesReposition();
+                }
+              };
+            }}>
               <input type="hidden" name="category_id" value={editingCategory.id} />
               <label class="a2-field a2-assign-select"><span>Assign a source</span>
                 <select name="source_id" required>
@@ -397,14 +599,22 @@
   .a2-assigned-name { font-size: var(--a2-text-sm); font-weight: 600; color: var(--a2-text-bright); }
   .a2-assigned-spacer { flex: 1 1 auto; }
   .a2-inline-form { display: inline-flex; }
-  /* MAVP-7 (Issue 2): numeric position control — compact, mobile-friendly
-     (44px touch target, wraps under the row on narrow screens). */
-  .a2-position-form { display: inline-flex; align-items: flex-end; gap: var(--a2-space-1); flex-wrap: wrap; }
+  /* 2026-10-16 round (Issue 5): numeric position control (shared bulk
+     reposition editor — the retired per-row Apply forms and their
+     dedicated styles were removed with them). */
   .a2-position-field { display: flex; flex-direction: column; gap: 2px; }
   .a2-position-field span { font-size: var(--a2-text-2xs); color: var(--a2-text-dim); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; }
   .a2-position-field input { width: 4.5rem; min-height: 44px; padding: 6px 8px; background: var(--a2-surface-3); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); color: var(--a2-text); font-size: var(--a2-text-sm); text-align: center; }
   .a2-position-field input:focus { outline: none; border-color: var(--a2-cyan); }
-  .a2-position-apply { min-height: 44px; padding: 8px 12px; font-size: var(--a2-text-xs); }
+  /* 2026-10-16 round (Issue 5): unified bulk-reposition editor. */
+  .a2-reposition-bar { display: flex; align-items: center; justify-content: flex-end; gap: var(--a2-space-2); margin-bottom: var(--a2-space-2); }
+  .a2-reposition-trigger { min-height: 44px; }
+  .a2-reposition-form { display: flex; flex-direction: column; gap: var(--a2-space-2); }
+  .a2-reposition-hint { margin: 0; font-size: var(--a2-text-2xs); color: var(--a2-text-muted); }
+  .a2-reposition-error { display: inline-flex; align-items: center; gap: var(--a2-space-1); margin: 0; padding: var(--a2-space-1) var(--a2-space-2); background: var(--a2-red-soft); border: 1px solid var(--a2-red-border); border-radius: var(--a2-radius-sm); color: var(--a2-red); font-size: var(--a2-text-2xs); }
+  .a2-position-row-error { font-size: var(--a2-text-2xs); color: var(--a2-red); }
+  .a2-position-field input.invalid { border-color: var(--a2-red); color: var(--a2-red); }
+  .a2-position-field input.invalid:focus { border-color: var(--a2-red); }
   .a2-assign-row { display: flex; align-items: flex-end; gap: var(--a2-space-2); flex-wrap: wrap; }
   .a2-assign-select { flex: 1 1 220px; }
   .a2-assign-row select { background: var(--a2-surface-3); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); color: var(--a2-text); font-size: var(--a2-text-sm); padding: 8px 10px; min-height: 44px; }

@@ -82,10 +82,35 @@ export function extractString(record: Record<string, unknown>, field: string): s
 }
 
 /**
+ * Active-embed-iframe window resolver (defense-in-depth for postMessage
+ * adapters). The host player (PlayerShell) registers a resolver returning
+ * the CURRENT embed iframe's contentWindow (or null when no embed iframe is
+ * bound — direct playback, teardown, tests). While a window IS bound, every
+ * PostMessageAdapterBase listener drops messages whose `event.source` is not
+ * that window — a matching origin string alone is not accepted from any
+ * other window (stale iframe after a source switch, same-origin poster).
+ * The resolver is module-level by design: all provider adapters share the
+ * ONE active player iframe.
+ */
+type ActiveIframeWindowResolver = () => Window | null | undefined;
+let activeIframeWindowResolver: ActiveIframeWindowResolver | null = null;
+
+/** Register (or replace/clear with null) the active embed-iframe resolver. */
+export function setActiveIframeWindowResolver(resolver: ActiveIframeWindowResolver | null): void {
+  activeIframeWindowResolver = resolver;
+}
+
+/**
  * Base class for postMessage-based provider adapters.
  *
  * Provides:
  *   - Origin-validated `window.message` listener registration/teardown.
+ *   - Defense-in-depth `event.source` validation against the ACTIVE embed
+ *     iframe's contentWindow when the host registers an embed-window
+ *     resolver (setActiveEmbedWindowResolver) — a message whose source is
+ *     NOT the active iframe's window is dropped even when its origin
+ *     string matches (stale iframes after a source switch, same-origin
+ *     interlopers, non-window posters).
  *   - A `destroyed` flag that prevents late events from reaching the handler.
  *   - An `emit(event)` method that forwards normalized PlayerEvents to the
  *     registered handler (dropped if destroyed).
@@ -134,6 +159,13 @@ export abstract class PostMessageAdapterBase {
       if (this.destroyed) return;
       // Origin validation — the primary security boundary.
       if (event.origin !== this.origin) return;
+      // Defense-in-depth source validation (activeIframeWindowResolver):
+      // when the host player has a bound embed iframe, a message must come
+      // from THAT window. When no iframe is bound (direct sources, tests,
+      // SSR-shape callers) this check is skipped — `event.origin` remains
+      // the authoritative gate.
+      const expectedWindow = activeIframeWindowResolver?.() ?? null;
+      if (expectedWindow && event.source !== expectedWindow) return;
       this.handleMessage(event);
     };
     if (typeof window !== 'undefined') {

@@ -1863,3 +1863,99 @@ refactor, no change to any existing provider's semantics:
    Mavero models only the documented parent-side contract.
 3. The DOM-QA `.mjs` browser suite failure is pre-existing (strict-mode
    `.bulk-btn` ambiguity) — left untouched per the no-weakening rule.
+
+## Production Fix Round — Vixolity + VidStuck.cc + icon/badge persistence + provider icon upload + bulk repositioning (2026-10-16)
+
+### What was done (per issue)
+
+1. **Vixolity playback error** — traced end-to-end through the REAL resolver
+   with the LIVE config (content mocked with real public IMDb ids): URL
+   construction, identifier gates, adapter dispatch and protocol metadata are
+   all CORRECT (movie `…/vs/tt0137523`; series `…/vs/tt0903747/s1/e01`,
+   `…/s1/e12`; missing/TMDB-in-IMDb-slot → typed MISSING_IDENTIFIER).
+   ROOT CAUSE (external, evidence-based): `ha.vixolity.com` NEVER returns
+   `access-control-allow-origin` (any Origin incl. `https://maveroweb.space`,
+   none, browser UA; OPTIONS preflight 204 without CORS headers). The
+   playlists (master/variant/audio/subtitles) are all on that host → hls.js
+   is CORS-blocked on every browser origin → the designed error screen with
+   retry/switch-source. Segments host `hs1.nodedatastream.top` IS CORS-open
+   (`*`); native-HLS browsers (Safari/iOS) play (the player sets no
+   `crossorigin`). Blue-Velvet precedent applies: NO proxy/bypass. No Mavero
+   code change was needed or made for this issue; the blocker is documented
+   for the provider.
+2. **VidStuck .cc** — live-verified (movie+tv embeds 200, zero redirects,
+   params consumed; .xyz hosts DEAD). Adapter re-pinned to the verified
+   `.cc` origin only (dead hosts + lookalikes rejected); NEW defense-in-depth
+   `event.source` validation against the ACTIVE iframe window (module-level
+   resolver registered/cleared by PlayerShell; origin check remains primary);
+   migration `20261117000000_vidstuck_cc_embed_origins.sql` created (ONE
+   guarded jsonb_set on the VidStuck provider row, stale-origin guard,
+   NOT applied); ledgers updated (15→16, 12→13) with sanctioned posture
+   checks.
+3. **Source icon/badge reset** — root cause: upload-mode submits `icon=''`
+   with no new file and the old contract erased the saved icon. New server
+   contract: uploaded file > explicit `icon_remove` flag > submitted value >
+   EMPTY = NO CHANGE on update (undefined key dropped from the payload;
+   create still null). Explicit remove checkbox added to the sheet (visible
+   confirmation hint, offered only when an icon exists). Badges round-trip
+   canonically. Global `ordering` is no longer submitted by the sheet and is
+   omitted-on-absent server-side.
+4. **Provider icon upload** — `parseProviderForm` now async and reuses the
+   EXISTING source icon pipeline (`icon_file` multipart → PNG magic bytes /
+   SVG sanitize → bounded data URL in `streaming_providers.icon`), URL
+   contract preserved, explicit remove, upload-wins precedence visible in
+   the live preview, oversized/non-image rejected. Provider rows render
+   URL/data icons via script-inert `<img>` (emoji/text fallback unchanged).
+5. **Bulk repositioning + no reloads** — shared validator
+   (`src/lib/shared/bulk-reposition.ts`) with prefill-from-saved, live
+   complete-set validation (blank/zero/neg/decimal/non-numeric/duplicate/
+   out-of-range) and the dense-1..N vs gap-permitting contracts; category
+   sources: ONE Reposition workflow (atomic RPC, complete order in ONE
+   request); global category + global source ordering editors (new
+   `reorderCategories`/`reorderSources` actions + services with server-side
+   completeness/uniqueness gates); per-row Apply forms REMOVED; Ordering
+   fields REMOVED from both edit sheets (bulk editors authoritative);
+   assign/remove/save mutations now `use:enhance` (no full-page reload,
+   sheet state kept, drafts preserved on failure, single-flight).
+
+### Verification matrix (this round)
+
+| Gate | Result |
+|------|--------|
+| New focused suite | `mav_fix_round_icons_reorder_test` 42/42 (chain 282→283) |
+| Updated suites | vidstuck (cc contract + stale-window + cc-migration pins); cloudstream registry 175/175 + phase4 222/222 (sanctioned ledger updates 15→16, 12→13); mavp4 hardening 175/175 (§4.13 re-pinned to the forUpdate contract — intent unchanged); stremio phase1 112/112 (async-signature adaptation, the documented MAVP-4 supersession precedent) |
+| Vixolity contract | `vixolity_provider_test` 119/119 (unchanged) |
+| pnpm check | 0 errors / 5 warnings (identical to baseline) |
+| Full chain + build | recorded at the end of this entry |
+| Migration classification | the NEW migration is UPDATE-class by design (the fix IS a config correction); both ledger tripwires were updated with the sanctioned, reviewed posture checks |
+
+### Mocks vs verified reality (honest boundary)
+
+- VERIFIED with live server probes (2026-10-16): the VidStuck `.cc` embed
+  behavior (200/zero-redirect/params), the DEAD `.xyz` hosts, the Vixolity
+  HLS manifest/segment serving + the full CORS matrix, and the Vixolity URL
+  contract through the real resolver with the live provider/source rows.
+- MOCKED (never misrepresented as live playback): all postMessage/stale-
+  window scenarios, the reorder service writes (in-memory client), and every
+  icon/upload scenario in the suites. No browser playback session and no
+  admin-UI click-through was performed (no staging environment) — real-device
+  verification remains the explicit gate.
+- NOT DONE (out of scope per the task): production deployment; ANY live
+  Supabase mutation — the migration is delivered unapplied with its
+  application path documented in the file header.
+
+### Remaining blockers / required manual actions
+
+1. **Vixolity (hls.js browsers)**: the PROVIDER must allowlist the deployed
+   origin(s) on `ha.vixolity.com` (ACO). Until then the error screen is the
+   designed degradation; Safari/iOS native playback already works. No Mavero
+   change can fix a cross-origin response header without a proxy (forbidden).
+2. **Apply the migration** `20261117000000_vidstuck_cc_embed_origins.sql`
+   (deliberate admin/infra action) or make the same one-key change through
+   the admin config pipeline — VidStuck resolves fail with
+   INVALID_SOURCE_URL until the live allowlist stops listing the dead .xyz
+   hosts.
+3. **Recommended follow-up**: a live browser message capture on
+   `vidstuck.cc` to re-confirm the postMessage shapes post-migration, and
+   migrating the download-providers ordering page to the shared bulk editor
+   (documented, intentionally deferred).

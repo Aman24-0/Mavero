@@ -411,6 +411,104 @@ async function normalizeCategoryOrdering(client: StreamingClient, categoryId: st
   await reorderCategorySources(client, categoryId, current.map((row) => row.source_id));
 }
 
+// ----- 2026-10-16 round (Issue 5): bulk GLOBAL ordering rewrites -----
+//
+// The unified bulk-reposition UI submits the COMPLETE intended position set
+// for a list in ONE request; the service re-validates it against the
+// database's actual rows (completeness + uniqueness + integer bounds) and
+// persists every change. Both tables have NO unique constraint on their
+// ordering columns (gaps are a permitted contract state), so a plain ordered
+// update set cannot violate anything mid-flight; the client's duplicate
+// validation is mirrored here server-side (Phase 6: never trust the client).
+
+/**
+ * Rewrites the GLOBAL ordering (streaming_sources.ordering) for the given
+ * sources. `positions` must cover EXACTLY the current source set (no
+ * missing rows, no unknown ids, no duplicate orderings); every value is a
+ * non-negative integer (gaps stay permitted). Rows not in the payload are
+ * rejected — the UI always submits the complete list.
+ */
+export async function reorderSourceOrderings(
+  client: StreamingClient,
+  positions: Array<{ sourceId: string; ordering: number }>,
+): Promise<void> {
+  const { data: current, error } = await client.from('streaming_sources').select('id').limit(1000);
+  if (error) throwRegistryError('List sources', error);
+  const currentIds = new Set((current ?? []).map((row) => row.id));
+  const seenIds = new Set<string>();
+  const seenOrderings = new Set<number>();
+  if (positions.length !== currentIds.size) {
+    throw new Error('The reposition must include every configured source exactly once.');
+  }
+  for (const entry of positions) {
+    if (!currentIds.has(entry.sourceId)) {
+      throw new Error('The reposition includes sources that do not exist.');
+    }
+    if (seenIds.has(entry.sourceId)) {
+      throw new Error('The reposition includes a source more than once.');
+    }
+    if (!Number.isSafeInteger(entry.ordering) || entry.ordering < 0) {
+      throw new Error('Ordering must be a non-negative whole number.');
+    }
+    if (seenOrderings.has(entry.ordering)) {
+      throw new Error(`Duplicate ordering value ${entry.ordering}. Every source needs a distinct position.`);
+    }
+    seenIds.add(entry.sourceId);
+    seenOrderings.add(entry.ordering);
+  }
+  for (const entry of positions) {
+    const { error: updateError } = await client
+      .from('streaming_sources')
+      .update({ ordering: entry.ordering })
+      .eq('id', entry.sourceId);
+    if (updateError) throwRegistryError('Reorder sources', updateError);
+  }
+  invalidatePublicStreamingConfig();
+}
+
+/**
+ * Rewrites the GLOBAL ordering (streaming_categories.ordering) for the
+ * given categories — the same contract as reorderSourceOrderings (complete
+ * set, distinct non-negative integers, gaps permitted).
+ */
+export async function reorderCategoryOrderings(
+  client: StreamingClient,
+  positions: Array<{ categoryId: string; ordering: number }>,
+): Promise<void> {
+  const { data: current, error } = await client.from('streaming_categories').select('id').limit(1000);
+  if (error) throwRegistryError('List categories', error);
+  const currentIds = new Set((current ?? []).map((row) => row.id));
+  const seenIds = new Set<string>();
+  const seenOrderings = new Set<number>();
+  if (positions.length !== currentIds.size) {
+    throw new Error('The reposition must include every configured category exactly once.');
+  }
+  for (const entry of positions) {
+    if (!currentIds.has(entry.categoryId)) {
+      throw new Error('The reposition includes categories that do not exist.');
+    }
+    if (seenIds.has(entry.categoryId)) {
+      throw new Error('The reposition includes a category more than once.');
+    }
+    if (!Number.isSafeInteger(entry.ordering) || entry.ordering < 0) {
+      throw new Error('Ordering must be a non-negative whole number.');
+    }
+    if (seenOrderings.has(entry.ordering)) {
+      throw new Error(`Duplicate ordering value ${entry.ordering}. Every category needs a distinct position.`);
+    }
+    seenIds.add(entry.categoryId);
+    seenOrderings.add(entry.ordering);
+  }
+  for (const entry of positions) {
+    const { error: updateError } = await client
+      .from('streaming_categories')
+      .update({ ordering: entry.ordering })
+      .eq('id', entry.categoryId);
+    if (updateError) throwRegistryError('Reorder categories', updateError);
+  }
+  invalidatePublicStreamingConfig();
+}
+
 // ----- Phase 2: default source management -----
 //
 // These functions persist the admin-configured per-content-type default
