@@ -191,4 +191,4 @@ Every drop is **guarded**: it executes only while the covering constraint index 
 - `package.json` (test-chain registration of the new suite)
 - `WORKLOG.md` (round entry)
 
-**Commit SHA:**  on  (parent  on ) — pushed to .
+**Commit SHA:** c1ec26d on the `supabase-remediation` branch (parent `ed90050` on `main`), pushed to `origin/supabase-remediation`.
