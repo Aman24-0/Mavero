@@ -1189,8 +1189,12 @@ function pristineFile(relative: string): string | null {
   // vidstuck.xyz allowlist entries for the verified https://vidstuck.cc
   // origin on the VidStuck provider row ONLY. No cloudstream/downloader/
   // registry tables touched — live verification evidence in WORKLOG.md.
+  // SUPABASE REMEDIATION (20261118000000, sanctioned): advisor remediation —
+  // policies/grants/functions/indexes ONLY (no data writes, no table
+  // create/drop, no cloudstream/downloader table touched); behaviorally
+  // proven by scripts/supabase_remediation_migration_test.ts (115 checks).
   ok(
-    addedMigrations.length === 13
+    addedMigrations.length === 14
       && addedMigrations.includes('20261004000000_unified_downloader_global_order.sql')
       && addedMigrations.includes('20261102000000_adapter_build_lifecycle.sql')
       && addedMigrations.includes('20261103000000_live_tv_analytics_events.sql')
@@ -1203,8 +1207,9 @@ function pristineFile(relative: string): string | null {
       && addedMigrations.includes('20261113000000_vixolity_tgvid_zxcstream_providers.sql')
       && addedMigrations.includes('20261015000000_add_poster_to_media_items.sql')
       && addedMigrations.includes('20261117000000_vidstuck_cc_embed_origins.sql')
+      && addedMigrations.includes('20261118000000_supabase_remediation_security_performance.sql')
       && addedMigrations.includes('20261014000000_add_unlink_action.sql'),
-    `F3: the ONLY added migrations are the FINAL TASK unified-order + build-lifecycle + LT-5-analytics + LT-15-fallback-event + VidRift-provider + MAVP-4-icon-badge + MAVP-5-default-slots + MAVP-7-unique-assignment + BlueVelvet-provider + Vixolity/TGVID/ZXCStream-provider + VidStuck-cc-origins migrations (${addedMigrations.join(', ') || 'none'})`,
+    `F3: the ONLY added migrations are the FINAL TASK unified-order + build-lifecycle + LT-5-analytics + LT-15-fallback-event + VidRift-provider + MAVP-4-icon-badge + MAVP-5-default-slots + MAVP-7-unique-assignment + BlueVelvet-provider + Vixolity/TGVID/ZXCStream-provider + VidStuck-cc-origins + Supabase-remediation migrations (${addedMigrations.join(', ') || 'none'})`,
   );
   ok(removedMigrations.length === 0, 'F3: no migration was removed');
 

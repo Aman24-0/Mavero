@@ -268,6 +268,17 @@ function section_registry(): void {
   // jsonb_set; no other row/table/key touched — see the migration header
   // and WORKLOG.md for the live verification evidence.
   const vidstuckCcOriginsMigration = '20261117000000_vidstuck_cc_embed_origins.sql';
+  // SUPABASE REMEDIATION (20261118000000, sanctioned): advisor remediation —
+  // server-only deny-all RLS + client privilege revocation (device_pairing_requests,
+  // direct_play_sources), trigger-function search_path hardening, SECURITY DEFINER →
+  // SECURITY INVOKER for the three ordering RPCs, device_sessions_select_own
+  // init-plan form, permissive-policy consolidations, three FK indexes, seven
+  // guarded redundant-index drops. NO registry/data writes, NO table
+  // create/drop, NO download_providers row or grant change (its download_providers
+  // statements are POLICY consolidation only — effective access matrix unchanged;
+  // behaviorally proven by scripts/supabase_remediation_migration_test.ts,
+  // 115 checks on the real chain). See SUPABASE_REMEDIATION_REPORT.md.
+  const supabaseRemediationMigration = '20261118000000_supabase_remediation_security_performance.sql';
   const added = migrations.filter((name) => !pristineMigrations.includes(name));
   const phase2Sql = read(`supabase/migrations/${phase2Migration}`);
   const phase2SqlNoComments = phase2Sql.replace(/--[^\n]*/g, '');
@@ -276,7 +287,7 @@ function section_registry(): void {
   const unifiedSql = read(`supabase/migrations/${unifiedMigration}`);
   const unifiedSqlNoComments = unifiedSql.replace(/--[^\n]*/g, '');
   ok(
-    added.length === 16
+    added.length === 17
       && added.includes(migrationName)
       && added.includes(phase2Migration)
       && added.includes(phase3Migration)
@@ -292,8 +303,9 @@ function section_registry(): void {
       && added.includes(vixolityTgvidZxcstreamMigration)
       && added.includes(posterToMediaItemsMigration)
       && added.includes(vidstuckCcOriginsMigration)
+      && added.includes(supabaseRemediationMigration)
       && added.includes('20261014000000_add_unlink_action.sql'),
-    `§A10: exactly the CS-5 + Phase 2 + Phase 3 + FINAL TASK + build-lifecycle + LT-5-analytics + LT-15-fallback-event + VidRift-provider + MAVP-4-icon-badge + MAVP-5-default-slots + MAVP-7-unique-assignment + BlueVelvet-provider + Vixolity/TGVID/ZXCStream-provider + VidStuck-cc-origins migrations were added (${added.join(', ') || 'none'})`,
+    `§A10: exactly the CS-5 + Phase 2 + Phase 3 + FINAL TASK + build-lifecycle + LT-5-analytics + LT-15-fallback-event + VidRift-provider + MAVP-4-icon-badge + MAVP-5-default-slots + MAVP-7-unique-assignment + BlueVelvet-provider + Vixolity/TGVID/ZXCStream-provider + VidStuck-cc-origins + Supabase-remediation migrations were added (${added.join(', ') || 'none'})`,
   );
   // VIDRIFT (sanctioned): insert-only registration — no destructive verbs,
   // no download_providers / registry-table references.
@@ -316,6 +328,19 @@ function section_registry(): void {
     ok((vidstuckCcSqlNoComments.match(/\bUPDATE\b/gi) ?? []).length === 1, '§A10: the VidStuck cc-origins migration contains exactly ONE UPDATE');
     ok(vidstuckCcSqlNoComments.includes("'[\"https://vidstuck.cc\"]'"), '§A10: the VidStuck cc-origins migration allowlists the verified .cc origin');
     ok(vidstuckCcSqlNoComments.includes("'dfb0c33c-038d-40b8-abcf-e89651d5d64e'"), '§A10: the VidStuck cc-origins migration is id-guarded to the VidStuck provider row');
+    // SUPABASE REMEDIATION (sanctioned): security posture — no data writes at
+    // all (no INSERT INTO / UPDATE … SET / DELETE FROM / TRUNCATE), no table
+    // create/drop; the DROP verbs are scoped to POLICIES and the seven
+    // provably-redundant secondary indexes (each guarded by a covering-index
+    // existence check); the ALTER verbs are function-attribute hardening
+    // (SECURITY INVOKER). The bare "for insert/update/delete" occurrences are
+    // RLS policy command definitions, not data writes.
+    const remediationSqlNoComments = read(`supabase/migrations/${supabaseRemediationMigration}`).replace(/--[^\n]*/g, '');
+    ok(!/\binsert\s+into\b/i.test(remediationSqlNoComments), '§A10: the Supabase remediation migration contains no INSERT INTO (no data writes)');
+    ok(!/\bupdate\s+\S+\s+set\b/i.test(remediationSqlNoComments), '§A10: the Supabase remediation migration contains no UPDATE … SET (no data writes)');
+    ok(!/\bdelete\s+from\b/i.test(remediationSqlNoComments), '§A10: the Supabase remediation migration contains no DELETE FROM (no data writes)');
+    ok(!/\btruncate\b/i.test(remediationSqlNoComments), '§A10: the Supabase remediation migration contains no TRUNCATE');
+    ok(!/\b(create|drop)\s+(table|schema)\b/i.test(remediationSqlNoComments), '§A10: the Supabase remediation migration creates/drops no tables');
   }
   const liveTvAnalyticsSql = read(`supabase/migrations/${liveTvAnalyticsMigration}`);
   const liveTvAnalyticsSqlNoComments = liveTvAnalyticsSql.replace(/--[^\n]*/g, '');

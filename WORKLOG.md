@@ -1970,3 +1970,68 @@ refactor, no change to any existing provider's semantics:
 - Tests: NEW vixolity_playback_routing_test (19 checks — mode routing per browser class, metadata.protocol load-bearing pin, no-global-native-preference) registered in the chain; vixolity_provider_test 119/119 + bluevelvet_provider_test 128/128 green; evidence harness vixolity_browser_playback_verification.mjs added (NOT in chain).
 - Gates: pnpm check 0e/5w (= baseline); pnpm build exit 0; full chain green to the PRE-EXISTING DOM-QA failure (mav_task2_episode_sheet_dom_qa.mjs .bulk-btn strict-mode — documented identical at baseline 219b058/3f9a49d; no src/ change this round); post-chain season-chip 32/32.
 - Boundaries honored: NO deploy, NO live Supabase mutation (resolve interception prevents demand writes; probes read-only), no migration, zero src/ changes. Report: VIXOLITY_PLAYBACK_AUDIT_REPORT.md (10 sections incl. the Android manual checklist and the pending CSP-delivery decision).
+
+## Supabase Security, Performance & Migration Remediation (2026-10-17)
+
+- Baseline: main @ ed90050 clean + synced; feature branch `supabase-remediation`.
+  Live access available to this environment = Data API only (service-role REST):
+  41 public tables + 16 RPC signatures + full column lists of the 11 in-scope
+  tables probed read-only. Management API token / direct Postgres / SQL
+  execution channel NOT available → advisors not re-runnable from here (the
+  cited findings come from the production audit; the post-apply advisor run is
+  a documented manual step).
+- Migration-history reconciliation: live history (34 entries) is INCOMPLETE vs
+  93 repository files because migrations are applied manually via the SQL
+  Editor (runbook), which does not write supabase_migrations. Effects-presence
+  audit via the Data API establishes production schema = repo head. No replay,
+  no history fabrication, no old-file edits. Documented pre-existing traps:
+  duplicate version prefixes (20261004000000/20261012000000 ×2), the
+  20261004000000 first-run backfill reading later-versioned cloudstream tables
+  (version-order replay fails; dependency order required), the 20261101000000
+  twin duplicate 20260820015000 ERRORING after 20260820014000 (drop-view vs
+  table — the runbook's "harmless no-op" claim is inaccurate), and the fully
+  out-of-band production objects direct_play_sources +
+  update_direct_play_sources_updated_at (0 rows, zero repo references).
+- Migration 20261118000000_supabase_remediation_security_performance.sql
+  (additive, idempotent, version after the newest repo file — machine clock
+  deliberately NOT used): §1 server-only posture for device_pairing_requests +
+  direct_play_sources (client privilege revocation + RESTRICTIVE deny-all
+  policies; service_role/ownership untouched; table-scoped statements
+  to_regclass-guarded); §2 trigger function hardened (security invoker,
+  search_path=pg_catalog, now() instead of the RC-3-class timezone('utc',now())
+  wall-clock round-trip; CREATE OR REPLACE keeps the live trigger bound);
+  §3 the three ordering RPCs → SECURITY INVOKER with the full security proof
+  (in-body is_admin() gate + admin_all RLS on every touched table + the
+  session-client call path; unused service_role EXECUTE revoked);
+  §4 device_sessions_select_own → (select auth.uid()) with name/role/command/
+  semantics preserved; §5 permissive-policy consolidations for
+  download_providers / streaming_default_source_slots / streaming_default_sources
+  / user_preferences with the exact effective access matrix preserved (the
+  first cut's merged download_providers SELECT would have broken every anon
+  read via is_admin() EXECUTE denial — caught by the regression test and fixed
+  with a per-role split); §6 three FK indexes (plain CREATE INDEX — SQL Editor
+  runs one implicit transaction, CONCURRENTLY unsupported; tables tiny);
+  §7 seven provably-redundant indexes dropped, each drop GUARDED by a live
+  covering-index existence check (pg_index/pg_constraint). Leaked-password
+  protection + Vixolity untouched.
+- NEW scripts/supabase_remediation_migration_test.ts (115 checks, registered in
+  the chain): applies the REAL chain verbatim to embedded PostgreSQL (pglite;
+  dependency-ordered with the two documented ordering quirks), reproduces every
+  advisor finding pre-state, applies the migration, then asserts BEHAVIOR:
+  42501 on every client operation against the server-only tables, service-role
+  pairing CRUD intact, trigger still attached + true-instant bump, admin RPC
+  success end-to-end under RLS (dense renumber + addon resync), ordinary-user
+  denial with original messages/codes, per-role single permissive SELECT
+  policies, ownership boundaries both ways, exact FK index definitions, seven
+  drops with coverings intact, re-apply idempotency.
+- Ledgers updated (sanctioned posture checks): cloudstream_registry_integration
+  16→17 migrations + remediation posture (no INSERT INTO/UPDATE SET/DELETE FROM/
+  TRUNCATE, no table create/drop); cloudstream_phase4_integration_manager 13→14.
+- Gates: pnpm check 0e/5w (= baseline); pnpm build exit 0; full chain green to
+  the PRE-EXISTING DOM-QA failure (.bulk-btn strict-mode — identical at
+  baseline); post-chain season-chip 32/32. Secrets scan clean.
+- NOT DONE (by design + environment): production application of the migration
+  (no SQL channel here — Dashboard SQL Editor procedure + verification script
+  docs/supabase-remediation-verification.sql + advisor re-run documented in
+  SUPABASE_REMEDIATION_REPORT.md §6); advisors not re-runnable from this
+  environment. Production is NOT claimed fixed.
