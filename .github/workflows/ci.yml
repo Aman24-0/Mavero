@@ -18,6 +18,17 @@
 #     at the project, then the GLOBAL npm installation. Playwright is
 #     intentionally NOT a package.json dependency, so CI provisions it
 #     globally (same as local dev) plus a headless Chromium.
+#   - ripgrep is apt-installed because adapter_build_lifecycle_test.ts §M1
+#     invokes `rg -l builder-client src/` (spawnSync) as an architecture
+#     pin; the GitHub-hosted runner image does not preinstall it
+#     (run 39056121023 failed with spawnSync rg ENOENT).
+#   - After checkout, the three hard-coded historical commits referenced
+#     by the CloudStream regression tests are verified to exist before any
+#     gate runs: PRISTINE_CS3 = 59634a9 (cloudstream_downloader_ui_test),
+#     PRISTINE_CS4 = 065d153 (cloudstream_registry_integration_test) and
+#     434d02b (cloudstream_phase4_integration_manager_test, git show +
+#     ls-tree). This fails fast with a clear message instead of failing
+#     deep inside the chain.
 #   - No Supabase secrets are provided: every suite in the chain runs
 #     offline against stubs/embedded PostgreSQL (pglite), and the one
 #     env-gated live smoke (final_remediation_live_smoke_test.ts) SKIPS
@@ -45,12 +56,36 @@ jobs:
     timeout-minutes: 60
     steps:
       # fetch-depth: 0 — CloudStream regression tests inspect historical
-      # baseline commits (PRISTINE_CS3 = 59634a9, PRISTINE_CS4 = 065d153);
-      # the default shallow clone (depth 1) cannot resolve them.
+      # baseline commits (PRISTINE_CS3 = 59634a9, PRISTINE_CS4 = 065d153,
+      # plus 434d02b in cloudstream_phase4_integration_manager_test); the
+      # default shallow clone (depth 1) cannot resolve them.
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      # Fail fast (before any install) if the checkout is missing a commit
+      # that the regression tests resolve via git show / ls-tree.
+      - name: Validate git references required by regression tests
+        run: |
+          for sha in 59634a9 065d153 434d02b; do
+            if ! git cat-file -e "${sha}^{commit}" 2>/dev/null; then
+              echo "::error::commit ${sha} is missing from the checkout — cloudstream regression tests resolve it (fetch-depth must stay 0)"
+              exit 1
+            fi
+            echo "ok ${sha} $(git log -1 --format=%s "${sha}")"
+          done
+
+      # ripgrep — the only OS package the test chain needs that the runner
+      # image does not preinstall (audit 2026-10: adapter_build_lifecycle_test.ts
+      # §M1 spawns `rg -l builder-client src/`; every other external binary
+      # in the 290-command chain — git, ls, vite, node, pnpm — is
+      # preinstalled or arrives via the frozen lockfile).
+      - name: Install ripgrep (adapter_build_lifecycle_test §M1)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ripgrep
+          rg --version
 
       - name: Setup pnpm 10.30.3 (the packageManager pin from package.json)
         uses: pnpm/action-setup@v4
