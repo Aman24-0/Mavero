@@ -139,7 +139,9 @@ ok(/onDownload=\{openEpisodeDownloadSheet\}/.test(detailPage), 'R: episode downl
 ok(/<SeasonEpisodes[\s\S]*?watchType=\{type === 'anime' \? 'anime' : 'series'\}/.test(detailPage), 'R: season/episode guide untouched');
 ok(/class="cast-rail"/.test(detailPage) && /class="recs-row"/.test(detailPage), 'R: Cast + recommendation rails untouched');
 ok(/navigateBackOr/.test(detailPage) && /appendReturnTo/.test(detailPage), 'R: back navigation + return-to contracts untouched');
-ok(/<script type="application\/ld\+json">\{structuredData\}<\/script>/.test(detailPage), 'R: SEO structured data untouched');
+// GSC JSON-LD fix (2026-10): raw-JSON injection replaces the literal
+// {structuredData} placeholder (Svelte does not interpolate inside <script>).
+ok(/\{@html structuredDataScript\}/.test(detailPage), 'R: SEO structured data untouched');
 ok(/structuredData = \$derived\(JSON\.stringify/.test(detailPage), 'R: metadata enrichment untouched');
 // The removed pieces did not orphan any dead code.
 ok(!/heroProviderOverflow|provider-strip-label|provider-logos\b|provider-names|provider-more/.test(detailPage), 'R: no dead provider-strip code remains');

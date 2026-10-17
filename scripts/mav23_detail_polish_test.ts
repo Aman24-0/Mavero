@@ -224,7 +224,9 @@ ok(/appendReturnTo|navigateBackOr/.test(detailPage), 'R: back/return navigation 
 ok(/openEpisodeDownloadSheet/.test(detailPage), 'R: episode download flow preserved');
 ok(/SeasonEpisodes/.test(detailPage), 'R: seasons/episodes section preserved');
 ok(/getLatestResumeTarget/.test(detailPage), 'R: resume/continue-watching resolution preserved');
-ok(/structuredData/.test(detailPage) && /application\/ld\+json/.test(detailPage), 'R: SEO structured data preserved');
+// GSC JSON-LD fix (2026-10): the ld+json element now lives in the shared
+// serializer (src/lib/shared/json-ld.ts); the component injects it raw.
+ok(/\{@html structuredDataScript\}/.test(detailPage) && /\$lib\/shared\/json-ld/.test(detailPage), 'R: SEO structured data preserved');
 // Navigation policy.
 ok(/window\.history\.back\(\)/.test(navigation), 'R: real history.back policy preserved');
 // Snapshot + scroll restoration.

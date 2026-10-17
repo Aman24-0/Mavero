@@ -558,7 +558,9 @@ assert.match(detailPage, /const fallbackDestination = validReturnTo \?\? '\/disc
 assert.match(detailPage, /navigateBackOr\(\(\) => \{/, 'back: shared policy preserved');
 assert.match(detailPage, /const watchHrefVal = \$derived\(appendReturnTo\(watchRoutePath, `\$\{page\.url\.pathname\}\$\{page\.url\.search\}\$\{page\.url\.hash\}`\)\);/, 'watch link carries the origin');
 assert.match(detailPage, /<link rel="canonical" href=\{canonicalUrl\} \/>/, 'canonical URL preserved');
-assert.match(detailPage, /<script type="application\/ld\+json">\{structuredData\}<\/script>/, 'structured data preserved');
+// GSC JSON-LD fix (2026-10): raw-JSON injection replaces the literal
+// {structuredData} placeholder (Svelte does not interpolate inside <script>).
+assert.match(detailPage, /\{@html structuredDataScript\}/, 'structured data preserved');
 // MAV-23 supersession: the inline player has no dialog chrome — focus
 // returns to the Trailer toggle on stop (the same "restore focus on
 // close" intent; the toggle IS the trigger now).

@@ -24,6 +24,8 @@
   import { getLatestResumeTarget } from '$lib/client/progress/presenter';
   import { deleteCloudFavorite, syncAuthenticatedState } from '$lib/client/progress/cloud';
   import { appendReturnTo, navigateBackOr } from '$lib/shared/navigation';
+  // GSC JSON-LD fix (2026-10): safe serialization for the ld+json head block.
+  import { escapeJsonForScript, jsonLdScriptElement } from '$lib/shared/json-ld';
   import { haptic } from '$lib/client/haptics';
   import { showSuccessToast, showErrorToast } from '$lib/client/toast.svelte';
   import type { PublicDownloadProvider, DownloadMediaType } from '$lib/shared/downloader';
@@ -151,6 +153,26 @@
       ? { aggregateRating: { '@type': 'AggregateRating', ratingValue: item.rating, bestRating: 10, ratingCount: item.voteCount } }
       : {}),
   }));
+  // Google Search Console fix — "Unparsable structured data: Missing '}' or
+  // object member name" (reported on /tv-show/4614?from=%2F).
+  //
+  // Svelte treats the CONTENTS of a script element in a template as raw
+  // text: the former emission — an ld+json head script interpolating
+  // {structuredData} inside it — emitted the LITERAL placeholder text
+  // "{structuredData}" in the SSR HTML (JSON.parse fails at position 1 —
+  // the exact GSC error). Plain Svelte interpolation is also wrong here —
+  // it HTML-escapes the JSON ("&quot;"), which corrupts it for crawlers.
+  //
+  // The block is therefore injected as RAW JSON through {@html} (the whole
+  // head script element), with every "less-than" character escaped to the
+  // JSON unicode escape backslash-u003c — identical after JSON.parse, and
+  // incapable of forming the script-closing or HTML-comment-opening
+  // sequence that would terminate the element early (titles/descriptions
+  // can contain markup-like text; they must never break out of the head
+  // script or inject HTML). See src/lib/shared/json-ld.ts.
+  const structuredDataScript = $derived(
+    jsonLdScriptElement(escapeJsonForScript(structuredData)),
+  );
   const trailerKey = $derived(item.trailerKey ?? '');
   const hasTrailer = $derived(Boolean(trailerKey));
   const castMembers = $derived(item.cast ?? []);
@@ -747,7 +769,7 @@
   <meta name="twitter:title" content={`${item.title} — Mavero`} />
   <meta name="twitter:description" content={item.description} />
   <meta name="twitter:image" content={item.backdrop || item.poster} />
-  <script type="application/ld+json">{structuredData}</script>
+  {@html structuredDataScript}
 </svelte:head>
 
 <svelte:window onkeydown={handleTrailerKeydown} />

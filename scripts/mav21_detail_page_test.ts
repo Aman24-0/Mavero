@@ -307,8 +307,13 @@ assert.match(detailPage, /<link rel="canonical" href=\{canonicalUrl\} \/>/,
   'canonical URL preserved');
 assert.match(detailPage, /<meta property="og:image" content=\{item\.backdrop \|\| item\.poster\} \/>/,
   'og:image = backdrop || poster');
-assert.match(detailPage, /<script type="application\/ld\+json">\{structuredData\}<\/script>/,
-  'structured data preserved');
+// GSC JSON-LD fix (2026-10): Svelte treats <script> element contents as
+// RAW TEXT — the former `{structuredData}` placeholder was emitted literally
+// in the SSR HTML (GSC "Unparsable structured data"). The block is now a
+// raw-JSON injection through {@html} with script-safe escaping
+// (see src/lib/shared/json-ld.ts and scripts/json_ld_ssr_test.ts).
+assert.match(detailPage, /\{@html structuredDataScript\}/,
+  'structured data preserved (raw-JSON injection, Svelte-safe)');
 // MAV-23 supersession: the trailer is now an INLINE player in the hero —
 // there is no modal to Tab-trap. The keyboard contract is preserved in the
 // inline form: Escape stops playback (except while the browser consumes
