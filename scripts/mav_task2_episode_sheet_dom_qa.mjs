@@ -8,8 +8,11 @@
 //
 //   §A Hierarchy rendering
 //      A1  ONE parent card per series (never one card per episode).
-//      A2  The parent card shows the episode rollup (N/M episodes).
-//      A3  A movie still renders as a plain card with its provider.
+//      A2  The parent card shows the episode rollup: the season-count
+//          badge AND the honest TMDB-denominator badge ("N/M episodes
+//          linked" — PLAN.md "Task 1 — honest linked-episode counts";
+//          metadata_available=true in the fixture because the harness
+//          stubs the TMDB metadata endpoints).
 //   §B Accessible episode sheet
 //      B1  Opening the parent renders a role=dialog + aria-modal sheet.
 //      B2  Season chips follow the Phase-1 sizing contract: all chips
@@ -19,15 +22,24 @@
 //          linked episode shows provider badge, unlinked shows "Add",
 //          unreleased shows "Not released" with NO actions.
 //      B4  Escape closes the sheet and restores focus to the opener.
-//   §C Bulk link (Task 3)
-//      C1  "Bulk link season" opens the per-episode reference form.
+//   §C Bulk link (Task 3) + bulk delete selection (Task 4)
+//      C0  The season toolbar groups exactly TWO bulk actions —
+//          "Bulk link season" + "Bulk delete" (the explicit-selection
+//          bulk-delete feature; both role+aria-label targeted).
+//      C1  "Bulk link season" opens the per-episode reference form
+//          (role-based selector; the sibling .bulk-btn-danger Bulk
+//          delete button made .bulk-btn ambiguous).
 //      C2  Each episode row has its OWN labeled reference input.
 //      C3  Submitting sends ONE POST /api/admin/media/bulk-link whose
 //          body carries per-episode items — episode 1 and episode 3
 //          each with their OWN distinct reference.
 //      C4  The per-episode outcomes render after submit.
-//      C5  The sheet remains keyboard-operable throughout (Tab cycles
-//          inside the dialog while open).
+//      C6  "Bulk delete" opens the EXPLICIT-SELECTION view: only the
+//          LINKED episodes are listed, nothing is pre-selected, and
+//          opening it sends NO bulk-unlink request (deletion requires
+//          explicit selection + confirmation).
+//      C5  (after Escape) No stray bulk submissions after close —
+//          exactly ONE bulk-link POST total, zero bulk-unlink POSTs.
 //
 // Run: node scripts/mav_task2_episode_sheet_dom_qa.mjs
 
@@ -58,9 +70,9 @@ function cleanupArtifacts() {
 }
 
 // The mock catalog: ONE parent series (4 episodes across 2 seasons in
-// TMDB, 2 linked) + one movie. Episodes 1 and 3 are linked (episode 3
-// on abyss); episode 2 is unlinked but released; episode 4 is
-// FUTURE-dated (unreleased).
+// TMDB, 2 linked, TMDB metadata available) + one movie. Episodes 1 and
+// 3 are linked (episode 3 on abyss); episode 2 is unlinked but
+// released; episode 4 is FUTURE-dated (unreleased).
 const PARENT_ID = 'parent-uuid-1';
 const NOW = new Date();
 const past = (days) => {
@@ -92,7 +104,10 @@ const mockLibraryItems = [
     assets: [],
     demand: null,
     hosting_state: 'hosted',
-    episode_summary: { season_count: 2, episode_count: 3, linked_episode_count: 2 },
+    // metadata_available=true — the harness stubs the TMDB metadata
+    // endpoints, so the card must render the honest denominator
+    // ("2/3 episodes linked"), NOT an invented total (PLAN.md Task 1).
+    episode_summary: { season_count: 2, episode_count: 3, linked_episode_count: 2, metadata_available: true },
   },
   {
     id: 'movie-uuid-2',
@@ -165,8 +180,9 @@ async function run() {
 import { mount } from 'svelte';
 import AdminMediaList from '../../src/lib/components/admin2/AdminMediaList.svelte';
 
-// Captured bulk-link requests (for §C assertions).
+// Captured bulk-link + bulk-unlink requests (for §C assertions).
 window.__bulkRequests = [];
+window.__bulkDeleteRequests = [];
 
 // Stub fetch BEFORE the component mounts.
 window.fetch = async (input, init) => {
@@ -184,6 +200,11 @@ window.fetch = async (input, init) => {
   }
   if (url.includes('/api/content/series/series-1396')) {
     return window.Response.json({ ok: true, item: { id: 'series-1396', title: 'QA Show', seasonsData: ${JSON.stringify(mockSeasonsData)} } });
+  }
+  if (url.includes('/api/admin/media/bulk-unlink') && method === 'POST') {
+    const body = JSON.parse(String(init?.body ?? '{}'));
+    window.__bulkDeleteRequests.push(body);
+    return window.Response.json({ ok: true, succeeded: 0, failed: 0, results: [] });
   }
   if (url.includes('/api/admin/media/bulk-link') && method === 'POST') {
     const body = JSON.parse(String(init?.body ?? '{}'));
@@ -284,7 +305,12 @@ export const browser = true;
     const allRows = await page.locator('.media-row').count();
     ok(parentRows === 1, `A1 [${width}] exactly ONE parent row renders (got ${parentRows}); total rows ${allRows} (parent + movie, never per-episode cards)`);
     const progressText = await page.locator('.media-row-parent .badge-progress').allTextContents();
-    ok(progressText.some((t) => /2\/3 episodes linked/.test(t)), `A2 [${width}] parent card shows the episode rollup (got: ${progressText.join(' / ')})`);
+    ok(progressText.some((t) => /2 seasons/.test(t)), `A2a [${width}] parent card shows the season-count badge (got: ${progressText.join(' / ')})`);
+    // The rollup badge is targeted by its data-metadata discriminator so
+    // the assertion is pinned to the TMDB-denominator mode, not just
+    // any badge text.
+    const rollupBadge = await page.locator('.media-row-parent .badge-progress[data-metadata="tmdb"]').allTextContents();
+    ok(rollupBadge.some((t) => /2\/3 episodes linked/.test(t)), `A2b [${width}] parent card shows the honest TMDB rollup (2/3 episodes linked; got: ${rollupBadge.join(' / ')})`);
     const movieBadges = await page.locator('.media-row:not(.media-row-parent) .badge-provider').allTextContents();
     ok(movieBadges.some((t) => /vidara/i.test(t)), `A3 [${width}] movie card still shows its provider badge`);
 
@@ -325,8 +351,17 @@ export const browser = true;
     ok(e2 != null && /Not linked/.test(e2.text ?? ''), `B3e [${width}] the unlinked-but-released episode shows "Not linked" with an Add action`);
 
     // ---------------- §C bulk link ----------------
-    await page.locator('.bulk-btn').click();
-    await page.waitForSelector('.bulk-form', { state: 'visible' });
+    // The toolbar groups TWO .bulk-btn buttons since the explicit-
+    // selection bulk delete shipped (PLAN.md Task 4) — a bare .bulk-btn
+    // locator is ambiguous (strict-mode violation). Target each action
+    // by role + accessible name.
+    const bulkButtonLabels = await page.locator('.bulk-actions .bulk-btn').evaluateAll((els) => els.map((el) => el.getAttribute('aria-label')));
+    ok(bulkButtonLabels.length === 2 && /Bulk link multiple episodes/.test(bulkButtonLabels[0] ?? '') && /Select linked episodes/.test(bulkButtonLabels[1] ?? ''),
+      `C0 [${width}] the toolbar groups exactly TWO bulk actions — Bulk link season + Bulk delete (explicit-selection)`);
+    await page.getByRole('button', { name: 'Bulk link multiple episodes' }).click();
+    // The bulk-DELETE selection view REUSES the .bulk-form class (with
+    // data-bulk-delete-select) — pin the wait to the LINK form only.
+    await page.waitForSelector('.bulk-form:not([data-bulk-delete-select])', { state: 'visible' });
     ok(true, `C1 [${width}] "Bulk link season" opens the per-episode reference form`);
 
     // Unreleased episode is excluded from the bulk candidates.
@@ -351,6 +386,22 @@ export const browser = true;
       `C3d [${width}] EACH episode carries its OWN distinct reference (E1→refForE1, E3→refForE3 — never a shared reference)`);
     const outcomes = await page.locator('.outcome-row').count();
     ok(outcomes === 2, `C4 [${width}] the per-episode outcomes render after submit (got ${outcomes})`);
+
+    // Back to the episode list, then verify the explicit-selection bulk
+    // DELETE view (PLAN.md Task 4): linked episodes only, nothing
+    // pre-selected, no deletion without explicit selection.
+    await page.getByRole('button', { name: 'Back to episode list' }).click();
+    await page.waitForSelector('.bulk-form:not([data-bulk-delete-select])', { state: 'hidden' });
+    await page.getByRole('button', { name: 'Select linked episodes' }).click();
+    await page.waitForSelector('.bulk-form[data-bulk-delete-select]', { state: 'visible' });
+    const deleteRows = await page.locator('.bulk-delete-row').count();
+    ok(deleteRows === 2, `C6a [${width}] bulk-delete selection lists ONLY the 2 linked episodes (got ${deleteRows})`);
+    const preChecked = await page.locator('.bulk-delete-row[data-checked="true"]').count();
+    ok(preChecked === 0, `C6b [${width}] nothing is pre-selected — deletion requires EXPLICIT selection`);
+    const deleteRequests = await page.evaluate(() => window.__bulkDeleteRequests);
+    ok(deleteRequests.length === 0, `C6c [${width}] opening the selection deleted NOTHING (no bulk-unlink call)`);
+    await page.getByRole('button', { name: 'Back to episode list' }).click();
+    await page.waitForSelector('.bulk-form[data-bulk-delete-select]', { state: 'hidden' });
 
     // ---------------- B4 Escape close + focus restore ----------------
     await page.keyboard.press('Escape');

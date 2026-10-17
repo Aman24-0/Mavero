@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { testGateText } from './test_gate_chain.mjs';
 
 /**
  * Phase 1 (audit BL-4 / SEC-001 / API-24) — dead discovery surface removal.
@@ -90,8 +91,12 @@ ok(true, '2b. zero script references to the removed subsystem remain');
 // ============================================================
 
 const pkg = JSON.parse(readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8')) as { scripts: { test: string } };
-ok(!pkg.scripts.test.includes('universal_resolver_test'), '3a. pnpm test chain no longer references the deleted test');
-ok(!pkg.scripts.test.includes('bingr_probe'), '3b. pnpm test chain never referenced the probe (unchanged)');
+// Task-A chain reorganization: the gate is composed of test:<group>
+// scripts — absence pins must scan the FULLY EXPANDED per-suite chain,
+// not the group chain.
+const expandedTestChain = testGateText();
+ok(!expandedTestChain.includes('universal_resolver_test'), '3a. pnpm test chain no longer references the deleted test');
+ok(!expandedTestChain.includes('bingr_probe'), '3b. pnpm test chain never referenced the probe (unchanged)');
 
 // ============================================================
 // 4. Hardened SSRF reference intact (not weakened by the removal)
