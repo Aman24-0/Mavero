@@ -44,8 +44,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
+      # fetch-depth: 0 — CloudStream regression tests inspect historical
+      # baseline commits (PRISTINE_CS3 = 59634a9, PRISTINE_CS4 = 065d153);
+      # the default shallow clone (depth 1) cannot resolve them.
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup pnpm 10.30.3 (the packageManager pin from package.json)
         uses: pnpm/action-setup@v4
