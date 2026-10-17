@@ -2134,3 +2134,41 @@ refactor, no change to any existing provider's semantics:
   SUPABASE_REMEDIATION_REPORT.md §6/§16. Production NOT claimed remediated
   for round 2. Leaked-password protection untouched (plan exception);
   Vixolity untouched (disabled).
+
+## Repository Cleanup Phase 0 — Audit & Baseline (2026-10-17, main @ f887f1e baseline)
+
+- READ-ONLY audit phase: zero application code, migration, or database changes.
+  The only artifact created is REPOSITORY_CLEANUP_PHASE0_AUDIT.md (this commit).
+- Baseline: main @ f887f1e, clean, synced 0/0 with origin/main; 95 migrations;
+  Supabase remediation artifacts (c1ec26d/d9696e5 + report + corrected
+  verification SQL) confirmed present. Production JSON-LD fix verified live.
+- Structure findings (evidence in the report): src/ = 582 files / 143,119
+  lines; two admin generations coexist (admin/ 11 files + admin2/ 25 files,
+  6 routes still import v1); 5 verified layering inversions (server->client
+  runtime imports via $lib/client/progress/types x4, shared->client via
+  progress-merge.ts, jsconfig maps production $env/$app to TEST stubs);
+  god components (PlayerShell.svelte 3,306 lines; tmdb.ts 2,349);
+  no CI (.github/ absent), no ESLint/Prettier; monolithic 296-command test
+  chain; worklog.md vs WORKLOG.md case clash; ~10 MB committed QA/binary
+  artifacts (docs/qa + 2 concept JPGs).
+- Dead code: dependencies all used (27/27 verified - NOTHING to remove);
+  SAFE deletions identified (both AdminPageHeader.svelte variants,
+  server/content/http.ts, server/hosting/index.ts, docs/qa logs, concept
+  JPGs); orphaned-but-live tests flagged for WIRE-IN (phase7e_vidlink above
+  all - the provider is real, every sibling test is chained).
+- Supabase docs: PLAN.md / WORKLOG.md / SUPABASE_REMEDIATION_REPORT.md /
+  VIXOLITY_PLAYBACK_AUDIT_REPORT.md confirmed authoritative-preserved;
+  report section 16 needs a small round-2 production-application update
+  (already Dashboard-verified per owner).
+- Test baseline (fresh runs at f887f1e): pnpm check EXIT 0 (0 errors /
+  5 pre-existing admin2 CSS warnings); pnpm test EXIT 1 with 6,598 checks
+  green across 286 suites and ZERO failures before the documented
+  PRE-EXISTING DOM-QA failure (mav_task2_episode_sheet_dom_qa A2 +
+  .bulk-btn strict-mode; identical on the pristine tree); Supabase suites
+  in-chain 115/115 + 107/107; JSON-LD SSR 22/22; season-chip run separately
+  32/32 (house convention); pnpm build EXIT 0.
+- Deliverable: REPOSITORY_CLEANUP_PHASE0_AUDIT.md with the phased cleanup
+  plan (P1 safety net/chain mechanics -> P2 hygiene -> P3 consolidations ->
+  P4 admin generation decision -> P5 god-component refactors), acceptance
+  criteria, must-not-touch list. Phase 0 STOPS HERE - execution awaits
+  approval.
