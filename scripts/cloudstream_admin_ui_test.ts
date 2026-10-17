@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
+import { testGateText } from './test_gate_chain.mjs';
 
 // CS-1: Integrations admin UI contract tests (AC-001).
 //
@@ -217,7 +218,10 @@ const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url),
 // 10. Test registration in the pnpm test chain
 // ---------------------------------------------------------------------------
 {
-  const testScript = String(pkg.scripts.test);
+  // Task-A chain reorganization: the gate is composed of test:<group>
+  // scripts — match composition pins against the FULLY EXPANDED per-suite
+  // chain, not the group chain.
+  const testScript = testGateText();
   ok(testScript.includes('scripts/cloudstream_repository_parse_test.ts'), '10: parse test registered in the chain');
   ok(testScript.includes('scripts/cloudstream_repository_sync_test.ts'), '10: sync test registered in the chain');
   ok(testScript.includes('scripts/cloudstream_admin_ui_test.ts'), '10: admin UI test registered in the chain');

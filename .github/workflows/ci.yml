@@ -1,0 +1,76 @@
+# MAVERO — minimal CI gate (2026-10, Task A safety net).
+#
+# Runs the three repository gates on every PR and every push to main:
+#   1. pnpm check  — svelte-check (0 errors required)
+#   2. pnpm build  — vite build + Netlify adapter executor
+#   3. pnpm test   — the full regression gate (16 grouped suites, 290
+#      commands; stops at the first failure and propagates non-zero exit)
+#
+# Environment contract (verified against the repo, no secrets needed):
+#   - Node 22 matches netlify.toml NODE_VERSION, engines ">=22.0.0" and
+#     the phase2_repo_hygiene_test pin; pnpm is pinned to 10.30.3, matching
+#     the packageManager field in package.json (also pinned by
+#     phase2_repo_hygiene_test).
+#   - pnpm-lock.yaml is committed → --frozen-lockfile.
+#   - The two browser DOM-QA suites at the end of the chain
+#     (mav_task2_episode_sheet_dom_qa.mjs, mav_phase1_season_chip_contract_test.mjs)
+#     resolve Playwright via scripts/mav_resolve_playwright.mjs, which looks
+#     at the project, then the GLOBAL npm installation. Playwright is
+#     intentionally NOT a package.json dependency, so CI provisions it
+#     globally (same as local dev) plus a headless Chromium.
+#   - No Supabase secrets are provided: every suite in the chain runs
+#     offline against stubs/embedded PostgreSQL (pglite), and the one
+#     env-gated live smoke (final_remediation_live_smoke_test.ts) SKIPS
+#     itself when PRIVATE_SUPABASE_SERVICE_ROLE_KEY is unset. CI never
+#     connects to production Supabase.
+#   - This workflow NEVER deploys: production deploys stay with Netlify.
+#
+# The gate reports real failures: any non-zero exit fails the job.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gates:
+    name: check · build · test
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm 10.30.3 (the packageManager pin from package.json)
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.30.3
+
+      - name: Setup Node 22 (netlify.toml NODE_VERSION)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright + Chromium for the DOM-QA suites
+        run: |
+          npm install -g playwright@1.57.0
+          playwright install --with-deps chromium
+
+      - name: pnpm check (svelte-check — 0 errors required)
+        run: pnpm check
+
+      - name: pnpm build (vite build + Netlify adapter executor)
+        run: pnpm build
+
+      - name: pnpm test (full regression gate — stops at first failure)
+        run: pnpm test
