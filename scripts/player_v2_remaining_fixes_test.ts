@@ -128,13 +128,16 @@ console.log('\n§2 — controller-key stale guards (the drop-everything bug)');
   const intro = await import('$lib/client/player/intro/intro-client');
   const introLookup = intro.createIntroLookup((async (input: unknown) => {
     const url = String(input);
-    if (!url.includes('api.theintrodb.org')) throw new TypeError('unexpected url');
+    // v4 base URL assertion: the request must target the /v4 endpoint exactly.
+    if (!url.includes('api.theintrodb.org/v4/')) throw new TypeError('unexpected url');
     return {
       ok: true,
       status: 200,
       headers: new Headers({ 'content-type': 'application/json' }),
       // The package reads the body via response.text() + its own JSON parse.
-      text: async () => JSON.stringify({ tmdb_id: 24428, type: 'movie', intro: [{ start_ms: 12_000, end_ms: 52_000 }] }),
+      // v4 raw shape: keyed by the resolved TVDB identity (fixture tvdb_id),
+      // snake_case ms timestamps — tmdb_id is deliberately absent in v4.
+      text: async () => JSON.stringify({ tvdb_id: 77111, type: 'movie', intro: [{ start_ms: 12_000, end_ms: 52_000 }] }),
     } as unknown as Response;
   }) as unknown as typeof fetch);
   const introRequest = { kind: 'movie' as const, tmdbId: 24428, durationSec: 5340 };

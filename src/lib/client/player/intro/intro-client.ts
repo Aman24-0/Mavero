@@ -1,15 +1,35 @@
 /**
  * Player UI V2 (Part 1, Phase 3B) — Skip Intro lookup on top of TheIntroDB.
  *
- * Uses the version-matched `theintrodb` package (installed: 3.2.1; API docs
- * read from node_modules/theintrodb/{AGENTS.md,docs/getting-started.md} and
- * the shipped type declarations):
+ * Uses the version-matched `theintrodb` package (installed: 4.0.0 — API v4;
+ * sources of truth: https://theintrodb.org/openapi.yaml (v4.0.0), the npm
+ * client's docs/migration-v3-to-v4.md, and the shipped type declarations):
  *   * `createIntroDbClient()` + typed `getMedia()` — read-only, NO API key
  *     (never a shared key; Mavero never submits timestamps).
- *   * TMDB id as the preferred identifier; TV includes the actual season and
- *     episode; `durationMs` is passed ONLY when a trustworthy ACTUAL playback
- *     duration is known (the media element's duration — never the catalog
- *     runtime) so the API can pick the closest matching version.
+ *   * API v4 identity is TVDB: every response is keyed by `tvdbId` and
+ *     `tmdbId` is deliberately absent from responses. Mavero KEEPS addressing
+ *     by `tmdbId` because its catalog is TMDB-backed and carries no TVDB ids;
+ *     v4 still accepts `tmdbId` and resolves it server-side (priority
+ *     `tvdbId` → `tmdbId` → `imdbId`; for TV that resolution includes the
+ *     season/episode mapping from the TMDB numbering — OpenAPI "/media →
+ *     Addressing the media"). Movie lookups resolve the TMDB movie identity;
+ *     episode lookups keep Mavero's actual TMDB season/episode numbers.
+ *   * NO `mapping` parameter: `mapping` declares a TVDB episode order
+ *     (default/official/dvd/alternate/absolute/regional) for numbers actually
+ *     sourced from such an order. Mavero's season/episode are its own TMDB
+ *     catalog numbers — TMDB numbering is not a media-server display order,
+ *     and relabeling it as one would guess a coordinate space; the
+ *     `tmdb_id` resolution path converts TMDB coordinates server-side.
+ *   * `getMedia()` returns a DISCRIMINATED UNION in v4: `kind: 'media'` (the
+ *     grouped skip timestamps), `kind: 'versions'` (release-version list —
+ *     only when `listVersions` is sent, which Mavero never does), and
+ *     `kind: 'episodes'` (per-episode submission counts — the API's fallback
+ *     when the media has no submissions). Only `kind: 'media'` carries
+ *     segment arrays; the other shapes are verified emptiness, NOT errors.
+ *   * TV includes the actual season and episode; `durationMs` is passed ONLY
+ *     when a trustworthy ACTUAL playback duration is known (the media
+ *     element's duration — never the catalog runtime) so the API can pick the
+ *     closest matching release version.
  *   * The API returns timestamps in MILLISECONDS (`NormalizedSegmentTimestamp`:
  *     `startMs` ≥ 0, `endMs` number | null where null = "to media end").
  *     Conversion to seconds happens ONLY at the boundary where Mavero's seek
@@ -35,7 +55,7 @@
  */
 
 import { createIntroDbClient, TheIntroDbApiError, TheIntroDbResponseValidationError, TheIntroDbValidationError } from 'theintrodb';
-import type { FetchLike, MediaRecord, NormalizedSegmentTimestamp } from 'theintrodb';
+import type { FetchLike, NormalizedSegmentTimestamp } from 'theintrodb';
 
 /** A validated, shell-ready intro segment (seconds — the player seek unit). */
 export type IntroSegment = {
@@ -170,7 +190,9 @@ export function createIntroLookup(fetchImpl: typeof fetch = fetch): IntroLookup 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), LOOKUP_TIMEOUT_MS);
     try {
-      const record: MediaRecord = await client.getMedia(
+      // v4 answers with a discriminated union (`MediaResponse`); narrow on
+      // `kind` before reading any segment array.
+      const response = await client.getMedia(
         {
           tmdbId: request.tmdbId,
           ...(request.kind === 'tv' ? { season: request.season, episode: request.episode } : {}),
@@ -180,7 +202,14 @@ export function createIntroLookup(fetchImpl: typeof fetch = fetch): IntroLookup 
         },
         { signal: controller.signal },
       );
-      const segments = validateIntroSegments(record?.intro, request.durationSec ?? null);
+      // Only `kind: 'media'` carries the grouped timestamp arrays. The
+      // `kind: 'episodes'` fallback (HTTP 200 with per-episode submission
+      // counts when the media has no submissions) and `kind: 'versions'`
+      // (requires `listVersions: true`, never sent here) carry NO skip
+      // timestamps — both are verified emptiness, not failures.
+      const segments = response.kind === 'media'
+        ? validateIntroSegments(response.intro, request.durationSec ?? null)
+        : [];
       return { segments, key, empty: segments.length === 0, errorKind: null };
     } catch (error) {
       // All failure classes degrade to "no skip button" — never an error UI:
