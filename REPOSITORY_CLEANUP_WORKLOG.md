@@ -123,6 +123,9 @@ Task A changes present, working tree clean, synced with `origin/main`).
 - `81bcca1` docs(cleanup): archive 15 historical round reports; resolve worklog.md case-collision; add docs index (Groups C+D)
 - `<(this commit)>` docs(cleanup): Phase 1 tracker files (plan + worklog)
 - PR link recorded after opening (see the Phase 1 PR section below)
+- **Post-merge update (2026-10-18)**: the owner created **PR #6** from this branch and merged it —
+  `43e882f` (merge commit; head `6c9d21b`; base `main` @ `3cd6f71`). The commit record above is
+  the pre-PR history and is preserved as written.
 
 ### Limitations & unresolved items
 
@@ -152,6 +155,25 @@ Task A changes present, working tree clean, synced with `origin/main`).
   (a full body draft is preserved in the session report; the tracker files carry all
   evidence needed for review).
 
+### Phase 1 PR — RESOLVED (2026-10-18, post-merge reconciliation; blocker record above preserved verbatim)
+
+- The owner created **PR #6** ("Cleanup/phase 1 migration docs") from
+  `Aman24-0:cleanup/phase-1-migration-docs` (head `6c9d21b`) onto `main` (`3cd6f71`) and
+  merged it. API evidence: `state: closed`, `merged: true`,
+  `merge_commit_sha: 43e882fe9fb8ef5e42ac326a7a5626d4e72aae2c`,
+  `merged_at: 2026-10-18T06:45:20Z`.
+- CI on merged `main` @ `43e882f` (push event, 2026-10-18T06:45:22Z): run `39105166599`,
+  `completed` / **success** — the full gate (check / build / 290-suite test chain) passed on
+  the exact merge commit that carries all Phase 1 changes.
+- Tracker reconciliation performed on the persistent cleanup branch after fast-forwarding it
+  `6c9d21b` → `43e882f` (merge --ff-only; Phase 1 had 0 commits not in `main`, only the merge
+  commit was missing locally). `REPOSITORY_CLEANUP_PLAN.md` roadmap/§2/§4 updated; this
+  section and the closure note below added; no historical text removed.
+- **Branch discipline going forward (owner instruction)**: repository-cleanup Phases 0–5 all
+  continue on ONE persistent cleanup branch — this branch, `cleanup/phase-1-migration-docs` —
+  not a new branch per phase. The old Task A branch `cleanup/task-a-safety-net` was deleted
+  after PR #4 merged and must NOT be recreated.
+
 ### Exact next step
 
 1. **Owner creates the Phase 1 PR** (one-click compare URL above — the only blocked step;
@@ -161,3 +183,67 @@ Task A changes present, working tree clean, synced with `origin/main`).
    Audit** (audit §4.2 SAFE deletions + binary-weight hygiene incl. `docs/qa/**` +
    `components.json`/`$styles` + `Newtask.txt`/`phaseF.txt` disposition + `.nvmrc`/ESLint/Prettier
    + the deferred 9-file archive batch with comment-pointer updates).
+
+### Exact next step — UPDATED 2026-10-18 (post-merge; supersedes step ordering above, scope unchanged)
+
+1. ~~Owner creates the Phase 1 PR~~ — **done**: PR #6 created by the owner and merged at
+   `43e882f` (see "Phase 1 PR — RESOLVED" above). ~~Owner reviews + merges~~ — **done**.
+2. **Branch correction (owner instruction, 2026-10-18)**: Phases 0–5 continue on ONE persistent
+   cleanup branch (`cleanup/phase-1-migration-docs`, kept synced with `main`) — NOT a fresh
+   branch per phase as originally written in step 3 above; that earlier per-phase-branch wording
+   is superseded.
+3. **Next cleanup action**: **Phase 2 — Dead Code & Dependency Audit** on this persistent branch
+   after syncing with `main`, with its own planned workflow. NOT started in the current task
+   (the current task is the Issue #5 TheIntroDB v3→v4 fix, which is explicitly NOT a cleanup
+   phase and runs on a separate issue branch `fix/theintrodb-v4`).
+4. Issue #5 fix closes with its own focused PR ("Update TheIntroDB API integration to v4");
+   after that PR, work returns here to the persistent cleanup branch and roadmap.
+
+### Consolidation run — 2026-10-19 (TheIntroDB v4 audit + integration check + PR-creation blocker)
+
+**Task**: enforce the two-branch consolidation policy, independently audit + test the Issue #5 TheIntroDB v3→v4 fix, then merge both changes. The fix stays on its own issue branch (`fix/theintrodb-v4`) per the recorded discipline; this entry is written on the persistent cleanup branch. Nothing below changes any phase status.
+
+**Current-state audit — every reported fact verified against the live remote (nothing assumed)**
+
+| Item | Verified value |
+|---|---|
+| `main` | `43e882fe9fb8ef5e42ac326a7a5626d4e72aae2c` (PR #6 merge) — CI on merged main: run `39105166599` **success** |
+| `fix/theintrodb-v4` | `d0f90897a6261111f209dd27542942ec1a4981b0` (`d0f9089`); exactly 1 commit ahead of `main`; merge-base = `43e882f` |
+| `cleanup/phase-1-migration-docs` | `0e6ad84e8b5f079a2da08682f5f49b6ad67e233d` (tracker reconciliation); exactly 1 commit ahead; merge-base = `43e882f` |
+| PR #4 / PR #6 | both merged (API `merged: true`; merge commits `3cd6f71fe1f7…` / `43e882fe9fb8…`) |
+| Issue #5 | open — "TheIntroDB API: v2/v3 are being retired — 10-minute path to v4" |
+| Open PRs | 0 — no PR exists yet for either branch |
+| `feature/tizen-tv` | owner's own branch (last commit 2026-09-01, 32 ahead / 569 behind, 0 PRs) — NOT deleted, reported separately |
+| Local-only stale refs | `cleanup/task-a-safety-net` (`e26a7a1`) and `supabase-remediation` (`2ede139`) deleted **locally only** after verifying both are fully merged into `main` (PRs #4 / #3); the Task A branch was NOT recreated |
+
+**TheIntroDB fix audit — `d0f9089`, exactly 7 files** (`package.json`, `pnpm-lock.yaml`, `src/lib/client/player/intro/intro-client.ts`, `scripts/player_ui_v2_phase3_test.ts`, `scripts/player_v2_corrections_test.ts`, `scripts/player_v2_remaining_fixes_test.ts`, `scripts/player_shell_qa.mjs`)
+
+- Authoritative sources re-fetched this run (not trusted from memory): OpenAPI `https://theintrodb.org/openapi.yaml` **v4.0.0** — response union `MediaResponse | MediaVersionsResponse | MediaEpisodeListResponse`; every `/v4` response keyed by `tvdb_id`; `tmdb_id`/`imdb_id` accepted as addressing, resolved server-side (for TV incl. the season/episode conversion from that provider's numbering); `mapping` = the TVDB episode order your numbers are given in; `MediaEpisodeSummary` required-fields list. npm `docs/migration-v3-to-v4.md` — `kind: 'media' | 'versions' | 'episodes'` discriminator; default base URL `https://api.theintrodb.org/v4`; `tmdb_id` deliberately absent from responses.
+- Installed client verified: `theintrodb@4.0.0`; `kind` union present in `lib/types.d.ts`; `DEFAULT_BASE_URL = 'https://api.theintrodb.org/v4'` in `lib/funcs.js`.
+- Audit verdict: union narrowed on `kind === 'media'` before any segment read; `episodes` fallback treated as verified emptiness; identity decision correct — Mavero keeps addressing by `tmdbId` (TMDB-backed catalog, zero TVDB ids in `src/`), no invented TVDB conversion; **no `mapping` parameter sent** (Mavero's TMDB catalog numbering is not a media-server display order; the tmdb_id path converts server-side); read-only preserved (no key, no submit/map, no invented endpoints); resilience contract intact (segment validation, caching, negative backoff, stale-response guard, ms→s at the seek boundary); CSP `connect-src https://api.theintrodb.org` retained (same host in v4); tests use real v4 raw shapes (`tvdb_id`-keyed, snake_case `start_ms`/`end_ms`) incl. a byte-for-byte OpenAPI `episode-list` fixture and `/v4` URL assertions; 5xx mocks use the real error body.
+- Scope guard: zero changes beyond the 7 files; no Supabase migration / production data / Vixolity / unrelated player behavior touched.
+
+**Gates — actual results on three states**
+
+| State | `pnpm check` | `pnpm test` (full 16-group / 290-suite chain) | `pnpm build` | `git diff --check` |
+|---|---|---|---|---|
+| `fix/theintrodb-v4` @ `d0f9089` | exit 0 (0 errors / 5 warnings, baseline-identical) | exit 0 | exit 0 | clean |
+| cleanup branch @ `0e6ad84` | exit 0 (0e/5w) | exit 0 | exit 0 | clean |
+| Integrated (both merged into a throwaway local integration branch) | exit 0 (0e/5w) | exit 0 | exit 0 | clean |
+
+- File sets are disjoint: fix = 7 files, tracker reconciliation = 2 files, 0 overlap; the integration branch was deleted after the run (never pushed).
+- Honest boundary: all results are **local contract tests with v4-shaped mocks**; this sandbox did not run a live production-API smoke test. The authoritative gate for the fix is the CI run that fires automatically when the PR is created (`on: pull_request`).
+
+**PR creation — BLOCKED (external action required; same token limitation as Phase 1)**
+
+- `POST /repos/Aman24-0/Mavero/pulls` → HTTP 403 "Resource not accessible by personal access token" (the fine-grained push token has `contents:write` but not `pull_requests:write`). Nothing was merged by this run and no merge is claimed.
+
+**Owner actions (one-click; in this order)**
+
+1. Create the fix PR: <https://github.com/Aman24-0/Mavero/compare/main...fix/theintrodb-v4> — title exactly **"Update TheIntroDB API integration to v4"**, body closes #5 (a complete reviewed body — file list, identifier/mapping rationale with spec citations, test table, scope guard — was drafted this run and is preserved in the session record). CI runs on the PR automatically.
+2. Review + merge it under the repository's normal merge policy (do not merge with failing checks).
+3. Create the tracker PR: <https://github.com/Aman24-0/Mavero/compare/main...cleanup/phase-1-migration-docs> (this branch — includes `0e6ad84` and this entry) and merge after review.
+4. After BOTH merges and green CI on `main`: delete `fix/theintrodb-v4` (temporary issue branch, verified merged — deletion is this run's explicit intent); active branches are then `main` + `cleanup/phase-1-migration-docs` only. `feature/tizen-tv` stays (owner's own work; deletion is the owner's decision).
+5. Only then Phase 2 starts here — **still NOT started** (blocked on consolidation completing).
+
+**Exact next step**: the owner performs steps 1–4 above; this run stops at the PR-permission boundary. On the next session after both merges: fetch `main`, verify the merge commits + CI run URLs on `main`, sync this branch (ff-only preferred; no force-push), record the SHAs in this tracker, then open Phase 2 with its own planned workflow.
