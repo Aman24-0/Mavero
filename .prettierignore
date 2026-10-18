@@ -1,0 +1,6 @@
+build/
+.svelte-kit/
+node_modules/
+.netlify/
+netlify/functions/adapter-build-executor.mjs
+pnpm-lock.yaml
