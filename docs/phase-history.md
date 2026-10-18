@@ -195,9 +195,9 @@ destinations instead of Discover subpages; mobile gets six primary
 destinations; desktop gets a proper sidebar; Account becomes a compact
 header sheet; the Account page converts to `/settings`.
 
-**Plan / Worklog**: `MAVERO_NAVIGATION_SETTINGS_REDESIGN_PLAN.md`
-(authoritative specification) and
-`MAVERO_NAVIGATION_SETTINGS_REDESIGN_WORKLOG.md` (implementation state).
+**Plan / Worklog**: `docs/archive/round-reports/MAVERO_NAVIGATION_SETTINGS_REDESIGN_PLAN.md`
+(authoritative specification; archived 2026-10-18, cleanup Phase 1) and
+`docs/archive/round-reports/MAVERO_NAVIGATION_SETTINGS_REDESIGN_WORKLOG.md` (implementation state; archived 2026-10-18).
 
 **Major completed work** (six phases, all COMPLETE):
 - Phase 1 — Routes: `/movies`, `/tv-shows`, `/anime` (implementations
@@ -261,5 +261,5 @@ production build.
 **Status**: COMPLETE. All gates pass (`pnpm check` 0/0, `pnpm test`
 222 scripts, `pnpm build` OK); live behavioral + viewport
 verification (360/390/820/1440) passed — see
-MAVERO_NAVIGATION_SETTINGS_REDESIGN_WORKLOG.md and
+docs/archive/round-reports/MAVERO_NAVIGATION_SETTINGS_REDESIGN_WORKLOG.md and
 docs/qa/explorer-verification/.

@@ -120,7 +120,7 @@ All migrations are **idempotent** (`create table if not exists`, `drop trigger i
 | 4 | `20260820012000_phase7a_template_constraints.sql` | Corrected `movie_template`/`series_template`/`anime_template` newline constraints. |
 | 5 | `20260820013000_phase7a_security_invoker_views.sql` | Security-invoker views + least-privilege anon column grants. |
 | 6 | `20260820014000_phase7a_public_mirror_tables.sql` | Materialized `streaming_public_*` mirror tables + `refresh_streaming_public_config()` function + triggers. |
-| 7 | `20260820015000_phase7a_public_mirror_tables.sql` | Byte-identical duplicate of #6 (harmless no-op if #6 already ran). |
+| 7 | `20260820015000_phase7a_public_mirror_tables.sql` | Comment-level duplicate of #6 — its statement bodies are byte-identical after comment-stripping (asserted by `scripts/supabase_remediation_migration_test.ts`), so skipping it loses no schema effect. **Caution — not a generic "harmless no-op"**: its leading `drop view if exists public.streaming_public_…` statements raise `"…" is not a view` if it is applied AFTER #6 has created the mirror tables (see §2.4 of `SUPABASE_REMEDIATION_REPORT.md`; the suite deliberately excludes this file from its replay chain). Skip this file; #6 is the effective migration. |
 | 8 | `20260820016000_phase7a_revoke_base_public.sql` | Revokes anon access from base registry tables. |
 | 9 | `20260820017000_phase7a_public_refresh_where.sql` | Refreshed `refresh_streaming_public_config()` with explicit predicates. |
 | 10 | `20260821010000_phase7a_migration_repair.sql` | Fixes `is_admin()` and `refresh_streaming_public_config()` security attributes. |
@@ -147,6 +147,18 @@ After step 10, the streaming registry schema is complete. Then apply provider mi
 | 26 | `20260824010000_phase7e_superembed_multiembed_experimental.sql` | SuperEmbed multiembed.mov iframe provider + source. |
 
 Non-streaming migrations (`20260821000000_my_list_status.sql`, `20260822093000_persistent_favorite_deletions.sql`, `20260823080000_harden_favorite_deletion_rls.sql`, `20260823081000_harden_history_idempotency.sql`) can be applied in the same timestamp order; they touch account/favorites/history tables, not the streaming registry.
+
+---
+
+## Migration history and the manual SQL Editor workflow (implications)
+
+The Mavero repo does not use the Supabase CLI (`config.toml` is absent) — migrations are applied manually via the Dashboard SQL Editor, as detailed in "Safe procedure (Supabase SQL Editor)" below. That workflow has a structural consequence for migration **history** (documented in `SUPABASE_REMEDIATION_REPORT.md` §2/§13 and the Phase 0 audit §5.1):
+
+- **Manual SQL-Editor runs do NOT write `supabase_migrations.schema_migrations`.** The recorded live history (~34 entries, from an early tool) therefore covers only a subset of what has actually been applied. Do not treat the history table as an inventory of applied migrations.
+- **The repository is the source of truth.** As of 2026-10-18 the repository contains **95 migration files** (duplicate timestamp prefixes included — see below). Production schema equivalence with the repository head has been verified by object-presence evidence (41 public tables + 16 RPCs with current shapes; remediation report §1/§2/§13) — but the **per-file production application status of the 95 files cannot be established from repository evidence** and must be treated as partially unrecorded. Preserve that uncertainty: never infer "applied" from a filename's presence, and never fabricate history entries to close the gap.
+- **Duplicate version prefixes exist and are intentional history:** `20261004000000_…` ×2 (`device_rpc_ambiguous_column_fix` + `unified_downloader_global_order`) and `20261012000000_…` ×2 (`add_link_reactivate_actions` + `source_category_unique_assignment`). CLI-based tooling would reject duplicate versions; the manual workflow is why it never surfaced. Left untouched — duplicate prefixes do NOT mean duplicate effects.
+- **Dependency-order replay trap (do not "fix" by renaming or reordering):** `20261004000000_unified_downloader_global_order.sql` contains a first-run backfill that reads `cloudstream_repositories` / `cloudstream_extensions` — tables created by the **later-versioned** `20261101000000_cloudstream_cs1.sql` and `20261101000002_extension_phase2_unified_adapters.sql`. In pure timestamp order on a fresh database this migration fails at the backfill. Production received the chain in **dependency order** (which is why it works there); any fresh-database rebuild must replicate dependency order, not filename order (the regression suites already encode the correct order — `scripts/supabase_remediation_migration_test.ts` applies the chain with an explanatory comment).
+- **If the project ever adopts the CLI**, a reconciliation pass (e.g. `supabase migration repair` against the real applied set) will be required; deliberately not fabricated in advance (remediation report §7 item 4).
 
 ---
 

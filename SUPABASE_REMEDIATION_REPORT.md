@@ -157,6 +157,8 @@ Every drop is **guarded**: it executes only while the covering constraint index 
 
 **Round-2 migration `20261119000000` is committed and pushed but NOT yet applied to production** — the application is a single idempotent SQL-Editor run of the file (procedure identical to §6 of round 1), followed by the corrected `docs/supabase-remediation-verification.sql` (now covering both migrations) and an advisor re-run. Until that run, production retains: the (correct but not self-contained) deny-all-policies-without-enablement-guard on `direct_play_sources`, and the provably-redundant `streaming_public_source_categories_order_idx` index — neither is a defect introduction, both are closed by the round-2 migration.
 
+> **Status update (2026-10-18, cleanup Phase 1 reconciliation):** the paragraph above is the round-time record and is retained verbatim for traceability. The round-2 application has since been reported complete by the project owner — owner-reported evidence (SQL-Editor execution, corrected verification returning `redundant indexes dropped = true`, advisors clean) is recorded in §18, and §16 item 3 frames the same facts. This environment still has no production Supabase access, so the owner-reported status is not independently re-verified here.
+
 ### Apply procedure (round 2, when approved)
 
 1. Supabase Dashboard → SQL Editor → paste `supabase/migrations/20261119000000_supabase_final_audit_hardening.sql` in full → Run (single implicit transaction; idempotent — safe to re-run).
@@ -173,6 +175,7 @@ Every drop is **guarded**: it executes only while the covering constraint index 
 4. **Migration-history backfill** — the live `supabase_migrations` history is incomplete (34 vs 93). If the project ever adopts the CLI, a reconciliation pass (e.g. `supabase migration repair` against the real applied set) will be needed; deliberately not fabricated here.
 5. **Duplicate version prefixes + the two ordering traps** (§2.4) — documented; fix only if/when the project moves to CLI-based migrations.
 6. **Advisor before/after evidence** — the "before" numbers come from the production audit; the "after" run must be captured in the Dashboard after application (§6.4) — it could not be executed from this environment.
+   - *Phase 1 reconciliation note (2026-10-18):* the owner reports the advisor re-run was performed and showed no security and no performance issues (§18 item 3, owner-reported). Dashboard-captured before/after evidence has still not been available to the agent; the limitation stands for agent-side verification.
 7. **SSR CSP delivery gap** — known open item from the Vixolity round (`VIXOLITY_PLAYBACK_AUDIT_REPORT.md`); unrelated to this Supabase round, listed only to keep the release notes complete.
 
 ---
@@ -301,6 +304,7 @@ Every FK on the applied chain (36) checked for a **valid leading-column index**,
 ## 13. Migration reconciliation — current state
 
 - Repository: **94 migration files** (93 at round-1 baseline + `20261119000000`). Live history table: unreachable from this environment (Data API cannot see `supabase_migrations`); the round-1 reconciliation stands: ~34 recorded entries vs repository files, root cause = manual SQL-Editor applications that do not write history; production schema verified current with the repository head via object-presence evidence (round 1) + this round's 41-table/16-RPC live inventory.
+  - *Phase 1 reconciliation note (2026-10-18, counted from the repository):* the count above is the round-2-time statement. Verified arithmetic — 94 files at the round-2 baseline `504bc7e` (93 at round-1 + `20261117000000_vidstuck_cc_embed_origins.sql`, landed `0894a24` 2026-10-16), **95** at the round-2 commit `d9696e5` (+ `20261119000000`) and unchanged through the current `main` (`3cd6f71`). The Phase 0 audit's 95 count agrees.
 - Round-1 findings unchanged and still documented: duplicate version prefixes ×2 (`20261004000000_*`, `20261012000000_*`); the `20260820015000` duplicate that errors after its twin (runbook's "harmless no-op" claim inaccurate); the `20261004000000` backfill reading later-versioned cloudstream tables. All are historical and left untouched per the constraints.
 - The round-2 migration follows the established versioning rule (sorts immediately after `20261118000000`; machine clock not used — repository files are future-dated relative to it).
 - No migration was renamed, rewritten, deleted, or replayed; no history entries were fabricated.
