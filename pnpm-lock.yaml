@@ -57,9 +57,6 @@ importers:
       '@electric-sql/pglite':
         specifier: ^0.5.8
         version: 0.5.8
-      '@eslint/js':
-        specifier: ^9.39.5
-        version: 9.39.5
       '@sveltejs/adapter-netlify':
         specifier: ^6.0.4
         version: 6.0.4(@sveltejs/kit@2.70.3(@sveltejs/vite-plugin-svelte@6.2.4(svelte@5.56.9(@typescript-eslint/types@8.71.2))(vite@7.3.6(@types/node@26.2.0)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.12)))(svelte@5.56.9(@typescript-eslint/types@8.71.2))(typescript@5.9.3)(vite@7.3.6(@types/node@26.2.0)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.12)))
@@ -84,9 +81,6 @@ importers:
       eslint:
         specifier: ^9.39.5
         version: 9.39.5(jiti@2.7.0)
-      eslint-config-prettier:
-        specifier: ^10.1.8
-        version: 10.1.8(eslint@9.39.5(jiti@2.7.0))
       eslint-plugin-svelte:
         specifier: ^3.23.1
         version: 3.23.1(eslint@9.39.5(jiti@2.7.0))(svelte@5.56.9(@typescript-eslint/types@8.71.2))
@@ -1124,12 +1118,6 @@ packages:
   escape-string-regexp@4.0.0:
     resolution: {integrity: sha512-TtpcNJ3XAzx3Gq8sWRzJaVajRs0uVxA2YAkdb1jm2YkPz4G6egUFAyA3n5vtEIZefPk5Wa4UXbKuS5fKkJWdgA==}
     engines: {node: '>=10'}
-
-  eslint-config-prettier@10.1.8:
-    resolution: {integrity: sha512-82GZUjRS0p/jganf6q1rEO25VSoHH0hKPCTrgillPjdI/3bgBhAE1QzHrHTizjpRvy6pGAvKjDJtk2pF9NDq8w==}
-    hasBin: true
-    peerDependencies:
-      eslint: '>=7.0.0'
 
   eslint-plugin-svelte@3.23.1:
     resolution: {integrity: sha512-+w86Jlx4IRUuuvtqD6j4njql+akx+81JnpvbN5de3AV5iq2SexvST/Jr51CiTlKeY0i+vhoKjPO/ywFKIP75sA==}
@@ -2683,10 +2671,6 @@ snapshots:
       '@esbuild/win32-x64': 0.28.2
 
   escape-string-regexp@4.0.0: {}
-
-  eslint-config-prettier@10.1.8(eslint@9.39.5(jiti@2.7.0)):
-    dependencies:
-      eslint: 9.39.5(jiti@2.7.0)
 
   eslint-plugin-svelte@3.23.1(eslint@9.39.5(jiti@2.7.0))(svelte@5.56.9(@typescript-eslint/types@8.71.2)):
     dependencies:
