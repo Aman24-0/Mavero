@@ -2172,3 +2172,101 @@ refactor, no change to any existing provider's semantics:
   P4 admin generation decision -> P5 god-component refactors), acceptance
   criteria, must-not-touch list. Phase 0 STOPS HERE - execution awaits
   approval.
+
+## Pre-Cleanup Safety Net — Task A (2026-10-17, main @ 3978c72 baseline; branch cleanup/task-a-safety-net)
+
+- Scope: the Phase-0 plan's P1 safety-net items ONLY (Tasks 1-5 of the
+  Task-A brief). Baseline verified before any change: main @ 3978c72,
+  clean, synced 0/0 with origin/main. No application code under src/,
+  no migration, and no production-database state changed; nothing
+  deleted; Vixolity untouched (disabled state preserved); leaked-password
+  protection untouched; historical migrations untouched.
+- Task 1 - DOM-QA fix (scripts/mav_task2_episode_sheet_dom_qa.mjs): the
+  episode sheet's season toolbar now groups TWO .bulk-btn buttons
+  ("Bulk link season" + the explicit-selection "Bulk delete", PLAN.md
+  Task 4), so a bare .bulk-btn locator is a Playwright strict-mode
+  violation. The QA now targets each action by role + accessible name
+  and waits on the LINK form only
+  (.bulk-form:not([data-bulk-delete-select]) - the delete-selection view
+  reuses .bulk-form). A2 corrected to PLAN.md Task 1's honest-rollup
+  contract: the fixture now carries metadata_available:true (the
+  harness stubs the TMDB metadata endpoints) so the card must render
+  "2 seasons" + "2/3 episodes linked", asserted via the data-metadata
+  discriminator. NEW regressions: C0 (toolbar groups exactly two bulk
+  actions), C6a/b/c (bulk-delete selection lists ONLY the 2 linked
+  episodes, nothing pre-selected, zero bulk-unlink calls on open).
+  Result: 58/58 checks pass at both viewports (375/1280); was 27 pass +
+  A2 FAIL + strict-mode abort (the Phase-0 pre-existing failure).
+- Task 2 - minimal CI (.github/workflows/ci.yml): pnpm check -> build ->
+  test on push/main + pull_request; Node 22 (= netlify.toml
+  NODE_VERSION) and pnpm 10.30.3 (= packageManager pin) enforced
+  explicitly - satisfying the phase2_repo_hygiene_test pins 2b/6b/6c
+  (the test anticipated a workflow re-introduction after the owner's
+  fe25339 removal; its assertions unchanged, comments updated only).
+  Playwright + Chromium provisioned globally (deliberately NOT a
+  package.json dependency) for the two chained DOM-QA suites via
+  scripts/mav_resolve_playwright.mjs. No secrets; every chained suite
+  runs offline (stubs / embedded pglite);
+  final_remediation_live_smoke_test self-skips without the service key;
+  no deploy step (Netlify stays the deploy surface). Validated as far
+  as the environment allows: YAML parsed, every step command executed
+  locally in this round.
+- Task 3 - chain organization: the 287-command monolithic `pnpm test`
+  && chain is split into 16 contiguous group scripts (test:core 26,
+  test:admin 15, test:ux 17, test:providers 26, test:playback 15,
+  test:platform 46, test:downloader 20, test:devices 18, test:analytics
+  6, test:hosting 23, test:cloudstream 19, test:livetv 13, test:player
+  26, test:mav 15, test:supabase 2, test:rendering 3). `pnpm test`
+  remains the complete regression gate: the groups are chained with &&
+  in the ORIGINAL chain order (verified programmatically: group
+  concatenation == original chain + 3 wire-ins; no omission, no
+  duplication, non-zero exit propagation preserved). No setup/teardown
+  or environment commands existed in the chain; per-suite environment
+  handling is unchanged. scripts/chain_runner.mjs (previously
+  referenced nowhere - Phase-0 item) is now group-aware and adopted as
+  the per-suite diagnostic runner (RUNNER_FROM/RUNNER_TO,
+  RUNNER_STOP_ON_FAIL, RUNNER_TIMEOUT_MS); it expands the groups to 290
+  suites. Four chain-composition pins re-pointed to the FULLY EXPANDED
+  gate via the new scripts/test_gate_chain.mjs helper -
+  cloudstream_admin_ui_test 10, live_tv_release_audit_test 1,
+  phase1_discovery_removal_test 3 (absence pins),
+  phase9_device_auth_regression_test A (presence + order) - so the
+  pins keep their full strength under the grouped shape.
+- Task 4 - wire-ins (each run green BEFORE chaining):
+  phase7e_vidlink_test.ts -> test:providers (after phase7e_filmu);
+  cross_device_progress_conflict_test.ts -> test:playback (after
+  phase4_progress_resume); pwa_install_banner_test.ts -> test:ux (after
+  upcoming_stream_identity). All three are offline tests and pass under
+  the repo-standard jsconfig tsx invocation. Vidlink's production
+  provider implementation (src/lib/server/resolver/vidlink.ts,
+  client/player/providers/vidlink-adapter.ts, migration
+  20260821020000) untouched.
+- Task 5 - Supabase docs: SUPABASE_REMEDIATION_REPORT.md 16 items 3/5
+  updated + NEW section 18 recording the OWNER-REPORTED production
+  evidence: migration 20261119000000_supabase_final_audit_hardening.sql
+  executed successfully in the Supabase SQL Editor; the verification
+  SQL returned "redundant indexes dropped = true" (block 8's boolean:
+  all 8 documented redundant indexes absent while the covering
+  unique-constraint indexes stay valid); Advisor showed no security and
+  no performance issues. The evidence is explicitly marked
+  owner-supplied - this environment has NO production Supabase access,
+  so nothing was re-executed against production; agent-side re-checks
+  remain chain-level only (both Supabase suites green in-chain, 115 +
+  107 checks, embedded PostgreSQL).
+- Gates (exact results): `pnpm check` EXIT 0 (0 errors / 5 pre-existing
+  admin2 unused-CSS-selector warnings - identical to the recorded
+  baseline); `pnpm test` EXIT 0 in 385 s - the full 290-suite gate
+  end-to-end, 7,032 ok checks, the chain's FIRST complete green run
+  (the pre-existing DOM-QA abort previously stopped it before the final
+  suites); `pnpm build` EXIT 0 in 37 s (vite build + Netlify adapter
+  executor). Also verified: each of the 16 groups individually EXIT 0
+  (core 15s, admin 9s, ux 10s, providers 17s, playback 25s, platform
+  29s, downloader 37s, devices 12s, analytics 4s, hosting 13s,
+  cloudstream 100s, livetv 8s, player 58s, mav 9s, supabase 27s,
+  rendering 27s); chain_runner over suites 288-290 EXIT 0; `git diff
+  --check` clean; secrets scan of changed files clean (only posture
+  documentation and no-key assertions match).
+- Branch: cleanup/task-a-safety-net (created from main @ 3978c72).
+  Task-A commit SHA: 7a82d5a (parent 3978c72; docs-only WORKLOG follow-up below).
+  No push to main; no force-push; no history rewrite. Phase 1 (hygiene
+  removals/archiving) NOT started - awaiting review of Task A.

@@ -331,9 +331,9 @@ Posture (asserted by the updated ledgers): no `INSERT INTO` / `UPDATE … SET` /
 
 1. **Repository changes committed:** yes — this round's commit (SHA in §17) on `main`.
 2. **Changes pushed to GitHub:** yes (pushed directly to `main`; no force-push).
-3. **SQL prepared but not applied:** `20261119000000` (round 2) — idempotent, guarded, ready for the SQL Editor.
+3. **SQL applied to production (owner-reported):** `20261119000000` (round 2) — the project owner reports a successful execution in the Supabase SQL Editor on 2026-10-17, together with the corrected verification run and an advisor re-check (evidence recorded in §18). At this round's own commit time it was prepared-only (idempotent, guarded).
 4. **SQL applied to production:** `20261118000000` (round 1) — applied by the project owner; verified live this round (§6, §9).
-5. **Production verification completed:** partial-by-necessity — Data-API behavioral proofs + user-reported advisor state recorded; the remaining SQL-Editor steps (round-2 application, corrected verification run, advisor re-run) are documented in §6 with exact expected outcomes. The corrected verification SQL is additionally proven meaningful on the real chain (all 16 checks green in the new suite).
+5. **Production verification completed (final step owner-reported):** Data-API behavioral proofs + user-reported advisor state were recorded this round; the remaining SQL-Editor steps (round-2 application, corrected verification run, advisor re-run) are reported complete by the project owner (§18). Agent-side verification remains chain-level only — this environment has no production Supabase access — and the corrected verification SQL is additionally proven meaningful on the real chain (all 16 checks green in the new suite; re-confirmed in the 2026-10-17 Task-A round, §18).
 
 **Limitations (unchanged):** no Management API (advisors), no direct Postgres (catalog/usage statistics), no SQL execution channel, no anon-key behavioral probes. Every limitation is stated where it affects a conclusion; nothing was claimed as live-verified that was only chain-verified.
 
@@ -346,3 +346,13 @@ Posture (asserted by the updated ledgers): no `INSERT INTO` / `UPDATE … SET` /
 - `20261119000000` written; `docs/supabase-remediation-verification.sql` corrected (block 6 OR-vs-AND defect fixed with coverage-based assertions; block 5 strengthened with role/WITH-CHECK checks; block 8 extended for the new drop; new block 0 for RLS enablement); new 107-check suite written and registered; ledgers 17→18 / 14→15; phase6 pin superseded.
 - Gates: `pnpm check` 0e/5w (= baseline); `pnpm test` full chain green through 286/288 suites — both Supabase suites pass in-chain (115 + 107 checks) before the documented PRE-EXISTING DOM-QA failure (.bulk-btn strict-mode, identical at baseline); post-chain season-chip 32/32; `pnpm build` exit 0; secrets scan + `git diff --check` clean.
 - **Commit SHA:** `d9696e5` on `main` (parent `504bc7e`), pushed to `origin/main` (`504bc7e..d9696e5`); working tree clean and synced.
+
+## 18. Round-2 production application — owner-reported evidence (2026-10-17)
+
+Recorded during the Task-A (pre-cleanup safety net) round. The three items below are **owner-supplied production evidence**, relayed from the project owner's report. The agent's environment has **no production Supabase access** (no Management API, no direct Postgres, no SQL execution channel), so **none of these were independently re-executed against production**:
+
+1. **Migration executed (owner-reported):** `20261119000000_supabase_final_audit_hardening.sql` was successfully executed in the Supabase SQL Editor.
+2. **Verification SQL run (owner-reported):** the corrected verification script (`docs/supabase-remediation-verification.sql`) returned `redundant indexes dropped = true` — i.e. block 8's boolean held: all eight documented redundant indexes (round-1's seven + round-2's `streaming_public_source_categories_order_idx`) absent from `pg_indexes`, with their covering unique-constraint indexes present, unique and valid. This is the expected success signal for the round-2 §2 guarded drop (and confirms the round-1 drops persist).
+3. **Advisors clean (owner-reported):** Supabase Advisor showed **no security and no performance issues** at the time of the owner's check.
+
+Independently re-run by the agent in the same round (chain-level only, embedded PostgreSQL): `supabase_remediation_migration_test.ts` **115/115** and `supabase_final_audit_test.ts` **107/107**, including the corrected verification SQL executed statement-for-statement against the real migration chain. This re-proves the migrations' semantics and the verification SQL's assertions **on the emulated chain — not the live production state**. Per the migration runbook, manual SQL-Editor applications do not write the `supabase_migrations` history table, so the repository + this report remain the source of truth for application status.

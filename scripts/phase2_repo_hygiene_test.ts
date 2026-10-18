@@ -46,11 +46,12 @@ ok(!rootPkg.engines.node.startsWith('>=20.'), '1c. root engines.node no longer c
 const netlify = read('netlify.toml');
 ok(/NODE_VERSION\s*=\s*"22"/.test(netlify), '2a. netlify.toml pins NODE_VERSION=22');
 
-// The GitHub Actions CI workflow was INTENTIONALLY removed by the repository
+// The GitHub Actions CI workflow was removed by the repository
 // owner in fe25339 ("chore: remove unused CI workflow and normalize cache
-// headers", 2026-09-28) — netlify.toml is the deployment surface that
-// remains. The version-pin enforcement below still applies to ANY workflow
-// file that exists, so a future re-introduction stays consistent.
+// headers", 2026-09-28) and RE-INTRODUCED by the Task-A pre-cleanup safety
+// net round (2026-10-17, .github/workflows/ci.yml) with these pins
+// enforced. The version-pin checks below apply to ANY workflow file that
+// exists, so future workflow edits stay consistent.
 const workflowsDir = path.join(REPO_ROOT, '.github/workflows');
 const workflowFiles = existsSync(workflowsDir)
   ? readdirSync(workflowsDir).filter((name) => name.endsWith('.yml') || name.endsWith('.yaml'))
@@ -93,8 +94,8 @@ ok(/Phase 2-N/.test(gitignore), '5b. .gitignore annotates the rule with Phase 2-
 
 // ============================================================
 // 6. CI workflow still pins pnpm 10.30.3 (the packageManager pin).
-// (Conditional: the workflow was intentionally removed in fe25339; the pin
-// enforcement applies to any workflow that exists.)
+// (The workflow was removed in fe25339 and re-introduced by the Task-A
+// round with the pins enforced; the checks apply to any workflow present.)
 // ============================================================
 ok(/pnpm@10\.30\.3/.test(read('package.json')), '6a. root package.json packageManager pin is pnpm@10.30.3');
 if (workflowFiles.length > 0) {

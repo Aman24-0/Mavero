@@ -32,10 +32,34 @@ const require = createRequire(import.meta.url);
  * @throws {Error} with installation instructions when Playwright cannot
  *   be resolved from any supported location.
  */
+/**
+ * Normalize the ESM-namespace produced by `await import(...)`.
+ *
+ * Portability defect fixed 2026-10 (PR #4 CI audit): strategies 2 and 4
+ * resolve playwright to its ABSOLUTE CJS entry (index.js). Importing a
+ * CJS file by path bypasses the package's `exports` map, so the returned
+ * namespace only exposes the real module as `default`
+ * (cjs-module-lexer cannot statically detect playwright's named exports):
+ *   ns.chromium         === undefined
+ *   ns.default.chromium === object
+ * The GitHub runner (no /home/<user>/node_modules, no NODE_PATH) hits
+ * exactly that path, and `const { chromium } = await resolvePlaywright()`
+ * crashed with "Cannot read properties of undefined (reading 'launch')"
+ * (CI run 39060293842, mav_task2_episode_sheet_dom_qa.mjs:295).
+ * If the namespace lacks `chromium` but its `default` carries it, return
+ * the default (the actual module.exports). True-ESM resolutions that
+ * already expose `chromium` are returned untouched.
+ */
+function normalize(mod) {
+  if (mod && mod.chromium) return mod;
+  if (mod && mod.default && mod.default.chromium) return mod.default;
+  return mod;
+}
+
 export async function resolvePlaywright() {
   // 1. Project-local import (ESM).
   try {
-    return await import('playwright');
+    return normalize(await import('playwright'));
   } catch {
     // Not installed locally — continue to fallbacks.
   }
@@ -43,7 +67,7 @@ export async function resolvePlaywright() {
   // 2. Global npm via require.resolve.
   try {
     const playwrightPath = require.resolve('playwright');
-    return await import(playwrightPath);
+    return normalize(await import(playwrightPath));
   } catch {
     // Not found via require.resolve — continue.
   }
@@ -54,7 +78,7 @@ export async function resolvePlaywright() {
     for (const p of paths) {
       try {
         const candidate = require.resolve('playwright', { paths: [p] });
-        return await import(candidate);
+        return normalize(await import(candidate));
       } catch {
         // Try next path.
       }
@@ -77,7 +101,7 @@ export async function resolvePlaywright() {
   for (const root of globalRoots) {
     try {
       const candidate = require.resolve('playwright', { paths: [root] });
-      return await import(candidate);
+      return normalize(await import(candidate));
     } catch {
       // Try next root.
     }

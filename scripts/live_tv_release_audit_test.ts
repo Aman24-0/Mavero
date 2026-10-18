@@ -20,6 +20,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { join, relative } from 'node:path';
+import { testGateText } from './test_gate_chain.mjs';
 
 let passed = 0;
 function ok(label: string): void {
@@ -29,7 +30,10 @@ function ok(label: string): void {
 
 const read = (p: string): string => readFileSync(new URL(p, import.meta.url), 'utf8');
 const packageJson = JSON.parse(read('../package.json')) as { scripts: { test: string } };
-const testChain = packageJson.scripts.test;
+// Task-A chain reorganization: the gate is composed of test:<group>
+// scripts — match composition pins against the FULLY EXPANDED per-suite
+// chain, not the group chain.
+const testChain = testGateText();
 
 // ============================================================
 // §1 Test-chain integration (the LT-6 chaining decision)

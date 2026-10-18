@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { testGateText } from './test_gate_chain.mjs';
 
 let passed = 0;
 function ok(condition: unknown, label: string) {
@@ -29,7 +30,10 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // ============================================================
 {
   const pkg = JSON.parse(read('package.json'));
-  const testScript: string = pkg.scripts.test;
+  // Task-A chain reorganization: the gate is composed of test:<group>
+  // scripts — match composition pins against the FULLY EXPANDED per-suite
+  // chain, not the group chain.
+  const testScript: string = testGateText();
 
   // All Device Auth suites exist in the correct order.
   const suites = [
