@@ -17,6 +17,8 @@ This file is the canonical cleanup roadmap. It preserves the five-phase roadmap 
 - [ ] **Phase 4 — README & Documentation**
 - [ ] **Phase 5 — Regression & Final Verification**
 
+**Issue-#5 interlude & consolidation run (2026-10-19, recorded without changing any phase status)**: `fix/theintrodb-v4` (`d0f9089`, exactly 7 files) was audited against the official v4 OpenAPI spec + npm migration guide and verified through every local gate (check / targeted intro+CSP suites / full 290-suite chain / build / `git diff --check`), plus an integrated-tree run with this branch's tracker commit `0e6ad84` — all green, disjoint file sets (7 + 2, zero overlap). PR creation is **BLOCKED** at the run's boundary: the push token lacks `pull_requests:write` (API 403 — the same limitation recorded for Phase 1); owner one-click links are in `REPOSITORY_CLEANUP_WORKLOG.md` §"Consolidation run — 2026-10-19". Phase 2 remains **NOT started** — it begins only after both PRs are merged and `main` is green.
+
 ## 2. Label reconciliation (audit `P1…P5` vs roadmap phases)
 
 | Roadmap phase | Phase-0-audit coverage | Status |
