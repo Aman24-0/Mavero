@@ -123,6 +123,9 @@ Task A changes present, working tree clean, synced with `origin/main`).
 - `81bcca1` docs(cleanup): archive 15 historical round reports; resolve worklog.md case-collision; add docs index (Groups C+D)
 - `<(this commit)>` docs(cleanup): Phase 1 tracker files (plan + worklog)
 - PR link recorded after opening (see the Phase 1 PR section below)
+- **Post-merge update (2026-10-18)**: the owner created **PR #6** from this branch and merged it —
+  `43e882f` (merge commit; head `6c9d21b`; base `main` @ `3cd6f71`). The commit record above is
+  the pre-PR history and is preserved as written.
 
 ### Limitations & unresolved items
 
@@ -152,6 +155,25 @@ Task A changes present, working tree clean, synced with `origin/main`).
   (a full body draft is preserved in the session report; the tracker files carry all
   evidence needed for review).
 
+### Phase 1 PR — RESOLVED (2026-10-18, post-merge reconciliation; blocker record above preserved verbatim)
+
+- The owner created **PR #6** ("Cleanup/phase 1 migration docs") from
+  `Aman24-0:cleanup/phase-1-migration-docs` (head `6c9d21b`) onto `main` (`3cd6f71`) and
+  merged it. API evidence: `state: closed`, `merged: true`,
+  `merge_commit_sha: 43e882fe9fb8ef5e42ac326a7a5626d4e72aae2c`,
+  `merged_at: 2026-10-18T06:45:20Z`.
+- CI on merged `main` @ `43e882f` (push event, 2026-10-18T06:45:22Z): run `39105166599`,
+  `completed` / **success** — the full gate (check / build / 290-suite test chain) passed on
+  the exact merge commit that carries all Phase 1 changes.
+- Tracker reconciliation performed on the persistent cleanup branch after fast-forwarding it
+  `6c9d21b` → `43e882f` (merge --ff-only; Phase 1 had 0 commits not in `main`, only the merge
+  commit was missing locally). `REPOSITORY_CLEANUP_PLAN.md` roadmap/§2/§4 updated; this
+  section and the closure note below added; no historical text removed.
+- **Branch discipline going forward (owner instruction)**: repository-cleanup Phases 0–5 all
+  continue on ONE persistent cleanup branch — this branch, `cleanup/phase-1-migration-docs` —
+  not a new branch per phase. The old Task A branch `cleanup/task-a-safety-net` was deleted
+  after PR #4 merged and must NOT be recreated.
+
 ### Exact next step
 
 1. **Owner creates the Phase 1 PR** (one-click compare URL above — the only blocked step;
@@ -161,3 +183,18 @@ Task A changes present, working tree clean, synced with `origin/main`).
    Audit** (audit §4.2 SAFE deletions + binary-weight hygiene incl. `docs/qa/**` +
    `components.json`/`$styles` + `Newtask.txt`/`phaseF.txt` disposition + `.nvmrc`/ESLint/Prettier
    + the deferred 9-file archive batch with comment-pointer updates).
+
+### Exact next step — UPDATED 2026-10-18 (post-merge; supersedes step ordering above, scope unchanged)
+
+1. ~~Owner creates the Phase 1 PR~~ — **done**: PR #6 created by the owner and merged at
+   `43e882f` (see "Phase 1 PR — RESOLVED" above). ~~Owner reviews + merges~~ — **done**.
+2. **Branch correction (owner instruction, 2026-10-18)**: Phases 0–5 continue on ONE persistent
+   cleanup branch (`cleanup/phase-1-migration-docs`, kept synced with `main`) — NOT a fresh
+   branch per phase as originally written in step 3 above; that earlier per-phase-branch wording
+   is superseded.
+3. **Next cleanup action**: **Phase 2 — Dead Code & Dependency Audit** on this persistent branch
+   after syncing with `main`, with its own planned workflow. NOT started in the current task
+   (the current task is the Issue #5 TheIntroDB v3→v4 fix, which is explicitly NOT a cleanup
+   phase and runs on a separate issue branch `fix/theintrodb-v4`).
+4. Issue #5 fix closes with its own focused PR ("Update TheIntroDB API integration to v4");
+   after that PR, work returns here to the persistent cleanup branch and roadmap.

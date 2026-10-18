@@ -11,8 +11,8 @@ This file is the canonical cleanup roadmap. It preserves the five-phase roadmap 
 
 - [x] **Phase 0 — Audit & Baseline** (audit report `3978c72`; baseline gates recorded in audit §6)
 - [x] **Pre-cleanup Task A — CI and full regression safety net** (PR #4 merged `3cd6f71`; CI green: check / build / full 290-suite test chain, run 39061251214)
-- [ ] **Phase 1 — Migration & Documentation Cleanup** ← current phase (branch `cleanup/phase-1-migration-docs`)
-- [ ] **Phase 2 — Dead Code & Dependency Audit**
+- [x] **Phase 1 — Migration & Documentation Cleanup** (PR #6 merged `43e882f` on 2026-10-18; CI on merged `main` @ `43e882f`: run `39105166599` success)
+- [ ] **Phase 2 — Dead Code & Dependency Audit** ← next phase (NOT started; awaits its own planned workflow on this persistent cleanup branch)
 - [ ] **Phase 3 — Architecture Refactoring**
 - [ ] **Phase 4 — README & Documentation**
 - [ ] **Phase 5 — Regression & Final Verification**
@@ -23,7 +23,7 @@ This file is the canonical cleanup roadmap. It preserves the five-phase roadmap 
 |---|---|---|
 | Phase 0 — Audit & Baseline | audit §1–§6, §9 (the whole read-only audit) | done (`3978c72`) |
 | Task A — safety net | audit §7 row "**P1 — Safety net & chain mechanics**" (DOM-QA fix, CI, chain grouping, wire-ins, Supabase round-2 status docs) | done (PR #4 `3cd6f71`) |
-| **Phase 1 — Migration & Documentation Cleanup** | audit §5.1 doc-update recommendation, §5.2 documentation classification; audit §7 row "P2 — Hygiene" items **5** (case-clash) and **6** (historical-report archive) — **documentation only** | **in progress** |
+| **Phase 1 — Migration & Documentation Cleanup** | audit §5.1 doc-update recommendation, §5.2 documentation classification; audit §7 row "P2 — Hygiene" items **5** (case-clash) and **6** (historical-report archive) — **documentation only** | done (PR #6 `43e882f`) |
 | Phase 2 — Dead Code & Dependency Audit | audit §4 (SAFE dead code) + audit §7 row "P2 — Hygiene" items 1–4, 7–8 (dead-code deletion, `docs/qa/**` + concept-JPG binary weight, `components.json`/`$styles`, `Newtask.txt`/`phaseF.txt` final disposition, `MPV.png` recompress, `.nvmrc`/`.editorconfig`/ESLint/Prettier) | pending |
 | Phase 3 — Architecture Refactoring | audit §7 rows "P3 — Consolidations", "P4 — Admin UI generation decision", "P5 — Large refactors" | pending |
 | Phase 4 — README & Documentation | README rewrite/restructure (Phase 1 only makes tiny link corrections if a move requires it) | pending |
@@ -74,11 +74,11 @@ The audit's P-labels are recorded here so no task is invented, renamed, or lost;
 - [x] Reviewed all changed-file references and the complete diff
 - [x] `git diff --check` passed
 - [x] `pnpm check` passed (0 errors / 5 warnings, unchanged baseline)
-- [x] Full `pnpm test` passed (290 suites — run group-by-group locally: 16/16 groups, identical command set and order to the single `pnpm test` gate; DOM-QA 58/0 + 32/0). CI on this branch: pending PR creation (see the unchecked item below)
+- [x] Full `pnpm test` passed (290 suites — run group-by-group locally: 16/16 groups, identical command set and order to the single `pnpm test` gate; DOM-QA 58/0 + 32/0). CI on this branch's content: verified post-merge on `main` @ `43e882f` — run `39105166599` **success** (see the PR item below)
 - [x] `pnpm build` passed (exit 0)
 - [x] Zero migration-file changes; no production database access of any kind
 - [x] Dedicated worklog updated with commit SHAs, tests, limitations, exact next step
-- [ ] Phase 1 pull request opened (not merged) — **BLOCKED, external action required**: the push token has `contents:write` (branch `cleanup/phase-1-migration-docs` is pushed with all commits) but NOT `pull_requests:write` (API returns 403 "Resource not accessible by personal access token"). One-click creation URL for the owner: https://github.com/Aman24-0/Mavero/compare/main...cleanup/phase-1-migration-docs — CI runs automatically once the PR exists (`on: pull_request`); branch CI cannot be claimed green until that run completes.
+- [x] Phase 1 pull request opened and reviewed by the owner — **resolved 2026-10-18**: the original blocker (push token had `contents:write` but NOT `pull_requests:write`, API 403 "Resource not accessible by personal access token"; one-click URL https://github.com/Aman24-0/Mavero/compare/main...cleanup/phase-1-migration-docs provided) played out as planned — the owner created **PR #6** from `cleanup/phase-1-migration-docs` (`6c9d21b`) and merged it at **`43e882f`** (API evidence: `merged: true`, `merge_commit_sha: 43e882fe9fb8ef5e42ac326a7a5626d4e72aae2c`, merged_at 2026-10-18T06:45:20Z). CI on merged `main` @ `43e882f`: run `39105166599` **success** (full gate: check / build / 290-suite test chain). Original blocker record preserved verbatim in `REPOSITORY_CLEANUP_WORKLOG.md`.
 - [x] Phase 2 not started (awaits Phase 1 review/merge)
 
 ## 5. Later-phase boundaries (preserved from the roadmap)
