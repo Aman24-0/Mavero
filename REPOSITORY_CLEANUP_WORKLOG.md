@@ -247,3 +247,30 @@ Task A changes present, working tree clean, synced with `origin/main`).
 5. Only then Phase 2 starts here — **still NOT started** (blocked on consolidation completing).
 
 **Exact next step**: the owner performs steps 1–4 above; this run stops at the PR-permission boundary. On the next session after both merges: fetch `main`, verify the merge commits + CI run URLs on `main`, sync this branch (ff-only preferred; no force-push), record the SHAs in this tracker, then open Phase 2 with its own planned workflow.
+
+### Post-merge audit + persistent-branch rename — 2026-10-19 (Phase 2 gate satisfied; Phase 2 starting)
+
+**Owner-confirmed merges, verified through the GitHub API (not screenshots)**
+
+| Item | Verified evidence |
+|---|---|
+| PR #7 — "Cleanup/phase 1 migration docs" | `merged: true`, merged_at 2026-10-18T19:37:51Z, merge commit `8dacb948959d88f8a6439170802613c2233cf0c3` (head `cleanup/phase-1-migration-docs@1acf868`) |
+| PR #8 — TheIntroDB v4 fix | `merged: true`, merged_at 2026-10-18T19:50:46Z, merge commit `839df6c8db3b6c2cd01d5f741c3b15de40673892` (head `fix/theintrodb-v4@d0f9089`) |
+| PR CI before merge | fix PR run `39159745855` **success**; tracker PR run `39158304344` **success** |
+| `main` after PR #7 (`8dacb94`) | run `39159646251` **success** |
+| `main` after PR #8 (`839df6c`) — latest | run `39160616555` **completed / success** (polled to completion this run) — https://github.com/Aman24-0/Mavero/actions/runs/39160616555 |
+| Temporary branches | `cleanup/phase-1-migration-docs` + `fix/theintrodb-v4` deleted on the remote (fetch --prune confirmed); local stale refs deleted after ancestry checks |
+
+**`main` @ `839df6c` content audit (diff `43e882f..839df6c`)**
+
+- Exactly 9 files entered: the 7 TheIntroDB-fix files + the 2 tracker files. Nothing unrelated.
+- v4 integration present: `package.json` `"theintrodb": "^4.0.0"` + lockfile `theintrodb@4.0.0`; `intro-client.ts` has the v4 union narrowing (`response.kind === 'media'`) and the 4.0.0 sources-of-truth header; `/v4` URL assertions present in `player_ui_v2_phase3_test.ts` and `player_v2_remaining_fixes_test.ts`.
+- Tracker files carry the full Phase 1 + consolidation-run history.
+- `supabase/migrations`: 0 changes; inventory still 95 files (consistent with the Phase 0 baseline).
+
+**Branch policy — RENAMED persistent cleanup branch (owner instruction, 2026-10-19)**
+
+- The single persistent repository-cleanup branch is now **`repo-clean`** (created from verified `main` @ `839df6c`, pushed; base = current = `839df6c`, 0/0 vs `main`). The old name `cleanup/phase-1-migration-docs` is retired with the branch (its history lives on in `main` via PR #7).
+- ALL cleanup phases (2, 3, 4, 5), tasks, subtasks, documentation updates, and cleanup fixes are committed and pushed to `repo-clean` — no per-phase/task branch, ever.
+- `main` stays the default protected production/integration branch; phase milestones go back through normal PR review. Unrelated feature work never mixes into `repo-clean`; `feature/tizen-tv` remains untouched (owner-controlled).
+- The previous tracker reference to "main + cleanup/phase-1-migration-docs" as the intended end-state is superseded by "main + repo-clean"; the historical text above is preserved as written.
