@@ -74,11 +74,11 @@ The audit's P-labels are recorded here so no task is invented, renamed, or lost;
 - [x] Reviewed all changed-file references and the complete diff
 - [x] `git diff --check` passed
 - [x] `pnpm check` passed (0 errors / 5 warnings, unchanged baseline)
-- [x] Full `pnpm test` passed (290 suites; run group-by-group locally, full chain green in CI)
+- [x] Full `pnpm test` passed (290 suites — run group-by-group locally: 16/16 groups, identical command set and order to the single `pnpm test` gate; DOM-QA 58/0 + 32/0). CI on this branch: pending PR creation (see the unchecked item below)
 - [x] `pnpm build` passed (exit 0)
 - [x] Zero migration-file changes; no production database access of any kind
 - [x] Dedicated worklog updated with commit SHAs, tests, limitations, exact next step
-- [x] Phase 1 pull request opened (not merged): URL + number recorded in `REPOSITORY_CLEANUP_WORKLOG.md` ("Phase 1 PR")
+- [ ] Phase 1 pull request opened (not merged) — **BLOCKED, external action required**: the push token has `contents:write` (branch `cleanup/phase-1-migration-docs` is pushed with all commits) but NOT `pull_requests:write` (API returns 403 "Resource not accessible by personal access token"). One-click creation URL for the owner: https://github.com/Aman24-0/Mavero/compare/main...cleanup/phase-1-migration-docs — CI runs automatically once the PR exists (`on: pull_request`); branch CI cannot be claimed green until that run completes.
 - [x] Phase 2 not started (awaits Phase 1 review/merge)
 
 ## 5. Later-phase boundaries (preserved from the roadmap)

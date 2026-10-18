@@ -115,7 +115,7 @@ Task A changes present, working tree clean, synced with `origin/main`).
 | Application source (`src/`) | zero changes (verified: no `src/` paths in the diff) |
 | Secrets scan | no keys/tokens added (diff reviewed in full) |
 | Renames | `git diff -M --stat` shows 15 `rename` entries (100% similarity where content unchanged) |
-| CI | recorded after push — see "Phase 1 PR" section below (only actual completed runs are claimed) |
+| CI | **Not yet run for this branch** — the workflow triggers on `pull_request` (+ push to `main` only), and PR creation is blocked by the token's missing `pull_requests:write` permission (403 "Resource not accessible by personal access token"); branch is pushed and ready. Baseline CI on `main` @ `3cd6f71` (pre-Phase-1): run `39086687959` **success**. No CI claim is made for the branch until the PR exists and a run completes. |
 
 ### Commit record
 
@@ -138,8 +138,26 @@ Task A changes present, working tree clean, synced with `origin/main`).
 - The `e26a7a1` Task-A commit message lost a few backticked fragments to shell substitution
   (cosmetic, disclosed in the PR #4 review) — unrelated to Phase 1, recorded here for traceability.
 
+### Phase 1 PR status — BLOCKED (external action required)
+
+- The branch `cleanup/phase-1-migration-docs` is pushed with all Phase 1 commits
+  (`96babc1`, `81bcca1`, `1381139`, + this update).
+- PR creation via the API returns **403 "Resource not accessible by personal access
+  token"** — the automation token has `contents:write` (pushes work) but not
+  `pull_requests:write` (this matches the precedent that PR #3/#4 were created by the
+  owner from the agent-pushed branches).
+- **Owner action (one click):** https://github.com/Aman24-0/Mavero/compare/main...cleanup/phase-1-migration-docs
+  → "Create pull request". CI (`on: pull_request`) then runs automatically on the PR head.
+- Suggested PR title: `Repository Cleanup — Phase 1: Migration & Documentation Cleanup`
+  (a full body draft is preserved in the session report; the tracker files carry all
+  evidence needed for review).
+
 ### Exact next step
 
-Phase 1 PR review by the owner. After merge: **Phase 2 — Dead Code & Dependency Audit**
-(audit §4.2 SAFE deletions + binary-weight hygiene + the deferred archive batch with
-comment-pointer updates), on a fresh branch from the then-current `main`.
+1. **Owner creates the Phase 1 PR** (one-click compare URL above — the only blocked step;
+   everything else is complete and verified). CI runs on the PR head automatically.
+2. Owner reviews + merges the Phase 1 PR (do not merge without review).
+3. Then, on a fresh branch from the then-current `main`: **Phase 2 — Dead Code & Dependency
+   Audit** (audit §4.2 SAFE deletions + binary-weight hygiene incl. `docs/qa/**` +
+   `components.json`/`$styles` + `Newtask.txt`/`phaseF.txt` disposition + `.nvmrc`/ESLint/Prettier
+   + the deferred 9-file archive batch with comment-pointer updates).
