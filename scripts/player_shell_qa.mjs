@@ -48,7 +48,9 @@ await page.route('**/v1/movie/24428', (route) => route.fulfill({
 await page.route('**/api.theintrodb.org/**', (route) => route.fulfill({
   status: 200,
   contentType: 'application/json',
-  body: JSON.stringify({ tmdbId: 24428, durationMs: 5340000, intro: [{ startMs: 12000, endMs: 52000 }] }),
+  // Real v4 /media raw shape: keyed by the resolved TVDB identity, snake_case
+  // ms timestamps (tmdb_id is deliberately absent from v4 responses).
+  body: JSON.stringify({ tvdb_id: 77111, type: 'movie', intro: [{ start_ms: 12000, end_ms: 52000 }] }),
 }));
 
 const sourceMode = process.env.SOURCE_MODE || 'direct';

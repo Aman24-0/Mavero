@@ -412,13 +412,13 @@ function introFetch(raw: unknown, opts?: { status?: number; fail?: boolean }) {
   lookup.clearForTests();
 }
 {
-  const lookup = createIntroLookup(introFetch({ tmdb_id: 278, type: 'movie', intro: [{ start_ms: 0, end_ms: 120_000 }] }, { status: 500 }));
+  const lookup = createIntroLookup(introFetch({ error: 'Failed to retrieve submissions' }, { status: 500 }));
   const result = await lookup.getIntroSegments({ kind: 'movie', tmdbId: 278, durationSec: 7200 }, 'movie:278');
   ok(result.segments.length === 0 && result.errorKind === 'api', '4. an upstream 5xx → typed "api" kind');
   lookup.clearForTests();
 }
 {
-  const lookup = createIntroLookup(introFetch({ tmdb_id: 278, type: 'movie', intro: [{ start_ms: 5_000, end_ms: 20_000 }] }));
+  const lookup = createIntroLookup(introFetch({ tvdb_id: 77111, type: 'movie', intro: [{ start_ms: 5_000, end_ms: 20_000 }] }));
   const result = await lookup.getIntroSegments({ kind: 'movie', tmdbId: 278, durationSec: 7200 }, 'movie:278');
   ok(result.segments.length === 1 && result.segments[0].startSec === 5 && result.segments[0].endSec === 20 && result.errorKind === null, '4. a valid response → converted seconds (ms→s at the boundary) + null errorKind');
   lookup.clearForTests();

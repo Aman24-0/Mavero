@@ -269,6 +269,9 @@ const segments: NormalizedSegmentTimestamp[] = [
 }
 
 // 3b. Controller — raw API response → validated segments; negative backoff; stale keys.
+// Mock bodies play the v4 SERVER: the raw shape is `{ tvdb_id, type, intro: [{ start_ms, end_ms }] }`
+// (v4 keys responses by the resolved TVDB identity and omits tmdb_id entirely — OpenAPI v4.0.0;
+// tvdb_id values are fixtures, nothing asserts them). The client is addressed with tmdbId.
 type CapturedCall = { url: string };
 function mockIntroFetch(raw: unknown, opts?: { status?: number; calls?: CapturedCall[] }) {
   return (async (input: unknown) => {
@@ -285,10 +288,11 @@ function mockIntroFetch(raw: unknown, opts?: { status?: number; calls?: Captured
 }
 {
   const calls: CapturedCall[] = [];
-  const lookup = createIntroLookup(mockIntroFetch({ tmdb_id: 1399, type: 'tv', season: 1, episode: 1, intro: [{ start_ms: null, end_ms: 90_000 }] }, { calls }));
+  const lookup = createIntroLookup(mockIntroFetch({ tvdb_id: 121361, type: 'tv', season: 1, episode: 1, intro: [{ start_ms: null, end_ms: 90_000 }] }, { calls }));
   const result = await lookup.getIntroSegments({ kind: 'tv', tmdbId: 1399, season: 1, episode: 1, durationSec: 3600 }, 'tv:1399:1:1');
   ok(result.segments.length === 1 && result.segments[0].startSec === 0 && result.segments[0].endSec === 90, '3b. a null API start normalizes to the beginning (package contract) and validates');
-  ok(calls[0]?.url.includes('tmdb_id=1399') && calls[0]?.url.includes('season=1') && calls[0]?.url.includes('episode=1'), '3b. the lookup uses the TMDB id + actual season/episode');
+  ok(calls[0]?.url.includes('api.theintrodb.org/v4/media'), '3b. the lookup hits the v4 endpoint (/v4) — the package default base URL, never a pinned older version');
+  ok(calls[0]?.url.includes('tmdb_id=1399') && calls[0]?.url.includes('season=1') && calls[0]?.url.includes('episode=1'), '3b. the lookup still addresses by the TMDB id + actual season/episode (v4 resolves tmdb_id server-side, incl. TMDB episode numbering)');
   ok(calls[0]?.url.includes('duration_ms=3600000'), '3b. the ACTUAL playback duration is forwarded as durationMs (never the catalog runtime)');
   const second = await lookup.getIntroSegments({ kind: 'tv', tmdbId: 1399, season: 1, episode: 1, durationSec: 3600 }, 'tv:1399:1:1');
   ok(second.segments.length === 1 && calls.length === 1, '3b. the cached lookup does not re-fetch');
@@ -296,14 +300,14 @@ function mockIntroFetch(raw: unknown, opts?: { status?: number; calls?: Captured
 }
 {
   const calls: CapturedCall[] = [];
-  const lookup = createIntroLookup(mockIntroFetch({ tmdb_id: 1399, type: 'tv', intro: [] }, { calls }));
+  const lookup = createIntroLookup(mockIntroFetch({ tvdb_id: 121361, type: 'tv', intro: [] }, { calls }));
   await lookup.getIntroSegments({ kind: 'tv', tmdbId: 1399, season: 2, episode: 3 }, 'tv:1399:2:3');
   await lookup.getIntroSegments({ kind: 'tv', tmdbId: 1399, season: 2, episode: 3 }, 'tv:1399:2:3');
   ok(calls.length === 1, '3b. missing data backs off — repeated lookups do not hammer the API');
   lookup.clearForTests();
 }
 {
-  const lookup = createIntroLookup(mockIntroFetch({ tmdb_id: 278, type: 'movie', intro: [{ start_ms: 0, end_ms: 120_000 }] }, { status: 500 }));
+  const lookup = createIntroLookup(mockIntroFetch({ error: 'Failed to retrieve submissions' }, { status: 500 }));
   const failed = await lookup.getIntroSegments({ kind: 'movie', tmdbId: 278, durationSec: 7200 }, 'movie:278');
   ok(failed.segments.length === 0 && failed.empty, '3b. an API failure degrades to no skip button (strictly optional feature)');
   const backed = await lookup.getIntroSegments({ kind: 'movie', tmdbId: 278, durationSec: 7200 }, 'movie:278');
@@ -311,9 +315,30 @@ function mockIntroFetch(raw: unknown, opts?: { status?: number; calls?: Captured
   lookup.clearForTests();
 }
 {
-  const lookup = createIntroLookup(mockIntroFetch({ tmdb_id: 278, type: 'movie', intro: [{ start_ms: 0, end_ms: 120_000 }] }));
+  const lookup = createIntroLookup(mockIntroFetch({ tvdb_id: 77111, type: 'movie', intro: [{ start_ms: 0, end_ms: 120_000 }] }));
   const stale = await lookup.getIntroSegments({ kind: 'movie', tmdbId: 278 }, 'movie:999');
   ok(stale.superseded === true && stale.segments.length === 0, '3b. a stale media key never drives the UI');
+  lookup.clearForTests();
+}
+{
+  // v4 response union: with no submissions the API can answer 200 with the
+  // per-episode `episodes` fallback instead of a media record. That shape is
+  // verified emptiness — no segments, and NOT a typed failure.
+  // Body mirrors the OpenAPI v4.0.0 "episode-list" example exactly (every
+  // per-segment count field is required by the API's schema).
+  const lookup = createIntroLookup(mockIntroFetch({
+    tvdb_id: 71663,
+    type: 'tv',
+    episodes: [{
+      season: 1, episode: 1, total_submission_count: 4, total_accepted_count: 4, total_pending_count: 0, total_rejected_count: 0, flag_votes: 0,
+      intro_accepted_count: 4, intro_pending_count: 0, intro_rejected_count: 0,
+      recap_accepted_count: 0, recap_pending_count: 0, recap_rejected_count: 0,
+      credits_accepted_count: 0, credits_pending_count: 0, credits_rejected_count: 0,
+      preview_accepted_count: 0, preview_pending_count: 0, preview_rejected_count: 0,
+    }],
+  }));
+  const fallback = await lookup.getIntroSegments({ kind: 'tv', tmdbId: 71663, season: 1, episode: 1, durationSec: 1800 }, 'tv:71663:1:1');
+  ok(fallback.segments.length === 0 && fallback.empty && fallback.errorKind === null, '3b. the v4 episode-list fallback (kind episodes, 200) is verified emptiness — no segments, no typed error');
   lookup.clearForTests();
 }
 
