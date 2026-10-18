@@ -12,12 +12,16 @@ This file is the canonical cleanup roadmap. It preserves the five-phase roadmap 
 - [x] **Phase 0 — Audit & Baseline** (audit report `3978c72`; baseline gates recorded in audit §6)
 - [x] **Pre-cleanup Task A — CI and full regression safety net** (PR #4 merged `3cd6f71`; CI green: check / build / full 290-suite test chain, run 39061251214)
 - [x] **Phase 1 — Migration & Documentation Cleanup** (PR #6 merged `43e882f` on 2026-10-18; CI on merged `main` @ `43e882f`: run `39105166599` success)
-- [ ] **Phase 2 — Dead Code & Dependency Audit** ← next phase (NOT started; awaits its own planned workflow on this persistent cleanup branch)
+- [ ] **Phase 2 — Dead Code & Dependency Audit** ← current phase (STARTED 2026-10-19 on `repo-clean`)
 - [ ] **Phase 3 — Architecture Refactoring**
 - [ ] **Phase 4 — README & Documentation**
 - [ ] **Phase 5 — Regression & Final Verification**
 
 **Issue-#5 interlude & consolidation run (2026-10-19, recorded without changing any phase status)**: `fix/theintrodb-v4` (`d0f9089`, exactly 7 files) was audited against the official v4 OpenAPI spec + npm migration guide and verified through every local gate (check / targeted intro+CSP suites / full 290-suite chain / build / `git diff --check`), plus an integrated-tree run with this branch's tracker commit `0e6ad84` — all green, disjoint file sets (7 + 2, zero overlap). PR creation is **BLOCKED** at the run's boundary: the push token lacks `pull_requests:write` (API 403 — the same limitation recorded for Phase 1); owner one-click links are in `REPOSITORY_CLEANUP_WORKLOG.md` §"Consolidation run — 2026-10-19". Phase 2 remains **NOT started** — it begins only after both PRs are merged and `main` is green.
+
+**RESOLVED 2026-10-19 (post-merge audit) + persistent-branch rename**: the owner merged **PR #7** (tracker; merge commit `8dacb94`) and **PR #8** (TheIntroDB v4 fix; merge commit `839df6c`); both temporary branches were deleted; `main` @ `839df6c` CI run `39160616555` **success**. The exact 9-file diff entering `main` was verified (7 fix + 2 tracker, nothing unrelated; `supabase/migrations` 0 changes, 95 files). Per the owner's instruction, the single persistent repository-cleanup branch is now **`repo-clean`** (created from verified `main` @ `839df6c`; old name `cleanup/phase-1-migration-docs` retired — historical references above preserved verbatim). ALL cleanup phases (2–5) and tasks continue on `repo-clean`; `main` stays the protected integration branch; `feature/tizen-tv` remains untouched (owner-controlled).
+
+**Phase 2 — Dead Code & Dependency Audit: STARTED 2026-10-19 on `repo-clean`** (see the worklog for per-group evidence).
 
 ## 2. Label reconciliation (audit `P1…P5` vs roadmap phases)
 
@@ -81,7 +85,24 @@ The audit's P-labels are recorded here so no task is invented, renamed, or lost;
 - [x] Zero migration-file changes; no production database access of any kind
 - [x] Dedicated worklog updated with commit SHAs, tests, limitations, exact next step
 - [x] Phase 1 pull request opened and reviewed by the owner — **resolved 2026-10-18**: the original blocker (push token had `contents:write` but NOT `pull_requests:write`, API 403 "Resource not accessible by personal access token"; one-click URL https://github.com/Aman24-0/Mavero/compare/main...cleanup/phase-1-migration-docs provided) played out as planned — the owner created **PR #6** from `cleanup/phase-1-migration-docs` (`6c9d21b`) and merged it at **`43e882f`** (API evidence: `merged: true`, `merge_commit_sha: 43e882fe9fb8ef5e42ac326a7a5626d4e72aae2c`, merged_at 2026-10-18T06:45:20Z). CI on merged `main` @ `43e882f`: run `39105166599` **success** (full gate: check / build / 290-suite test chain). Original blocker record preserved verbatim in `REPOSITORY_CLEANUP_WORKLOG.md`.
-- [x] Phase 2 not started (awaits Phase 1 review/merge)
+- [x] Phase 2 not started (awaits Phase 1 review/merge) — superseded 2026-10-19: Phase 2 STARTED below.
+
+## 4b. Phase 2 — Dead Code & Dependency Audit: checklist (executed on `repo-clean`, 2026-10-19)
+
+Canonical scope = audit §4 + §7 row "P2 — Hygiene" items 1–4, 7–8 (items 5–6 of that row were done in Phase 1). One commit per group; every deletion re-verified with fresh references before removal.
+
+- [x] **P2-1 SAFE dead-code files** — 3 of the audit's 4 rows deleted (`d234456`): `src/lib/components/admin/AdminPageHeader.svelte`, `src/lib/components/admin2/AdminPageHeader.svelte` (zero live imports; admin2 tests assert the tag's absence), `src/lib/server/hosting/index.ts` (zero directory-index consumers). **Audit correction — 1 row RETAINED**: `src/lib/server/content/http.ts` is NOT dead — `src/lib/server/content/adapters/tmdb.ts:3` imports `asNumber/asString/asStringArray/fetchJson` from `'../http'` (verified present at baseline `f887f1e`; the audit's zero-reference claim was mistaken). Load-bearing for the TMDB adapter (§8 surface).
+- [x] **P2-2 `docs/qa/**` + concept JPGs** (`d19442f`) — 51 artifacts (3.0 MB) + 2 concept JPGs (7.25 MB) untracked, ≈10.3 MB off the repo; `docs/qa/README.md` pointer added (git-history recovery + no-recommit rule); the only live writer (`followup2_live_verification.mjs`) mkdir -p's its own output dir and is unchained.
+- [x] **P2-4 `components.json` + `$styles`** (`42b9bec`) — shadcn config with zero consumers removed; dangling `$styles` alias (target dir never existed; zero imports) removed from BOTH `svelte.config.js` and `jsconfig.json`; test-loader alias tables deliberately untouched (inert, protected infra). Gates: check 0e/5w, build 0, test:core green.
+- [x] **P2-8 `.nvmrc` + `.editorconfig` + warn-only ESLint/Prettier** (`03f487f`, `688d3e5`) — `.nvmrc`=22 (consistent with netlify/engines/CI/hygiene-test pins); `.editorconfig` documents existing conventions (no reformat); ESLint 9 flat config STRICTLY warn-only (verified 0 errors / 1,099 warnings, exit 0; no error-level presets; NOT in ci.yml gate); Prettier + svelte plugin configs match dominant style, NO mass reformat; scripts `lint`/`format`/`format:check` (manual, outside the CI gate); `82d0427` then dropped 2 speculative devDeps that ended up unused (`@eslint/js`, `eslint-config-prettier`), restoring the zero-unused-deps invariant.
+- [x] **Dependencies — fresh-evidence re-audit** (`82d0427`) — all 27 Phase 0 baseline deps RETAINED (rule upheld; zero removals); 8 net-new tooling devDeps each verified used; full-scan zero-reference list empty (type-companion `@types/qrcode` + `@tailwindcss/vite` usage verified individually).
+- [x] **`phase7e_vidlink_test.ts` — PRESERVED** — verified chained in `test:providers` (wired in Task A); audit §4.3.1 "orphaned-but-live → highest-priority wiring fix" is RESOLVED, not a deletion candidate.
+- [x] **Deferred (owner-confirmation boundary, unchanged on disk, evidence recorded)**:
+  - `Newtask.txt` + `phaseF.txt` (66 KB): live section-number citations — `scripts/device_session_registry_v2_test.ts` ("Newtask §34/§21/§5"), `supabase/migrations/20261002000000_phaseF_set_addon_link_types_rpc.sql:5` ("phaseF.txt §8"), `scripts/stremio_downloader_phaseF_runtime_test.ts:51` ("phaseF.txt §17"), `docs/README.md` index. Moving/deleting would orphan the migration's citation (migrations are frozen by §8) — disposition needs the owner.
+  - `static/icons/MPV.png` (282 KB) recompression: lossless re-encode measured at 119% (original already zlib-optimal); palette quantization reaches ~31 KB (−88%) but with mean channel diff 27.6 across ~22% of pixels — unverifiable visually in this headless environment. Owner decision: accept quantized output (producible on request) or run `pngquant --quality=80-98` locally.
+- [x] **Deferred to a later Phase 2 session (scope, not blockers)**: the Phase-1-deferred 9-file comment-pointer archive batch (§3.C list) — not started this run; also the ~42 unchained-test wire-in-or-archive review (audit §4.3.2) which is Phase 2-adjacent but not in this run's group plan.
+- [x] Gates on the integrated `repo-clean` state (`82d0427`): `pnpm check` 0e/5w exit 0; **full `pnpm test` 16/16 groups / 290 suites exit 0**; `pnpm build` exit 0; `git diff --check` clean; secrets scan clean; zero `supabase/migrations` changes (95/95 intact); `feature/tizen-tv` untouched.
+
 
 ## 5. Later-phase boundaries (preserved from the roadmap)
 

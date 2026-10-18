@@ -274,3 +274,31 @@ Task A changes present, working tree clean, synced with `origin/main`).
 - ALL cleanup phases (2, 3, 4, 5), tasks, subtasks, documentation updates, and cleanup fixes are committed and pushed to `repo-clean` — no per-phase/task branch, ever.
 - `main` stays the default protected production/integration branch; phase milestones go back through normal PR review. Unrelated feature work never mixes into `repo-clean`; `feature/tizen-tv` remains untouched (owner-controlled).
 - The previous tracker reference to "main + cleanup/phase-1-migration-docs" as the intended end-state is superseded by "main + repo-clean"; the historical text above is preserved as written.
+
+### Phase 2 — Dead Code & Dependency Audit — run 1 (2026-10-19, on `repo-clean`)
+
+**Method**: one small auditable commit per group; every deletion re-verified with fresh reference greps on the current tree before removal; targeted suites per group; full gates on the integrated state before push. Canonical scope: audit §4 + §7 "P2 — Hygiene" items 1–4, 7–8 (that row's items 5–6 were Phase 1).
+
+**Commits (in order)**
+
+| Commit | Group | Change |
+|---|---|---|
+| `d234456` | P2-1 | Deleted 3 re-verified dead files (2× `AdminPageHeader.svelte`, `hosting/index.ts`). **RETAINED `src/lib/server/content/http.ts` — audit correction**: fresh evidence shows `src/lib/server/content/adapters/tmdb.ts:3` imports `asNumber/asString/asStringArray/fetchJson` from `'../http'`; the import exists verbatim at the Phase 0 baseline `f887f1e`, so the audit's zero-reference claim was mistaken at baseline (its §9 uncertainty note anticipated a per-file P2 review). The file is load-bearing for the §8-protected TMDB adapter. |
+| `d19442f` | P2-2 | Untracked 51 `docs/qa/**` artifacts (3.0 MB) + removed the 2 concept JPGs (7.25 MB) — ≈10.3 MB off the repo; added `docs/qa/README.md` (recovery via git history + no-recommit rule). Only live writer (`followup2_live_verification.mjs`) mkdir -p's its own output dir and is unchained. |
+| `42b9bec` | P2-4 | Removed `components.json` (zero consumers) + the dangling `$styles` alias from both `svelte.config.js` and `jsconfig.json` (target `src/lib/styles` never existed; zero imports). Test-loader alias tables left untouched (inert, protected). |
+| `03f487f` | P2-8a | Added `.nvmrc` (22 — matches netlify/engines/CI/hygiene-test pins) + `.editorconfig` (documents existing conventions; no reformat). |
+| `688d3e5` | P2-8b | Warn-only ESLint + Prettier tooling: eslint 9 flat config with NO error-level presets — verified contract `eslint .` → **0 errors / 1,099 warnings, exit 0**; build outputs ignored; NOT wired into ci.yml (gate stays check/build/test). Prettier configs match dominant style; **no mass reformat**. Scripts `lint`/`format`/`format:check` (manual only). |
+| `82d0427` | deps | Dropped `@eslint/js` + `eslint-config-prettier` (my own speculative adds that the final minimal config left unreferenced) → zero-unused-deps invariant restored. |
+
+**Deferred (owner-confirmation boundary — unchanged on disk, evidence recorded)**
+
+1. `Newtask.txt` / `phaseF.txt` disposition: both carry live section-number citations — `device_session_registry_v2_test.ts` ("Newtask §34/§21/§5"), migration `20261002000000_phaseF_set_addon_link_types_rpc.sql` ("phaseF.txt §8"), `stremio_downloader_phaseF_runtime_test.ts` ("phaseF.txt §17"), `docs/README.md` index. Contents confirmed (device-auth/QR design spec; Phase-F hardening spec). Deleting/moving would orphan the migration's citation anchor and migrations are frozen (audit §8) — needs the owner.
+2. `static/icons/MPV.png` recompression: lossless re-encode = 119% of original (already optimal); palette quantization = ~31 KB (−88%) but mean channel diff 27.6 over ~22% of pixels — cannot be visually validated headlessly; the icon renders in user-facing download sheets. Owner options recorded in the plan (§4b).
+
+**Preserved / verified unchanged**: all 27 Phase 0 baseline dependencies (zero removals; fresh full-scan + individual verification of the 4 scan artifacts); `phase7e_vidlink_test.ts` chained in `test:providers` (audit §4.3.1 wiring fix already resolved in Task A); 95/95 migration files; Vixolity; leaked-password protection; `feature/tizen-tv` (untouched).
+
+**Gates — actual results on the integrated `repo-clean` @ `82d0427`**: `pnpm check` exit 0 (0e/5w, baseline-identical) · `pnpm test` full 16-group/290-suite chain **exit 0** · `pnpm build` exit 0 · `git diff --check` clean · secrets scan clean · zero migration changes.
+
+**Deferred to a later Phase 2 session (scope, not blockers)**: the Phase-1-deferred 9-file comment-pointer archive batch (plan §3.C); the ~42 unchained-test wire-in-or-archive review (audit §4.3.2).
+
+**Exact next step**: owner reviews + merges the Phase 2 PR from `repo-clean` → `main` (compare link below; PR creation blocked by the token's missing `pull_requests:write` — API 403, same limitation as recorded above). After merge: sync `repo-clean` with `main`, then either continue Phase 2 session 2 (the two deferred-to-later items above) or move to Phase 3 per this roadmap.
