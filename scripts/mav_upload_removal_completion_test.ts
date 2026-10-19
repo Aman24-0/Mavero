@@ -178,13 +178,13 @@ console.log('§F — the manual linking workflows remain INTACT');
 console.log('§G — documentation matches the implemented architecture');
 // ===========================================================================
 {
-  const plan = read('PLAN.md');
+  const plan = read('docs/PLAN.md');
   ok(/upload workflow REMOVED/.test(plan), 'G1. PLAN.md title states the upload removal');
   ok(/no media upload\/import workflow/.test(plan), 'G2. PLAN.md describes the manual-reference-only architecture');
   ok(!/\/admin\/media\/upload` — Upload\/Import wizard/.test(plan), 'G3. PLAN.md no longer lists the upload page as a live route');
   ok(/Retained INTENTIONALLY/.test(plan), 'G4. PLAN.md documents what was intentionally retained (tables, valid endpoints)');
   ok(/zero-link/.test(plan) || /Zero/.test(plan) || /ZERO-LINK/.test(plan), 'G5. PLAN.md mentions the zero-link library rule');
-  const worklog = read('WORKLOG.md');
+  const worklog = read('docs/WORKLOG.md');
   ok(/2026-10-16/.test(worklog), 'G6. WORKLOG.md records this round');
 }
 
