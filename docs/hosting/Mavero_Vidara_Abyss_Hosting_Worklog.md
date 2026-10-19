@@ -141,8 +141,8 @@ Date: 2026-09-28
     after the `fe25339` baseline was audited.
 -   `git diff --stat fe25339..29d0496` shows EXACTLY 2 files added
     (2435 insertions), both under `docs/`:
-    -   `docs/Mavero_Vidara_Abyss_Hosting_Implementation_Plan.md`
-    -   `docs/Mavero_Vidara_Abyss_Hosting_Worklog.md`
+    -   `docs/hosting/Mavero_Vidara_Abyss_Hosting_Implementation_Plan.md`
+    -   `docs/hosting/Mavero_Vidara_Abyss_Hosting_Worklog.md`
 -   No other source files were touched between the plan's audited HEAD
     and the actual clone HEAD. The Phase 0 audit therefore proceeds
     against `29d0496`; no source drift relative to `fe25339` exists.
@@ -917,14 +917,14 @@ Tests that PASS at baseline (representative sample, all run via
 
 #### 12. Phase 0 deliverables produced
 
--   `docs/Mavero_Vidara_Abyss_Hosting_Implementation_Plan.md` —
+-   `docs/hosting/Mavero_Vidara_Abyss_Hosting_Implementation_Plan.md` —
     updated:
     -   §3.2.1 added (Abyss generic remote URL VERIFIED).
     -   §6 Abyss capability matrix updated to
         `supportsGenericRemoteUrl = VERIFIED`.
     -   §27 Revision 1.1 added.
     -   Header updated to reflect actual audit HEAD `29d0496`.
--   `docs/Mavero_Vidara_Abyss_Hosting_Worklog.md` — updated:
+-   `docs/hosting/Mavero_Vidara_Abyss_Hosting_Worklog.md` — updated:
     -   Current State block updated to Phase 0 COMPLETE.
     -   Phase 0 section filled with this full audit entry.
     -   Plan Changes section gets Change 1 entry (below).
@@ -1027,8 +1027,8 @@ chore(hosting): baseline and schema drift audit
 
 Files changed (2 files, 1042 insertions, 33 deletions):
 
--   `docs/Mavero_Vidara_Abyss_Hosting_Implementation_Plan.md`
--   `docs/Mavero_Vidara_Abyss_Hosting_Worklog.md`
+-   `docs/hosting/Mavero_Vidara_Abyss_Hosting_Implementation_Plan.md`
+-   `docs/hosting/Mavero_Vidara_Abyss_Hosting_Worklog.md`
 
 No source code under `src/` modified. No migrations added. No live DB
 schema changes. Phase 0 is audit-only.
@@ -1195,11 +1195,11 @@ Summary:
 
 #### F4. Deliverables produced by this follow-up
 
--   `docs/Mavero_Vidara_Abyss_Hosting_Implementation_Plan.md`
+-   `docs/hosting/Mavero_Vidara_Abyss_Hosting_Implementation_Plan.md`
     -   §28 "Engineering conventions" added (commits SHAs + migration
         timestamp rules).
     -   §27 Revision History: Revision 1.2 added.
--   `docs/Mavero_Vidara_Abyss_Hosting_Worklog.md`
+-   `docs/hosting/Mavero_Vidara_Abyss_Hosting_Worklog.md`
     -   Operating Rules section extended with the commit SHA
         recording convention + the migration filename timestamp
         convention.
@@ -2266,7 +2266,7 @@ existing file was renamed, modified, or deleted.
 Only TWO non-migration files were modified:
 -   `src/lib/server/supabase/database.types.ts` — appended 7 new
     table type blocks (hand-maintained per project convention).
--   `docs/Mavero_Vidara_Abyss_Hosting_Worklog.md` — this Phase 2
+-   `docs/hosting/Mavero_Vidara_Abyss_Hosting_Worklog.md` — this Phase 2
     worklog entry.
 
 No source code under `src/lib/`, `src/routes/`, `src/lib/components/`,
@@ -2333,7 +2333,7 @@ Files changed (summary):
     (NEW migration, ~620 lines).
 -   `src/lib/server/supabase/database.types.ts` (extended — added 7
     new table type blocks).
--   `docs/Mavero_Vidara_Abyss_Hosting_Worklog.md` (this Phase 2
+-   `docs/hosting/Mavero_Vidara_Abyss_Hosting_Worklog.md` (this Phase 2
     worklog entry).
 
 7 new DB tables created. 0 existing tables modified. 0 migrations
@@ -2521,7 +2521,7 @@ Files changed by this correction:
 
 -   `supabase/migrations/20260928204845_phase2_corrective_upload_status_queued.sql`
     (NEW corrective migration).
--   `docs/Mavero_Vidara_Abyss_Hosting_Worklog.md` (this Phase 2
+-   `docs/hosting/Mavero_Vidara_Abyss_Hosting_Worklog.md` (this Phase 2
     correction entry).
 
 Files NOT changed:
@@ -2580,7 +2580,7 @@ Files changed (summary):
 
 -   `supabase/migrations/20260928204845_phase2_corrective_upload_status_queued.sql`
     (NEW corrective migration).
--   `docs/Mavero_Vidara_Abyss_Hosting_Worklog.md` (this Phase 2
+-   `docs/hosting/Mavero_Vidara_Abyss_Hosting_Worklog.md` (this Phase 2
     correction entry).
 
 0 data rows migrated. 0 historical migrations modified. 0 source
@@ -2839,7 +2839,7 @@ Files changed:
 -   `.env.example` — added VIDARA/ABYSS env var documentation.
 -   `scripts/phase3_hosting_adapter_test.ts` — NEW test (113 checks).
 -   `package.json` — added Phase 3 test to `test` script.
--   `docs/Mavero_Vidara_Abyss_Hosting_Worklog.md` — this entry.
+-   `docs/hosting/Mavero_Vidara_Abyss_Hosting_Worklog.md` — this entry.
 
 No migrations created. No existing migrations modified. No live DB
 schema changes. No provider API calls to live services (all tests use
@@ -3025,7 +3025,7 @@ Files changed:
 -   `src/lib/server/hosting/index.ts` — updated barrel export.
 -   `scripts/phase4_registry_integration_test.ts` — NEW test (68 checks).
 -   `package.json` — added Phase 4 test to `test` script.
--   `docs/Mavero_Vidara_Abyss_Hosting_Worklog.md` — this entry.
+-   `docs/hosting/Mavero_Vidara_Abyss_Hosting_Worklog.md` — this entry.
 
 2 new providers, 2 new sources, 2 new category mappings. 0 existing
 rows modified. 0 secrets stored. 0 hosting media rows inserted.
@@ -3222,7 +3222,7 @@ Files changed:
 -   `src/lib/server/hosting/media/index.ts` — NEW.
 -   `scripts/phase5_canonical_folder_test.ts` — NEW test (49 checks).
 -   `package.json` — added Phase 5 test to `test` script.
--   `docs/Mavero_Vidara_Abyss_Hosting_Worklog.md` — this entry.
+-   `docs/hosting/Mavero_Vidara_Abyss_Hosting_Worklog.md` — this entry.
 
 No migrations created. No existing migrations modified. No live DB
 schema changes. No provider API calls. No admin UI.
@@ -3426,7 +3426,7 @@ Files changed:
 -   `src/routes/admin/media/upload/+page.svelte` — NEW.
 -   `scripts/phase6_admin_upload_test.ts` — NEW test (60 checks).
 -   `package.json` — added Phase 6 test to `test` script.
--   `docs/Mavero_Vidara_Abyss_Hosting_Worklog.md` — this entry.
+-   `docs/hosting/Mavero_Vidara_Abyss_Hosting_Worklog.md` — this entry.
 
 No migrations created. No existing migrations modified. No live DB
 schema changes. No secrets exposed.
@@ -3583,7 +3583,7 @@ Files changed:
 -   `src/routes/admin/media/upload/+page.svelte` — subtitle upload UI + Abyss proxy flow.
 -   `scripts/phase6_completion_test.ts` — NEW test (81 checks).
 -   `package.json` — added Phase 6 completion test to `test` script.
--   `docs/Mavero_Vidara_Abyss_Hosting_Worklog.md` — this entry.
+-   `docs/hosting/Mavero_Vidara_Abyss_Hosting_Worklog.md` — this entry.
 
 No migrations created. No existing migrations modified. No live DB
 schema changes. No secrets exposed.
@@ -4088,7 +4088,7 @@ Proceeding with implementation.
 4.  **MODIFIED** `package.json` — appended
     `phase7_playback_resolver_test.ts` to the `test` script (after
     `phase6_completion_test.ts`).
-5.  **MODIFIED** `docs/Mavero_Vidara_Abyss_Hosting_Worklog.md` — this
+5.  **MODIFIED** `docs/hosting/Mavero_Vidara_Abyss_Hosting_Worklog.md` — this
     entry.
 
 NO migration created. NO existing migrations modified. NO live DB
@@ -4922,10 +4922,10 @@ Plan revision: 1.1 (see Implementation Plan §27 Revision History).
 
 Affected files / schema:
 
--   `docs/Mavero_Vidara_Abyss_Hosting_Implementation_Plan.md`
+-   `docs/hosting/Mavero_Vidara_Abyss_Hosting_Implementation_Plan.md`
     (§3.2.1 added, §6 capability matrix updated, §27 Revision 1.1
     added, header updated to record actual audit HEAD `29d0496`).
--   `docs/Mavero_Vidara_Abyss_Hosting_Worklog.md` (this Plan Changes
+-   `docs/hosting/Mavero_Vidara_Abyss_Hosting_Worklog.md` (this Plan Changes
     entry + full Phase 0 audit entry above).
 -   NO source code under `src/` modified.
 -   NO migrations added.
@@ -4998,9 +4998,9 @@ Plan revision: 1.2 (see Implementation Plan §27 Revision History).
 
 Affected files / schema:
 
--   `docs/Mavero_Vidara_Abyss_Hosting_Implementation_Plan.md`
+-   `docs/hosting/Mavero_Vidara_Abyss_Hosting_Implementation_Plan.md`
     (§28 added, §27 Revision 1.2 added).
--   `docs/Mavero_Vidara_Abyss_Hosting_Worklog.md`
+-   `docs/hosting/Mavero_Vidara_Abyss_Hosting_Worklog.md`
     (Operating Rules extended; Phase 0 Follow-up §F1—§F6 added; 4 SHA
     references fixed; this Plan Changes Change 2 entry appended).
 -   NO source code under `src/` modified.

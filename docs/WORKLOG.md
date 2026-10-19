@@ -2032,7 +2032,7 @@ refactor, no change to any existing provider's semantics:
   baseline); post-chain season-chip 32/32. Secrets scan clean.
 - NOT DONE (by design + environment): production application of the migration
   (no SQL channel here — Dashboard SQL Editor procedure + verification script
-  docs/supabase-remediation-verification.sql + advisor re-run documented in
+  docs/supabase/supabase-remediation-verification.sql + advisor re-run documented in
   SUPABASE_REMEDIATION_REPORT.md §6); advisors not re-runnable from this
   environment. Production is NOT claimed fixed.
 
@@ -2090,7 +2090,7 @@ refactor, no change to any existing provider's semantics:
   analytics_sessions.user_id, cloudstream_adapter_build_jobs.extension_id —
   personal-scale tables, rare parent deletes, advisor-green; "avoid
   speculative changes"); the exact exception set is pinned in the new suite.
-- PHASE 3/5 — docs/supabase-remediation-verification.sql FIXED: block 6's
+- PHASE 3/5 — docs/supabase/supabase-remediation-verification.sql FIXED: block 6's
   OR-over-both-roles "= 0" counter counted BOTH correct role-specific
   download_providers SELECT policies and reported a false failure — replaced
   with coverage-based assertions (exactly 1 per-role permissive SELECT, zero
