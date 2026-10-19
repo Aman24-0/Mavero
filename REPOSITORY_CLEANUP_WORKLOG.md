@@ -358,3 +358,10 @@ Fresh enumeration: **35 unchained `*_test.ts`** (audit said "~42" — 3 of its n
 | `feature/tizen-tv` | untouched |
 
 **Exact next step**: owner reviews + merges the Phase 2 session-2 PR from `repo-clean` → `main` (compare link in the PR section of this run; PR creation via the API is expected to 403 — same token limitation, recorded rather than claimed). After merge: sync `repo-clean`, then the remaining Phase 2 backlog is empty except owner-deferred items — Phase 3 (Architecture Refactoring, audit P3/P4/P5 rows) starts per the roadmap, not before.
+
+**Run-2 closeout (push + PR boundary)**
+
+- Tracker commits `23dc25d` + `db18593` (ci.yml header comment corrected to 315 — comment-only, hygiene-test pins re-verified 15/15 green) pushed to `origin/repo-clean`: `01b9f4e..db18593`. Session head: **`db18593`** (6 commits over the sync base `b2b8dbe`).
+- PR creation attempted via the API and **BLOCKED**: `POST /repos/Aman24-0/Mavero/pulls` → HTTP 403 "Resource not accessible by personal access token" (the token has `contents:write` — both pushes succeeded — but not `pull_requests:write`; identical to the Phase 1 / consolidation-run limitation). Nothing was merged and no merge is claimed.
+- **Owner action (one click)**: open <https://github.com/Aman24-0/Mavero/compare/main...repo-clean> → "Create pull request" (suggested title: "Repository Cleanup — Phase 2 Session 2: archive batch + unchained-test dispositions"; a complete body draft is preserved in the session record). CI runs automatically on the PR head (`on: pull_request`); the exact content of the pushed head already passed every gate locally as recorded above.
+- After merge: sync `repo-clean` with `main` (no force-push), then Phase 3 per the roadmap — or handle the owner-deferred dispositions (Newtask/phaseF, the 3 migration-cited plan docs, MPV.png) whenever the owner decides them.
