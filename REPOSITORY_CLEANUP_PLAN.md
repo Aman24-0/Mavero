@@ -128,28 +128,35 @@ Session-2 scope = plan §3.C deferred archive batch + audit §4.3.1/§4.3.2 unch
 Canonical scope = audit §7 rows "**P3 — Consolidations**", "**P4 — Admin UI generation decision**", "**P5 — Large refactors**" (roadmap §2 mapping). Method per the roadmap and the owner's instruction: architectural boundaries and dependencies mapped FIRST from fresh evidence; small behavior-preserving groups; one auditable commit per group; targeted suites per commit; full regression chain after each meaningful group; NO invented scope, NO broad rewrites without evidence, NO unrelated feature work. Deferred Phase 2 items stay deferred (list above). Frozen per audit §8: `supabase/migrations/**`, remediation contracts, `netlify.toml`/`svelte.config.js`/`jsconfig.json` stub mappings (load-bearing for `pnpm check`), `PLAN.md`/`WORKLOG.md`/remediation/Vixolity docs, `origin/feature/tizen-tv`.
 
 ### Group 3-A — progress-record validators out of client-land (audit §3.3 #1 + #2; audit §7 P3 item 1)
-- [ ] Fresh reference map: every importer of `$lib/client/progress/types`, `progress-merge.ts` chain, the 4 server importers (`records.ts`, `api/account/favorites`, `favorites/batch-delete`, `api/account/sync`)
-- [ ] Move record validators/normalizers to `$lib/shared` (or `$lib/records`) and re-point importers — removes the **server→client** and **shared→client** runtime inversions
-- [ ] Import-graph check shows **zero server→client runtime imports**; targeted suites green (playback/progress-related + core)
+- [x] Fresh reference map: 9 importer files found for `$lib/client/progress/types` + the `progress-merge` chain (server: `records.ts`, `favorites`, `favorites/batch-delete`, `sync`; shared: `progress-merge.ts`; client/pages: my-list, watch, DetailPage; suites) — sweep confirmed exactly 4 server→client runtime import sites (audit's set, nothing missed) + `progress-merge.ts`'s presenter import
+- [x] NEW `$lib/shared/progress-records.ts`: record types + keys + validators/normalizers + `getLatestResumeTarget`/`getLatestActiveProgress` (pure record-selection) moved VERBATIM (comments preserved); `client/progress/types.ts` → re-export façade keeping the client-local storage types (`SaveProgressInput`, `LocalStorageStatus`, `LocalProgressState`) — every existing client/script import path unchanged
+- [x] 4 server importers + `progress-merge.ts` re-pointed → **import-graph check: ZERO `$lib/client/` imports in all server contexts, ZERO client imports in shared** (was 4 server→client + 1 shared→client runtime inversions — both REMOVED)
+- [x] Targeted suites green (7 groups: core/ux/playback/platform/devices/player/mav) + full chain exit 0 + build 0 before commit
 
 ### Group 3-B — validation-helper unification (audit §3.4; audit §7 P3 item 2)
-- [ ] `server/streaming/validation.ts` (763 L) vs `server/downloader/validation.ts` (199 L): unify near-identical `validateSlug`/`normalizeSlug`/`parseId` behind one shared helper (parameterized error class); behavior identical (same inputs → same outputs/errors)
-- [ ] Targeted suites: downloader + unified-downloader + streaming-contract groups
+- [x] NEW `server/validation-common.ts`: `makeSlugHelpers(createError)` + `makeIdParser(createError)` — ONE `normalizeSlug`/`validateSlug`/`parseId` implementation (identical regexes/messages/check order), registry error class parameterized
+- [x] Both registries derive the primitives and keep exporting the same names (zero importer churn); local duplicates + `slugPattern` copies removed
+- [x] `cloudstream_registry_integration_test` §F1 re-pin: `validation.ts` left the CS-4 byte-identity freeze deliberately; the pinned CONTRACT now asserted behaviorally (§F1-d, 8 new checks: exact legacy messages, label form, 3-message parseId contract, error-class identity) — no failure suppressed
+- [x] Targeted suites: playback/platform/downloader/devices/hosting/cloudstream/player all green (cloudstream 195/195 after re-pin)
 
 ### Group 3-C — hosting helper reconciliation (audit §3.4; audit §7 P3 item 3)
-- [ ] `server/hosting/provider-resolver.ts` helpers vs `shared/hosting-source-helpers.ts` (same names, different signatures; the server file's own header says it was to be replaced) — reconcile behind one implementation with behavior-preserving adapters where signatures genuinely differ
-- [ ] Targeted suites: hosting group; suites green
+- [x] `provider-resolver.ts`'s three pure lookup helpers were byte-identical duplicates of `shared/hosting-source-helpers.ts` (only parameter TYPE differed; `ResolvedProviderSource[]` structurally satisfies `HostingSourceLike[]`) → bodies now DELEGATE to the shared functions; typed server signatures PRESERVED (plan's "behavior-preserving adapters where signatures genuinely differ") so the `admin2_audit_fix_test` H5 pin (`export function adapterIdForSource`) and all callers stay valid; the LOGIC lives once
+- [x] Targeted suites: test:hosting + test:admin + test:ux green
 
 ### Group 3-D — VDRK_VTT_ORIGIN single-sourcing (audit §3.4; audit §7 P3 item 4)
-- [ ] Server + client copies → one shared constant; the `netlify.toml` CSP coupling resolved the ONLY safe way for a TOML file: a **lockstep pin test** asserting the deployed CSP origin equals the shared constant (no CSP behavior change; netlify.toml edited only if the pin proves drift)
-- [ ] Targeted suites: subtitles/player + core
+- [x] Server + client copies → ONE shared constant in `$lib/shared/subtitles.ts` (BOTH origins — `VDRK_LIST_ORIGIN` + `VDRK_VTT_ORIGIN`); both original modules re-export, every importer untouched. **Audit correction from fresh evidence**: the CSP coupling is with the LIST origin (browser-direct fetch); `cache.vdrk.site` is the SERVER-side proxy upstream and deliberately has NO CSP entry
+- [x] `netlify.toml` CSP coupling resolved the only safe way for a TOML file: NEW lockstep pin suite `scripts/vdrk_origin_csp_lockstep_test.ts` (9 checks, wired into `test:player`) asserting §1 all three modules re-export the same value, §2 CSP connect-src CONTAINS the list origin, §3 CSP does NOT contain the VTT origin — both drift directions pinned; netlify.toml NOT edited (no drift found)
+- [x] Targeted suites: test:player + test:platform green; check 0e/5w
 
 ### Group 3-E — stub-directory consolidation (audit §3.3 #5; audit §7 P3 item 5)
-- [ ] `scripts/env-stubs/` (jsconfig), `scripts/stubs/` (behavioral tsconfig), `scripts/executor-shims/` → consolidated mapping table with explicit per-consumer tsconfig mappings; `pnpm check` + full chain must stay baseline-identical (these are load-bearing, audit §8)
+- [x] Fresh evidence sweep (file diffs + mapping trace + consumer audit) → **PHYSICAL MERGE REJECTED**: the three dirs hold DELIBERATELY DIFFERENT implementations for three resolution contexts (behavioral = empty env, hermetic; executor shim = `process.env`, production function semantics; env-stubs = `process.env` mirror + test-injection merge; two distinct `$app/environment` variants `version ''` vs `'test-stub'`) — merging would break one context (all load-bearing per audit §8)
+- [x] Consolidation delivered as the evidence sanctioned: `scripts/env-stubs/README.md` (the consolidated mapping table: per-file semantics + per-consumer config + do-not-dedupe warning) + NEW `scripts/stub_contexts_test.ts` (22 checks, wired into `test:core`) pinning the three distinct `$env` semantics, the two distinct `$app/environment` versions, and every documented mapping target
+- [x] `pnpm check` + full chain baseline-identical (both tsconfig surfaces covered by targeted groups)
 
 ### Group 3-F — URL-sniffing heuristic dedup (audit §3.4; audit §7 P3 item 6)
-- [ ] `detectContainer`/`detectAudioLanguages` (cloudstream `normalize/links.ts` vs stremio `stream-normalize.ts`) + `extractQuality` (stremio vs downloader `fourk-service.ts`) → one shared module, byte-identical outputs proven by the existing suites
-- [ ] Targeted suites: cloudstream + providers + downloader groups
+- [x] Fresh evidence sweep of all three heuristic pairs → **DEDUP REJECTED on evidence**: the same-named functions are separate display contracts, not re-implementations — `detectContainer` label taxonomies differ by design (cloudstream regex table: `.ts`→MPEG, `.m4v`→MP4; stremio ext-map: `.ts`→TS, `.m4v`→M4V; plus stremio's URL/free-text variants have no cloudstream counterpart); `detectAudioLanguages` lexicons differ (cloudstream: abbreviations + 'dual audio' rule, UNcapped; stremio: 28 full words, capped at 2); `extractQuality` return types differ structurally (fourk: string; stremio: `{label, height}` with 'Auto' fallback). Unifying would change user-visible output — forbidden behavior change. The plan's own acceptance bar ("byte-identical outputs proven by the existing suites") is not met by the premise.
+- [x] NEW `scripts/url_heuristic_boundaries_test.ts` (12 checks, wired into `test:core`) pins the exact divergence pairs so no future session can "dedup" them naively
+- [x] Targeted suites: test:core + test:cloudstream + test:providers + test:playback green
 
 ### Group 3-G — Admin UI generation decision (audit §7 P4; decision recorded BEFORE code)
 - [ ] Fresh enumeration of the routes still importing v1 `admin/` components (audit named 6) + the 11 test-only-referenced admin components (audit §4.3.4)
