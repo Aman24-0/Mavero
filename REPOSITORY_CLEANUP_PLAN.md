@@ -14,8 +14,8 @@ This file is the canonical cleanup roadmap. It preserves the five-phase roadmap 
 - [x] **Phase 1 — Migration & Documentation Cleanup** (PR #6 merged `43e882f` on 2026-10-18; CI on merged `main` @ `43e882f`: run `39105166599` success)
 - [x] **Phase 2 — Dead Code & Dependency Audit** (runs 1–2 via PRs #9 `2d7785c` and #10 `b201b17`, both merged 2026-10-19; residual = owner-deferred items only — see §4b/§4c)
 - [x] **Phase 3 — Architecture Refactoring** (3-A…3-H executed 2026-10-19 on `repo-clean`; PR #11 merged `3c5f35a` on 2026-10-19; CI on merged `main` @ `3c5f35a`: run `39206699373` success)
-- [ ] **Phase 4 — README & Documentation** ← current phase (executed 2026-10-19 on `repo-clean`; scope + findings in §5b) — **audit + targeted accuracy fixes complete pending owner review; full rewrite not evidence-justified**
-- [ ] **Phase 5 — Regression & Final Verification**
+- [x] **Phase 4 — README & Documentation** (targeted accuracy fixes F1–F9 executed 2026-10-19 on `repo-clean`, findings in §5b; PR #12 merged `35b9491` on 2026-10-19)
+- [x] **Phase 5 — Regression & Final Verification** (full-gate pass executed 2026-10-19 on `repo-clean` @ `35b9491`; every gate baseline-identical green — results + preservation evidence in §5c; **roadmap complete**, pending owner merge of the final tracker commit)
 
 **Issue-#5 interlude & consolidation run (2026-10-19, recorded without changing any phase status)**: `fix/theintrodb-v4` (`d0f9089`, exactly 7 files) was audited against the official v4 OpenAPI spec + npm migration guide and verified through every local gate (check / targeted intro+CSP suites / full 290-suite chain / build / `git diff --check`), plus an integrated-tree run with this branch's tracker commit `0e6ad84` — all green, disjoint file sets (7 + 2, zero overlap). PR creation is **BLOCKED** at the run's boundary: the push token lacks `pull_requests:write` (API 403 — the same limitation recorded for Phase 1); owner one-click links are in `REPOSITORY_CLEANUP_WORKLOG.md` §"Consolidation run — 2026-10-19". Phase 2 remains **NOT started** — it begins only after both PRs are merged and `main` is green.
 
@@ -39,7 +39,7 @@ This file is the canonical cleanup roadmap. It preserves the five-phase roadmap 
 | Phase 2 — Dead Code & Dependency Audit | audit §4 (SAFE dead code) + audit §7 row "P2 — Hygiene" items 1–4, 7–8 (dead-code deletion, `docs/qa/**` + concept-JPG binary weight, `components.json`/`$styles`, `Newtask.txt`/`phaseF.txt` final disposition, `MPV.png` recompress, `.nvmrc`/`.editorconfig`/ESLint/Prettier) | pending |
 | Phase 3 — Architecture Refactoring | audit §7 rows "P3 — Consolidations", "P4 — Admin UI generation decision", "P5 — Large refactors" | pending |
 | Phase 4 — README & Documentation | README rewrite/restructure (Phase 1 only makes tiny link corrections if a move requires it) | executed on `repo-clean` 2026-10-19 as targeted accuracy fixes (full rewrite not evidence-justified) — see §5b |
-| Phase 5 — Regression & Final Verification | final full-gate verification pass | pending |
+| Phase 5 — Regression & Final Verification | final full-gate verification pass | executed on `repo-clean` @ `35b9491` 2026-10-19 — all gates baseline-identical green — see §5c |
 
 The audit's P-labels are recorded here so no task is invented, renamed, or lost; the roadmap phase names above are canonical.
 
@@ -193,7 +193,26 @@ Scope honesty: the roadmap row reads "README rewrite/restructure"; the fresh aud
 - [x] Verified accurate, no change: tech-stack table vs `package.json`; Node 22/pnpm 10.30.3 pins vs `.nvmrc`/`netlify.toml`/CI; `netlify.toml` build settings (file itself READ-ONLY verified as valid TOML, untouched since pre-cleanup `3f9a49d`); AniList claim (used across `src/lib/server/content` + resolver); Tizen sections
 - [x] Preserved untouched: `Newtask.txt`, `phaseF.txt`, `static/icons/MPV.png`, the 3 migration-cited plan docs, `docs/archive/**` (historical records not rewritten even where stale), `docs/tizen-tv/**`, Vixolity disabled, production config/secrets, `supabase/migrations` 95/95
 - [x] Gates: `pnpm check` exit 0 (0e/5w); `pnpm lint` exit 0 (0e/1101w); `pnpm test` exit 0 (16/16 groups); `pnpm build` exit 0; `git diff --check` clean; secrets scan clean; `feature/tizen-tv` untouched
-- [ ] PR from `repo-clean` → `main` for owner review (API 403 expected; compare URL fallback)
+- [x] PR from `repo-clean` → `main` for owner review (owner merged as PR #12 `35b9491`; CI run `39277173655` success — verified via API + job log 2026-10-19)
+
+## 5c. Phase 5 — Regression & Final Verification: executed (2026-10-19, on `repo-clean` @ `35b9491`)
+
+Final full-gate pass over the merged `main` content, compared against the recorded baselines (Phase 0 `f887f1e` gates; Phase 3/4 final-gate records). No new cleanup work performed; no product/migration/config files touched by this phase.
+
+- [x] Pre-run: PR #12 (`35b9491`) verified merged via API; CI run `39277173655` verified **completed / success** through BOTH the status API and the full job log (log showed check 0e/5w, build ok, final suite 32/0 at 15:30:47Z, zero failure markers across 11,513 lines — status API lagged ~25 min behind the completed job; both evidence sources recorded); `repo-clean` fast-forwarded `1070a7e..35b9491`, pushed, tree clean
+- [x] `pnpm check` — exit 0, **0 errors / 5 warnings** (baseline-identical; warnings pre-existing admin2 unused-CSS selectors)
+- [x] `pnpm lint` — exit 0, **0 errors / 1,101 warnings** (baseline-identical; warn-only contract intact)
+- [x] `pnpm test` — exit 0, **16/16 groups**, full chain green end-to-end (318 commands; final season-chip suite 32 passed / 0 failed)
+- [x] `pnpm build` — exit 0 (vite build + Netlify adapter executor)
+- [x] `git diff --check` — clean; working tree clean
+- [x] Secrets scan — clean; one documented FALSE POSITIVE: `scripts/phase3_observability_test.ts:103` contains `sk_live_1234567890`, a dummy fixture inside the structured-logger redaction test (asserts the logger redacts such values; file pre-dates the cleanup, unchanged at `71fd41e` 2026-09-21; surfaced only because this pass scanned the whole tree instead of changed files)
+- [x] Migrations — **95/95 files identical by name between Phase 0 baseline `f887f1e` and `35b9491`**; 0 changes
+- [x] Import-boundary (Phase 3 contract re-checked) — zero `$lib/client/` / `../client` imports in `src/lib/server/**` and `src/lib/shared/**`
+- [x] CI contract — `.github/workflows/ci.yml` intact; its pins (Node 22, pnpm 10.30.3, frozen lockfile, Playwright/ripgrep provisioning) are enforced by `phase2_repo_hygiene_test`, green in-chain; merged-main CI green (run `39277173655`)
+- [x] Preservation — zero cleanup-era commits (`3978c72..35b9491`) touched `docs/tizen-tv/**` or any tizen path; `feature/tizen-tv` still on origin at unchanged tip `bd248cc`; Vixolity surfaces byte-identical to baseline; `Newtask.txt` / `phaseF.txt` / `MPV.png` / the 3 migration-cited plan docs all present and untouched; `netlify.toml` + `.env.example` unchanged across the entire cleanup era; production services/secrets never touched
+- [x] Warnings vs errors — 0 new errors anywhere; every warning pre-existing with baseline-identical counts (5 svelte-check + 1,101 lint)
+
+**Verdict**: every gate baseline-identical green; no new failures; no regressions. With the owner's merge of this final tracker commit, the **repository cleanup roadmap (Phases 0–5) is complete**. Residual owner-deferred items (explicitly NOT blockers): `Newtask.txt`/`phaseF.txt` final disposition, 3 migration-cited plan docs, `MPV.png` recompress, 3-H deferrals (PlayerShell split, tmdb.ts split), db-types facade skip recommendation, admin-generation retirement path.
 
 ## 6. Later-phase boundaries (preserved from the roadmap)
 

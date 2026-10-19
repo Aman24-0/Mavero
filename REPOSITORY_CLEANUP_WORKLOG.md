@@ -535,3 +535,43 @@ The roadmap row reads "README rewrite/restructure". The fresh audit found the RE
 | `feature/tizen-tv` | untouched |
 
 Next: commit + push on `repo-clean`; PR creation expected to hit the known API 403 (`pull_requests:write` missing) → compare URL for the owner. Then Phase 5 — Regression & Final Verification after the owner merges.
+
+---
+
+# Phase 5 — Regression & Final Verification (2026-10-19, on `repo-clean` @ `35b9491`)
+
+## Pre-run verification (nothing assumed)
+
+- **PR #12** verified via GitHub API: `merged=true`, base `main` ← head `repo-clean`, merge commit **`35b9491`** (`35b9491da640e4a0d501807cafa958b8362fe0d6`), merged_at 2026-10-19T15:21:02Z — the Phase 4 merge.
+- **CI on merged `main` @ `35b9491`**: run **`39277173655`** — verified **completed / success**. Honesty note: the status API reported `in_progress` for ~25 minutes while the job log already showed a finished run; forensics on the full 11,513-line log: `svelte-check found 0 errors and 5 warnings`, build executor written, the chain's final suite (`Phase 1 chip contract: 32 passed, 0 failed`) completed at 15:30:47Z flowing directly into post-job cleanup, and **zero** failure markers (`##[error]` / `ELIFECYCLE` / non-zero exit notices). Duration 9.2 min (previous green run: 8.4 min). Both evidence sources recorded; verdict taken only after the status API concurred.
+- **Sync**: `repo-clean` fast-forwarded `1070a7e..35b9491` via `--ff-only` (0 unique commits at risk); pushed; working tree clean. Phase 5 baseline SHA: **`35b9491da640e4a0d501807cafa958b8362fe0d6`**.
+
+## Final gate results vs established baseline
+
+| Gate | Phase 5 result | Baseline (Phase 0 / latest records) | Verdict |
+|---|---|---|---|
+| `pnpm check` | exit 0 — 0 errors / 5 warnings | 0e / 5w | baseline-identical |
+| `pnpm lint` | exit 0 — 0 errors / 1,101 warnings | 0e / 1,101w | baseline-identical |
+| `pnpm test` | exit 0 — 16/16 groups, chain green end-to-end (318 commands; final suite 32/0) | 16/16 exit 0 | baseline-identical |
+| `pnpm build` | exit 0 | exit 0 | baseline-identical |
+| `git diff --check` | clean | clean | baseline-identical |
+| Secrets scan | clean — 1 documented false positive (below) | clean on changed files | no real secrets |
+| `supabase/migrations` | 95/95 files identical by name vs `f887f1e`; 0 changes | 95/95 | preserved |
+| Import boundary | zero client imports in `src/lib/server/**` + `src/lib/shared/**` | zero (Phase 3 final) | preserved |
+| CI contract | `.github/workflows/ci.yml` intact; pins enforced by `phase2_repo_hygiene_test` (green in-chain); merged-main run `39277173655` success | same | preserved |
+
+**Warnings vs errors**: 0 new errors anywhere; 5 svelte-check + 1,101 lint warnings, all pre-existing with baseline-identical counts. No new failures to investigate; nothing suppressed.
+
+**Secret-scan false positive (documented, not suppressed)**: whole-tree scanning (broader than the per-phase changed-file scans) surfaced `sk_live_1234567890` at `scripts/phase3_observability_test.ts:103` — a dummy fixture inside the structured-logger redaction test (the suite asserts the logger redacts such values). File pre-dates the cleanup (last touched `71fd41e`, 2026-09-21), unchanged throughout, contains no real credential.
+
+## Preservation evidence (whole-cleanup-era, `f887f1e`/`3978c72` → `35b9491`)
+
+- Zero cleanup-era commits touched `docs/tizen-tv/**` or any tizen path; `origin/feature/tizen-tv` exists at unchanged tip `bd248cc`
+- Vixolity surfaces byte-identical to the Phase 0 baseline (`git diff f887f1e 35b9491 -- "*vixolity*"` empty); disabled state untouched
+- `Newtask.txt`, `phaseF.txt`, `static/icons/MPV.png`, `CLOUDSTREAM_MAVERO_DOWNLOADER_PLAN.md`, `live-tv-plan.md`, `mavero-user-management-analytics-plan.md` — all present, untouched
+- `netlify.toml` + `.env.example`: zero changes across the entire cleanup era; production services/secrets never touched
+- `package.json`/`pnpm-lock.yaml` deltas across the era are the sanctioned, CI-verified Phase 2 changes only (warn-only ESLint/Prettier tooling; 2 speculative devDeps dropped; all 27 baseline deps retained — invariant enforced by `phase2_repo_hygiene_test`, green in-chain)
+
+## Roadmap closure
+
+Phases 0, Task A, 1, 2, 3, 4, 5 — all executed and merged green (PRs #4, #6, #9, #10, #11, #12 + the final tracker commit below). **The repository cleanup roadmap is COMPLETE** once the owner merges this tracker commit. Residual owner-deferred items (not blockers, listed in plan §5c): Newtask.txt/phaseF.txt disposition, 3 migration-cited plan docs, MPV.png recompress, 3-H deferrals (PlayerShell/tmdb splits), db-types skip recommendation, admin-generation retirement path.
