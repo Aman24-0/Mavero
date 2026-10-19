@@ -488,3 +488,50 @@ Next: Group 3-G (admin-generation decision — enumeration + decision recorded B
 **Behavioral net effect**: server→client runtime inversions 4→0; shared→client runtime inversions 1→0; duplicated slug/id primitives 2→1; duplicated hosting lookup logic 2→1; VDRK origin constants 3→1; NO user-visible behavior change anywhere (3 pin suites + the full chain prove; every touched surface's suites re-run green). Three audit premises corrected on fresh evidence (3-D CSP origin; 3-E stubs and 3-F heuristics are context-specific contracts, not duplicates), each re-pinned rather than merged. New pin suites: `vdrk_origin_csp_lockstep_test` (9), `stub_contexts_test` (22), `url_heuristic_boundaries_test` (12) — all wired into the chain (315→318 commands).
 
 **Owner decisions surfaced by this run** (all recorded in plan §5): (1) 3-H PlayerShell + tmdb deferrals (dedicated sessions/PRs); (2) db-types facade skip recommendation; (3) the 3-G admin boundary doc (incl. the retirement path if the owner prefers retiring the 11 test-only components); (4) AdminMediaCard's zero-importer status; (5) the still-deferred Phase 2 items (Newtask.txt/phaseF.txt, 3 migration-cited docs, MPV.png).
+
+---
+
+# Phase 4 — README & Documentation Cleanup (2026-10-19, on `repo-clean`)
+
+## Pre-run verification (owner-reported merge independently confirmed — nothing assumed)
+
+- **PR #11** verified via GitHub API: `state=closed`, `merged=true`, base `main` ← head `repo-clean`, merge commit **`3c5f35a`** (`3c5f35abf0163203a4717d09bc081bf079e782ec`), merged_at 2026-10-19T05:51:29Z.
+- **CI on merged `main` @ `3c5f35a`**: check-run `check · build · test`, run **`39206699373`** — first probe `in_progress`, polled to **`completed / success`** (~7 min). URL: `https://github.com/Aman24-0/Mavero/actions/runs/39206699373`.
+- **Sync**: `repo-clean` fast-forwarded `f841596..3c5f35a` via `git merge --ff-only` (0 ahead / 1 behind before — zero unique commits at risk, no force-push, no new branch); pushed `f841596..3c5f35a` to `origin/repo-clean`; working tree clean; `repo-clean` == `origin/main`.
+
+## Scope decision
+
+The roadmap row reads "README rewrite/restructure". The fresh audit found the README structurally sound (accurate tech stack, platforms, project structure, deployment, architecture, Tizen, citation paths) with 9 specific accuracy defects — so the phase was executed as **targeted accuracy fixes**, not an invented rewrite (owner directive: "prioritize accurate documentation and preservation of working features over maximizing the number of changed files").
+
+## Findings and dispositions (every claim verified against the tree, `package.json`, `netlify.toml` via TOML parse, GitHub API)
+
+| # | File | Evidence | Disposition |
+|---|---|---|---|
+| F1 | README Validation | "There is no separate `lint` script declared in `package.json`" — false since Phase 2 (`688d3e5` added `lint`/`format`/`format:check`; verified in `package.json`) | lint/format rows added; false sentence replaced with the warn-only contract; `pnpm preview` note corrected (runs the build first) |
+| F2 | README aliases sentence | Listed `$styles`; `svelte.config.js` declares only `$components` + `$data` (`$styles` removed in Phase 2 `42b9bec`) | `$styles` dropped |
+| F3 | README Validation | CI unmentioned although `.github/workflows/ci.yml` (Task A) runs check/build/test on every PR + push to `main` | one factual CI sentence added |
+| F4 | README env table | `.env.example` documents 8 server-only variables absent from the table: `VIDARA_API_KEY`, `VIDARA_API_BASE_URL`, `ABYSS_EMAIL`, `ABYSS_PASSWORD`, `ABYSS_API_BASE_URL`, `PRIVATE_ADAPTER_BUILDER_URL/_SECRET/_TIMEOUT_MS` | names + one-line purposes added (README's names-only policy kept; no values) |
+| F5 | DEPLOYMENT commands table | `pnpm test` (the repo's regression gate) and `pnpm lint` missing | both rows added |
+| F6 | DEPLOYMENT env table | `MAVERO_COMPAT_SESSION_SECRET` + `MAVERO_MEDIA_WORKER_URL` (documented in README) and the F4 set missing | rows added, consistent with `.env.example` wording |
+| F7 | DEPLOYMENT CSP bullets | Actual header (tomllib-parsed) has `media-src 'self' https://zcdn.bluevelvet.space https://ha.vixolity.com` and `connect-src` extended with `zcdn.bluevelvet.space`, `ha.vixolity.com`, `sub.vdrk.site`, `api.theintrodb.org` — none documented | bullets re-synced; `netlify.toml` declared the source of truth (provider phases extend it) |
+| F8 | README structure block | `scripts/archive/` (retired suites + manifest) and favicon trivially absent | one-line touches |
+| F9 | README tech-stack L46 | Cited "media-worker `engines.node >=22.19`" — **no `media-worker` package exists in the repo** (only root `package.json` carries `engines`); the verifiable in-repo pin `.nvmrc` (`22`) was uncited | reworded to the verifiable set: Netlify `NODE_VERSION=22`, CI `node-version: 22`, root `.nvmrc` `22` (Prerequisites line aligned in the same pass) |
+
+**Verified accurate — deliberately NO change**: all 10 README doc links + all 14 `docs/README.md` link targets exist (24/24); tech-stack rows match `package.json` (`@sveltejs/adapter-netlify` ^6, `@supabase/ssr`/`supabase-js`, Tailwind v4 via `@tailwindcss/vite`, GSAP, SvelteKit 2/Svelte 5, TS); Node 22 / pnpm 10.30.3 pins match `.nvmrc`/`netlify.toml`/CI/`packageManager`; `netlify.toml` build settings correct; AniList claim backed by `src/lib/server/content` + resolver usage; citation paths `src/routes/watch/[type]/[id]/+page.svelte` and `src/lib/server/streaming/admin-service.ts` exist; lowercase `worklog.md` case-clash resolved (Phase 1).
+
+**Deliberately preserved (deferred/frozen)**: `Newtask.txt`, `phaseF.txt`, `static/icons/MPV.png` (owner-deferred), the 3 migration-cited plan docs (`CLOUDSTREAM_MAVERO_DOWNLOADER_PLAN.md`, `live-tv-plan.md`, `mavero-user-management-analytics-plan.md`), `docs/archive/**` (historical records are records — not rewritten even where stale), `docs/tizen-tv/**`, Vixolity disabled, production config/secrets, `supabase/migrations` 95/95. **`netlify.toml` was READ-ONLY verified** (valid TOML: build/functions/headers, 5 header entries; untouched since pre-cleanup `3f9a49d` per git log) — no production-configuration change.
+
+## Gates (exact results; docs-only diff — exactly `README.md` + `DEPLOYMENT.md`)
+
+| Gate | Result |
+|---|---|
+| `pnpm check` | exit 0 — 0 errors / 5 warnings (baseline-identical) |
+| `pnpm lint` | exit 0 — 0 errors / 1,101 warnings (warn-only contract intact) |
+| `pnpm test` | exit 0 — 16/16 groups, full chain green end-to-end (318 commands per the Phase 3 record; final season-chip suite 32/32) |
+| `pnpm build` | exit 0 (vite build + Netlify adapter executor) |
+| `git diff --check` | clean |
+| Secrets scan (changed files) | clean |
+| `supabase/migrations` | 0 changes, 95/95 intact |
+| `feature/tizen-tv` | untouched |
+
+Next: commit + push on `repo-clean`; PR creation expected to hit the known API 403 (`pull_requests:write` missing) → compare URL for the owner. Then Phase 5 — Regression & Final Verification after the owner merges.
