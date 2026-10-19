@@ -1,6 +1,6 @@
 // ============================================================================
 // Phase 2 behavioral tests — adult network registry + central adult classifier
-// (Adult Mode architecture rebuild; see Mavero_Adult_Mode_Rebuild_Worklog.md).
+// (Adult Mode architecture rebuild; see docs/archive/round-reports/Mavero_Adult_Mode_Rebuild_Worklog.md).
 //
 // Unlike scripts/adult_mode_test.ts (static source assertions A–W), these are
 // REAL behavioral tests: they import the actual registry and classifier

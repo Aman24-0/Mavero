@@ -1,7 +1,7 @@
 /**
  * Admin 2.0 Deep Audit Fix — Comprehensive Regression Tests
  *
- * Verifies every finding from ADMIN_2_DEEP_AUDIT_REPORT.md that was
+ * Verifies every finding from docs/archive/round-reports/ADMIN_2_DEEP_AUDIT_REPORT.md that was
  * addressed in the fix phase. Mix of:
  *   - Behavioral tests (in-memory PostgREST fake for upload service)
  *   - Source-contract tests (regex on source for UI/validation fixes)

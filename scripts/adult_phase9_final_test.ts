@@ -1,6 +1,6 @@
 // ============================================================================
 // Phase 9 FINAL behavioral suite — cross-phase integration confidence.
-// (Adult Mode architecture rebuild; see Mavero_Adult_Mode_Rebuild_Worklog.md.)
+// (Adult Mode architecture rebuild; see docs/archive/round-reports/Mavero_Adult_Mode_Rebuild_Worklog.md.)
 //
 // PURPOSE (Phase 9 spec §25): a DEDICATED FINAL suite that aggregates the
 // most important cross-phase contracts in one place. It deliberately does
