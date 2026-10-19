@@ -16,6 +16,14 @@ import {
   rewriteMaveroOrigin,
   rewriteMaveroOrigins,
 } from '$lib/server/downloader/public-config';
+// Phase 3 3-B re-pin: the slug/id validation contract is asserted
+// BEHAVIORALLY (see §F1-d) after the primitives were unified with
+// streaming's into src/lib/server/validation-common.ts.
+import {
+  DownloaderValidationError,
+  validateSlug,
+  parseId,
+} from '$lib/server/downloader/validation';
 
 /**
  * CS-5 suite: Mavero Downloader 2 registry integration — the
@@ -777,13 +785,43 @@ function section_regression(): void {
     // pinned by §F1c below.
     'src/routes/api/downloader/config/+server.ts',
     'src/lib/server/downloader/admin-service.ts',
-    'src/lib/server/downloader/validation.ts',
     'src/lib/server/downloader/types.ts',
   ]) {
     const current = read(frozen);
     const pristine = pristineFile(frozen);
     ok(pristine === null || pristine === current, `§F1: ${frozen} is byte-identical to the pre-CS-5 commit`);
   }
+
+  // §F1-d (Phase 3 3-B, repository-cleanup): validation.ts DELIBERATELY LEFT
+  // the frozen byte-identity set above. Its slug/id primitives were unified
+  // with streaming's byte-identical twins into
+  // src/lib/server/validation-common.ts (audit §3.4 duplication finding —
+  // ONE implementation, registry error class parameterized; regexes,
+  // messages, and check order are unchanged). The CONTRACT the byte-pin was
+  // proxying is asserted behaviorally here:
+  ok(validateSlug('  My Provider  ') === 'my-provider', '§F1-d: validateSlug normalizes trim + lowercase + spaces→hyphens');
+  ok(validateSlug('my-provider') === 'my-provider', '§F1-d: validateSlug passes canonical kebab slugs through');
+  let slugThrew: unknown = null;
+  try { validateSlug('Bad_Slug'); } catch (e) { slugThrew = e; }
+  ok(slugThrew instanceof DownloaderValidationError
+    && (slugThrew as Error).message === 'Slug must use lowercase letters, numbers, and single hyphens only.',
+    '§F1-d: validateSlug throws DownloaderValidationError with the exact legacy message');
+  let slugLabeledThrew: unknown = null;
+  try { validateSlug('Bad_Slug', 'Provider slug'); } catch (e) { slugLabeledThrew = e; }
+  ok(slugLabeledThrew instanceof DownloaderValidationError
+    && (slugLabeledThrew as Error).message === 'Provider slug must use lowercase letters, numbers, and single hyphens only.',
+    '§F1-d: validateSlug keeps the label-prefixed message form');
+  const idForm = (v: string | null) => { const f = new FormData(); if (v !== null) f.set('id', v); return f; };
+  ok(parseId(idForm('00000000-0000-4000-8000-000000000002'), 'Id') === '00000000-0000-4000-8000-000000000002', '§F1-d: parseId passes a UUID through');
+  let idMissing: unknown = null;
+  try { parseId(idForm(null), 'Id'); } catch (e) { idMissing = e; }
+  ok(idMissing instanceof DownloaderValidationError && (idMissing as Error).message === 'Id is required.', '§F1-d: parseId exact "is required." message');
+  let idLong: unknown = null;
+  try { parseId(idForm('x'.repeat(81)), 'Id'); } catch (e) { idLong = e; }
+  ok(idLong instanceof DownloaderValidationError && (idLong as Error).message === 'Id must be 80 characters or fewer.', '§F1-d: parseId exact length message');
+  let idBad: unknown = null;
+  try { parseId(idForm('not-a-uuid'), 'Id'); } catch (e) { idBad = e; }
+  ok(idBad instanceof DownloaderValidationError && (idBad as Error).message === 'Id is invalid.', '§F1-d: parseId exact "is invalid." message');
 
   // §F1c (Explorer redesign): DetailPage.svelte evolved in the approved
   // task (mobile top spacing 150→132px + "Streaming on" → "Available on"
