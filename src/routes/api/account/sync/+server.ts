@@ -2,7 +2,7 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { readJsonBody } from '$lib/server/http/body';
 import { favoriteDeletionFromRow, favoriteDeletionToRow, favoriteFromRow, favoriteToRow, progressFromRow, progressToRow } from '$lib/server/supabase/records';
-import { isFavoriteDeletionRecord, isFavoriteRecord, isPlaybackRecord, type FavoriteDeletionRecord, type FavoriteRecord, type WatchProgressRecord } from '$lib/client/progress/types';
+import { isFavoriteDeletionRecord, isFavoriteRecord, isPlaybackRecord, type FavoriteDeletionRecord, type FavoriteRecord, type WatchProgressRecord } from '$lib/shared/progress-records';
 import { resolvePositionConflict } from '$lib/shared/progress-conflict';
 
 const MAX_RECORDS = 300;

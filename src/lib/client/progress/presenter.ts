@@ -2,6 +2,12 @@ import type { MediaItem } from '$data/content';
 import { progressLabel, progressPercent } from './service';
 import type { FavoriteRecord, WatchProgressRecord } from './types';
 import { watchHref as watchPath, extractTmdbId } from '$lib/shared/routes';
+// Phase 3 3-A: the canonical resume-target selector is now the SHARED
+// record-contract module (pure record-selection logic — the shared
+// progress-merge.ts consumes it too). Re-exported here so every existing
+// presenter consumer keeps its import surface unchanged.
+import { getLatestResumeTarget } from '$lib/shared/progress-records';
+export { getLatestResumeTarget, getLatestActiveProgress } from '$lib/shared/progress-records';
 
 /**
  * Deep-audit Section 4 — deterministic classification reconstruction.
@@ -86,63 +92,6 @@ function base(snapshot: WatchProgressRecord['snapshot'], record: { contentType: 
     backdrop: snapshot.backdrop ?? snapshot.poster,
     accent: '#9b87f5'
   };
-}
-
-/**
- * P2: ONE canonical helper for finding the LATEST RESUME TARGET.
- *
- * A "resume target" is the episode/position the user should resume from.
- * This is DIFFERENT from "has actual playback progress" — a user can
- * click S2E3 and immediately leave before any provider emits a
- * timeupdate. S2E3 is STILL the resume target even with currentTime=0.
- *
- * Rules:
- *   - exact contentType + contentId match
- *   - completionState !== 'completed'
- *   - For MOVIES: currentTime > 0 (movies have no episode; a zero-progress
- *     movie record is not a meaningful resume target — use "Play" instead)
- *   - For SERIES/ANIME: valid season + episode (positive integers).
- *     currentTime MAY be 0 — the user selected this episode, that's enough.
- *
- * Ordering:
- *   1. latest max(updatedAt, lastWatchedAt) wins
- *   2. tie-break: higher currentTime wins (user watched further)
- *   3. never depends on array ordering
- */
-export function getLatestResumeTarget(
-  contentType: WatchProgressRecord['contentType'],
-  contentId: string,
-  records: WatchProgressRecord[],
-): WatchProgressRecord | undefined {
-  const isSeriesLike = contentType === 'series' || contentType === 'anime';
-  return records
-    .filter((r) =>
-      r.contentType === contentType &&
-      r.contentId === contentId &&
-      r.completionState !== 'completed' &&
-      (!isSeriesLike
-        ? r.currentTime > 0  // movies: require actual playback
-        : r.season !== undefined && r.episode !== undefined && r.season > 0 && r.episode > 0  // series: just need valid episode
-      )
-    )
-    .sort((a, b) => {
-      const aTime = Math.max(a.updatedAt, a.lastWatchedAt);
-      const bTime = Math.max(b.updatedAt, b.lastWatchedAt);
-      if (bTime !== aTime) return bTime - aTime;
-      return b.currentTime - a.currentTime;
-    })[0];
-}
-
-/**
- * Backward-compatible alias. getLatestActiveProgress now delegates to
- * getLatestResumeTarget. The old name is kept for any external callers.
- */
-export function getLatestActiveProgress(
-  contentType: WatchProgressRecord['contentType'],
-  contentId: string,
-  records: WatchProgressRecord[],
-): WatchProgressRecord | undefined {
-  return getLatestResumeTarget(contentType, contentId, records);
 }
 
 export function progressToMedia(record: WatchProgressRecord): MediaItem {
