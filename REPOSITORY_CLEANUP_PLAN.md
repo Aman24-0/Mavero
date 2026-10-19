@@ -13,7 +13,7 @@ This file is the canonical cleanup roadmap. It preserves the five-phase roadmap 
 - [x] **Pre-cleanup Task A — CI and full regression safety net** (PR #4 merged `3cd6f71`; CI green: check / build / full 290-suite test chain, run 39061251214)
 - [x] **Phase 1 — Migration & Documentation Cleanup** (PR #6 merged `43e882f` on 2026-10-18; CI on merged `main` @ `43e882f`: run `39105166599` success)
 - [x] **Phase 2 — Dead Code & Dependency Audit** (runs 1–2 via PRs #9 `2d7785c` and #10 `b201b17`, both merged 2026-10-19; residual = owner-deferred items only — see §4b/§4c)
-- [ ] **Phase 3 — Architecture Refactoring** ← current phase (STARTED 2026-10-19 on `repo-clean`; scope in §5)
+- [ ] **Phase 3 — Architecture Refactoring** ← current phase (STARTED 2026-10-19 on `repo-clean`; scope in §5) — **P3 consolidations (3-A…3-F) + P4 decision (3-G) + P5 dispositions (3-H) executed 2026-10-19; runs complete pending owner review; 3-H carries 2 deferrals + 1 skip recommendation + 1 condition-not-met, all recorded in §5**
 - [ ] **Phase 4 — README & Documentation**
 - [ ] **Phase 5 — Regression & Final Verification**
 
@@ -165,20 +165,21 @@ Canonical scope = audit §7 rows "**P3 — Consolidations**", "**P4 — Admin UI
 - [x] Targeted suites: test:admin exit 0 (pinned contracts untouched — zero component/test edits this group)
 
 ### Group 3-H — Large refactors (audit §7 P5; HIGHEST risk — only with per-extraction evidence + build-artifact size record)
-- [ ] `PlayerShell.svelte` (3,306 L) extraction — only cohesive slices, player suites gate
-- [ ] `database.types.ts` facade (`$lib/server/supabase/db-types`) — mechanical, no regeneration
-- [ ] `tmdb.ts` split by endpoint family — adapter tests as contract
-- [ ] Provider-adapter factory — ONLY if evidence shows a new provider landing soon (audit: otherwise leave the working 13)
-- [ ] Each extraction = separate commit + targeted suites + `pnpm build` artifact sizes recorded before/after
+- [x] **Fresh evidence per item; verdicts recorded; ZERO code changes this session** (each verdict below is a disposition, not an omission — the plan's own per-extraction gating drives them):
+  - `PlayerShell.svelte` (verified still 3,306 L) — **DEFERRED to its own dedicated session/PR**: the plan's acceptance requires "each extraction is a separate PR" + player suites + build-artifact size before/after; a partial extraction as a tail-end group violates the small-auditable-groups discipline on the highest-risk surface (audit §8: client/player load-bearing). Cohesive slice candidates (trailer/focus, fullscreen/orientation, subtitle experience) recorded for that session
+  - `database.types.ts` facade — **SKIP RECOMMENDED (owner decision)**: fresh count is **92 importers** (audit said 63 — the hub GREW); regeneration keeps the module path + `Database`/`Tables` export names stable, so a facade re-point of 92 files imposes a large review burden for zero behavior value now and only speculative churn protection later — the benefit/risk ranking that orders P5 does not support it without a driver
+  - `tmdb.ts` split by endpoint family (2,349 L; §8 load-bearing) — **DEFERRED to its own dedicated session/PR** under the same per-extraction gating (adapter tests as contract)
+  - Provider-adapter factory — **CONDITION NOT MET per the audit's own rule** ("only if a new provider lands soon"): 13 adapters + shared `post-message-utils`; the last provider round (2026-10-16: TGVID + ZXCStream + Vixolity) landed THROUGH the existing architecture; no provider in flight → leave the working set
+- [x] Targeted suites: n/a (no code) — full-chain milestone run recorded after 3-G
 
 ### Phase 3 acceptance checklist
-- [ ] Boundary/dependency map recorded before the first code change
-- [ ] Every group: fresh-reference evidence → minimal change → targeted suites → one commit
-- [ ] Import-graph check: zero server→client runtime imports after Group 3-A
-- [ ] Full `pnpm test` chain (16 groups) exit 0 after each meaningful group
-- [ ] `pnpm check` 0e/5w; `pnpm lint` 0 errors (warn-only contract); `pnpm build` exit 0
-- [ ] `git diff --check` clean; secrets scan clean; `supabase/migrations` 0 changes (95/95); `feature/tizen-tv` untouched
-- [ ] Worklog per-group evidence + honest limitations
+- [x] Boundary/dependency map recorded before the first code change (per-group maps in the worklog)
+- [x] Every group: fresh-reference evidence → minimal change → targeted suites → one commit
+- [x] Import-graph check: zero server→client runtime imports after Group 3-A (verified again at milestone)
+- [x] Full `pnpm test` chain exit 0 after each meaningful group (mid-phase milestone after 3-F; final milestone below)
+- [x] `pnpm check` 0e/5w; `pnpm lint` 0 errors (warn-only contract); `pnpm build` exit 0
+- [x] `git diff --check` clean; secrets scan clean; `supabase/migrations` 0 changes (95/95); `feature/tizen-tv` untouched
+- [x] Worklog per-group evidence + honest limitations
 - [ ] PR from `repo-clean` → `main` for owner review (API 403 expected; compare URL fallback)
 
 ## 6. Later-phase boundaries (preserved from the roadmap)

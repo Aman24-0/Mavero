@@ -452,3 +452,39 @@ Per-group reference sweeps ran BEFORE each group's code change (details per grou
 **Net product-code effect of 3-A…3-F**: server→client runtime inversions 4→0; shared→client runtime inversions 1→0; duplicated validation primitives 2→1; duplicated hosting lookup logic 2→1; duplicated VDRK origin constants 3 copies→1 (+2 re-exports); NO behavior change anywhere (pin suites + full chain prove). Two audit premises corrected on fresh evidence (3-D CSP origin, 3-E/3-F "duplicates" = deliberate context-specific contracts), each with the finding re-pinned instead of merged.
 
 Next: Group 3-G (admin-generation decision — enumeration + decision recorded BEFORE any retirement), then 3-H (evidence-gated large refactors).
+
+## Group 3-G — admin-generation decision (commit `75d6502`)
+
+- **Enumeration (fresh)**: the 6 v1-importing routes are exactly the audit's set (16 import statements: users/[userId] ×4 symbols, api-sources/downloads/content-rules ×4 each, integrations ×3, media/missing ×1); the audit's 11 test-only components ALL confirmed zero live importers (8 admin2 + 3 v1; the `+server.ts` "AdminMediaTree" hit is a comment; phaseE's "Assets UI uses AdminConfirmDialog" was ALREADY re-pinned 2026-10-16 to AdminMediaList's inline confirm-dialog). Sweep validated by live controls (AdminMediaList/AdminEpisodeSheet imports found by the same method). **Observation recorded**: `AdminMediaCard` also has zero live importers (not in the audit's 11; documented, no action).
+- **Decision (recorded before any retirement; both branches sanctioned by P4's "page importer OR a documented reason")**: 6 routes KEEP v1 with a documented boundary (admin2 has NO 1:1 sheet/section/badge equivalents — migration = UI rewrite of six live, actively-maintained pages, several extended 2026-10-16); the 11 test-only components KEEP with per-component documented reasons (retirement = 11 deletions + ~10 chained-suite contract rewrites with zero user-visible benefit; several suites already document the keep-reasons: phase3 14d-vi "legacy… still exists", phaseB "5c standalone primitives", phaseC "library page does NOT render the old Phase C set").
+- **Deliverable**: `src/lib/components/admin/README.md` (per-route table, per-component keep-reasons + pinning suites, AdminMediaCard observation, owner's retirement path).
+- **Gates**: test:admin exit 0; zero component/test/product-code edits.
+
+## Group 3-H — large refactors: dispositions recorded, ZERO code (in `75d6502`+ tracker commits)
+
+- `PlayerShell.svelte` (verified 3,306 L) — **DEFERRED to its own dedicated session/PR** (plan's "each extraction is a separate PR" gating + player suites + build-size record; highest-risk surface per audit §8; slice candidates: trailer/focus, fullscreen/orientation, subtitle experience).
+- `database.types.ts` facade — **SKIP RECOMMENDED (owner decision)**: fresh count **92 importers** (audit said 63 — hub grew); regeneration keeps path + `Database`/`Tables` exports stable → 92-file re-point = large review burden, zero behavior value now.
+- `tmdb.ts` split (2,349 L; §8) — **DEFERRED to its own dedicated session/PR** (same gating; adapter tests as contract).
+- Provider-adapter factory — **CONDITION NOT MET per the audit's own rule**: 13 adapters + `post-message-utils`; the 2026-10-16 provider round (TGVID/ZXCStream/Vixolity) landed THROUGH the existing architecture; none in flight → leave the working set.
+
+## Phase 3 FINAL gates (on `repo-clean` after all groups)
+
+| Gate | Result |
+|---|---|
+| `pnpm check` | exit 0 — 0 errors / 5 warnings (baseline-identical) |
+| `pnpm test` — full chain | exit 0 — 16/16 groups, **318 commands** |
+| `pnpm lint` | exit 0 — 0 errors / 1,101 warnings (warn-only contract intact) |
+| `pnpm build` | exit 0 |
+| `git diff --check` | clean |
+| Secrets scan (all files changed vs `b201b17`) | clean |
+| Import-graph final check | **zero `$lib/client/` imports in all server contexts; zero `../client` imports in shared** |
+| `supabase/migrations` | 0 changes, 95/95 intact |
+| `feature/tizen-tv` | untouched |
+
+## Phase 3 run summary (for the owner's PR review)
+
+**Commits on `repo-clean` for Phase 3** (session start `b201b17`): `cdc06b6` (session opening + scope), `b3ebad9` (3-A), `f137154` (3-B), `b9b92bb` (3-C), `ae05467` (3-D), `8ea6dc2` (3-E), `834087b` (3-F), `73282ff` (P3 milestone worklog), `75d6502` (3-G), + the closeout tracker commit (SHA below).
+
+**Behavioral net effect**: server→client runtime inversions 4→0; shared→client runtime inversions 1→0; duplicated slug/id primitives 2→1; duplicated hosting lookup logic 2→1; VDRK origin constants 3→1; NO user-visible behavior change anywhere (3 pin suites + the full chain prove; every touched surface's suites re-run green). Three audit premises corrected on fresh evidence (3-D CSP origin; 3-E stubs and 3-F heuristics are context-specific contracts, not duplicates), each re-pinned rather than merged. New pin suites: `vdrk_origin_csp_lockstep_test` (9), `stub_contexts_test` (22), `url_heuristic_boundaries_test` (12) — all wired into the chain (315→318 commands).
+
+**Owner decisions surfaced by this run** (all recorded in plan §5): (1) 3-H PlayerShell + tmdb deferrals (dedicated sessions/PRs); (2) db-types facade skip recommendation; (3) the 3-G admin boundary doc (incl. the retirement path if the owner prefers retiring the 11 test-only components); (4) AdminMediaCard's zero-importer status; (5) the still-deferred Phase 2 items (Newtask.txt/phaseF.txt, 3 migration-cited docs, MPV.png).
