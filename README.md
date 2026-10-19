@@ -43,7 +43,7 @@ The implemented product currently provides:
 | Catalog sources | TMDB and AniList integrations in the server content adapters |
 | Motion | GSAP where used by the existing web experience |
 | Package manager | pnpm 10.30.3, as declared by `package.json` |
-| Runtime prerequisite | Node.js 22 or newer, as declared by `package.json` (matches Netlify `NODE_VERSION=22`, CI `node-version: 22`, and media-worker `engines.node >=22.19`) |
+| Runtime prerequisite | Node.js 22 or newer, as declared by `package.json` (matches Netlify `NODE_VERSION=22`, CI `node-version: 22`, and the root `.nvmrc` pin `22`) |
 
 The exact dependency and script contract is defined in `package.json`; this README intentionally does not list libraries that are not declared there.[6]
 
@@ -57,19 +57,19 @@ src/
   lib/data/               Public content/data contracts
   lib/server/             Supabase, content adapters, resolver, streaming, account, and HTTP services
   lib/shared/             Shared validation and platform-independent helpers
-static/                   Manifest, icons, service worker, offline page, and robots.txt
-scripts/                  Focused regression and contract tests
+static/                   Manifest, icons, favicon, service worker, offline page, and robots.txt
+scripts/                  Focused regression and contract tests (retired suites archived under scripts/archive/)
 docs/                     Phase reports, QA notes, architecture records, and project documentation
 supabase/                 Database migrations and Supabase-related project files
 ```
 
-The repository uses SvelteKit route conventions and the aliases declared in `svelte.config.js`, including `$components`, `$data`, and `$styles`.[7]
+The repository uses SvelteKit route conventions and the aliases declared in `svelte.config.js`, `$components` and `$data`.[7]
 
 ## Getting Started
 
 ### Prerequisites
 
-Install **Node.js 22 or newer** and **pnpm 10.30.3**. These versions are declared by the repository and lockfile contract (Netlify `NODE_VERSION=22`, CI `node-version: 22`, media-worker `engines.node >=22.19`, root `engines.node >=22.0.0`).[6]
+Install **Node.js 22 or newer** and **pnpm 10.30.3**. These versions are declared by the repository and lockfile contract (Netlify `NODE_VERSION=22`, CI `node-version: 22`, root `.nvmrc` `22`, root `engines.node >=22.0.0`, `packageManager` pnpm 10.30.3).[6]
 
 ### Install dependencies
 
@@ -104,6 +104,13 @@ The application uses public Supabase runtime configuration for browser-safe valu
 | `MAVERO_STREMIO_SESSION_SECRET` | HMAC signing secret for Stremio addon session tokens (optional; safe derivation default) | Secret; never public |
 | `MAVERO_COMPAT_SESSION_SECRET` | Optional independent signing secret for compatibility references (must match the media worker's value when set) | Secret; never public |
 | `MAVERO_MEDIA_WORKER_URL` | Optional HTTPS base URL of the FFmpeg compatibility media worker (absent → typed COMPAT_UNAVAILABLE degradation) | Runtime configuration; never a secret |
+| `VIDARA_API_KEY` | Server-side Vidara hosting-provider credential | Secret; never public |
+| `VIDARA_API_BASE_URL` | Vidara API base URL (defaults to `https://api.vidara.so`) | Runtime configuration; never a secret |
+| `ABYSS_EMAIL` / `ABYSS_PASSWORD` | Server-side Abyss hosting-provider credentials | Secret; never public |
+| `ABYSS_API_BASE_URL` | Abyss API base URL (defaults to `https://api.abyssplayer.com`) | Runtime configuration; never a secret |
+| `PRIVATE_ADAPTER_BUILDER_URL` | External Adapter Builder Service base URL (admin Create Adapter flow only) | Secret; never public |
+| `PRIVATE_ADAPTER_BUILDER_SECRET` | Shared secret with the Builder deployment (also authorizes the background build executor) | Secret; never public |
+| `PRIVATE_ADAPTER_BUILDER_TIMEOUT_MS` | Builder call timeout (default 150000, min 5000, max 600000) | Runtime configuration; never a secret |
 
 Only variable names are documented here. Values belong in local ignored files or Netlify’s encrypted environment-variable store. Never prefix server-only credentials with `PUBLIC_` or return them through client-facing APIs.[1] [8]
 
@@ -131,11 +138,13 @@ The repository currently defines the following validation commands:
 | Purpose | Command |
 |---|---|
 | Svelte and TypeScript checks | `pnpm check` |
-| Full regression/contract suite | `pnpm test` |
+| ESLint (warn-only contract: errors fail, warnings do not) | `pnpm lint` |
+| Full grouped regression/contract suite | `pnpm test` |
 | Production build | `pnpm build` |
-| Local production preview | `pnpm preview` |
+| Local production preview (runs the build first) | `pnpm preview` |
+| Prettier write / check | `pnpm format` / `pnpm format:check` |
 
-There is no separate `lint` script declared in `package.json`, so this README does not document one.[6]
+Continuous integration (`.github/workflows/ci.yml`) runs `pnpm check`, `pnpm build`, and the full `pnpm test` chain on every pull request and every push to `main`.[6]
 
 ## Deployment
 

@@ -13,8 +13,8 @@ This file is the canonical cleanup roadmap. It preserves the five-phase roadmap 
 - [x] **Pre-cleanup Task A — CI and full regression safety net** (PR #4 merged `3cd6f71`; CI green: check / build / full 290-suite test chain, run 39061251214)
 - [x] **Phase 1 — Migration & Documentation Cleanup** (PR #6 merged `43e882f` on 2026-10-18; CI on merged `main` @ `43e882f`: run `39105166599` success)
 - [x] **Phase 2 — Dead Code & Dependency Audit** (runs 1–2 via PRs #9 `2d7785c` and #10 `b201b17`, both merged 2026-10-19; residual = owner-deferred items only — see §4b/§4c)
-- [ ] **Phase 3 — Architecture Refactoring** ← current phase (STARTED 2026-10-19 on `repo-clean`; scope in §5) — **P3 consolidations (3-A…3-F) + P4 decision (3-G) + P5 dispositions (3-H) executed 2026-10-19; runs complete pending owner review; 3-H carries 2 deferrals + 1 skip recommendation + 1 condition-not-met, all recorded in §5**
-- [ ] **Phase 4 — README & Documentation**
+- [x] **Phase 3 — Architecture Refactoring** (3-A…3-H executed 2026-10-19 on `repo-clean`; PR #11 merged `3c5f35a` on 2026-10-19; CI on merged `main` @ `3c5f35a`: run `39206699373` success)
+- [ ] **Phase 4 — README & Documentation** ← current phase (executed 2026-10-19 on `repo-clean`; scope + findings in §5b) — **audit + targeted accuracy fixes complete pending owner review; full rewrite not evidence-justified**
 - [ ] **Phase 5 — Regression & Final Verification**
 
 **Issue-#5 interlude & consolidation run (2026-10-19, recorded without changing any phase status)**: `fix/theintrodb-v4` (`d0f9089`, exactly 7 files) was audited against the official v4 OpenAPI spec + npm migration guide and verified through every local gate (check / targeted intro+CSP suites / full 290-suite chain / build / `git diff --check`), plus an integrated-tree run with this branch's tracker commit `0e6ad84` — all green, disjoint file sets (7 + 2, zero overlap). PR creation is **BLOCKED** at the run's boundary: the push token lacks `pull_requests:write` (API 403 — the same limitation recorded for Phase 1); owner one-click links are in `REPOSITORY_CLEANUP_WORKLOG.md` §"Consolidation run — 2026-10-19". Phase 2 remains **NOT started** — it begins only after both PRs are merged and `main` is green.
@@ -38,7 +38,7 @@ This file is the canonical cleanup roadmap. It preserves the five-phase roadmap 
 | **Phase 1 — Migration & Documentation Cleanup** | audit §5.1 doc-update recommendation, §5.2 documentation classification; audit §7 row "P2 — Hygiene" items **5** (case-clash) and **6** (historical-report archive) — **documentation only** | done (PR #6 `43e882f`) |
 | Phase 2 — Dead Code & Dependency Audit | audit §4 (SAFE dead code) + audit §7 row "P2 — Hygiene" items 1–4, 7–8 (dead-code deletion, `docs/qa/**` + concept-JPG binary weight, `components.json`/`$styles`, `Newtask.txt`/`phaseF.txt` final disposition, `MPV.png` recompress, `.nvmrc`/`.editorconfig`/ESLint/Prettier) | pending |
 | Phase 3 — Architecture Refactoring | audit §7 rows "P3 — Consolidations", "P4 — Admin UI generation decision", "P5 — Large refactors" | pending |
-| Phase 4 — README & Documentation | README rewrite/restructure (Phase 1 only makes tiny link corrections if a move requires it) | pending |
+| Phase 4 — README & Documentation | README rewrite/restructure (Phase 1 only makes tiny link corrections if a move requires it) | executed on `repo-clean` 2026-10-19 as targeted accuracy fixes (full rewrite not evidence-justified) — see §5b |
 | Phase 5 — Regression & Final Verification | final full-gate verification pass | pending |
 
 The audit's P-labels are recorded here so no task is invented, renamed, or lost; the roadmap phase names above are canonical.
@@ -180,11 +180,24 @@ Canonical scope = audit §7 rows "**P3 — Consolidations**", "**P4 — Admin UI
 - [x] `pnpm check` 0e/5w; `pnpm lint` 0 errors (warn-only contract); `pnpm build` exit 0
 - [x] `git diff --check` clean; secrets scan clean; `supabase/migrations` 0 changes (95/95); `feature/tizen-tv` untouched
 - [x] Worklog per-group evidence + honest limitations
+- [x] PR from `repo-clean` → `main` for owner review (owner merged as PR #11 `3c5f35a`; CI run `39206699373` success — verified via API 2026-10-19)
+
+## 5b. Phase 4 — README & Documentation: executed (2026-10-19, on `repo-clean`)
+
+Scope honesty: the roadmap row reads "README rewrite/restructure"; the fresh audit found the README structurally sound with 9 specific accuracy defects, so the phase was executed as **targeted accuracy fixes** rather than an invented rewrite (owner directive: accuracy over changed-file count). Full findings table with evidence: `REPOSITORY_CLEANUP_WORKLOG.md` → Phase 4 section.
+
+- [x] Pre-run: PR #11 merge (`3c5f35a`) + CI (run `39206699373` success) verified via GitHub API before any change; `repo-clean` fast-forwarded `f841596..3c5f35a` (no force-push, no commits lost) and pushed; working tree clean
+- [x] README.md: stale "$styles" alias removed (removed from `svelte.config.js` in Phase 2 `42b9bec`); lint/format/format:check documented and the false "no lint script" sentence replaced (warn-only contract noted); CI sentence added (`.github/workflows/ci.yml` gates); env table completed with the 8 server-only variables `.env.example` documents (VIDARA×2, ABYSS×3, PRIVATE_ADAPTER_BUILDER×3); structure line notes `scripts/archive/` + favicon; prerequisites mention `.nvmrc`
+- [x] DEPLOYMENT.md: commands table gains `pnpm test` + `pnpm lint`; env table completed (`MAVERO_COMPAT_SESSION_SECRET`, `MAVERO_MEDIA_WORKER_URL`, hosting + adapter-builder sets); CSP bullets re-synced to the actual `netlify.toml` header (`media-src` for zcdn.bluevelvet.space/ha.vixolity.com; `connect-src` gains zcdn.bluevelvet.space, ha.vixolity.com, sub.vdrk.site, api.theintrodb.org) with `netlify.toml` declared the source of truth
+- [x] Link verification: all README + `docs/README.md` link targets exist (24/24 checked)
+- [x] Verified accurate, no change: tech-stack table vs `package.json`; Node 22/pnpm 10.30.3 pins vs `.nvmrc`/`netlify.toml`/CI; `netlify.toml` build settings (file itself READ-ONLY verified as valid TOML, untouched since pre-cleanup `3f9a49d`); AniList claim (used across `src/lib/server/content` + resolver); Tizen sections
+- [x] Preserved untouched: `Newtask.txt`, `phaseF.txt`, `static/icons/MPV.png`, the 3 migration-cited plan docs, `docs/archive/**` (historical records not rewritten even where stale), `docs/tizen-tv/**`, Vixolity disabled, production config/secrets, `supabase/migrations` 95/95
+- [x] Gates: `pnpm check` exit 0 (0e/5w); `pnpm lint` exit 0 (0e/1101w); `pnpm test` exit 0 (16/16 groups); `pnpm build` exit 0; `git diff --check` clean; secrets scan clean; `feature/tizen-tv` untouched
 - [ ] PR from `repo-clean` → `main` for owner review (API 403 expected; compare URL fallback)
 
 ## 6. Later-phase boundaries (preserved from the roadmap)
 
 - ~~Phase 2 owns: SAFE dead-code deletion (audit §4.2), `docs/qa/**` + binary weight moves, `components.json` + `$styles`, `Newtask.txt`/`phaseF.txt` final disposition, `MPV.png` recompress, `.nvmrc`/`.editorconfig`, warn-only ESLint/Prettier, and the deferred comment-pointer archive batch (§3.C list above).~~ (done 2026-10-19, PRs #9 + #10; Newtask/phaseF/3 plan docs/MPV.png remain owner-deferred)
-- Phase 3 owns: consolidations (§5 groups 3-A…3-F), admin-generation decision (3-G), large refactors (3-H) — audit P3/P4/P5 rows only.
+- ~~Phase 3 owns: consolidations (§5 groups 3-A…3-F), admin-generation decision (3-G), large refactors (3-H) — audit P3/P4/P5 rows only.~~ (executed 2026-10-19; PR #11 merged `3c5f35a`, CI `39206699373` success; 3-H carries 2 deferrals + 1 skip recommendation + 1 condition-not-met — recorded in §5)
 - Phase 4 owns: README restructure.
 - Explicitly never without owner approval: deleting/merging any `supabase/migrations/*` file, touching the `20261004000000` dependency-order trap in migrations, production-data operations, enabling Vixolity, changing leaked-password protection, removing dependencies (all 27 verified used), deleting `origin/feature/tizen-tv`.

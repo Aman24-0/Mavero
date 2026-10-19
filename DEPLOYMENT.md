@@ -24,8 +24,10 @@ Local commands are:
 | Install | `pnpm install --frozen-lockfile` |
 | Development | `pnpm dev` |
 | Type and Svelte validation | `pnpm check` |
+| ESLint (warn-only contract: errors fail, warnings do not) | `pnpm lint` |
+| Full grouped regression/contract suite | `pnpm test` |
 | Production build | `pnpm build` |
-| Local preview | `pnpm preview` |
+| Local preview (runs the build first) | `pnpm preview` |
 
 ## Netlify setup
 
@@ -47,6 +49,15 @@ Real values must be provided through Netlify’s encrypted environment-variable 
 | `TMDB_API_KEY` | Server-only TMDB fallback credential (v3 API key) | Server-side secret |
 | `MAVERO_ADULT_COOKIE_SECRET` | HMAC-SHA256 signing secret for the guest Adult Mode cookie | Encrypted server-side secret; never public |
 | `MAVERO_STREMIO_SESSION_SECRET` | HMAC-SHA256 signing secret for Stremio addon session tokens | Encrypted server-side secret; never public |
+| `MAVERO_COMPAT_SESSION_SECRET` | Optional independent signing secret for compatibility references (must match the media worker's value when set) | Encrypted server-side secret; never public |
+| `MAVERO_MEDIA_WORKER_URL` | Optional HTTPS base URL of the FFmpeg compatibility media worker (absent → typed COMPAT_UNAVAILABLE degradation) | Runtime configuration; never a secret |
+| `VIDARA_API_KEY` | Server-side Vidara hosting-provider credential | Encrypted server-side secret; never public |
+| `VIDARA_API_BASE_URL` | Vidara API base URL (defaults to `https://api.vidara.so`) | Runtime configuration; never a secret |
+| `ABYSS_EMAIL` / `ABYSS_PASSWORD` | Server-side Abyss hosting-provider credentials | Encrypted server-side secret; never public |
+| `ABYSS_API_BASE_URL` | Abyss API base URL (defaults to `https://api.abyssplayer.com`) | Runtime configuration; never a secret |
+| `PRIVATE_ADAPTER_BUILDER_URL` | External Adapter Builder Service base URL (admin Create Adapter flow only; also consumed by the background build executor) | Encrypted server-side secret; never public |
+| `PRIVATE_ADAPTER_BUILDER_SECRET` | Shared secret with the Builder deployment (also authorizes the background executor invoke) | Encrypted server-side secret; never public |
+| `PRIVATE_ADAPTER_BUILDER_TIMEOUT_MS` | Builder call timeout (default 150000, min 5000, max 600000) | Runtime configuration; never a secret |
 
 
 The application reads public Supabase values through SvelteKit’s runtime public environment module rather than requiring them as build-time static exports. This allows the Netlify build to compile without baking credentials into the bundle; the variables must still be present at runtime for Supabase Auth and data operations to work.
@@ -140,7 +151,9 @@ The check is side-effect-free (impossible-hash dry-calls). Full procedure and ex
 - `script-src 'self' 'unsafe-inline'` — SvelteKit compatibility (SvelteKit does not currently emit per-request nonces by default).
 - `style-src 'self' 'unsafe-inline'` — Tailwind CSS v4 + Svelte component styles.
 - `img-src 'self' data: https://image.tmdb.org` — TMDB poster/backdrop images.
-- `connect-src 'self' https://*.supabase.co https://image.tmdb.org` — Supabase auth + API + TMDB images. Self-hosted Supabase deployments need to add their URL here.
+- `media-src 'self' https://zcdn.bluevelvet.space https://ha.vixolity.com` — direct HLS media for the providers that serve it.
+- `font-src 'self'`.
+- `connect-src 'self' https://*.supabase.co https://image.tmdb.org https://zcdn.bluevelvet.space https://ha.vixolity.com https://sub.vdrk.site https://api.theintrodb.org` — Supabase auth + API, TMDB images, and the provider/content hosts that direct playback and metadata resolution need (self-hosted Supabase deployments must add their URL here). Provider phases extend this list, so treat `netlify.toml` (where the full header lives, with rationale comments) as the source of truth for the current directive set.
 - `frame-src *` — admin-configured provider embeds (restricting would break playback every time an admin adds a new provider).
 - `frame-ancestors 'none'` — nobody can iframe Mavero.
 - `object-src 'none'` — no plugins.
