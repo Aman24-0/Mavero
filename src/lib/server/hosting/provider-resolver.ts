@@ -61,6 +61,17 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '$lib/server/supabase/database.types';
 import { getHostingAdapter } from './registry';
 import type { HostingProviderAdapter } from './types';
+// Phase 3 3-C: the three pure lookup helpers below now DELEGATE to the one
+// implementation in $lib/shared/hosting-source-helpers (they were
+// byte-identical duplicates; only the parameter TYPE differs — the full
+// ResolvedProviderSource[] structurally satisfies the shared
+// HostingSourceLike[]). The typed server signatures are kept so server
+// callers stay stricter-checked; the LOGIC lives once.
+import {
+  adapterIdForSource as sharedAdapterIdForSource,
+  sourceNameForId as sharedSourceNameForId,
+  providerNameForSource as sharedProviderNameForSource,
+} from '$lib/shared/hosting-source-helpers';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -316,9 +327,11 @@ export async function resolveAdapterForSource(
 }
 
 // ---------------------------------------------------------------------------
-// Client-side helper — a pure function that components use to look up
-// the adapterId for an asset from a pre-resolved hostingSources list.
-// This replaces the duplicated adapterIdForSource() in 3 components.
+// Client-safe lookup helpers — TYPED SERVER ADAPTERS over the ONE shared
+// implementation in $lib/shared/hosting-source-helpers (Phase 3 3-C; the
+// bodies used to be duplicated here byte-for-byte). Components import the
+// shared module DIRECTLY (AdminMediaCard does); server consumers can keep
+// using these ResolvedProviderSource[]-typed wrappers.
 // ---------------------------------------------------------------------------
 
 /**
@@ -330,16 +343,12 @@ export async function resolveAdapterForSource(
  * This is a PURE function — no DB access. The hostingSources list
  * must be passed in (typically from the page server's load function,
  * which calls resolveHostingSources()).
- *
- * Components should use this instead of inventing their own
- * `hostingSources.find(...)` logic.
  */
 export function adapterIdForSource(
   hostingSources: ResolvedProviderSource[],
   sourceId: string | null | undefined,
 ): string | null {
-  if (!sourceId) return null;
-  return hostingSources.find((s) => s.id === sourceId)?.adapterId ?? null;
+  return sharedAdapterIdForSource(hostingSources, sourceId);
 }
 
 /**
@@ -352,8 +361,7 @@ export function sourceNameForId(
   hostingSources: ResolvedProviderSource[],
   sourceId: string | null | undefined,
 ): string | null {
-  if (!sourceId) return null;
-  return hostingSources.find((s) => s.id === sourceId)?.name ?? null;
+  return sharedSourceNameForId(hostingSources, sourceId);
 }
 
 /**
@@ -364,6 +372,5 @@ export function providerNameForSource(
   hostingSources: ResolvedProviderSource[],
   sourceId: string | null | undefined,
 ): string | null {
-  if (!sourceId) return null;
-  return hostingSources.find((s) => s.id === sourceId)?.providerName ?? null;
+  return sharedProviderNameForSource(hostingSources, sourceId);
 }
