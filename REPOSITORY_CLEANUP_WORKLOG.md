@@ -302,3 +302,66 @@ Task A changes present, working tree clean, synced with `origin/main`).
 **Deferred to a later Phase 2 session (scope, not blockers)**: the Phase-1-deferred 9-file comment-pointer archive batch (plan §3.C); the ~42 unchained-test wire-in-or-archive review (audit §4.3.2).
 
 **Exact next step**: owner reviews + merges the Phase 2 PR from `repo-clean` → `main` (compare link below; PR creation blocked by the token's missing `pull_requests:write` — API 403, same limitation as recorded above). After merge: sync `repo-clean` with `main`, then either continue Phase 2 session 2 (the two deferred-to-later items above) or move to Phase 3 per this roadmap.
+
+### Phase 2 — Dead Code & Dependency Audit — run 2 / session 2 (2026-10-19, on `repo-clean`)
+
+**Session opening (post-PR-#9-merge audit — every fact verified through the GitHub API or fresh git evidence, nothing assumed)**
+
+| Item | Verified value |
+|---|---|
+| PR #9 — "Repo clean" (head `repo-clean@01b9f4e`, base `main`) | `state: closed`, `merged: true`, merge commit `2d7785cdc197fbdc88fb32edb94ace0a773d1797`, merged_at 2026-10-19T00:40:45Z |
+| CI on the PR head (`01b9f4e`) | run `39180570166` — `completed` / **success** |
+| CI on merged `main` @ `2d7785c` | run `39181860648` — `completed` / **success** (polled to completion this session) — https://github.com/Aman24-0/Mavero/actions/runs/39181860648 |
+| Merge-tree integrity | `git diff 01b9f4e..2d7785c` EMPTY (byte-identical trees → the green head result fully covers the merge commit) |
+| `repo-clean` vs `main` at session start | 0 commits ahead / 1 behind (only the merge commit missing) |
+| Branch sync | `repo-clean` ← merge `main` @ `2d7785c` (explicit merge commit `b2b8dbe`, NO force-push, nothing discarded); long-lived branches remain `main` + `repo-clean` |
+| `feature/tizen-tv` | owner-updated to `bd248cc` ("fix(tv): repair phase 10.3 playback regressions") — untouched |
+| v4 integration on `main` | `"theintrodb": "^4.0.0"` + `docs/qa/` holds only its README pointer — spot-verified |
+
+**Method**: identical to run 1 — small auditable commits, one per group; every decision from a fresh run/grep on the current tree; targeted groups per commit; full gates on the integrated state.
+
+**Group A — 9-file comment-pointer archive batch (plan §3.C) — commit `d56f181`**
+
+- Fresh full-repo reference sweep (not the Phase 1 inventory) found **a frozen Supabase migration name-cites THREE of the batch files**, so they get the same owner-deferral as `phaseF.txt` (migrations frozen per audit §8; the migration citation anchor must not be orphaned): `CLOUDSTREAM_MAVERO_DOWNLOADER_PLAN.md` (`20261101000000_cloudstream_cs1.sql:5`), `live-tv-plan.md` (`20261103000000_live_tv_analytics_events.sql:10` — NEWLY DISCOVERED; Phase 1's inventory recorded only 7 src/test pointers for this file), `mavero-user-management-analytics-plan.md` (`20261008000000_analytics_foundation.sql:7`).
+- **Archived (git mv, 100% rename similarity) → `docs/archive/round-reports/`**: `live-tv-worklog.md`, `Mavero_Adult_Mode_Rebuild_Worklog.md`, `ADMIN_2_DEEP_AUDIT_REPORT.md`, `BLUEVELVET_INTEGRATION_REPORT.md`, `MAVP7_PRODUCTION_FIX_AUDIT.md` — each verified historical (completed epic / read-only round report; zero migration citations) and zero-referenced by tooling.
+- **14 comment pointers updated** to `docs/archive/round-reports/...` paths (fresh sweep corrected §3.C's pointer counts: Adult worklog has 1 src + 8 script pointers, not "1 src + 3"): `src/lib/client/live-tv/player.ts`, `src/lib/server/content/adult-networks.ts`, 8× `scripts/adult_*_test.ts` headers, `scripts/admin2_audit_fix_test.ts`, `scripts/cloudstream_phase4_integration_manager_test.ts`, `scripts/cloudstream_registry_integration_test.ts` (2 refs: BlueVelvet + MAVP7).
+- `docs/README.md` index + `docs/archive/README.md` map rewritten to the new state (5 archived / 4 root-deferred with per-file migration citation).
+- Targeted gates: `test:core`, `test:admin`, `test:cloudstream`, `test:livetv` all exit 0.
+
+**Group B — unchained-test review (audit §4.3.1 + §4.3.2) — commits `3967514`, `4a86300`, `db61fd4`**
+
+Fresh enumeration: **35 unchained `*_test.ts`** (audit said "~42" — 3 of its named items were wired in Task A: `phase7e_vidlink_test`, `cross_device_progress_conflict_test`, `pwa_install_banner_test`; the audit's own range was approximate). Each file was **executed on this tree** (`tsx --tsconfig ./jsconfig.json`, the chain's command form, 90 s timeout) and its imports/headers/git-age inspected before disposition. Result: 21 pass / 14 fail; every failure root-caused.
+
+- **21 wired as-is** (`3967514`) — passing, offline, live subject: core +4 (`f3_discover_batch_parallel`, `mav_focused_issue4_eligibility`, `mav_focused_issue4_season_gating`, `search_tv_classification`), admin +1 (`mav_focused_admin_nav`), ux +5 (`mav_focused_issue1_dummy_routes`, `mav_phase5_route_contract`, `mavero_icon`, `navigation_primary`, `pwa_boot_overlay`), player +3 (`mav_focused_issue2_subtitle_tabs`, `mav_focused_issue3_loading_indicator`, `phase7c_player`), providers +1 (`phase7d_vidsrc`), playback +1 (`phase7b_resolver`), hosting +4 (`mav_focused_behavioral`, `mav_focused_manual_link_contract`, `mav_focused_vidara_abyss`, `mav_phase3_missing_media_contract`), devices +1 (`mav_focused_google_oauth`), platform +1 (`mav_focused_favicon`). All 9 modified groups re-run exit 0.
+- **4 re-pinned to verified-intentional contracts, then wired** (`4a86300`) — no failure suppressed; each re-pin asserts the CURRENT documented contract with evidence: `phase7a_validation_test.ts` (parseProviderForm/parseSourceForm now ASYNC for icon-upload normalization; source-capabilities assertion re-pinned to the documented Phase-8 provider-level-only sandbox contract + legacy-strip check → `test:platform`), `mav_phase7_resolver_contract_test.ts` (11d re-pinned to `hosting/media/manual-link-contract.ts` — `PROVIDER_ASSET_ID_MAX=200` moved by faa0079; 52/52 → `test:hosting`), `detail_back_navigation_test.ts` (MediaCard href re-pinned to canonical `detailPath()` form; 22/22 → `test:ux`), `search_performance_test.ts` (Svelte 5 `$state` runes form; 9/9 → `test:ux`).
+- **10 archived** (`db61fd4`) → `scripts/archive/` + README manifest with per-file subject, failure evidence, and recovery: `mav_phase6_reference_normalization_test.ts` (superseded — contract now covered by the wired `mav_focused_manual_link_contract_test.ts` + chained `mav_task3_bulk_link_behavioral_test.ts`), `phase20_verification_test.ts` + `phase4_progress_test.ts` (pin the deliberately-removed 90% completion threshold; `completionFor` documents "BUG #8 fix: completion ONLY from an explicit 'ended' event"; live behavior covered by chained `cross_device_progress_conflict_test` + `progress_duration_test`), `post_f0c1a26_validation_test.ts` (SHA-pinned stale-by-construction), `phase5_cloud_test.ts` / `phase6_auth_test.ts` / `phase6_rls_test.ts` / `phase7a_public_config_test.ts` / `phase7a_security_test.ts` (require live Supabase credentials — cannot run in CI), `f6_auth_getuser_optimization_test.ts` (its "no getUser()" optimization contract was intentionally inverted by the faa0079 email-confirmation fix).
+- **No product-code regression found**: all 14 failures traced to documented intentional changes, module moves, the Svelte 5 migration, missing live env, or SHA-pinned staleness.
+
+**Deferred (owner-confirmation boundary — unchanged on disk, evidence recorded)**
+
+1. `Newtask.txt` / `phaseF.txt` — unchanged from run 1 (live citations incl. migration `20261002000000_phaseF_set_addon_link_types_rpc.sql:5`; migrations frozen).
+2. `CLOUDSTREAM_MAVERO_DOWNLOADER_PLAN.md` / `live-tv-plan.md` / `mavero-user-management-analytics-plan.md` — NEW deferrals from this session (frozen-migration name citations listed above); all other pointers to them remain valid because the files stay at root.
+3. `static/icons/MPV.png` — unchanged (needs safe visual verification; run-1 evidence stands).
+
+**Gates — actual results on the integrated session-2 state**
+
+| Gate | Result |
+|---|---|
+| `pnpm check` | exit 0 — **0 errors / 5 warnings** (baseline-identical) |
+| `pnpm lint` (warn-only contract) | exit 0 — 0 errors / 1,099 warnings (unchanged from run 1's record) |
+| `pnpm test` — full chain | exit 0 — **16/16 groups, 315 suites** (290 → 315: +25 wired suites; runner order unchanged) |
+| `pnpm build` | exit 0 |
+| `git diff --check` | clean |
+| Secrets scan (all changed files) | clean |
+| `supabase/migrations` | 0 changes, 95/95 files intact |
+| `src/` product code | zero behavior changes (2 comment-pointer files only, in Group A) |
+| `feature/tizen-tv` | untouched |
+
+**Exact next step**: owner reviews + merges the Phase 2 session-2 PR from `repo-clean` → `main` (compare link in the PR section of this run; PR creation via the API is expected to 403 — same token limitation, recorded rather than claimed). After merge: sync `repo-clean`, then the remaining Phase 2 backlog is empty except owner-deferred items — Phase 3 (Architecture Refactoring, audit P3/P4/P5 rows) starts per the roadmap, not before.
+
+**Run-2 closeout (push + PR boundary)**
+
+- Tracker commits `23dc25d` + `db18593` (ci.yml header comment corrected to 315 — comment-only, hygiene-test pins re-verified 15/15 green) pushed to `origin/repo-clean`: `01b9f4e..db18593`. Session head: **`db18593`** (6 commits over the sync base `b2b8dbe`).
+- PR creation attempted via the API and **BLOCKED**: `POST /repos/Aman24-0/Mavero/pulls` → HTTP 403 "Resource not accessible by personal access token" (the token has `contents:write` — both pushes succeeded — but not `pull_requests:write`; identical to the Phase 1 / consolidation-run limitation). Nothing was merged and no merge is claimed.
+- **Owner action (one click)**: open <https://github.com/Aman24-0/Mavero/compare/main...repo-clean> → "Create pull request" (suggested title: "Repository Cleanup — Phase 2 Session 2: archive batch + unchained-test dispositions"; a complete body draft is preserved in the session record). CI runs automatically on the PR head (`on: pull_request`); the exact content of the pushed head already passed every gate locally as recorded above.
+- After merge: sync `repo-clean` with `main` (no force-push), then Phase 3 per the roadmap — or handle the owner-deferred dispositions (Newtask/phaseF, the 3 migration-cited plan docs, MPV.png) whenever the owner decides them.

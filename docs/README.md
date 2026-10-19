@@ -17,6 +17,7 @@ execution history in [`REPOSITORY_CLEANUP_WORKLOG.md`](../REPOSITORY_CLEANUP_WOR
 | [`VIXOLITY_PLAYBACK_AUDIT_REPORT.md`](../VIXOLITY_PLAYBACK_AUDIT_REPORT.md) | Vixolity record — provider stays disabled and untouched. |
 | [`REPOSITORY_CLEANUP_PHASE0_AUDIT.md`](../REPOSITORY_CLEANUP_PHASE0_AUDIT.md) | Cleanup baseline audit (structure, dead code, migrations, docs, tests). |
 | [`Newtask.txt`](../Newtask.txt) / [`phaseF.txt`](../phaseF.txt) | Device-auth/QR design spec and Phase-F hardening spec — historical but still cited by section number in source/test comments. |
+| [`CLOUDSTREAM_MAVERO_DOWNLOADER_PLAN.md`](../CLOUDSTREAM_MAVERO_DOWNLOADER_PLAN.md) / [`live-tv-plan.md`](../live-tv-plan.md) / [`mavero-user-management-analytics-plan.md`](../mavero-user-management-analytics-plan.md) | Historical plan documents retained at root because a **frozen Supabase migration** name-cites each (Phase-2 disposition deferred to the owner — see `docs/archive/README.md`). |
 
 ## Active guides (`docs/`)
 
@@ -32,5 +33,6 @@ execution history in [`REPOSITORY_CLEANUP_WORKLOG.md`](../REPOSITORY_CLEANUP_WOR
 ## Historical records
 
 - **Archived**: [`docs/archive/`](archive/) — design history, phase reports, audits, and (new in Phase 1) per-round reports in [`docs/archive/round-reports/`](archive/round-reports/), including the Admin 2.0 epic worklog (`admin2-worklog.md`, formerly the root `worklog.md` — the case-clash with `WORKLOG.md` is resolved by the rename).
-- **Still at repository root, scheduled for Phase 2 archival** (name-cited by source/test comments): `CLOUDSTREAM_MAVERO_DOWNLOADER_PLAN.md`, `live-tv-plan.md`, `mavero-user-management-analytics-plan.md`, `live-tv-worklog.md`, `Mavero_Adult_Mode_Rebuild_Worklog.md`, `ADMIN_2_DEEP_AUDIT_REPORT.md`, `BLUEVELVET_INTEGRATION_REPORT.md`, `MAVP7_PRODUCTION_FIX_AUDIT.md`.
+- **Archived by cleanup Phase 2 (2026-10-19, `git mv` history-preserving; comment pointers updated)**: `live-tv-worklog.md`, `Mavero_Adult_Mode_Rebuild_Worklog.md`, `ADMIN_2_DEEP_AUDIT_REPORT.md`, `BLUEVELVET_INTEGRATION_REPORT.md`, `MAVP7_PRODUCTION_FIX_AUDIT.md` → [`docs/archive/round-reports/`](archive/round-reports/).
+- **Retained at root, disposition deferred to the owner (frozen-migration name citations)**: `CLOUDSTREAM_MAVERO_DOWNLOADER_PLAN.md` (migration `20261101000000_cloudstream_cs1.sql`), `live-tv-plan.md` (migration `20261103000000_live_tv_analytics_events.sql`), `mavero-user-management-analytics-plan.md` (migration `20261008000000_analytics_foundation.sql`), plus `Newtask.txt`/`phaseF.txt` (see above).
 - Superseded in practice by `PLAN.md` + `WORKLOG.md`: the per-epic worklogs above and the per-round reports under `docs/archive/round-reports/` (retained for traceability, not deleted).

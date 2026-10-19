@@ -119,7 +119,7 @@ const manualLink = src('src/routes/api/admin/media/manual-link/+server.ts');
 ok(/requireAdmin/.test(manualLink), '11a. requireAdmin enforced on POST');
 ok(/provider !== 'vidara' && provider !== 'abyss'/.test(manualLink), '11b. provider validated (vidara/abyss only)');
 ok(/normalizeReference/.test(manualLink), '11c. reference normalized before persistence');
-ok(/PROVIDER_ASSET_ID_MAX\s*=\s*200/.test(manualLink), '11d. provider_asset_id max=200 (matches DB CHECK)');
+ok(/PROVIDER_ASSET_ID_MAX\s*=\s*200/.test(src('src/lib/server/hosting/media/manual-link-contract.ts')), '11d. provider_asset_id max=200 (matches DB CHECK; constant lives in the shared manual-link contract since faa0079)');
 
 // No provider deletion.
 const noComments = manualLink.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');

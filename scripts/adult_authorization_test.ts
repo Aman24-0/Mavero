@@ -1,6 +1,6 @@
 // ============================================================================
 // Phase 5 behavioral tests — authorization security hardening.
-// (Adult Mode architecture rebuild; see Mavero_Adult_Mode_Rebuild_Worklog.md.)
+// (Adult Mode architecture rebuild; see docs/archive/round-reports/Mavero_Adult_Mode_Rebuild_Worklog.md.)
 //
 // REAL behavioral tests: they execute the actual HMAC cookie construction
 // (adult-cookie.ts), the actual timing-safe comparison, the actual fail-closed

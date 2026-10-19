@@ -241,14 +241,14 @@ function section_registry(): void {
   // deterministic dedup of streaming_source_categories (keeping the runtime
   // primary-assignment row) + a guarded UNIQUE (source_id) constraint. Only
   // the assignment mapping table is touched (no registry/download_provider/
-  // cloudstream tables) — see MAVP7_PRODUCTION_FIX_AUDIT.md §4.
+  // cloudstream tables) — see docs/archive/round-reports/MAVP7_PRODUCTION_FIX_AUDIT.md §4.
   const mavp7UniqueAssignmentMigration = '20261012000000_source_category_unique_assignment.sql';
   // BLUE VELVET PROVIDER (20261112000000, sanctioned): API-resolved direct
   // HLS provider registration — insert-only streaming_providers +
   // streaming_sources rows (provider AND source seeded DISABLED until
   // upstream CORS allowlisting is verified). Never touches
   // download_providers or any registry/cloudstream table — see
-  // BLUEVELVET_INTEGRATION_REPORT.md.
+  // docs/archive/round-reports/BLUEVELVET_INTEGRATION_REPORT.md.
   const blueVelvetProviderMigration = '20261112000000_blue_velvet_provider.sql';
   // VIXOLITY + TGVID + ZXCSTREAM PROVIDERS (20261113000000, sanctioned):
   // insert-only streaming_providers + streaming_sources rows for three new

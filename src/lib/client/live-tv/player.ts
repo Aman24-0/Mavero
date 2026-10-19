@@ -1,7 +1,7 @@
 // LT-3 — Live TV DASH/ClearKey playback engine (Shaka-backed, Live TV only).
 //
 // DOCUMENTED INTEGRATION CONTRACT (LiveGT V1 "Play it in your own player",
-// audited 2026-10-08 against shaka-player 5.2.12 — see live-tv-worklog.md
+// audited 2026-10-08 against shaka-player 5.2.12 — see docs/archive/round-reports/live-tv-worklog.md
 // "DOCUMENTED SHAKA INTEGRATION AUDIT"):
 //
 //   const player = new shaka.Player();

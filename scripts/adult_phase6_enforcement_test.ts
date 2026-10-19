@@ -1,7 +1,7 @@
 // ============================================================================
 // Phase 6 behavioral tests — direct enforcement, unsupported catalog paths,
 // cache isolation. (Adult Mode architecture rebuild; see
-// Mavero_Adult_Mode_Rebuild_Worklog.md.)
+// docs/archive/round-reports/Mavero_Adult_Mode_Rebuild_Worklog.md.)
 //
 // REAL behavioral tests: they execute the actual list-rail classification
 // orchestrator (list-classify.ts — filterSafeRailItems /

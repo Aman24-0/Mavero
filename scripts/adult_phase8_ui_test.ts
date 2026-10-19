@@ -1,6 +1,6 @@
 // ============================================================================
 // Phase 8 tests — Popular TV cleanup + Adult Discover / Search UI integration.
-// (Adult Mode architecture rebuild; see Mavero_Adult_Mode_Rebuild_Worklog.md.)
+// (Adult Mode architecture rebuild; see docs/archive/round-reports/Mavero_Adult_Mode_Rebuild_Worklog.md.)
 //
 // REAL behavioral tests wherever the module graph allows tsx import (pure
 // contracts: types.ts, adult-networks.ts, adult-catalog.ts, adult-providers.ts

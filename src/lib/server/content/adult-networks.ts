@@ -2,7 +2,7 @@
 //
 // CANONICAL IDENTITY: TMDB TV NETWORK — not TMDB watch provider.
 //
-// Phase 1 (Mavero_Adult_Mode_Rebuild_Worklog.md, findings F1/F2) established
+// Phase 1 (docs/archive/round-reports/Mavero_Adult_Mode_Rebuild_Worklog.md, findings F1/F2) established
 // that Indian adult OTT services such as Ullu, Kooku and Atrangii are
 // represented by TMDB as TV NETWORKS (production/broadcast companies), not as
 // JustWatch watch providers. Modelling them as watch providers is the root

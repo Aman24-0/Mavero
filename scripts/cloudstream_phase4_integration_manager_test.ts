@@ -1178,7 +1178,7 @@ function pristineFile(relative: string): string | null {
   // BLUE VELVET PROVIDER (20261112000000, sanctioned): API-resolved direct
   // HLS provider registration — insert-only provider/source rows (both
   // seeded DISABLED). No cloudstream/downloader/registry tables touched —
-  // see BLUEVELVET_INTEGRATION_REPORT.md.
+  // see docs/archive/round-reports/BLUEVELVET_INTEGRATION_REPORT.md.
   // VIXOLITY + TGVID + ZXCSTREAM PROVIDERS (20261113000000, sanctioned):
   // insert-only provider/source rows for three new playback providers (all
   // six rows seeded DISABLED/experimental). No

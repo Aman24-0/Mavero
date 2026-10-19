@@ -1,6 +1,6 @@
 // ============================================================================
 // Phase 3 behavioral tests — network-based TMDB catalog query construction
-// (Adult Mode architecture rebuild; see Mavero_Adult_Mode_Rebuild_Worklog.md).
+// (Adult Mode architecture rebuild; see docs/archive/round-reports/Mavero_Adult_Mode_Rebuild_Worklog.md).
 //
 // REAL behavioral tests: they import the actual query-construction module
 // (adult-catalog.ts) and the actual registry (adult-networks.ts) — the same

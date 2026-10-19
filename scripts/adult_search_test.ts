@@ -1,7 +1,7 @@
 // ============================================================================
 // Phase 4 behavioral tests — adult-aware search (bounded N+1 classification,
 // page continuation, fail-closed semantics, cache separation).
-// (Adult Mode architecture rebuild; see Mavero_Adult_Mode_Rebuild_Worklog.md.)
+// (Adult Mode architecture rebuild; see docs/archive/round-reports/Mavero_Adult_Mode_Rebuild_Worklog.md.)
 //
 // REAL behavioral tests: they execute the actual orchestrator
 // (search-classify.ts — collectSafeSearchPage), the actual verdict helpers
