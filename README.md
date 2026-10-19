@@ -59,7 +59,10 @@ src/
   lib/shared/             Shared validation and platform-independent helpers
 static/                   Manifest, icons, favicon, service worker, offline page, and robots.txt
 scripts/                  Focused regression and contract tests (retired suites archived under scripts/archive/)
-docs/                     Phase reports, QA notes, architecture records, and project documentation
+docs/                     Project documentation — index in docs/README.md; feature-family
+                          directories (cloudstream/, device-auth/, hosting/, supabase/,
+                          player/, provider-evaluations/, user-management-analytics/,
+                          tizen-tv/) plus the historical archive under docs/archive/
 supabase/                 Database migrations and Supabase-related project files
 ```
 
@@ -169,13 +172,13 @@ Important documentation already in the repository includes:
 - [`DEPLOYMENT.md`](DEPLOYMENT.md) — Netlify setup, environment variables, Supabase Auth production preparation, and resolver phase boundaries.
 - [`docs/architecture.md`](docs/architecture.md) — canonical architecture document: request flow, major modules, authentication, Adult Mode boundary, resolver, cache, health, deployment, security boundaries.
 - [`docs/phase-history.md`](docs/phase-history.md) — concise phase history (Phase 1–5): objectives, major work, architectural decisions, regressions/fixes, status.
-- [`docs/phase7g-completion-report.md`](docs/phase7g-completion-report.md) — provider/source ranking and optimization completion report.
-- [`docs/landscape-player-completion-report.md`](docs/landscape-player-completion-report.md) — landscape player implementation record.
-- [`docs/universal-resolver-completion-report.md`](docs/universal-resolver-completion-report.md) — resolver architecture and verification record.
+- [`docs/provider-evaluations/phase7g-completion-report.md`](docs/provider-evaluations/phase7g-completion-report.md) — provider/source ranking and optimization completion report.
+- [`docs/player/landscape-player-completion-report.md`](docs/player/landscape-player-completion-report.md) — landscape player implementation record.
+- [`docs/player/universal-resolver-completion-report.md`](docs/player/universal-resolver-completion-report.md) — resolver architecture and verification record.
 - [`docs/tizen-tv/TIZEN_TV_PLAN.md`](docs/tizen-tv/TIZEN_TV_PLAN.md) — approved Samsung Tizen TV/TizenBrew roadmap.
 - [`docs/tizen-tv/TIZEN_TV_WORKLOG.md`](docs/tizen-tv/TIZEN_TV_WORKLOG.md) — persistent Tizen project worklog; it begins with Phase 0 not started.
 
-Detailed implementation history remains in the existing `docs/` reports rather than being duplicated here.
+Detailed implementation history remains in the existing `docs/` reports rather than being duplicated here; [`docs/README.md`](docs/README.md) is the full documentation index, including the grouped feature-family directories and the frozen-migration citation map.
 
 ## Samsung Tizen TV
 
@@ -198,7 +201,7 @@ This repository does not declare a license in `package.json` or the audited root
 
 [1]: DEPLOYMENT.md "Mavero deployment and phase boundaries"
 [2]: docs/tizen-tv/TIZEN_TV_PLAN.md "Approved Mavero Samsung Tizen TV / TizenBrew development plan"
-[3]: docs/phase7g-completion-report.md "Mavero Phase 7G completion report"
+[3]: docs/provider-evaluations/phase7g-completion-report.md "Mavero Phase 7G completion report"
 [4]: src/routes/watch/[type]/[id]/+page.svelte "Mavero watch route and playback orchestration"
 [5]: src/lib/server/streaming/admin-service.ts "Mavero server-side streaming registry administration"
 [6]: package.json "Mavero package scripts, engines, dependencies, and package manager"

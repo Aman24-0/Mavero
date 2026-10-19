@@ -18,8 +18,8 @@
 //     * the ORIGINAL (defective) download_providers verification counter —
 //       an OR over both role arrays compared to 0 — counts BOTH correct
 //       role-specific policies and reports a false failure (the documented
-//       verification-script defect fixed in docs/supabase-remediation-
-//       verification.sql)
+//       verification-script defect fixed in docs/supabase/
+//       supabase-remediation-verification.sql)
 //
 //   PHASE 2 — the corrective migration applies cleanly (single transaction).
 //
@@ -34,7 +34,7 @@
 //        (refresh_streaming_public_config) still works end-to-end; the
 //        unique constraint still rejects duplicate (category_id, ordering)
 //
-//   PHASE 4 — the CORRECTED docs/supabase-remediation-verification.sql runs
+//   PHASE 4 — the CORRECTED docs/supabase/supabase-remediation-verification.sql runs
 //     against the real chain and every check returns ok = true (the
 //     verification script's assertions are proven meaningful, not just
 //     syntactically valid), and the four pairing dry-calls return 0 rows.
@@ -79,7 +79,7 @@ type QResult = { ok: true; rows: Row[] } | { ok: false; code: string | null; mes
 
 const REMEDIATION = 'supabase/migrations/20261118000000_supabase_remediation_security_performance.sql';
 const CORRECTIVE = 'supabase/migrations/20261119000000_supabase_final_audit_hardening.sql';
-const VERIFICATION = 'docs/supabase-remediation-verification.sql';
+const VERIFICATION = 'docs/supabase/supabase-remediation-verification.sql';
 
 // Dependency-ordered chain — identical to supabase_remediation_migration_test.ts
 // plus the files the final audit needed for its full-table sweep (analytics,
@@ -403,7 +403,7 @@ async function main() {
     dupInsert.ok ? 'unexpectedly allowed' : dupInsert.message);
 
   // ── PHASE 4: the CORRECTED verification SQL, run against the real chain ──
-  console.log('4. corrected docs/supabase-remediation-verification.sql — every check green');
+  console.log('4. corrected docs/supabase/supabase-remediation-verification.sql — every check green');
   {
     const sqlText = read(VERIFICATION);
     const results = await exec(sqlText);
