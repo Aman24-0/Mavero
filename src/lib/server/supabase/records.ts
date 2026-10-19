@@ -1,5 +1,5 @@
 import type { Json, Tables, TablesInsert } from './database.types';
-import { favoriteKey, isContentSnapshot, normalizeWatchlistStatus, progressKey, type ContentSnapshot, type FavoriteDeletionRecord, type FavoriteRecord, type LocalContentType, type WatchProgressRecord } from '$lib/client/progress/types';
+import { favoriteKey, isContentSnapshot, normalizeWatchlistStatus, progressKey, type ContentSnapshot, type FavoriteDeletionRecord, type FavoriteRecord, type LocalContentType, type WatchProgressRecord } from '$lib/shared/progress-records';
 
 export type CloudHistoryEvent = {
   eventKey: string;

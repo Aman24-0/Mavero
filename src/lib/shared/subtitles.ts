@@ -29,6 +29,31 @@
 
 export const SUBTITLE_LABEL_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9 ()._-]{0,62}[A-Za-z0-9()._-])?$/;
 
+// ---------------------------------------------------------------------------
+// VDRK upstream origins — SINGLE SOURCE (Phase 3 3-D, repository-cleanup
+// plan §5 group 3-D; audit §3.4 duplication finding).
+//
+// These two constants used to be DUPLICATED verbatim in the server VDRK
+// proxy (`server/subtitles/vdrk.ts`) and the player client
+// (`client/player/subtitles/external-subtitles.ts`) — drift between the two
+// copies would silently split the subtitle pipeline (server fetches one
+// origin, the browser builds proxy URLs against another).
+//
+// CSP COUPLING (documented, pinned by scripts/vdrk_origin_csp_lockstep_test.ts):
+//   * VDRK_LIST_ORIGIN (https://sub.vdrk.site) is a BROWSER-DIRECT fetch
+//     (external-subtitles.ts) — it MUST stay in netlify.toml's connect-src.
+//   * VDRK_VTT_ORIGIN (https://cache.vdrk.site) is fetched SERVER-SIDE ONLY
+//     through the same-origin /api/content/subtitles/vtt proxy — it
+//     deliberately has NO CSP entry.
+// netlify.toml cannot import TS, so the lockstep is enforced by the pin
+// suite (which imports these constants and parses the deployed CSP).
+// ---------------------------------------------------------------------------
+
+/** The verified VDRK API origin (subtitle LISTS — browser-direct, CORS open). */
+export const VDRK_LIST_ORIGIN = 'https://sub.vdrk.site';
+/** The verified VDRK VTT origin (subtitle FILES — only reachable same-origin via the proxy). */
+export const VDRK_VTT_ORIGIN = 'https://cache.vdrk.site';
+
 /**
  * Validates an already-DECODED subtitle label and returns it unchanged, or
  * null when the value is not a legitimate VDRK label. Callers must never

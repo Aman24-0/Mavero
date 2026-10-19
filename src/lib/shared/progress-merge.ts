@@ -1,5 +1,7 @@
-import { favoriteKey, normalizeWatchlistStatus, type FavoriteDeletionRecord, type FavoriteRecord, type WatchProgressRecord, type CloudProgressRecord, type SourceRuntimeEntry } from '$lib/client/progress/types';
-import { getLatestResumeTarget } from '$lib/client/progress/presenter';
+// Phase 3 3-A: the record contract + the canonical resume-target selector
+// now live in the SHARED progress-records module — importing them from
+// client-land was a shared→client runtime layering inversion.
+import { favoriteKey, normalizeWatchlistStatus, getLatestResumeTarget, type FavoriteDeletionRecord, type FavoriteRecord, type WatchProgressRecord, type CloudProgressRecord, type SourceRuntimeEntry } from './progress-records';
 import { resolvePositionConflict } from './progress-conflict';
 
 // Phase 9: merge sourceRuntimes from both sides. For each source ID, prefer

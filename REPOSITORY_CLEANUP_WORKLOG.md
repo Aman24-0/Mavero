@@ -365,3 +365,126 @@ Fresh enumeration: **35 unchained `*_test.ts`** (audit said "~42" — 3 of its n
 - PR creation attempted via the API and **BLOCKED**: `POST /repos/Aman24-0/Mavero/pulls` → HTTP 403 "Resource not accessible by personal access token" (the token has `contents:write` — both pushes succeeded — but not `pull_requests:write`; identical to the Phase 1 / consolidation-run limitation). Nothing was merged and no merge is claimed.
 - **Owner action (one click)**: open <https://github.com/Aman24-0/Mavero/compare/main...repo-clean> → "Create pull request" (suggested title: "Repository Cleanup — Phase 2 Session 2: archive batch + unchained-test dispositions"; a complete body draft is preserved in the session record). CI runs automatically on the PR head (`on: pull_request`); the exact content of the pushed head already passed every gate locally as recorded above.
 - After merge: sync `repo-clean` with `main` (no force-push), then Phase 3 per the roadmap — or handle the owner-deferred dispositions (Newtask/phaseF, the 3 migration-cited plan docs, MPV.png) whenever the owner decides them.
+
+---
+
+# Phase 3 session — 2026-10-19 (post-PR-#10-merge audit + Phase 3 start)
+
+## Session opening (every fact verified through the GitHub API or fresh git evidence this session, nothing assumed)
+
+| Item | Verified value |
+|---|---|
+| PR #10 — "Repo clean" (head `repo-clean@e8adc30`, base `main`) | `state: closed`, `merged: true`, merge commit `b201b1789130984e414623a26aa154e7758f8765` |
+| CI on merged `main` @ `b201b17` | run `39194514874` — `completed` / **success** (polled from `in_progress` to completion this session) — https://github.com/Aman24-0/Mavero/actions/runs/39194514874 |
+| `main` movement this merge | `2d7785c..b201b17` = exactly the 9 Phase 2 session-2 commits (`b2b8dbe`, `d56f181`, `3967514`, `4a86300`, `db61fd4`, `23dc25d`, `db18593`, `e8adc30`) + the merge commit — nothing unrelated entered main |
+| `repo-clean` vs `main` at session start | 0 unique commits (`git log origin/main..repo-clean` EMPTY) + `merge-base --is-ancestor repo-clean origin/main` TRUE → repo-clean was fully contained in the merge |
+| Branch sync | `repo-clean` ← `git merge --ff-only origin/main` (`e8adc30..b201b17`), pushed `origin/repo-clean`: `e8adc30..b201b17` — fast-forward only, NO merge commit, NO force-push, nothing discarded |
+| Working tree | clean, on `repo-clean` @ `b201b17`; long-lived branches remain `main` + `repo-clean` |
+| `feature/tizen-tv` | `bd248cc`, untouched |
+
+## Phase 2 → closed; Phase 3 scope declared BEFORE any code change
+
+- Phase 2 status recorded in `REPOSITORY_CLEANUP_PLAN.md` §1/§4b/§4c: **completed** (runs 1 + 2, PRs #9 + #10); residual = owner-deferred items ONLY (`Newtask.txt`, `phaseF.txt`, the 3 migration-cited plan docs, `MPV.png`) — all explicitly NOT carried into Phase 3, unchanged on disk.
+- Phase 3 canonical scope (plan §5, mapped from audit §7 rows P3/P4/P5 — nothing invented):
+  - **3-A** progress-record validators out of client-land (audit §3.3 #1+#2: 4 server importers + `progress-merge.ts` chain → removes server→client and shared→client runtime inversions)
+  - **3-B** `streaming/validation.ts` vs `downloader/validation.ts` slug/id helper unification (parameterized error class)
+  - **3-C** `hosting/provider-resolver.ts` vs `shared/hosting-source-helpers.ts` reconciliation (server header says it was to be replaced)
+  - **3-D** `VDRK_VTT_ORIGIN` single-sourcing + netlify.toml CSP **lockstep pin test** (TOML cannot import TS — pin, don't weld)
+  - **3-E** stub-directory consolidation (`scripts/env-stubs/`, `scripts/stubs/`, `scripts/executor-shims/`) with explicit per-consumer mappings
+  - **3-F** URL-sniffing heuristic dedup (`detectContainer`/`detectAudioLanguages`/`extractQuality` across cloudstream/stremio/downloader)
+  - **3-G** admin-generation decision (audit P4: enumerate v1-importing routes + 11 test-only components; decision recorded BEFORE retirement)
+  - **3-H** large refactors (audit P5: PlayerShell extraction, db-types facade, tmdb split, provider-adapter factory) — highest risk, per-extraction commits + build-artifact size record
+- Method: fresh evidence before every group; one commit per group; targeted suites per commit; full 16-group chain + check + lint + build after each meaningful group; frozen surfaces per audit §8 untouched (migrations, remediation contracts, netlify.toml/svelte.config.js/jsconfig.json stub mappings, authoritative docs, feature/tizen-tv).
+
+## Boundary/dependency map (fresh evidence, before first code change)
+
+Per-group reference sweeps ran BEFORE each group's code change (details per group below); no code was written before its map. Session start head: `b201b17`.
+
+## Group 3-A — progress-record contract moved to shared (commit `b3ebad9`)
+
+- **Map (fresh)**: 9 importer files for `$lib/client/progress/types`; exactly 4 server→client runtime import sites (server/supabase/records.ts, api/account/favorites, favorites/batch-delete, api/account/sync — the audit's set, nothing missed) + `shared/progress-merge.ts` importing client types (line 1) AND client presenter `getLatestResumeTarget` (line 2, shared→client). `getLatestResumeTarget` verified PURE (filters/sorts records only).
+- **Change**: NEW `$lib/shared/progress-records.ts` (record types + keys + validators/normalizers + the resume-target selector, moved VERBATIM incl. all load-bearing comments); `client/progress/types.ts` → re-export façade + keeps the genuinely client-local storage types (`SaveProgressInput`, `LocalStorageStatus`, `LocalProgressState`); presenter re-exports the selector; `progress-merge.ts` imports `./progress-records`; 4 server importers re-pointed to `$lib/shared/progress-records`.
+- **Acceptance evidence**: fixed-string sweeps prove **ZERO `$lib/client/` imports in all server contexts** (`src/lib/server/**` + `src/routes/**` server files, incl. dynamic-import patterns) and **ZERO client imports in shared** (comment-only mentions remain).
+- **Gates**: check 0e/5w; 7 targeted groups exit 0 (core 330 ok, ux 297, playback 62, platform 967, devices 2768, player 464, mav 620); FULL chain 16 groups exit 0; build exit 0; diff --check clean; migrations 95/95.
+
+## Group 3-B — slug/id primitives unified (commit `f137154`)
+
+- **Map (fresh)**: `validateSlug`/`normalizeSlug`/`parseId` byte-identical in `streaming/validation.ts` + `downloader/validation.ts` (same regexes, messages, order; only the error class differs); `slugPattern` used only by validateSlug in both; external symbol importers: parseId ×2 admin routes, validateSlug ×1 addon-validation (streaming); downloader's three have no external importers.
+- **Change**: NEW `server/validation-common.ts` (`makeSlugHelpers(createError)` + `makeIdParser(createError)`); both registries derive + re-export the same names (zero importer churn). A CS-5 **byte-identity pin caught the change mid-run** (`cloudstream_registry_integration_test` §F1: "validation.ts is byte-identical to the pre-CS-5 commit") — the pin was RE-PINNED, not suppressed: validation.ts left the byte-freeze deliberately and its CONTRACT is now asserted behaviorally (§F1-d, 8 new checks: normalization behavior, exact legacy messages incl. the label form, the 3-message parseId contract, `DownloaderValidationError` class identity).
+- **Gates**: check 0e/5w; playback/platform/downloader/devices/hosting/cloudstream/player exit 0 (cloudstream 195/195 after re-pin); diff --check clean.
+
+## Group 3-C — hosting lookup helpers delegate to shared (commit `b9b92bb`)
+
+- **Map (fresh)**: `provider-resolver.ts`'s three pure helpers were byte-identical LOGIC duplicates of `shared/hosting-source-helpers.ts` (parameter TYPE differs; `ResolvedProviderSource[]` structurally satisfies `HostingSourceLike[]`). `admin2_audit_fix_test` H5 pins `export function adapterIdForSource` ON THE SERVER MODULE; the live component consumer (AdminMediaCard) imports from shared (M1). NOTE: AdminMediaList + AdminEpisodeSheet define their own LOCAL `providerNameForSource` closures with different signatures — different functions, NOT the duplication, left untouched.
+- **Change**: server helpers now DELEGATE to the shared implementation; typed server signatures PRESERVED (the plan's "behavior-preserving adapters where signatures genuinely differ") — H5 valid, all callers untouched, LOGIC lives once. Section header comment updated to current truth.
+- **Gates**: check 0e/5w; hosting + admin + ux exit 0; diff --check clean.
+
+## Group 3-D — VDRK origins single-sourced + CSP lockstep pin (commit `ae05467`)
+
+- **Map (fresh) — AUDIT CORRECTION**: the netlify.toml CSP contains `https://sub.vdrk.site` (the LIST origin, browser-direct fetch), NOT `cache.vdrk.site`; the VTT origin is the SERVER-side proxy upstream and deliberately has NO CSP entry ("go through the same-origin /api/content/subtitles/vtt proxy and need no entry here" — netlify.toml comment). The audit's "VDRK_VTT_ORIGIN … hardcoded in netlify.toml CSP" premise was mistaken on which origin couples.
+- **Change**: `VDRK_LIST_ORIGIN` + `VDRK_VTT_ORIGIN` single-sourced in `$lib/shared/subtitles.ts` (both original modules re-export → PlayerShell/suites/proxy routes untouched). NEW `scripts/vdrk_origin_csp_lockstep_test.ts` (9 checks → test:player): §1 all three modules re-export the SAME value (catches divergent literal re-introduction); §2 CSP connect-src CONTAINS the list origin (missing entry = the documented production CSP-refusal symptom); §3 CSP does NOT contain the VTT origin (minimal-CSP posture). netlify.toml NOT edited (no drift found).
+- **Gates**: new pin 9/9; check 0e/5w; player + platform exit 0; ci.yml suite-count comment 315→316.
+
+## Group 3-E — stub directories: merge REJECTED, mapping table + pin (commit `8ea6dc2`)
+
+- **Map (fresh) — audit premise corrected**: the three "overlapping" stub dirs hold DELIBERATELY DIFFERENT implementations: behavioral `$env/dynamic/private` = EMPTY env (hermetic); executor shim = `env = process.env` (production Netlify function semantics); env-stubs `dynamic-private.ts` = process.env mirror + `__MAVERO_UPCOMING_TEST_ENV__` injection merge; `$app/environment` variants differ (`version: 'test-stub'` typed vs `''` untyped). NOT duplicates — each context's semantics are load-bearing (audit §8).
+- **Change**: physical merging REJECTED (would break one resolution context). Consolidation delivered as the evidence sanctioned: `scripts/env-stubs/README.md` (the consolidated mapping table: 3 dirs × 8 files × per-context semantics + do-not-dedupe warning) + NEW `scripts/stub_contexts_test.ts` (22 checks → test:core): §1 three distinct `$env` semantics (empty / process.env identity / snapshot mirror), §2 two distinct `$app/environment` versions, §3 every documented mapping target exists in its config file + on disk.
+- **Gates**: pin 22/22; check 0e/5w; core/player/cloudstream/hosting exit 0 (both tsconfig surfaces incl. behavioral suites); ci.yml comment 316→317.
+
+## Group 3-F — URL-sniffing heuristics: dedup REJECTED, boundary pinned (commit `834087b`)
+
+- **Map (fresh) — audit premise corrected**: the same-named heuristics are separate display contracts, not re-implementations. `detectContainer`: cloudstream regex-table (`.ts`→MPEG, `.m4v`→MP4, groups ts/m2ts/mpeg) vs stremio extension-map (`.ts`→TS, `.m4v`→M4V) + URL/free-text variants cloudstream lacks. `detectAudioLanguages`: cloudstream 12 patterns WITH abbreviations (eng/hin/kor…) + 'dual audio'→'Hindi', UNCAPPED vs stremio 28 full words, no abbreviations, CAPPED at 2. `extractQuality`: fourk returns `string` (name-only, 4K/UHD→'2160p') vs stremio typed `{label, height}` with filename→title→name priority + 'Auto' fallback + 10 heights.
+- **Change**: dedup REJECTED (unifying would change user-visible output — the plan's "byte-identical outputs" acceptance bar is not met by the premise). NEW `scripts/url_heuristic_boundaries_test.ts` (12 checks → test:core) pins the exact divergence pairs (all 12 verified against the live implementations before wiring). PLAN §5 groups 3-A…3-F checklists filled with per-group evidence.
+- **Gates**: pin 12/12; core/cloudstream/providers/playback exit 0; ci.yml comment 317→318.
+
+## P3 milestone gates (after `834087b`, before 3-G)
+
+| Gate | Result |
+|---|---|
+| `pnpm check` | exit 0 — 0 errors / 5 warnings (baseline-identical) |
+| `pnpm test` — full chain | exit 0 — 16/16 groups, **318 commands** (315 → 318: +3 Phase 3 pin suites) |
+| `pnpm lint` | exit 0 — **0 errors** / 1,101 warnings (warn-only contract intact; +2 vs run-1's 1,099: `validation-common.ts:28` type-annotation param name in the NEW file, and `external-subtitles.ts:205` `load(request, …)` interface param — pre-existing line from 025292b, not authored by this phase; both non-blocking warnings, recorded honestly) |
+| `pnpm build` | exit 0 |
+| `git diff --check` | clean |
+| `supabase/migrations` | 0 changes, 95/95 intact |
+| `feature/tizen-tv` | untouched |
+
+**Net product-code effect of 3-A…3-F**: server→client runtime inversions 4→0; shared→client runtime inversions 1→0; duplicated validation primitives 2→1; duplicated hosting lookup logic 2→1; duplicated VDRK origin constants 3 copies→1 (+2 re-exports); NO behavior change anywhere (pin suites + full chain prove). Two audit premises corrected on fresh evidence (3-D CSP origin, 3-E/3-F "duplicates" = deliberate context-specific contracts), each with the finding re-pinned instead of merged.
+
+Next: Group 3-G (admin-generation decision — enumeration + decision recorded BEFORE any retirement), then 3-H (evidence-gated large refactors).
+
+## Group 3-G — admin-generation decision (commit `75d6502`)
+
+- **Enumeration (fresh)**: the 6 v1-importing routes are exactly the audit's set (16 import statements: users/[userId] ×4 symbols, api-sources/downloads/content-rules ×4 each, integrations ×3, media/missing ×1); the audit's 11 test-only components ALL confirmed zero live importers (8 admin2 + 3 v1; the `+server.ts` "AdminMediaTree" hit is a comment; phaseE's "Assets UI uses AdminConfirmDialog" was ALREADY re-pinned 2026-10-16 to AdminMediaList's inline confirm-dialog). Sweep validated by live controls (AdminMediaList/AdminEpisodeSheet imports found by the same method). **Observation recorded**: `AdminMediaCard` also has zero live importers (not in the audit's 11; documented, no action).
+- **Decision (recorded before any retirement; both branches sanctioned by P4's "page importer OR a documented reason")**: 6 routes KEEP v1 with a documented boundary (admin2 has NO 1:1 sheet/section/badge equivalents — migration = UI rewrite of six live, actively-maintained pages, several extended 2026-10-16); the 11 test-only components KEEP with per-component documented reasons (retirement = 11 deletions + ~10 chained-suite contract rewrites with zero user-visible benefit; several suites already document the keep-reasons: phase3 14d-vi "legacy… still exists", phaseB "5c standalone primitives", phaseC "library page does NOT render the old Phase C set").
+- **Deliverable**: `src/lib/components/admin/README.md` (per-route table, per-component keep-reasons + pinning suites, AdminMediaCard observation, owner's retirement path).
+- **Gates**: test:admin exit 0; zero component/test/product-code edits.
+
+## Group 3-H — large refactors: dispositions recorded, ZERO code (in `75d6502`+ tracker commits)
+
+- `PlayerShell.svelte` (verified 3,306 L) — **DEFERRED to its own dedicated session/PR** (plan's "each extraction is a separate PR" gating + player suites + build-size record; highest-risk surface per audit §8; slice candidates: trailer/focus, fullscreen/orientation, subtitle experience).
+- `database.types.ts` facade — **SKIP RECOMMENDED (owner decision)**: fresh count **92 importers** (audit said 63 — hub grew); regeneration keeps path + `Database`/`Tables` exports stable → 92-file re-point = large review burden, zero behavior value now.
+- `tmdb.ts` split (2,349 L; §8) — **DEFERRED to its own dedicated session/PR** (same gating; adapter tests as contract).
+- Provider-adapter factory — **CONDITION NOT MET per the audit's own rule**: 13 adapters + `post-message-utils`; the 2026-10-16 provider round (TGVID/ZXCStream/Vixolity) landed THROUGH the existing architecture; none in flight → leave the working set.
+
+## Phase 3 FINAL gates (on `repo-clean` after all groups)
+
+| Gate | Result |
+|---|---|
+| `pnpm check` | exit 0 — 0 errors / 5 warnings (baseline-identical) |
+| `pnpm test` — full chain | exit 0 — 16/16 groups, **318 commands** |
+| `pnpm lint` | exit 0 — 0 errors / 1,101 warnings (warn-only contract intact) |
+| `pnpm build` | exit 0 |
+| `git diff --check` | clean |
+| Secrets scan (all files changed vs `b201b17`) | clean |
+| Import-graph final check | **zero `$lib/client/` imports in all server contexts; zero `../client` imports in shared** |
+| `supabase/migrations` | 0 changes, 95/95 intact |
+| `feature/tizen-tv` | untouched |
+
+## Phase 3 run summary (for the owner's PR review)
+
+**Commits on `repo-clean` for Phase 3** (session start `b201b17`): `cdc06b6` (session opening + scope), `b3ebad9` (3-A), `f137154` (3-B), `b9b92bb` (3-C), `ae05467` (3-D), `8ea6dc2` (3-E), `834087b` (3-F), `73282ff` (P3 milestone worklog), `75d6502` (3-G), + the closeout tracker commit (SHA below).
+
+**Behavioral net effect**: server→client runtime inversions 4→0; shared→client runtime inversions 1→0; duplicated slug/id primitives 2→1; duplicated hosting lookup logic 2→1; VDRK origin constants 3→1; NO user-visible behavior change anywhere (3 pin suites + the full chain prove; every touched surface's suites re-run green). Three audit premises corrected on fresh evidence (3-D CSP origin; 3-E stubs and 3-F heuristics are context-specific contracts, not duplicates), each re-pinned rather than merged. New pin suites: `vdrk_origin_csp_lockstep_test` (9), `stub_contexts_test` (22), `url_heuristic_boundaries_test` (12) — all wired into the chain (315→318 commands).
+
+**Owner decisions surfaced by this run** (all recorded in plan §5): (1) 3-H PlayerShell + tmdb deferrals (dedicated sessions/PRs); (2) db-types facade skip recommendation; (3) the 3-G admin boundary doc (incl. the retirement path if the owner prefers retiring the 11 test-only components); (4) AdminMediaCard's zero-importer status; (5) the still-deferred Phase 2 items (Newtask.txt/phaseF.txt, 3 migration-cited docs, MPV.png).

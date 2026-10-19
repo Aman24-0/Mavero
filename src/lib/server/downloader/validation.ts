@@ -23,6 +23,9 @@
 
 import { DOWNLOAD_PLACEHOLDERS, type DownloadProviderType } from '$lib/shared/downloader';
 import { validateIconUrl, IconValidationError } from '$lib/shared/icon-url';
+// Phase 3 3-B: the slug/id primitives were byte-identical to streaming's —
+// they now come from ONE shared implementation (error class parameterized).
+import { makeSlugHelpers, makeIdParser } from '../validation-common';
 
 export class DownloaderValidationError extends Error {
   constructor(message: string) {
@@ -31,7 +34,8 @@ export class DownloaderValidationError extends Error {
   }
 }
 
-const slugPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const { normalizeSlug, validateSlug } = makeSlugHelpers((message) => new DownloaderValidationError(message));
+const parseId = makeIdParser((message) => new DownloaderValidationError(message));
 
 function text(value: FormDataEntryValue | null, label: string, maxLength: number): string | null {
   const normalized = String(value ?? '').trim();
@@ -60,15 +64,7 @@ function nonNegativeInteger(value: FormDataEntryValue | null, label: string, fal
   return parsed;
 }
 
-export function normalizeSlug(value: string): string {
-  return value.trim().toLowerCase().replace(/\s+/g, '-');
-}
-
-export function validateSlug(value: string, label = 'Slug'): string {
-  const slug = normalizeSlug(value);
-  if (!slugPattern.test(slug)) throw new DownloaderValidationError(`${label} must use lowercase letters, numbers, and single hyphens only.`);
-  return slug;
-}
+export { normalizeSlug, validateSlug, parseId };
 
 /**
  * Validate a single URL template.
@@ -171,15 +167,6 @@ export function parseDownloadProviderForm(form: FormData) {
     tv_url_template: tvUrlTemplate,
     type: providerType(form.get('type')),
   };
-}
-
-/**
- * Parse just an id from a form. Mirrors streaming's parseId for consistency.
- */
-export function parseId(form: FormData, label: string): string {
-  const id = requiredText(form.get('id'), label, 80);
-  if (!/^[0-9a-f-]{36}$/i.test(id)) throw new DownloaderValidationError(`${label} is invalid.`);
-  return id;
 }
 
 /**

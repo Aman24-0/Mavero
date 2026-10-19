@@ -1,6 +1,6 @@
 import { json } from '@sveltejs/kit';
 import { readJsonBody } from '$lib/server/http/body';
-import type { LocalContentType } from '$lib/client/progress/types';
+import type { LocalContentType } from '$lib/shared/progress-records';
 import type { RequestHandler } from './$types';
 
 // Batch removal endpoint for the My List page.

@@ -1,5 +1,5 @@
 import { json } from '@sveltejs/kit';
-import { favoriteKey, type LocalContentType } from '$lib/client/progress/types';
+import { favoriteKey, type LocalContentType } from '$lib/shared/progress-records';
 import { favoriteDeletionToRow } from '$lib/server/supabase/records';
 import { recordServerEvent } from '$lib/server/analytics/ingest';
 import { createSupabaseAdminClient } from '$lib/server/supabase/admin';

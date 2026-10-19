@@ -32,9 +32,13 @@
  *     selections without unbounded growth.
  */
 
-import { validateSubtitleLabel } from '$lib/shared/subtitles';
+// Phase 3 3-D: the VDRK origins are SINGLE-SOURCED in $lib/shared/subtitles
+// (this module's copy was duplicated verbatim in the player client — drift
+// would split the subtitle pipeline). Re-exported so the existing import
+// surface (script suites) stays unchanged.
+import { validateSubtitleLabel, VDRK_VTT_ORIGIN } from '$lib/shared/subtitles';
 
-export const VDRK_VTT_ORIGIN = 'https://cache.vdrk.site';
+export { VDRK_VTT_ORIGIN };
 
 /** Observed VTT response cap — real files are ~50 KB; 2 MB is generous. */
 const VTT_MAX_BYTES = 2_000_000;

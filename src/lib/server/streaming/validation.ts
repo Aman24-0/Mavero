@@ -5,8 +5,10 @@ import { validateIconUrl, IconValidationError } from '$lib/shared/icon-url';
 // MAVP-4 Issue 4: SVG sanitization (established sanitizer pattern on the
 // existing cheerio parser) + PNG upload normalization for source icons.
 import { sanitizeSourceSvgMarkup, svgMarkupToDataUrl, SvgValidationError, pngUploadToDataUrl } from './svg-sanitizer';
+// Phase 3 3-B: the slug/id primitives were byte-identical to downloader's —
+// they now come from ONE shared implementation (error class parameterized).
+import { makeSlugHelpers, makeIdParser } from '../validation-common';
 
-const slugPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const adapterPattern = /^[a-z0-9]+(?:[-_.][a-z0-9]+)*$/;
 
 export class StreamingValidationError extends Error {
@@ -15,6 +17,9 @@ export class StreamingValidationError extends Error {
     this.name = 'StreamingValidationError';
   }
 }
+
+const { normalizeSlug, validateSlug } = makeSlugHelpers((message) => new StreamingValidationError(message));
+const parseId = makeIdParser((message) => new StreamingValidationError(message));
 
 function text(value: FormDataEntryValue | null, label: string, maxLength: number): string | null {
   const normalized = String(value ?? '').trim();
@@ -265,15 +270,7 @@ function stripSandboxPolicy(capabilities: JsonObject): JsonObject {
   return capabilities;
 }
 
-export function normalizeSlug(value: string): string {
-  return value.trim().toLowerCase().replace(/\s+/g, '-');
-}
-
-export function validateSlug(value: string, label = 'Slug'): string {
-  const slug = normalizeSlug(value);
-  if (!slugPattern.test(slug)) throw new StreamingValidationError(`${label} must use lowercase letters, numbers, and single hyphens only.`);
-  return slug;
-}
+export { normalizeSlug, validateSlug, parseId };
 
 /**
  * Provider create/update form (2026-10-16 round): the icon field now goes
@@ -650,12 +647,6 @@ export function parseCategoryForm(form: FormData, options: { forUpdate?: boolean
     enabled: booleanValue(form.get('enabled'), true),
     ordering: (options.forUpdate === true && orderingRaw === null) ? undefined : nonNegativeInteger(orderingRaw, 'Ordering'),
   };
-}
-
-export function parseId(form: FormData, label: string): string {
-  const id = requiredText(form.get('id'), label, 80);
-  if (!/^[0-9a-f-]{36}$/i.test(id)) throw new StreamingValidationError(`${label} is invalid.`);
-  return id;
 }
 
 /**

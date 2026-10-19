@@ -30,12 +30,13 @@
  *     and the native subtitle tracks are untouched.
  */
 
-/** The verified VDRK API origin (subtitle LISTS — browser-direct, CORS open). */
-export const VDRK_LIST_ORIGIN = 'https://sub.vdrk.site';
-/** The verified VDRK VTT origin (subtitle FILES — only reachable same-origin via the proxy). */
-export const VDRK_VTT_ORIGIN = 'https://cache.vdrk.site';
+// Phase 3 3-D: the VDRK origins are SINGLE-SOURCED in $lib/shared/subtitles
+// (they were duplicated here and in server/subtitles/vdrk.ts — drift would
+// split the subtitle pipeline). Re-exported so every existing importer
+// (PlayerShell, the script suites) keeps its import surface unchanged.
+import { validateSubtitleLabel, sanitizeSubtitleDisplayLabel, VDRK_LIST_ORIGIN, VDRK_VTT_ORIGIN } from '$lib/shared/subtitles';
 
-import { validateSubtitleLabel, sanitizeSubtitleDisplayLabel } from '$lib/shared/subtitles';
+export { VDRK_LIST_ORIGIN, VDRK_VTT_ORIGIN };
 
 /**
  * Pathname label segment AFTER WHATWG URL normalization (Part A): spaces
