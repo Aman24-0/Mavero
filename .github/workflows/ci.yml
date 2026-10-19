@@ -3,8 +3,9 @@
 # Runs the three repository gates on every PR and every push to main:
 #   1. pnpm check  — svelte-check (0 errors required)
 #   2. pnpm build  — vite build + Netlify adapter executor
-#   3. pnpm test   — the full regression gate (16 grouped suites, 315
-#      commands after cleanup Phase 2 session 2 wired 25 unchained suites in;
+#   3. pnpm test   — the full regression gate (16 grouped suites, 316
+#      commands after cleanup Phase 2 session 2 wired 25 unchained suites in
+#      and Phase 3 3-D added the VDRK origin/CSP lockstep pin;
 #      stops at the first failure and propagates non-zero exit)
 #
 # Environment contract (verified against the repo, no secrets needed):
