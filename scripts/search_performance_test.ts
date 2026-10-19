@@ -37,8 +37,8 @@ ok('MediaCard is NOT eagerly imported on the Search route');
 // ============================================================
 console.log('\n2. MediaCard lazily imported');
 
-assert.match(searchPageSource, /let MediaCardComponent: any = null/,
-  'MediaCardComponent state variable exists');
+assert.match(searchPageSource, /let MediaCardComponent = \$state<any>\(null\)/,
+  'MediaCardComponent state variable exists (Svelte 5 runes form)');
 assert.match(searchPageSource, /async function loadMediaCard\(\)/,
   'loadMediaCard function exists');
 assert.match(searchPageSource, /const mod = await import\('\$components\/MediaCard\.svelte'\)/,

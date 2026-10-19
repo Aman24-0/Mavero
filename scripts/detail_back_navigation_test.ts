@@ -55,8 +55,8 @@ console.log('\n1. MediaCard from-param encoding');
 
 assert.match(mediaCard, /import \{ appendReturnTo \} from '\$lib\/shared\/navigation'/,
   'MediaCard imports appendReturnTo');
-assert.match(mediaCard, /appendReturnTo\(`\/\$\{item\.type\}\/\$\{item\.id\}`, returnTo\)/,
-  'MediaCard builds detail href via appendReturnTo');
+assert.match(mediaCard, /appendReturnTo\(detailPath\(item\.id, item\.type, item\.isAnime, item\.animeFormat\), returnTo\)/,
+  'MediaCard builds detail href via appendReturnTo over the shared canonical detailPath helper (canonical-routes round)');
 assert.match(mediaCard, /\$: returnTo = `\$\{page\.url\.pathname\}\$\{page\.url\.search\}\$\{page\.url\.hash\}`/,
   'MediaCard computes returnTo from pathname + search + hash');
 ok('MediaCard creates DetailPage URL with encoded from param');
