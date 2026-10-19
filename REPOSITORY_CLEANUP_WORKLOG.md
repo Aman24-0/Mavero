@@ -365,3 +365,39 @@ Fresh enumeration: **35 unchained `*_test.ts`** (audit said "~42" — 3 of its n
 - PR creation attempted via the API and **BLOCKED**: `POST /repos/Aman24-0/Mavero/pulls` → HTTP 403 "Resource not accessible by personal access token" (the token has `contents:write` — both pushes succeeded — but not `pull_requests:write`; identical to the Phase 1 / consolidation-run limitation). Nothing was merged and no merge is claimed.
 - **Owner action (one click)**: open <https://github.com/Aman24-0/Mavero/compare/main...repo-clean> → "Create pull request" (suggested title: "Repository Cleanup — Phase 2 Session 2: archive batch + unchained-test dispositions"; a complete body draft is preserved in the session record). CI runs automatically on the PR head (`on: pull_request`); the exact content of the pushed head already passed every gate locally as recorded above.
 - After merge: sync `repo-clean` with `main` (no force-push), then Phase 3 per the roadmap — or handle the owner-deferred dispositions (Newtask/phaseF, the 3 migration-cited plan docs, MPV.png) whenever the owner decides them.
+
+---
+
+# Phase 3 session — 2026-10-19 (post-PR-#10-merge audit + Phase 3 start)
+
+## Session opening (every fact verified through the GitHub API or fresh git evidence this session, nothing assumed)
+
+| Item | Verified value |
+|---|---|
+| PR #10 — "Repo clean" (head `repo-clean@e8adc30`, base `main`) | `state: closed`, `merged: true`, merge commit `b201b1789130984e414623a26aa154e7758f8765` |
+| CI on merged `main` @ `b201b17` | run `39194514874` — `completed` / **success** (polled from `in_progress` to completion this session) — https://github.com/Aman24-0/Mavero/actions/runs/39194514874 |
+| `main` movement this merge | `2d7785c..b201b17` = exactly the 9 Phase 2 session-2 commits (`b2b8dbe`, `d56f181`, `3967514`, `4a86300`, `db61fd4`, `23dc25d`, `db18593`, `e8adc30`) + the merge commit — nothing unrelated entered main |
+| `repo-clean` vs `main` at session start | 0 unique commits (`git log origin/main..repo-clean` EMPTY) + `merge-base --is-ancestor repo-clean origin/main` TRUE → repo-clean was fully contained in the merge |
+| Branch sync | `repo-clean` ← `git merge --ff-only origin/main` (`e8adc30..b201b17`), pushed `origin/repo-clean`: `e8adc30..b201b17` — fast-forward only, NO merge commit, NO force-push, nothing discarded |
+| Working tree | clean, on `repo-clean` @ `b201b17`; long-lived branches remain `main` + `repo-clean` |
+| `feature/tizen-tv` | `bd248cc`, untouched |
+
+## Phase 2 → closed; Phase 3 scope declared BEFORE any code change
+
+- Phase 2 status recorded in `REPOSITORY_CLEANUP_PLAN.md` §1/§4b/§4c: **completed** (runs 1 + 2, PRs #9 + #10); residual = owner-deferred items ONLY (`Newtask.txt`, `phaseF.txt`, the 3 migration-cited plan docs, `MPV.png`) — all explicitly NOT carried into Phase 3, unchanged on disk.
+- Phase 3 canonical scope (plan §5, mapped from audit §7 rows P3/P4/P5 — nothing invented):
+  - **3-A** progress-record validators out of client-land (audit §3.3 #1+#2: 4 server importers + `progress-merge.ts` chain → removes server→client and shared→client runtime inversions)
+  - **3-B** `streaming/validation.ts` vs `downloader/validation.ts` slug/id helper unification (parameterized error class)
+  - **3-C** `hosting/provider-resolver.ts` vs `shared/hosting-source-helpers.ts` reconciliation (server header says it was to be replaced)
+  - **3-D** `VDRK_VTT_ORIGIN` single-sourcing + netlify.toml CSP **lockstep pin test** (TOML cannot import TS — pin, don't weld)
+  - **3-E** stub-directory consolidation (`scripts/env-stubs/`, `scripts/stubs/`, `scripts/executor-shims/`) with explicit per-consumer mappings
+  - **3-F** URL-sniffing heuristic dedup (`detectContainer`/`detectAudioLanguages`/`extractQuality` across cloudstream/stremio/downloader)
+  - **3-G** admin-generation decision (audit P4: enumerate v1-importing routes + 11 test-only components; decision recorded BEFORE retirement)
+  - **3-H** large refactors (audit P5: PlayerShell extraction, db-types facade, tmdb split, provider-adapter factory) — highest risk, per-extraction commits + build-artifact size record
+- Method: fresh evidence before every group; one commit per group; targeted suites per commit; full 16-group chain + check + lint + build after each meaningful group; frozen surfaces per audit §8 untouched (migrations, remediation contracts, netlify.toml/svelte.config.js/jsconfig.json stub mappings, authoritative docs, feature/tizen-tv).
+
+## Boundary/dependency map (fresh evidence, before first code change)
+
+*(to be filled per-group as each group's fresh reference sweep runs — no code before its map)*
+
+Phase 3 session start head: `b201b17` (== `origin/main`, == `origin/repo-clean`).

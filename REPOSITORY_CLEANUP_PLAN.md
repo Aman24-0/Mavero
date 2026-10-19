@@ -12,8 +12,8 @@ This file is the canonical cleanup roadmap. It preserves the five-phase roadmap 
 - [x] **Phase 0 — Audit & Baseline** (audit report `3978c72`; baseline gates recorded in audit §6)
 - [x] **Pre-cleanup Task A — CI and full regression safety net** (PR #4 merged `3cd6f71`; CI green: check / build / full 290-suite test chain, run 39061251214)
 - [x] **Phase 1 — Migration & Documentation Cleanup** (PR #6 merged `43e882f` on 2026-10-18; CI on merged `main` @ `43e882f`: run `39105166599` success)
-- [ ] **Phase 2 — Dead Code & Dependency Audit** ← current phase (STARTED 2026-10-19 on `repo-clean`)
-- [ ] **Phase 3 — Architecture Refactoring**
+- [x] **Phase 2 — Dead Code & Dependency Audit** (runs 1–2 via PRs #9 `2d7785c` and #10 `b201b17`, both merged 2026-10-19; residual = owner-deferred items only — see §4b/§4c)
+- [ ] **Phase 3 — Architecture Refactoring** ← current phase (STARTED 2026-10-19 on `repo-clean`; scope in §5)
 - [ ] **Phase 4 — README & Documentation**
 - [ ] **Phase 5 — Regression & Final Verification**
 
@@ -22,6 +22,10 @@ This file is the canonical cleanup roadmap. It preserves the five-phase roadmap 
 **RESOLVED 2026-10-19 (post-merge audit) + persistent-branch rename**: the owner merged **PR #7** (tracker; merge commit `8dacb94`) and **PR #8** (TheIntroDB v4 fix; merge commit `839df6c`); both temporary branches were deleted; `main` @ `839df6c` CI run `39160616555` **success**. The exact 9-file diff entering `main` was verified (7 fix + 2 tracker, nothing unrelated; `supabase/migrations` 0 changes, 95 files). Per the owner's instruction, the single persistent repository-cleanup branch is now **`repo-clean`** (created from verified `main` @ `839df6c`; old name `cleanup/phase-1-migration-docs` retired — historical references above preserved verbatim). ALL cleanup phases (2–5) and tasks continue on `repo-clean`; `main` stays the protected integration branch; `feature/tizen-tv` remains untouched (owner-controlled).
 
 **Phase 2 — Dead Code & Dependency Audit: STARTED 2026-10-19 on `repo-clean`** (see the worklog for per-group evidence).
+
+**Phase 2 — COMPLETED 2026-10-19 (runs 1 + 2; owner-deferred items remain explicitly open)**: run 1 (audit §4 SAFE dead code, repo weight, configs, deps — PR #9 merged `2d7785c`); session 2 (plan §3.C deferred archive batch + audit §4.3.1/§4.3.2 unchained-test dispositions — PR #10 merged `b201b17`). Owner-deferred and NOT carried into Phase 3: `Newtask.txt`, `phaseF.txt`, the 3 migration-cited plan docs (`CLOUDSTREAM_MAVERO_DOWNLOADER_PLAN.md`, `live-tv-plan.md`, `mavero-user-management-analytics-plan.md`), `static/icons/MPV.png` recompression.
+
+**RESOLVED 2026-10-19 (session-3 post-merge audit)**: the owner reviewed and merged **PR #10** ("Repo clean"; head `repo-clean@e8adc30` = Phase 2 session 2) at merge commit **`b201b1789130984e414623a26aa154e7758f8765`** (API `merged: true`; PR #10 state closed/merged, verified via API this session). CI on merged `main` @ `b201b17`: run **`39194514874`** — `completed` / **success** (polled to completion this session) — https://github.com/Aman24-0/Mavero/actions/runs/39194514874. `repo-clean` was then synchronized with `main` by **fast-forward** (`git merge --ff-only`, `e8adc30..b201b17`, pushed): `repo-clean` had **0 unique commits** outside the merge (verified via `git log origin/main..repo-clean` empty + `merge-base --is-ancestor`), so no merge commit, no force-push, nothing discarded. Long-lived branches remain `main` + `repo-clean`; `feature/tizen-tv` untouched.
 
 **RESOLVED 2026-10-19 (session-2 post-merge audit)**: the owner reviewed and merged **PR #9** ("Repo clean"; head `repo-clean@01b9f4e` = Phase 2 run 1) at merge commit **`2d7785c`** (API `merged: true`, merged_at 2026-10-19T00:40:45Z). CI: PR head run `39180570166` **success**; merged `main` @ `2d7785c` run `39181860648` **success** (polled to completion). The merge tree is byte-identical to the green head (`git diff` empty). `repo-clean` was then synchronized with `main` (explicit merge commit `b2b8dbe`; repo-clean had 0 unique commits, nothing force-pushed or discarded) and remains the single persistent cleanup branch (long-lived branches: `main` + `repo-clean` only; `feature/tizen-tv` owner-controlled, now at `bd248cc`, untouched).
 
@@ -119,9 +123,59 @@ Session-2 scope = plan §3.C deferred archive batch + audit §4.3.1/§4.3.2 unch
 - [x] Gates on the integrated session-2 state (`db61fd4` + tracker): `pnpm check` exit 0 (**0 errors / 5 warnings**, baseline-identical); `pnpm lint` exit 0 (0 errors / 1,099 warnings — warn-only contract intact); **full `pnpm test` 16/16 groups / 315 suites exit 0** (290 → 315: +25 wired suites); `pnpm build` exit 0; `git diff --check` clean; secrets scan clean; zero `supabase/migrations` changes (95/95 intact); zero `src/` product-code changes in session 2 (comment-pointer updates only in run-1-adjacent src files); `feature/tizen-tv` untouched.
 
 
-## 5. Later-phase boundaries (preserved from the roadmap)
+## 5. Phase 3 — Architecture Refactoring: exact scope (this phase; STARTED 2026-10-19 on `repo-clean`)
 
-- Phase 2 owns: SAFE dead-code deletion (audit §4.2), `docs/qa/**` + binary weight moves, `components.json` + `$styles`, `Newtask.txt`/`phaseF.txt` final disposition, `MPV.png` recompress, `.nvmrc`/`.editorconfig`, warn-only ESLint/Prettier, and the deferred comment-pointer archive batch (§3.C list above).
-- Phase 3 owns: consolidations, admin-generation decision, large refactors (audit P3/P4/P5).
+Canonical scope = audit §7 rows "**P3 — Consolidations**", "**P4 — Admin UI generation decision**", "**P5 — Large refactors**" (roadmap §2 mapping). Method per the roadmap and the owner's instruction: architectural boundaries and dependencies mapped FIRST from fresh evidence; small behavior-preserving groups; one auditable commit per group; targeted suites per commit; full regression chain after each meaningful group; NO invented scope, NO broad rewrites without evidence, NO unrelated feature work. Deferred Phase 2 items stay deferred (list above). Frozen per audit §8: `supabase/migrations/**`, remediation contracts, `netlify.toml`/`svelte.config.js`/`jsconfig.json` stub mappings (load-bearing for `pnpm check`), `PLAN.md`/`WORKLOG.md`/remediation/Vixolity docs, `origin/feature/tizen-tv`.
+
+### Group 3-A — progress-record validators out of client-land (audit §3.3 #1 + #2; audit §7 P3 item 1)
+- [ ] Fresh reference map: every importer of `$lib/client/progress/types`, `progress-merge.ts` chain, the 4 server importers (`records.ts`, `api/account/favorites`, `favorites/batch-delete`, `api/account/sync`)
+- [ ] Move record validators/normalizers to `$lib/shared` (or `$lib/records`) and re-point importers — removes the **server→client** and **shared→client** runtime inversions
+- [ ] Import-graph check shows **zero server→client runtime imports**; targeted suites green (playback/progress-related + core)
+
+### Group 3-B — validation-helper unification (audit §3.4; audit §7 P3 item 2)
+- [ ] `server/streaming/validation.ts` (763 L) vs `server/downloader/validation.ts` (199 L): unify near-identical `validateSlug`/`normalizeSlug`/`parseId` behind one shared helper (parameterized error class); behavior identical (same inputs → same outputs/errors)
+- [ ] Targeted suites: downloader + unified-downloader + streaming-contract groups
+
+### Group 3-C — hosting helper reconciliation (audit §3.4; audit §7 P3 item 3)
+- [ ] `server/hosting/provider-resolver.ts` helpers vs `shared/hosting-source-helpers.ts` (same names, different signatures; the server file's own header says it was to be replaced) — reconcile behind one implementation with behavior-preserving adapters where signatures genuinely differ
+- [ ] Targeted suites: hosting group; suites green
+
+### Group 3-D — VDRK_VTT_ORIGIN single-sourcing (audit §3.4; audit §7 P3 item 4)
+- [ ] Server + client copies → one shared constant; the `netlify.toml` CSP coupling resolved the ONLY safe way for a TOML file: a **lockstep pin test** asserting the deployed CSP origin equals the shared constant (no CSP behavior change; netlify.toml edited only if the pin proves drift)
+- [ ] Targeted suites: subtitles/player + core
+
+### Group 3-E — stub-directory consolidation (audit §3.3 #5; audit §7 P3 item 5)
+- [ ] `scripts/env-stubs/` (jsconfig), `scripts/stubs/` (behavioral tsconfig), `scripts/executor-shims/` → consolidated mapping table with explicit per-consumer tsconfig mappings; `pnpm check` + full chain must stay baseline-identical (these are load-bearing, audit §8)
+
+### Group 3-F — URL-sniffing heuristic dedup (audit §3.4; audit §7 P3 item 6)
+- [ ] `detectContainer`/`detectAudioLanguages` (cloudstream `normalize/links.ts` vs stremio `stream-normalize.ts`) + `extractQuality` (stremio vs downloader `fourk-service.ts`) → one shared module, byte-identical outputs proven by the existing suites
+- [ ] Targeted suites: cloudstream + providers + downloader groups
+
+### Group 3-G — Admin UI generation decision (audit §7 P4; decision recorded BEFORE code)
+- [ ] Fresh enumeration of the routes still importing v1 `admin/` components (audit named 6) + the 11 test-only-referenced admin components (audit §4.3.4)
+- [ ] Decision (owner-sanctioned default per plan: smallest safe change): migrate the 6 routes to admin2 equivalents OR keep v1 with a documented boundary — recorded here before any retirement
+- [ ] Only after the decision: retire or keep the 11 components WITH their tests (no test-only-referenced component left unaccounted); admin suites green
+
+### Group 3-H — Large refactors (audit §7 P5; HIGHEST risk — only with per-extraction evidence + build-artifact size record)
+- [ ] `PlayerShell.svelte` (3,306 L) extraction — only cohesive slices, player suites gate
+- [ ] `database.types.ts` facade (`$lib/server/supabase/db-types`) — mechanical, no regeneration
+- [ ] `tmdb.ts` split by endpoint family — adapter tests as contract
+- [ ] Provider-adapter factory — ONLY if evidence shows a new provider landing soon (audit: otherwise leave the working 13)
+- [ ] Each extraction = separate commit + targeted suites + `pnpm build` artifact sizes recorded before/after
+
+### Phase 3 acceptance checklist
+- [ ] Boundary/dependency map recorded before the first code change
+- [ ] Every group: fresh-reference evidence → minimal change → targeted suites → one commit
+- [ ] Import-graph check: zero server→client runtime imports after Group 3-A
+- [ ] Full `pnpm test` chain (16 groups) exit 0 after each meaningful group
+- [ ] `pnpm check` 0e/5w; `pnpm lint` 0 errors (warn-only contract); `pnpm build` exit 0
+- [ ] `git diff --check` clean; secrets scan clean; `supabase/migrations` 0 changes (95/95); `feature/tizen-tv` untouched
+- [ ] Worklog per-group evidence + honest limitations
+- [ ] PR from `repo-clean` → `main` for owner review (API 403 expected; compare URL fallback)
+
+## 6. Later-phase boundaries (preserved from the roadmap)
+
+- ~~Phase 2 owns: SAFE dead-code deletion (audit §4.2), `docs/qa/**` + binary weight moves, `components.json` + `$styles`, `Newtask.txt`/`phaseF.txt` final disposition, `MPV.png` recompress, `.nvmrc`/`.editorconfig`, warn-only ESLint/Prettier, and the deferred comment-pointer archive batch (§3.C list above).~~ (done 2026-10-19, PRs #9 + #10; Newtask/phaseF/3 plan docs/MPV.png remain owner-deferred)
+- Phase 3 owns: consolidations (§5 groups 3-A…3-F), admin-generation decision (3-G), large refactors (3-H) — audit P3/P4/P5 rows only.
 - Phase 4 owns: README restructure.
 - Explicitly never without owner approval: deleting/merging any `supabase/migrations/*` file, touching the `20261004000000` dependency-order trap in migrations, production-data operations, enabling Vixolity, changing leaked-password protection, removing dependencies (all 27 verified used), deleting `origin/feature/tizen-tv`.
