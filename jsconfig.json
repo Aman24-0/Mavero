@@ -30,12 +30,6 @@
       "$data/*": [
         "./src/lib/data/*"
       ],
-      "$styles": [
-        "./src/lib/styles"
-      ],
-      "$styles/*": [
-        "./src/lib/styles/*"
-      ],
       "$lib": [
         "./src/lib"
       ],
