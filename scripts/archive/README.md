@@ -2,8 +2,8 @@
 
 This directory holds test scripts that were **not wired into the `pnpm test` chain** and whose
 disposition was resolved to "archive" rather than "wire in" during the audit §4.3.2 review
-(cleanup Phase 2, session 2 — see `REPOSITORY_CLEANUP_PLAN.md` §4b and
-`REPOSITORY_CLEANUP_WORKLOG.md`).
+(cleanup Phase 2, session 2 — see `docs/repository-cleanup/REPOSITORY_CLEANUP_PLAN.md` §4b and
+`docs/repository-cleanup/REPOSITORY_CLEANUP_WORKLOG.md`).
 
 Policy for everything here:
 

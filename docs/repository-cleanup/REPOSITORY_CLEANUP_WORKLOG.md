@@ -4,6 +4,11 @@ Factual execution history for the repository-cleanup roadmap in `REPOSITORY_CLEA
 This file records evidence, commits, test results, blockers, and the next step. The product-level
 `WORKLOG.md` and the historical `worklog.md` are separate records and are not repurposed here.
 
+**Location**: `docs/repository-cleanup/` (relocated from the repository root on 2026-10-21 by the
+final documentation-placement pass — history-preserving `git mv`, contents unchanged; both
+cleanup trackers share this directory, so the bare-filename cross-references between them
+remain resolvable).
+
 ---
 
 ## Phase 1 — Migration & Documentation Cleanup (2026-10-18)
@@ -649,3 +654,55 @@ Fresh owner mandate: complete evidence-based audit, then implement every clearly
 
 - Pushed to `origin/repo-clean` for owner review. PR creation via the API is permission-blocked (token lacks `pull_requests:write` — known limitation since Task A); compare URL: `https://github.com/Aman24-0/Mavero/compare/main...repo-clean`. No self-merge performed.
 - Residual owner decisions (non-blockers): `MPV.png` recompression; PlayerShell/tmdb.ts dedicated-session splits (§5 3-H); db-types facade skip; admin-generation retirement path.
+
+---
+
+## Final documentation placement & current-state accuracy pass (2026-10-21)
+
+Factual record of the owner-directed final documentation task (verification evidence below; appended, nothing rewritten).
+
+### State verification (GitHub API, before any edit)
+
+- PR #14 (comprehensive cleanup + analytics determinism fix): `merged=true`, merge commit `8d93a09` (2026-10-21); CI on merged `main` @ `8d93a09`: run completed/**success**.
+- `repo-clean` fast-forwarded `31ebb6a..8d93a09` (`--ff-only`, no force-push; true merge commit, `31ebb6a` verified ancestor of `main`); pushed; working tree clean. Starting head: `8d93a09`.
+
+### Tracker relocation
+
+- `git mv REPOSITORY_CLEANUP_PLAN.md` / `REPOSITORY_CLEANUP_WORKLOG.md` → `docs/repository-cleanup/`; staged as pure renames (0 insertions/deletions; 100% similarity).
+- Reference audit (repo-wide, before + after): 4 active external sites updated atomically — `docs/README.md` (intro links + root table → dedicated `docs/repository-cleanup/` section + root layout description), `src/lib/components/admin/README.md` (3-G pointer), `scripts/archive/README.md` (Phase 2 pointers), `scripts/url_heuristic_boundaries_test.ts:19` (3-F pin comment). No test reads either tracker by path (`phase2_repo_hygiene_test.ts` pins only `README.md`/`DEPLOYMENT.md` at root); no CI/workflow references; no frozen migration cites either filename. Bare-filename cross-references between the two trackers stay truthful (same directory); relocation noted in each header. Historical mentions in archived/historical records left as-written by policy.
+
+### README / DEPLOYMENT accuracy (evidence-based changes only)
+
+- Live TV verified implemented (route `src/routes/live-tv/+page.svelte`, `src/lib/components/live-tv/` 6 components, `src/lib/client/live-tv/` 9 modules, `shaka-player@5.2.12` dependency, 11 `live_tv_*` suites green in the chain) — added to README's implemented features (was absent).
+- Big-screen TV login verified implemented (`/tv-login`, 7 `/api/auth/device-pairing/*` endpoints, session suites) — added.
+- Admin surface verified (`src/routes/admin/`: providers, sources, categories, defaults, downloaders, addons, hosting, media, operations, analytics, users, system, feature-control) — README admin bullet rewritten from the stale 5-item list.
+- Download tooling verified (`/api/downloader/{mavero,mavero2,4k,json}` families, `watch/mavero-downloader{,-2}` pages, `MaveroUnifiedDownload.svelte`) — added.
+- Playback engines row added (`video.js` HLS via `src/lib/client/player/hls-engine.ts`; Shaka for Live TV; both declared in `package.json`).
+- **Phantom env variables removed from both documents** (the pass's main accuracy defect): `MAVERO_STREMIO_SESSION_SECRET`, `MAVERO_COMPAT_SESSION_SECRET`, `MAVERO_MEDIA_WORKER_URL` — zero consumers in `src/`/`scripts/`/`netlify/`, zero presence in `.env.example`; decommissioned in `71fd41e` (2026-09-21 "complete media-worker/compat decommission" — which itself removed these from `.env.example` and DEPLOYMENT) and `0111d7f` (retired the mavero player branch incl. `/api/playback/stremio/session` + the session secret). The Phase 4 README pass had re-introduced the rows. Root cause: the Phase 4 pass trusted historical worklog prose over the live tree.
+- DEPLOYMENT rate-limit section corrected: `/api/playback/stremio/session` (non-existent) dropped; verified applier set now listed (`/api/playback/resolve`, downloader endpoints, `/api/content/search`, `/api/events` analytics ingest, device-pairing endpoints); edge budgets re-synced to `RATE_LIMIT_RULES`. `default-src 'self'` CSP bullet added (tomllib-verified `netlify.toml` header; media-src/connect-src values re-verified in sync).
+- **Separately reported**: `RATE_LIMIT_RULES.stremioSession` (rate-limit.ts:105) is a dead rule with no applier — code-level cleanup, out of this documentation task's scope.
+
+### Gates (final tree, exit codes)
+
+| Gate | Result | Baseline comparison |
+|---|---|---|
+| `pnpm check` | exit 0 — 0 errors / 5 warnings | identical to baseline |
+| `pnpm lint` | exit 0 — 0 errors / 1,101 warnings | identical to baseline |
+| `pnpm test` | exit 0 — 16/16 groups | identical |
+| `pnpm build` | exit 0 | identical |
+| `git diff --check` | clean | — |
+| Doc link/path validation | all README/DEPLOYMENT/docs-index targets exist | 0 broken |
+| Old tracker-path search | 0 active references to root paths (4 sites re-pointed; historical prose retained by policy) | — |
+| `supabase/migrations` | 95/95; zero diffs | preserved |
+
+### Preservation evidence (this task)
+
+- `supabase/migrations/**`: zero changes (95/95).
+- `netlify.toml`, `.env.example`, production secrets/settings: untouched (docs-only task).
+- Vixolity surfaces: untouched; `feature/tizen-tv`: untouched.
+- All application runtime logic: untouched (diff = 2 root docs + docs index + 2 relocated trackers + 2 source-tree README/comment pointers).
+- Historical prose in trackers and archived records: byte-preserved apart from the two added header notes and the appended sections.
+
+### Status
+
+- Pushed to `origin/repo-clean` for owner review; PR creation via the API is permission-blocked (token lacks `pull_requests:write` — known limitation since Task A); compare URL: `https://github.com/Aman24-0/Mavero/compare/main...repo-clean`. No self-merge performed.

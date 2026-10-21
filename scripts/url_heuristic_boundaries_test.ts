@@ -16,7 +16,7 @@
  *
  * Disposition: REJECT the merge; pin the boundary so a future session
  * cannot "dedup" these naively. This suite asserts the exact divergence
- * pairs documented in REPOSITORY_CLEANUP_PLAN.md §5 group 3-F.
+ * pairs documented in docs/repository-cleanup/REPOSITORY_CLEANUP_PLAN.md §5 group 3-F.
  *
  * Deterministic: pure-function imports only.
  */

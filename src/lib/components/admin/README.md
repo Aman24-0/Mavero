@@ -1,6 +1,6 @@
 # Admin UI generations — boundary decision (Phase 3 3-G)
 
-**Decision date**: 2026-10-19 · **Recorded in**: `REPOSITORY_CLEANUP_PLAN.md` §5 group 3-G ·
+**Decision date**: 2026-10-19 · **Recorded in**: `docs/repository-cleanup/REPOSITORY_CLEANUP_PLAN.md` §5 group 3-G ·
 **Evidence basis**: fresh importer census on the Phase 3 tree (every claim below re-verified by
 `rg` sweeps + the pinned suites named per item; audit §4.3.4 / §7 P4 items 1–2).
 
