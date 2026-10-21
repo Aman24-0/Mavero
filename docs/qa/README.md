@@ -19,3 +19,21 @@ authoritative record for them.
 scripts (e.g. `scripts/followup2_live_verification.mjs`) `mkdir -p` it themselves
 (`fs.mkdirSync(..., { recursive: true })`), and nothing in the test chain, CI, or
 build reads from it. Do not re-commit generated QA screenshots or logs.
+
+## Recoverable verification screenshots (untracked 2026-10-20)
+
+Two manual verification screenshots that used to live at `docs/` root —
+`mavero-mobile-verification.png` (278 KB) and
+`mavero-landscape-verification.png` (138 KB) — were untracked in the
+post-roadmap comprehensive audit (2026-10-20) by the same policy as the
+artifacts above: zero references anywhere in the repository (docs, source,
+tests, CI, configs), binary weight off the tree, full recovery from git
+history:
+
+```
+git log --oneline --all -- docs/mavero-mobile-verification.png docs/mavero-landscape-verification.png
+git show <commit>:docs/mavero-mobile-verification.png > mavero-mobile-verification.png
+```
+
+Do not re-commit them; if a future document needs them, link the git-history
+recovery instead.

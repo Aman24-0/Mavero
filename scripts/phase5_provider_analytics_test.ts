@@ -203,6 +203,19 @@ function createMockClient(options: { events?: MockEvent[]; error?: { code?: stri
   return { client };
 }
 
+// Deterministic test clock. The fixture-bearing K-blocks (K2/K3/K6) use
+// events on 2026-09-20/21. `resolvePresetRange('30d')` without an explicit
+// `now` anchors at the real current instant, so the rolling 30-day window
+// eventually slides past the fixtures (confirmed 2026-10-21: K2 failed
+// standalone with "1 selection (provider A)" — actual 0, expected 1 —
+// masked in CI by the phase 4 failure that precedes this suite in the
+// analytics chain). resolvePresetRange supports an explicit clock — the
+// phase 2 suite's NOW constant uses the same pattern — so the
+// fixture-bearing blocks anchor to a fixed instant. All assertions are
+// unchanged. K1/K4 (empty fixture) and K5 (error path) have no
+// date-dependent assertions and stay on the default clock.
+const TEST_NOW = new Date('2026-09-21T12:00:00.000Z');
+
 // K1. fetchProviders with no events returns empty result.
 {
   const { client } = createMockClient({ events: [] });
@@ -226,7 +239,7 @@ ok(true, 'K1. fetchProviders returns empty result when no events');
       { user_id: 'u1', anonymous_id: 'g1', event_name: 'watch_start', event_time: '2026-09-20T10:05:00Z', provider_id: 'prov-b', source_id: 'src-b', content_type: 'movie' },
     ],
   });
-  const range = resolvePresetRange('30d');
+  const range = resolvePresetRange('30d', TEST_NOW);
   const result = await fetchProviders(client, range);
   assert.equal(result.metrics.totalSelections, 1, '1 selection (provider A)');
   assert.equal(result.metrics.totalWatchStarts, 1, '1 watch start (provider B — actual)');
@@ -251,7 +264,7 @@ ok(true, 'K2. fetchProviders distinguishes selections (provider_selected) from a
       { user_id: 'u2', anonymous_id: 'g2', event_name: 'provider_switched', event_time: '2026-09-21T10:00:00Z', provider_id: 'prov-b', source_id: 'src-b', metadata: { from_provider_id: 'prov-a', to_provider_id: 'prov-b', reason: 'manual_switch' } },
     ],
   });
-  const range = resolvePresetRange('30d');
+  const range = resolvePresetRange('30d', TEST_NOW);
   const result = await fetchProviders(client, range);
   assert.equal(result.metrics.totalSwitches, 2, '2 total switches');
   assert.equal(result.transitions.length, 1, '1 unique transition (prov-a → prov-b)');
@@ -297,7 +310,7 @@ ok(true, 'K5. fetchProviders returns migrationPending on missing-table error');
       { user_id: 'u2', anonymous_id: 'g2', event_name: 'watch_start', event_time: '2026-09-21T10:00:00Z', provider_id: 'prov-a', source_id: 'src-a', content_type: 'anime' },
     ],
   });
-  const range = resolvePresetRange('30d');
+  const range = resolvePresetRange('30d', TEST_NOW);
   const result = await fetchProviders(client, range);
   const provA = result.usage.find((u) => u.provider_id === 'prov-a');
   assert.ok(provA);

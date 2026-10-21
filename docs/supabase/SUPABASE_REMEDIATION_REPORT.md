@@ -2,7 +2,7 @@
 
 **Production project:** Supabase ref `whekhqimzrafhsrmswbn` (Data API `https://whekhqimzrafhsrmswbn.supabase.co`)
 **Round 1 (advisor remediation):** `supabase/migrations/20261118000000_supabase_remediation_security_performance.sql` — committed `c1ec26d` (+ docs follow-up `2ede139`) on the `supabase-remediation` branch, merged to `main` via PR #3 (merge commit `504bc7e`); **applied to production by the project owner via the Dashboard SQL Editor** (verified — see §6/§9).
-**Round 2 (final audit, this round):** `supabase/migrations/20261119000000_supabase_final_audit_hardening.sql` + corrected `docs/supabase-remediation-verification.sql` + `scripts/supabase_final_audit_test.ts` (107-check behavioral suite). See §9–§17.
+**Round 2 (final audit, this round):** `supabase/migrations/20261119000000_supabase_final_audit_hardening.sql` + corrected `docs/supabase/supabase-remediation-verification.sql` + `scripts/supabase_final_audit_test.ts` (107-check behavioral suite). See §9–§17.
 **Scope discipline:** Vixolity untouched (deliberately disabled); leaked-password protection untouched (plan limitation); no production reset/drop/truncate; no history fabrication; no unrelated UX/provider work.
 
 ---
@@ -52,7 +52,7 @@ Live-state verification was therefore performed **through the Data API** and is 
 
 ### A. RLS enabled with no policies — FIXED (server-only posture documented in-catalog)
 
-- `device_pairing_requests`: RLS stays **enabled**; all privileges revoked from `anon` and `authenticated`; `service_role`/ownership untouched; an explicit **RESTRICTIVE** deny-all policy (`device_pairing_requests_deny_client … for all to anon, authenticated using (false) with check (false)`) documents the intent and keeps the table sealed even if a permissive policy is added later. Server-side operations are unaffected (service role bypasses RLS and keeps its grants) — verified behaviorally in §5 and by the pairing dry-call checks in `docs/supabase-remediation-verification.sql`.
+- `device_pairing_requests`: RLS stays **enabled**; all privileges revoked from `anon` and `authenticated`; `service_role`/ownership untouched; an explicit **RESTRICTIVE** deny-all policy (`device_pairing_requests_deny_client … for all to anon, authenticated using (false) with check (false)`) documents the intent and keeps the table sealed even if a permissive policy is added later. Server-side operations are unaffected (service role bypasses RLS and keeps its grants) — verified behaviorally in §5 and by the pairing dry-call checks in `docs/supabase/supabase-remediation-verification.sql`.
 - `direct_play_sources`: same treatment (restrictive deny-all + privilege revocation), **conditional on table existence** so fresh replays of the repository chain (which never creates this table) are no-ops. No public access policy was invented; the table is closed, not populated with access paths.
 
 ### B. Mutable search_path — FIXED
@@ -155,14 +155,14 @@ Every drop is **guarded**: it executes only while the covering constraint index 
 3. **User-reported advisor state:** both advisors show no findings except the leaked-password-protection plan warning — the advisor catalog checks (RLS-no-policies, mutable search_path, SECURITY DEFINER, overlapping policies, missing FK indexes) only go quiet when the migration's catalog changes are live.
 4. The remediation branch was merged to `main` (PR #3, merge commit `504bc7e`).
 
-**Round-2 migration `20261119000000` is committed and pushed but NOT yet applied to production** — the application is a single idempotent SQL-Editor run of the file (procedure identical to §6 of round 1), followed by the corrected `docs/supabase-remediation-verification.sql` (now covering both migrations) and an advisor re-run. Until that run, production retains: the (correct but not self-contained) deny-all-policies-without-enablement-guard on `direct_play_sources`, and the provably-redundant `streaming_public_source_categories_order_idx` index — neither is a defect introduction, both are closed by the round-2 migration.
+**Round-2 migration `20261119000000` is committed and pushed but NOT yet applied to production** — the application is a single idempotent SQL-Editor run of the file (procedure identical to §6 of round 1), followed by the corrected `docs/supabase/supabase-remediation-verification.sql` (now covering both migrations) and an advisor re-run. Until that run, production retains: the (correct but not self-contained) deny-all-policies-without-enablement-guard on `direct_play_sources`, and the provably-redundant `streaming_public_source_categories_order_idx` index — neither is a defect introduction, both are closed by the round-2 migration.
 
 > **Status update (2026-10-18, cleanup Phase 1 reconciliation):** the paragraph above is the round-time record and is retained verbatim for traceability. The round-2 application has since been reported complete by the project owner — owner-reported evidence (SQL-Editor execution, corrected verification returning `redundant indexes dropped = true`, advisors clean) is recorded in §18, and §16 item 3 frames the same facts. This environment still has no production Supabase access, so the owner-reported status is not independently re-verified here.
 
 ### Apply procedure (round 2, when approved)
 
 1. Supabase Dashboard → SQL Editor → paste `supabase/migrations/20261119000000_supabase_final_audit_hardening.sql` in full → Run (single implicit transaction; idempotent — safe to re-run).
-2. Run every block of `docs/supabase-remediation-verification.sql` — every row must show `ok = t` (16 checks), the trigger-attached column must be `t`, and the four pairing dry-calls must return 0 rows without error.
+2. Run every block of `docs/supabase/supabase-remediation-verification.sql` — every row must show `ok = t` (16 checks), the trigger-attached column must be `t`, and the four pairing dry-calls must return 0 rows without error.
 3. Re-run both advisors (Dashboard → Advisors) and record before/after in this report's log; the remaining expected findings are exactly: leaked-password protection (plan limitation). The removed `streaming_public_source_categories_order_idx` should also disappear from any unused-index listing.
 
 ---
@@ -193,7 +193,7 @@ Every drop is **guarded**: it executes only while the covering constraint index 
 
 - `supabase/migrations/20261118000000_supabase_remediation_security_performance.sql` (new — the corrective migration)
 - `scripts/supabase_remediation_migration_test.ts` (new — 115-check behavioral regression suite)
-- `docs/supabase-remediation-verification.sql` (new — post-apply live verification + advisor instructions)
+- `docs/supabase/supabase-remediation-verification.sql` (new — post-apply live verification + advisor instructions)
 - `SUPABASE_REMEDIATION_REPORT.md` (new — this report)
 - `scripts/cloudstream_registry_integration_test.ts` (ledger 16→17 + posture check)
 - `scripts/cloudstream_phase4_integration_manager_test.ts` (ledger 13→14)
@@ -347,7 +347,7 @@ Posture (asserted by the updated ledgers): no `INSERT INTO` / `UPDATE … SET` /
 - Live read-only probes: 41 tables + counts, 16 RPCs, application-probe evidence (§9).
 - Full index/constraint/FK/policy/grant/function/trigger catalog dump on the real chain (35 files) + both migrations.
 - Final-audit index matrix (§10), security audit (§11), FK sweep (§12) produced; one new actionable removal + one enforceability gap identified.
-- `20261119000000` written; `docs/supabase-remediation-verification.sql` corrected (block 6 OR-vs-AND defect fixed with coverage-based assertions; block 5 strengthened with role/WITH-CHECK checks; block 8 extended for the new drop; new block 0 for RLS enablement); new 107-check suite written and registered; ledgers 17→18 / 14→15; phase6 pin superseded.
+- `20261119000000` written; `docs/supabase/supabase-remediation-verification.sql` corrected (block 6 OR-vs-AND defect fixed with coverage-based assertions; block 5 strengthened with role/WITH-CHECK checks; block 8 extended for the new drop; new block 0 for RLS enablement); new 107-check suite written and registered; ledgers 17→18 / 14→15; phase6 pin superseded.
 - Gates: `pnpm check` 0e/5w (= baseline); `pnpm test` full chain green through 286/288 suites — both Supabase suites pass in-chain (115 + 107 checks) before the documented PRE-EXISTING DOM-QA failure (.bulk-btn strict-mode, identical at baseline); post-chain season-chip 32/32; `pnpm build` exit 0; secrets scan + `git diff --check` clean.
 - **Commit SHA:** `d9696e5` on `main` (parent `504bc7e`), pushed to `origin/main` (`504bc7e..d9696e5`); working tree clean and synced.
 
@@ -356,7 +356,7 @@ Posture (asserted by the updated ledgers): no `INSERT INTO` / `UPDATE … SET` /
 Recorded during the Task-A (pre-cleanup safety net) round. The three items below are **owner-supplied production evidence**, relayed from the project owner's report. The agent's environment has **no production Supabase access** (no Management API, no direct Postgres, no SQL execution channel), so **none of these were independently re-executed against production**:
 
 1. **Migration executed (owner-reported):** `20261119000000_supabase_final_audit_hardening.sql` was successfully executed in the Supabase SQL Editor.
-2. **Verification SQL run (owner-reported):** the corrected verification script (`docs/supabase-remediation-verification.sql`) returned `redundant indexes dropped = true` — i.e. block 8's boolean held: all eight documented redundant indexes (round-1's seven + round-2's `streaming_public_source_categories_order_idx`) absent from `pg_indexes`, with their covering unique-constraint indexes present, unique and valid. This is the expected success signal for the round-2 §2 guarded drop (and confirms the round-1 drops persist).
+2. **Verification SQL run (owner-reported):** the corrected verification script (`docs/supabase/supabase-remediation-verification.sql`) returned `redundant indexes dropped = true` — i.e. block 8's boolean held: all eight documented redundant indexes (round-1's seven + round-2's `streaming_public_source_categories_order_idx`) absent from `pg_indexes`, with their covering unique-constraint indexes present, unique and valid. This is the expected success signal for the round-2 §2 guarded drop (and confirms the round-1 drops persist).
 3. **Advisors clean (owner-reported):** Supabase Advisor showed **no security and no performance issues** at the time of the owner's check.
 
 Independently re-run by the agent in the same round (chain-level only, embedded PostgreSQL): `supabase_remediation_migration_test.ts` **115/115** and `supabase_final_audit_test.ts` **107/107**, including the corrected verification SQL executed statement-for-statement against the real migration chain. This re-proves the migrations' semantics and the verification SQL's assertions **on the emulated chain — not the live production state**. Per the migration runbook, manual SQL-Editor applications do not write the `supabase_migrations` history table, so the repository + this report remain the source of truth for application status.

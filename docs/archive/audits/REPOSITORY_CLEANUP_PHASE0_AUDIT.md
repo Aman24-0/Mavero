@@ -23,7 +23,7 @@ The repository is a large, actively developed SvelteKit 2 / Svelte 5 application
 | Local branches | `main`, `supabase-remediation` (stale post-merge copy) |
 | Supabase remediation commits | `c1ec26d` (round 1), `2ede139` (docs), `504bc7e` (PR #3 merge), `d9696e5` (round 2 final audit), `6b0aa8d` (docs) — all present on `main` |
 | Migrations present | **95 files** in `supabase/migrations/`, newest `20261119000000_supabase_final_audit_hardening.sql` (round 2) |
-| Remediation artifacts | `SUPABASE_REMEDIATION_REPORT.md` (47.5 KB, 17 sections), `docs/supabase-remediation-verification.sql` (corrected, 11.8 KB) — present |
+| Remediation artifacts | `SUPABASE_REMEDIATION_REPORT.md` (47.5 KB, 17 sections), `docs/supabase/supabase-remediation-verification.sql` (corrected, 11.8 KB) — present |
 | Toolchain | Node v24.21.0 (engines `>=22.0.0`), pnpm 10.30.3 (= `packageManager` field), no `.nvmrc` (pin exists only in `netlify.toml` + engines) |
 | Package manager scripts | `dev` / `build` (vite + Netlify executor) / `check` (svelte-check) / **`test` (single 296-command `&&` chain)** / 7 `verify:*` / 2 `test:*` |
 | Config files at root | `svelte.config.js`, `vite.config.ts`, `jsconfig.json`, `tsconfig.behavioral.json`, `tsconfig.scripts.json`, `netlify.toml`, `.env.example`, `components.json` (vestigial — see §4), `.mcp.json` |
@@ -207,7 +207,7 @@ Ordering principle: **protect the safety net first** (CI, chain mechanics, known
 ## 8. Files that must not be changed without further investigation
 
 - `supabase/migrations/**` — every file; history is partially unrecorded (34 vs 95); application status must be checked per-file first (see §5.1 and `SUPABASE_REMEDIATION_REPORT.md` §2/§13)
-- `scripts/supabase_remediation_migration_test.ts`, `scripts/supabase_final_audit_test.ts`, `docs/supabase-remediation-verification.sql` — the verified remediation contracts (115 + 107 + 16 checks)
+- `scripts/supabase_remediation_migration_test.ts`, `scripts/supabase_final_audit_test.ts`, `docs/supabase/supabase-remediation-verification.sql` — the verified remediation contracts (115 + 107 + 16 checks)
 - `src/lib/shared/json-ld.ts` + `scripts/json_ld_ssr_test.ts` — the live-verified GSC fix (`f887f1e`)
 - `PLAN.md`, `WORKLOG.md`, `SUPABASE_REMEDIATION_REPORT.md`, `VIXOLITY_PLAYBACK_AUDIT_REPORT.md` — authoritative docs (append/archive only, never overwrite)
 - `src/lib/server/content/adapters/tmdb.ts`, `src/lib/server/hosting/**`, `src/lib/server/cloudstream/**`, `src/lib/client/player/**` — load-bearing feature surfaces gated by many suites; refactor only via P5's per-extraction PRs

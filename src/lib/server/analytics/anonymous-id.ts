@@ -6,7 +6,7 @@
  * lifecycle. This module issues and reads the `mavero:anonymous-id`
  * cookie.
  *
- * DESIGN (per docs/mavero-user-management-analytics-plan.md §6.1):
+ * DESIGN (per docs/user-management-analytics/mavero-user-management-analytics-plan.md §6.1):
  *   - Format: `guest_<random-uuid>` (the `guest_` prefix makes the
  *     value self-describing in logs and DB rows; the UUID is
  *     cryptographically random via crypto.randomUUID()).
