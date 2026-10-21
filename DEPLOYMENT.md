@@ -48,9 +48,6 @@ Real values must be provided through Netlify’s encrypted environment-variable 
 | `TMDB_READ_ACCESS_TOKEN` | Server-only TMDB credential (v4 Read Access Token) | Server-side secret |
 | `TMDB_API_KEY` | Server-only TMDB fallback credential (v3 API key) | Server-side secret |
 | `MAVERO_ADULT_COOKIE_SECRET` | HMAC-SHA256 signing secret for the guest Adult Mode cookie | Encrypted server-side secret; never public |
-| `MAVERO_STREMIO_SESSION_SECRET` | HMAC-SHA256 signing secret for Stremio addon session tokens | Encrypted server-side secret; never public |
-| `MAVERO_COMPAT_SESSION_SECRET` | Optional independent signing secret for compatibility references (must match the media worker's value when set) | Encrypted server-side secret; never public |
-| `MAVERO_MEDIA_WORKER_URL` | Optional HTTPS base URL of the FFmpeg compatibility media worker (absent → typed COMPAT_UNAVAILABLE degradation) | Runtime configuration; never a secret |
 | `VIDARA_API_KEY` | Server-side Vidara hosting-provider credential | Encrypted server-side secret; never public |
 | `VIDARA_API_BASE_URL` | Vidara API base URL (defaults to `https://api.vidara.so`) | Runtime configuration; never a secret |
 | `ABYSS_EMAIL` / `ABYSS_PASSWORD` | Server-side Abyss hosting-provider credentials | Encrypted server-side secret; never public |
@@ -71,7 +68,6 @@ The requirement level of each secret is determined by the code that consumes it,
 - **Supabase configuration (`PUBLIC_SUPABASE_URL`, `PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `PRIVATE_SUPABASE_SERVICE_ROLE_KEY`) is required.** With the server-side Supabase wiring unavailable, the fail-closed hooks contract (audit BL-2) serves degraded/error responses instead of leaking a half-initialized application; protected routes never become public because configuration is missing.
 - **TMDB: at least one of the two credentials is required for TMDB-backed content.** Each variable is individually optional, but with neither set, TMDB-backed content endpoints fail closed with a typed `CONFIG_MISSING` (503) — they never silently return empty results. Set `TMDB_READ_ACCESS_TOKEN` (v4 token) for normal deployments; `TMDB_API_KEY` (v3 key) is the fallback path for deployments whose token store only carries a v3 key.
 - **`MAVERO_ADULT_COOKIE_SECRET` is REQUIRED in production.** It signs the guest Adult Mode preference cookie (HMAC-SHA256). Missing/empty secret fails closed in both directions: verification treats the guest preference as OFF, and cookie issuance throws — the server refuses to mint cookies it cannot sign.
-- **`MAVERO_STREMIO_SESSION_SECRET` is optional with a safe default.** When unset, session tokens are signed with a domain-separated SHA-256 derivation of `PRIVATE_SUPABASE_SERVICE_ROLE_KEY` (one-way, domain-tagged; the raw service key is never used as an HMAC key). A deployment with neither secret fails closed: no session tokens can be signed or verified.
 
 
 ### Node and package manager expectations
@@ -80,7 +76,7 @@ The runtime expects Node.js 22 or newer and pnpm `10.30.3` (the `packageManager`
 
 ## Rate limiting and abuse protection (Phase 1, audit SEC-003)
 
-Application-level rate limiting (`src/lib/server/http/rate-limit.ts`) protects the highest-risk public endpoints (`/api/playback/resolve`, the downloader endpoints, `/api/content/search`, `/api/playback/stremio/session`). It is a BOUNDED per-instance fixed-window counter.
+Application-level rate limiting (`src/lib/server/http/rate-limit.ts`) protects the highest-risk public endpoints (`/api/playback/resolve`, the downloader endpoints, `/api/content/search`, `/api/events` analytics ingest, and the device-pairing endpoints). It is a BOUNDED per-instance fixed-window counter.
 
 **This is not a global guarantee.** Netlify function instances do not share memory, so per-instance counters are a per-instance protection only. The authoritative global layer MUST be deployment-level — configure at least one of:
 
@@ -88,7 +84,7 @@ Application-level rate limiting (`src/lib/server/http/rate-limit.ts`) protects t
 2. **Netlify WAF / firewall rules** (available on paid plans) — per-IP request-rate rules on the same path prefixes, with a 429 response.
 3. A CDN/edge provider (Cloudflare or equivalent) in front of the site with per-IP rate-limiting rules for `/api/*`.
 
-Recommended edge budgets (match the application rules, see `RATE_LIMIT_RULES`): resolve 30/min/IP, downloader batch 10/min/IP, downloader addon+tabs 30/min/IP, 4K 20/min/IP, search 30/min/IP, Stremio session 20/min/IP. Exceeding a budget should return `429` with a `retry-after` header so the client surfaces the same degraded state the application limit produces.
+Recommended edge budgets (match the application rules, see `RATE_LIMIT_RULES`): resolve 30/min/IP, downloader batches 10/min/IP for both downloader generations, downloader addon/tabs/sources endpoints 30/min/IP, the 4K and JSON downloaders 20/min/IP, search 30/min/IP, analytics event ingest 60/min/client, pairing create and exchange 10/min/IP, pairing status polling 60/min, pairing approve 20/min/user, pairing info 30/min/IP, pairing cancel 20/min/IP, and manual pairing-code lookup 10/min per user plus 30/min per IP. Exceeding a budget should return `429` with a `retry-after` header so the client surfaces the same degraded state the application limit produces.
 
 Application-level limits remain valuable as defense in depth (they cap the per-instance fan-out even if the edge rule is misconfigured), and they distinguish authenticated users from anonymous clients, which pure edge rules cannot.
 
@@ -148,6 +144,7 @@ The check is side-effect-free (impossible-hash dry-calls). Full procedure and ex
 
 `netlify.toml` includes a conservative Content-Security-Policy:
 
+- `default-src 'self'` — baseline fallback for every other directive.
 - `script-src 'self' 'unsafe-inline'` — SvelteKit compatibility (SvelteKit does not currently emit per-request nonces by default).
 - `style-src 'self' 'unsafe-inline'` — Tailwind CSS v4 + Svelte component styles.
 - `img-src 'self' data: https://image.tmdb.org` — TMDB poster/backdrop images.

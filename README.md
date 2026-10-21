@@ -4,7 +4,7 @@ Mavero is a SvelteKit application for discovering and watching movies, series, a
 
 ## Current Status
 
-The current repository is an actively maintained Web/PWA product. The existing application includes the Discover, Search, detail, My List, profile, settings, authentication, admin registry, and watch/player surfaces described below. Samsung Tizen TV support is **not implemented**; it is a planned development track whose approved roadmap and worklog are maintained under `docs/tizen-tv/`.[2] [3]
+The current repository is an actively maintained Web/PWA product. The existing application includes the Discover, Search, detail, My List, profile, settings, authentication, admin registry, Live TV, and watch/player surfaces described below. Samsung Tizen TV support is **not implemented**; it is a planned development track whose approved roadmap and worklog are maintained under `docs/tizen-tv/`.[2] [3]
 
 The repository also contains documented resolver, source-health, fallback, and provider/source registry infrastructure. The deployment documentation explicitly limits the relevant resolver phase: it does not claim unrestricted third-party provider integration, scraping, DRM bypass, direct stream extraction, or provider-specific playback support.[1]
 
@@ -17,9 +17,12 @@ The implemented product currently provides:
 - Movie, series, and anime detail pages with metadata, recommendations, watch actions, and My List actions.
 - Series seasons and episodes, including episode-aware watch navigation where content data provides that structure.
 - A watch flow with source resolution, bounded fallback behavior, retry/error states, resume handling, and a reusable player shell with direct/embed boundaries, subtitles or quality controls where available, fullscreen/PiP controls, and landscape playback controls.[4]
+- Live TV (`/live-tv`): a channel guide with an electronic programme guide sheet, category filtering and local search, recent-channel recall, Shaka-based stream playback with an automatic embed fallback, and orientation-aware player controls. Catalogue and playback come from the documented LiveGT client; nothing in the Live TV path bypasses its published boundaries.
+- Big-screen TV login: the `/tv-login` route pairs a TV with the user's phone through the device-pairing challenge/approve/exchange RPC flow, with rate limiting on every unauthenticated pairing step.
+- Download tooling: a unified download sheet fed by Stremio-addon and CloudStream-extension source enumeration endpoints, plus dedicated 4K and JSON downloader endpoints, all rate limited per endpoint.
 - My List persistence with local browser storage and authenticated synchronization, together with watch-history and playback-progress synchronization.[4]
 - Supabase-backed authentication flows for sign-up, sign-in, callback handling, password reset, sign-out, profile/settings management, and server-side account deletion confirmation.
-- Server-authorized admin registry screens for providers, sources, categories, mappings, and runtime health/ranking information. Administrative state remains authoritative over runtime selection.[5]
+- Server-authorized admin registry covering providers, sources, categories, defaults, downloaders, Stremio addons, Vidara/Abyss hosting, the media library (linking, health, sync), CloudStream extension integrations with a durable adapter build lifecycle, analytics, users and sessions, operations, and feature control. Administrative state remains authoritative over runtime selection.[5]
 - Installable PWA metadata, branded icons, service-worker registration, safe static-asset caching, an offline navigation fallback, update handling, and an install prompt.
 
 ## Platforms
@@ -41,6 +44,7 @@ The implemented product currently provides:
 | Styling | Tailwind CSS through the Vite plugin plus repository CSS/design tokens |
 | Authentication and database | Supabase through `@supabase/ssr` and `@supabase/supabase-js` |
 | Catalog sources | TMDB and AniList integrations in the server content adapters |
+| Playback engines | video.js HLS engine for catalog playback; Shaka Player for Live TV streams |
 | Motion | GSAP where used by the existing web experience |
 | Package manager | pnpm 10.30.3, as declared by `package.json` |
 | Runtime prerequisite | Node.js 22 or newer, as declared by `package.json` (matches Netlify `NODE_VERSION=22`, CI `node-version: 22`, and the root `.nvmrc` pin `22`) |
@@ -62,7 +66,7 @@ scripts/                  Focused regression and contract tests (retired suites 
 docs/                     Project documentation — index in docs/README.md; feature-family
                           directories (cloudstream/, device-auth/, hosting/, supabase/,
                           player/, provider-evaluations/, user-management-analytics/,
-                          tizen-tv/) plus the historical archive under docs/archive/
+                          tizen-tv/, repository-cleanup/) plus the historical archive under docs/archive/
 supabase/                 Database migrations and Supabase-related project files
 ```
 
@@ -104,9 +108,6 @@ The application uses public Supabase runtime configuration for browser-safe valu
 | `TMDB_READ_ACCESS_TOKEN` | Server-side TMDB credential (v4 token); one of the two TMDB credentials is required for TMDB-backed content | Secret; never public |
 | `TMDB_API_KEY` | Server-side TMDB fallback credential (v3 key) | Secret; never public |
 | `MAVERO_ADULT_COOKIE_SECRET` | HMAC signing secret for the guest Adult Mode cookie (required in production; missing secret fails closed) | Secret; never public |
-| `MAVERO_STREMIO_SESSION_SECRET` | HMAC signing secret for Stremio addon session tokens (optional; safe derivation default) | Secret; never public |
-| `MAVERO_COMPAT_SESSION_SECRET` | Optional independent signing secret for compatibility references (must match the media worker's value when set) | Secret; never public |
-| `MAVERO_MEDIA_WORKER_URL` | Optional HTTPS base URL of the FFmpeg compatibility media worker (absent → typed COMPAT_UNAVAILABLE degradation) | Runtime configuration; never a secret |
 | `VIDARA_API_KEY` | Server-side Vidara hosting-provider credential | Secret; never public |
 | `VIDARA_API_BASE_URL` | Vidara API base URL (defaults to `https://api.vidara.so`) | Runtime configuration; never a secret |
 | `ABYSS_EMAIL` / `ABYSS_PASSWORD` | Server-side Abyss hosting-provider credentials | Secret; never public |
@@ -170,6 +171,7 @@ The player is a reusable client component reached by the watch route. It support
 Important documentation already in the repository includes:
 
 - [`DEPLOYMENT.md`](DEPLOYMENT.md) — Netlify setup, environment variables, Supabase Auth production preparation, and resolver phase boundaries.
+- [`docs/README.md`](docs/README.md) — the full documentation index: feature-family directories, the frozen-migration citation map, and the repository-cleanup trackers.
 - [`docs/architecture.md`](docs/architecture.md) — canonical architecture document: request flow, major modules, authentication, Adult Mode boundary, resolver, cache, health, deployment, security boundaries.
 - [`docs/phase-history.md`](docs/phase-history.md) — concise phase history (Phase 1–5): objectives, major work, architectural decisions, regressions/fixes, status.
 - [`docs/provider-evaluations/phase7g-completion-report.md`](docs/provider-evaluations/phase7g-completion-report.md) — provider/source ranking and optimization completion report.
@@ -177,6 +179,7 @@ Important documentation already in the repository includes:
 - [`docs/player/universal-resolver-completion-report.md`](docs/player/universal-resolver-completion-report.md) — resolver architecture and verification record.
 - [`docs/tizen-tv/TIZEN_TV_PLAN.md`](docs/tizen-tv/TIZEN_TV_PLAN.md) — approved Samsung Tizen TV/TizenBrew roadmap.
 - [`docs/tizen-tv/TIZEN_TV_WORKLOG.md`](docs/tizen-tv/TIZEN_TV_WORKLOG.md) — persistent Tizen project worklog; it begins with Phase 0 not started.
+- [`docs/repository-cleanup/`](docs/repository-cleanup/) — the canonical repository-cleanup roadmap (`REPOSITORY_CLEANUP_PLAN.md`) and its factual execution history (`REPOSITORY_CLEANUP_WORKLOG.md`), relocated from the repository root on 2026-10-21 with filename-preserving `git mv` history.
 
 Detailed implementation history remains in the existing `docs/` reports rather than being duplicated here; [`docs/README.md`](docs/README.md) is the full documentation index, including the grouped feature-family directories and the frozen-migration citation map.
 
