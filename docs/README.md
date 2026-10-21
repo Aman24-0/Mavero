@@ -3,18 +3,32 @@
 Navigation aid for locating the authoritative documentation. Added by cleanup
 Phase 1 (2026-10-18); reorganized by the post-roadmap comprehensive audit
 (2026-10-20) into feature-family directories. The canonical roadmap for the
-cleanup effort itself is [`REPOSITORY_CLEANUP_PLAN.md`](../REPOSITORY_CLEANUP_PLAN.md)
+cleanup effort itself is
+[`REPOSITORY_CLEANUP_PLAN.md`](repository-cleanup/REPOSITORY_CLEANUP_PLAN.md)
 with its factual execution history in
-[`REPOSITORY_CLEANUP_WORKLOG.md`](../REPOSITORY_CLEANUP_WORKLOG.md).
+[`REPOSITORY_CLEANUP_WORKLOG.md`](repository-cleanup/REPOSITORY_CLEANUP_WORKLOG.md)
+(both relocated from the repository root to `docs/repository-cleanup/` on
+2026-10-21 — filename-preserving `git mv`, history intact).
 
 ## Repository root (intentionally minimal)
+
+The root keeps only the two primary entry documents plus application/tooling
+configuration (`.env.example`, `netlify.toml`, `package.json`, `pnpm-lock.yaml`,
+`svelte.config.js`, `vite.config.ts`, `jsconfig.json`, `tsconfig.behavioral.json`,
+`eslint.config.mjs`, `.prettierrc`/`.prettierignore`, `.editorconfig`, `.nvmrc`,
+`.gitignore`) and the private `adapter-builder/` sub-project.
 
 | Document | Role |
 |---|---|
 | [`README.md`](../README.md) | Project overview, setup, supported Node floor. |
 | [`DEPLOYMENT.md`](../DEPLOYMENT.md) | Netlify deployment, environment variables, security boundaries. |
-| [`REPOSITORY_CLEANUP_PLAN.md`](../REPOSITORY_CLEANUP_PLAN.md) | Canonical cleanup roadmap. |
-| [`REPOSITORY_CLEANUP_WORKLOG.md`](../REPOSITORY_CLEANUP_WORKLOG.md) | Factual cleanup execution history. |
+
+## Repository-cleanup trackers (`docs/repository-cleanup/`)
+
+| Document | Role |
+|---|---|
+| [`REPOSITORY_CLEANUP_PLAN.md`](repository-cleanup/REPOSITORY_CLEANUP_PLAN.md) | Canonical cleanup roadmap (relocated from root, 2026-10-21). |
+| [`REPOSITORY_CLEANUP_WORKLOG.md`](repository-cleanup/REPOSITORY_CLEANUP_WORKLOG.md) | Factual cleanup execution history (relocated from root, 2026-10-21). |
 
 ## Product plan & general work log (`docs/`)
 
