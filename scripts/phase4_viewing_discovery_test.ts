@@ -205,6 +205,19 @@ function createMockClient(options: {
   return { client };
 }
 
+// Deterministic test clock. The fixture-bearing K-blocks use events on
+// 2026-09-20/21. `resolvePresetRange('30d')` without an explicit `now`
+// anchors at the real current instant, so the rolling 30-day window
+// eventually slides past the fixtures (CI 2026-10-21: K2 failed with
+// "expected 3 watch_start events, actual 1"; K5/K8 had already degraded
+// to vacuous passes — their fixture events were silently excluded).
+// resolvePresetRange supports an explicit clock — the phase 2 suite's NOW
+// constant uses the same pattern — so the fixture-bearing blocks anchor to
+// a fixed instant and the suite is deterministic. All assertions are
+// unchanged. K1 (empty fixture) and K7 (error path) have no
+// date-dependent assertions and stay on the default clock.
+const TEST_NOW = new Date('2026-09-21T12:00:00.000Z');
+
 // K1. fetchViewing with no events returns empty result.
 {
   const { client } = createMockClient({ events: [] });
@@ -227,7 +240,7 @@ ok(true, 'K1. fetchViewing returns empty result when no events');
       { user_id: null, anonymous_id: 'g2', event_name: 'watch_start', event_time: '2026-09-21T10:00:00Z', content_id: 'series-94605', content_type: 'series' },
     ],
   });
-  const range = resolvePresetRange('30d');
+  const range = resolvePresetRange('30d', TEST_NOW);
   const result = await fetchViewing(client, range);
   assert.equal(result.metrics.watchStarts, 3, '3 watch_start events');
   assert.equal(result.metrics.uniqueViewers, 2, '2 unique viewers (u1 + g2)');
@@ -243,7 +256,7 @@ ok(true, 'K2. fetchViewing computes unique viewers + watch starts + movie/series
       { user_id: 'u1', anonymous_id: 'g1', event_name: 'watch_complete', event_time: '2026-09-20T12:00:00Z', content_id: 'movie-550', content_type: 'movie' },
     ],
   });
-  const range = resolvePresetRange('30d');
+  const range = resolvePresetRange('30d', TEST_NOW);
   const result = await fetchViewing(client, range);
   assert.equal(result.metrics.completedWatches, 1, '1 completed watch');
   assert.equal(result.metrics.movieCompletedWatches, 1, '1 movie completion');
@@ -258,7 +271,7 @@ ok(true, 'K3. fetchViewing computes completed watches from watch_complete events
       { user_id: 'u1', anonymous_id: 'g1', event_name: 'watch_progress', event_time: '2026-09-20T11:00:00Z', content_id: 'movie-550', metadata: { position_seconds: 3600, duration: 7200 } },
     ],
   });
-  const range = resolvePresetRange('30d');
+  const range = resolvePresetRange('30d', TEST_NOW);
   const result = await fetchViewing(client, range);
   assert.ok(result.metrics.watchTimeSeconds !== null, 'watch time computed');
   assert.equal(result.metrics.watchTimeSeconds, 3600, 'watch time = max position_seconds (3600, not 5400)');
@@ -272,7 +285,7 @@ ok(true, 'K4. fetchViewing computes approximate watch time from max position_sec
       { user_id: 'u1', anonymous_id: 'g1', event_name: 'watch_progress', event_time: '2026-09-20T10:30:00Z', content_id: 'movie-550', metadata: {} },
     ],
   });
-  const range = resolvePresetRange('30d');
+  const range = resolvePresetRange('30d', TEST_NOW);
   const result = await fetchViewing(client, range);
   assert.equal(result.metrics.watchTimeSeconds, null, 'watch time null when no position_seconds');
 }
@@ -287,7 +300,7 @@ ok(true, 'K5. fetchViewing returns null watch time when no position_seconds (not
       { user_id: null, anonymous_id: 'g2', event_name: 'search', event_time: '2026-09-21T10:00:00Z', metadata: { query: ' Spider-Man ', result_count: 3 } },
     ],
   });
-  const range = resolvePresetRange('30d');
+  const range = resolvePresetRange('30d', TEST_NOW);
   const result = await fetchViewing(client, range);
   assert.equal(result.search.totalSearches, 3, '3 total searches');
   assert.equal(result.search.uniqueSearchers, 2, '2 unique searchers (u1 + g2)');
@@ -323,7 +336,7 @@ ok(true, 'K7. fetchViewing returns migrationPending on missing-table error');
       { user_id: 'u1', anonymous_id: 'g1', event_name: 'watch_progress', event_time: '2026-09-20T10:30:00Z', content_id: 'movie-550', metadata: { position_seconds: 7200, duration: 7200 } },
     ],
   });
-  const range = resolvePresetRange('30d');
+  const range = resolvePresetRange('30d', TEST_NOW);
   const result = await fetchViewing(client, range);
   // Even though position == duration (100%), watch_progress does NOT
   // count as a completed watch. Only watch_complete events count.

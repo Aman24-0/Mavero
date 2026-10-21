@@ -231,6 +231,19 @@ function createMockClient(options: {
   return { client };
 }
 
+// Deterministic test clock for the fixture-bearing behavioral-cohort block
+// (L4, events on 2026-09-20). `resolvePresetRange('30d')` without an
+// explicit `now` anchors at the real current instant, so the rolling
+// 30-day window eventually slides past the fixture (confirmed 2026-10-21:
+// L4 failed standalone with "1 unique watcher (u1)" — actual 0 — masked in
+// CI by the phase 4 failure that precedes this suite in the analytics
+// chain). resolvePresetRange supports an explicit clock — the phase 2
+// suite's NOW constant uses the same pattern — so L4 anchors to a fixed
+// instant. All assertions are unchanged. L1/L3 (empty/error) stay on the
+// default clock; L2/L5 already build self-relative timestamps and are
+// deterministic by construction.
+const TEST_NOW = new Date('2026-09-21T12:00:00.000Z');
+
 // L1. fetchRetention with signup cohort + no activity returns empty cohorts.
 {
   const { client } = createMockClient({ events: [], profiles: [] });
@@ -288,7 +301,7 @@ ok(true, 'L3. fetchRetention returns migrationPending on missing-table error');
     ],
     profiles: [],
   });
-  const range = resolvePresetRange('30d');
+  const range = resolvePresetRange('30d', TEST_NOW);
   const result = await fetchRetention(client, range, 'signup');
   assert.ok(result.behavioralCohorts.length >= 4, '4 behavioral cohorts');
   const watched = result.behavioralCohorts.find((c) => c.id === 'watched');
