@@ -312,3 +312,10 @@ Environment: Node `v24.21.0`, pnpm `10.30.3` (exact `packageManager` pin). All c
 
 - **Phase 2+ implementation has NOT started.** The diff contains only: the additive migration, the new server registry module, the two new test suites, the required type/census/allowlist registrations, and the plan/worklog documentation.
 - **No production database, no deploy configuration, no existing feature, and no VOD surface was modified.** Every golden behavior of plan §10 remains protected by the existing suites (all green).
+
+## Entry P1-12 — Push and PR outcome (final git state)
+
+- **Commit:** `836c3d1` on branch `livetv/phase-1-unified-model` (one commit; base `c1fb46f`).
+- **Push:** the dedicated branch was pushed to `origin` per the Phase 1 brief §14 (never `main`; no force-push; the PAT was used via a one-shot push URL and `git remote -v` confirms no token persisted in `.git/config`).
+- **PR creation:** the provided fine-grained PAT does NOT carry the "Pull requests: write" permission — the GitHub API returned "Resource not accessible by personal access token". Per brief §14 ("open a PR if permissions allow"), the PR was therefore NOT created by this task. One-click PR creation for the pushed branch: `https://github.com/Aman24-0/Mavero/pull/new/livetv/phase-1-unified-model`.
+- **`main` untouched:** still at `c1fb46f` remotely and locally.
