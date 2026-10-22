@@ -124,6 +124,13 @@ export const RATE_LIMIT_RULES = {
   // Dry-run preview: one bounded upstream fetch, zero writes. Slightly
   // looser than refresh (it is the adapter validation surface) but bounded.
   livetvAdminPreview: { limit: 12, windowMs: 60_000 },
+  // Unified Live TV Phase 3 — admin EPG guide refresh. A guide refresh
+  // fetches a (potentially large, gzip) XMLTV document and writes bounded
+  // programme batches — a heavier upstream+DB budget than a playlist
+  // refresh, so it gets its own additive rule.
+  livetvAdminEpgRefresh: { limit: 6, windowMs: 60_000 },
+  // Dry-run guide preview: one bounded fetch + parse, zero writes.
+  livetvAdminEpgPreview: { limit: 12, windowMs: 60_000 },
 } as const satisfies Record<string, RateLimitRule>;
 
 export type RateLimitBucketName = keyof typeof RATE_LIMIT_RULES;

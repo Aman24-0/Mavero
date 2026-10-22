@@ -108,6 +108,16 @@ export type LivetvJsonFetchResult = {
         body: unknown;
 };
 
+export type LivetvBinaryFetchResult = {
+        /** URL of the response actually returned (after redirects) — configuration data, safe to retain server-side. */
+        finalUrl: string;
+        /** The final response origin (diagnostics only; no query is included). */
+        finalOrigin: string;
+        contentType: string;
+        /** Raw response bytes, hard-capped (Phase 3: XMLTV documents — plain or gzip). */
+        bytes: Uint8Array;
+};
+
 function linkExternalSignal(external: AbortSignal | undefined, controller: AbortController): () => void {
         if (!external) return () => {};
         if (external.aborted) {
@@ -180,6 +190,51 @@ function assertJsonAcceptableContentType(response: Response): void {
         }
 }
 
+/**
+ * Binary content acceptance (Phase 3 XMLTV documents). An HTML document is
+ * NEVER a guide document (it is an error/player page) — the same rule as the
+ * text gate. Everything else (application/gzip, application/x-gzip,
+ * text/xml, application/xml, application/octet-stream, missing) falls
+ * through: compression and XML validity are detected by content, never by a
+ * filename extension or a content-type claim alone.
+ */
+function assertNotHtmlContentTypeBinary(response: Response): void {
+        assertNotHtmlContentType(response);
+}
+
+/** Reads the body as raw bytes under a hard byte cap (aborts the connection on overflow). */
+async function readBodyBytesWithLimit(response: Response, maxBytes: number, controller: AbortController, requestedOrigin: string | null): Promise<Uint8Array> {
+        const contentLength = Number(response.headers.get('content-length') ?? '');
+        if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+                controller.abort();
+                throw new LivetvSourceFetchError('too_large', 'The source document exceeds the configured size budget.', { requestedOrigin });
+        }
+        if (!response.body) return new Uint8Array(0);
+        const chunks: Uint8Array[] = [];
+        let total = 0;
+        try {
+                for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
+                        total += chunk.byteLength;
+                        if (total > maxBytes) {
+                                controller.abort();
+                                throw new LivetvSourceFetchError('too_large', 'The source document exceeds the configured size budget.', { requestedOrigin });
+                        }
+                        chunks.push(chunk);
+                }
+        } catch (error) {
+                if (error instanceof LivetvSourceFetchError) throw error;
+                if (controller.signal.aborted) throw new LivetvSourceFetchError('timeout', 'The source request exceeded its time budget.', { requestedOrigin, cause: error });
+                throw new LivetvSourceFetchError('network', 'The source response could not be read.', { requestedOrigin, cause: error });
+        }
+        const out = new Uint8Array(total);
+        let offset = 0;
+        for (const chunk of chunks) {
+                out.set(chunk, offset);
+                offset += chunk.byteLength;
+        }
+        return out;
+}
+
 /** Reads the body as text under a hard byte cap (aborts the connection on overflow). */
 async function readBodyWithLimit(response: Response, maxBytes: number, controller: AbortController, requestedOrigin: string | null): Promise<string> {
         const contentLength = Number(response.headers.get('content-length') ?? '');
@@ -215,7 +270,7 @@ async function readBodyWithLimit(response: Response, maxBytes: number, controlle
  * connect-time validation, deadline, byte cap, redirect cap, content-type
  * sanity) exists exactly once.
  */
-async function fetchSourceDocument(rawUrl: string, deps: LivetvFetchDeps, mode: 'text' | 'json'): Promise<LivetvTextFetchResult | LivetvJsonFetchResult> {
+async function fetchSourceDocument(rawUrl: string, deps: LivetvFetchDeps, mode: 'text' | 'json' | 'binary'): Promise<LivetvTextFetchResult | LivetvJsonFetchResult | LivetvBinaryFetchResult> {
         const fetcher = deps.fetcher ?? ssrfSafeFetch;
         const timeoutMs = deps.timeoutMs ?? LIVETV_FETCH_TIMEOUT_MS;
         const maxBytes = deps.maxBytes ?? LIVETV_FETCH_MAX_BYTES;
@@ -238,7 +293,7 @@ async function fetchSourceDocument(rawUrl: string, deps: LivetvFetchDeps, mode: 
                         response = await fetcher(currentUrl.toString(), {
                                 redirect: 'manual',
                                 signal: controller.signal,
-                                headers: { accept: mode === 'json' ? 'application/json' : 'application/json, text/plain, */*' }
+                                headers: { accept: mode === 'json' ? 'application/json' : mode === 'binary' ? 'application/gzip, application/x-gzip, application/xml, text/xml, application/octet-stream, */*' : 'application/json, text/plain, */*' }
                         });
                         if (response.status < 300 || response.status >= 400) break;
                         const location = response.headers.get('location');
@@ -263,7 +318,17 @@ async function fetchSourceDocument(rawUrl: string, deps: LivetvFetchDeps, mode: 
                         throw new LivetvSourceFetchError('http_error', 'The source endpoint returned an HTTP error status.', { httpStatus: finalResponse.status, requestedOrigin });
                 }
                 if (mode === 'json') assertJsonAcceptableContentType(finalResponse);
+                else if (mode === 'binary') assertNotHtmlContentTypeBinary(finalResponse);
                 else assertNotHtmlContentType(finalResponse);
+                if (mode === 'binary') {
+                        const bytes = await readBodyBytesWithLimit(finalResponse, maxBytes, controller, requestedOrigin);
+                        return {
+                                finalUrl: currentUrl.toString(),
+                                finalOrigin: currentUrl.origin,
+                                contentType: (finalResponse.headers.get('content-type') ?? '').toLowerCase(),
+                                bytes
+                        };
+                }
                 const text = await readBodyWithLimit(finalResponse, maxBytes, controller, requestedOrigin);
                 if (mode === 'json') {
                         let parsed: unknown;
@@ -311,4 +376,17 @@ export async function fetchLivetvSourceText(rawUrl: string, deps: LivetvFetchDep
  */
 export async function fetchLivetvSourceJson(rawUrl: string, deps: LivetvFetchDeps = {}): Promise<LivetvJsonFetchResult> {
         return (await fetchSourceDocument(rawUrl, deps, 'json')) as LivetvJsonFetchResult;
+}
+
+/**
+ * Fetches a source configuration document as bounded RAW BYTES (Phase 3:
+ * XMLTV guide documents, plain or gzip). EVERY security property of this
+ * module applies unchanged — the two-stage SSRF guard on the initial URL and
+ * every redirect hop, connect-time re-validation, https-only re-assertion,
+ * deadline, byte cap and redirect cap, and the HTML-is-never-a-document
+ * gate. Compression is detected by CONTENT (magic bytes) by the caller —
+ * never by a filename extension or a content-type claim.
+ */
+export async function fetchLivetvSourceBytes(rawUrl: string, deps: LivetvFetchDeps = {}): Promise<LivetvBinaryFetchResult> {
+        return (await fetchSourceDocument(rawUrl, deps, 'binary')) as LivetvBinaryFetchResult;
 }
