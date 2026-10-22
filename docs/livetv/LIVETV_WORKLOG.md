@@ -773,3 +773,12 @@ Environment: Node `v24.21.0`, pnpm `10.30.3`. All commands from repo root; exit 
 ## Entry P5-6 — Stop confirmation
 
 - Phase 5 scope only; Phase 6 NOT started (no merged catalogue UI, no search/category changes, no guide display changes). `unified_enabled` remains **FALSE** — structurally unchanged, never written by any Phase 5 code path (suite-pinned). The user-facing `/live-tv` page's legacy path is intact (all pre-existing suites green unchanged), the LiveGT client/engine/media-auth surfaces are byte-identical to `origin/main` (protected-path review), and NO migration was executed or applied to any database (production untouched; `test:supabase` green).
+
+## Entry P5-7 — Commit, push and PR outcome (final git state, 2026-10-23)
+
+- **Commit:** `ba64287` "feat(livetv): Phase 5 — unified playback routing with deterministic fallback" on branch `livetv/phase-5-playback-router` (one implementation commit; base `df162e3` = the Phase 4 merge on `main`; docs + code in the same commit per the Phase 1–4 convention).
+- **Pre-push verification:** `git fetch origin` exit 0; `origin/main` still `df162e3`; `git merge-base --is-ancestor origin/main HEAD` → YES (clean fast-forward); `git ls-remote` showed no pre-existing remote branch.
+- **Credentials:** the session PAT was used ONLY as a one-shot push URL (`git -c credential.helper= push https://x-access-token:<PAT>@github.com/...`); NOT stored in `.git/config`, `~/.gitconfig`, `~/.git-credentials`, any remote, or any commit (re-verified post-push: `git remote -v` clean; no credential helper configured). The token never entered the worklog, the plan, or any source file.
+- **Push: VERIFIED, exit 0** — `origin/livetv/phase-5-playback-router` = `ba64287` = local HEAD (GitHub accepted the new branch and offered the one-click PR link).
+- **PR creation: attempted via the GitHub API (`POST /repos/Aman24-0/Mavero/pulls`) and REJECTED — HTTP 403 `{"message":"Resource not accessible by personal access token"}`** (identical to the Phase 1/2/3/4 outcomes: the fine-grained PAT carries Contents:write but not the separate "Pull requests: write" permission). Per the brief, the PR was NOT created by this task. One-click PR creation for the pushed branch: `https://github.com/Aman24-0/Mavero/pull/new/livetv/phase-5-playback-router`.
+- **`main` untouched:** still at `df162e3` locally and remotely; the push touched ONLY the new `livetv/phase-5-playback-router` branch.
