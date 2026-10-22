@@ -593,3 +593,100 @@ Environment: Node `v24.21.0`, pnpm `10.30.3`. All commands from repo root; exit 
 - **Push:** VERIFIED — `origin/livetv/phase-3-epg-xmltv` = `f6099ba` (pushed via a one-shot PAT URL; `git remote -v` and the git config re-checked afterwards — no token persisted anywhere).
 - **PR creation:** attempted via the GitHub API (`POST /repos/Aman24-0/Mavero/pulls`) and REJECTED — HTTP 403 `{"message":"Resource not accessible by personal access token"}`: the provided fine-grained PAT does NOT carry the "Pull requests: write" permission (identical to the Phase 1/2 outcomes). Per the brief, the PR was therefore NOT created by this task. One-click PR creation for the pushed branch: `https://github.com/Aman24-0/Mavero/pull/new/livetv/phase-3-epg-xmltv`.
 - **`main` untouched:** still at `527faf3` remotely and locally.
+
+## Entry P4-0 — Phase 4 implementation checklist (written BEFORE coding)
+
+- **Verified base:** branch `livetv/phase-4-admin-management` cut from `origin/main` = `34bb4cd` (PR #19 merge — Phase 3 confirmed merged via `git merge-base --is-ancestor`). Working tree clean. No AGENTS.md exists (re-verified). `unified_enabled` untouched (no Phase 4 code path writes `livetv_config_meta`).
+- **Schema re-verified from source:** Phase 1 tables (`livetv_config_meta`, `livetv_sources`, `livetv_channels`, `livetv_source_channels`, `livetv_playback_endpoints`, `livetv_playback_candidates`, `livetv_epg_sources`, `livetv_epg_channel_mappings`) + Phase 3 `livetv_epg_programmes`; DB guards reused as-is: builtin delete-protect trigger, candidate cross-channel guard trigger, updated_at + config-version bump triggers, fail-closed admin-only RLS. ZERO schema changes planned for Phase 4.
+- **Admin IA decision:** dedicated route `/admin/system/livetv` (plan §5's first placement option; api-sources is already a 1388-line workspace — extending it would entangle VOD registry logic with Live TV). Registered in `AdminAppShell` navGroups (System group) + an Overview "System Status" metric card for mobile reachability parity (the established mobile path for System destinations per `mav_focused_admin_nav_test` §5).
+- **UI surface (5 tabs, `?tab=` routing, AdminPage/AdminSheet/AdminConfirmDialog/AdminStatusBadge reuse):** 1 Overview & health; 2 Playback sources (CRUD/enable/priority/refresh/preview/delete-impact); 3 Imported channels (paginated entries, enable/disable, canonical mapping); 4 Canonical channels (CRUD, exposure, per-channel playback-candidate ordering); 5 EPG guides (source CRUD/refresh/preview, explicit mappings CRUD, guide diagnostics via the Phase 3 `planEpgMapping` + per-instance outcomes).
+- **Server layer:** ONE new module `src/lib/server/livetv/admin-service.ts` (all CRUD/reads; reuses `validateLivetvSourceConfig`/`validateLivetvEndpointInput`/`validateEpgSourceConfig`/`normalizeEpgIdentity`/`planEpgMapping` and the Phase 2/3 refresh+preview services — no second pipeline, no weaker fetcher). Page mutations are SvelteKit server actions (`requireAdmin` on load + every action; refresh/preview actions rate-limited reusing the existing `livetvAdmin*` rules). The Phase 2/3 JSON endpoints stay unchanged and remain the API surface.
+- **CRUD/refresh-semantics boundary (honored, not invented):** admin-owned fields (`canonical_channel_id`, `enabled`, endpoint `ordering`) are exactly what Phase 2 ingestion never writes. Endpoint URL/kind/format edits and endpoint/channel-entry deletion are offered ONLY where no upstream can resurrect rows (manual_stream/embed_provider endpoints: full CRUD; adapter-fed sources: enable/disable + ordering only, entries: enable/disable + mapping only — a refresh would otherwise re-import). Deletes (non-builtin sources, canonical channels, EPG sources, endpoints, candidates, mappings) are confirmed with computed impact counts; the DB triggers/cascades remain the last line of defense.
+- **Refresh-history decision (P2-8 review):** RETAIN report-only status — NO migration. Rationale: the Admin UI needs "last available refresh information", which the bounded per-instance record provides honestly when labeled ("instance-local recent activity"); persistent history pays off only with the Phase 7 scheduler; skipping it avoids a production DDL round-trip (owner applies migrations manually per runbook) and scope expansion. The P2-8 proposal remains documented for Phase 7 review.
+- **Tests:** `scripts/livetv_phase4_admin_service_test.ts` (mock-DB CRUD/validation/priority/candidate-guard/EPG-mapping-conflict/impact/redaction suites) + `scripts/livetv_phase4_admin_ui_test.ts` (nav registration desktop+mobile, authz on load+actions, tabs, confirm dialogs, no `unified_enabled` writes, isolation guards) — both wired into `test:livetv`. Existing `test:admin` suites (incl. nav + dialog-stacking contracts) must stay green unchanged.
+- **Regression guards honored:** zero diffs planned under `src/lib/client/live-tv/**`, `src/lib/components/live-tv/**`, `src/routes/live-tv/**`, VOD paths, migrations, netlify config; `unified_enabled` stays FALSE; no Phase 5 playback routing implemented.
+
+## Entry P4-1 — Phase 4 execution record (2026-10-23)
+
+**Verified base:** branch `livetv/phase-4-admin-management` cut from `origin/main` = `34bb4cd` (PR #19 merge; Phase 3 confirmed merged via `git merge-base --is-ancestor f6099ba origin/main` → YES). Working tree clean at start (the only pre-existing modification was this worklog's own P4-0 checklist entry). No AGENTS.md exists (re-verified).
+
+## Entry P4-2 — Files created/modified by Phase 4
+
+**Created:**
+- `src/lib/server/livetv/admin-service.ts` — the ONE administrative data layer: typed validation (names/slugs/priorities/https URLs/dedup keys/config documents through the Phase 1 registry validators + Phase 3 EPG config validator), source/channel/entry/endpoint/candidate/EPG CRUD, deterministic priority reordering (completeness + duplicate rejection), delete-impact accounting (embedded exact counts incl. the 3-level source cascade), per-EPG-source guide diagnostics via the Phase 3 `planEpgMapping` over stored guide identities + a bounded now/next window, the read-only overview, and the safe DB-error mapper (unique/FK/check/protect-trigger → static messages).
+- `src/routes/admin/system/livetv/+page.server.ts` — the load (per-tab bounded reads; uniform nullable shape) + 30 form actions, each with `requireAdmin` FIRST; refresh/preview actions rate-limited with the existing `livetvAdmin{,Epg}{Refresh,Preview}` rules; standard `fail()` envelope with typed safe messages.
+- `src/routes/admin/system/livetv/+page.svelte` — the five-tab Admin2 workspace (Overview & health / Playback Sources / Imported Channels / Canonical Channels / EPG Guides): source & channel & EPG-source sheets, per-entry endpoint inspector, per-channel candidate inspector (explicit/default mode, add/order/enable/remove), explicit EPG mapping management + guide diagnostics, impact-confirmed deletes via the shared `AdminConfirmDialog`, outcome rendering bounded and typed.
+- `scripts/livetv_phase4_admin_service_test.ts` (71 checks) — mock-DB suites with REAL uniqueness + trigger + cascade parity: validation, source CRUD/immutable fields/priority ordering/builtin protection, entry mapping, channel CRUD + unmap/cascade deletes, candidate cross-channel guard + duplicates, endpoint authoring boundary (adapter-fed vs admin-authored), EPG source/mapping CRUD + both uniqueness directions, diagnostics planner parity (explicit/tvgId/ambiguous/unmatched/invalid + now/next), read-only config meta, error mapping/redaction.
+- `scripts/livetv_phase4_admin_ui_test.ts` (50 checks) — source-inspection suites: nav registration (desktop navGroups + Overview card mobile parity, no duplicate surface), requireAdmin on load + EVERY action (programmatically verified per action), rate-rule reuse, tab contract, impact-confirmed deletes, refresh-semantics wording, redaction (no `{@html}`, no signed-URL material, bounded samples, no URL fields in outcome rendering), unified_enablement read-only, no client live-tv imports, design-system reuse (no new z-index/dialog patterns).
+
+**Modified (additive only):**
+- `src/lib/components/admin2/AdminAppShell.svelte` — ONE nav item (`livetv` in the System group, `Tv` icon import). `AdminCommandMenu` receives navGroups and picks the entry up automatically.
+- `src/routes/admin/+page.server.ts` / `+page.svelte` — a Live TV metric card on the Admin Overview fed by `getLivetvAdminOverview(...).catch(() => null)` (the same graceful-degradation convention as the downloaders/addons cards; this is the mobile-reachability surface per the `mav_focused_admin_nav` §4/§5 contract).
+- `package.json` — the two new suites appended to `test:livetv` (now 23 suites; repo convention: suites join in the same PR).
+
+**NOT touched:** `src/lib/client/live-tv/**`, `src/lib/components/live-tv/**`, `src/routes/live-tv/**`, all VOD code, ALL migrations (zero schema changes — see P4-3), the Phase 2/3 JSON endpoints, netlify config, any database. Secret scan of the full diff: clean (no tokens/keys/credential-shaped strings).
+
+## Entry P4-3 — Migration decision (P2-8 review): NO migration
+
+- **Decision:** the report-only, bounded, per-instance refresh record is RETAINED; the Phase 4 Admin UI labels it honestly ("instance-local (per server instance)") on the Overview tab. The P2-8 persistent-refresh-history proposal stays deferred to Phase 7, where the scheduler makes durable history genuinely load-bearing.
+- **Rationale:** (a) the Admin UI's "last available refresh information" is fully served by the existing bounded records — the brief's phrasing ("last AVAILABLE") matches; (b) a new table now would add a production-DDL round-trip (migrations are applied manually via the SQL-Editor runbook), types, censuses and PGlite suites for data nothing acts on yet; (c) scope discipline: Phase 4 is the management UI, not a reliability phase.
+- **Consequence:** ZERO schema changes in Phase 4 — no migration file, no `database.types.ts` change, no census updates, `test:supabase` unchanged and green. No migration was applied to ANY database (production remains at the Phase 3 state; read-only).
+
+## Entry P4-4 — API routes and database operations
+
+- **New page actions (SvelteKit form actions on /admin/system/livetv, all requireAdmin-first):** sources `createSource/updateSource/toggleSource/reorderSources/deleteSource/refreshSource/refreshAllSources/previewSource`; entries `toggleEntry/mapEntry`; channels `createChannel/updateChannel/toggleChannel/deleteChannel`; candidates `addCandidate/updateCandidate/removeCandidate`; endpoints `addEndpoint/updateEndpoint/toggleEndpoint/deleteEndpoint`; EPG `createEpgSource/updateEpgSource/toggleEpgSource/deleteEpgSource/refreshEpgSource/refreshAllEpgSources/previewEpgSource/createEpgMapping/deleteEpgMapping`.
+- **Database operations:** exclusively SELECT/INSERT/UPDATE/DELETE on the existing Phase 1–3 `livetv_*` tables through supabase-js; RLS (`public.is_admin()` policies) remains the DB-level twin; config-version bumping happens via the EXISTING statement triggers (never written directly); `livetv_config_meta` is read-only.
+- **JSON API surface:** unchanged — `/api/admin/livetv/sources/*` and `/api/admin/livetv/epg/*` remain the programmatic endpoints (the UI consumes the service layer server-side, not via HTTP round-trips).
+
+## Entry P4-5 — Security and authorization decisions
+
+- `requireAdmin()` on the page load AND on every one of the 30 actions (suite-pinned per action; client-side visibility is never authorization).
+- Refresh/preview actions reuse the Phase 2/3 per-identity rate rules (`livetvAdminRefresh` 6/min, `livetvAdminPreview` 12/min, `livetvAdminEpgRefresh` 6/min, `livetvAdminEpgPreview` 12/min) → 429 with the standard envelope.
+- CSRF: SvelteKit's built-in form-action origin checks (repo convention for admin mutations); the JSON endpoints' `readJsonBody` content-type contract is untouched.
+- Every upstream fetch flows through the EXISTING Phase 2/3 bounded SSRF-guarded fetchers (no new fetch call sites exist in Phase 4 code; the UI performs zero client-side fetching).
+- Errors: typed `LivetvAdminError` static messages; the DB-error mapper converts constraint failures to safe actionable text; no stack traces, no raw provider responses, no signed URLs (redaction suite §11/§6).
+- Deletes: impact counts computed server-side; confirm dialog mandatory; builtin source delete refused app-side AND by the DB trigger; adapter-fed endpoint deletes refused (report-only stale strategy owns those rows).
+- RLS posture unchanged: fail-closed admin-only policies; no new roles; no anon access; `unified_enabled` reads fine, writes none.
+
+## Entry P4-6 — Verification (commands actually executed 2026-10-23)
+
+| # | Command | Exit | Result |
+|---|---|---|---|
+| 1 | `pnpm check` | 0 | **0 errors, 5 warnings** (the pre-existing `css_unused_selector` warnings — unchanged; the transient nested-form warning found during development was fixed via the HTML5 `form` attribute pattern) |
+| 2 | `pnpm run test:livetv` (23 suites: 21 pre-existing + Phase 4 ×2) | 0 | All green — **807 pre-existing checks + 71 (service) + 50 (UI) checks** |
+| 3 | `pnpm run test:admin` (16 suites) | 0 | All green — final suite `mav_focused_admin_nav_test: 58 passed, 0 failed` |
+| 4 | `pnpm run test:supabase` | 0 | 115 checks + `PASS supabase_final_audit_test — 107 checks` |
+| 5 | `pnpm run test:core` / `test:ux` / `test:providers` / `test:playback` / `test:platform` / `test:downloader` / `test:devices` / `test:analytics` / `test:hosting` / `test:cloudstream` / `test:player` / `test:mav` / `test:rendering` | **0 for every group** | Full 16-group chain covered group-by-group — every group exit 0 |
+| 6 | `pnpm run build` | 0 | vite build OK + Netlify adapter "✔ done" |
+| 7 | `git diff --check` | 0 | clean |
+| 8 | Secret scan on the full diff | — | clean (no credential-shaped strings; the suite fixtures use only fake example URLs) |
+
+- Test-writing notes: the Phase 4 mock DB implements REAL uniqueness + trigger parity (candidate cross-channel guard, builtin delete protection) + ON DELETE cascade/unmap parity, and a minimal embed resolver for the exact PostgREST embed shapes the service uses (count embeds incl. the 3-level cascade; reverse FK for endpoints→entries). One genuine routing-behavior find during UI development: wrapping the sources table in the reorder `<form>` nested forms inside per-row action forms — fixed with the HTML5 `form` attribute (no behavioral change; hydration-safe).
+
+## Entry P4-7 — Known limitations and remaining phases
+
+- **Refresh status remains per-instance** (serverless honesty): after a cold start or on a different Netlify function instance the Overview shows no recent activity until a refresh runs on THAT instance. Persistent history = the Phase 7 P2-8 decision.
+- **Endpoint/entry metadata editing** for adapter-fed sources is deliberately unavailable beyond enablement/ordering (the refresh owns provenance fields); source `capabilities` JSONB is not editable in the UI (capabilities remain as seeded/ingested — no documented admin workflow exists for them yet).
+- **Guide diagnostics derive identities from STORED programme rows** (bounded probe; capped label shown when hit) — the live-document view comes from refresh/preview outcomes. Very large guides (≥5000 stored rows per source) show the capped notice; a refresh recomputes exact numbers.
+- **Pagination bounds:** entries/channels/mappings paginate at 50/page; the mapping dropdowns load up to 500 canonical channels (documented Phase 4 scale; the Phase 5/6 serving layer should revisit for large catalogues).
+- **No scheduler, no bulk operations** (bulk mapping import, bulk enable) — not in the Phase 4 brief; candidates/dispatch stay configuration-only until Phase 5.
+- **Phases 5–8 remain NOT started** (per plan §11).
+
+## Entry P4-8 — Commit, push and PR outcome
+
+- **Commit:** `6cf3467` "feat(livetv): Phase 4 — unified Live TV admin management workspace" on branch `livetv/phase-4-admin-management` (one implementation commit; base `34bb4cd` = the Phase 3 merge on `main`; docs + code in the same commit per the Phase 1–3 convention).
+- **Push: BLOCKED — no credentials available in this session.** `git push origin livetv/phase-4-admin-management` fails with `could not read Username for 'https://github.com'`: unlike Phases 0–3, no PAT was provided to this session (the earlier PAT was scrubbed from `.git/config` after its session per the Phase 0 protocol, and no token/SSH key exists anywhere in this environment — checked git credential helpers, `~/.git-credentials`, `~/.ssh/`, shell profiles, env). NOT retried with fabrication, NOT worked around by committing tokens to the repo or remote URL (brief §5: "Never commit secrets or place tokens in Git remotes"). The verified branch sits ready to push.
+- **PR: NOT created** (push prerequisite unmet; same 403 PAT-permission outcome as Phases 1–3 is also expected). One-click PR creation once the branch is pushed: `https://github.com/Aman24-0/Mavero/pull/new/livetv/phase-4-admin-management`.
+- **`main` untouched:** still at `34bb4cd` (the Phase 3 merge) locally and remotely.
+
+## Entry P4-9 — Stop confirmation
+
+- Phase 4 scope only; Phase 5 NOT started (no resolution router, no dispatcher, no playback changes of any kind). `unified_enabled` remains FALSE and is now structurally unwritable from the admin workspace (suite-pinned). The user-facing /live-tv page, the LiveGT client, the playback engines and all VOD paths are byte-identical to `origin/main` (isolation verified via git status + the release-audit suites).
+
+## Entry P4-10 — Push and PR outcome (final git state, 2026-10-23)
+
+- **Credentials:** the owner provided a fine-grained PAT for this session. Per the Phase 0 protocol it was used ONLY as a one-shot push URL (`git -c credential.helper= push https://x-access-token:<PAT>@github.com/...`); it is NOT stored in `.git/config`, `~/.gitconfig`, `~/.git-credentials`, any git remote, or any commit (re-verified post-push: `git remote -v` shows the clean `https://github.com/Aman24-0/Mavero.git` URL; `git config --local --list` contains no token; no credential helper is configured). The token also never entered the worklog, the plan, or any source file.
+- **Pre-push verification:** `git fetch origin` exit 0; `origin/main` still `34bb4cd` (Phase 3 merge — unchanged); `git merge-base --is-ancestor origin/main HEAD` → YES (clean fast-forward); `git ls-remote` showed no pre-existing remote branch (no force-push situation); working tree clean.
+- **Push: VERIFIED, exit 0** — the implementation state was pushed first: `origin/livetv/phase-4-admin-management` = `66fbafd` ("docs(livetv): record Phase 4 push/PR outcome in the worklog"; tip carries the implementation commit `6cf3467`). GitHub accepted the new branch (`* [new branch]`) and offered the one-click PR link. This entry's own docs commit is pushed immediately afterwards in the same session (same protocol), so the final remote tip is the commit carrying this entry.
+- **PR creation: attempted via the GitHub API (`POST /repos/Aman24-0/Mavero/pulls`) and REJECTED — HTTP 403 `{"message":"Resource not accessible by personal access token"}`** (identical to the Phase 1/2/3 outcomes): the PAT's repo role is `admin/maintain/push/triage/pull` (verified via `GET /repos/Aman24-0/Mavero` → `"push": true`), but the fine-grained token does not carry the separate "Pull requests: write" permission. Per the brief, the PR was therefore NOT created by this task. One-click PR creation for the pushed branch: `https://github.com/Aman24-0/Mavero/pull/new/livetv/phase-4-admin-management`.
+- **`main` untouched:** still at `34bb4cd` locally and remotely; the push touched ONLY the new `livetv/phase-4-admin-management` branch.

@@ -48,7 +48,7 @@
     LayoutGrid, Library, Upload, AlertCircle, HardDrive, RefreshCw,
     Activity, History, TriangleAlert, Settings, Layers, Download, Puzzle,
     BarChart3, PanelLeftClose, PanelLeft, ArrowLeft,
-    Search, Command, ArrowRight
+    Search, Command, ArrowRight, Tv
   } from 'lucide-svelte';
   import AdminCommandMenu from './AdminCommandMenu.svelte';
 
@@ -138,6 +138,7 @@
       label: 'System',
       items: [
         { id: 'api-sources', label: 'API & Sources', href: '/admin/system/api-sources', icon: Settings, matchPrefix: '/admin/system/api-sources' },
+        { id: 'livetv', label: 'Live TV', href: '/admin/system/livetv', icon: Tv, matchPrefix: '/admin/system/livetv' },
         { id: 'content-rules', label: 'Content Rules', href: '/admin/system/content-rules', icon: Layers, matchPrefix: '/admin/system/content-rules' },
         { id: 'downloads', label: 'Downloads', href: '/admin/system/downloads', icon: Download, matchPrefix: '/admin/system/downloads' },
         { id: 'integrations', label: 'Integrations', href: '/admin/system/integrations', icon: Puzzle, matchPrefix: '/admin/system/integrations' },
