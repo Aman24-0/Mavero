@@ -76,6 +76,9 @@
   import { emptyLiveTvQualitySnapshot, type LiveTvQualitySnapshot } from '$lib/client/live-tv/quality';
   import { isLiveTvPlaybackError, type LiveTvPlaybackError } from '$lib/client/live-tv/player-errors';
   import { buildLiveTvEmbedUrl } from '$lib/client/live-tv/api';
+  // Phase 5 — the same-document https guard for the unified router's embed
+  // src (pure; the component still never spells any provider host).
+  import { isSafeLivetvEmbedSrc } from '$lib/client/live-tv/resolution-router';
   import { createLiveTvFullscreenOrientationCoordinator } from '$lib/client/live-tv/fullscreen-orientation';
   import { isLiveTvOverlayShown } from '$lib/client/live-tv/player-overlay';
   import { describeLivePosition, formatBehindLive } from '$lib/client/live-tv/epg';
@@ -89,6 +92,8 @@
     onuseraction = () => {},
     embedChannelId = null,
     embedReloadToken = 0,
+    unifiedEmbedSrc = null,
+    onembedready = () => {},
     video = $bindable()
   }: {
     /** The page's LT-3 engine for the active session (null between sessions). */
@@ -120,6 +125,20 @@
      * never re-instantiates Shaka).
      */
     embedReloadToken?: number;
+    /**
+     * Phase 5 — the unified router's embed src (a VALIDATED https URL from
+     * the server's bounded candidate list, or the documented LiveGT embed
+     * URL built client-side). Rendered ONLY after the same-document https
+     * guard passes (isSafeLivetvEmbedSrc) — no arbitrary src can ever reach
+     * the iframe through this prop. Null unless a unified session mounted
+     * an embed candidate; the legacy embedChannelId prop takes precedence.
+     */
+    unifiedEmbedSrc?: string | null;
+    /**
+     * Phase 5 — forwarded iframe load event (the router's bounded embed
+     * load window is released by it). A no-op for the legacy fallback.
+     */
+    onembedready?: () => void;
     /** The page-owned video element rendered here (bindable, page binds it). */
     video?: HTMLVideoElement | undefined;
   } = $props();
@@ -243,12 +262,17 @@
     }
   });
 
-  // ---- LT-15 — embed fallback (documented LiveGT embed player) ----------
-  // The iframe src is built EXCLUSIVELY from the LT-2 client's base-URL
-  // constant + the strictly validated numeric channel id (the builder
-  // returns null for anything else → no iframe is ever mounted). The URL
-  // is never taken from API wire data and never persisted anywhere.
-  const embedSrc = $derived(embedChannelId !== null ? buildLiveTvEmbedUrl(embedChannelId) : null);
+  // ---- LT-15 / Phase 5 — embed fallback (validated embed surfaces) ------
+  // LEGACY path: the iframe src is built EXCLUSIVELY from the LT-2 client's
+  // base-URL constant + the strictly validated numeric channel id (the
+  // builder returns null for anything else → no iframe is ever mounted).
+  // The URL is never taken from API wire data and never persisted anywhere.
+  // UNIFIED path (Phase 5): the router's validated https src renders only
+  // after the same-document guard passes. Legacy takes precedence; both
+  // feed the SAME single-iframe surface (exactly one iframe at a time).
+  const embedSrc = $derived(
+    embedChannelId !== null ? buildLiveTvEmbedUrl(embedChannelId) : isSafeLivetvEmbedSrc(unifiedEmbedSrc)
+  );
   const embedActive = $derived(embedSrc !== null);
   // Subtle "Switching…" state: shown from the moment the fallback mounts
   // until the embed page's own load event fires (a fresh mount resets it).
@@ -257,6 +281,7 @@
     // Re-run on every fresh mount (channel change or reload token bump).
     void embedChannelId;
     void embedReloadToken;
+    void unifiedEmbedSrc;
     embedLoaded = false;
   });
 
@@ -672,6 +697,7 @@
             allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
             onload={() => {
               embedLoaded = true;
+              onembedready(); // Phase 5: passive notify (bounded embed window)
             }}
           ></iframe>
         {/key}
