@@ -2367,6 +2367,67 @@ export type Database = {
           },
         ]
       }
+      // Added by 20261121000000_livetv_epg_guide_data.sql — Phase 3 of the
+      // Unified Live TV project: parsed XMLTV programme windows keyed by the
+      // guide's own channel identity; absolute UTC instants (timestamptz);
+      // idempotent via (epg_source_id, epg_channel_id, start_at, end_at);
+      // FK cascade into livetv_epg_sources only. Guide data — never playback.
+      livetv_epg_programmes: {
+        Row: {
+          id: string
+          epg_source_id: string
+          epg_channel_id: string
+          start_at: string
+          end_at: string
+          title: string
+          sub_title: string | null
+          description: string | null
+          category: string | null
+          icon_url: string | null
+          language: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          epg_source_id: string
+          epg_channel_id: string
+          start_at: string
+          end_at: string
+          title: string
+          sub_title?: string | null
+          description?: string | null
+          category?: string | null
+          icon_url?: string | null
+          language?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          epg_source_id?: string
+          epg_channel_id?: string
+          start_at?: string
+          end_at?: string
+          title?: string
+          sub_title?: string | null
+          description?: string | null
+          category?: string | null
+          icon_url?: string | null
+          language?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'livetv_epg_programmes_epg_source_id_fkey'
+            columns: ['epg_source_id']
+            isOneToOne: false
+            referencedRelation: 'livetv_epg_sources'
+            referencedColumns: ['id']
+          },
+        ]
+      }
       // Added by 20261004000000_unified_downloader_global_order.sql.
       // FINAL TASK (unified Mavero Downloader): the ONE canonical global
       // source order spanning BOTH unified-downloader source kinds:

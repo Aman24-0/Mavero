@@ -444,3 +444,152 @@ Environment: Node `v24.21.0`, pnpm `10.30.3` (exact `packageManager` pin). All c
 - **Push:** the dedicated branch was pushed to `origin` per the Phase 2 brief §12 (never `main`; no force-push; the PAT was used via a one-shot push URL and `git remote -v` confirms no token persisted in `.git/config`). Verified: `origin/livetv/phase-2-source-adapters` = `a4b3c5e`.
 - **PR creation:** the provided fine-grained PAT does NOT carry the "Pull requests: write" permission — the GitHub API returned "Resource not accessible by personal access token" (identical to the Phase 1 outcome, P1-12). Per brief §12 ("Open a PR if permissions allow"), the PR was therefore NOT created by this task. One-click PR creation for the pushed branch: `https://github.com/Aman24-0/Mavero/pull/new/livetv/phase-2-source-adapters`.
 - **`main` untouched:** still at `92786e7` remotely and locally.
+
+
+---
+
+# PHASE 3 — EPG/XMLTV Ingestion, Channel Mapping & Guide Data (executed 2026-10-22)
+
+## Entry P3-0 — Kickoff, base commit, and prerequisite checks
+
+- **Start time:** 2026-10-22 ~15:00 UTC. Execution environment: Linux sandbox; Node `v24.21.0`; pnpm `10.30.3` (exact `packageManager` pin); dependencies present from the committed lockfile.
+- **Working-tree anomaly (investigated, non-destructively resolved):** after the container restart, 435 files showed as modified with **0 insertions/0 deletions** — pure file-mode changes (100644→100755, an environment permission artifact, NOT user content). Resolved with `git config core.filemode false` (a local-config-only, non-destructive fix; no file content touched, no checkout/reset used). Tree then verified clean at `6797d53`.
+- **Phase 2 merge verified:** `git fetch` → `origin/main` head `527faf3` = "Merge pull request #18 from Aman24-0/livetv/phase-2-source-adapters"; `git merge-base --is-ancestor 6797d53 origin/main` → YES. Base commit for Phase 3: `527faf3`.
+- **Branch:** `livetv/phase-3-epg-xmltv` created from `origin/main` (never `main`; no force-push/reset/clean anywhere).
+- **Repository instructions:** no `AGENTS.md`/`CLAUDE.md` exists (re-verified by search). Read before any change: `docs/livetv/LIVETV_PLAN.md` (full), `docs/livetv/LIVETV_WORKLOG.md` (full, all Phase 0–2 entries preserved untouched), the Phase 1 migration, `registry.ts`, `fetch-safe.ts`, `adapters/types.ts`, `ingestion.ts`, `refresh-service.ts`, the Phase 2 admin routes, `src/lib/client/live-tv/epg.ts`, the release-audit isolation rules, the PGlite migration-test conventions, the mock-DB conventions of the Phase 2 suites, and both migration-census registries.
+- **Migration-history prerequisite:** no schema-history probe was needed for a blocker decision — the Phase 3 migration is ADDITIVE REPOSITORY EVIDENCE ONLY and is explicitly NOT applied to any database (the owner applies it via the SQL Editor runbook, `docs/supabase-migration-runbook.md`). The documented discrepancy from Phase 2 (manual application does not write `schema_migrations`) remains the expected project reality; nothing was reapplied, fabricated, or executed against production.
+
+## Entry P3-1 — Parser selection and security evidence (brief §4.1)
+
+- **Choice: cheerio 1.0.0** — an ALREADY-INSTALLED, maintained repository dependency (used server-side by the CloudStream modules). NO new dependency was added.
+- **Configuration:** `load(text, { xml: true })` → the htmlparser2 tokenizer in XML mode with entity decoding enabled (verified: predefined + numeric entities decode; nothing else).
+- **Probed security behavior against the installed version (evidence recorded here and PINNED by the suite, §13 of the parse suite):**
+  1. A DOCTYPE with `SYSTEM`/`PUBLIC` external ids is INERT — nothing is ever fetched (probed with an external-URL DTD; document parses, zero network).
+  2. DTD-declared entities are NEVER expanded — a billion-laughs-style declaration chain produces the LITERAL text (`&lol;`, 5 chars, not the 10^3 expansion); only predefined + numeric references decode.
+  3. Deep nesting does not recurse per level (5000-level probe parses without stack failure); the module ADDITIONALLY bounds depth at 64 via its own scanner.
+  4. The tokenizer is TOLERANT (malformed XML does not throw) — therefore `xmltv.ts` performs EXPLICIT document-structure validation (root must be `<tv>`, required attributes checked per record) and treats structural violations as typed document-level failures. Tolerance is never mistaken for validity.
+- **Consequence:** XXE, external DTD fetch, entity expansion and resource-exhaustion-via-entities are structurally impossible; resource exhaustion via SIZE is bounded by the module (next entry).
+
+## Entry P3-2 — Input safety and bounds (brief §4.1)
+
+- **Compression detected by CONTENT** (gzip magic `1f 8b`), never by filename or content-type; invalid gzip and truncated payloads fail as typed `invalid_gzip`; decompression uses zlib `gunzipSync(..., { maxOutputLength })` — a 20 MiB gzip bomb probe is stopped by the 16 MiB decompressed budget (typed `decompression_too_large`).
+- **Separate budgets:** compressed bytes ≤ 12 MiB (enforced by the shared fetcher AND re-checked), decompressed ≤ 16 MiB, channels ≤ 5 000, programmes ≤ 50 000, title ≤ 500 / sub-title ≤ 500 / description ≤ 2 000 / category ≤ 120 (DB parity), guide ids ≤ 200 with the whitespace/control ban (DB parity), nesting depth ≤ 64, parse deadline 15 s (injectable clock), external AbortSignal honored between records.
+- **Encoding policy:** bytes decode as UTF-8; an XML declaration naming any other encoding is a typed document-level failure (`unsupported_encoding`) — silently misreading encodings would fabricate data. BOM tolerated/stripped.
+- **Record isolation:** one malformed channel/programme is a counted skip with a static reason (+ bounded sanitized samples of rejected ids); document-level violations (structure, caps, deadline, decompression) fail the WHOLE document — no partial snapshot is ever produced for persistence.
+- **No fabrication:** icons are stored only when genuinely supplied (and https-only, DB parity); display names/language ride along verbatim and bounded; nothing invented anywhere.
+- **Fetcher extension (ONE implementation):** `fetchLivetvSourceBytes` — an additive raw-bytes mode INSIDE the existing guarded `fetch-safe.ts` pipeline: the same stage-1+stage-2 SSRF guards on the initial URL and every redirect hop, connect-time re-validation, https-only re-assertion, deadline/byte-cap/redirect-cap, and the HTML-is-never-a-document gate. No parallel/weaker fetcher exists.
+
+## Entry P3-3 — Timestamp and timezone policy (brief §5)
+
+- Implemented in `epg/time.ts` (pure; no ambient locale/clock; Intl-based with an explicitly-passed IANA timezone):
+  - **Explicit offsets are mechanical** (instant = wall − offset; ±HHMM validated, real-world ±14:00 magnitude cap); `clumpidx` (`/N`) suffix tolerated and ignored for window purposes.
+  - **Timezone-less values are interpreted ONLY in the CONFIGURED IANA timezone** (`livetv_epg_sources.config.defaultTimezone`, validated at the config boundary via `assertValidIanaTimezone`). With no configured timezone they are per-record typed skips (`missing_timezone`) — the server's local zone is NEVER assumed.
+  - **DST rules (documented, deterministic, tested):** ambiguous fall-back times resolve to the EARLIER instant (first occurrence, DST side); nonexistent spring-forward times map via the PRE-transition offset (post-gap reading). Probed for America/New_York 2024-11-03 01:30 (→ 05:30Z) and 2024-03-10 02:30 (→ 07:30Z).
+  - **Validation:** component-wise calendar checks (no Date rollover: Feb 30 invalid; leap-day valid), time bounds (leap second 60 rejected), `end <= start` skipped per record; a formatting helper exists for deterministic fixtures only.
+
+## Entry P3-4 — Channel mapping (brief §7)
+
+- `epg/mapping.ts` — PURE planner over the existing Phase 1/2 model (no second registry, no duplicate catalogue):
+  1. **Explicit admin overrides first:** rows of `livetv_epg_channel_mappings` for this guide source (1:1 both ways, DB-enforced) are authoritative. The schema already represents them safely, so overrides are CONSUMED (exact match, then NFKC+trim normalized match; two rows agreeing after normalization but disagreeing on channel → ambiguous, never guessed).
+  2. **tvgId auto-match second:** a guide id matches only when the normalized id equals the normalized `tvg_id` of source entries AND every MAPPED entry with that identity agrees on ONE canonical channel (unmapped entries never vote). Disagreement → `ambiguous`. Display names are NEVER identity; matching is case-sensitive after NFKC+trim (a case-different id resolves to its OWN channel, never merges).
+  3. Otherwise `unmatched` — reported with counts + bounded samples; a mapping is NEVER created or mutated by ingestion (an unmatched guide channel cannot corrupt a valid mapping; mapping-row admin tooling is Phase 4).
+- Diagnostics: matched (explicit/tvgId split), unmatched, ambiguous, invalid — over every DISTINCT guide identity the document revealed (declared channels + programme references + rejected id samples).
+
+## Entry P3-5 — Persistence, idempotency, refresh safety (brief §8)
+
+- `epg/ingestion.ts` — pure plan (`planGuideIngestion`) + bounded executor (`applyGuideIngestion`):
+  - **Idempotency keyed by the DB uniqueness** `(epg_source_id, epg_channel_id, start_at, end_at)`: a repeat import of unchanged input plans ZERO writes (all records land `unchanged`) and the executor therefore performs zero writes (mock-DB proven; PGlite proves the same convergence against REAL DDL via ON CONFLICT).
+  - **Programme rows carry NO admin-owned fields** (unlike playback endpoints) — the row is fully source-derived, so upserts cannot clobber admin state; mapping rows are a different table and are never written.
+  - **Nothing is ever deleted by a refresh.** Upstream-omitted rows are counted (`programmesMissingUpstream`, report-only) — a transient failure can never erase the guide; rows outside the imported window are untouched and age out via retention.
+  - **Staging/snapshot honesty:** there is NO atomic snapshot switch and none is claimed (PostgREST has no multi-statement transaction). The design does not need one: refreshes only add/update in place, so readers never see an empty guide mid-refresh, and a failed/cancelled refresh leaves the last good guide byte-identical (tested: network failure AND corrupt payload after a good refresh).
+  - **Bounded batches** (500 rows) with per-item retry isolation on batch failure (one bad row never aborts the import); error samples bounded.
+- The refresh NEVER mutates `livetv_epg_sources` (enabled/status), channels, source entries, endpoints, candidates, or `unified_enabled`; one failed refresh never marks the source unavailable (mock-DB write-log assertions).
+
+## Entry P3-6 — Retention and stale-guide behavior (brief §9)
+
+- `epg/retention.ts` — ONE rule: rows whose window has fully ENDED before `now − 24h` (grace) are deleted in bounded batches (500/batch, ≤ 40 batches per call; repeated calls converge). The cutoff is strictly in the past, so **current and upcoming programmes are structurally unreachable** (unit-proven on the mock DB AND PGlite-evaluated on real timestamps). Cutoff/batch validation (finite clock, 0–30-day window); idempotent (second sweep deletes 0). Runs best-effort after successful persistence (a retention failure is never a refresh failure). NO scheduler (Phase 7). No Admin UI, no user-facing diagnostics.
+- Stale-guide behavior: the last good snapshot is served unchanged after a failed refresh (its rows simply age); honest gaps render as no data (helpers return null/[]). Refresh state remains REPORT-ONLY (per-instance bounded record, `getLivetvEpgRefreshOutcomes` + status endpoint) — persistent history stays the Phase 2 P2-8 proposal for Phase 4 review.
+
+## Entry P3-7 — Current/upcoming helpers (brief §10)
+
+- `epg/queries.ts` — source-agnostic server-side helpers, NOT wired into `/live-tv`:
+  - `resolveEpgTargets` (explicit mappings first; then the tvgId auto-path with an AMBIGUITY GUARD — an identity claimed by another canonical channel serves nothing; only enabled+eligible guide sources considered; deterministic target ordering).
+  - `getCurrentEpgProgramme` (`start <= now < end`; most-specific window wins via latest start; ties broken deterministically by earliest end then title — overlaps can never produce nondeterministic results; explicit `now` argument for deterministic tests).
+  - `getUpcomingEpgProgrammes` (`start > now`, stable UTC ordering, bounded limit ≤ 50, optional horizon; the current programme excluded; coverage gaps honestly return fewer/empty rows).
+  - Provenance (source + guide id + mapping mechanism) rides on every returned row.
+
+## Entry P3-8 — API surface and security boundaries (brief §11)
+
+- THREE admin-only endpoints mirroring the Phase 2 conventions: `POST /api/admin/livetv/epg/refresh` (`{epgSourceId|slug|all}`, exactly one mode), `POST /api/admin/livetv/epg/preview` (dry-run, zero writes), `GET /api/admin/livetv/epg/status` (bounded per-instance outcomes). All: `requireAdmin` FIRST, per-identity rate limits (NEW additive rules `livetvAdminEpgRefresh` 6/min, `livetvAdminEpgPreview` 12/min), 256 KiB body cap, standard `{ok:false,error:{code,message}}` envelope, `no-store`. No admin UI, no user-facing surface, no public guide API — nothing becomes an XMLTV proxy (only admin-registered source URLs are fetched, through the shared guarded fetcher).
+- Diagnostics redaction (suite-asserted): no upstream URLs/query strings/tokens, no raw XML, no credentials anywhere in outcomes, samples, or status records; fetch-error messages remain the static Phase 2 strings.
+- `unified_enabled` remains FALSE; nothing in Phase 3 is on any user path.
+
+## Entry P3-9 — Verification (commands actually executed 2026-10-22)
+
+Environment: Node `v24.21.0`, pnpm `10.30.3`. All commands from repo root; exit codes captured verbatim.
+
+| # | Command | Exit | Result |
+|---|---|---|---|
+| 1 | `pnpm check` | 0 | **0 errors, 5 warnings** (the pre-existing `css_unused_selector` warnings documented since Phase 0 — unchanged, not "fixed") |
+| 2 | `pnpm exec tsx --tsconfig ./jsconfig.json scripts/livetv_phase3_xmltv_test.ts` | 0 | **78 checks PASSED** (plain/gzip/truncated/bomb/encoding/malformed/DTD-inert/entity-expansion/nesting/caps/deadline/abort/offsets/timezone-less/DST/multi-tz/invalid windows/redaction + pinned parser-behavior regressions) |
+| 3 | `pnpm exec tsx --tsconfig ./jsconfig.json scripts/livetv_phase3_epg_pipeline_test.ts` | 0 | **102 checks PASSED** (mapping §13/§14; ingestion idempotency + executor isolation §15; eligibility/config/failure taxonomy §16; snapshot preservation §16c; happy-path gzip refresh + honest counts §17; retention §18; helper boundaries §19; duplicate-refresh guard/preview/all-mode isolation §20b; redaction §21b; LiveGT client-EPG regression §22) |
+| 4 | `pnpm exec tsx --tsconfig ./jsconfig.json scripts/livetv_phase3_epg_migration_test.ts` | 0 | **33 checks PASSED** (apply + idempotent replay over the Phase 1 family; CHECK contracts incl. window ordering/title/https-icon/id-shape; DB-level upsert convergence; FK cascade scope; RLS fail-closed matrix incl. granted-non-admin zero rows + denied write; updated_at + version-bump triggers; retention predicate + indexes on real timestamps) |
+| 5 | `pnpm run test:livetv` (21 suites) | 0 | All green — pre-existing suites unchanged (62/91/22/…/162 checks) + the three new Phase 3 suites |
+| 6 | `pnpm run test:supabase` | 0 | 115 checks (remediation migration) + `PASS supabase_final_audit_test — 107 checks` |
+| 7 | `pnpm run test:admin` (16 suites) | 0 | All green — final suite `mav_focused_admin_nav_test: 58 passed, 0 failed` |
+| 8 | `pnpm run test:core` / `test:ux` / `test:providers` / `test:playback` / `test:platform` / `test:downloader` / `test:devices` / `test:analytics` / `test:hosting` / `test:cloudstream` / `test:player` / `test:mav` / `test:rendering` | **0 for every group** | Full 16-group chain covered group-by-group (with #5–#7 completing livetv/admin/supabase) |
+| 9 | `pnpm run build` | 0 | vite build OK + Netlify adapter "✔ done" + executor function written |
+| 10 | `git diff --check` | 0 | No whitespace/conflict-marker issues |
+| 11 | Secret scan of the full diff + all new files (PAT/keys/DB password/project-ref patterns) | clean | Only fixture-safe strings; no credentials anywhere |
+| 12 | Isolation census of `git status` | clean | ZERO diffs under `src/lib/client/**`, `src/lib/components/**`, `src/routes/live-tv/**`, `src/lib/server/streaming/**`, `src/lib/server/cloudstream/**`, `netlify.toml`, deployment config |
+
+- Test-writing notes (all behavioral, resolved by fixing the SUITE or a genuine bug): a REAL bug was caught and fixed via the suite (planned programme upsert rows initially omitted `epg_source_id` — would violate the NOT NULL/FK on the real DB; fixed and now suite-pinned); one parser count was corrected to include stop timestamps (provenance honesty); fixture corrections (real gzip magic bytes; a 20 MiB bomb to actually exceed the budget; the HTML gate surfaces as `unsupported_media_type` before parsing, as designed); a PGlite date-comparison was moved to DB-evaluated SQL (JS Date round-trip is not a reliable string comparison); both migration censuses re-registered per the established convention (19→20, 16→17).
+- Not run / not applicable: no migration applied to ANY database (the Phase 3 migration is owner-applied via the runbook); no production access (no probes at all this phase); no playback/stream tests (Phase 5+); `pnpm test` as a single top-level invocation is executed by CI on push — this session ran all 16 constituent groups with individual exit codes (all 0).
+
+## Entry P3-10 — Files created/modified by Phase 3
+
+**Created:**
+- `supabase/migrations/20261121000000_livetv_epg_guide_data.sql` — the additive `livetv_epg_programmes` table + indexes/triggers/RLS (completing the Phase 1 EPG model).
+- `src/lib/server/livetv/epg/time.ts` — the XMLTV timestamp/timezone policy (pure).
+- `src/lib/server/livetv/epg/xmltv.ts` — document decoding (gzip/encoding) + the bounded XMLTV parser.
+- `src/lib/server/livetv/epg/mapping.ts` — the pure guide→canonical mapping planner.
+- `src/lib/server/livetv/epg/ingestion.ts` — the pure plan + bounded batch upsert executor.
+- `src/lib/server/livetv/epg/retention.ts` — the bounded past-only retention sweep.
+- `src/lib/server/livetv/epg/queries.ts` — current/upcoming helpers (not wired into any UI).
+- `src/lib/server/livetv/epg/guide-service.ts` — refresh orchestration, outcomes, preview, EPG config validation.
+- `src/routes/api/admin/livetv/epg/{refresh,preview,status}/+server.ts` — the three admin-only endpoints.
+- `scripts/livetv_phase3_xmltv_test.ts` (78 checks), `scripts/livetv_phase3_epg_pipeline_test.ts` (102), `scripts/livetv_phase3_epg_migration_test.ts` (33).
+
+**Modified (additive only):**
+- `src/lib/server/livetv/fetch-safe.ts` — ONE additive raw-bytes mode (`fetchLivetvSourceBytes` + `LivetvBinaryFetchResult` + a bytes body reader); every existing property/path unchanged (the full Phase 2 suite still passes).
+- `src/lib/server/supabase/database.types.ts` — the `livetv_epg_programmes` type group added (hand-maintained "Added by …" convention).
+- `src/lib/server/http/rate-limit.ts` — TWO additive rule keys (`livetvAdminEpgRefresh`, `livetvAdminEpgPreview`). Existing rules untouched.
+- `package.json` — the three new suites appended to the `test:livetv` chain (repo convention).
+- `scripts/cloudstream_registry_integration_test.ts` (§A10 19→20) + `scripts/cloudstream_phase4_integration_manager_test.ts` (F3 16→17) — the two migration-census registries updated per their established convention (every prior migration did the same registration).
+- `docs/livetv/LIVETV_PLAN.md` — Phase 3 marked executed with ratified deviations; header status updated.
+
+**NOT touched:** `src/lib/client/live-tv/**`, `src/lib/components/live-tv/**`, `src/routes/live-tv/**`, all VOD code, ALL pre-existing migrations, netlify/deployment config, any database. Secret-scanned the full diff: only fixture-safe strings; no real credentials anywhere.
+
+## Entry P3-11 — Known limitations and remaining phases
+
+- **No atomic snapshot switch** (documented, not claimed) — convergence-by-upsert instead; readers never see an empty guide mid-refresh.
+- **No persistent refresh health/history** (report-only, per-instance) — the Phase 2 P2-8 additive-schema proposal remains with Phase 4 review.
+- **No mapping CRUD** — explicit `livetv_epg_channel_mappings` rows are consumed when present (seedable via SQL by the owner) but no admin tooling exists yet (Phase 4). The tvgId auto-path is case-sensitive after NFKC+trim; exotic spellings need explicit mappings.
+- **Bounded guide sizes** (12 MiB compressed / 16 MiB decompressed / 50k programmes per import) — oversized guides fail with typed errors; operators should configure per-region guide URLs (documented policy, not a bug).
+- **Lingering future rows for guide-dropped channels** — report-only (`programmesMissingUpstream`) until their windows end (retention only deletes the past; the brief forbids deleting upcoming data).
+- **No scheduler** (Phase 7); **no Admin UI** (Phase 4); **no playback/unified integration** (Phase 5+); queries/unified catalogue intentionally NOT wired into `/live-tv`.
+- `loadEpgSourceRow`/mapping loads are simple bounded queries at Phase 3 scale; the Phase 4/5 serving layer should paginate if guide sources grow beyond current bounds.
+- **Phases 4–8 remain NOT started** (per plan §11).
+
+## Entry P3-12 — Phase 3 stop confirmation
+
+- **Phase 4+ implementation has NOT started.** The diff contains only: the additive migration, the new server EPG modules, the additive fetcher mode/types/rate rules, the three admin endpoints, the three test suites (+ chain wiring + census registration), and this documentation.
+- **No golden behavior changed:** `/live-tv` behavior is byte-identical (unified switch still FALSE; zero client/component/route diffs); the existing LiveGT client, Shaka engine, media-auth, embed fallback and VOD surfaces are untouched (isolation census + full 16-group regression chain green).
+- **No database, deploy configuration, or production state was modified.** The unified switch remains disabled.
+
+## Entry P3-13 — Push and PR outcome (final git state)
+
+- **Commit:** `f6099ba` "feat(livetv): Phase 3 — EPG/XMLTV ingestion, channel mapping & guide data" on branch `livetv/phase-3-epg-xmltv` (one implementation commit; base `527faf3` = the Phase 2 merge on `main`). A follow-up docs-only commit records this entry.
+- **Push:** VERIFIED — `origin/livetv/phase-3-epg-xmltv` = `f6099ba` (pushed via a one-shot PAT URL; `git remote -v` and the git config re-checked afterwards — no token persisted anywhere).
+- **PR creation:** attempted via the GitHub API (`POST /repos/Aman24-0/Mavero/pulls`) and REJECTED — HTTP 403 `{"message":"Resource not accessible by personal access token"}`: the provided fine-grained PAT does NOT carry the "Pull requests: write" permission (identical to the Phase 1/2 outcomes). Per the brief, the PR was therefore NOT created by this task. One-click PR creation for the pushed branch: `https://github.com/Aman24-0/Mavero/pull/new/livetv/phase-3-epg-xmltv`.
+- **`main` untouched:** still at `527faf3` remotely and locally.
