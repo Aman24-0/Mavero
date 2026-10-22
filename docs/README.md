@@ -48,6 +48,7 @@ configuration (`.env.example`, `netlify.toml`, `package.json`, `pnpm-lock.yaml`,
 | [`docs/device-auth/`](device-auth/) | Device-auth/QR family: the design spec (`Newtask.txt` — still cited by section number in `src/` comments and session-suite headers) + the integration worklog that implemented it. |
 | [`docs/hosting/`](hosting/) | Vidara/Abyss hosting implementation plan + worklog. |
 | [`docs/live-tv-plan.md`](live-tv-plan.md) | Live TV plan — kept filename-stable; name-cited by frozen migration `20261103000000_live_tv_analytics_events.sql` (its historical worklog is archived at `docs/archive/round-reports/live-tv-worklog.md`). |
+| [`docs/livetv/`](livetv/) | Unified Live TV source-management program: [`LIVETV_PLAN.md`](livetv/LIVETV_PLAN.md) (multi-phase roadmap; Phase 0 audit complete) + [`LIVETV_WORKLOG.md`](livetv/LIVETV_WORKLOG.md) (Phase 0 execution evidence). Cross-references the frozen `live-tv-plan.md` without altering it. |
 | [`docs/supabase/`](supabase/) | Supabase remediation report (name-cited by migrations `20261118…`/`20261119…`) + post-apply verification SQL (path-pinned by `scripts/supabase_final_audit_test.ts`). |
 | [`docs/player/`](player/) | Landscape-player reports (4) + universal-resolver design/completion records (2). |
 | [`docs/provider-evaluations/`](provider-evaluations/) | Phase 7E provider evaluations/verifications (12), Phase 7F (3), Phase 7G (3). |

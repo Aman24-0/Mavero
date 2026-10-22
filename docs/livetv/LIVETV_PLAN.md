@@ -1,0 +1,559 @@
+# MAVERO — Unified Live TV Source Management — Master Plan
+
+**Status:** DRAFT — Phase 0 (Baseline & Architecture Audit) evidence incorporated; Phases 1+ NOT authorized and NOT started.
+**Date:** 2026-10-22
+**Baseline commit audited:** `120c4b5b429d1a361082db9af181c34c179f9fc5` (branch `main`, clean tree, synced with `origin/main`)
+**Phase 0 execution log:** [`LIVETV_WORKLOG.md`](LIVETV_WORKLOG.md) (append-only, evidence-based)
+**Historical Live TV documents (kept intact, cross-referenced — never replaced):**
+- [`docs/live-tv-plan.md`](../live-tv-plan.md) — the completed LiveGT V1 integration plan (filename-frozen: cited by migration `20261103000000_live_tv_analytics_events.sql:10`; must never move or be renamed).
+- [`docs/archive/round-reports/live-tv-worklog.md`](../archive/round-reports/live-tv-worklog.md) — the archived V1 implementation worklog (incl. the Shaka integration audit against shaka-player 5.2.12).
+
+**Evidence labeling convention used in this document:**
+- **[FACT]** — verified directly against the repository at the baseline commit (exact path given) or against a live read-only probe recorded in the worklog.
+- **[ASSUMPTION]** — plausible but NOT yet verified; must be confirmed in the phase where it becomes load-bearing.
+- **[DECISION REQUIRED]** — an open product/architecture question the owner must answer before the affected phase starts.
+
+---
+
+## 1. Product Objective and Scope
+
+### 1.1 Objective
+
+Build a **unified Live TV management system** in which an administrator can, from the existing Admin panel:
+
+1. Configure **multiple authorized Live TV sources** (playlists, documented provider APIs, embed providers, manual direct streams, EPG/XMLTV guide sources) in one place.
+2. Manage them **centrally**: add/edit/enable/disable, refresh, validate, inspect parsed channels, set priority, and choose the active source — with safe deletion and clear validation/error reporting.
+3. **Control exposure**: decide which enabled sources and which channels are visible on the user-facing `/live-tv` page.
+4. Observe **health**: source refresh status, parsing errors, per-source channel counts, and playback diagnostics without touching production streams.
+
+The user-facing Live TV page continues to work exactly as it does today (LiveGT V1 as the built-in first source), and is progressively extended to render channels from the enabled source set with real metadata (logos, categories, current programme, programme artwork where genuine metadata exists, progress and upcoming schedule).
+
+### 1.2 In scope (source types to support, where technically and legally appropriate)
+
+| Source type | Description | Current-state anchor |
+|---|---|---|
+| `builtin_livegt_v1` | The existing LiveGT V1 API integration (catalogue, guide, fresh signed DASH/ClearKey resolution) | [FACT] `src/lib/client/live-tv/api.ts` — becomes a registered, non-deletable built-in source |
+| `m3u_playlist` | M3U/M3U8 playlist URLs (e.g. iptv-org-style public playlists or authorized private ones) | [FACT] no parser exists yet; format verified reachable (worklog §R) |
+| `api_provider` | Documented JSON provider APIs (channel catalogue + optional guide) | [FACT] LiveGT V1 itself is the reference contract; generic adapter is new |
+| `embed_provider` | Embed (iframe) playback providers with documented postMessage protocols | [FACT] VOD side already has 14 embed adapters (`src/lib/client/player/adapter-registry.ts`); the LiveGT documented embed fallback (`/embed/{id}`) is the Live TV precedent |
+| `manual_stream` | Manual, authorized direct stream URLs (HLS/DASH/MP4) entered by an admin | [FACT] analogous VOD patterns exist (`streaming_sources` templates, `direct_play_sources` out-of-band table — worklog §DB-3) |
+| `epg_xmltv` | XMLTV guide sources (optionally gzip), mapped onto channels by ID | [FACT] none exists; LiveGT V1 JSON guide is the only guide today |
+
+### 1.3 Capability honesty (non-negotiable design rule)
+
+No provider supports all capabilities. Every source carries **capability flags** (§4.3) and the UI must never present an unsupported capability as available (e.g. no fake EPG for a playlist without guide data, no logo placeholder presented as channel artwork, no fake progress bar for non-seekable live streams — the existing rule in [`docs/live-tv-plan.md`](../live-tv-plan.md) §7 "Never show a fake VOD progress bar" is extended to all sources).
+
+### 1.4 Explicit non-goals (whole project)
+
+- **No** LiveGT V2 adoption ([FACT] V1 plan §2 forbids it; this project does not change that).
+- **No** universal open stream proxy. Any server-side fetching is limited to **configuration data** (playlists, EPG, provider catalogue JSON) behind SSRF guards — never arbitrary media relay. Server-side media relay remains a [DECISION REQUIRED] (§13.1) with a default answer of "no".
+- **No** DRM circumvention, geo-restriction bypass, header spoofing to defeat access controls, or use of undocumented provider interfaces. Future sources must be authorized streams and documented interfaces ([FACT] consistent with live-tv-plan §15 and repo security conventions).
+- **No** replacement or rework of the VOD player, resolver, hosting, downloaders, CloudStream, device auth, or any unrelated subsystem.
+- **No** wholesale adoption of JioTv_STB_Relay behavior (reference-only; §13.1).
+- **No** automatic silent fallback between sources: fallback is explicit, configured, and bounded (§4.5).
+
+---
+
+## 2. Existing-System Constraints (confirmed facts Phase 0 must respect)
+
+All items below were verified at the baseline commit; evidence paths are recorded in [`LIVETV_WORKLOG.md`](LIVETV_WORKLOG.md).
+
+### 2.1 Stack and delivery
+
+- SvelteKit 2 (`^2.37.0`) + Svelte 5 (`^5.38.7`) + Tailwind CSS 4 (`^4.1.12`) + `@supabase/supabase-js` (`^2.112.3`); Node >= 22 (`.nvmrc` = 22); package manager pinned `pnpm@10.30.3` (`package.json` `packageManager`); deploy on Netlify (`netlify.toml`, `DEPLOYMENT.md`).
+- CI (`.github/workflows/ci.yml`) runs three gates on every push/PR: `pnpm check` (svelte-check, 0 errors), `pnpm build` (vite build + executor function), `pnpm test` (16 chained groups, 318 commands, offline against stubs/pglite — **CI never connects to production Supabase**). Any Live TV work must keep these green; the full chain stops at first failure.
+- Shaka Player `5.2.12` and hls.js `1.7.2` are installed dependencies.
+
+### 2.2 Live TV is deliberately isolated from VOD
+
+- Live TV types are intentionally separate from VOD `PlayerSource` ([FACT] `src/lib/client/live-tv/types.ts` header, "ISOLATION CONTRACT", decision D5 of live-tv-plan §5/§13). **This isolation must be preserved**: the unified system must not force Live TV channels into VOD `PlayerSource` shapes nor let VOD code import Live TV types.
+- Live TV playback is a small isolated engine ([FACT] `src/lib/client/live-tv/player.ts`): one Shaka instance per engine, caller-owned `<video>`, generation-token race protection, no auto-retry, structural Shaka types only, zero console calls.
+- The VOD registry pattern to imitate (not import): ordered adapter registry with per-origin adapters + generic embed fallback ([FACT] `src/lib/client/player/adapter-registry.ts`).
+
+### 2.3 LiveGT V1 contract (the built-in source)
+
+- Base `https://livetgtv.lovable.app`; endpoints `GET /api/public/channels`, `GET /api/public/channels/{id}`, `GET /api/public/guide/{id}`; embed page `{base}/embed/{id}` ([FACT] `api.ts` §L79–83, L486).
+- Live probe 2026-10-22: catalogue returned HTTP 200, `count=1176`, JSON shape matched the normalizer exactly (`id`,`name`,`category`,`logo`,`embed`,`watch`) (worklog §R-1).
+- Playback is **always freshly resolved**, signed MPD + optional ClearKey, never cached/persisted/logged ([FACT] `api.ts` header + `resolveLiveTvPlayback`); the browser talks to the CDN directly (CORS-open, India-georestricted) — **no proxy exists or is planned for V1** ([FACT] `api.ts` §L9–10, live-tv-plan §2).
+- Signed-query propagation `__hdnea__` (DASH segments + HLS variant playlists/segments, same-origin only, allowlist of exactly one parameter) is production-proven and MUST be preserved for the LiveGT source ([FACT] `src/lib/client/live-tv/media-auth.ts` header).
+- Automatic embed fallback (LT-15) mounts the documented LiveGT embed iframe only after a fatal native failure and emits `live_tv_fallback_embed` ([FACT] `LiveTvPlayer.svelte` §L110–253, migration `20261104000000_live_tv_fallback_embed_event.sql`).
+
+### 2.4 Client cache and analytics contracts
+
+- Catalogue cache ≤ 5 min (16-entry LRU), guide cache ≤ 30 s (64-entry LRU), playback/DRM never cached ([FACT] `src/lib/client/live-tv/cache.ts` §L14–30).
+- Analytics: closed CHECK-constrained taxonomy; the seven `live_tv_*` events + `live_tv_fallback_embed` exist; signed URLs/keys are regression-tested to never be sent ([FACT] migrations `20261103000000`, `20261104000000`; `src/lib/client/live-tv/analytics.ts`). New events require a new migration widening the CHECK (documented convention).
+
+### 2.5 Admin panel conventions
+
+- Admin2 shell owns navigation ([FACT] `src/lib/components/admin2/AdminAppShell.svelte` §L120–158): groups Command / Content / System / People; canonical source management lives at `/admin/system/api-sources` (tabs), and legacy routes `/admin/sources`, `/admin/providers`, `/admin/categories`, `/admin/defaults`, `/admin/addons`, `/admin/feature-control`, `/admin/operations` are 303 redirect stubs ([FACT] their `+page.server.ts`).
+- Authorization is `profiles.role === 'admin'`, enforced server-side by `requireAdmin()` / `assertAdminClient()` ([FACT] `src/lib/server/streaming/admin-auth.ts`) and by RLS `using ((select public.is_admin()))` policies in migrations. Fail-closed everywhere.
+- API conventions: consistent error envelope `{ ok:false, error:{ code, message } }` (`src/lib/server/http/error-response.ts`), 256 KiB body cap (`body.ts`), per-identity rate limiting (`rate-limit.ts`), redaction-aware structured logging (`log.ts`).
+- Reusable admin UI components exist: `AdminCapabilityGrid`, `AdminStatusBadge`, `AdminSheet`, `AdminConfirmDialog`, `AdminCloudStreamManager`, `AdminHostingProviders` ([FACT] `src/lib/components/admin2/`).
+
+### 2.6 Supabase / database constraints
+
+- ~100 migrations under `supabase/migrations/`. The **Phase 7A streaming registry** ([FACT] `20260820010000_phase7a_streaming_registry.sql`) already implements a configuration-only provider/source registry for VOD: `streaming_providers` (`integration_type` ∈ template/api/direct/embed/custom, `capabilities` jsonb, `status` enum, `enabled`), `streaming_sources` (visibility, ordering, per-content-type URL templates, identifier_mode, quality/audio/subtitle capabilities), `streaming_categories`, `streaming_source_categories`, plus default-source slots, provider health, and `streaming_public_*` views consumed via `refresh_streaming_public_config` and served by the versioned cache in `src/lib/server/streaming/public-config.ts`. RLS: public-read policies with enabled/status filters + admin-all via `(select public.is_admin())`.
+- **No Live TV tables exist** — V1 decision "no Live TV Supabase migration" ([FACT] live-tv-plan §13). The unified system intentionally revisits this with an additive, separately-reviewed migration (§9); that is an explicit architectural change to be approved with Phase 1.
+- **Production schema drift exists**: two out-of-band production tables have no repository migration owner — `direct_play_sources` ("server-only experimental direct-play cache", 0 rows at the 2026-11 remediation audit, closed with restrictive deny-all RLS by `20261118000000_supabase_remediation_security_performance.sql` §1.b) and `user_streaming_credentials` (created outside tracked migrations, documented in `20260926000000_phase6b_streaming_credentials_initplan.sql` §L12–14). **Consequence: a fresh replay of the migration chain does not reproduce production state 1:1; any Live TV migration must be additive, idempotent, and drift-aware** (§9).
+- Live read-only REST introspection (2026-10-22, worklog §DB-1) listed 41 relations matching `src/lib/server/supabase/database.types.ts` plus the two out-of-band tables above. No live table data was queried; no writes were performed.
+
+### 2.7 Server infrastructure available for reuse
+
+- **SSRF guard, battle-tested**: `src/lib/server/streaming/stremio/ssrf.ts` (two-stage: sync URL validation — http(s) only, no credentials, ≤ 2048 chars, host blocklist incl. cloud-metadata endpoints, IP-literal rejection incl. hex/octal/decimal and IPv4-mapped/NAT64 forms; then async DNS-answer validation) + `connect-guard.ts` (connect-time IP re-validation via undici Agent — closes the DNS-rebinding TOCTOU). This is the mandated foundation for any future server-side playlist/EPG fetch.
+- Bounded caches (content `getOrSet` LRU), rate limiting, body caps, redaction logging, fail-closed hooks (`hooks.server.ts` + `src/lib/server/route-policy.ts`), health endpoint with deep/stats modes.
+- `netlify.toml` CSP (§L19–110): `connect-src 'self' https://*.supabase.co …`, `frame-src *` (deliberately permissive for provider embeds), `media-src` for native-HLS browsers. **Constraint:** new direct-play stream origins may require CSP media-src/connect-src additions; each addition is a documented, reviewed change.
+
+### 2.8 Test conventions
+
+- Test scripts live in `scripts/*.test.ts` style files executed via `tsx` with `jsconfig.json` (or `tsconfig.behavioral.json` for browser-behavior suites); groups are wired in `package.json` (`test:livetv` currently chains 13 suites) and CI runs the full chain. Tests are offline/stub-based; one env-gated live smoke self-skips without `PRIVATE_SUPABASE_SERVICE_ROLE_KEY`. New Live TV work follows this pattern (no new frameworks).
+
+---
+
+## 3. Current-State Architecture Summary (as audited)
+
+### 3.1 Live TV data/playback flow (today)
+
+```text
+/live-tv (+page.svelte, client-driven, 1376 lines)
+   │  uses
+   ▼
+src/lib/client/live-tv/api.ts          LiveGT V1 client (normalizers, timeouts, abort)
+   │  catalogue cache (cache.ts, 5 min / 30 s TTL+LRU)
+   ▼
+resolveLiveTvPlayback()  →  { channel, sources[], drm }   (fresh every call, no-store)
+   │
+   ▼
+src/lib/client/live-tv/player.ts       LiveTvPlaybackEngine (Shaka 5.2.12)
+   │  attach → configure (ClearKey) → load(mpd|m3u8)
+   │  + media-auth.ts signed-query filters (__hdnea__, same-origin)
+   ▼
+caller-owned <video> (MSE)  ← LiveTvPlayer.svelte (1212 lines)
+   │  on fatal native failure only
+   ▼
+LT-15 embed fallback: iframe {base}/embed/{id}  (+ live_tv_fallback_embed event)
+```
+
+Guide display helpers are pure functions in `epg.ts` (current programme from `nowPlaying` or timestamp scan, never fabricated; viewer-local rendering only). Recent channels, quality selection (LT-18 variant tracks), fullscreen/orientation, and analytics complete the module set (§2.2).
+
+### 3.2 Component inventory and reuse assessment
+
+| Existing asset | Path | Reuse verdict for unified system |
+|---|---|---|
+| LiveGT V1 client + normalizers | `src/lib/client/live-tv/api.ts` | **Keep as-is**; wrap as the `builtin_livegt_v1` source adapter behind the new registry |
+| Playback engine + signed-query auth | `player.ts`, `media-auth.ts` | **Keep as-is**; multi-source concerns added *around* it (a resolution step that can consult non-LiveGT sources), never inside it |
+| Embed fallback (LT-15) | `LiveTvPlayer.svelte` | **Keep**; generalize cautiously into an embed *mode* only with per-provider allowlisted origins + documented protocols |
+| EPG helpers | `epg.ts` | **Keep**; add a source-agnostic guide provider interface above them |
+| Client cache | `cache.ts` | **Extend** (per-source keys, bounded entries); never cache resolutions |
+| VOD adapter-registry pattern | `src/lib/client/player/adapter-registry.ts` | **Imitate** (ordered, per-origin `canHandle`) for Live TV source adapters |
+| Streaming registry schema + public-config versioned cache | `20260820010000…sql`, `public-config.ts` | **Extend/imitate** for Live TV tables (separate `livetv_*` tables; do not overload VOD rows) |
+| SSRF guard + connect guard | `stremio/ssrf.ts`, `stremio/connect-guard.ts` | **Reuse** for admin-configured playlist/EPG/API fetching (server-side) |
+| Admin auth, error envelope, rate limits, admin2 UI kit | §2.5 | **Reuse unchanged** |
+| Analytics taxonomy mechanism | `20261103000000…sql` | **Extend** with new events via migration only |
+
+### 3.3 Gaps (what does not exist yet)
+
+1. No source registry for Live TV (no tables, no admin UI, no adapters beyond LiveGT).
+2. No M3U/XMLTV parsing anywhere in the app ([FACT] repo-wide search — worklog §A-2).
+3. No server-side fetch pipeline for configuration data outside the Stremio manifest service.
+4. No channel-normalization layer spanning sources (each source would emit raw shapes today).
+5. No source health/diagnostics surface for Live TV (VOD has `streaming_provider_health`).
+6. **"TV Flix" does not exist under that name** in the repository ([FACT] case-insensitive searches for `tvflix|tv-flix|tv flix|tv_flix` return nothing). The closest match is the **TGVID** VOD embed provider (`https://tgvid.lovable.app`, documented `TGFLIX_EVENT`/`TGFLIX_CMD` postMessage protocol, registered in migration `20261113000000_vixolity_tgvid_zxcstream_providers.sql` and `src/lib/client/player/providers/tgvid-adapter.ts`). If "TV Flix" means TGVID, it is a **VOD** (TMDB-keyed, season/episode) embed — not a Live TV integration — and would only enter Live TV scope as a new, separately-evidenced embed provider. Recorded as [DECISION REQUIRED] (§13.2).
+
+---
+
+## 4. Target Architecture Proposal
+
+> Everything in this section is a **proposal** to be ratified in Phase 1 after the schema review. Names are provisional. Nothing here has been implemented.
+
+### 4.1 Layered architecture
+
+```mermaid
+flowchart TD
+    subgraph Admin
+        A1[Admin2 page<br/>/admin/system/livetv] --> A2[Admin API routes<br/>/api/admin/livetv/*]
+    end
+    subgraph Server["SvelteKit server (Netlify function)"]
+        A2 --> S1[livetv admin-service<br/>validation + mutations]
+        S1 --> DB[(Supabase<br/>livetv_* tables)]
+        S2[livetv refresh worker<br/>fetch + parse + normalize] --> DB
+        S2 --> G1[SSRF guard + connect guard<br/>reuse stremio/ssrf.ts]
+        S3[livetv public-config<br/>versioned cache<br/>pattern: streaming public-config] --> DB
+    end
+    subgraph Client["Browser (user-facing /live-tv)"]
+        U1[/live-tv +page.svelte/] --> U2[livetv catalogue service<br/>per-source adapters, ordered]
+        U2 --> U3[[builtin_livegt_v1 adapter<br/>existing api.ts]]
+        U2 --> U4[[m3u / api / manual<br/>catalogue adapters]]
+        U1 --> U5[LiveTvPlaybackEngine<br/>player.ts — unchanged]
+        U1 --> U6[EPG service<br/>epg.ts + guide providers]
+    end
+    S3 -.public config.<-> U2
+    U5 --> CDN[Authorized upstream streams<br/>browser-direct, no proxy]
+```
+
+Design rules:
+
+1. **The existing LiveGT client and player engine stay untouched.** The unified layer sits *above* them: a catalogue service merges normalized channels from enabled sources; a resolution step routes a channel to the adapter that can resolve it.
+2. **Server owns configuration; client owns presentation.** Servers fetch/parse/normalize heavy configuration data (playlists, EPG, provider catalogues) into the registry; the client receives a bounded, versioned public config — mirroring the proven `streaming_public_*` + `public-config.ts` version pattern.
+3. **No media proxy by default.** Playback remains browser-direct to authorized origins. Embeds remain iframes with allowlisted origins. Any relaxation requires the explicit relay decision (§13.1) with SSRF, rate-limit, size, and auth review.
+4. **VOD isolation preserved.** New code lives in `src/lib/server/livetv/`, `src/lib/client/livetv/` (or extends `src/lib/client/live-tv/`), and `src/lib/components/live-tv/`; no import edges between VOD `PlayerSource` and Live TV types in either direction.
+
+### 4.2 Source registry model (proposed)
+
+A new, separate family of tables (Phase 1 deliverable; shape sketched, final DDL after schema review):
+
+- `livetv_sources` — one row per configured source:
+  - `id`, `name`, `slug`, `source_type` ∈ (`builtin_livegt_v1`, `m3u_playlist`, `api_provider`, `embed_provider`, `manual_stream`),
+  - `config` jsonb (typed per source_type: URL, headers-none-by-default, provider endpoints, embed origins, format hints),
+  - `capabilities` jsonb (§4.3), `enabled` boolean, `status` enum (active/disabled/maintenance/experimental/unavailable),
+  - `priority` integer + `is_active` semantics (§4.5), `visibility` (public/internal/hidden) for user-facing exposure,
+  - `builtin` boolean (the LiveGT V1 row is seeded, non-deletable, enabled-by-default to preserve today's behavior),
+  - health columns: `last_refresh_at`, `last_refresh_status`, `last_error_kind`, `channel_count`, `refresh_in_progress`.
+- `livetv_channels` — normalized channel rows per source: `source_id`, `source_channel_id` (the id used by that source), `stable_id` (deterministic hash of source + identity, §4.4), `name`, `category`, `logo_url`, `stream_kind` (dash/hls/direct/embed/unknown), `enabled_for_users` boolean + admin overrides, unique `(source_id, source_channel_id)`.
+- `livetv_epg_sources` + `livetv_programmes` — EPG source config and parsed programme windows keyed by (`epg_source_id`, `channel_key`) with timezone-explicit windows.
+- Secrets (if a provider ever needs credentials): server-only handling following the `user_streaming_credentials` precedent — **never** in `config` jsonb exposed to the client; storage design deferred to Phase 1 with an explicit RLS review. [ASSUMPTION: no Live TV source in scope requires stored credentials today.]
+
+### 4.3 Capability flags (source-level, honest-by-construction)
+
+`catalogue` (can list channels), `guide` (has EPG), `logos`, `categories`, `search`, `playback_kind` ∈ (`dash`, `hls`, `direct`, `embed`, `mixed`, `unknown`), `drm` ∈ (`none`, `clearkey`, `widevine`, `unsupported/unknown`), `geo_hint` (free text, informational only), `programme_images` (genuine programme artwork availability), `refresh_supported`.
+
+Rules: flags are **set by the adapter based on verified provider behavior**, not wishes; the user UI renders strictly within the flags (e.g. `guide: false` ⇒ no Now/Next row at all, exactly like today's empty-guide honesty); `drm: unknown` renders the honest "may not play on this device" state rather than a spinner of doom.
+
+### 4.4 Channel normalization model (proposed)
+
+- Internal normalized shape extends today's `LiveTvChannel` (id/name/category/logo) with: `stableId`, `sourceId`, `sourceChannelId`, `streamKind`, optional `guide` hooks, optional `tvgId` (XMLTV mapping key for M3U `tvg-id` attributes).
+- `stableId` = deterministic (e.g. SHA-256 of `sourceId + ':' + sourceChannelId`) — used for analytics content ids, recent-channels, and EPG joins; never the signed playback URL, never the raw upstream URL.
+- Duplicate policy across sources: sources are ordered; the **first enabled source that provides a channel wins** by default; cross-source dedup keys are (normalized name + logo) with admin override ability — final dedup semantics is a Phase 1 acceptance item, not silently invented.
+- Raw provider payloads never spread into the UI (extends the existing V1 rule, live-tv-plan §8).
+
+### 4.5 Source selection, priority, and fallback semantics
+
+1. **Explicit active source per channel** beats everything: if an admin pins a channel to a source, that source resolves it.
+2. Otherwise, channels resolve from the **highest-priority enabled source that lists them** (admin-ordered `priority`).
+3. **Fallback is opt-in, explicit, and bounded**: per-source "fallback on failure" toggle, at most one fallback hop, surfaced in the UI as "switched to <source>" with an analytics event; no silent infinite cascades. (Mirrors the bounded-recovery philosophy of live-tv-plan §11 and the resolver's bounded fallback in `src/lib/server/resolver/fallback.ts`.)
+4. The built-in LiveGT V1 source keeps its **existing internal fallback** (LT-15 embed) — that behavior is source-internal and unchanged.
+
+### 4.6 Refresh pipeline and data flow (proposed)
+
+```mermaid
+sequenceDiagram
+    participant Admin as Admin action / schedule
+    participant API as /api/admin/livetv/sources/:id/refresh
+    participant Guard as SSRF guard (ssrf.ts + connect-guard.ts)
+    participant Up as Upstream (playlist/EPG/API)
+    participant DB as Supabase livetv_*
+    participant Pub as public config cache (versioned)
+    participant UI as /live-tv client
+
+    Admin->>API: POST refresh (requireAdmin + rate limit)
+    API->>Guard: validate URL (stage 1 + stage 2)
+    API->>Up: bounded GET (timeout, max bytes, allowed protocols)
+    Up-->>API: playlist / EPG / catalogue body
+    API->>API: parse (strict, size-capped, entity-safe) + normalize
+    API->>DB: upsert channels/programmes + health row (single transaction)
+    API->>DB: bump config version
+    Pub->>DB: versioned re-read (invalidate cache)
+    UI->>Pub: next page load gets new config version
+```
+
+Stale-data behavior: if a refresh fails, the last good parsed snapshot stays served, health shows the failure, and the UI shows a "guide/data as of" note only where genuine data supports it (extends `formatGuideGeneratedAt` honesty, `epg.ts` §L180).
+
+---
+
+## 5. Admin Information Architecture (proposed, no implementation yet)
+
+**Placement decision (evidence-based):** add a **Live TV** tab group as a new tab inside the canonical `/admin/system/api-sources` page **or** a sibling route `/admin/system/livetv` registered in the Admin2 `navGroups` "System" group ([FACT] registry at `AdminAppShell.svelte` §L129–145). Rationale: source management already lives there conceptually; the Admin2 registry is the single navigation source of truth; legacy routes are redirect stubs and must not be revived.
+
+Proposed Admin surface (single coherent area, avoiding page sprawl):
+
+1. **Overview & health** — per-source status cards (enabled, last refresh, error kind, channel count) reusing `AdminStatusBadge` / `AdminCapabilityGrid` patterns.
+2. **Sources list** — add/edit/enable/disable/delete (delete requires confirm dialog + channel-impact preview), refresh now, validate config, inspect parsed channels (paginated, searchable).
+3. **Channel catalogue** — cross-source channel list with source attribution, per-channel enable/disable for user exposure, dedup/override controls.
+4. **EPG sources** — XMLTV source CRUD, mapping diagnostics (matched/unmatched channel ids), refresh status.
+5. **Priority & activation** — drag-order priority, explicit active-source selection, fallback toggles.
+6. **Diagnostics** — safe (redacted) last-error info, refresh history; **no** signed URLs, tokens, or key material anywhere in Admin UI or logs ([FACT] redaction conventions in `log.ts`; the Live TV rule against logging playback credentials extends to Admin).
+
+Every mutation: `requireAdmin()` on the page, `assertAdminClient()` on the API route, RLS admin-write policies server-side, rate-limited, standard error envelope, optimistic-UI avoided for destructive ops. No changes to any existing Admin page's behavior (Phase 4 acceptance gates re-run `scripts/admin_nav_test.ts`, `admin2_phase*_test.ts` chains).
+
+---
+
+## 6. EPG Integration Strategy
+
+1. **Sources**: XMLTV (`.xml`, `.xml.gz`) from admin-configured URLs; iptv-org/epg published guides are the reference public source (format and licensing verified — worklog §R-3/§R-4). LiveGT V1's JSON guide remains the built-in source's native guide (untouched).
+2. **Parsing**: server-side, size-capped, entity-safe XML parsing ([ASSUMPTION] a hardening review must pick a parser configuration that disables external entity resolution / DTD fetch — Phase 3 acceptance item; SSRF guard wraps the download).
+3. **Mapping**: M3U `tvg-id` / channel `stableId` → XMLTV `@xmltv_id`-style channel ids; unmatched-channel diagnostics stored (count + samples) and shown in Admin; mapping is admin-fixable (per-channel manual key override).
+4. **Time**: XMLTV windows are timezone-explicit; stored as absolute UTC instants; display stays viewer-local via the existing pure helpers (extends the V1 timestamp contract — Unix seconds absolute instants, `epg.ts` §L9–19). No provider display strings feed logic (existing rule preserved).
+5. **Current/upcoming**: `determineCurrentProgramme` semantics generalized (provider "now" hint first, then timestamp scan, never fabricated); "progress within programme" and "remaining" only render when a genuine current programme exists.
+6. **Posters/programme images**: only from genuine programme metadata (XMLTV icon elements or documented API fields); never invented, never hot-linked from unrelated CDNs without review; missing image = existing logo/initials fallback.
+7. **Retention**: bounded programme window (e.g. now − N hours → + N days), swept on refresh; stale-guide behavior: keep last good guide with visible "as of" note; missing guide for a channel renders the honest empty state (existing V1 rule).
+
+---
+
+## 7. Player / Protocol Compatibility Matrix
+
+[FACT] rows 1–3 verified against the audited code; M3U rows are **format** facts — an M3U entry never guarantees playback (payload protocol/DRM/geo vary per stream). No playback claims are made beyond what the code or probes verify.
+
+| Protocol / mode | Engine today | Where | DRM | CORS / CSP requirements | Known limitations |
+|---|---|---|---|---|---|
+| MPEG-DASH (`.mpd`) | Shaka 5.2.12 (Live TV engine) | `live-tv/player.ts` | ClearKey via `drm.clearKeys` config | Direct browser fetch; CDN CORS-open (LiveGT verified) | Signed `__hdnea__` must propagate to segments (`media-auth.ts`); Widevine NOT configured anywhere in Live TV |
+| HLS (`.m3u8`) | Shaka sniffing in Live TV; hls.js 1.7.2 in VOD (`hls-engine.ts`) | live-tv `player.ts`; VOD `hls-engine.ts` | none | Same as above; CSP `media-src`/`connect-src` per origin (netlify.toml §L45–106) | HLS variant playlists also need signed-query propagation (LT-11, implemented) |
+| Direct MP4 (progressive) | VOD DirectPlayerAdapter (`direct-adapter.ts`) | VOD only | none | `media-src` | Not a Live TV path today; manual_stream sources may need it — Phase 5 evaluates reuse of the VOD direct path *without* merging engines |
+| iframe embed | EmbedPlayerAdapter + 13 provider-specific adapters (VOD); LT-15 LiveGT embed (Live TV) | `adapter-registry.ts`, `LiveTvPlayer.svelte` | provider-side | `frame-src *` already permissive (netlify.toml §L54) | Only documented postMessage protocols get rich controls (e.g. TGFLIX_EVENT/CMD); otherwise black-box |
+| Widevine / PlayReady | **Not implemented anywhere** | — | — | — | Live TV has no Widevine config; honest `unsupported_drm`/`content_unsupported` error paths exist (`api.ts` `normalizeDrm`; Shaka codes 6000/6001/6010/6012/4032). No DRM bypass will be built |
+| ClearKey (non-Shaka browsers) | n/a | — | — | — | Safari/iOS MSE+EME limits are real; the V1 plan already mandates explicit Safari QA (live-tv-plan §17); embed fallback remains the honest escape hatch for the built-in source |
+
+Token/URL expiry handling: LiveGT-style signed URLs are resolved fresh per playback ([FACT] `api.ts`); future sources with signed URLs must declare their expiry semantics in `config` and follow the same never-persist/never-log rules.
+
+---
+
+## 8. Security and Privacy Requirements (plan-level; enforced per-phase)
+
+1. **SSRF prevention for admin-supplied URLs** (Phase 2+ server fetching): mandatory two-stage validation + connect-time pinning via the existing `stremio/ssrf.ts` + `stremio/connect-guard.ts`; https-only unless a documented exception; no credentials in URLs; response-size caps; timeout caps; allowed-protocol allowlist.
+2. **Redirect safety**: per-hop re-validation (pattern already proven in the Stremio fetch path and documented in `ssrf.ts` header).
+3. **Bounded downloads**: playlists/XMLTV have max-bytes and max-entries limits at fetch AND parse time; oversized inputs fail with typed errors, never partial silent ingestion.
+4. **XML safety**: parser must run with external entities/DTD resolution disabled (billion-laughs / exfil protection); parse failures are contained per-source (one bad source never breaks the page — per-source isolation).
+5. **Rate limiting / upstream load**: admin refresh actions rate-limited per identity (`rate-limit.ts`); scheduled refreshes have per-source minimum intervals; jittered schedules; refresh concurrency bounded.
+6. **No cache poisoning / cross-source leakage**: cache keys are source-scoped; public config is versioned and read-only to clients; user-generated channel state (recent channels) keyed by `stableId` only.
+7. **Secrets & credentials**: no secrets in client-reachable config; redaction in logs (existing `log.ts`); signed playback URLs, ClearKey material, provider tokens never logged/persisted/emitted to analytics (extends regression-tested V1 rules); Admin diagnostics show error kinds, never raw upstream material.
+8. **Authorization**: every admin action behind `requireAdmin`/`assertAdminClient` + RLS admin policies; public reads only through filtered public views/policies; no anon writes anywhere.
+9. **Playback safety**: browser-direct only to allowlisted, admin-configured origins; embeds only for providers with documented interfaces and allowlisted origins; no arbitrary user-supplied playback URLs ever (extends live-tv-plan §15).
+10. **Privacy**: analytics taxonomy remains closed; any new event must pass the "no URLs, no keys, no free-text" payload contract with a migration + regression test.
+11. **Geo/licensing honesty**: source-level `geo_hint` is informational; the app never attempts circumvention; public playlist sources (iptv-org class) are attributed and their Unlicense terms noted; DMCA/NSFW blocklist awareness documented for iptv-org integrations.
+
+---
+
+## 9. Data Model, Migration and Rollback Strategy
+
+1. **Additive-only migrations.** New `livetv_*` tables/policies in new migration files; zero edits to existing tables or frozen migrations; follow the repo conventions: `create table if not exists`, idempotent policies with `drop policy if exists` guards, comments explaining intent, and CHECK-constrained enums (patterns from `20260820010000_phase7a_streaming_registry.sql`).
+2. **Drift-awareness.** Because production contains out-of-band tables (§2.6), each migration must be safe to replay on a fresh chain AND on drifted production (conditional DO-blocks where interaction with unknown objects is possible — pattern from `20261118000000` §1.b).
+3. **Types**: regenerate `src/lib/server/supabase/database.types.ts` as part of the Phase 1 migration PR; CI `pnpm check` gates type drift.
+4. **Rollback**:
+   - Feature-level: the entire unified system is behind an enablement switch — disabled ⇒ `/live-tv` behaves exactly as today (LiveGT V1 only). This is the primary rollback lever and is rehearsed in Phase 1 acceptance.
+   - Data-level: new tables can be dropped cleanly (no FK edges into existing tables); seeded built-in row is data, not schema, so dropping tables restores V1-only state.
+   - Code-level: phases are structured so the user-facing page's LiveGT path is never the failure domain of new code (new sources render *additionally*, guarded by capability + enablement checks).
+5. **Migration safety rule**: never apply destructive SQL; never reset the database; deployment ordering documented in the PR (mirroring the deploy-ordering safety style of `public-config.ts` `isMissingDefaultSlotsTableError`).
+
+---
+
+## 10. Regression-Prevention Strategy
+
+- **Golden behaviors (must never change unless a phase explicitly says so):**
+  1. `/live-tv` opens to the LiveGT catalogue with the existing category bar/search/grid UX.
+  2. Playback resolution is always fresh; nothing about a resolution is cached or persisted.
+  3. Signed `__hdnea__` propagation and ClearKey config behave byte-exactly as `media-auth.ts` implements today.
+  4. LT-15 embed fallback activates only after fatal native failure, with its analytics event.
+  5. Empty guide / no-logo / behind-live / error kinds render the honest existing states.
+  6. VOD (`PlaybackManager`, all 14 embed adapters, HLS engine, resolver, hosting, downloaders) untouched.
+- **Mechanics:** every phase runs `pnpm check`, the full `test:livetv` group, touched-area groups, and before release the full `pnpm test` + `pnpm build` (CI contract §2.1). New suites are added to `test:livetv` (or a new `test:livetv2` group wired into `test`) in the same PR that adds code. Parser work gets fixture suites including malformed-input cases. DB work gets migration tests following `supabase_remediation_migration_test.ts` / `adapter_build_lifecycle_migration_test.ts` patterns.
+- **No silent behavior switches:** any change to default source ordering or channel visibility ships disabled-by-default with a documented admin enablement step.
+
+---
+
+## 11. Phased Roadmap
+
+> Completion is never automatic: each phase exits only through its acceptance gates with recorded evidence. "Likely files" are **provisional** until the phase's own audit confirms them.
+
+### Phase 0 — Baseline and Architecture Audit ✅ (this document + worklog)
+
+- **Objective:** establish the evidence-based foundation without touching behavior.
+- **Status:** executed 2026-10-22 at commit `120c4b5`; results in [`LIVETV_WORKLOG.md`](LIVETV_WORKLOG.md).
+- **Completed:** git baseline; docs/instructions inspection; Live TV architecture audit; TV-Flix-uncertainty resolution; Admin registry audit; Supabase migration/RLS audit incl. live read-only introspection; reference-repo audits (JioTv_STB_Relay, iptv-org ×3); protocol/security audits; baseline checks (`pnpm check`, `test:livetv`, `test:supabase`, `pnpm build`).
+- **Exit criteria met:** acceptance checklist §17; no source/migration/config changes; docs-only diff.
+
+### Phase 1 — Source Registry and Data Model Design
+
+- **Objective:** ratify the target schema (§4.2) against the full existing schema; ship the additive migration + types + a server-side registry service — no UI yet.
+- **Dependencies:** Phase 0 (this document); owner sign-off on [DECISION REQUIRED] items §13.1–§13.4.
+- **Likely files (provisional):** `supabase/migrations/2026MMDD000000_livetv_source_registry.sql`; regenerated `src/lib/server/supabase/database.types.ts`; new `src/lib/server/livetv/types.ts`, `src/lib/server/livetv/registry-service.ts`, `src/lib/server/livetv/public-config.ts`; `scripts/livetv_registry_migration_test.ts`.
+- **Tasks:** schema review vs §4.2; seed `builtin_livegt_v1`; RLS (public-read filtered views + admin-write `(select public.is_admin())`); capability/config jsonb shape validation (CHECK constraints); public-config versioned cache; enablement switch; migration + rollback rehearsal on a throwaway database (never production).
+- **Non-goals:** no admin UI, no /live-tv changes, no fetching.
+- **Regression risks:** type regeneration breaking `pnpm check`; public view over-exposure (mitigation: filtered views + policy tests).
+- **Acceptance:** migration applies cleanly on a fresh local chain AND is idempotent on replay; `pnpm check`/`pnpm build` green; registry service unit-tested (stubbed client); built-in source enabled-by-default preserves "LiveGT only" behavior; rollback (drop tables / disable switch) rehearsed and documented.
+- **Exit evidence:** migration test suite green + recorded commands/outputs in the phase worklog.
+
+### Phase 2 — Backend Source Adapters and Catalogue Normalization
+
+- **Objective:** server-side fetch+parse+normalize pipeline for `m3u_playlist`, `api_provider`, `manual_stream` and the built-in source; health recording; NO universal proxy.
+- **Dependencies:** Phase 1.
+- **Likely files (provisional):** `src/lib/server/livetv/adapters/{m3u,apiprovider,manual,livegt-v1}.ts`; `src/lib/server/livetv/fetch-safe.ts` (wraps `stremio/ssrf.ts` + `connect-guard.ts`); `src/lib/server/livetv/refresh-service.ts`; `scripts/livetv_m3u_parse_test.ts` + adapter suites.
+- **Tasks:** strict M3U/M3U8 parser (#EXTM3U header enforcement, attribute parsing `tvg-id/tvg-logo/group-title`, malformed-line policy); documented-API adapter pattern (LiveGT V1 client as reference contract); normalized channel upserts; per-source error kinds + health rows; bounded fetch (timeouts, max bytes, max entries); refresh concurrency limits; caching/version bump.
+- **Non-goals:** no EPG parsing (Phase 3); no playback changes; no embed adapters (Phase 5); no scheduled refresh yet unless trivially safe.
+- **Regression risks:** none to users (server-only), but health writes must stay off critical paths (reuse `health-service.ts` bounded-flush pattern).
+- **Acceptance:** fixture suites incl. malformed playlists (oversized, empty, bad encoding, hostile attributes) all produce typed errors; SSRF guard rejects private/metadata/rebinding targets (unit tests); one bad source cannot affect another; `test:livetv` green.
+- **Verification:** `pnpm exec tsx scripts/livetv_m3u_parse_test.ts` etc.; `pnpm check`; `pnpm build`.
+
+### Phase 3 — EPG/XMLTV Integration
+
+- **Objective:** XMLTV (plain + gzip) ingestion, channel mapping, current/upcoming computation, diagnostics.
+- **Dependencies:** Phase 2 (channel rows + `tvgId` exist).
+- **Likely files (provisional):** `src/lib/server/livetv/epg/{xmltv-parse,mapping,retention}.ts`; `scripts/livetv_epg_test.ts`; new analytics event migration if events are added.
+- **Tasks:** entity-safe XML parsing config; timezone-explicit window storage (UTC instants); mapping via `tvgId`/admin overrides; unmatched-channel diagnostics; bounded retention sweep; stale-guide behavior; programme images only from genuine metadata.
+- **Non-goals:** no UI changes; no LiveGT guide changes.
+- **Regression risks:** DB growth (mitigation: retention sweep + bounded windows, tested); parser memory (size caps).
+- **Acceptance:** fixture suites incl. DST-boundary and multi-timezone guides, gzip + plain, malformed XML, entity-expansion attempts (rejected); mapping diagnostics correct on a mixed-match fixture; retention sweep bounded.
+- **Verification:** dedicated suite + `pnpm check` + `pnpm build`.
+
+### Phase 4 — Admin Live TV Management
+
+- **Objective:** the admin surface of §5, integrated into Admin2 conventions with zero regressions to existing admin pages.
+- **Dependencies:** Phases 1–3.
+- **Likely files (provisional):** `src/routes/admin/system/livetv/+page.server.ts`/`+page.svelte` (or api-sources tab extension — final call at phase start); `src/routes/api/admin/livetv/**`; components `AdminLivetvSource*.svelte` under `src/lib/components/admin2/`; nav entry in `AdminAppShell.svelte`.
+- **Tasks:** CRUD + validate + refresh + parsed-channel inspector; channel exposure controls; priority/activation; EPG source UI + mapping diagnostics; health/diagnostics views; permission checks; error envelopes; rate limits.
+- **Non-goals:** no changes to existing tabs' logic; no new roles beyond `profiles.role='admin'`.
+- **Regression risks:** nav registry edits (guarded by `admin_nav_test.ts`); dialog stacking conventions (guarded by `mav_dialog_stacking_contract_test.ts`).
+- **Acceptance:** full `test:admin` + `test:livetv` groups green; admin flows covered by new suites (authz negative cases: non-admin gets 403/redirect); delete flows require confirm + show impact; no secret material rendered anywhere.
+- **Verification:** `pnpm test:admin`, `pnpm test:livetv`, `pnpm check`, `pnpm build`.
+
+### Phase 5 — Unified Playback and Provider Integration
+
+- **Objective:** route a selected channel to the right playback path — existing Shaka engine for direct kinds; embed mode for embed providers; honest unsupported states.
+- **Dependencies:** Phases 1–4.
+- **Likely files (provisional):** `src/lib/client/live-tv/` new `resolution-router.ts` + `catalogue-service.ts`; `LiveTvPlayer.svelte` extensions (embed mode generalization of LT-15); `player.ts` UNTOUCHED.
+- **Tasks:** resolution routing (source priority + explicit activation + bounded fallback §4.5); embed provider config (allowlisted origins, documented protocols only); DRM honesty (ClearKey only; unknown ⇒ explicit state); expiry semantics per source; keep VOD contracts untouched.
+- **Non-goals:** no engine rewrite; no Widevine; no server proxy; no silent source switching.
+- **Regression risks:** highest-risk phase for user-facing behavior — mitigated by keeping the LiveGT path as the untouched default and adding new paths only for non-builtin sources (disabled until an admin enables them).
+- **Acceptance:** golden behaviors §10 all verified via existing suites (`live_tv_player_test`, `live_tv_embed_fallback_test`, `live_tv_hardening_test`) PLUS new multi-source suites; manual browser matrix (Chrome/Firefox/Safari/Edge desktop + Android Chrome) recorded for at least one non-LiveGT source and one embed source.
+- **Verification:** full `test:livetv` + new suites; `pnpm check`; `pnpm build`.
+
+### Phase 6 — User-Facing Live TV Integration
+
+- **Objective:** render the merged, exposure-filtered catalogue with real metadata and EPG on `/live-tv`, preserving the existing UX language.
+- **Dependencies:** Phase 5.
+- **Likely files (provisional):** `src/routes/live-tv/+page.svelte`; `LiveTvChannelCard/CategoryBar/Guide*.svelte`; `src/lib/client/live-tv/{cache,types}.ts` extensions.
+- **Tasks:** merged catalogue display (source-ordered, deduped); search + category filtering across sources; logos/categories from normalized rows; Now/Next/progress/remaining + upcoming guide where capabilities allow; empty/loading/error/stale states per capability flags; recent-channels keyed by `stableId`; mobile/fullscreen/keyboard/a11y parity with today.
+- **Non-goals:** no redesign of the existing LiveGT presentation; no VOD surface changes.
+- **Regression risks:** page is 1376 lines of shipped UX — changes are additive and capability-gated; existing suites (`live_tv_page_test`, `live_tv_page_redesign_test`, `live_tv_player_ui_test`) must stay green.
+- **Acceptance:** with the unified system disabled, `/live-tv` is pixel-behaviorally the current page (suite + manual smoke); enabled with only the built-in source, identical catalogue; enabled with a second source, merged view follows §4.4/§4.5; a11y checks pass (`phase8_accessibility_test.ts` conventions).
+- **Verification:** full `test:livetv`; `pnpm check`; `pnpm build`; recorded manual QA.
+
+### Phase 7 — Reliability, Security, and Operational Hardening
+
+- **Objective:** production-grade operations for the whole pipeline.
+- **Dependencies:** Phases 2–6.
+- **Tasks:** scheduled refresh with per-source intervals + jitter; health checks & safe diagnostics; retry/backoff policy (bounded); rate limits reviewed under real usage; SSRF/redirect re-audit; secrets/URL redaction audit (grep + suite); refresh-failure recovery runbook; monitoring hooks (`/api/health?stats=1` extension or admin diagnostics); operational runbook doc in `docs/livetv/`.
+- **Non-goals:** no new features; no schema changes unless a hardening fix requires one (then additive + tested).
+- **Acceptance:** hardening suite (timeouts, caps, redaction, authz) green; runbook reviewed; failure drills recorded (refresh failure, oversized playlist, dead EPG source, disabled source mid-session).
+- **Verification:** `pnpm test` (full chain) + `pnpm check` + `pnpm build`.
+
+### Phase 8 — Regression QA and Release
+
+- **Objective:** release gate.
+- **Tasks:** full `pnpm check` / `pnpm test` / `pnpm build`; complete golden-behavior pass (§10) incl. TGTV/LiveGT regression suites and embed suites; playlist/EPG fixture suite final run; authz + network-security suites; mobile/browser playback verification incl. Safari; deployment-readiness review (migration order, rollback rehearsal), release checklist in `docs/livetv/`, final worklog with commit SHA.
+- **Exit:** owner sign-off; release notes; rollback criteria documented.
+
+---
+
+## 12. Implementation Dependency Graph
+
+```mermaid
+flowchart LR
+    P0["Phase 0<br/>Baseline & audit ✅"] --> P1["Phase 1<br/>Registry & data model"]
+    P1 --> P2["Phase 2<br/>Adapters & normalization"]
+    P2 --> P3["Phase 3<br/>EPG/XMLTV"]
+    P1 --> P4["Phase 4<br/>Admin management"]
+    P2 --> P4
+    P3 --> P4
+    P4 --> P5["Phase 5<br/>Unified playback"]
+    P5 --> P6["Phase 6<br/>User-facing integration"]
+    P2 --> P7["Phase 7<br/>Hardening"]
+    P3 --> P7
+    P4 --> P7
+    P5 --> P7
+    P6 --> P7
+    P7 --> P8["Phase 8<br/>Regression QA & release"]
+    P6 --> P8
+```
+
+Parallelization: Phase 3 can proceed alongside Phase 4 once Phase 2 lands; Phase 7 hardening items accumulate per-phase rather than being purely sequential.
+
+---
+
+## 13. Reference-Integration Notes and Open Decisions
+
+### 13.1 JioTv_STB_Relay — reference audit (design input ONLY)
+
+Audited via repository README/source listing 2026-10-22 (worklog §R-2). What it is: a JioTV playlist proxy + web player (TypeScript, TanStack Start, Bun) that fetches an upstream M3U playlist, caches it in-memory ~3h, rewrites channel lines (re-attaches `__hdnea__` tokens; injects `#EXTVLCOPT:http-user-agent` / `#EXTHTTP` cookie+UA headers; pipe-suffixed `|cookie=…&User-Agent=…`), and relays video requests through its own origin to bypass cross-origin restrictions; Shaka-based web player.
+
+| Aspect | Reusable general pattern | Jio-specific (must NOT copy) |
+|---|---|---|
+| Playlist cache | Server-side fetch + bounded TTL in-memory cache + normalization before serving | Upstream credential acquisition, token refreshing |
+| Header/token handling | The *concept* that some CDNs need per-request auth on child requests | UA/cookie spoofing pipelines (`EXTVLCOPT`/`EXTHTTP`/pipe-suffixes) — Mavero never spoofs to defeat access controls |
+| Stream relay | — | The relay itself: conflicts with Mavero's no-media-proxy boundary (live-tv-plan §2) and turns the app into a stream proxy — [DECISION REQUIRED] §13.1, default NO |
+| Player | Shaka player setup (Mavero already has a stricter, audited engine) | Jio host assumptions (`jiotvmblive.cdn.jio.com` token policy) — Mavero already implements the equivalent client-side (`media-auth.ts`) with production evidence |
+
+**Net:** adopt the *playlist-cache-normalize* server pattern (already mirrored in §4.6); reject the relay and the credential/UA machinery. No license file was observed on the reference repo — treat as reference reading only, no code copying.
+
+**[DECISION REQUIRED] §13.1 — server-side media relay:** default **NO** (preserves live-tv-plan §2 "no media proxying" and avoids Mavero becoming a public stream proxy). Revisit only with an explicit owner-approved threat model (SSRF, auth, bandwidth, geo/licensing).
+
+### 13.2 iptv-org family — reference audit
+
+- **iptv-org/iptv** (Unlicense): public M3U playlists organized by country/category/language; main playlist `https://iptv-org.github.io/iptv/index.m3u` — **probed 2026-10-22: HTTP 200, `content-type: audio/x-mpegurl`, `access-control-allow-origin: *`, daily `last-modified`** (worklog §R-2b). Limitations: links only, no control over destinations; streams may be geo-blocked, dead, or NSFW; a blocklist exists for DMCA/NSFW removals. **Integration shape:** admin-configured `m3u_playlist` source pointing at a chosen playlist URL; direct browser playback attempt (CORS-open), honest per-channel failure states; attribution note in Admin. Scheduled (not real-time) ingestion.
+- **iptv-org/api** (Unlicense): static JSON datasets at `https://iptv-org.github.io/api/{channels,feeds,logos,streams,guides,countries,languages,categories,…}.json` — usable as enrichment metadata (logos, categories, feed→guide mapping). **Integration shape:** optional enrichment join keyed by channel identity; must be scheduled/cached server-side; never trust stream URLs blindly (same honesty rules).
+- **iptv-org/epg** (Unlicense): XMLTV guides for thousands of channels, output `guide.xml` / `.xml.gz` (+ JSON option), channel ids of the form `xmltv_id` (e.g. `ArirangTV.kr`), daily builds published via GitHub Pages. **Integration shape:** reference `epg_xmltv` source; mapping via `tvg-id` ↔ `xmltv_id` with admin overrides (§6).
+
+**What must be verified during implementation (not assumed):** per-playlist reachability + size; per-stream codec/DRM/geo reality (an M3U entry is a claim, not a guarantee); guide URL freshness; blocklist/NSFW filtering defaults; attribution presentation.
+
+**[DECISION REQUIRED] §13.2 — "TV Flix":** no entity by that name exists in the repo ([FACT] §3.3). Closest is **TGVID** (`tgvid.lovable.app`, TGFLIX postMessage protocol) — a **VOD** embed provider. Owner to confirm: (a) TGVID was meant, in which case it stays out of Live TV scope unless a Live TV-capable provider is documented; or (b) an external "TV Flix" service was meant, in which case its documented interface must be supplied before any embed provider work (Phase 5) includes it.
+
+### 13.3 Further open decisions
+
+- **[DECISION REQUIRED] §13.3 — cross-source dedup key:** name+logo heuristic (proposed §4.4) vs admin-manual-only. Affects Phase 1 schema (unique indexes) and Phase 6 UX.
+- **[DECISION REQUIRED] §13.4 — scheduled refresh ownership:** Netlify scheduled functions vs admin-triggered-only for Phase 2 (proposal: admin-triggered first; scheduling in Phase 7).
+
+---
+
+## 14. Unresolved Decisions and Assumptions Register
+
+| ID | Type | Statement | Where it bites |
+|---|---|---|---|
+| D-1 | Decision | Server-side media relay allowed? (default NO) | Phase 2/5 |
+| D-2 | Decision | "TV Flix" = TGVID (VOD) or an undocumented external? | Phase 5 embed scope |
+| D-3 | Decision | Cross-source dedup semantics | Phase 1/6 |
+| D-4 | Decision | Refresh scheduling mechanism | Phase 2/7 |
+| A-1 | Assumption | No Live TV source in scope needs stored provider credentials | Phase 1 schema |
+| A-2 | Assumption | XMLTV parser can be configured entity-safe (to be proven) | Phase 3 |
+| A-3 | Assumption | Production `profiles.role='admin'` + `is_admin()` semantics are stable (verified in repo only, schema-level) | Phase 1 RLS |
+| A-4 | Assumption | iptv-org playlist sizes stay within planned fetch caps (main index.m3u is large; per-country/category playlists smaller) | Phase 2 caps |
+| A-5 | Assumption | LiveGT V1 remains available/CORS-open for the built-in source (verified 2026-10-22; re-verify per phase) | All phases |
+| U-1 | Unverified | Actual production row counts / data shapes (never queried — only schema-level introspection performed) | n/a (out of scope by design) |
+| U-2 | Unverified | Browser playback of any non-LiveGT source (no streams were played during Phase 0) | Phase 5 |
+
+---
+
+## 15. Verification Strategy and Test Gates
+
+1. **Per-phase gates** (minimum): `pnpm check` + touched `test:*` groups + `pnpm build`, all with recorded exit codes in the phase worklog.
+2. **Release gates** (Phases 7–8): full `pnpm test` (16 groups / 318 commands) + `pnpm build` + manual browser matrix incl. Safari + rollback rehearsal.
+3. **Evidence rules:** no phase claims success without captured command output; un-runnable checks are recorded as not-run with reasons; no test is edited to make it pass; no unrelated failures are fixed silently inside a Live TV phase (documented and escalated instead).
+4. **Live probes:** only read-only, no-credential, non-destructive probes (HEAD/GET of public endpoints, REST schema introspection) are permitted in audits; playback testing requires explicit phase authorization (Phase 5+).
+
+---
+
+## 16. Related Documents
+
+- [`docs/live-tv-plan.md`](../live-tv-plan.md) — V1 integration plan (frozen filename; §13 "no Live TV Supabase migration" is superseded by this plan's Phase 1 **only after owner approval**).
+- [`docs/archive/round-reports/live-tv-worklog.md`](../archive/round-reports/live-tv-worklog.md) — V1 implementation evidence (incl. Shaka audit).
+- [`docs/architecture.md`](../architecture.md) — canonical current architecture (resolver, SSRF, health, deployment boundaries).
+- [`docs/PLAN.md`](../PLAN.md) / [`docs/WORKLOG.md`](../WORKLOG.md) — product plan + general append-only work log.
+- [`docs/supabase-migration-runbook.md`](../supabase-migration-runbook.md) — migration procedure (path-frozen).
+- [`LIVETV_WORKLOG.md`](LIVETV_WORKLOG.md) — Phase 0 execution evidence (this project).
+
+---
+
+## 17. Phase 0 Acceptance Checklist
+
+- [x] Current Git state inspected and pre-existing state preserved (clean tree at `120c4b5`).
+- [x] Existing documentation and repository instructions inspected (README, DEPLOYMENT, docs/README, architecture, PLAN, WORKLOG, CI).
+- [x] This plan contains the complete multi-phase roadmap.
+- [x] `LIVETV_WORKLOG.md` records actual audit execution and results.
+- [x] Live TV / LiveGT / player / EPG / embed paths documented with exact file paths.
+- [x] Admin architecture and access-control conventions documented.
+- [x] Supabase schema/migrations/RLS evidence documented, live-access limitation disclosed (schema-level introspection only; no row data).
+- [x] JioTv_STB_Relay and iptv-org references audited with reuse/reject decisions.
+- [x] Playback/protocol compatibility and security risks documented (§7, §8).
+- [x] Baseline commands and results recorded accurately (worklog §V).
+- [x] Future architecture includes safe failure handling and rollback (§4.6, §9).
+- [x] No application source code, migrations, database, or production configuration changed (docs-only diff).
+- [x] No existing feature changed.
+- [x] Phase 1+ implementation NOT started.
+- [x] Final Git diff contains only the approved Phase 0 documentation changes (+ minimal docs-index row, per repository convention — see worklog §F).
+
