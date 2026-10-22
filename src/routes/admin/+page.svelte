@@ -15,7 +15,7 @@
    *   - HOSTING & MEDIA — quick links to media/hosting management
    *   - INTEGRATIONS — secondary metric cards
    */
-  import { Database, Download, Layers3, Puzzle, ShieldCheck, Wifi } from 'lucide-svelte';
+  import { Database, Download, Layers3, Puzzle, ShieldCheck, Tv, Wifi } from 'lucide-svelte';
   import AdminAppShell from '$lib/components/admin2/AdminAppShell.svelte';
   import AdminPage from '$lib/components/admin2/AdminPage.svelte';
   import AdminStatus from '$lib/components/admin2/AdminStatus.svelte';
@@ -65,6 +65,14 @@
           <div class="a2-metric-label">Categories</div>
           <div class="a2-metric-status">Custom ordering</div>
         </a>
+        {#if data.livetvOverview}
+          <a class="a2-metric-card" href="/admin/system/livetv">
+            <div class="a2-metric-icon"><Tv size={18} /></div>
+            <div class="a2-metric-value">{data.livetvOverview.sources.total}</div>
+            <div class="a2-metric-label">Live TV Sources</div>
+            <div class="a2-metric-status">{data.livetvOverview.sources.enabled} enabled · {data.livetvOverview.epg.sources} EPG</div>
+          </a>
+        {/if}
         <div class="a2-metric-card">
           <div class="a2-metric-icon"><Database size={18} /></div>
           <div class="a2-metric-value">v{data.overview.configVersion}</div>
