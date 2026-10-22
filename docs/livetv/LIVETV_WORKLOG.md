@@ -589,7 +589,7 @@ Environment: Node `v24.21.0`, pnpm `10.30.3`. All commands from repo root; exit 
 
 ## Entry P3-13 — Push and PR outcome (final git state)
 
-- **Commit:** recorded at push time on branch `livetv/phase-3-epg-xmltv` (base `527faf3` = the Phase 2 merge on `main`).
-- **Push:** the dedicated branch was pushed to `origin` (never `main`; no force-push; the PAT used via a one-shot push URL and scrubbed from `.git/config` afterwards).
-- **PR creation:** the provided fine-grained PAT does NOT carry the "Pull requests: write" permission (identical to the Phase 1/2 outcomes). Per the brief, the PR was therefore NOT created by this task. One-click PR creation for the pushed branch: `https://github.com/Aman24-0/Mavero/pull/new/livetv/phase-3-epg-xmltv`.
+- **Commit:** `f6099ba` "feat(livetv): Phase 3 — EPG/XMLTV ingestion, channel mapping & guide data" on branch `livetv/phase-3-epg-xmltv` (one implementation commit; base `527faf3` = the Phase 2 merge on `main`). A follow-up docs-only commit records this entry.
+- **Push:** VERIFIED — `origin/livetv/phase-3-epg-xmltv` = `f6099ba` (pushed via a one-shot PAT URL; `git remote -v` and the git config re-checked afterwards — no token persisted anywhere).
+- **PR creation:** attempted via the GitHub API (`POST /repos/Aman24-0/Mavero/pulls`) and REJECTED — HTTP 403 `{"message":"Resource not accessible by personal access token"}`: the provided fine-grained PAT does NOT carry the "Pull requests: write" permission (identical to the Phase 1/2 outcomes). Per the brief, the PR was therefore NOT created by this task. One-click PR creation for the pushed branch: `https://github.com/Aman24-0/Mavero/pull/new/livetv/phase-3-epg-xmltv`.
 - **`main` untouched:** still at `527faf3` remotely and locally.
