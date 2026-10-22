@@ -1,6 +1,6 @@
 # MAVERO — Unified Live TV Source Management — Master Plan
 
-**Status:** ACTIVE — Phase 0 (Baseline & Architecture Audit) ✅ executed; Phase 1 (Source Registry & Data Model) ✅ executed 2026-10-22 on branch `livetv/phase-1-unified-model`; Phases 2+ NOT authorized and NOT started.
+**Status:** ACTIVE — Phase 0 (Baseline & Architecture Audit) ✅ executed; Phase 1 (Source Registry & Data Model) ✅ executed 2026-10-22 on branch `livetv/phase-1-unified-model` (merged via PR #17); Phase 2 (Source Adapters, Ingestion & Channel Normalization) ✅ executed 2026-10-22 on branch `livetv/phase-2-source-adapters`; Phases 3+ NOT authorized and NOT started.
 **Date:** 2026-10-22
 **Baseline commit audited:** `120c4b5b429d1a361082db9af181c34c179f9fc5` (branch `main`, clean tree, synced with `origin/main`)
 **Phase 0 execution log:** [`LIVETV_WORKLOG.md`](LIVETV_WORKLOG.md) (append-only, evidence-based)
@@ -376,16 +376,20 @@ Token/URL expiry handling: LiveGT-style signed URLs are resolved fresh per playb
 - **Acceptance (verified):** migration applies cleanly on a fresh local chain AND is idempotent on replay (PGlite Phase A); `pnpm check`/`pnpm build` green; registry model unit-tested; built-in source enabled-by-default preserves "LiveGT only" behavior with the unified system switch defaulting to FALSE; rollback levers documented (drop-tables / `unified_enabled=false`); no production database was touched.
 - **Exit evidence:** migration + model suites green inside `test:livetv` (exit 0); exact commands/outputs recorded in the phase worklog.
 
-### Phase 2 — Backend Source Adapters and Catalogue Normalization
+### Phase 2 — Backend Source Adapters and Catalogue Normalization ✅ (executed 2026-10-22)
 
-- **Objective:** server-side fetch+parse+normalize pipeline for `m3u_playlist`, `api_provider`, `manual_stream` and the built-in source; health recording; NO universal proxy.
-- **Dependencies:** Phase 1.
-- **Likely files (provisional):** `src/lib/server/livetv/adapters/{m3u,apiprovider,manual,livegt-v1}.ts`; `src/lib/server/livetv/fetch-safe.ts` (wraps `stremio/ssrf.ts` + `connect-guard.ts`); `src/lib/server/livetv/refresh-service.ts`; `scripts/livetv_m3u_parse_test.ts` + adapter suites.
-- **Tasks:** strict M3U/M3U8 parser (#EXTM3U header enforcement, attribute parsing `tvg-id/tvg-logo/group-title`, malformed-line policy); documented-API adapter pattern (LiveGT V1 client as reference contract); normalized channel upserts; per-source error kinds + health rows; bounded fetch (timeouts, max bytes, max entries); refresh concurrency limits; caching/version bump.
-- **Non-goals:** no EPG parsing (Phase 3); no playback changes; no embed adapters (Phase 5); no scheduled refresh yet unless trivially safe.
-- **Regression risks:** none to users (server-only), but health writes must stay off critical paths (reuse `health-service.ts` bounded-flush pattern).
-- **Acceptance:** fixture suites incl. malformed playlists (oversized, empty, bad encoding, hostile attributes) all produce typed errors; SSRF guard rejects private/metadata/rebinding targets (unit tests); one bad source cannot affect another; `test:livetv` green.
-- **Verification:** `pnpm exec tsx scripts/livetv_m3u_parse_test.ts` etc.; `pnpm check`; `pnpm build`.
+- **Objective:** server-side fetch+parse+normalize pipeline for `m3u_playlist`, `api_provider` and the built-in source; refresh reliability + state reporting; NO universal proxy.
+- **Status:** EXECUTED on branch `livetv/phase-2-source-adapters` from base commit `92786e7` (verified as `origin/main` head — Phase 1 merged via PR #17). Evidence: [`LIVETV_WORKLOG.md`](LIVETV_WORKLOG.md) entries P2-0…P2-12.
+- **Deliverables (as shipped):** the typed adapter contract (`adapters/types.ts`) with per-entry isolation + honest capability reporting; THREE adapters — `m3u_playlist` (strict-header bounded parser, extension-only format establishment, tvg-id/URL-hash identity), `api_provider` (generic mapping-driven catalogue engine + the ONE inspected documented profile `documented-catalogue-json-v1`, explicit endpoint-field mappings for future documented providers), `builtin_livegt_v1` (embed endpoint materialized via the client's own builder; direct streams deliberately NOT persisted — fresh-signed contract, `playbackResolution: 'fresh_signed'`); `fetch-safe.ts` (the ONE bounded/SSRF-guarded fetcher — stage-1+stage-2 per hop, connect-guarded, 12s/8 MiB/3-redirect caps, HTML never a source document); `ingestion.ts` (pure idempotent planner + bounded batch executor; admin-owned fields never written; nothing ever deleted — report-only stale strategy; zero candidate rows); `refresh-service.ts` (S1/S2 eligibility, per-instance duplicate-refresh guard, 45s deadline, per-source isolation, typed failure taxonomy, report-only state); three admin-only endpoints (`refresh`/`preview`/`status`) behind `requireAdmin` + new additive rate rules; three new suites in `test:livetv` (64 + 62 + 61 checks).
+- **Ratified deviations/additions (documented in the worklog):**
+  1. **Zero schema changes** — every Phase 2 requirement fits the Phase 1 columns; no second registry; no duplicated channel/endpoint tables; no candidate rows written by ingestion.
+  2. **Refresh state is report-only** (no health columns exist in the Phase 1 tables); the persistent-refresh-history additive schema is PROPOSED separately (worklog P2-8) for owner review with Phase 4 — deliberately not implemented.
+  3. **`embed_provider`/`manual_stream` intentionally have no Phase 2 adapter** (no upstream catalogue to fetch) — a typed `adapter_unavailable` gap, not a silent no-op.
+  4. **The LiveGT hostname literal never enters server code** — the adapter imports `LIVEGT_V1_BASE_URL`/`buildLiveTvEmbedUrl` from the existing client (release-audit §4 isolation preserved; "reuse the existing client" honored verbatim).
+  5. **Migration-history discrepancy** (version `20261120000000` absent from the recorded Supabase history while the tables ARE in production) — EXPECTED per `docs/supabase-migration-runbook.md` (manual SQL-Editor application does not write `schema_migrations`); read-only probes confirmed the production Phase 1 state; does NOT block Phase 2 (no schema changes); no reapply/fabrication/DDL.
+- **Non-goals honored:** no EPG parsing (Phase 3); no playback changes/dispatcher (Phase 5); no Admin UI (Phase 4); no scheduler (Phase 7); `unified_enabled` stays FALSE; zero diffs under `src/lib/client/live-tv/**`, `src/lib/components/live-tv/**`, `src/routes/live-tv/**`, and all VOD paths.
+- **Acceptance (verified):** fixture suites incl. malformed playlists (hostile attributes, oversized lines, entry caps, deadline, missing header) all produce typed errors or isolated per-entry diagnostics; SSRF guard rejects private/metadata/loopback/redirect-into-private targets (unit tests with injected resolvers/fetchers); one bad entry/source cannot affect another; repeated refresh applies ZERO writes (mock-DB uniqueness contract); admin-owned mapping/enablement/ordering survive refreshes byte-exactly; full 16-group regression chain green (`test:livetv` now 18 suites); `pnpm check` 0 errors; `pnpm build` green.
+- **Exit evidence:** worklog P2-9 verification table (exact commands/exit codes); P2-10 file census; P2-12 stop confirmation.
 
 ### Phase 3 — EPG/XMLTV Integration
 

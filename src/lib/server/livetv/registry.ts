@@ -75,6 +75,13 @@ const PLAYBACK_ELIGIBLE_STATUSES: ReadonlySet<LivetvSourceStatus> = new Set([
         'maintenance'
 ]);
 
+/**
+ * Public form of the rule-S2 eligible-status set — the single normative
+ * definition, shared with the Phase 2 refresh eligibility gates (a source
+ * that is never playback-eligible is also never refresh-eligible).
+ */
+export const LIVETV_PLAYBACK_ELIGIBLE_STATUSES: ReadonlySet<LivetvSourceStatus> = PLAYBACK_ELIGIBLE_STATUSES;
+
 /** User-facing exposure control. */
 export const LIVETV_VISIBILITIES = ['public', 'internal', 'hidden'] as const;
 export type LivetvVisibility = (typeof LIVETV_VISIBILITIES)[number];

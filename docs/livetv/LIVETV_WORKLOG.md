@@ -319,3 +319,128 @@ Environment: Node `v24.21.0`, pnpm `10.30.3` (exact `packageManager` pin). All c
 - **Push:** the dedicated branch was pushed to `origin` per the Phase 1 brief §14 (never `main`; no force-push; the PAT was used via a one-shot push URL and `git remote -v` confirms no token persisted in `.git/config`).
 - **PR creation:** the provided fine-grained PAT does NOT carry the "Pull requests: write" permission — the GitHub API returned "Resource not accessible by personal access token". Per brief §14 ("open a PR if permissions allow"), the PR was therefore NOT created by this task. One-click PR creation for the pushed branch: `https://github.com/Aman24-0/Mavero/pull/new/livetv/phase-1-unified-model`.
 - **`main` untouched:** still at `c1fb46f` remotely and locally.
+
+---
+
+# PHASE 2 — Source Adapters, Ingestion & Channel Normalization (executed 2026-10-22)
+
+## Entry P2-0 — Kickoff, base commit, and prerequisite checks
+
+- **Start time:** 2026-10-22 ~13:20 UTC. Execution environment: Linux sandbox; Node `v24.21.0`; pnpm `10.30.3` (exact `packageManager` pin); dependencies installed from the committed lockfile.
+- **Phase 1 merge verified:** `git fetch` + `git branch -r --contains 836c3d1` → Phase 1 is on `origin/main` via merge commit `92786e7` (PR #17, "Merge pull request #17 from Aman24-0/livetv/phase-1-unified-model"). Local `main` fast-forwarded to `92786e7`; working tree clean before any change (0 modified files).
+- **Base commit for Phase 2:** `92786e74e99360f9be69798a669f098ca14f056a` (`origin/main` head).
+- **Branch:** `livetv/phase-2-source-adapters` created from the base commit (never `main`; no force-push/reset/clean used anywhere).
+- **Repository instructions:** no `AGENTS.md`/`CLAUDE.md` exists (re-verified). Read before any change: `docs/livetv/LIVETV_PLAN.md` (full), `docs/livetv/LIVETV_WORKLOG.md` (full — all Phase 0 + P1 entries preserved untouched), `docs/live-tv-plan.md` (frozen V1 plan), `docs/supabase-migration-runbook.md`, the Phase 1 migration + `src/lib/server/livetv/registry.ts`, `src/lib/client/live-tv/api.ts` + `cache.ts`, the Stremio security infrastructure (`stremio/ssrf.ts`, `stremio/connect-guard.ts`, `stremio/manifest-fetch.ts`), `admin-auth.ts`, `http/{rate-limit,body,error-response}.ts`, `hooks.server.ts`, `route-policy.ts`, admin API route conventions, and the Phase 1 test suites' conventions.
+
+## Entry P2-1 — Migration-history discrepancy (prerequisite check) — recorded, NOT blocking
+
+- **Probe:** read-only `GET api.supabase.com/v1/projects/<ref>/database/migrations` with the provided Supabase access token returned `{"message":"Invalid access token"}` — the token is invalid/expired, so the history table could not be re-verified via the Management API in this session. Recorded honestly; nothing was retried with fabricated data.
+- **Read-only REST introspection (provided secret key, GET only):** production CONFIRMED to carry the Phase 1 state — `livetv_sources` holds exactly the seeded `builtin-livegt-v1` row (`builtin=true, enabled=true, status=active, priority=0`); `livetv_config_meta` = `id=1, version=2, unified_enabled=false`; `livetv_channels` count = 0. This matches the task's statement that the Phase 1 tables are present in production.
+- **Root cause (documented project reality):** `docs/supabase-migration-runbook.md` §"Migration history and the manual SQL Editor workflow": manual SQL-Editor application does NOT write `supabase_migrations.schema_migrations`; "Do not treat the history table as an inventory of applied migrations. The repository is the source of truth." The absence of version `20261120000000` from the recorded history is therefore the EXPECTED consequence of the established manual workflow, not a drift incident.
+- **Disposition:** the discrepancy does NOT block Phase 2 because Phase 2 performs NO schema changes and never re-applies or modifies Phase 1. Per the brief: no reapply, no manual history fabrication, no production DDL. Suggested (out of scope, owner decision): a one-time `supabase migration repair`-style reconciliation IF the project ever adopts the CLI (runbook §7 already documents this).
+
+## Entry P2-2 — Inspected-files summary and design constraints carried into the implementation
+
+- **Isolation guards (enforced by suites, treated as design inputs):** `live_tv_release_audit_test.ts` §3/§4 — the literal "livetgtv" may exist ONLY in `src/lib/client/live-tv/api.ts` (→ the built-in adapter IMPORTS the base URL + embed builder from the client; no duplicated hostname, which also satisfies "reuse the existing client, do not duplicate provider logic"), and "shaka" stays inside the Live TV dirs (→ route files under `src/routes/api/admin/livetv/` contain neither literal; the adapters never mention engines at all).
+- **No refresh/health columns exist** in the Phase 1 tables (the plan §4.2 sketch's health columns were consciously NOT shipped in Phase 1) → Phase 2 refresh state is REPORT-ONLY (return value + bounded per-instance record); a persistent refresh-history schema is documented as a proposal (P2-8), NOT implemented (brief §9 rule).
+- **Existing infrastructure reused unchanged:** `stremio/ssrf.ts` (stage-1 + stage-2 guards), `stremio/connect-guard.ts` (connect-time validation — the DNS-rebinding TOCTOU closure), `registry.ts` (config/endpoint validators, enablement vocabulary), `admin-auth.ts` (`requireAdmin`), `http/rate-limit.ts` (additive rules only), `http/body.ts` (256 KiB cap), the standard error envelope, and the tsx+jsconfig test conventions.
+
+## Entry P2-3 — Schema decision: ZERO schema changes
+
+- **Decision: Phase 2 makes NO migration.** Every Phase 2 requirement is representable in the existing Phase 1 columns: source entries (`livetv_source_channels` with `metadata` jsonb for bounded provenance), typed endpoints (`livetv_playback_endpoints`), and enablement (admin-owned flags untouched). No second registry, no duplicated channel/endpoint tables (brief §2). The `livetv_playback_candidates` table is deliberately NEVER written by ingestion (brief §8: source-level default ordering remains available when a channel has no explicit candidates).
+- Refresh diagnostics/state: report-only (P2-8). No migration was created, applied, or proposed for application; nothing was run against any database beyond read-only GET probes.
+
+## Entry P2-4 — The adapter contract and the three adapters
+
+- **Contract (`src/lib/server/livetv/adapters/types.ts`):** `LivetvSourceAdapter` interface (identity, `supportedSourceTypes`, `supports`, `capabilities`, `run`), typed source-level `LivetvAdapterError` (15 kinds), per-entry `LivetvEntryError` (static safe reasons), `NormalizedLivetvChannel`/`NormalizedLivetvEndpoint` (validated through the Phase 1 registry contract — `validateLivetvEndpointInput` reuses the DB-pairing rules), honest `LivetvAdapterCapabilities` (incl. `playbackResolution: 'static_urls' | 'fresh_signed' | 'none'`), bounded scalar-only `sanitizeAdapterMetadata` (≤24 keys, strings ≤300, nested payloads dropped — raw upstream payloads never spread).
+- **Pipeline separation (never mixed):** `Source Provider → Adapter → Normalized Source Channels → Canonical Channel Mapping (ingestion) → Typed Playback Endpoints`. Adapters parse/normalize; they never choose a player, never perform fallback, and no engine appears anywhere in the vocabulary.
+- **M3U adapter (`adapters/m3u.ts`):** strict `#EXTM3U` header enforcement; tolerant attribute parser (quoted/unquoted, ordering variations, commas inside quotes, `#EXTGRP` fallback); preserves tvg-id/tvg-name/tvg-logo/group-title/title + ≤8 bounded extra attributes; malformed LINES are per-entry diagnostics (parse continues); policy caps (20k entries, 64k-char lines, 5s parse deadline, abort signal) fail the WHOLE source with typed errors (never partial ingestion); format established ONLY from the URL path extension (`.mpd`→dash, `.m3u8/.m3u`→hls) — anything else (extensionless, query-hint, `.html` player pages) is skipped as `unknown_stream_format` with NO invented formats; https-only + no-credential URLs via the registry validator; identity = validated tvg-id, else deterministic SHA-256 URL hash (`m3u-…`) — display names NEVER determine identity; same-tvg-id entries converge into ONE source entry with multiple typed endpoints (URL-deduped); directives (`#EXTVLCOPT`, `#KODIPROP`, …) are ignored and NEVER persisted (they can carry credentials).
+- **JSON/API adapter (`adapters/api-catalogue.ts`):** a generic mapping-driven catalogue engine + the ONLY Phase 2 profile, `documented-catalogue-json-v1` (the real, inspected documented shape: `{channels:[{id,name,category?,logo?}]}`). Explicit typed endpoint-field mappings (`LivetvApiEndpointFieldMapping`) exist for future documented providers — each endpoint classified INDEPENDENTLY by its declared kind, never from the source type; the shipped profile maps NO endpoint fields (no assumed streams). Payload-shape validation (non-object / missing channels array / entry cap = source-level typed failures), per-entry isolation, duplicate-id first-wins.
+- **Built-in LiveGT V1 adapter (`adapters/livegt-v1.ts`):** fetches the fixed documented `/api/public/channels` built from the client's own `LIVEGT_V1_BASE_URL`; normalizes through the shared engine; materializes ONE typed `embed_page` endpoint per entry via the client's `buildLiveTvEmbedUrl` (digits-only rule reused verbatim); a non-digit id degrades to a typed `embed_url_unavailable` diagnostic (entry survives). **Direct streams are NOT persisted** — LiveGT playback URLs are freshly signed per playback and their contract forbids caching/persisting resolutions (live-tv-plan §11, D6; the catalogue's `embed`/`watch` wire fields are never read, exactly like the existing client) — reported honestly via `playbackResolution: 'fresh_signed'`; the direct path stays resolution-based through the untouched existing client (Phase 5 integration surface). No per-channel playback probing happens anywhere in Phase 2.
+- **Registry (`adapters/index.ts`):** the typed extension point — a future type implements `LivetvSourceAdapter` and registers one entry. `embed_provider`/`manual_stream` have NO Phase 2 adapter by design (no upstream catalogue to fetch); requesting them yields the typed `adapter_unavailable` failure, never a silent no-op.
+
+## Entry P2-5 — Secure source fetching (`src/lib/server/livetv/fetch-safe.ts`)
+
+- ONE bounded/guarded implementation behind `fetchLivetvSourceText` / `fetchLivetvSourceJson` — every security property exists exactly once: https-only re-assertion; stage-1 `assertSafeManifestUrl` + stage-2 `assertSafeManifestDestination` on the initial URL AND every redirect hop; default fetcher = `ssrfSafeFetch` (connect-time re-validation); `redirect:'manual'` loop bounded at 3 hops; 12s deadline + external `AbortSignal` linking; hard 8 MiB byte cap enforced via Content-Length AND per-chunk streaming (connection aborted on overflow); content-type sanity (an HTML page is NEVER a playlist/JSON document; XML/octet-stream rejected by the JSON gate); typed `LivetvSourceFetchError` with 10 kinds and STATIC safe messages.
+- NOT a proxy: the fetcher only retrieves source configuration documents for ingestion; no media relay, no cookie/auth forwarding, no client-visible response bodies.
+- Reuses the mandated infrastructure 1:1 — NO weaker parallel guard was created.
+
+## Entry P2-6 — Idempotent ingestion (`src/lib/server/livetv/ingestion.ts`)
+
+- **Pure planner + thin executor.** `planSourceIngestion` (no I/O, fully unit-tested) → `applySourceIngestion` (bounded 100-row batches, deterministic order, per-item error isolation; entry inserts return their row ids so endpoint FKs resolve without extra round-trips).
+- **Idempotency:** keyed by the DB's own uniques `(source_id, source_channel_id)` / `(source_channel_id, url)`; a repeated refresh plans NO-OP updates (`changes=false`) and applies ZERO writes (proven by the mock-DB uniqueness contract).
+- **Admin-owned fields NEVER written:** update payloads carry EXACTLY the five writable columns (`name`, `category`, `logo_url`, `tvg_id`, `metadata`) — `canonical_channel_id` + entry `enabled` + endpoint `enabled`/`ordering` are preserved (payload-key-set test proves the key set). Source-provided metadata refreshes; admin mapping/enablement survive.
+- **Conservative mapping:** ingestion NEVER creates or alters canonical mappings; new entries are born UNMAPPED; identical display names never merge anything (Phase 1 D-3 posture).
+- **Deletion safety:** a refresh NEVER deletes anything. Entries the upstream omits are counted (`entriesMissingUpstream`) and left untouched; endpoints that vanished are REPORTED (`endpointsMissingUpstream`) with a report-only stale strategy — enablement is admin-owned, so a transient failure can never flip gates or destroy data. A later refresh simply updates rows that reappear.
+- **No candidate rows** (executor-verified): source-level default ordering remains available via the Phase 1 model.
+
+## Entry P2-7 — Refresh service + API surface (`refresh-service.ts`, `/api/admin/livetv/sources/*`)
+
+- **Reliability:** S1/S2-parity eligibility gates (disabled sources and `disabled`/`unavailable` statuses are never refreshed); per-instance in-flight map keyed by source id → a concurrent second call gets the typed `refresh_in_progress` outcome (serverless honesty documented in-module); 45s overall deadline linked into every fetch; sequential multi-source refresh (`refreshAllEligibleLivetvSources`, capped at 25/run) with per-source isolation — one failing source never prevents the others; a refresh NEVER mutates `livetv_sources.enabled/status` (mock-DB verified: zero writes to the sources table).
+- **Failure taxonomy:** lookup vs not-found vs ineligible vs adapter-unavailable vs fetch kinds (invalid_url/blocked_url/timeout/too_large/http_error/network/unsupported_media_type) vs invalid_payload/parse kinds vs per-entry diagnostics vs per-item DB write errors — all distinct, typed, static-message (no raw URLs/credentials).
+- **State reporting:** outcomes carry timestamps/duration/ok/failure/counts/`skippedReasons`/bounded `entryErrors`/bounded `ingestionErrors`; a bounded per-instance record (≤200 sources, LRU-style eviction) backs the status endpoint. Persistent refresh history: documented as a separate proposal (P2-8), NOT implemented.
+- **API (minimum secure surface, admin-only):** `POST /api/admin/livetv/sources/refresh` (`{sourceId|slug|all}`, exactly one mode), `POST /api/admin/livetv/sources/preview` (dry-run: fetch+normalize+plan, ZERO writes; counts + static reasons only — never an upstream URL), `GET /api/admin/livetv/sources/status` (bounded per-instance outcomes). All three: `requireAdmin` first, per-identity rate limits (NEW additive rules `livetvAdminRefresh` 6/min, `livetvAdminPreview` 12/min), 256 KiB body cap, standard `{ok:false,error:{code,message}}` envelope, `no-store`. No admin UI, no user-facing surface, no scheduler.
+- **VOD/LiveGT untouched:** zero diff under `src/lib/client/live-tv/**`, `src/lib/components/live-tv/**`, `src/routes/live-tv/**`, and all VOD paths; `livetv_config_meta.unified_enabled` remains FALSE and nothing in Phase 2 is on any user path.
+
+## Entry P2-8 — Proposed (NOT implemented): persistent refresh history
+
+- If the owner wants durable last-attempt/last-success/health reporting (needed by the Phase 4 Admin UI), the additive candidate is: `livetv_sources` health columns (`last_refresh_at`, `last_refresh_status`, `last_error_kind`, `channel_count`, `refresh_in_progress`) or a separate `livetv_refresh_history` append table — via a NEW additive, idempotent, drift-aware migration following the Phase 1 conventions. Documented here for review per the brief §9 ("document the proposed additive schema separately and stop"); Phase 2 ships the report-only behavior.
+
+## Entry P2-9 — Verification (commands actually executed 2026-10-22)
+
+| # | Command | Exit | Result |
+|---|---|---|---|
+| 1 | `pnpm check` | 0 | **0 errors, 5 warnings** (the pre-existing `css_unused_selector` warnings — unchanged) |
+| 2 | `pnpm run test:livetv` (18 suites: 13 pre-existing + Phase 1 ×2 + Phase 2 ×3) | 0 | All green — incl. the isolation guards (`live_tv_release_audit_test` §3/§4), Phase 1 suites (76 + 60 checks), and the new suites: **M3U parse 64 checks, adapters 62 checks, ingestion/refresh 61 checks** |
+| 3 | `pnpm run test:supabase` | 0 | 115 checks + `PASS supabase_final_audit_test — 107 checks` |
+| 4 | `pnpm run test:admin` (16 suites) | 0 | All green — final suite `mav_focused_admin_nav_test: 58 passed, 0 failed` |
+| 5 | `scripts/phase1_rate_limit_test.ts` | 0 | 6 checks passed (rate-limit regression after the additive rules) |
+| 6 | `scripts/phase1_body_limit_test.ts` | 0 | 5 checks passed |
+| 7 | `pnpm run test:core` / `test:ux` / `test:providers` / `test:playback` / `test:platform` / `test:downloader` / `test:devices` / `test:analytics` / `test:hosting` / `test:cloudstream` / `test:player` / `test:mav` / `test:rendering` | **0 for every group** | Full 16-group chain covered group-by-group (with #2–#4 completing livetv/admin/supabase) — every group exit 0 |
+| 8 | `pnpm run build` | 0 | vite build OK + Netlify adapter "✔ done" |
+
+- Test-writing notes (all behavioral, resolved by fixing the SUITE or a genuine bug): a real bug was found and fixed via the suite (an over-long `tvg-id` was silently truncated by the attribute-value cap into a DIFFERENT stable identity — fixed by validating identity fields with the id validator instead of a truncating normalizer, and raising the raw attribute capture cap above every field-validator bound so field validators decide usability); hostile display metadata is now proven to be conservatively skipped; §7/§4 fixtures initially asserted wrong contracts and were corrected to the ratified behavior.
+- Not run / not applicable: no migration applied to ANY database (Phase 2 has none); no production writes (read-only GET probes only, P2-1); no playback/stream tests (Phase 5+); the single top-level `pnpm test` chain is executed by CI on push — this session ran all 16 constituent groups with individual exit codes (all 0).
+
+## Entry P2-10 — Files created/modified by Phase 2
+
+**Created:**
+- `src/lib/server/livetv/fetch-safe.ts` — the bounded/SSRF-guarded source-document fetcher.
+- `src/lib/server/livetv/adapters/types.ts` — the typed adapter contract + shared normalization/metadata bounds + fetch→adapter error mapping.
+- `src/lib/server/livetv/adapters/m3u.ts` — the M3U/M3U8 playlist adapter (parser + adapter).
+- `src/lib/server/livetv/adapters/api-catalogue.ts` — the generic catalogue engine + the documented profile + the `api_provider` adapter.
+- `src/lib/server/livetv/adapters/livegt-v1.ts` — the built-in LiveGT V1 catalogue adapter (embed materialization; direct stays fresh-signed).
+- `src/lib/server/livetv/adapters/index.ts` — the adapter registry (extension point).
+- `src/lib/server/livetv/ingestion.ts` — the pure planner + bounded batch executor.
+- `src/lib/server/livetv/refresh-service.ts` — refresh orchestration, outcomes, concurrency guard, dry-run preview.
+- `src/routes/api/admin/livetv/sources/{refresh,preview,status}/+server.ts` — the three admin-only endpoints.
+- `scripts/livetv_m3u_parse_test.ts` (64 checks), `scripts/livetv_phase2_adapters_test.ts` (62), `scripts/livetv_phase2_ingestion_test.ts` (61).
+
+**Modified (additive only):**
+- `src/lib/server/livetv/registry.ts` — ONE additive export (`LIVETV_PLAYBACK_ELIGIBLE_STATUSES`, the public form of the existing rule-S2 set — single normative definition shared with refresh eligibility). No behavior change.
+- `src/lib/server/http/rate-limit.ts` — TWO additive rule keys (`livetvAdminRefresh`, `livetvAdminPreview`). Existing rules untouched.
+- `package.json` — the three new suites appended to the `test:livetv` chain (repo convention: new suites join in the same PR).
+
+**NOT touched:** `src/lib/client/live-tv/**`, `src/lib/components/live-tv/**`, `src/routes/live-tv/**`, all VOD code, ALL migrations (zero schema changes), netlify/deployment config, any database. Secret-scanned the full diff: only fake fixture strings (`token=abc`/`token=t`) used to prove non-leakage; no real credentials anywhere.
+
+## Entry P2-11 — Known limitations and remaining phases
+
+- **Report-only refresh state** (per-instance, bounded) — persistent history awaits the owner-reviewed proposal (P2-8, Phase 4).
+- **No Admin UI** for sources/refresh (Phase 4); the API endpoints are the minimal secure surface only.
+- **No scheduler** (Phase 7); **no EPG ingestion** (Phase 3 — `tvg_id` provenance is preserved for it); **no canonical auto-mapping** (conservative by design; admin mapping arrives with Phase 4 tooling); **no embed_provider/manual_stream adapters** (no upstream to fetch — typed gap).
+- **LiveGT direct endpoints are not materialized** by design (fresh-signed contract); the built-in source's unified playback integration (resolution-based direct + embed candidates) is the Phase 5 design space.
+- `loadExistingState` reads endpoints table-wide then filters (PostgREST has no cross-table filter) — acceptable at Phase 2 scale; the Phase 4/5 serving layer should move to per-entry queries if catalogues grow beyond the current bounds.
+- **Phases 3–8 remain NOT started** (per plan §11).
+
+## Entry P2-12 — Phase 2 stop confirmation
+
+- **Phase 3+ implementation has NOT started.** The diff contains only: the new server adapter/ingestion/refresh modules, the three admin endpoints, the three test suites (+ chain wiring), the two additive vocabulary/rule exports, and this documentation.
+- **No golden behavior changed:** `/live-tv` behavior is byte-identical (unified switch still FALSE; zero client diffs); the full 16-group regression chain is green (P2-9).
+- **No database, deploy configuration, or production state was modified.**
+
+## Entry P2-13 — Push and PR outcome (final git state)
+
+- **Commit:** `a4b3c5e` on branch `livetv/phase-2-source-adapters` (one commit; base `92786e7` = the Phase 1 merge on `main`).
+- **Push:** the dedicated branch was pushed to `origin` per the Phase 2 brief §12 (never `main`; no force-push; the PAT was used via a one-shot push URL and `git remote -v` confirms no token persisted in `.git/config`). Verified: `origin/livetv/phase-2-source-adapters` = `a4b3c5e`.
+- **PR creation:** the provided fine-grained PAT does NOT carry the "Pull requests: write" permission — the GitHub API returned "Resource not accessible by personal access token" (identical to the Phase 1 outcome, P1-12). Per brief §12 ("Open a PR if permissions allow"), the PR was therefore NOT created by this task. One-click PR creation for the pushed branch: `https://github.com/Aman24-0/Mavero/pull/new/livetv/phase-2-source-adapters`.
+- **`main` untouched:** still at `92786e7` remotely and locally.
