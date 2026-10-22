@@ -116,6 +116,14 @@ export const RATE_LIMIT_RULES = {
   // client, generous for any realistic UX. Per-identity (user or IP)
   // so a single misbehaving client cannot drive unbounded DB writes.
   eventsIngest: { limit: 60, windowMs: 60_000 },
+  // Unified Live TV Phase 2 — admin source refresh. Each call drives one
+  // bounded upstream fetch + ingestion per source (≤25 sources for "all").
+  // Admin-only endpoints, but rate-limited anyway: a refresh spends an
+  // upstream budget and DB writes, so a stuck admin loop must stay bounded.
+  livetvAdminRefresh: { limit: 6, windowMs: 60_000 },
+  // Dry-run preview: one bounded upstream fetch, zero writes. Slightly
+  // looser than refresh (it is the adapter validation surface) but bounded.
+  livetvAdminPreview: { limit: 12, windowMs: 60_000 },
 } as const satisfies Record<string, RateLimitRule>;
 
 export type RateLimitBucketName = keyof typeof RATE_LIMIT_RULES;
