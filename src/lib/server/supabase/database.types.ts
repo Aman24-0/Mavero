@@ -2015,6 +2015,358 @@ export type Database = {
           },
         ]
       }
+      // Added by 20261120000000_livetv_source_registry.sql — Phase 1 of the
+      // Unified Live TV Source Management project (docs/livetv/). The
+      // livetv_* family models the four unified concepts separately:
+      // sources (registry), canonical channels + source entries + typed
+      // endpoints (mapping), playback candidates (priority), and NO table
+      // for playback engines (derived from endpoint kind at dispatch).
+      // Additive-only, no FK edges into existing tables, RLS fail-closed
+      // admin-only (no anon policies in Phase 1).
+      livetv_config_meta: {
+        Row: {
+          id: number
+          version: number
+          unified_enabled: boolean
+          updated_at: string
+        }
+        Insert: {
+          id?: number
+          version?: number
+          unified_enabled?: boolean
+          updated_at?: string
+        }
+        Update: {
+          id?: number
+          version?: number
+          unified_enabled?: boolean
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      livetv_sources: {
+        Row: {
+          id: string
+          slug: string
+          name: string
+          source_type: string
+          builtin: boolean
+          enabled: boolean
+          status: string
+          priority: number
+          visibility: string
+          capabilities: Json
+          config: Json
+          description: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          slug: string
+          name: string
+          source_type: string
+          builtin?: boolean
+          enabled?: boolean
+          status?: string
+          priority?: number
+          visibility?: string
+          capabilities?: Json
+          config?: Json
+          description?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          slug?: string
+          name?: string
+          source_type?: string
+          builtin?: boolean
+          enabled?: boolean
+          status?: string
+          priority?: number
+          visibility?: string
+          capabilities?: Json
+          config?: Json
+          description?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      livetv_channels: {
+        Row: {
+          id: string
+          name: string
+          category: string | null
+          logo_url: string | null
+          dedup_key: string | null
+          enabled: boolean
+          notes: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          name: string
+          category?: string | null
+          logo_url?: string | null
+          dedup_key?: string | null
+          enabled?: boolean
+          notes?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          name?: string
+          category?: string | null
+          logo_url?: string | null
+          dedup_key?: string | null
+          enabled?: boolean
+          notes?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      livetv_source_channels: {
+        Row: {
+          id: string
+          source_id: string
+          source_channel_id: string
+          canonical_channel_id: string | null
+          name: string
+          category: string | null
+          logo_url: string | null
+          tvg_id: string | null
+          enabled: boolean
+          metadata: Json
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          source_id: string
+          source_channel_id: string
+          canonical_channel_id?: string | null
+          name: string
+          category?: string | null
+          logo_url?: string | null
+          tvg_id?: string | null
+          enabled?: boolean
+          metadata?: Json
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          source_id?: string
+          source_channel_id?: string
+          canonical_channel_id?: string | null
+          name?: string
+          category?: string | null
+          logo_url?: string | null
+          tvg_id?: string | null
+          enabled?: boolean
+          metadata?: Json
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'livetv_source_channels_source_id_fkey'
+            columns: ['source_id']
+            isOneToOne: false
+            referencedRelation: 'livetv_sources'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'livetv_source_channels_canonical_channel_id_fkey'
+            columns: ['canonical_channel_id']
+            isOneToOne: false
+            referencedRelation: 'livetv_channels'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      livetv_playback_endpoints: {
+        Row: {
+          id: string
+          source_channel_id: string
+          endpoint_kind: string
+          stream_format: string | null
+          url: string
+          ordering: number
+          enabled: boolean
+          label: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          source_channel_id: string
+          endpoint_kind: string
+          stream_format?: string | null
+          url: string
+          ordering?: number
+          enabled?: boolean
+          label?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          source_channel_id?: string
+          endpoint_kind?: string
+          stream_format?: string | null
+          url?: string
+          ordering?: number
+          enabled?: boolean
+          label?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'livetv_playback_endpoints_source_channel_id_fkey'
+            columns: ['source_channel_id']
+            isOneToOne: false
+            referencedRelation: 'livetv_source_channels'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      livetv_playback_candidates: {
+        Row: {
+          id: string
+          channel_id: string
+          endpoint_id: string
+          priority: number
+          enabled: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          channel_id: string
+          endpoint_id: string
+          priority?: number
+          enabled?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          channel_id?: string
+          endpoint_id?: string
+          priority?: number
+          enabled?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'livetv_playback_candidates_channel_id_fkey'
+            columns: ['channel_id']
+            isOneToOne: false
+            referencedRelation: 'livetv_channels'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'livetv_playback_candidates_endpoint_id_fkey'
+            columns: ['endpoint_id']
+            isOneToOne: false
+            referencedRelation: 'livetv_playback_endpoints'
+            referencedColumns: ['id']
+          },
+        ]
+      }
+      livetv_epg_sources: {
+        Row: {
+          id: string
+          slug: string
+          name: string
+          epg_type: string
+          source_url: string | null
+          enabled: boolean
+          status: string
+          config: Json
+          description: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          slug: string
+          name: string
+          epg_type?: string
+          source_url?: string | null
+          enabled?: boolean
+          status?: string
+          config?: Json
+          description?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          slug?: string
+          name?: string
+          epg_type?: string
+          source_url?: string | null
+          enabled?: boolean
+          status?: string
+          config?: Json
+          description?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      livetv_epg_channel_mappings: {
+        Row: {
+          id: string
+          epg_source_id: string
+          channel_id: string
+          epg_channel_id: string
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          epg_source_id: string
+          channel_id: string
+          epg_channel_id: string
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          epg_source_id?: string
+          channel_id?: string
+          epg_channel_id?: string
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'livetv_epg_channel_mappings_epg_source_id_fkey'
+            columns: ['epg_source_id']
+            isOneToOne: false
+            referencedRelation: 'livetv_epg_sources'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'livetv_epg_channel_mappings_channel_id_fkey'
+            columns: ['channel_id']
+            isOneToOne: false
+            referencedRelation: 'livetv_channels'
+            referencedColumns: ['id']
+          },
+        ]
+      }
       // Added by 20261004000000_unified_downloader_global_order.sql.
       // FINAL TASK (unified Mavero Downloader): the ONE canonical global
       // source order spanning BOTH unified-downloader source kinds:

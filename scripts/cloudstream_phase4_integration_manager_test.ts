@@ -1193,8 +1193,14 @@ function pristineFile(relative: string): string | null {
   // policies/grants/functions/indexes ONLY (no data writes, no table
   // create/drop, no cloudstream/downloader table touched); behaviorally
   // proven by scripts/supabase_remediation_migration_test.ts (115 checks).
+  // LIVETV PHASE 1 (20261120000000, sanctioned): the Unified Live TV source
+  // registry — a NEW additive livetv_* table family (sources, canonical
+  // channels, source entries, typed playback endpoints, per-channel playback
+  // candidates, EPG identity foundation). Zero references to any existing
+  // table; no cloudstream/downloader/registry surface touched — behaviorally
+  // proven by scripts/livetv_phase1_migration_test.ts (60 PGlite checks).
   ok(
-    addedMigrations.length === 15
+    addedMigrations.length === 16
       && addedMigrations.includes('20261004000000_unified_downloader_global_order.sql')
       && addedMigrations.includes('20261102000000_adapter_build_lifecycle.sql')
       && addedMigrations.includes('20261103000000_live_tv_analytics_events.sql')
@@ -1209,8 +1215,9 @@ function pristineFile(relative: string): string | null {
       && addedMigrations.includes('20261117000000_vidstuck_cc_embed_origins.sql')
       && addedMigrations.includes('20261118000000_supabase_remediation_security_performance.sql')
       && addedMigrations.includes('20261119000000_supabase_final_audit_hardening.sql')
+      && addedMigrations.includes('20261120000000_livetv_source_registry.sql')
       && addedMigrations.includes('20261014000000_add_unlink_action.sql'),
-    `F3: the ONLY added migrations are the FINAL TASK unified-order + build-lifecycle + LT-5-analytics + LT-15-fallback-event + VidRift-provider + MAVP-4-icon-badge + MAVP-5-default-slots + MAVP-7-unique-assignment + BlueVelvet-provider + Vixolity/TGVID/ZXCStream-provider + VidStuck-cc-origins + Supabase-remediation + Supabase-final-audit migrations (${addedMigrations.join(', ') || 'none'})`,
+    `F3: the ONLY added migrations are the FINAL TASK unified-order + build-lifecycle + LT-5-analytics + LT-15-fallback-event + VidRift-provider + MAVP-4-icon-badge + MAVP-5-default-slots + MAVP-7-unique-assignment + BlueVelvet-provider + Vixolity/TGVID/ZXCStream-provider + VidStuck-cc-origins + Supabase-remediation + Supabase-final-audit + Livetv-source-registry migrations (${addedMigrations.join(', ') || 'none'})`,
   );
   ok(removedMigrations.length === 0, 'F3: no migration was removed');
 
