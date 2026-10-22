@@ -437,3 +437,10 @@ Environment: Node `v24.21.0`, pnpm `10.30.3` (exact `packageManager` pin). All c
 - **Phase 3+ implementation has NOT started.** The diff contains only: the new server adapter/ingestion/refresh modules, the three admin endpoints, the three test suites (+ chain wiring), the two additive vocabulary/rule exports, and this documentation.
 - **No golden behavior changed:** `/live-tv` behavior is byte-identical (unified switch still FALSE; zero client diffs); the full 16-group regression chain is green (P2-9).
 - **No database, deploy configuration, or production state was modified.**
+
+## Entry P2-13 — Push and PR outcome (final git state)
+
+- **Commit:** `a4b3c5e` on branch `livetv/phase-2-source-adapters` (one commit; base `92786e7` = the Phase 1 merge on `main`).
+- **Push:** the dedicated branch was pushed to `origin` per the Phase 2 brief §12 (never `main`; no force-push; the PAT was used via a one-shot push URL and `git remote -v` confirms no token persisted in `.git/config`). Verified: `origin/livetv/phase-2-source-adapters` = `a4b3c5e`.
+- **PR creation:** the provided fine-grained PAT does NOT carry the "Pull requests: write" permission — the GitHub API returned "Resource not accessible by personal access token" (identical to the Phase 1 outcome, P1-12). Per brief §12 ("Open a PR if permissions allow"), the PR was therefore NOT created by this task. One-click PR creation for the pushed branch: `https://github.com/Aman24-0/Mavero/pull/new/livetv/phase-2-source-adapters`.
+- **`main` untouched:** still at `92786e7` remotely and locally.
