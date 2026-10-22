@@ -81,7 +81,11 @@ const testChain = testGateText();
 // ============================================================
 {
   // Prefixes RELATIVE TO src/ (the walk computes src-relative paths).
-  const LIVE_TV_DIRS = ['lib/client/live-tv', 'lib/components/live-tv', 'routes/live-tv'];
+  // lib/server/livetv joins the Live TV family in Phase 1 of the unified
+  // Live TV project (docs/livetv/LIVETV_PLAN.md §4.1/§Phase 1): the server
+  // registry module only DOCUMENTS the engine routing (endpoint kind →
+  // engine) — it contains no engine code and VOD paths remain guarded.
+  const LIVE_TV_DIRS = ['lib/client/live-tv', 'lib/components/live-tv', 'routes/live-tv', 'lib/server/livetv'];
   const SRC_ROOT = new URL('../src', import.meta.url).pathname;
   const files: string[] = [];
   const collect = (dir: string): void => {

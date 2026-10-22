@@ -1,6 +1,6 @@
 # MAVERO — Unified Live TV Source Management — Master Plan
 
-**Status:** DRAFT — Phase 0 (Baseline & Architecture Audit) evidence incorporated; Phases 1+ NOT authorized and NOT started.
+**Status:** ACTIVE — Phase 0 (Baseline & Architecture Audit) ✅ executed; Phase 1 (Source Registry & Data Model) ✅ executed 2026-10-22 on branch `livetv/phase-1-unified-model`; Phases 2+ NOT authorized and NOT started.
 **Date:** 2026-10-22
 **Baseline commit audited:** `120c4b5b429d1a361082db9af181c34c179f9fc5` (branch `main`, clean tree, synced with `origin/main`)
 **Phase 0 execution log:** [`LIVETV_WORKLOG.md`](LIVETV_WORKLOG.md) (append-only, evidence-based)
@@ -359,16 +359,22 @@ Token/URL expiry handling: LiveGT-style signed URLs are resolved fresh per playb
 - **Completed:** git baseline; docs/instructions inspection; Live TV architecture audit; TV-Flix-uncertainty resolution; Admin registry audit; Supabase migration/RLS audit incl. live read-only introspection; reference-repo audits (JioTv_STB_Relay, iptv-org ×3); protocol/security audits; baseline checks (`pnpm check`, `test:livetv`, `test:supabase`, `pnpm build`).
 - **Exit criteria met:** acceptance checklist §17; no source/migration/config changes; docs-only diff.
 
-### Phase 1 — Source Registry and Data Model Design
+### Phase 1 — Source Registry and Data Model Design ✅ (executed 2026-10-22)
 
 - **Objective:** ratify the target schema (§4.2) against the full existing schema; ship the additive migration + types + a server-side registry service — no UI yet.
-- **Dependencies:** Phase 0 (this document); owner sign-off on [DECISION REQUIRED] items §13.1–§13.4.
-- **Likely files (provisional):** `supabase/migrations/2026MMDD000000_livetv_source_registry.sql`; regenerated `src/lib/server/supabase/database.types.ts`; new `src/lib/server/livetv/types.ts`, `src/lib/server/livetv/registry-service.ts`, `src/lib/server/livetv/public-config.ts`; `scripts/livetv_registry_migration_test.ts`.
-- **Tasks:** schema review vs §4.2; seed `builtin_livegt_v1`; RLS (public-read filtered views + admin-write `(select public.is_admin())`); capability/config jsonb shape validation (CHECK constraints); public-config versioned cache; enablement switch; migration + rollback rehearsal on a throwaway database (never production).
+- **Status:** EXECUTED on branch `livetv/phase-1-unified-model` from base commit `c1fb46f` (§11 Phase 0 head, verified in sync with `origin/main`). Evidence: [`LIVETV_WORKLOG.md`](LIVETV_WORKLOG.md) Phase 1 entries. Migration: `supabase/migrations/20261120000000_livetv_source_registry.sql`.
+- **Deliverables (as shipped):** the additive `livetv_*` migration (8 tables, RLS, triggers, built-in seed, unified enablement switch); hand-maintained `database.types.ts` additions (repo has no Supabase CLI config — the file's documented "Added by …" convention); `src/lib/server/livetv/registry.ts` (typed vocabularies, per-source config validation with stage-1 SSRF gate, typed endpoint validation, effective-enablement rules, deterministic candidate ordering); `scripts/livetv_phase1_migration_test.ts` (PGlite, 60 checks) + `scripts/livetv_phase1_model_test.ts` (pure, 76 checks), both wired into `test:livetv`.
+- **Ratified deviations from the provisional §4.2/§4.5 sketch (all evidence-based, documented in the worklog):**
+  1. **Per-channel candidate list** (`livetv_playback_candidates`) implements the ratified priority semantics — an ordered (source, endpoint) candidate list per canonical channel with endpoint-level and candidate-level enablement — generalizing the sketch's single "active source" idea while keeping source-level `priority` as the default order when a channel has no explicit candidates.
+  2. **Typed playback endpoints** (`livetv_playback_endpoints` with a DB-enforced `direct_stream ⇔ dash|hls` / `embed_page ⇔ null` pairing constraint) — an iframe URL can never be stored "as a manifest"; the playback engine is derived (`registry.ts` `playbackEngineForEndpoint`), never stored or prioritized.
+  3. **RLS ships fail-closed admin-only** (no anon/public-read policies or views in Phase 1): no public consumer exists yet, so exposure predicates are decided together with the versioned public-config consumer (Phase 5/6) instead of speculatively. Admin authorization reuses `public.is_admin()` unchanged.
+  4. **The registry module is pure** (no DB I/O): Phase 1 ships validation + enablement + ordering logic unit-tested without a database; the DB-serving layer arrives with its Phase 5 consumer (avoids speculative dead code).
+  5. **EPG identity foundation only** (`livetv_epg_sources` + `livetv_epg_channel_mappings`, 1:1 per EPG source, plus `tvg_id` provenance on source entries) — ingestion untouched for Phase 3.
+- **Dependencies:** Phase 0 (this document); owner sign-off on [DECISION REQUIRED] items §13.1–§13.4 (D-3 resolved conservatively for Phase 1: dedup stays explicit via nullable `dedup_key` + explicit canonical mapping; display-name equality never merges).
+- **Original task list (kept for the record):** schema review vs §4.2; seed `builtin_livegt_v1`; RLS; capability/config jsonb shape validation (CHECK constraints); public-config versioned cache; enablement switch; migration + rollback rehearsal on a throwaway database (never production).
 - **Non-goals:** no admin UI, no /live-tv changes, no fetching.
-- **Regression risks:** type regeneration breaking `pnpm check`; public view over-exposure (mitigation: filtered views + policy tests).
-- **Acceptance:** migration applies cleanly on a fresh local chain AND is idempotent on replay; `pnpm check`/`pnpm build` green; registry service unit-tested (stubbed client); built-in source enabled-by-default preserves "LiveGT only" behavior; rollback (drop tables / disable switch) rehearsed and documented.
-- **Exit evidence:** migration test suite green + recorded commands/outputs in the phase worklog.
+- **Acceptance (verified):** migration applies cleanly on a fresh local chain AND is idempotent on replay (PGlite Phase A); `pnpm check`/`pnpm build` green; registry model unit-tested; built-in source enabled-by-default preserves "LiveGT only" behavior with the unified system switch defaulting to FALSE; rollback levers documented (drop-tables / `unified_enabled=false`); no production database was touched.
+- **Exit evidence:** migration + model suites green inside `test:livetv` (exit 0); exact commands/outputs recorded in the phase worklog.
 
 ### Phase 2 — Backend Source Adapters and Catalogue Normalization
 

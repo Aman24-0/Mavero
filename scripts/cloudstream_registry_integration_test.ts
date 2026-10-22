@@ -294,6 +294,13 @@ function section_registry(): void {
   // valid unique constraint index). No data writes, no table create/drop.
   // Behaviorally proven by scripts/supabase_final_audit_test.ts (107 checks).
   const finalAuditHardeningMigration = '20261119000000_supabase_final_audit_hardening.sql';
+  // LIVETV PHASE 1 (20261120000000, sanctioned): the Unified Live TV source
+  // registry — a NEW additive livetv_* table family (sources, canonical
+  // channels, source entries, typed playback endpoints, per-channel playback
+  // candidates, EPG identity foundation). Zero references to any existing
+  // table; no VOD registry surface is touched. Behaviorally proven by
+  // scripts/livetv_phase1_migration_test.ts (60 PGlite checks).
+  const livetvSourceRegistryMigration = '20261120000000_livetv_source_registry.sql';
   const added = migrations.filter((name) => !pristineMigrations.includes(name));
   const phase2Sql = read(`supabase/migrations/${phase2Migration}`);
   const phase2SqlNoComments = phase2Sql.replace(/--[^\n]*/g, '');
@@ -302,7 +309,7 @@ function section_registry(): void {
   const unifiedSql = read(`supabase/migrations/${unifiedMigration}`);
   const unifiedSqlNoComments = unifiedSql.replace(/--[^\n]*/g, '');
   ok(
-    added.length === 18
+    added.length === 19
       && added.includes(migrationName)
       && added.includes(phase2Migration)
       && added.includes(phase3Migration)
@@ -320,8 +327,9 @@ function section_registry(): void {
       && added.includes(vidstuckCcOriginsMigration)
       && added.includes(supabaseRemediationMigration)
       && added.includes(finalAuditHardeningMigration)
+      && added.includes(livetvSourceRegistryMigration)
       && added.includes('20261014000000_add_unlink_action.sql'),
-    `§A10: exactly the CS-5 + Phase 2 + Phase 3 + FINAL TASK + build-lifecycle + LT-5-analytics + LT-15-fallback-event + VidRift-provider + MAVP-4-icon-badge + MAVP-5-default-slots + MAVP-7-unique-assignment + BlueVelvet-provider + Vixolity/TGVID/ZXCStream-provider + VidStuck-cc-origins + Supabase-remediation + Supabase-final-audit migrations were added (${added.join(', ') || 'none'})`,
+    `§A10: exactly the CS-5 + Phase 2 + Phase 3 + FINAL TASK + build-lifecycle + LT-5-analytics + LT-15-fallback-event + VidRift-provider + MAVP-4-icon-badge + MAVP-5-default-slots + MAVP-7-unique-assignment + BlueVelvet-provider + Vixolity/TGVID/ZXCStream-provider + VidStuck-cc-origins + Supabase-remediation + Supabase-final-audit + Livetv-source-registry migrations were added (${added.join(', ') || 'none'})`,
   );
   // VIDRIFT (sanctioned): insert-only registration — no destructive verbs,
   // no download_providers / registry-table references.

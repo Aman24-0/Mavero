@@ -158,3 +158,157 @@ Not-run / not-possible items: no Supabase migrations applied anywhere (forbidden
 
 - Final status after all work: only `?? docs/livetv/` (new) plus the one-line `docs/README.md` index addition (see `git diff` at commit/push time). Working tree otherwise exactly as cloned at `120c4b5b429d1a361082db9af181c34c179f9fc5`.
 - **Confirmation: Phase 1+ implementation has NOT started.** No source code, migrations, RLS policies, environment variables, deployment configuration, or database state was created/modified/applied. All outputs are the documentation files above.
+
+---
+
+# PHASE 1 — Source Registry, Channel Mapping & Priority Data Model
+
+**Task:** implement Phase 1 only (per the owner's Phase 1 brief): source/provider data model, canonical channel + source-entry relationships, typed playback endpoint model, configurable source/channel candidate ordering, enablement semantics, EPG identity foundation, server-side validation/types/tests, additive migrations. Full architecture design for the complete unified system preserved; Phases 2+ NOT started.
+
+## Entry P1-0 — Kickoff, branch, and base commit
+
+- **Start time:** 2026-10-22 11:58:16 UTC.
+- **Base commit:** `c1fb46f82742f378c0a8fbc082d958f997388f8e` — verified as `origin/main` head (fetch + `git rev-list --left-right --count main...origin/main` → `0 0`; the owner's statement that Phase 0 commit `c1fb46f` was pushed to `main` and CI passed is CONFIRMED against the remote).
+- **Working tree:** clean before work started (`git status --porcelain | wc -l` → 0). No pre-existing user changes to preserve; no destructive git commands used.
+- **Branch:** `livetv/phase-1-unified-model` created from the base commit (never `main`; no direct pushes to `main`).
+- **Repository instructions:** no `AGENTS.md`/`CLAUDE.md` exists (Phase 0 finding re-verified). Read before any change: `docs/livetv/LIVETV_PLAN.md` (full), `docs/livetv/LIVETV_WORKLOG.md` (full), `docs/live-tv-plan.md` (frozen V1 plan), plus the implementation files listed in P1-1.
+
+## Entry P1-1 — Inspected files and architecture (before changing anything)
+
+| Area | Path (read in full or in relevant sections) | Key facts carried into the design |
+|---|---|---|
+| V1 LiveGT client | `src/lib/client/live-tv/api.ts` | `LIVEGT_V1_BASE_URL` constant; `buildLiveTvEmbedUrl()` → `https://livetgtv.lovable.app/embed/{id}` (digits-only `^\d{1,8}$`); playback always freshly resolved, never cached/persisted; embed/watch wire fields intentionally unused for playback in V1 |
+| LT types | `src/lib/client/live-tv/types.ts` | ISOLATION CONTRACT (decision D5): Live TV types never forced into VOD `PlayerSource`; VOD code must not import LT modules |
+| LT player | `src/lib/client/live-tv/player.ts` (structure), `LiveTvPlayer.svelte` (embed sections) | LT-15 embed fallback mounts `{base}/embed/{id}` iframe after fatal native failure; embed mode is embed-only (LT-18 §3) |
+| VOD registry pattern | `supabase/migrations/20260820010000_phase7a_streaming_registry.sql` | The structural conventions reused: CHECK-constrained vocabularies, `(select public.is_admin())` RLS policies, version-bump trigger pattern, slug/name/ordering/visibility/status columns, `set_updated_at` triggers |
+| Streaming public config | `src/lib/server/streaming/public-config.ts` | Versioned single-row cache + deploy-ordering guard (42P01/PGRST205) — pattern referenced for Phases 5/6 |
+| Admin authz | `src/lib/server/streaming/admin-auth.ts` | `requireAdmin()`/`assertAdminClient()`/`isAdminUser()` unchanged by Phase 1 (no routes yet); RLS `is_admin()` is the DB-level twin |
+| SSRF guard | `src/lib/server/streaming/stremio/ssrf.ts` | Stage-1 `assertSafeManifestUrl` (https/http, no credentials, ≤2048, host blocklist, IP-literal rejection incl. hex/octal/decimal + IPv4-mapped/NAT64) — REUSED for server-fetched config URLs |
+| Migration test pattern | `scripts/adapter_build_lifecycle_migration_test.ts`, `scripts/supabase_remediation_migration_test.ts` | PGlite embedded-Postgres conventions: realistic pre-state (auth.uid/profiles/is_admin/set_updated_at), idempotent replay, RLS catalog checks, tryExec-based constraint probes |
+| Types file | `src/lib/server/supabase/database.types.ts` | Hand-maintained (no Supabase CLI config exists in the repo — `supabase/` contains only `migrations/`); inline `// Added by <migration>` convention |
+| CI contract | `.github/workflows/ci.yml`, `package.json` | `test:livetv` chain (13 suites at Phase 0), full 16-group `pnpm test` chain, `pnpm check`, `pnpm build` |
+
+## Entry P1-2 — Schema reuse decision and rationale
+
+**Decision: build a NEW, separate `livetv_*` table family; do NOT reuse or extend the VOD `streaming_providers`/`streaming_sources`/`streaming_categories` registry.**
+
+Rationale (evidence-based, per the brief's §9):
+1. **VOD semantics are VOD-specific.** `streaming_sources` carries `movie_template`/`series_template`/`anime_template` URL templates, `identifier_mode ∈ (tmdb_id, anilist_id, imdb_id, slug, custom)`, and quality/audio/subtitle capability columns — none of which have Live TV meaning. Overloading them would either corrupt VOD semantics or force Live TV into incompatible shapes (exactly what the brief forbids: "Do not overload VOD-specific fields with incompatible Live TV semantics").
+2. **Consumer safety.** The VOD registry is consumed by `public-config.ts` + versioned views + admin CRUD suites (Phase 7A → MAVP-7 chains). Any schema change risks those consumers; a separate family risks none (verified by the full 16-group test run, P1-9).
+3. **Isolation contract.** live-tv-plan §5/§13 decision D5 mandates Live TV/VOD separation; the Phase 0 plan §4.2 already proposed separate `livetv_*` tables as the ratified direction.
+4. **No duplicate-registry violation.** The new family is not a duplicate of anything: no Live TV registry existed (Phase 0 DB-1: "No `livetv_*` tables exist").
+5. **What IS reused:** conventions and primitives, not structures — Phase 7A's DDL/policy/trigger patterns, `public.is_admin()`, `public.set_updated_at()`, the version-bump single-row-meta pattern, and `stremio/ssrf.ts` stage-1 validation inside the new config validators.
+
+## Entry P1-3 — The data model (migration `20261120000000_livetv_source_registry.sql`)
+
+**Architecture mapping (the four mandatory concepts, never mixed):**
+
+| Concept | Where it lives |
+|---|---|
+| 1. Source/provider | `livetv_sources` (types: `builtin_livegt_v1`, `m3u_playlist`, `api_provider`, `embed_provider`, `manual_stream` — closed CHECK, widening = additive migration) |
+| 2. Channel + endpoint mapping | `livetv_channels` (canonical) → `livetv_source_channels` (per-source entries, nullable canonical mapping) → `livetv_playback_endpoints` (typed per entry) |
+| 3. Source priority/fallback | `livetv_playback_candidates` (explicit per-channel ordered list) + `livetv_sources.priority` (default order); `livetv_config_meta.unified_enabled` = master switch |
+| 4. Playback engine | **No table.** Derived from `endpoint_kind` at dispatch (`direct_stream` → existing Shaka engine; `embed_page` → existing iframe integration). Engines never appear in any source/priority structure (DB CHECK + TS vocabulary separation both enforce this). |
+
+**Tables (8):** `livetv_config_meta`, `livetv_sources`, `livetv_channels`, `livetv_source_channels`, `livetv_playback_endpoints`, `livetv_playback_candidates`, `livetv_epg_sources`, `livetv_epg_channel_mappings`.
+
+**Key modeling decisions:**
+- **Unified channel identity (brief §3):** canonical rows are the single logical channel; source entries carry `(source_id, source_channel_id)` UNIQUE plus source-provided name/category/logo/tvg_id (provenance preserved verbatim). Conservative dedup: entries are UNMAPPED (`canonical_channel_id IS NULL`) until explicitly mapped; `livetv_channels.dedup_key` is nullable + partial-UNIQUE and reserved for verified stable identities — display-name equality NEVER merges anything (tested: two "Example News" entries from two sources stay separate).
+- **Typed endpoints (brief §4):** `endpoint_kind ∈ (direct_stream, embed_page)` with DB CHECK pairing `direct_stream ⇔ stream_format ∈ (dash,hls)` / `embed_page ⇔ stream_format IS NULL` — an iframe URL can never be stored "as a manifest". The kind decides the engine; the source's category never does (an API source can return either kind).
+- **Priority (brief §5):** `livetv_playback_candidates(channel_id, endpoint_id)` UNIQUE — one candidate row per (channel, endpoint), priority integer (lower = first), enabled flag. Deterministic order: `priority ASC, created_at ASC, id ASC` (total, stable). Default mode (no candidate rows): derived from source `priority ASC, slug ASC`, then per-entry endpoint `ordering ASC, id ASC`. Explicit mode (any rows exist) is authoritative — unlisted endpoints are never silently auto-included. Duplicate attempts are impossible (UNIQUE + defensive dedupe in code); fallback loops are impossible (ordered list consumed once — Phase 5 contract).
+- **Integrity trigger:** `livetv_candidates_channel_guard()` (BEFORE INSERT/UPDATE) verifies the endpoint's source entry maps to the candidate's channel — cross-channel endpoint attachment is structurally impossible, not just app-policed.
+- **Delete semantics (brief §3):** source deletion cascades ONLY its own entries/endpoints/candidates (canonical channel and other sources' mappings survive — tested); canonical-channel deletion UNMAPS entries (`ON DELETE SET NULL`, provenance survives — tested); EPG mappings follow the canonical channel, independent of any endpoint (tested).
+- **Built-in source:** seeded `builtin-livegt-v1` (enabled, active, priority 0, public) with a BEFORE DELETE guard (`livetv_sources_protect_builtin`) — non-deletable but fully enable/disable-capable.
+- **Enablement switch:** `livetv_config_meta.unified_enabled` ships FALSE — the primary rollback lever; `/live-tv` behavior is byte-identical to today while false (nothing in Phase 1 is on any user path).
+- **Version bumping:** `bump_livetv_config_version()` statement triggers on all 7 config tables (future versioned public-config cache pattern).
+
+## Entry P1-4 — Effective enablement rules (normative, implemented in `src/lib/server/livetv/registry.ts`)
+
+A candidate is ELIGIBLE for playback resolution iff EVERY gate passes (conjunction along the chain):
+
+| Rule | Gate | Block reason |
+|---|---|---|
+| S1 | `livetv_sources.enabled = true` | `source_disabled` |
+| S2 | `livetv_sources.status ∈ (active, experimental, maintenance)` (Phase 7A parity; `disabled`/`unavailable` never eligible) | `source_status_ineligible` |
+| C1 | canonical `livetv_channels.enabled = true` | `channel_disabled` |
+| M0 | source entry is MAPPED to this channel (`canonical_channel_id` non-null) | `source_channel_unmapped` |
+| M1 | `livetv_source_channels.enabled = true` | `source_channel_disabled` |
+| E1 | `livetv_playback_endpoints.enabled = true` | `endpoint_disabled` |
+| P1 | `livetv_playback_candidates.enabled = true` | `candidate_disabled` |
+
+`explainLivetvCandidateBlock()` returns the exact reason; `isLivetvCandidateEligible()` is its boolean form. A disabled source (or any disabled link below it) is therefore never selected, and no gate can be bypassed by another gate being on. All seven gates are matrix-tested (model suite §5.1–§5.10).
+
+## Entry P1-5 — LiveGT direct/embed compatibility
+
+- LiveGT V1 remains a **registered source** (`builtin_livegt_v1`, seeded, non-deletable); the existing client (`api.ts`), Shaka engine (`player.ts`), media-auth (`media-auth.ts`), EPG helpers, and the LT-15 embed fallback are **completely untouched** (verified: zero diff under `src/lib/client/live-tv/` and `src/lib/components/live-tv/`).
+- The model represents BOTH LiveGT playback options independently (brief §2.D): a `direct_stream` endpoint (dash → Shaka, if compatible) and an `embed_page` endpoint (`https://livetgtv.lovable.app/embed/143` — representable verbatim, tested §7.2) on the SAME source entry, each independently enabled/disabled and orderable (tested: disabling direct leaves embed eligible, §7.3).
+- The canonical priority example from the brief (Playlist A direct → LiveGT direct → Embed B → LiveGT embed) is data-representable and proven in both order modes (migration test F3 = DB-level; model test §6.7 = logic-level). NOTHING is hard-coded: ordering is rows, tie-breaking is documented, engines are derived.
+- LiveGT is NOT confused with the TGFLIX VOD embed contract (no VOD files touched; census + isolation suites green).
+
+## Entry P1-6 — Production-drift safeguards and migration safety
+
+- **Additive-only:** 8 new tables; zero statements touch existing tables, views, functions, or policies. No FK edges into existing tables → the family drops cleanly (documented rollback).
+- **Idempotent:** every create is `if not exists`; policies are `drop policy if exists` + create; seeds are `on conflict do nothing` (PGlite replay Phase A2 proves a second apply is a no-op).
+- **Drift-aware:** the migration never references the out-of-band `direct_play_sources`/`user_streaming_credentials`; it re-asserts nothing about existing functions (uses `public.is_admin()` + `public.set_updated_at()` as-is, both present since 20260820010000/20260820000000).
+- **Version number:** `20261120000000` sorts immediately after the newest repository migration `20261119000000` (machine-dating deliberately not used — convention from the 20261118000000 header).
+- **Deployment note (unchanged project reality):** the project applies migrations manually via the SQL Editor runbook (`docs/supabase-migration-runbook.md`); nothing was applied to any database by this task.
+
+## Entry P1-7 — Security considerations implemented in Phase 1
+
+1. **SSRF (config-time):** server-fetched config URLs (`m3u_playlist.playlistUrl`, `api_provider.baseUrl`, EPG `source_url`) enforce https-first + the battle-tested stage-1 guard (`assertSafeManifestUrl`): localhost/mDNS/.internal/metadata hostnames, IPv4/IPv6 literals incl. hex/octal/decimal and mapped/NAT64 forms, credentials, whitespace, >2048 — all rejected (tested §2.1–§2.10); DB CHECKs reject non-https `source_url`/`url` at the storage layer too.
+2. **Playback URLs** are browser-fetched by design (no proxy exists or is planned): https-only + no-credentials + control-char ban enforced in both the validator and the DB CHECK.
+3. **Embed safety foundation:** `embed_provider.config.allowedOrigins` (https origins only, path/query/hash rejected, default-port normalized) — the allowlist Phase 5's iframe integration will enforce.
+4. **RLS fail-closed:** RLS enabled on all 8 tables; the ONLY policies are admin-all via the init-plan-optimized `(select public.is_admin())`; NO anon policies exist (deliberate — public surfaces ship with their Phase 5/6 consumer; the provisional plan task "public-read filtered views" is consciously deferred and the deviation is documented in the plan). Anon has zero grants-backed access; unauthorized mutation rejection is DB-enforced and PGlite-tested (D1–D4).
+5. **Secrets:** config validators REJECT unknown keys (no credential field can hide); the seeded capabilities/config contain no secrets; no logging exists in the new module.
+6. **No fetching, no proxy, no ingestion** happens in Phase 1 — bounded-fetch/XML-safety work stays scheduled for Phases 2/3 per plan §8.
+
+## Entry P1-8 — Files created/modified by Phase 1
+
+**Created:**
+- `supabase/migrations/20261120000000_livetv_source_registry.sql` — the additive migration (8 tables, RLS, triggers, guard, seed, switch).
+- `src/lib/server/livetv/registry.ts` — typed vocabularies + config/endpoint validation (SSRF-gated) + effective-enablement rules + deterministic ordering (pure; no DB I/O).
+- `scripts/livetv_phase1_migration_test.ts` — PGlite migration verification (60 checks).
+- `scripts/livetv_phase1_model_test.ts` — pure model verification (76 checks).
+
+**Modified (all necessary and documented):**
+- `src/lib/server/supabase/database.types.ts` — the 8 `livetv_*` table type groups added (hand-maintained file; no Supabase CLI in repo; follows the inline "Added by …" convention).
+- `package.json` — the two new suites appended to the `test:livetv` chain (repo convention: new suites join the chain in the same PR).
+- `scripts/live_tv_release_audit_test.ts` — §3 Shaka-isolation allowlist extended with the NEW `lib/server/livetv` family directory (the guard's intent — Shaka only inside Live TV paths — is preserved; VOD paths remain guarded; documented in-place).
+- `scripts/cloudstream_registry_integration_test.ts` + `scripts/cloudstream_phase4_integration_manager_test.ts` — the two migration-census registries updated per their established convention (every prior migration did the same registration; counts 18→19 and 15→16 with the new entry documented).
+- `docs/livetv/LIVETV_PLAN.md` — Phase 1 marked executed with ratified deviations; header status updated.
+
+**NOT touched:** `src/lib/client/live-tv/**`, `src/lib/components/live-tv/**`, `src/routes/live-tv/**`, all VOD player/resolver/provider code, all other migrations, netlify/deployment config, any environment or database.
+
+## Entry P1-9 — Verification (commands actually executed 2026-10-22)
+
+Environment: Node `v24.21.0`, pnpm `10.30.3` (exact `packageManager` pin). All commands from repo root; exit codes captured verbatim.
+
+| # | Command | Exit | Result |
+|---|---|---|---|
+| 1 | `pnpm check` | 0 | **0 errors, 5 warnings** (the pre-existing `css_unused_selector` warnings documented in Phase 0 Entry V — unchanged, not "fixed") |
+| 2 | `pnpm exec tsx --tsconfig ./jsconfig.json scripts/livetv_phase1_migration_test.ts` | 0 | **60 checks PASSED** (apply + idempotent replay; CHECK vocabularies; endpoint kind/format pairing incl. the SQL NULL-trap case; https-only URLs; builtin seed + delete-protection; RLS matrix; integrity triggers; version bump deltas; multi-source isolation lifecycle) |
+| 3 | `pnpm exec tsx --tsconfig ./jsconfig.json scripts/livetv_phase1_model_test.ts` | 0 | **76 checks PASSED** (config validation per type; 10 SSRF rejections; stream-vs-embed separation; engine routing; engine-≠-source vocabulary separation; full enablement matrix; deterministic ordering + tie-breaks; default mode reproducing the brief's example; LiveGT direct/embed; provenance; VOD import-graph scan over 107 files) |
+| 4 | `pnpm run test:livetv` (15 suites incl. the 2 new) | 0 | All green — e.g. `live_tv_client_test: 62 checks passed`, `live_tv_player_test: 91 checks passed`, `MAV-20 regression suite: 162 checks passed`, plus the two new suites |
+| 5 | `pnpm run test:supabase` | 0 | 115 checks (remediation migration) + `PASS supabase_final_audit_test — 107 checks` |
+| 6 | `pnpm run test:admin` (16 suites) | 0 | All green — final suite `mav_focused_admin_nav_test: 58 passed, 0 failed` |
+| 7 | `pnpm run build` | 0 | vite build OK (33.05 s) + Netlify adapter "✔ done" + executor function written |
+| 8 | Full `pnpm test` chain — all **16 groups executed individually**, in the chain's own order | **0 for every group** | core 0, admin 0, ux 0, providers 0, playback 0, platform 0, downloader 0, devices 0, analytics 0, hosting 0, cloudstream 0 (after the census registration below), livetv 0, player 0, mav 0, supabase 0, rendering 0 |
+
+**Honest incident log during verification (both resolved per repo convention, no behavior changed):**
+1. `test:livetv` initially failed at `live_tv_release_audit_test.ts` §3 ("no file outside Live TV paths mentions Shaka") — the new `src/lib/server/livetv/` family directory (which only DOCUMENTS engine routing in comments) predated nothing; the allowlist was extended with the new Live TV directory, guard intent preserved.
+2. `test:cloudstream` initially failed at two migration-census assertions (§A10 `cloudstream_registry_integration_test.ts`, F3 `cloudstream_phase4_integration_manager_test.ts`) — the established convention requires every new migration to be registered in these censuses (all 19 currently-known post-baseline migrations are registered exactly this way). Both were updated (18→19, 15→16) with an explanatory comment; suites then passed (e.g. `cloudstream_registry_integration_test: 195 checks passed`).
+- Not run / not applicable: no Supabase migration was applied to ANY database (forbidden); no production access; no playback/stream tests (Phase 5+); `pnpm test` as a single top-level invocation was executed as its 16 constituent groups with individual exit codes (all 0) rather than one chained process — CI will additionally run the single chain on push.
+
+## Entry P1-10 — Known limitations and remaining phases
+
+- **No Admin UI, no API routes, no ingestion, no EPG parsing, no playback orchestration** — exactly the Phase 1 non-goals. The registry module is pure logic; the DB-serving layer (join + resolve) arrives with its Phase 5 consumer.
+- **D-3 (dedup semantics):** resolved conservatively for Phase 1 — explicit mapping + verified-identity `dedup_key` only; automatic cross-source matching is NOT implemented (stays a Phase 2/6 product decision with admin overrides).
+- **D-4 (refresh scheduling):** untouched (Phase 2/7 per plan).
+- **Public read surface:** deferred by design (fail-closed admin-only RLS in Phase 1) — the filtered public policies/views ship with the versioned public-config consumer (Phase 5/6), documented as a plan deviation.
+- **Unsigned-validation residual:** `validateServerFetchedHttpsUrl` runs stage-1 (sync) only; stage-2 DNS validation + connect-time pinning apply at Phase 2 fetch time via the existing `assertSafeManifestDestination` + `connect-guard.ts` (unchanged reuse).
+- **Phases 2–8 remain NOT started** (per plan §11): adapters → EPG → Admin → orchestration → user-facing → hardening → release.
+
+## Entry P1-11 — Phase 1+ stop confirmation
+
+- **Phase 2+ implementation has NOT started.** The diff contains only: the additive migration, the new server registry module, the two new test suites, the required type/census/allowlist registrations, and the plan/worklog documentation.
+- **No production database, no deploy configuration, no existing feature, and no VOD surface was modified.** Every golden behavior of plan §10 remains protected by the existing suites (all green).
