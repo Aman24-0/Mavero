@@ -296,10 +296,16 @@ function unresolvedWire(unifiedEnabled: boolean): LivetvPlaybackResolutionWire {
 /**
  * Resolve the ordered, eligible playback candidates for one selected channel.
  *
- * `selectionId` is the channel identity the user selected (for Phase 5 the
- * LiveGT catalogue id). The selection maps to a canonical channel ONLY
- * through the builtin source's mapped entry — the conservative Phase 1
- * mapping model (no automatic matching, ever).
+ * `selectionId` is the channel identity the user selected. TWO identities
+ * are accepted (Phase 6, additive — the mapping model itself is unchanged):
+ *   (a) the builtin source's mapped entry source-channel id (the Phase 5
+ *       LiveGT-catalogue selection — behavior byte-identical), or
+ *   (b) the canonical channel id itself (the Phase 6 unified-catalogue
+ *       selection).
+ * The conservative Phase 1 mapping model is preserved: an entry that exists
+ * but is UNMAPPED (M0) is NOT under unified management, and an id matching
+ * NEITHER identity resolves `resolved:false` (the client's documented
+ * legacy compatibility path — never a fake candidate list).
  */
 export async function resolveLivetvPlaybackForSelection(
         client: SupabaseClient<Database>,
@@ -328,11 +334,21 @@ export async function resolveLivetvPlaybackForSelection(
                 .eq('source_channel_id', selectionId)
                 .limit(1)
                 .maybeSingle();
-        if (entryError || !entryRow || !entryRow.canonical_channel_id) return unresolvedWire(unifiedEnabled);
-        const channelId: string = entryRow.canonical_channel_id;
+        if (entryError) return unresolvedWire(unifiedEnabled);
+        if (entryRow && !entryRow.canonical_channel_id) return unresolvedWire(unifiedEnabled);
 
         // 3. The canonical channel (FK guarantees existence; a missing row is
         //    treated as not-managed → legacy path, never a fake error).
+        //    Phase 6: when the selection did NOT match a builtin entry, it is
+        //    accepted as the CANONICAL channel id itself (the unified
+        //    catalogue's stable id). An id matching neither identity (no
+        //    entry, no channel row) resolves `resolved:false` — unchanged.
+        let channelId: string;
+        if (entryRow && entryRow.canonical_channel_id) {
+                channelId = entryRow.canonical_channel_id;
+        } else {
+                channelId = selectionId;
+        }
         const { data: channelRow, error: channelError } = await client
                 .from('livetv_channels')
                 .select('id,name,category,logo_url,dedup_key,enabled')
@@ -436,10 +452,31 @@ export async function resolveLivetvPlaybackForSelection(
         // Default-mode inputs: the registry derives the order from source
         // priorities. The builtin's virtual pair is injected ONLY in default
         // mode (explicit rows are authoritative and cannot reference it).
+        // The entry feeding the pair is the selection-matched builtin entry
+        // when the selection came through it (Phase 5 — byte-identical),
+        // otherwise the channel's mapped builtin entry with the smallest
+        // source_channel_id (deterministic; Phase 6 canonical selections).
+        type SelectionEntryRow = {
+                id: string;
+                source_id: string;
+                source_channel_id: string;
+                canonical_channel_id: string | null;
+                enabled: boolean;
+        };
+        let builtinEntryForPair: SelectionEntryRow | null = entryRow ?? null;
+        if (!builtinEntryForPair) {
+                for (const row of entryRows) {
+                        if (row.source_id !== builtinRow.id) continue;
+                        if (row.canonical_channel_id !== channelId) continue;
+                        if (builtinEntryForPair === null || row.source_channel_id < builtinEntryForPair.source_channel_id) {
+                                builtinEntryForPair = row;
+                        }
+                }
+        }
         const mutableEndpoints: LivetvEndpointRef[] = [...endpoints];
         if (explicitRecords.length === 0) {
                 const builtinSource = sources.find((source) => source.id === builtinRow.id);
-                const builtinEntry = sourceChannels.find((entry) => entry.id === entryRow.id);
+                const builtinEntry = builtinEntryForPair ? sourceChannels.find((entry) => entry.id === builtinEntryForPair.id) : undefined;
                 const builtinEligible =
                         builtinSource !== undefined &&
                         LIVETV_PLAYBACK_ELIGIBLE_STATUSES.has(builtinSource.status) &&
@@ -455,6 +492,12 @@ export async function resolveLivetvPlaybackForSelection(
         const resolution = resolveLivetvPlaybackOrder({ channelId, explicitRecords, defaults });
 
         // 6. Wire projection — bounded, redacted, virtual-aware.
+        // The virtual builtin pair's `sourceChannelId` is the builtin ENTRY's
+        // source channel id (the public LiveGT catalogue id the EXISTING
+        // client modules resolve/build with). In the Phase 5 entry-selection
+        // flow that IS the selectionId; for Phase 6 canonical selections it
+        // is the mapped entry's id — never the canonical UUID.
+        const virtualSourceChannelId = builtinEntryForPair ? builtinEntryForPair.source_channel_id : selectionId;
         const candidates: LivetvPlaybackCandidateWire[] = [];
         for (const candidate of resolution.candidates) {
                 if (candidates.length >= MAX_PLAYBACK_CANDIDATES) break;
@@ -469,7 +512,7 @@ export async function resolveLivetvPlaybackForSelection(
                                 streamFormat: candidate.streamFormat,
                                 url: null,
                                 resolver: 'builtin_livegt_v1',
-                                sourceChannelId: selectionId,
+                                sourceChannelId: virtualSourceChannelId,
                                 label: null
                         });
                         continue;

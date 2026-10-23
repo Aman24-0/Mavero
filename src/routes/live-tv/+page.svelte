@@ -93,7 +93,14 @@
   // Phase 5 — unified playback routing (behind the unified_enabled lever).
   // While the lever is FALSE (production default) the router never starts
   // and the legacy flow below runs byte-identical to the shipped page.
-  import { LiveTvPlaybackRouter } from '$lib/client/live-tv/resolution-router';
+  // Phase 6 — the SAME module owns the ONE shared flag read; the catalogue
+  // and guide loaders below consume it so there is exactly ONE flag, ONE
+  // read path and ONE cache (never a second gate, never a page fetch).
+  import { LiveTvPlaybackRouter, isUnifiedLivetvGateEnabled } from '$lib/client/live-tv/resolution-router';
+  // Phase 6 — the flag-ON data surface: the merged canonical catalogue and
+  // the Phase 3 mapping-contract guide (both bounded server endpoints; the
+  // legacy LT-2 client above stays the flag-OFF surface, byte-identical).
+  import { getUnifiedLivetvCatalogue, getUnifiedLivetvGuide } from '$lib/client/live-tv/unified-catalogue';
   import { determineCurrentProgramme, channelInitials } from '$lib/client/live-tv/epg';
   // Task 5 — recently-played channels (local, bounded, channel-id only).
   import { getRecentChannelIds, recordRecentChannel, removeRecentChannel, clearRecentChannels } from '$lib/client/live-tv/recent-channels';
@@ -148,6 +155,25 @@
     catalogueState = 'loading';
     catalogueMessage = null;
     try {
+      // -----------------------------------------------------------------
+      // Phase 6 — the flag-gated catalogue source. The shared gate is the
+      // ONE flag read (same module cache the playback router uses); while
+      // it is FALSE (production default) the legacy LiveGT load below runs
+      // byte-identical. When TRUE, the merged, exposure-filtered canonical
+      // catalogue is loaded through the bounded unified endpoint instead —
+      // same abort/sequence discipline (the abort is re-checked BEFORE the
+      // assignment, so a superseded load can never clobber a newer one).
+      // A flag-ON catalogue that is empty (no admin-mapped channels yet)
+      // renders the existing honest empty state below — never a fallback
+      // to the legacy list.
+      // -----------------------------------------------------------------
+      if (await isUnifiedLivetvGateEnabled()) {
+        const unifiedList = await getUnifiedLivetvCatalogue({ signal: controller.signal });
+        if (controller.signal.aborted) return; // superseded/unmounted — silent
+        channels = unifiedList;
+        catalogueState = 'ready';
+        return;
+      }
       const list = await getLiveTvChannels({ signal: controller.signal });
       if (controller.signal.aborted) return; // superseded/unmounted — silent
       channels = list;
@@ -611,6 +637,23 @@
     guideErrorMessage = null;
     guide = null;
     try {
+      // -----------------------------------------------------------------
+      // Phase 6 — the flag-gated guide source. The unified guide reads the
+      // ESTABLISHED Phase 3 mapping contract (explicit mappings first, then
+      // the ambiguity-guarded tvgId derivation) through the bounded server
+      // endpoint — never a browser XMLTV fetch, never a second pipeline.
+      // While the shared gate is FALSE the legacy LiveGT guide below runs
+      // byte-identical. Missing/unmatched guide data normalizes to the
+      // honest empty guide (never fabricated); a failure lands in the same
+      // catch below — a guide outage can never touch the playback session.
+      // -----------------------------------------------------------------
+      if (await isUnifiedLivetvGateEnabled()) {
+        const unifiedGuide = await getUnifiedLivetvGuide(channel.id, { signal: controller.signal });
+        if (seq !== guideSeq || controller.signal.aborted) return;
+        guide = unifiedGuide;
+        guideLoading = false;
+        return;
+      }
       const result = await getLiveTvGuide(channel.id, { signal: controller.signal });
       if (seq !== guideSeq || controller.signal.aborted) return;
       guide = result;

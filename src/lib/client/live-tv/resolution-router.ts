@@ -159,6 +159,45 @@ type Timers = {
 const defaultTimers: Timers = { setTimeout, clearTimeout };
 
 // ---------------------------------------------------------------------------
+// The shared unified-flag gate (ONE flag, ONE read, ONE cache).
+// ---------------------------------------------------------------------------
+
+/**
+ * The ONE unified-flag read (module-cached, fail-closed FALSE — the legacy
+ * path is always the safe direction). BOTH the router's session gate and the
+ * Phase 6 catalogue/guide loaders share THIS implementation and THIS cache:
+ * single-gate ownership (one flag, one read path, one TTL). The page itself
+ * never fetches the flag (it consumes this export through the Live TV client
+ * family instead — pinned by the Phase 5 page suite).
+ */
+export async function isUnifiedLivetvGateEnabled(
+        fetchFn: typeof fetch = fetch,
+        baseUrl = '',
+        timers: Timers = defaultTimers
+): Promise<boolean> {
+        const now = Date.now();
+        if (flagCache && flagCache.expiresAt > now) return flagCache.value;
+        let value = false;
+        try {
+                const controller = new AbortController();
+                const timer = timers.setTimeout(() => controller.abort(), LIVETV_ROUTER_RESOLVE_TIMEOUT_MS);
+                try {
+                        const response = await fetchFn(`${baseUrl}/api/livetv/playback/config`, { signal: controller.signal, headers: { accept: 'application/json' } });
+                        if (response.ok) {
+                                const body: unknown = await response.json();
+                                if (isRecord(body) && typeof body.unifiedEnabled === 'boolean') value = body.unifiedEnabled;
+                        }
+                } finally {
+                        timers.clearTimeout(timer);
+                }
+        } catch {
+                value = false;
+        }
+        flagCache = { value, expiresAt: now + FLAG_CACHE_TTL_MS };
+        return value;
+}
+
+// ---------------------------------------------------------------------------
 // The router.
 // ---------------------------------------------------------------------------
 
@@ -259,28 +298,10 @@ export class LiveTvPlaybackRouter {
         /**
          * Whether the unified router may run at all. Cached per page session,
          * fail-closed to FALSE (the legacy path is always the safe direction).
+         * Delegates to the shared module gate (one flag read implementation).
          */
         async isUnifiedEnabled(): Promise<boolean> {
-                const now = Date.now();
-                if (flagCache && flagCache.expiresAt > now) return flagCache.value;
-                let value = false;
-                try {
-                        const controller = new AbortController();
-                        const timer = this.timers.setTimeout(() => controller.abort(), LIVETV_ROUTER_RESOLVE_TIMEOUT_MS);
-                        try {
-                                const response = await this.fetchFn(`${this.baseUrl}/api/livetv/playback/config`, { signal: controller.signal, headers: { accept: 'application/json' } });
-                                if (response.ok) {
-                                        const body: unknown = await response.json();
-                                        if (isRecord(body) && typeof body.unifiedEnabled === 'boolean') value = body.unifiedEnabled;
-                                }
-                        } finally {
-                                this.timers.clearTimeout(timer);
-                        }
-                } catch {
-                        value = false;
-                }
-                flagCache = { value, expiresAt: now + FLAG_CACHE_TTL_MS };
-                return value;
+                return isUnifiedLivetvGateEnabled(this.fetchFn, this.baseUrl, this.timers);
         }
 
         /**
