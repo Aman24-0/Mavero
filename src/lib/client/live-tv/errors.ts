@@ -58,7 +58,12 @@ export type LiveTvErrorContext = {
 	/** Channel id the request was for (caller-supplied, not sensitive). */
 	channelId?: string;
 	/** Which logical endpoint failed: 'channels' | 'channel' | 'guide'. */
-	endpoint?: 'channels' | 'channel' | 'guide';
+	/**
+	 * Which logical endpoint failed: 'channels' | 'channel' | 'guide'
+	 * (the LT-2 LiveGT V1 surfaces) plus 'catalogue' (LT-P6 — the
+	 * unified catalogue read; additive Phase 6 vocabulary).
+	 */
+	endpoint?: 'channels' | 'channel' | 'guide' | 'catalogue';
 };
 
 /**
@@ -72,7 +77,7 @@ export class LiveTvError extends Error {
 	readonly kind: LiveTvErrorKind;
 	readonly status?: number;
 	readonly channelId?: string;
-	readonly endpoint?: 'channels' | 'channel' | 'guide';
+	readonly endpoint?: 'channels' | 'channel' | 'guide' | 'catalogue';
 
 	constructor(kind: LiveTvErrorKind, context: LiveTvErrorContext = {}) {
 		super(SAFE_MESSAGES[kind]);

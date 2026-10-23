@@ -157,6 +157,56 @@ export function formatBehindLive(behindSeconds: number | null): string | null {
 }
 
 /**
+ * Progress through the CURRENT programme's real [start, stop) window as a
+ * 0–100 integer. Null unless the programme is genuinely on air at
+ * `nowSeconds` AND its window is valid (finite, stop > start) — progress is
+ * never invented for past/future entries or for broken data.
+ * (LT-P6 — additive, used by the guide's current-programme card.)
+ */
+export function programmeProgressPercent(
+        programme: LiveTvGuideProgramme,
+        nowSeconds: number
+): number | null {
+        if (!Number.isFinite(nowSeconds)) return null;
+        const start = programme.startSeconds;
+        const stop = programme.stopSeconds;
+        if (typeof start !== 'number' || typeof stop !== 'number') return null;
+        if (!Number.isFinite(start) || !Number.isFinite(stop) || stop <= start) return null;
+        if (nowSeconds < start || nowSeconds >= stop) return null; // only the real current window
+        const fraction = (nowSeconds - start) / (stop - start);
+        if (!Number.isFinite(fraction)) return null;
+        return Math.min(100, Math.max(0, Math.round(fraction * 100)));
+}
+
+/**
+ * Human remaining time for the CURRENT programme (e.g. "12m left",
+ * "1h 05m left"). Null unless the programme is genuinely on air with a
+ * valid window — never shown for past/future entries or broken data.
+ * (LT-P6 — additive, used by the guide's current-programme card.)
+ */
+export function formatProgrammeRemaining(
+        programme: LiveTvGuideProgramme,
+        nowSeconds: number
+): string | null {
+        if (!Number.isFinite(nowSeconds)) return null;
+        const start = programme.startSeconds;
+        const stop = programme.stopSeconds;
+        if (typeof start !== 'number' || typeof stop !== 'number') return null;
+        if (!Number.isFinite(start) || !Number.isFinite(stop) || stop <= start) return null;
+        if (nowSeconds < start || nowSeconds >= stop) return null; // only the real current window
+        const remainingSeconds = Math.max(0, Math.round(stop - nowSeconds));
+        const minutes = Math.floor(remainingSeconds / 60);
+        const seconds = remainingSeconds % 60;
+        if (minutes >= 60) {
+                const hours = Math.floor(minutes / 60);
+                const rem = minutes % 60;
+                return rem > 0 ? `${hours}h ${String(rem).padStart(2, '0')}m left` : `${hours}h left`;
+        }
+        if (minutes > 0) return `${minutes}m left`;
+        return `${seconds}s left`;
+}
+
+/**
  * Initials for the no-logo fallback — derived ONLY from the channel's actual
  * name (first letters of the first two words, uppercased). Empty/garbage
  * names yield "TV" so the fallback surface is never blank; nothing else is

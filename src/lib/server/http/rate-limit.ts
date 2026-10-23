@@ -139,6 +139,17 @@ export const RATE_LIMIT_RULES = {
   // call per channel selection/retry; each call is a handful of scoped DB
   // reads. 30/min per identity comfortably covers fast channel switching.
   livetvPlaybackResolve: { limit: 30, windowMs: 60_000 },
+  // Unified Live TV Phase 6 — public unified catalogue. One call per page
+  // load / manual reload (the result is client-cached 5 minutes like the
+  // legacy catalogue); each call is a handful of scoped DB reads. 30/min
+  // per identity mirrors the Phase 5 public probe budget.
+  livetvCatalogue: { limit: 30, windowMs: 60_000 },
+  // Unified Live TV Phase 6 — public unified guide (Phase 3 mapping
+  // contract). One call per channel selection (client-cached 30 seconds
+  // like the legacy guide); bounded current+upcoming reads per call.
+  // 60/min per identity covers fast channel switching without caching a
+  // "now" answer beyond the established guide freshness window.
+  livetvGuide: { limit: 60, windowMs: 60_000 },
 } as const satisfies Record<string, RateLimitRule>;
 
 export type RateLimitBucketName = keyof typeof RATE_LIMIT_RULES;

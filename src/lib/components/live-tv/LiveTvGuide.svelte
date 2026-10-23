@@ -15,7 +15,9 @@
   import {
     formatGuideClock,
     formatGuideDateTime,
+    formatProgrammeRemaining,
     programmeIsToday,
+    programmeProgressPercent,
     programmeStatusAt
   } from '$lib/client/live-tv/epg';
   import type { LiveTvGuide, LiveTvGuideProgramme } from '$lib/client/live-tv/types';
@@ -61,6 +63,18 @@
     }
     return `${formatGuideDateTime(entry.startSeconds)} – ${formatGuideClock(entry.stopSeconds)}`;
   }
+
+  // LT-P6 — progress/remaining for the genuinely-on-air entry ONLY (both
+  // helpers return null outside a real current [start, stop) window — the
+  // progress bar and the "left" label never render for past/future entries
+  // or broken data).
+  const currentProgress = $derived.by(() => {
+    const entry = upcomingEntries.find((candidate) => statusOf(candidate) === 'current');
+    if (!entry) return null;
+    const percent = programmeProgressPercent(entry, nowSeconds);
+    if (percent === null) return null;
+    return { percent, remaining: formatProgrammeRemaining(entry, nowSeconds) };
+  });
 </script>
 
 <section class="ltv-guide" aria-label="Programme guide">
@@ -113,6 +127,19 @@
               <span class="row-cat">{entry.category}</span>
             {/if}
           </span>
+          {#if status === 'current' && currentProgress}
+            <!-- LT-P6 — honest progress: only the real current window renders
+                 it (the derived value is null otherwise); the bar is decorative,
+                 the remaining label carries the information. -->
+            <span class="row-progress-line">
+              <span class="row-progress" aria-hidden="true">
+                <span class="row-progress-fill" style={`width:${currentProgress.percent}%`}></span>
+              </span>
+              {#if currentProgress.remaining}
+                <span class="row-remaining">{currentProgress.remaining}</span>
+              {/if}
+            </span>
+          {/if}
         </li>
       {/each}
     </ol>
@@ -224,6 +251,36 @@
     font-weight: 800;
     letter-spacing: .12em;
     text-transform: uppercase;
+    white-space: nowrap;
+  }
+
+  /* LT-P6 — honest progress line (current programme only; spans the row). */
+  .row-progress-line {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+  .row-progress {
+    flex: 1 1 auto;
+    height: 4px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: var(--color-surface-raised);
+  }
+  .row-progress-fill {
+    display: block;
+    height: 100%;
+    border-radius: 999px;
+    background: linear-gradient(90deg, var(--color-primary), var(--color-primary-border));
+  }
+  .row-remaining {
+    flex: 0 0 auto;
+    color: var(--color-primary);
+    font-size: .66rem;
+    font-weight: 800;
+    letter-spacing: .02em;
     white-space: nowrap;
   }
 
