@@ -1057,3 +1057,36 @@ All §10 golden behaviors re-verified against the ACTUAL suites (not assumed fro
 ## Entry P8-6 — Phase 8 stop confirmation
 
 - Release-QA scope only; no new features, no architecture changes, no VOD changes, no flag change, no migration applied, no deploy triggered. Golden behaviors green (P8-2); all 16 test groups exit 0; `pnpm check` 0 errors; `pnpm build` 0; scheduler probes behave as documented; secret scan clean; protected paths zero-diff. The release is NOT declared "complete": production verification (first scheduled tick, first deploy log line, admin diagnostics, the manual browser matrix) and owner sign-off remain per `LIVETV_RELEASE_CHECKLIST.md`. Phase 8 is the final planned phase — nothing beyond it was started.
+
+## Entry P8-7 — Independent re-verification and delivery record (2026-10-23)
+
+Before delivery, the ENTIRE gate set was independently re-executed from scratch on the final Phase 8 tree (`843f3ab`, clean tree, `pnpm install --frozen-lockfile` exit 0) — a full second clean pass, every row a first-clean execution in this pass (no rerun-to-pass; no test edited):
+
+| # | Command | Exit | Result |
+|---|---|---|---|
+| 1 | `pnpm check` | **0** | 0 errors, 5 pre-existing `css_unused_selector` warnings (unchanged) |
+| 2 | `pnpm run test:core` | **0** | green (stub-context 22 + URL-heuristic 12) |
+| 3 | `pnpm run test:admin` | **0** | green (`mav_focused_admin_nav_test` 58/58) |
+| 4 | `pnpm run test:ux` | **0** | green |
+| 5 | `pnpm run test:providers` | **0** | green (tgvid 82, zxcstream 34, Phase 7D vidsrc) |
+| 6 | `pnpm run test:playback` | **0** | green (Phase 7B resolver contract incl. SSRF guards) |
+| 7 | `pnpm run test:platform` | **0** | green (48 commands; favicon 37/37) |
+| 8 | `pnpm run test:downloader` | **0** | green (Phase F runtime 44 + embedded-state 18) |
+| 9 | `pnpm run test:devices` | **0** | green (google oauth 113/113) |
+| 10 | `pnpm run test:analytics` | **0** | green (retention cohorts 62) |
+| 11 | `pnpm run test:hosting` | **0** | green (resolver contract 52) |
+| 12 | `pnpm run test:cloudstream` | **0** | green (migration verification 29; censuses pin `20261122000000`) |
+| 13 | `pnpm run test:livetv` | **0** | all 34 suites green (script definition re-counted this pass: exactly 34 `.ts` entries = 27 pre-existing + 7 Phase 7) |
+| 14 | `pnpm run test:player` | **0** | green (Phase 7C contract) |
+| 15 | `pnpm run test:mav` | **0** | green |
+| 16 | `pnpm run test:supabase` | **0** | green (PGlite chain; final audit 107 — catalog byte-identical after re-apply) |
+| 17 | `pnpm run test:rendering` | **0** | green (real headless-Chromium DOM QA 58 + 32) |
+| 18 | `pnpm build` | **0** | vite build 41.56 s + `adapter-netlify ✔ done` + executor written + the scheduler generator's HONEST no-op line (`LIVETV_SCHEDULER_CRON unset — scheduler implemented but NOT scheduled`) |
+| 19 | Probe: `LIVETV_SCHEDULER_CRON=@hourly …` | **0** | emitted `netlify/functions/livetv-scheduler.mjs`, in-file `schedule: "@hourly"` frozen; artifact deleted after the probe (git-ignored) |
+| 20 | Probe: `LIVETV_SCHEDULER_CRON="not-a-cron" …` | **1** | generator FAILS loudly with the corrective message |
+| 21 | `git status` clean + `git diff --check` | **0** | no probe artifacts leaked; tree clean |
+
+- P8-1's results are therefore REPRODUCED in full by an independent second pass: all 16 `pnpm test` groups exit 0 ⇒ chain exit 0 by `&&` semantics (CI runs the single command on every push).
+- **Delivery record (owner instruction):** for this phase the owner explicitly instructed a DIRECT push to `main` (overriding the per-phase branch-push + owner-created-PR protocol used by Phases 1–7). `livetv/phase-8-release-qa` is pushed for traceability AND `main` is fast-forwarded to the same tip. No force-push (fast-forward only), no history rewrite, no other branch touched. The commit carrying this entry is the final Phase 8 commit and the remote `main` tip immediately after the push.
+- **Pre-push hygiene re-verified:** `git remote -v` clean (no credential in any URL); the PAT was used ONLY as a one-shot inline fetch/push URL and never written to config, credentials, files or commits; push executed only after the token-leak scan over the full Phase 8 diff returned zero hits.
+- **Scope re-confirmed:** this entry is documentation-only; the complete Phase 8 diff remains docs-only (no application code, test, migration, or configuration change).
