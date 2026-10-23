@@ -2428,6 +2428,80 @@ export type Database = {
           },
         ]
       }
+      // Added by 20261122000000_livetv_refresh_history.sql — Phase 7 of the
+      // Unified Live TV project: append-only persistent refresh history (one
+      // row per refresh attempt; scheduled or manual trigger). Admin-only via
+      // RLS; NO foreign keys (history survives source deletion; the subject
+      // slug snapshot keeps diagnostics readable). Diagnostic text is
+      // writer-sanitized and CHECK-bounded — never credentials, signed URLs
+      // or raw provider payloads. Operational history — never playback,
+      // catalogue, guide or admin-CRUD state.
+      livetv_refresh_history: {
+        Row: {
+          id: string
+          subject_kind: string
+          subject_id: string
+          subject_slug: string
+          operation: string
+          trigger_type: string
+          correlation_id: string
+          attempt_count: number
+          status: string
+          imported_count: number
+          updated_count: number
+          skipped_count: number
+          error_count: number
+          error_category: string | null
+          error_message: string | null
+          duration_ms: number
+          started_at: string
+          finished_at: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          subject_kind: string
+          subject_id: string
+          subject_slug: string
+          operation: string
+          trigger_type: string
+          correlation_id: string
+          attempt_count?: number
+          status: string
+          imported_count?: number
+          updated_count?: number
+          skipped_count?: number
+          error_count?: number
+          error_category?: string | null
+          error_message?: string | null
+          duration_ms?: number
+          started_at?: string
+          finished_at?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          subject_kind?: string
+          subject_id?: string
+          subject_slug?: string
+          operation?: string
+          trigger_type?: string
+          correlation_id?: string
+          attempt_count?: number
+          status?: string
+          imported_count?: number
+          updated_count?: number
+          skipped_count?: number
+          error_count?: number
+          error_category?: string | null
+          error_message?: string | null
+          duration_ms?: number
+          started_at?: string
+          finished_at?: string | null
+          created_at?: string
+        }
+        Relationships: []
+      }
       // Added by 20261004000000_unified_downloader_global_order.sql.
       // FINAL TASK (unified Mavero Downloader): the ONE canonical global
       // source order spanning BOTH unified-downloader source kinds:

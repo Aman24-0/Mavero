@@ -150,6 +150,12 @@ export const RATE_LIMIT_RULES = {
   // 60/min per identity covers fast channel switching without caching a
   // "now" answer beyond the established guide freshness window.
   livetvGuide: { limit: 60, windowMs: 60_000 },
+  // Unified Live TV Phase 7 — the authenticated scheduler tick endpoint.
+  // A scheduled function or external scheduler calls this at most once per
+  // minute by design (each call is a bounded 8s tick); 4/min per identity
+  // absorbs retry bursts while keeping a leaked secret's blast radius
+  // bounded. Manual admin refresh keeps its own separate rule.
+  livetvSchedulerTick: { limit: 4, windowMs: 60_000 },
 } as const satisfies Record<string, RateLimitRule>;
 
 export type RateLimitBucketName = keyof typeof RATE_LIMIT_RULES;

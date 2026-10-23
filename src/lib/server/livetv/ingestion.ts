@@ -344,8 +344,13 @@ function extractMessage(error: unknown): string {
  * its entry row). Entry inserts return their row ids so endpoint inserts
  * resolve the FK without extra round-trips. A failing row is recorded and
  * skipped — never fatal for the remaining rows.
+ *
+ * Phase 7: an optional `signal` (the refresh deadline/cancellation) is
+ * checked between BATCHES — once the caller has abandoned the run, no
+ * further database mutations are started by this executor. Writes already
+ * applied are complete, idempotent batch writes; a re-run converges.
  */
-export async function applySourceIngestion(client: SupabaseClient<Database>, plan: LivetvIngestionPlan, options: { batchSize?: number } = {}): Promise<LivetvExecutionResult> {
+export async function applySourceIngestion(client: SupabaseClient<Database>, plan: LivetvIngestionPlan, options: { batchSize?: number; signal?: AbortSignal } = {}): Promise<LivetvExecutionResult> {
         const batchSize = options.batchSize ?? LIVETV_INGESTION_BATCH_SIZE;
         const errors: LivetvExecutionError[] = [];
         let appliedEntryWrites = 0;
@@ -359,6 +364,10 @@ export async function applySourceIngestion(client: SupabaseClient<Database>, pla
 
         // --- entry writes (bounded batches, deterministic order) ---
         for (let start = 0; start < plan.entries.length; start += batchSize) {
+                if (options.signal?.aborted) {
+                        errors.push({ scope: 'entry_insert', sourceChannelId: '', url: null, message: 'ingestion cancelled before a batch (caller deadline elapsed)' });
+                        return { appliedEntryWrites, appliedEndpointWrites, errors, batchSize };
+                }
                 const batch = plan.entries.slice(start, start + batchSize);
                 for (const entryPlan of batch) {
                         if (entryPlan.action === 'insert') {
@@ -405,6 +414,10 @@ export async function applySourceIngestion(client: SupabaseClient<Database>, pla
 
         // --- endpoint writes (bounded batches, deterministic order) ---
         for (let start = 0; start < plan.endpoints.length; start += batchSize) {
+                if (options.signal?.aborted) {
+                        errors.push({ scope: 'endpoint_insert', sourceChannelId: '', url: null, message: 'ingestion cancelled before a batch (caller deadline elapsed)' });
+                        return { appliedEntryWrites, appliedEndpointWrites, errors, batchSize };
+                }
                 const batch = plan.endpoints.slice(start, start + batchSize);
                 for (const endpointPlan of batch) {
                         if (endpointPlan.action === 'insert') {

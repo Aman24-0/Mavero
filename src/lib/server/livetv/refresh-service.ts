@@ -38,6 +38,7 @@ import { LIVETV_PLAYBACK_ELIGIBLE_STATUSES, type LivetvSourceStatus, type Livetv
 import { requireLivetvAdapter, livetvAdapterIdFor } from './adapters';
 import { LivetvAdapterError, type LivetvAdapterDeps, type LivetvEntryError } from './adapters/types';
 import { planSourceIngestion, applySourceIngestion, type ExistingEndpointRow, type ExistingSourceChannelRow, type LivetvExecutionError, type LivetvIngestionPlan } from './ingestion';
+import { livetvHistoryRowFromSourceOutcome, recordLivetvRefreshHistory, type LivetvHistoryTrigger } from './history';
 
 // Re-export for route convenience (single import surface).
 export { livetvAdapterIdFor };
@@ -45,6 +46,13 @@ export { livetvAdapterIdFor };
 /** Bounded defaults for one refresh run. */
 export const LIVETV_REFRESH_TIMEOUT_MS = 45_000;
 export const LIVETV_REFRESH_MAX_SOURCES_PER_RUN = 25;
+/**
+ * Phase 7 — bounded state reads: the staleness report reads at most this
+ * many entry/endpoint rows per refresh (far above any realistic catalogue;
+ * beyond the cap the outcome honestly reports `stateTruncated`).
+ */
+export const LIVETV_REFRESH_MAX_STATE_ENTRIES = 2_000;
+export const LIVETV_REFRESH_MAX_STATE_ENDPOINTS = 4_000;
 /** Bound on stored entry/execution error samples in an outcome. */
 const OUTCOME_ENTRY_ERROR_SAMPLE = 100;
 const OUTCOME_EXECUTION_ERROR_SAMPLE = 50;
@@ -108,6 +116,12 @@ export type LivetvRefreshSourceOutcome = {
         ingestionErrors: Pick<LivetvExecutionError, 'scope' | 'sourceChannelId' | 'message'>[] | null;
         /** Skipped entries reason histogram (safe static reasons). */
         skippedReasons: Record<string, number> | null;
+        /** Phase 7 — who asked for this refresh (scheduler or a manual admin action). */
+        trigger: LivetvHistoryTrigger;
+        /** Phase 7 — true when the bounded staleness read hit its honest cap. */
+        stateTruncated: boolean;
+        /** Phase 7 — whether the best-effort persistent-history write landed. */
+        historyPersisted: boolean | null;
 };
 
 function nowIso(): string {
@@ -167,6 +181,11 @@ function recordOutcome(outcome: LivetvRefreshSourceOutcome): void {
 
 const inFlight = new Map<string, Promise<LivetvRefreshSourceOutcome>>();
 
+/** Phase 7 — instance-local in-flight count (ops diagnostics; serverless-honest). */
+export function getLivetvRefreshInFlightCount(): number {
+        return inFlight.size;
+}
+
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
@@ -188,25 +207,31 @@ async function loadSourceRow(client: SupabaseClient<Database>, ref: { id?: strin
         return { row: (data as SourceRow | null) ?? null, error: false };
 }
 
-async function loadExistingState(client: SupabaseClient<Database>, sourceId: string): Promise<{ entries: ExistingSourceChannelRow[]; endpoints: ExistingEndpointRow[]; error: boolean }> {
+async function loadExistingState(client: SupabaseClient<Database>, sourceId: string): Promise<{ entries: ExistingSourceChannelRow[]; endpoints: ExistingEndpointRow[]; truncated: boolean; error: boolean }> {
         const entriesResult = await client
                 .from('livetv_source_channels')
                 .select('id, source_id, source_channel_id, canonical_channel_id, name, category, logo_url, tvg_id, enabled, metadata')
-                .eq('source_id', sourceId);
-        if (entriesResult.error) return { entries: [], endpoints: [], error: true };
+                .eq('source_id', sourceId)
+                .limit(LIVETV_REFRESH_MAX_STATE_ENTRIES);
+        if (entriesResult.error) return { entries: [], endpoints: [], truncated: false, error: true };
         const entries = (entriesResult.data ?? []) as unknown as ExistingSourceChannelRow[];
 
         // Endpoints are fetched for the whole table then filtered to this
         // source's entry rows (PostgREST has no cross-table filter; the
-        // bounded column set keeps this cheap at Phase 2 scale).
-        const endpointsResult = await client.from('livetv_playback_endpoints').select('id, source_channel_id, endpoint_kind, stream_format, url, ordering, enabled, label');
-        if (endpointsResult.error) return { entries: [], endpoints: [], error: true };
+        // bounded column set keeps this cheap). Phase 7 bounds the read —
+        // beyond LIVETV_REFRESH_MAX_STATE_ENDPOINTS rows the staleness
+        // report is honestly flagged `truncated` instead of growing with
+        // the table.
+        const endpointsResult = await client.from('livetv_playback_endpoints').select('id, source_channel_id, endpoint_kind, stream_format, url, ordering, enabled, label').limit(LIVETV_REFRESH_MAX_STATE_ENDPOINTS);
+        if (endpointsResult.error) return { entries: [], endpoints: [], truncated: false, error: true };
+        const endpointRows = (endpointsResult.data ?? []) as unknown as ExistingEndpointRow[];
         const entryRowIds = new Set(entries.map((entry) => entry.id));
-        const endpoints = ((endpointsResult.data ?? []) as unknown as ExistingEndpointRow[]).filter((endpoint) => entryRowIds.has(endpoint.source_channel_id));
-        return { entries, endpoints, error: false };
+        const endpoints = endpointRows.filter((endpoint) => entryRowIds.has(endpoint.source_channel_id));
+        const truncated = entries.length >= LIVETV_REFRESH_MAX_STATE_ENTRIES || endpointRows.length >= LIVETV_REFRESH_MAX_STATE_ENDPOINTS;
+        return { entries, endpoints, truncated, error: false };
 }
 
-function failureOutcome(started: { at: string; ms: number }, row: { id: string; slug: string; source_type: string } | null, kind: LivetvRefreshFailureKind, message: string): LivetvRefreshSourceOutcome {
+function failureOutcome(started: { at: string; ms: number }, row: { id: string; slug: string; source_type: string } | null, kind: LivetvRefreshFailureKind, message: string, trigger: LivetvHistoryTrigger = 'manual'): LivetvRefreshSourceOutcome {
         return {
                 sourceId: row?.id ?? 'unknown',
                 slug: row?.slug ?? 'unknown',
@@ -220,7 +245,10 @@ function failureOutcome(started: { at: string; ms: number }, row: { id: string; 
                 counts: null,
                 entryErrors: null,
                 ingestionErrors: null,
-                skippedReasons: null
+                skippedReasons: null,
+                trigger,
+                stateTruncated: false,
+                historyPersisted: null
         };
 }
 
@@ -261,6 +289,12 @@ export type LivetvRefreshDeps = {
         maxRedirects?: number;
         /** External cancellation linked into the refresh deadline. */
         signal?: AbortSignal;
+        /** Phase 7 — who triggered this refresh (drives persistent history; default 'manual'). */
+        trigger?: LivetvHistoryTrigger;
+        /** Phase 7 — correlation id grouping the attempts of ONE logical operation. */
+        correlationId?: string;
+        /** Phase 7 — 1-based attempt number within the correlation (default 1). */
+        attemptNumber?: number;
 };
 
 /**
@@ -268,47 +302,73 @@ export type LivetvRefreshDeps = {
  * typed outcome (safe to call from API routes). A concurrent second call for
  * the same source returns a typed `refresh_in_progress` outcome instead of
  * double-fetching upstream.
+ *
+ * Phase 7 changes (behavior-preserving otherwise):
+ *   * The source row is resolved FIRST, so the per-instance in-flight guard
+ *     is keyed by the CANONICAL source id — the same source addressed by id
+ *     and by slug can no longer bypass dedup.
+ *   * Every resolved attempt (including duplicates and skips) is appended to
+ *     the persistent `livetv_refresh_history` table, best-effort: a history
+ *     failure NEVER fails the refresh (the outcome's additive
+ *     `historyPersisted` flag reports it honestly).
+ *   * `trigger` distinguishes a scheduled tick from a manual admin action.
  */
 export async function refreshLivetvSource(client: SupabaseClient<Database>, ref: { id?: string; slug?: string }, deps: LivetvRefreshDeps = {}): Promise<LivetvRefreshSourceOutcome> {
         const started = { at: nowIso(), ms: Date.now() };
-        const inFlightKey = ref.id ?? ref.slug ?? '';
+        const trigger = deps.trigger ?? 'manual';
 
-        const pending = inFlight.get(inFlightKey);
-        if (pending) {
-                return failureOutcome(started, null, 'refresh_in_progress', 'A refresh for this source is already in progress.');
-        }
-
-        const run = executeRefresh(client, started, ref, deps).finally(() => {
-                inFlight.delete(inFlightKey);
-        });
-        // Registered synchronously in the same tick as the check above, so a
-        // concurrent caller reliably observes it.
-        inFlight.set(inFlightKey, run);
-        const outcome = await run;
-        recordOutcome(outcome);
-        return outcome;
-}
-
-async function executeRefresh(client: SupabaseClient<Database>, started: { at: string; ms: number }, ref: { id?: string; slug?: string }, deps: LivetvRefreshDeps): Promise<LivetvRefreshSourceOutcome> {
-        // --- lookup ---
+        // Resolve the row FIRST so the in-flight guard is keyed by the
+        // canonical id (Phase 7 dedup fix).
         const loaded = await loadSourceRow(client, ref);
         if (loaded.error) {
-                return failureOutcome(started, null, 'lookup_failed', 'The source lookup failed.');
+                return failureOutcome(started, null, 'lookup_failed', 'The source lookup failed.', trigger);
         }
         if (!loaded.row) {
-                return failureOutcome(started, null, 'source_not_found', 'The requested source does not exist.');
+                return failureOutcome(started, null, 'source_not_found', 'The requested source does not exist.', trigger);
         }
         const row = loaded.row;
 
+        const pending = inFlight.get(row.id);
+        if (pending) {
+                const duplicate = failureOutcome(started, row, 'refresh_in_progress', 'A refresh for this source is already in progress.', trigger);
+                duplicate.historyPersisted = await recordLivetvRefreshHistory(
+                        client,
+                        livetvHistoryRowFromSourceOutcome(duplicate, { trigger, correlationId: deps.correlationId ?? crypto.randomUUID(), attemptNumber: deps.attemptNumber ?? 1 })
+                );
+                // Deliberately NOT recorded in the in-memory outcome record —
+                // preserved Phase 2 behavior (duplicates never displaced the
+                // last real outcome); the durable history row IS the evidence.
+                return duplicate;
+        }
+
+        const run = runRefreshForSourceRow(client, started, row, deps).finally(() => {
+                inFlight.delete(row.id);
+        });
+        // Registered synchronously in the same tick as the check above, so a
+        // concurrent caller reliably observes it.
+        inFlight.set(row.id, run);
+        const outcome = await run;
+        recordOutcome(outcome);
+        outcome.historyPersisted = await recordLivetvRefreshHistory(
+                client,
+                livetvHistoryRowFromSourceOutcome(outcome, { trigger, correlationId: deps.correlationId ?? crypto.randomUUID(), attemptNumber: deps.attemptNumber ?? 1 })
+        );
+        return outcome;
+}
+
+/** The refresh pipeline AFTER the row is resolved (eligible gates onwards). */
+async function runRefreshForSourceRow(client: SupabaseClient<Database>, started: { at: string; ms: number }, row: SourceRow, deps: LivetvRefreshDeps): Promise<LivetvRefreshSourceOutcome> {
+        const trigger = deps.trigger ?? 'manual';
+
         // --- eligibility (Phase 1 rule S1/S2 parity) ---
         if (!row.enabled || !LIVETV_PLAYBACK_ELIGIBLE_STATUSES.has(row.status)) {
-                return failureOutcome(started, row, 'source_ineligible', 'The source is not eligible for refresh (disabled or non-eligible status).');
+                return failureOutcome(started, row, 'source_ineligible', 'The source is not eligible for refresh (disabled or non-eligible status).', trigger);
         }
 
         // --- adapter availability ---
         const adapterId = livetvAdapterIdFor(row.source_type);
         if (!adapterId) {
-                return failureOutcome(started, row, 'adapter_unavailable', 'No source adapter is available for this source type yet.');
+                return failureOutcome(started, row, 'adapter_unavailable', 'No source adapter is available for this source type yet.', trigger);
         }
         const adapter = requireLivetvAdapter(row.source_type);
 
@@ -330,9 +390,9 @@ async function executeRefresh(client: SupabaseClient<Database>, started: { at: s
         } catch (error) {
                 if (error instanceof LivetvAdapterError) {
                         const kind = ADAPTER_KIND_TO_REFRESH_KIND[error.kind] ?? 'unexpected';
-                        return failureOutcome(started, row, kind, error.message);
+                        return failureOutcome(started, row, kind, error.message, trigger);
                 }
-                return failureOutcome(started, row, 'unexpected', 'The source refresh failed unexpectedly.');
+                return failureOutcome(started, row, 'unexpected', 'The source refresh failed unexpectedly.', trigger);
         } finally {
                 deadline.dispose();
         }
@@ -340,7 +400,7 @@ async function executeRefresh(client: SupabaseClient<Database>, started: { at: s
         // --- idempotent ingestion ---
         const state = await loadExistingState(client, row.id);
         if (state.error) {
-                return failureOutcome(started, row, 'lookup_failed', 'The source state lookup failed.');
+                return failureOutcome(started, row, 'lookup_failed', 'The source state lookup failed.', trigger);
         }
         const plan: LivetvIngestionPlan = planSourceIngestion({
                 sourceId: row.id,
@@ -348,7 +408,9 @@ async function executeRefresh(client: SupabaseClient<Database>, started: { at: s
                 existingEntries: state.entries,
                 existingEndpoints: state.endpoints
         });
-        const execution = await applySourceIngestion(client, plan);
+        // The deadline signal stops batched DB mutations once the caller has
+        // abandoned the run (Phase 7: no post-abandonment persistence).
+        const execution = await applySourceIngestion(client, plan, { signal: deadline.signal });
 
         const counts: LivetvRefreshCounts = {
                 discovered: plan.counts.discovered,
@@ -377,7 +439,10 @@ async function executeRefresh(client: SupabaseClient<Database>, started: { at: s
                 counts,
                 entryErrors: adapterResult.diagnostics.entryErrors.slice(0, OUTCOME_ENTRY_ERROR_SAMPLE),
                 ingestionErrors: execution.errors.slice(0, OUTCOME_EXECUTION_ERROR_SAMPLE).map(({ scope, sourceChannelId, message }) => ({ scope, sourceChannelId, message })),
-                skippedReasons: adapterResult.diagnostics.skippedReasons
+                skippedReasons: adapterResult.diagnostics.skippedReasons,
+                trigger,
+                stateTruncated: state.truncated,
+                historyPersisted: null
         };
 }
 
