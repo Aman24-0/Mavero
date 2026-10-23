@@ -90,6 +90,10 @@
   import { isLiveTvError } from '$lib/client/live-tv/errors';
   import { isLiveTvPlaybackError, shouldFallbackToEmbed } from '$lib/client/live-tv/player-errors';
   import { LiveTvPlaybackEngine } from '$lib/client/live-tv/player';
+  // Phase 5 — unified playback routing (behind the unified_enabled lever).
+  // While the lever is FALSE (production default) the router never starts
+  // and the legacy flow below runs byte-identical to the shipped page.
+  import { LiveTvPlaybackRouter } from '$lib/client/live-tv/resolution-router';
   import { determineCurrentProgramme, channelInitials } from '$lib/client/live-tv/epg';
   // Task 5 — recently-played channels (local, bounded, channel-id only).
   import { getRecentChannelIds, recordRecentChannel, removeRecentChannel, clearRecentChannels } from '$lib/client/live-tv/recent-channels';
@@ -337,6 +341,23 @@
   // fallback is active — a fresh iframe mount, NEVER a new Shaka attempt).
   let embedReloadToken = $state(0);
 
+  // ---------------------------------------------------------------------
+  // Phase 5 — unified playback router state.
+  //
+  // `unifiedEmbedSrc` is the router-mounted embed iframe src (a VALIDATED
+  // https URL from the server's bounded candidate list, or the documented
+  // LiveGT embed URL built client-side). Non-null EXCLUSIVELY while the
+  // unified router's embed candidate is the active playback surface. The
+  // legacy `embedFallbackChannelId` above stays untouched by unified
+  // sessions (one embed signal per mode; the component derives the final
+  // src from both, legacy first).
+  //
+  // `playbackRouter` is created lazily on the first selection (a client
+  // event path — never during SSR) and destroyed with the page.
+  // ---------------------------------------------------------------------
+  let unifiedEmbedSrc = $state<string | null>(null);
+  let playbackRouter: LiveTvPlaybackRouter | null = null;
+
   const resolvingChannel = $derived(resolving ? selectedChannel : null);
 
   function destroyEngineSafely(target: LiveTvPlaybackEngine | null): void {
@@ -413,6 +434,24 @@
       resolving = false;
       sessionErrorMessage = 'Live TV playback could not start in this browser.';
       return;
+    }
+
+    // -------------------------------------------------------------------
+    // Phase 5 — unified playback routing (behind the owner-controlled
+    // unified_enabled lever). While the lever is FALSE (production default)
+    // the router's flag gate stops it before ANY work and 'legacy' is
+    // returned — the flow below runs byte-identical to the shipped page.
+    // 'handled' outcomes (including the honest exhausted error) end here;
+    // 'legacy' outcomes (nothing configured for this selection, or a
+    // resolution outage — the documented compatibility rule) fall through
+    // to the legacy flow below.
+    // -------------------------------------------------------------------
+    if (!playbackRouter) {
+      playbackRouter = createLivetvPlaybackRouter();
+    }
+    {
+      const outcome = await playbackRouter.start(channel, videoEl, controller.signal);
+      if (outcome === 'handled') return;
     }
 
     try {
@@ -495,7 +534,51 @@
     }
   }
 
+  /**
+   * Phase 5 — the page-owned playback router. The handlers map the
+   * router's session events onto THIS page's existing state variables —
+   * the same state the legacy flow drives (engine, resolving, safe error
+   * message, embed mount) — so the player component cannot tell which
+   * path is active. Analytics reuse the closed taxonomy inside the router.
+   */
+  function createLivetvPlaybackRouter(): LiveTvPlaybackRouter {
+    return new LiveTvPlaybackRouter({
+      handlers: {
+        onengine: (eng) => {
+          engine = eng;
+        },
+        onresolving: (value) => {
+          resolving = value;
+        },
+        onsessionerror: (message) => {
+          sessionErrorMessage = message;
+        },
+        onembed: (src) => {
+          unifiedEmbedSrc = src;
+          if (src !== null) embedReloadToken += 1; // fresh iframe mount
+        },
+        onplayed: () => {
+          // Same semantic as the legacy path: the session reached readiness
+          // — this channel is the most recently PLAYED one.
+          if (selectedChannel) rememberPlayedChannel(selectedChannel);
+        }
+      }
+    });
+  }
+
+  /** Phase 5 — the player component forwards the unified iframe load signal. */
+  function handleUnifiedEmbedReady(): void {
+    playbackRouter?.noteEmbedLoaded();
+  }
+
   function retryPlayback(): void {
+    // Phase 5 — unified embed fallback: EXACTLY the LT-15 remount-only
+    // semantics (a fresh iframe mount of the SAME validated src; never a
+    // new engine run while the fallback is the active surface).
+    if (unifiedEmbedSrc !== null) {
+      embedReloadToken += 1;
+      return;
+    }
     // LT-15: while the embed fallback is active for the selected channel,
     // "Try again" recreates the embed iframe ONCE (a fresh mount of the
     // documented embed URL) — it must NOT repeatedly instantiate Shaka.
@@ -589,6 +672,11 @@
     catalogueController?.abort();
     catalogueController = undefined;
     destroyEngineSafely(engine);
+    // Phase 5: the unified router session dies with the page (engines,
+    // timers, controllers, iframe — and the embed state it owns).
+    playbackRouter?.destroy();
+    playbackRouter = null;
+    unifiedEmbedSrc = null;
     // LT-15: the embed fallback dies with the page (the iframe unmounts
     // with the player component — nothing outlives the route).
     embedFallbackChannelId = null;
@@ -632,6 +720,8 @@
         {sessionErrorMessage}
         embedChannelId={embedFallbackChannelId}
         {embedReloadToken}
+        unifiedEmbedSrc={unifiedEmbedSrc}
+        onembedready={handleUnifiedEmbedReady}
         onretry={retryPlayback}
         onuseraction={handlePlayerUserAction}
       />

@@ -1,0 +1,491 @@
+// ============================================================================
+// Unified Live TV Phase 5 — playback candidate resolution (SERVER).
+//
+//   GET /api/livetv/playback/config  → { unifiedEnabled }
+//   GET /api/livetv/playback/resolve?channelId=<selectionId>
+//                                    → ordered, eligible, redacted candidates
+//
+// This module is the RUNTIME half of the Phase 1 registry: it loads the
+// persisted configuration rows and hands them to the PURE Phase 1 resolution
+// functions (`resolveLivetvPlaybackOrder` — explicit vs default mode, the
+// seven enablement gates, deterministic tie-breaking). It owns NO ordering
+// logic of its own and adds NO second registry.
+//
+// THE BUILTIN LIVEGT INTEGRATION (the documented schema-gap answer):
+//   The builtin source's direct stream is a FRESH-SIGNED RESOLUTION CONTRACT
+//   (P2 worklog: "resolution-based direct + embed candidates is the Phase 5
+//   design space") — `livetv_playback_endpoints.url` is NOT NULL, so a
+//   builtin direct endpoint row is unrepresentable. Rather than a migration,
+//   this resolver synthesizes the builtin's candidate pair (direct → embed)
+//   for a MAPPED+ENABLED builtin entry and injects them as VIRTUAL endpoints
+//   into `buildDefaultLivetvOrder` — the registry's own default-mode
+//   mechanics position them by source priority (the seeded builtin row has
+//   priority 0; admins reorder sources in the Phase 4 UI; nothing is
+//   hardcoded first). EXPLICIT mode stays registry-pure: candidate rows are
+//   the authoritative list and the builtin contributes nothing (a future
+//   additive `resolver` column is the recorded option if mid-list explicit
+//   positioning is ever needed).
+//
+// SECURITY:
+//   * The livetv_* tables are fail-closed admin-only (RLS). The public
+//     endpoints call this module with the SERVICE-ROLE client (the
+//     established /api/downloader/mavero precedent for public reads of
+//     admin-governed config) and return ONLY the bounded wire projection
+//     below — never config jsonb, capabilities, slugs, source ids, labels
+//     beyond the endpoint label, or any signed/fresh material.
+//   * Every candidate URL is re-validated https+absolute here (fail-closed:
+//     a non-https stored endpoint is SKIPPED, never returned) — the registry
+//     validators already enforce this at write time; this is defense in
+//     depth for the playback surface.
+//   * The flag read fails CLOSED to false on any error — the client then
+//     runs the untouched legacy path. False is always the safe direction.
+//   * NO fetching happens in this module (pure DB reads + pure ordering).
+//     Playback stays browser-direct (no proxy is created or needed).
+//
+// ISOLATION: shares no types with VOD `PlayerSource` shapes; the existing
+// LiveGT client, the direct-playback engine and the embed fallback are NOT
+// re-implemented or imported here — the wire's `engine` field is DERIVED by
+// the Phase 1 registry (`playbackEngineForEndpoint`) and is consumed by the
+// client router to pick between the two EXISTING playback mechanisms.
+// ============================================================================
+
+import type { SupabaseClient } from '@supabase/supabase-js';
+import type { Database } from '$lib/server/supabase/database.types';
+import {
+        LIVETV_ENDPOINT_KINDS,
+        LIVETV_PLAYBACK_ELIGIBLE_STATUSES,
+        LIVETV_SOURCE_STATUSES,
+        LIVETV_SOURCE_TYPES,
+        LIVETV_STREAM_FORMATS,
+        type LivetvCandidateRecord,
+        type LivetvEndpointRef,
+        type LivetvEndpointKind,
+        type LivetvSourceRef,
+        type LivetvSourceChannelRef,
+        type LivetvSourceStatus,
+        type LivetvSourceType,
+        type LivetvStreamFormat,
+        type LivetvDefaultOrderInput
+} from './registry';
+import { resolveLivetvPlaybackOrder } from './registry';
+
+// ---------------------------------------------------------------------------
+// Wire contract (the ONLY data that ever crosses to the client router).
+// ---------------------------------------------------------------------------
+
+/** The direct playback engine string — mirrors registry LIVETV_PLAYBACK_ENGINES. */
+export type LivetvWireEngine = 'shaka_media_player' | 'iframe_embed';
+
+/** One playback candidate on the wire — bounded, redacted, display-safe. */
+export type LivetvPlaybackCandidateWire = {
+        /** Stable attempt key (registry row id, `default:<endpointId>` or a virtual id). */
+        candidateId: string;
+        /** DERIVED from the endpoint kind by the Phase 1 registry — never configured. */
+        engine: LivetvWireEngine;
+        endpointKind: LivetvEndpointKind;
+        streamFormat: LivetvStreamFormat | null;
+        /**
+         * The CONFIG endpoint URL (https, validated again here). null for the
+         * synthesized builtin candidates — their playback material is produced
+         * at play time by the EXISTING client modules (fresh-signed direct
+         * resolution / the documented embed URL builder). Never a signed URL.
+         */
+        url: string | null;
+        /** Set ONLY for the synthesized builtin pair — the approved adapter contract. */
+        resolver: 'builtin_livegt_v1' | null;
+        /** The builtin entry's source channel id (a public catalogue id) for resolver candidates. */
+        sourceChannelId: string | null;
+        /** Optional human label from the endpoint row (display-only). */
+        label: string | null;
+};
+
+export type LivetvPlaybackResolutionWire = {
+        unifiedEnabled: boolean;
+        /**
+         * true  → the selection IS under unified management (candidates are
+         *         authoritative, possibly empty = honest "nothing eligible").
+         * false → nothing is configured for this selection: the client runs
+         *         the documented legacy compatibility path for it.
+         */
+        resolved: boolean;
+        mode: 'explicit' | 'default' | null;
+        candidates: LivetvPlaybackCandidateWire[];
+};
+
+/** Hard cap on candidates returned (bounded response regardless of config size). */
+export const MAX_PLAYBACK_CANDIDATES = 12;
+
+/** Bounded read guards (a single channel realistically has a handful of rows). */
+const MAX_ENTRIES_PER_CHANNEL = 200;
+const MAX_ENDPOINTS_PER_LOAD = 400;
+const MAX_CANDIDATE_ROWS_PER_CHANNEL = 200;
+
+// ---------------------------------------------------------------------------
+// Flag read (unified_enabled) — cached, fail-closed.
+// ---------------------------------------------------------------------------
+
+const FLAG_CACHE_TTL_MS = 30_000;
+let flagCache: { value: boolean; expiresAt: number } | null = null;
+
+/** Test seam — clears the module-level flag cache. */
+export function resetLivetvPlaybackFlagCacheForTests(): void {
+        flagCache = null;
+}
+
+/**
+ * Read `livetv_config_meta.unified_enabled` (row id 1). Fail-closed: ANY
+ * error (missing table, RLS surprise, network) resolves to FALSE so the
+ * client always falls back to the untouched legacy path. Cached 30s — the
+ * flag is the owner's rollback lever, not a hot value.
+ */
+export async function isUnifiedLivetvEnabled(client: SupabaseClient<Database>, now = Date.now()): Promise<boolean> {
+        if (flagCache && flagCache.expiresAt > now) return flagCache.value;
+        let value = false;
+        try {
+                const { data, error } = await client
+                        .from('livetv_config_meta')
+                        .select('unified_enabled')
+                        .eq('id', 1)
+                        .limit(1)
+                        .maybeSingle();
+                // A missing row (data === null) means "never configured" → false.
+                if (!error && data && typeof data.unified_enabled === 'boolean') value = data.unified_enabled;
+        } catch {
+                value = false;
+        }
+        flagCache = { value, expiresAt: now + FLAG_CACHE_TTL_MS };
+        return value;
+}
+
+// ---------------------------------------------------------------------------
+// Row → registry-ref mapping (explicit, one-directional, narrowing).
+// The generated Database types carry plain `string` for the CHECK-constrained
+// vocabularies — every value is narrowed against the registry's closed sets
+// and anything invalid is dropped (fail-closed), never coerced.
+// ---------------------------------------------------------------------------
+
+function narrowSourceType(value: string): LivetvSourceType | null {
+        return (LIVETV_SOURCE_TYPES as readonly string[]).includes(value) ? (value as LivetvSourceType) : null;
+}
+
+function narrowSourceStatus(value: string): LivetvSourceStatus | null {
+        return (LIVETV_SOURCE_STATUSES as readonly string[]).includes(value) ? (value as LivetvSourceStatus) : null;
+}
+
+function narrowEndpointKind(value: string): LivetvEndpointKind | null {
+        return (LIVETV_ENDPOINT_KINDS as readonly string[]).includes(value) ? (value as LivetvEndpointKind) : null;
+}
+
+function narrowStreamFormat(value: string | null): LivetvStreamFormat | null {
+        if (value === null) return null;
+        return (LIVETV_STREAM_FORMATS as readonly string[]).includes(value) ? (value as LivetvStreamFormat) : null;
+}
+
+/** https + absolute + bounded length — the playback-surface re-validation. */
+function isSafePlaybackUrl(value: string): boolean {
+        if (typeof value !== 'string' || value.length === 0 || value.length > 2048) return false;
+        try {
+                const parsed = new URL(value);
+                return parsed.protocol === 'https:';
+        } catch {
+                return false;
+        }
+}
+
+type SourceRow = Database['public']['Tables']['livetv_sources']['Row'];
+type ChannelRow = Database['public']['Tables']['livetv_channels']['Row'];
+type SourceChannelRow = Database['public']['Tables']['livetv_source_channels']['Row'];
+type EndpointRow = Database['public']['Tables']['livetv_playback_endpoints']['Row'];
+type CandidateRow = Database['public']['Tables']['livetv_playback_candidates']['Row'];
+
+function toSourceRef(row: SourceRow): LivetvSourceRef | null {
+        const sourceType = narrowSourceType(row.source_type);
+        const status = narrowSourceStatus(row.status);
+        if (!sourceType || !status) return null;
+        return {
+                id: row.id,
+                slug: row.slug,
+                sourceType,
+                enabled: row.enabled === true,
+                status,
+                priority: typeof row.priority === 'number' && Number.isFinite(row.priority) ? row.priority : 0
+        };
+}
+
+function toSourceChannelRef(row: SourceChannelRow): LivetvSourceChannelRef {
+        return {
+                id: row.id,
+                sourceId: row.source_id,
+                sourceChannelId: row.source_channel_id,
+                canonicalChannelId: row.canonical_channel_id ?? null,
+                enabled: row.enabled === true
+        };
+}
+
+/**
+ * Map one endpoint row to its registry ref. Returns null when the row is
+ * unusable for playback: unknown kind/format vocabulary, or a URL that fails
+ * the https re-validation (a broken config row must never reach the player).
+ */
+function toEndpointRef(row: EndpointRow): LivetvEndpointRef | null {
+        const kind = narrowEndpointKind(row.endpoint_kind);
+        if (!kind) return null;
+        const streamFormat = narrowStreamFormat(row.stream_format ?? null);
+        if (!isSafePlaybackUrl(row.url)) return null;
+        return {
+                id: row.id,
+                sourceChannelId: row.source_channel_id,
+                kind,
+                streamFormat,
+                url: row.url,
+                ordering: typeof row.ordering === 'number' && Number.isFinite(row.ordering) ? row.ordering : 0,
+                enabled: row.enabled === true,
+                label: row.label ?? null
+        };
+}
+
+// ---------------------------------------------------------------------------
+// Builtin synthesis — the virtual endpoint pair for a mapped builtin entry.
+// ---------------------------------------------------------------------------
+
+const BUILTIN_SOURCE_TYPE = 'builtin_livegt_v1';
+/** Virtual endpoint ids carry the `virtual:` prefix — never real row ids. */
+const VIRTUAL_ID_PREFIX = 'virtual:';
+
+type VirtualPair = { direct: LivetvEndpointRef; embed: LivetvEndpointRef };
+
+function buildBuiltinVirtualEndpoints(entry: LivetvSourceChannelRef): VirtualPair {
+        // `url` is a required registry field; virtual endpoints carry an empty
+        // string that NEVER reaches the wire (the wire mapping replaces these
+        // two candidates with the resolver marker + null url). The entry's
+        // enablement is the endpoint enablement (M1 covers the entry gate).
+        return {
+                direct: {
+                        id: `${VIRTUAL_ID_PREFIX}${entry.id}:direct`,
+                        sourceChannelId: entry.id,
+                        kind: 'direct_stream',
+                        streamFormat: 'dash',
+                        url: '',
+                        ordering: 0,
+                        enabled: entry.enabled,
+                        // The label is deliberately null: nothing synthetic is displayed.
+                        label: null
+                },
+                embed: {
+                        id: `${VIRTUAL_ID_PREFIX}${entry.id}:embed`,
+                        sourceChannelId: entry.id,
+                        kind: 'embed_page',
+                        streamFormat: null,
+                        url: '',
+                        ordering: 1,
+                        enabled: entry.enabled,
+                        label: null
+                }
+        };
+}
+
+// ---------------------------------------------------------------------------
+// Resolution.
+// ---------------------------------------------------------------------------
+
+/** Shape of the never-resolvable response (flag off / nothing configured). */
+function unresolvedWire(unifiedEnabled: boolean): LivetvPlaybackResolutionWire {
+        return { unifiedEnabled, resolved: false, mode: null, candidates: [] };
+}
+
+/**
+ * Resolve the ordered, eligible playback candidates for one selected channel.
+ *
+ * `selectionId` is the channel identity the user selected (for Phase 5 the
+ * LiveGT catalogue id). The selection maps to a canonical channel ONLY
+ * through the builtin source's mapped entry — the conservative Phase 1
+ * mapping model (no automatic matching, ever).
+ */
+export async function resolveLivetvPlaybackForSelection(
+        client: SupabaseClient<Database>,
+        selectionId: string
+): Promise<LivetvPlaybackResolutionWire> {
+        const unifiedEnabled = await isUnifiedLivetvEnabled(client);
+        if (!unifiedEnabled) return unresolvedWire(false);
+
+        // 1. The builtin source row (seeded; builtin flag is the identity).
+        const { data: builtinRow, error: builtinError } = await client
+                .from('livetv_sources')
+                .select('id,slug,name,source_type,builtin,enabled,status,priority,visibility,capabilities,config,description')
+                .eq('source_type', BUILTIN_SOURCE_TYPE)
+                .eq('builtin', true)
+                .limit(1)
+                .maybeSingle();
+        if (builtinError || !builtinRow) return unresolvedWire(unifiedEnabled);
+
+        // 2. The builtin entry for the selection — must be MAPPED to a
+        //    canonical channel (M0). Unmapped selections are NOT under
+        //    unified management → legacy compatibility path client-side.
+        const { data: entryRow, error: entryError } = await client
+                .from('livetv_source_channels')
+                .select('id,source_id,source_channel_id,canonical_channel_id,enabled')
+                .eq('source_id', builtinRow.id)
+                .eq('source_channel_id', selectionId)
+                .limit(1)
+                .maybeSingle();
+        if (entryError || !entryRow || !entryRow.canonical_channel_id) return unresolvedWire(unifiedEnabled);
+        const channelId: string = entryRow.canonical_channel_id;
+
+        // 3. The canonical channel (FK guarantees existence; a missing row is
+        //    treated as not-managed → legacy path, never a fake error).
+        const { data: channelRow, error: channelError } = await client
+                .from('livetv_channels')
+                .select('id,name,category,logo_url,dedup_key,enabled')
+                .eq('id', channelId)
+                .limit(1)
+                .maybeSingle();
+        if (channelError || !channelRow) return unresolvedWire(unifiedEnabled);
+
+        // 4. Load the full candidate context for THIS canonical channel only.
+        //    The channel's mapped entries load FIRST; the endpoints query is
+        //    then scoped to exactly those entry ids — cross-channel endpoints
+        //    are never even read (the DB trigger guards candidates; this
+        //    guards endpoints the same way).
+        const entriesResult = await client
+                .from('livetv_source_channels')
+                .select('id,source_id,source_channel_id,canonical_channel_id,enabled')
+                .eq('canonical_channel_id', channelId)
+                .limit(MAX_ENTRIES_PER_CHANNEL);
+        if (entriesResult.error) return unresolvedWire(unifiedEnabled);
+        const entryRows = (entriesResult.data ?? []) as SourceChannelRow[];
+
+        const [sourcesResult, endpointsResult, candidatesResult] = await Promise.all([
+                client
+                        .from('livetv_sources')
+                        .select('id,slug,name,source_type,builtin,enabled,status,priority,visibility,capabilities,config,description')
+                        .order('priority')
+                        .order('slug')
+                        .limit(MAX_ENTRIES_PER_CHANNEL),
+                client
+                        .from('livetv_playback_endpoints')
+                        .select('id,source_channel_id,endpoint_kind,stream_format,url,ordering,enabled,label')
+                        .in(
+                                'source_channel_id',
+                                // Scoped to THIS channel's entries — cross-channel
+                                // endpoints are never even read (the DB trigger guards
+                                // candidates; this guards endpoints the same way).
+                                entryRows.map((entry) => entry.id)
+                        )
+                        .limit(MAX_ENDPOINTS_PER_LOAD),
+                client
+                        .from('livetv_playback_candidates')
+                        .select('id,channel_id,endpoint_id,priority,enabled,created_at')
+                        .eq('channel_id', channelId)
+                        .limit(MAX_CANDIDATE_ROWS_PER_CHANNEL)
+        ]);
+        const firstError = sourcesResult.error ?? endpointsResult.error ?? candidatesResult.error;
+        if (firstError) {
+                // A read failure is a failure — fail-closed to the legacy path
+                // (resolved:false) rather than an empty "managed" answer.
+                return unresolvedWire(unifiedEnabled);
+        }
+
+        const sourceRows = (sourcesResult.data ?? []) as SourceRow[];
+        const endpointRows = (endpointsResult.data ?? []) as EndpointRow[];
+        const candidateRows = (candidatesResult.data ?? []) as CandidateRow[];
+
+        // Narrow everything; unusable rows are dropped (fail-closed).
+        const sources: LivetvSourceRef[] = [];
+        for (const row of sourceRows) {
+                const ref = toSourceRef(row);
+                if (ref) sources.push(ref);
+        }
+        const sourceChannels: LivetvSourceChannelRef[] = entryRows.map(toSourceChannelRef);
+        const endpoints: LivetvEndpointRef[] = [];
+        for (const row of endpointRows) {
+                const ref = toEndpointRef(row);
+                if (ref) endpoints.push(ref);
+        }
+
+        // Explicit-mode records: join each candidate row with its endpoint,
+        // entry and source (all DB-guaranteed FKs; a dangling join drops the
+        // candidate defensively).
+        const endpointById = new Map(endpoints.map((endpoint) => [endpoint.id, endpoint]));
+        const entryById = new Map(sourceChannels.map((entry) => [entry.id, entry]));
+        const sourceById = new Map(sources.map((source) => [source.id, source]));
+        const explicitRecords: LivetvCandidateRecord[] = [];
+        for (const row of candidateRows) {
+                if (row.channel_id !== channelId) continue; // cross-channel guard (defense in depth)
+                const endpoint = endpointById.get(row.endpoint_id);
+                if (!endpoint) continue;
+                const entry = entryById.get(endpoint.sourceChannelId);
+                if (!entry) continue;
+                const source = sourceById.get(entry.sourceId);
+                if (!source) continue;
+                explicitRecords.push({
+                        candidate: {
+                                rowId: row.id,
+                                channelId: row.channel_id,
+                                endpointId: row.endpoint_id,
+                                priority: typeof row.priority === 'number' && Number.isFinite(row.priority) ? row.priority : 0,
+                                enabled: row.enabled === true,
+                                createdAt: typeof row.created_at === 'string' ? row.created_at : ''
+                        },
+                        endpoint,
+                        sourceChannel: entry,
+                        source,
+                        channelEnabled: channelRow.enabled === true
+                });
+        }
+
+        // Default-mode inputs: the registry derives the order from source
+        // priorities. The builtin's virtual pair is injected ONLY in default
+        // mode (explicit rows are authoritative and cannot reference it).
+        const mutableEndpoints: LivetvEndpointRef[] = [...endpoints];
+        if (explicitRecords.length === 0) {
+                const builtinSource = sources.find((source) => source.id === builtinRow.id);
+                const builtinEntry = sourceChannels.find((entry) => entry.id === entryRow.id);
+                const builtinEligible =
+                        builtinSource !== undefined &&
+                        LIVETV_PLAYBACK_ELIGIBLE_STATUSES.has(builtinSource.status) &&
+                        builtinSource.enabled;
+                if (builtinEligible && builtinEntry) {
+                        const pair = buildBuiltinVirtualEndpoints(builtinEntry);
+                        mutableEndpoints.push(pair.direct, pair.embed);
+                }
+        }
+        const defaults: LivetvDefaultOrderInput = { channelEnabled: channelRow.enabled === true, sources, sourceChannels, endpoints: mutableEndpoints };
+
+        // 5. The PURE Phase 1 resolution (gates + ordering + engine derivation).
+        const resolution = resolveLivetvPlaybackOrder({ channelId, explicitRecords, defaults });
+
+        // 6. Wire projection — bounded, redacted, virtual-aware.
+        const candidates: LivetvPlaybackCandidateWire[] = [];
+        for (const candidate of resolution.candidates) {
+                if (candidates.length >= MAX_PLAYBACK_CANDIDATES) break;
+                if (candidate.endpointId.startsWith(VIRTUAL_ID_PREFIX)) {
+                        // The synthesized builtin pair: resolver marker + the public
+                        // catalogue id; NO url ever crosses (playback material is
+                        // produced by the EXISTING client modules at play time).
+                        candidates.push({
+                                candidateId: candidate.candidateId,
+                                engine: candidate.engine === 'iframe_embed' ? 'iframe_embed' : 'shaka_media_player',
+                                endpointKind: candidate.endpointKind,
+                                streamFormat: candidate.streamFormat,
+                                url: null,
+                                resolver: 'builtin_livegt_v1',
+                                sourceChannelId: selectionId,
+                                label: null
+                        });
+                        continue;
+                }
+                candidates.push({
+                        candidateId: candidate.candidateId,
+                        engine: candidate.engine === 'iframe_embed' ? 'iframe_embed' : 'shaka_media_player',
+                        endpointKind: candidate.endpointKind,
+                        streamFormat: candidate.streamFormat,
+                        // The registry ref already passed the https re-validation.
+                        url: candidate.endpointUrl,
+                        resolver: null,
+                        sourceChannelId: null,
+                        label: candidate.endpointLabel
+                });
+        }
+
+        return { unifiedEnabled: true, resolved: true, mode: resolution.mode, candidates };
+}

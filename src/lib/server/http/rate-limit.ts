@@ -131,6 +131,14 @@ export const RATE_LIMIT_RULES = {
   livetvAdminEpgRefresh: { limit: 6, windowMs: 60_000 },
   // Dry-run guide preview: one bounded fetch + parse, zero writes.
   livetvAdminEpgPreview: { limit: 12, windowMs: 60_000 },
+  // Unified Live TV Phase 5 — public playback config probe. ONE call per
+  // page session (the unified/legacy switch); 30/min per identity is far
+  // above any real UX while keeping the endpoint bounded.
+  livetvPlaybackConfig: { limit: 30, windowMs: 60_000 },
+  // Unified Live TV Phase 5 — public playback candidate resolution. One
+  // call per channel selection/retry; each call is a handful of scoped DB
+  // reads. 30/min per identity comfortably covers fast channel switching.
+  livetvPlaybackResolve: { limit: 30, windowMs: 60_000 },
 } as const satisfies Record<string, RateLimitRule>;
 
 export type RateLimitBucketName = keyof typeof RATE_LIMIT_RULES;
