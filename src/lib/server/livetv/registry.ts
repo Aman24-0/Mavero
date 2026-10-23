@@ -232,14 +232,37 @@ export type LivetvEndpointRef = {
 // hide inside the config document.
 // ---------------------------------------------------------------------------
 
+/**
+ * Phase 7 (scheduler): the OPTIONAL per-source refresh interval, expressed
+ * through the EXISTING config jsonb contract (no scheduler configuration
+ * table, no DDL). Present on the server-refreshable source types; absent ⇒
+ * the scheduler default applies. Bounds: 15 minutes … 7 days (validated
+ * here AND defensively re-validated by the scheduler at read time).
+ */
+export const LIVETV_REFRESH_INTERVAL_MIN_MINUTES = 15;
+export const LIVETV_REFRESH_INTERVAL_MAX_MINUTES = 10_080;
+
+export type LivetvRefreshIntervalConfig = { refreshIntervalMinutes?: number };
+
+function validateRefreshIntervalMinutes(raw: unknown, label: string): number | undefined {
+        if (raw === undefined) return undefined;
+        if (typeof raw !== 'number' || !Number.isFinite(raw) || !Number.isInteger(raw)) {
+                fail(`${label} must be an integer number of minutes.`);
+        }
+        if (raw < LIVETV_REFRESH_INTERVAL_MIN_MINUTES || raw > LIVETV_REFRESH_INTERVAL_MAX_MINUTES) {
+                fail(`${label} must be between ${LIVETV_REFRESH_INTERVAL_MIN_MINUTES} and ${LIVETV_REFRESH_INTERVAL_MAX_MINUTES} minutes.`);
+        }
+        return raw;
+}
+
 /** builtin_livegt_v1 — behavior lives in the existing client modules. */
-export type LivetvBuiltinLivegtV1Config = Record<string, never>;
+export type LivetvBuiltinLivegtV1Config = LivetvRefreshIntervalConfig;
 
 /** m3u_playlist — the playlist the server will fetch (SSRF-gated). */
-export type LivetvM3UPlaylistConfig = { playlistUrl: string };
+export type LivetvM3UPlaylistConfig = LivetvRefreshIntervalConfig & { playlistUrl: string };
 
 /** api_provider — the documented JSON API base (SSRF-gated). */
-export type LivetvApiProviderConfig = { baseUrl: string };
+export type LivetvApiProviderConfig = LivetvRefreshIntervalConfig & { baseUrl: string };
 
 /** embed_provider — iframe origin allowlist (rendered via the iframe integration). */
 export type LivetvEmbedProviderConfig = { allowedOrigins: string[] };
@@ -317,18 +340,25 @@ export function validateLivetvSourceConfig(sourceType: LivetvSourceType, raw: un
 
         switch (sourceType) {
                 case 'builtin_livegt_v1': {
-                        rejectUnknownKeys(config, [], 'builtin_livegt_v1');
-                        return {};
+                        rejectUnknownKeys(config, ['refreshIntervalMinutes'], 'builtin_livegt_v1');
+                        const interval = validateRefreshIntervalMinutes(config.refreshIntervalMinutes, 'builtin_livegt_v1.refreshIntervalMinutes');
+                        return interval === undefined ? {} : { refreshIntervalMinutes: interval };
                 }
                 case 'm3u_playlist': {
-                        rejectUnknownKeys(config, ['playlistUrl'], 'm3u_playlist');
+                        rejectUnknownKeys(config, ['playlistUrl', 'refreshIntervalMinutes'], 'm3u_playlist');
                         if (config.playlistUrl === undefined) fail('m3u_playlist: "playlistUrl" is required.');
-                        return { playlistUrl: validateServerFetchedHttpsUrl(config.playlistUrl, 'm3u_playlist.playlistUrl') };
+                        const interval = validateRefreshIntervalMinutes(config.refreshIntervalMinutes, 'm3u_playlist.refreshIntervalMinutes');
+                        return interval === undefined
+                                ? { playlistUrl: validateServerFetchedHttpsUrl(config.playlistUrl, 'm3u_playlist.playlistUrl') }
+                                : { playlistUrl: validateServerFetchedHttpsUrl(config.playlistUrl, 'm3u_playlist.playlistUrl'), refreshIntervalMinutes: interval };
                 }
                 case 'api_provider': {
-                        rejectUnknownKeys(config, ['baseUrl'], 'api_provider');
+                        rejectUnknownKeys(config, ['baseUrl', 'refreshIntervalMinutes'], 'api_provider');
                         if (config.baseUrl === undefined) fail('api_provider: "baseUrl" is required.');
-                        return { baseUrl: validateServerFetchedHttpsUrl(config.baseUrl, 'api_provider.baseUrl') };
+                        const interval = validateRefreshIntervalMinutes(config.refreshIntervalMinutes, 'api_provider.refreshIntervalMinutes');
+                        return interval === undefined
+                                ? { baseUrl: validateServerFetchedHttpsUrl(config.baseUrl, 'api_provider.baseUrl') }
+                                : { baseUrl: validateServerFetchedHttpsUrl(config.baseUrl, 'api_provider.baseUrl'), refreshIntervalMinutes: interval };
                 }
                 case 'embed_provider': {
                         rejectUnknownKeys(config, ['allowedOrigins'], 'embed_provider');

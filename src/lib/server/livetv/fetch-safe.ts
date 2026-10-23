@@ -66,19 +66,56 @@ export type LivetvSourceFetchErrorKind =
         | 'cancelled'
         | 'unexpected';
 
-/** Typed, diagnostics-safe fetch failure (messages are static; no URL echo). */
+/**
+ * Hard cap for a `Retry-After` interpretation (Phase 7 bounded-retry
+ * contract). A hostile server cannot make a caller sleep for hours: values
+ * beyond this cap are clamped, garbage values are ignored (null).
+ */
+export const LIVETV_FETCH_MAX_RETRY_AFTER_MS = 60_000;
+
+/**
+ * Parses a `Retry-After` header defensively (delta-seconds or HTTP-date),
+ * clamped to LIVETV_FETCH_MAX_RETRY_AFTER_MS. Returns null for garbage or
+ * absent values — the caller then falls back to its own backoff.
+ */
+export function parseLivetvFetchRetryAfterMs(headerValue: string | null, nowMs: number = Date.now()): number | null {
+        if (!headerValue) return null;
+        const trimmed = headerValue.trim().slice(0, 64);
+        if (!trimmed) return null;
+        if (/^\d{1,10}$/.test(trimmed)) {
+                const seconds = Number(trimmed);
+                if (!Number.isFinite(seconds) || seconds < 0) return null;
+                return Math.min(seconds * 1000, LIVETV_FETCH_MAX_RETRY_AFTER_MS);
+        }
+        const dateMs = Date.parse(trimmed);
+        if (!Number.isFinite(dateMs)) return null;
+        const delta = dateMs - nowMs;
+        if (delta <= 0) return 0;
+        return Math.min(delta, LIVETV_FETCH_MAX_RETRY_AFTER_MS);
+}
+
+/**
+ * Typed, diagnostics-safe fetch failure (messages are static; no URL echo).
+ * Phase 7: `retryAfterMs` carries a BOUNDED `Retry-After` interpretation for
+ * HTTP 429 responses ONLY (parsed by parseLivetvFetchRetryAfterMs) — the
+ * single surface the Phase 7 retry policy consumes. Every other failure
+ * kind carries null.
+ */
 export class LivetvSourceFetchError extends Error {
         readonly kind: LivetvSourceFetchErrorKind;
         readonly httpStatus: number | null;
         /** Origin of the ORIGINALLY requested URL (config value) — never the query, never a redirect target. */
         readonly requestedOrigin: string | null;
+        /** Bounded Retry-After hint (ms) — HTTP 429 ONLY, else null. */
+        readonly retryAfterMs: number | null;
 
-        constructor(kind: LivetvSourceFetchErrorKind, message: string, options: { httpStatus?: number; requestedOrigin?: string | null; cause?: unknown } = {}) {
+        constructor(kind: LivetvSourceFetchErrorKind, message: string, options: { httpStatus?: number; requestedOrigin?: string | null; retryAfterMs?: number | null; cause?: unknown } = {}) {
                 super(message);
                 this.name = 'LivetvSourceFetchError';
                 this.kind = kind;
                 this.httpStatus = options.httpStatus ?? null;
                 this.requestedOrigin = options.requestedOrigin ?? null;
+                this.retryAfterMs = options.retryAfterMs ?? null;
         }
 }
 
@@ -315,7 +352,10 @@ async function fetchSourceDocument(rawUrl: string, deps: LivetvFetchDeps, mode: 
 
                 const finalResponse = response as Response;
                 if (!finalResponse.ok) {
-                        throw new LivetvSourceFetchError('http_error', 'The source endpoint returned an HTTP error status.', { httpStatus: finalResponse.status, requestedOrigin });
+                        // Phase 7: surface a BOUNDED Retry-After interpretation for 429
+                        // ONLY — the single additive hook the retry policy consumes.
+                        const retryAfterMs = finalResponse.status === 429 ? parseLivetvFetchRetryAfterMs(finalResponse.headers.get('retry-after')) : null;
+                        throw new LivetvSourceFetchError('http_error', 'The source endpoint returned an HTTP error status.', { httpStatus: finalResponse.status, requestedOrigin, retryAfterMs });
                 }
                 if (mode === 'json') assertJsonAcceptableContentType(finalResponse);
                 else if (mode === 'binary') assertNotHtmlContentTypeBinary(finalResponse);

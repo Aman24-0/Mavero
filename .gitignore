@@ -20,6 +20,8 @@ package-lock.json
 # (scripts/build_executor_function.mjs) before Netlify deploys.
 netlify/functions/adapter-build-executor.mjs
 netlify/functions/adapter-build-executor.config.json
+netlify/functions/livetv-scheduler.mjs
+netlify/functions/livetv-scheduler.mjs.stale-removed
 
 # MAV-FOCUSED (2026-10): DOM QA harness generated artifacts — never commit.
 scripts/harness-admin-nav/

@@ -239,13 +239,22 @@ function extractMessage(error: unknown): string {
  * the DB uniqueness, with per-item retry isolation when a batch fails. A
  * failed row is recorded and skipped — never fatal for the remaining rows.
  * Re-running converges (unchanged rows are never in the plan).
+ *
+ * Phase 7: an optional `signal` (the refresh deadline/cancellation) is
+ * checked between BATCHES — once the caller has abandoned the run, no
+ * further database mutations are started by this executor. Writes already
+ * applied are complete, idempotent upserts; a re-run converges.
  */
-export async function applyGuideIngestion(client: SupabaseClient<Database>, plan: EpgGuideIngestionPlan, options: { batchSize?: number } = {}): Promise<EpgExecutionResult> {
+export async function applyGuideIngestion(client: SupabaseClient<Database>, plan: EpgGuideIngestionPlan, options: { batchSize?: number; signal?: AbortSignal } = {}): Promise<EpgExecutionResult> {
         const batchSize = options.batchSize ?? EPG_INGESTION_BATCH_SIZE;
         const errors: EpgExecutionError[] = [];
         let appliedWrites = 0;
 
         for (let start = 0; start < plan.upserts.length; start += batchSize) {
+                if (options.signal?.aborted) {
+                        errors.push({ scope: 'programme_upsert', epgChannelId: '', message: 'guide ingestion cancelled before a batch (caller deadline elapsed)' });
+                        return { appliedWrites, errors, batchSize };
+                }
                 const batch = plan.upserts.slice(start, start + batchSize);
                 const { error } = await client
                         .from('livetv_epg_programmes')

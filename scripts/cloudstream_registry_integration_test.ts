@@ -308,6 +308,15 @@ function section_registry(): void {
   // family; no VOD/registry/cloudstream surface is touched. Behaviorally
   // proven by scripts/livetv_phase3_epg_migration_test.ts (33 PGlite checks).
   const livetvEpgGuideDataMigration = '20261121000000_livetv_epg_guide_data.sql';
+  // LIVETV PHASE 7 (20261122000000, sanctioned): the Unified Live TV
+  // persistent refresh history — ONE additive append-only table
+  // (livetv_refresh_history: one row per refresh attempt, scheduled or
+  // manual; sanitized + CHECK-bounded diagnostic text; NO foreign keys —
+  // history survives source deletion; admin-only RLS; no config-version
+  // coupling). Zero references to any existing table; no VOD/registry/
+  // cloudstream surface is touched. Behaviorally proven by
+  // scripts/livetv_phase7_migration_test.ts (35 PGlite checks).
+  const livetvRefreshHistoryMigration = '20261122000000_livetv_refresh_history.sql';
   const added = migrations.filter((name) => !pristineMigrations.includes(name));
   const phase2Sql = read(`supabase/migrations/${phase2Migration}`);
   const phase2SqlNoComments = phase2Sql.replace(/--[^\n]*/g, '');
@@ -316,7 +325,7 @@ function section_registry(): void {
   const unifiedSql = read(`supabase/migrations/${unifiedMigration}`);
   const unifiedSqlNoComments = unifiedSql.replace(/--[^\n]*/g, '');
   ok(
-    added.length === 20
+    added.length === 21
       && added.includes(migrationName)
       && added.includes(phase2Migration)
       && added.includes(phase3Migration)
@@ -336,8 +345,9 @@ function section_registry(): void {
       && added.includes(finalAuditHardeningMigration)
       && added.includes(livetvSourceRegistryMigration)
       && added.includes(livetvEpgGuideDataMigration)
+      && added.includes(livetvRefreshHistoryMigration)
       && added.includes('20261014000000_add_unlink_action.sql'),
-    `§A10: exactly the CS-5 + Phase 2 + Phase 3 + FINAL TASK + build-lifecycle + LT-5-analytics + LT-15-fallback-event + VidRift-provider + MAVP-4-icon-badge + MAVP-5-default-slots + MAVP-7-unique-assignment + BlueVelvet-provider + Vixolity/TGVID/ZXCStream-provider + VidStuck-cc-origins + Supabase-remediation + Supabase-final-audit + Livetv-source-registry + Livetv-EPG-guide-data migrations were added (${added.join(', ') || 'none'})`,
+    `§A10: exactly the CS-5 + Phase 2 + Phase 3 + FINAL TASK + build-lifecycle + LT-5-analytics + LT-15-fallback-event + VidRift-provider + MAVP-4-icon-badge + MAVP-5-default-slots + MAVP-7-unique-assignment + BlueVelvet-provider + Vixolity/TGVID/ZXCStream-provider + VidStuck-cc-origins + Supabase-remediation + Supabase-final-audit + Livetv-source-registry + Livetv-EPG-guide-data + Livetv-refresh-history migrations were added (${added.join(', ') || 'none'})`,
   );
   // VIDRIFT (sanctioned): insert-only registration — no destructive verbs,
   // no download_providers / registry-table references.

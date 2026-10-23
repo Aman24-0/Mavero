@@ -43,10 +43,17 @@ import { XMLTV_MAX_COMPRESSED_BYTES, XmltvDocumentError, decodeXmltvPayload, par
 import { planEpgMapping, type EpgMappingRow, type EpgSourceChannelRow } from './mapping';
 import { applyGuideIngestion, planGuideIngestion, type EpgExecutionError, type ExistingEpgProgrammeRow } from './ingestion';
 import { applyEpgRetention } from './retention';
+import { livetvHistoryRowFromEpgOutcome, recordLivetvRefreshHistory, type LivetvHistoryTrigger } from '../history';
 
 /** Bounded defaults for one guide refresh (guides are larger than playlists). */
 export const EPG_REFRESH_TIMEOUT_MS = 60_000;
 export const EPG_REFRESH_MAX_SOURCES_PER_RUN = 10;
+/**
+ * Phase 7 — bounded mapping read: the tvgId/mapping plan reads at most this
+ * many source-channel rows per refresh (the mapping diagnostics probe cap
+ * parity; beyond the cap the outcome honestly reports `entriesTruncated`).
+ */
+export const EPG_REFRESH_MAX_SOURCE_CHANNELS = 5_000;
 /** Bound on stored diagnostics samples in an outcome. */
 const OUTCOME_SAMPLE = 100;
 
@@ -57,7 +64,7 @@ const EPG_PARSE_LIMITS: Partial<XmltvParseLimits> = {};
 // Config validation (the `livetv_epg_sources.config` jsonb contract)
 // ---------------------------------------------------------------------------
 
-/** The typed EPG source config: ONLY an optional default IANA timezone. */
+/** The typed EPG source config: an optional default IANA timezone + (Phase 7) an optional refresh interval. */
 export type LivetvEpgSourceConfig = {
         /**
          * Interprets TIMEZONE-LESS XMLTV timestamps (documented policy —
@@ -65,6 +72,11 @@ export type LivetvEpgSourceConfig = {
          * timezone-less timestamps are per-record skips.
          */
         defaultTimezone?: string;
+        /**
+         * Phase 7 — optional per-source refresh interval for the scheduler
+         * (minutes; 15..10080). Absent ⇒ the scheduler default applies.
+         */
+        refreshIntervalMinutes?: number;
 };
 
 export function validateEpgSourceConfig(raw: unknown): LivetvEpgSourceConfig {
@@ -72,15 +84,27 @@ export function validateEpgSourceConfig(raw: unknown): LivetvEpgSourceConfig {
         if (typeof raw !== 'object' || Array.isArray(raw)) throw new Error('EPG source config must be a JSON object.');
         const config = raw as Record<string, unknown>;
         for (const key of Object.keys(config)) {
-                if (key !== 'defaultTimezone') throw new Error(`EPG source config: unknown config key "${key.slice(0, 40)}".`);
+                if (key !== 'defaultTimezone' && key !== 'refreshIntervalMinutes') throw new Error(`EPG source config: unknown config key "${key.slice(0, 40)}".`);
         }
-        if (config.defaultTimezone === undefined) return {};
-        if (typeof config.defaultTimezone !== 'string') throw new Error('EPG source config: "defaultTimezone" must be a string.');
-        try {
-                return { defaultTimezone: assertValidIanaTimezone(config.defaultTimezone) };
-        } catch (error) {
-                throw new Error(error instanceof Error ? error.message.slice(0, 200) : 'EPG source config: invalid defaultTimezone.');
+        const result: LivetvEpgSourceConfig = {};
+        if (config.defaultTimezone === undefined) {
+                // absent — no timezone policy override
+        } else if (typeof config.defaultTimezone !== 'string') {
+                throw new Error('EPG source config: "defaultTimezone" must be a string.');
+        } else {
+                try {
+                        result.defaultTimezone = assertValidIanaTimezone(config.defaultTimezone);
+                } catch (error) {
+                        throw new Error(error instanceof Error ? error.message.slice(0, 200) : 'EPG source config: invalid defaultTimezone.');
+                }
         }
+        if (config.refreshIntervalMinutes !== undefined) {
+                const raw = config.refreshIntervalMinutes;
+                if (typeof raw !== 'number' || !Number.isFinite(raw) || !Number.isInteger(raw)) throw new Error('EPG source config: "refreshIntervalMinutes" must be an integer number of minutes.');
+                if (raw < 15 || raw > 10_080) throw new Error('EPG source config: "refreshIntervalMinutes" must be between 15 and 10080 minutes.');
+                result.refreshIntervalMinutes = raw;
+        }
+        return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -185,6 +209,12 @@ export type LivetvEpgRefreshOutcome = {
         mappingSamples: { unmatched: string[]; ambiguous: string[]; invalid: string[] } | null;
         /** Timezone policy actually applied (diagnostics). */
         timezonePolicy: { configured: string | null; explicitOffsetTimestamps: number; defaultTimezoneTimestamps: number } | null;
+        /** Phase 7 — who asked for this refresh (scheduler or a manual admin action). */
+        trigger: LivetvHistoryTrigger;
+        /** Phase 7 — true when the bounded mapping read hit its honest cap. */
+        entriesTruncated: boolean;
+        /** Phase 7 — whether the best-effort persistent-history write landed. */
+        historyPersisted: boolean | null;
 };
 
 function nowIso(): string {
@@ -224,6 +254,11 @@ function recordOutcome(outcome: LivetvEpgRefreshOutcome): void {
 // ---------------------------------------------------------------------------
 
 const inFlight = new Map<string, Promise<LivetvEpgRefreshOutcome>>();
+
+/** Phase 7 — instance-local in-flight count (ops diagnostics; serverless-honest). */
+export function getLivetvEpgInFlightCount(): number {
+        return inFlight.size;
+}
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -269,7 +304,7 @@ function linkDeadline(deps: LivetvEpgRefreshDeps, deadlineMs: number): { signal:
         };
 }
 
-function failureOutcome(started: { at: string; ms: number }, row: { id: string; slug: string; epg_type: string } | null, kind: LivetvEpgRefreshFailureKind, message: string): LivetvEpgRefreshOutcome {
+function failureOutcome(started: { at: string; ms: number }, row: { id: string; slug: string; epg_type: string } | null, kind: LivetvEpgRefreshFailureKind, message: string, trigger: LivetvHistoryTrigger = 'manual'): LivetvEpgRefreshOutcome {
         return {
                 epgSourceId: row?.id ?? 'unknown',
                 slug: row?.slug ?? 'unknown',
@@ -284,7 +319,10 @@ function failureOutcome(started: { at: string; ms: number }, row: { id: string; 
                 executionErrors: null,
                 skipReasons: null,
                 mappingSamples: null,
-                timezonePolicy: null
+                timezonePolicy: null,
+                trigger,
+                entriesTruncated: false,
+                historyPersisted: null
         };
 }
 
@@ -308,6 +346,12 @@ export type LivetvEpgRefreshDeps = {
         signal?: AbortSignal;
         /** Retention sweep override (tests); default ON after successful persistence. */
         retention?: boolean;
+        /** Phase 7 — who triggered this refresh (drives persistent history; default 'manual'). */
+        trigger?: LivetvHistoryTrigger;
+        /** Phase 7 — correlation id grouping the attempts of ONE logical operation. */
+        correlationId?: string;
+        /** Phase 7 — 1-based attempt number within the correlation (default 1). */
+        attemptNumber?: number;
 };
 
 // ---------------------------------------------------------------------------
@@ -318,36 +362,52 @@ export type LivetvEpgRefreshDeps = {
  * Refreshes ONE EPG source by id or slug. Never throws — every failure
  * becomes a typed outcome. A concurrent second call for the same source
  * returns a typed `refresh_in_progress` outcome instead of double-fetching.
+ *
+ * Phase 7: the source row is resolved FIRST so the in-flight guard is keyed
+ * by the canonical EPG source id (id/slug dedup fix), and every resolved
+ * attempt is appended to the persistent history best-effort (a history
+ * failure NEVER fails the refresh).
  */
 export async function refreshLivetvEpgSource(client: SupabaseClient<Database>, ref: { id?: string; slug?: string }, deps: LivetvEpgRefreshDeps = {}): Promise<LivetvEpgRefreshOutcome> {
         const started = { at: nowIso(), ms: Date.now() };
-        const inFlightKey = ref.id ?? ref.slug ?? '';
+        const trigger = deps.trigger ?? 'manual';
 
-        const pending = inFlight.get(inFlightKey);
+        const loaded = await loadEpgSourceRow(client, ref);
+        if (loaded.error) return failureOutcome(started, null, 'lookup_failed', 'The guide source lookup failed.', trigger);
+        if (!loaded.row) return failureOutcome(started, null, 'epg_source_not_found', 'The requested guide source does not exist.', trigger);
+        const row = loaded.row;
+
+        const pending = inFlight.get(row.id);
         if (pending) {
-                return failureOutcome(started, null, 'refresh_in_progress', 'A guide refresh for this source is already in progress.');
+                const duplicate = failureOutcome(started, row, 'refresh_in_progress', 'A guide refresh for this source is already in progress.', trigger);
+                duplicate.historyPersisted = await recordLivetvRefreshHistory(
+                        client,
+                        livetvHistoryRowFromEpgOutcome(duplicate, { trigger, correlationId: deps.correlationId ?? crypto.randomUUID(), attemptNumber: deps.attemptNumber ?? 1 })
+                );
+                return duplicate;
         }
 
-        const run = executeEpgRefresh(client, started, ref, deps).finally(() => {
-                inFlight.delete(inFlightKey);
+        const run = runEpgRefreshForSourceRow(client, started, row, deps).finally(() => {
+                inFlight.delete(row.id);
         });
         // Registered synchronously in the same tick as the check above.
-        inFlight.set(inFlightKey, run);
+        inFlight.set(row.id, run);
         const outcome = await run;
         recordOutcome(outcome);
+        outcome.historyPersisted = await recordLivetvRefreshHistory(
+                client,
+                livetvHistoryRowFromEpgOutcome(outcome, { trigger, correlationId: deps.correlationId ?? crypto.randomUUID(), attemptNumber: deps.attemptNumber ?? 1 })
+        );
         return outcome;
 }
 
-async function executeEpgRefresh(client: SupabaseClient<Database>, started: { at: string; ms: number }, ref: { id?: string; slug?: string }, deps: LivetvEpgRefreshDeps): Promise<LivetvEpgRefreshOutcome> {
-        // --- lookup ---
-        const loaded = await loadEpgSourceRow(client, ref);
-        if (loaded.error) return failureOutcome(started, null, 'lookup_failed', 'The guide source lookup failed.');
-        if (!loaded.row) return failureOutcome(started, null, 'epg_source_not_found', 'The requested guide source does not exist.');
-        const row = loaded.row;
+/** The guide refresh pipeline AFTER the row is resolved. */
+async function runEpgRefreshForSourceRow(client: SupabaseClient<Database>, started: { at: string; ms: number }, row: EpgSourceRow, deps: LivetvEpgRefreshDeps): Promise<LivetvEpgRefreshOutcome> {
+        const trigger = deps.trigger ?? 'manual';
 
         // --- eligibility (Phase 1 rule S1/S2 parity) ---
         if (!row.enabled || !LIVETV_PLAYBACK_ELIGIBLE_STATUSES.has(row.status as LivetvSourceStatus)) {
-                return failureOutcome(started, row, 'epg_source_ineligible', 'The guide source is not eligible for refresh (disabled or non-eligible status).');
+                return failureOutcome(started, row, 'epg_source_ineligible', 'The guide source is not eligible for refresh (disabled or non-eligible status).', trigger);
         }
 
         // --- config validation ---
@@ -355,13 +415,13 @@ async function executeEpgRefresh(client: SupabaseClient<Database>, started: { at
         try {
                 config = validateEpgSourceConfig(row.config);
         } catch (error) {
-                return failureOutcome(started, row, 'invalid_source_config', error instanceof Error ? error.message : 'The guide source config is invalid.');
+                return failureOutcome(started, row, 'invalid_source_config', error instanceof Error ? error.message : 'The guide source config is invalid.', trigger);
         }
 
         // --- URL policy re-assertion (the DB CHECK is the primary gate) ---
         const sourceUrl = row.source_url;
         if (!sourceUrl || !sourceUrl.startsWith('https://')) {
-                return failureOutcome(started, row, 'invalid_url', 'The guide source has no https URL configured.');
+                return failureOutcome(started, row, 'invalid_url', 'The guide source has no https URL configured.', trigger);
         }
 
         // --- guarded fetch (the ONE shared bounded fetcher; brief §11) ---
@@ -381,9 +441,9 @@ async function executeEpgRefresh(client: SupabaseClient<Database>, started: { at
                 deadline.dispose();
                 if (error instanceof LivetvSourceFetchError) {
                         const kind = FETCH_KIND_TO_EPG_KIND[error.kind] ?? 'unexpected';
-                        return failureOutcome(started, row, kind, error.message);
+                        return failureOutcome(started, row, kind, error.message, trigger);
                 }
-                return failureOutcome(started, row, 'unexpected', 'The guide fetch failed unexpectedly.');
+                return failureOutcome(started, row, 'unexpected', 'The guide fetch failed unexpectedly.', trigger);
         }
 
         // --- content-detected decompression + encoding policy ---
@@ -394,9 +454,9 @@ async function executeEpgRefresh(client: SupabaseClient<Database>, started: { at
                 deadline.dispose();
                 if (error instanceof XmltvDocumentError) {
                         const kind = DOCUMENT_KIND_TO_EPG_KIND[error.kind] ?? 'unexpected';
-                        return failureOutcome(started, row, kind, error.message);
+                        return failureOutcome(started, row, kind, error.message, trigger);
                 }
-                return failureOutcome(started, row, 'unexpected', 'The guide document could not be decoded.');
+                return failureOutcome(started, row, 'unexpected', 'The guide document could not be decoded.', trigger);
         }
 
         // --- bounded parse (deadline signal + caps + per-record isolation) ---
@@ -411,20 +471,32 @@ async function executeEpgRefresh(client: SupabaseClient<Database>, started: { at
                 deadline.dispose();
                 if (error instanceof XmltvDocumentError) {
                         const kind = DOCUMENT_KIND_TO_EPG_KIND[error.kind] ?? 'unexpected';
-                        return failureOutcome(started, row, kind, error.message);
+                        return failureOutcome(started, row, kind, error.message, trigger);
                 }
-                return failureOutcome(started, row, 'unexpected', 'The guide document could not be parsed.');
+                return failureOutcome(started, row, 'unexpected', 'The guide document could not be parsed.', trigger);
         }
-        deadline.dispose();
+        // NOTE (Phase 7): the deadline signal stays linked through the
+        // ingestion phase below — an abandoned caller must be able to stop
+        // batched DB writes. dispose() moves to after persistence.
 
         // --- mapping plan (pure; explicit rows + tvgId votes) ---
         const mappingsResult = await client.from('livetv_epg_channel_mappings').select('epg_channel_id, channel_id').eq('epg_source_id', row.id);
-        if (mappingsResult.error) return failureOutcome(started, row, 'lookup_failed', 'The guide mapping lookup failed.');
+        if (mappingsResult.error) {
+                deadline.dispose();
+                return failureOutcome(started, row, 'lookup_failed', 'The guide mapping lookup failed.', trigger);
+        }
         const explicitMappings = (mappingsResult.data ?? []) as unknown as EpgMappingRow[];
 
-        const entriesResult = await client.from('livetv_source_channels').select('id, source_id, source_channel_id, canonical_channel_id, tvg_id, enabled');
-        if (entriesResult.error) return failureOutcome(started, row, 'lookup_failed', 'The source channel lookup failed.');
+        // Phase 7: the mapping read is bounded — beyond the cap the tvgId
+        // vote pool would silently change shape, so the outcome reports
+        // `entriesTruncated` honestly instead.
+        const entriesResult = await client.from('livetv_source_channels').select('id, source_id, source_channel_id, canonical_channel_id, tvg_id, enabled').limit(EPG_REFRESH_MAX_SOURCE_CHANNELS);
+        if (entriesResult.error) {
+                deadline.dispose();
+                return failureOutcome(started, row, 'lookup_failed', 'The source channel lookup failed.', trigger);
+        }
         const sourceChannels = (entriesResult.data ?? []) as unknown as EpgSourceChannelRow[];
+        const entriesTruncated = sourceChannels.length >= EPG_REFRESH_MAX_SOURCE_CHANNELS;
 
         const mappingPlan = planEpgMapping({
                 // Every DISTINCT guide identity the document revealed: declared
@@ -445,7 +517,10 @@ async function executeEpgRefresh(client: SupabaseClient<Database>, started: { at
                         .eq('epg_source_id', row.id)
                         .gte('start_at', new Date(plan.window.startMs).toISOString())
                         .lte('start_at', new Date(plan.window.endMs).toISOString());
-                if (existingResult.error) return failureOutcome(started, row, 'lookup_failed', 'The existing guide lookup failed.');
+                if (existingResult.error) {
+                        deadline.dispose();
+                        return failureOutcome(started, row, 'lookup_failed', 'The existing guide lookup failed.', trigger);
+                }
                 existingRows = ((existingResult.data ?? []) as unknown as (Omit<ExistingEpgProgrammeRow, 'startMs' | 'endMs'> & { start_at: string; end_at: string })[]).map((row) => ({
                         ...row,
                         startMs: Date.parse(row.start_at),
@@ -454,8 +529,10 @@ async function executeEpgRefresh(client: SupabaseClient<Database>, started: { at
         }
         const finalPlan = planGuideIngestion({ epgSourceId: row.id, programmes: parsed.programmes, existingRows });
 
-        // --- bounded persistence (unchanged rows never written) ---
-        const execution = await applyGuideIngestion(client, finalPlan);
+        // --- bounded persistence (unchanged rows never written; the deadline
+        // signal stops batched mutations once the caller has abandoned the run) ---
+        const execution = await applyGuideIngestion(client, finalPlan, { signal: deadline.signal });
+        deadline.dispose();
 
         // --- bounded retention sweep (best-effort, post-persistence) ---
         let retentionDeleted: number | null = null;
@@ -507,7 +584,10 @@ async function executeEpgRefresh(client: SupabaseClient<Database>, started: { at
                         configured: config.defaultTimezone ?? null,
                         explicitOffsetTimestamps: parsed.counts.explicitOffsetTimestamps,
                         defaultTimezoneTimestamps: parsed.counts.defaultTimezoneTimestamps
-                }
+                },
+                trigger,
+                entriesTruncated,
+                historyPersisted: null
         };
 }
 
