@@ -1,6 +1,6 @@
-# MAVERO Unified Live TV — Operations Runbook (Phase 7)
+# MAVERO Unified Live TV — Operations Runbook (Phase 7; status refreshed by Phase 8)
 
-**Status:** Phase 7 hardening implemented on branch `livetv/phase-7-operational-hardening`. The scheduler is **IMPLEMENTED BUT NOT ACTIVE** — see §1 for the exact activation steps (owner action required). `unified_enabled` remains **FALSE**; no migration has been applied to any database.
+**Status (Phase 8 refresh, 2026-10-23):** the Phase 7 hardening is MERGED to `main` (PR #23) and passed the Phase 8 release QA (`LIVETV_RELEASE_CHECKLIST.md`). The scheduler is **CONFIGURED — per the owner's report: `LIVETV_SCHEDULER_CRON`/`LIVETV_SCHEDULER_SECRET` set in Netlify, the migration applied via the SQL Editor, the Netlify project reconnected — but the production build and the FIRST scheduled tick are NOT yet verified** (the agent session holds no production credentials and never observed a deploy). Complete checklist items §3–§5 of `LIVETV_RELEASE_CHECKLIST.md` after the next production deploy; §1 below remains the exact activation/verification reference. `unified_enabled` remains **FALSE** (owner-reported; verify with §9).
 
 **Audience:** the owner/operator. Every procedure below assumes admin access to the Mavero Admin UI, the Supabase SQL Editor, and the Netlify site settings.
 
@@ -14,10 +14,10 @@
 |---|---|---|
 | Tick orchestration (planner + bounded executor) | `src/lib/server/livetv/scheduler.ts` | shipped |
 | Authenticated tick endpoint | `POST /api/livetv/scheduler/tick` | shipped (fail-closed until configured) |
-| Netlify scheduled function | `netlify/functions/livetv-scheduler.mjs` (generated at build) | emitted ONLY when `LIVETV_SCHEDULER_CRON` is set at build time |
-| Shared secret | `LIVETV_SCHEDULER_SECRET` (server-side env) | NOT configured |
+| Netlify scheduled function | `netlify/functions/livetv-scheduler.mjs` (generated at build) | emitted ONLY when `LIVETV_SCHEDULER_CRON` is set at build time; OWNER-REPORTED `@hourly` — confirm via the deploy log line or Site configuration → Functions |
+| Shared secret | `LIVETV_SCHEDULER_SECRET` (server-side env) | OWNER-REPORTED configured; never print the value; verify by the §1.5 endpoint check only |
 | Per-source intervals | optional `refreshIntervalMinutes` (15–10080) in the source/EPG-source `config` jsonb | absent ⇒ default 720 min (12 h) |
-| Persistent history | `livetv_refresh_history` table (migration `20261122000000`) | migration NOT applied yet |
+| Persistent history | `livetv_refresh_history` table (migration `20261122000000`) | OWNER-REPORTED applied (SQL Editor); verify with the §6 queries |
 
 ### Activation steps (owner)
 

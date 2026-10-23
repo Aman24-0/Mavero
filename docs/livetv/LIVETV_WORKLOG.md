@@ -957,3 +957,103 @@ Environment: Node `v24.21.0`, pnpm `10.30.3`. All commands from repo root; exit 
 - **PR creation: attempted via the GitHub API (`POST /repos/Aman24-0/Mavero/pulls`) and REJECTED — HTTP 403 `{"message":"Resource not accessible by personal access token"}`** (identical to the Phase 1/2/3/4/5/6 outcomes: the fine-grained PAT carries Contents:write but not the separate "Pull requests: write" permission). Per the standing protocol, the PR was NOT created by this task. One-click PR creation for the pushed branch: `https://github.com/Aman24-0/Mavero/pull/new/livetv/phase-7-operational-hardening`.
 - **`main` untouched:** still at `8beb349` locally and remotely; the push touched ONLY the new `livetv/phase-7-operational-hardening` branch. This entry's own docs commit is pushed immediately afterwards in the same session (same protocol), so the final remote tip is the commit carrying this entry.
 - **Post-push hygiene re-verified:** `git remote -v` clean (no token in the URL); 0 token references in git config; no `~/.git-credentials`; the generated Netlify function artifacts (`livetv-scheduler.mjs`, `*.stale-removed`) are git-ignored and absent from the commit; temporary API response files deleted.
+
+## Entry P8-0 — Phase 8 baseline and preflight audit (2026-10-23)
+
+- **Verified base:** `git fetch origin` exit 0; `origin/main` = `50a811d` = **Merge PR #23 from `livetv/phase-7-operational-hardening`** (Phase 7 tip `e84bb11` confirmed ancestor; `git diff e84bb11 origin/main` EMPTY — the merge is content-identical to the verified Phase 7 tip). Branch `livetv/phase-8-release-qa` cut from `50a811d`. Working tree clean before any work. No `AGENTS.md` exists (unchanged since Phase 0's audit).
+- **Phase 7 presence confirmed in the baseline:** all Phase 7 artifacts present (`20261122000000_livetv_refresh_history.sql`, `scheduler.ts`, `retry.ts`, `history.ts`, `redact.ts`, the tick endpoint, the admin ops-status endpoint, the scheduler entry + build generator, 7 Phase 7 suites, `LIVETV_OPERATIONS.md`). `netlify/functions/livetv-scheduler.mjs` is ABSENT from git BY DESIGN (git-ignored build-time artifact; `.gitignore` carries both the function and its `.stale-removed` marker — verified in the Phase 7 diff).
+- **Phase 7 diff independently re-audited (`git diff 8beb349 50a811d`, 31 files):** the client LiveGT surface (`src/lib/client/live-tv/`), all live-tv components/routes, `/api/health`, `netlify.toml`, `src/lib/server/streaming/` and every existing migration are ZERO-DIFF. The only shared-file touches are the two documented additive ones: `rate-limit.ts` (+6: the `livetvSchedulerTick` 4/min rule) and `database.types.ts` (+74: the history-table types).
+- **Docs read in full:** `LIVETV_PLAN.md` (incl. §10 golden behaviors and the Phase 8 section), `LIVETV_OPERATIONS.md`, the Phase 7 worklog entries (P7-0…P7-6), `docs/supabase-migration-runbook.md` (SQL Editor workflow), CI workflow, `netlify.toml`, `package.json`. `docs/PLAN.md` has no Live TV release-relevant items (one historical DONE row for the V1 recently-played feature); `docs/WORKLOG.md` ends at the pre-Live-TV cleanup era — nothing applicable.
+- **Chain inventory:** `pnpm test` = the exact `&&` chain of 16 groups (core 32, admin 16, ux 24, providers 27, playback 16, platform 48, downloader 20, devices 19, analytics 6, hosting 28, cloudstream 19, **livetv 34**, player 30, mav 15, supabase 2, rendering 3 suite commands). **Correction to entry P7-2:** it recorded test:livetv as "35 suites (28 pre-existing + Phase 7 ×7)" — the actual count is **34 (27 pre-existing + 7)**; arithmetic slip only, no code impact (Phase 6's own entry correctly said 27, and this phase's run confirms 34).
+- **Toolchain:** Node v24.21.0 (engines `>=22`; CI pins 22), pnpm 10.30.3 (the `packageManager` pin). `pnpm install --frozen-lockfile` exit 0.
+- **Owner-reported production state (recorded as OWNER-REPORTED, not independently verified — this session holds no production credentials):** Phase 7 merged; `LIVETV_SCHEDULER_CRON`/`LIVETV_SCHEDULER_SECRET` configured in Netlify; the migration applied via the SQL Editor; the Netlify project reconnected. The production build/scheduled function are NOT assumed active — first-tick verification remains an owner step (§P8-4, checklist §3–§4).
+
+## Entry P8-1 — Automated gates (commands actually executed 2026-10-23)
+
+| # | Command | Exit | Result |
+|---|---|---|---|
+| 1 | `pnpm check` | **0** | 0 errors, 5 warnings (the pre-existing `css_unused_selector` set — unchanged since Phase 0) |
+| 2 | `pnpm run test:core` | **0** | green (incl. stub-context + URL-heuristic boundary pins) |
+| 3 | `pnpm run test:admin` | **0** | green (incl. `mav_focused_admin_nav_test` 58/58) |
+| 4 | `pnpm run test:ux` | **0** | green |
+| 5 | `pnpm run test:providers` | **0** | green (tgvid 82, zxcstream 34, Phase 7D vidsrc) |
+| 6 | `pnpm run test:playback` | **0** | green (Phase 7B resolver contract incl. SSRF guards) |
+| 7 | `pnpm run test:platform` | **0** | green (48 commands incl. favicon 37/37) |
+| 8 | `pnpm run test:downloader` | **0** | green (Phase F runtime 44 + embedded-state 18) |
+| 9 | `pnpm run test:devices` | **0** | green (google oauth 113/113) |
+| 10 | `pnpm run test:analytics` | **0** | green (retention cohorts 62) |
+| 11 | `pnpm run test:hosting` | **0** | green |
+| 12 | `pnpm run test:cloudstream` | **0** | green (incl. migration census A-sections: 21 + 18 migrations, both pinning `20261122000000`) |
+| 13 | `pnpm run test:livetv` | **0** | **all 34 suites green — per-suite counts in P8-2** |
+| 14 | `pnpm run test:player` | **0** | green |
+| 15 | `pnpm run test:mav` | **0** | green (incl. `mav_task5_live_tv_recent_channels_test`) |
+| 16 | `pnpm run test:supabase` | **0** | green (PGlite chain; final audit 107) |
+| 17 | `pnpm run test:rendering` | **0** | green — incl. the two REAL headless-Chromium DOM-QA suites (58 + 32 checks; see P8-3) |
+| 18 | `pnpm build` | **0** | vite build OK + `adapter-netlify ✔ done` + the executor function written + the scheduler generator's HONEST no-op line (`LIVETV_SCHEDULER_CRON unset — scheduler implemented but NOT scheduled`) |
+| 19 | Scheduler emission probe: `LIVETV_SCHEDULER_CRON=@hourly node scripts/build_livetv_scheduler_function.mjs` | **0** | function emitted (`netlify/functions/livetv-scheduler.mjs`, 4.1 MB bundle), in-file `schedule: "@hourly"` frozen, tick + secret-verify symbols present; artifact then deleted (git-ignored) |
+| 20 | Scheduler invalid-cron probe: `LIVETV_SCHEDULER_CRON="not-a-cron" …` | **1** | the build-time generator FAILS loudly with the corrective message (owner-gated honesty; matches the Phase 7 record) |
+| 21 | `git diff --check` | **0** | clean |
+
+- **Execution-shape disclosure (honesty rule §15.3):** the full `pnpm test` single command was attempted first in this sandbox and the runner environment killed the detached process mid-chain (no test failure — an environment process-lifetime limit, log truncated mid-`test:core` with only green output). The gates were therefore executed as the 16 constituent groups of the EXACT `&&` chain defined by the `test` script, each with its real exit code captured (table above). Since `pnpm test` is literally `group1 && group2 && … && group16`, 16 × exit 0 ⇒ chain exit 0 by `&&` semantics. CI runs the single command on every push/PR and will confirm the same result.
+- No command was re-run to "get a pass": every row is the first clean execution of that group on the Phase 8 baseline. No test was edited anywhere in this phase (zero-diff on `scripts/` outside the two new doc files).
+
+## Entry P8-2 — Golden-behavior and security audit (test-evidence map)
+
+All §10 golden behaviors re-verified against the ACTUAL suites (not assumed from Phase 7's records):
+
+| Golden behavior / security area | Evidence (suite → checks, this phase's run) |
+|---|---|
+| LiveGT V1 catalogue/guide/playback/embed fallback compat | `live_tv_client_test` 62 (LT-2 contract), `live_tv_page_test` 22 (LT-4), `live_tv_embed_fallback_test` 15/15 (LT-15 activates only on fatal native failure), `live_tv_hardening_test` 13/13 |
+| Player engine + signed-query auth intact | `live_tv_player_test` 91 (LT-3 DASH/ClearKey + LT-9 DASH auth + LT-11 HLS auth; `media-auth.ts` zero-diff in the Phase 7/8 diffs) |
+| Unified mode disabled unless owner-authorized | `livetv_phase5_resolution_test` 69 + `livetv_phase5_router_test` 71 + `livetv_phase5_page_test` 62 (fail-closed flag pins) + `livetv_phase7_health_test` 32 (ops DTO reports the flag as a boolean only) |
+| Flag-off ⇒ `/live-tv` byte-identical legacy behavior | `livetv_phase6_unified_test` 128 (§5a.4 the legacy LiveGT load line is byte-identical; §5a.5 the gate strictly precedes it; §8 flag-off legacy preservation) + the Phase 8 zero-diff on `src/routes/live-tv/` and all client live-tv modules |
+| Enabled-source / visibility / exposure enforced server-side | `livetv_phase1_model_test` 76 (§5 S1/M1/E1/P1 eligibility chain: disabled source/entry/endpoint/candidate all blocked server-side) + `livetv_phase6_unified_test` exposure matrix |
+| Channel IDs, source/guide mappings, recent channels | `livetv_phase1_model_test` 76 + `livetv_phase3_epg_pipeline_test` 102 (mapping contract) + `mav_task5_live_tv_recent_channels_test` (test:mav, green) |
+| DRM honesty — no Widevine/PlayReady circumvention | `live_tv_player_test` 91 (DRM errors classify to `drm_playback_failed` — an honest failure, never bypassed; source grep: no license-server/circvention path exists; ClearKey remains the provider-supplied runtime-memory-only LT-3 contract) |
+| No silent source switching / no media proxy | `live_tv_release_audit_test` (LT-6: Shaka isolation, LiveGT hostname isolation — only `api.ts` carries it —, VOD DASH stays UNSUPPORTED, dynamic-only Shaka loading) + `livetv_phase7_fetch_hardening_test` §7 ONE-fetcher monopoly |
+| Ingestion limits, SSRF, redirects, timeouts, aborts, bounded parsing | `livetv_m3u_parse_test` 64 + `livetv_phase3_xmltv_test` 78 (malformed inputs, caps) + `livetv_phase7_fetch_hardening_test` 44 (§1 transport/URL policy, §2 private-address matrix, §3 per-hop redirect re-validation + cap, §4 HTML-never-a-feed, §5 compression/decompression bounds with stream abort, §6 deadline/cancel propagation, §7 fetcher monopoly) |
+| Admin + scheduler authz, rate limits, fail-closed | `livetv_phase4_admin_service_test` 71 + `livetv_phase4_admin_ui_test` 50 (requireAdmin-first admin surface) + `livetv_phase7_scheduler_test` 57 (§1 fail-closed unset env / wrong secret / timing-safe; rejection BEFORE any DB or upstream work — endpoint order re-read this phase: rate-limit → 503 unconfigured → 401 → execute) + `livetv_phase7_health_test` §3 endpoint-order pins |
+| History/diagnostics leak nothing | `livetv_phase7_redaction_test` 27 (UNIQUE fake secret values driven through every surface and asserted absent BY VALUE — not by variable name) + `livetv_phase7_history_test` 45 (writer-side sanitization + DB CHECK bounds) |
+| Refresh failures / retries / oversized / disabled / missing guide handled safely | `livetv_phase7_retry_test` 81 (transient-only, ≤2 attempts, budget, bounded Retry-After, injected clocks — CI never sleeps) + `livetv_phase7_scheduler_test` §4 (ineligible sources never planned) + `livetv_phase3_epg_migration_test` 33 + Phase 3 honesty suites |
+| Migration + RLS behavior | `livetv_phase7_migration_test` 35 (PGlite DDL/RLS/CHECKs/retention) + both cloudstream censuses re-pinned (21 + 18 include `20261122000000`) |
+
+**Findings:** zero golden-behavior regressions; zero security regressions; NO test weakened or edited; no in-scope bug required fixing (the only defects found were the P7-2 arithmetic slip recorded in P8-0 and the stale docs lines corrected in P8-5 — both documentation-only).
+
+## Entry P8-3 — Browser / playback QA (PASS / NOT RUN per scenario)
+
+**Environment available here:** Playwright 1.57.0 + headless Chromium (only), Linux container, no production credentials, no backend.
+
+| Scenario | Status | Basis |
+|---|---|---|
+| Real-browser harness execution (real Vite build + real Chromium mount, mobile [375] + desktop [1280] viewports) | **PASS** | `test:rendering`: episode-sheet DOM QA 58/58 + season-chip contract 32/32 — proves the repo's browser QA infrastructure executes in this environment (MAV VOD components, NOT Live TV) |
+| `/live-tv` rendering & navigation in a real browser | **NOT RUN** | the page mounts against a live backend (Supabase env) and the LiveGT client; this session has neither. The page's behavior is covered by the LT-4/LT-19/P5/P6 source-contract suites instead |
+| Loading / empty / error / stale-data states | **NOT RUN (browser)** | same backend constraint; state logic is suite-covered (LT-4 22, honest-state pins in P5/P6 suites) |
+| Admin Live TV management + diagnostics authorization (browser) | **NOT RUN** | requires an admin account; production credentials must not be retrieved. `livetv_phase4_admin_ui_test` 50 + the ops endpoint's requireAdmin-first order (re-read this phase) are the code-level evidence |
+| Legacy LiveGT playback + embed fallback (real stream) | **NOT RUN** | requires the real provider + fresh signed URLs + a permitted geo; bypassing geo/access controls is forbidden (plan §8). LT-3 91 + LT-15 15/15 are the code-level evidence |
+| Unified-mode-disabled compatibility (browser) | **NOT RUN** | same as above; the flag-off byte-identical pins (P6 §5a/§8) + `/live-tv` zero-diff are the code-level evidence |
+| Authorized non-LiveGT source + documented embed source (browser) | **NOT RUN** | no enabled non-LiveGT source exists in production yet (`unified_enabled=false`; registry has only the builtin seed per the Phase 0 probe), and no authorized test source is available |
+| Chrome / Firefox / Safari / Edge matrix; real mobile devices; keyboard + screen-reader a11y pass | **NOT RUN** | only headless Chromium exists here; Safari/WebKit is not installable in this Linux container; no real devices. The manual matrix below is in the release checklist |
+| Mobile layout / keyboard navigation / accessibility (Live TV) | **NOT RUN (browser)** | LT-16 fullscreen-orientation 13 + LT-17 player-UI 15 + LT-19 5 cover the responsive/kbd contracts at source level |
+
+**Precise manual tests required (owner, per the checklist §2):** desktop Chrome+Firefox+Safari+Edge and one real Android + one iOS device: open `/live-tv` → catalogue renders → select a channel → video plays (fresh resolution) → fullscreen/rotate → switch channels → reload (stale-state check) → airplane-mode error state; Admin → System → Live TV every tab; admin-only 403 check in a logged-out browser window.
+
+## Entry P8-4 — Migration and deployment-readiness findings
+
+- **Migration `20261122000000_livetv_refresh_history.sql`:** PRESENT and self-contained (re-read in full this phase: append-only table, NO FKs — survives source deletion, admin-only RLS via `(select public.is_admin())` with no anon policies, CHECK bounds on every free-text/counter column, two access-pattern indexes, idempotent `if not exists` + `drop policy if exists` guards). Verified by `livetv_phase7_migration_test` 35 (PGlite DDL/RLS/CHECK/retention) and pinned in both migration censuses (21 + 18). **Owner-reported APPLIED in production** (SQL Editor per the runbook) — not independently verifiable from this session (no credentials). Post-apply verification SQL: `LIVETV_OPERATIONS.md` §6. **Rollback:** `drop table if exists public.livetv_refresh_history;` — zero schema references elsewhere (NO FK edges in or out), so the drop is clean at any time. Migration order: the Phase 1–3 livetv migrations must already exist (the production chain does); `20261122000000` has no dependency on any later migration.
+- **Scheduler build path (repository evidence, both paths probed this phase):** unset `LIVETV_SCHEDULER_CRON` ⇒ honest no-op log line, nothing emitted (Gate #18); valid `@hourly` ⇒ function emitted with the schedule frozen in-file (Gate #19); invalid value ⇒ build FAILS exit 1 (Gate #20). The build log and the Netlify deploy log both surface the generator line, so **"was the scheduled function emitted?" is answerable from the deploy log alone**; the Netlify UI (Site configuration → Functions → livetv-scheduler with its schedule) is the second check.
+- **Scheduler activation state: OWNER-REPORTED configured (`LIVETV_SCHEDULER_CRON=@hourly`, secret set), production build NOT yet verified.** The remaining production checks are exactly `LIVETV_OPERATIONS.md` §1.5: after the first scheduled window, the admin ops-status endpoint must show a non-null `subsystems.refresh.lastTickAt`; the manual `POST /api/livetv/scheduler/tick` check (bearer secret) must return 200. **Reminder recorded in the checklist:** an hourly TICK is not an hourly refresh of every source — per-source `refreshIntervalMinutes` and the 720-minute default govern due-ness, ≤3+≤2 sources run per tick, and the duplicate window dedups cross-instance.
+- **`unified_enabled`:** owner-reported still FALSE; repo evidence: fail-closed read (30 s cache) suite-pinned in P5/P6/P7 suites; no Phase 7/8 code path writes it (ops endpoint reads it as a boolean only). Verification SQL: `LIVETV_OPERATIONS.md` §9. **This phase did not touch it.**
+- **No deploy was triggered by this session; no env var, flag, or production config was changed.** Distinction kept throughout: REPOSITORY evidence (this branch's code/tests/diffs) vs TEST evidence (the exit-0 gates) vs PRODUCTION evidence (owner-reported; first-tick/first-deploy checks still pending — checklist §3–§5).
+
+## Entry P8-5 — Documentation updated by Phase 8 (docs-only diff)
+
+- `docs/livetv/LIVETV_WORKLOG.md` — entries P8-0…P8-6 (this record).
+- `docs/livetv/LIVETV_RELEASE_CHECKLIST.md` — NEW concise release checklist: automated gates, manual browser/playback matrix, Supabase migration verification, Netlify deploy + scheduled-function first-tick verification, admin diagnostics verification, rollback criteria/procedure, owner sign-off. Nothing is pre-checked without evidence.
+- `docs/livetv/LIVETV_OPERATIONS.md` — status header refreshed to the Phase 8 reality (scheduler owner-reported configured; first-tick verification pending); §1 table states updated with the same distinction. No operational procedure changed.
+- `docs/livetv/LIVETV_PLAN.md` — Phase 8 marked executed with realized decisions; the top status line refreshed.
+- `docs/README.md` — the stale `docs/livetv/` index row (still saying "Phase 0 audit complete") refreshed to the full program state + the two new documents.
+- **NO application code, test, migration, or configuration file was changed by Phase 8.** The complete Phase 8 diff is documentation-only (verified before commit).
+
+## Entry P8-6 — Phase 8 stop confirmation
+
+- Release-QA scope only; no new features, no architecture changes, no VOD changes, no flag change, no migration applied, no deploy triggered. Golden behaviors green (P8-2); all 16 test groups exit 0; `pnpm check` 0 errors; `pnpm build` 0; scheduler probes behave as documented; secret scan clean; protected paths zero-diff. The release is NOT declared "complete": production verification (first scheduled tick, first deploy log line, admin diagnostics, the manual browser matrix) and owner sign-off remain per `LIVETV_RELEASE_CHECKLIST.md`. Phase 8 is the final planned phase — nothing beyond it was started.
