@@ -305,6 +305,32 @@ export class LiveTvPlaybackRouter {
         }
 
         /**
+         * R-1 — READ-ONLY availability probe for one selection id (the
+         * source-switch pre-check): resolves the selection through the same
+         * bounded server endpoint and reports whether a usable candidate
+         * list exists. NO session state is mutated — current playback is
+         * never touched (a switch that cannot be resolved leaves the prior
+         * stream intact). Fail-closed: transport errors, timeouts and
+         * anything not explicitly available resolve false.
+         */
+        async probeSelection(selectionId: string, signal?: AbortSignal): Promise<boolean> {
+                if (signal?.aborted) return false; // the caller already lost interest — fail closed
+                try {
+                        const controller = new AbortController();
+                        const onExternalAbort = () => controller.abort();
+                        if (signal) signal.addEventListener('abort', onExternalAbort, { once: true });
+                        try {
+                                const resolution = await this.fetchCandidates(selectionId, controller.signal);
+                                return resolution.resolved && resolution.candidates.length > 0;
+                        } finally {
+                                if (signal) signal.removeEventListener('abort', onExternalAbort);
+                        }
+                } catch {
+                        return false;
+                }
+        }
+
+        /**
          * Run one playback session for the selected channel.
          *
          * Returns 'handled' when the router owns the session's outcome

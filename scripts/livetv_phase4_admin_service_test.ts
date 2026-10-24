@@ -60,6 +60,7 @@ import {
   listLivetvEntries,
   listLivetvEpgMappings,
   listLivetvEpgSources,
+  listLivetvSourceChannelsForAdmin,
   listLivetvSourceDeleteImpacts,
   listLivetvSources,
   mapLivetvDbError,
@@ -918,6 +919,57 @@ console.log('§12 — R-0: mutation honesty + durable last-refresh map');
   db.state['livetv_refresh_history'] = [];
   const empty = await getLatestLivetvRefreshHistoryBySource(db.client as never);
   ok(empty instanceof Map && empty.size === 0, '§12.10 a missing/empty history table degrades to an EMPTY map (diagnostics only, never an error)');
+}
+
+// ============================================================
+// §13 — R-1: the bounded per-source channel page (Edit sheet).
+// ============================================================
+{
+  console.log('\n§13 — R-1 bounded per-source channel page (listLivetvSourceChannelsForAdmin)');
+  const db = createMockDb();
+  db.state.livetv_source_channels.push(
+    { id: 'e1000001-0000-0000-0000-0000000000a1', source_id: UUIDS.source, source_channel_id: 'a', canonical_channel_id: null, name: 'Alpha TV', category: 'News', logo_url: 'https://cdn.example/a.png', tvg_id: null, enabled: true, metadata: {}, created_at: '', updated_at: '' },
+    { id: 'e1000001-0000-0000-0000-0000000000a2', source_id: UUIDS.source, source_channel_id: 'b', canonical_channel_id: UUIDS.channel, name: 'Beta TV', category: null, logo_url: null, tvg_id: null, enabled: false, metadata: {}, created_at: '', updated_at: '' },
+    { id: 'e1000001-0000-0000-0000-0000000000a3', source_id: '99000001-0000-0000-0000-000000000001', source_channel_id: 'c', canonical_channel_id: null, name: 'Gamma TV', category: null, logo_url: null, tvg_id: null, enabled: true, metadata: {}, created_at: '', updated_at: '' }
+  );
+  db.state.livetv_playback_endpoints.push(
+    { id: 'e2000001-0000-0000-0000-0000000000b1', source_channel_id: 'e1000001-0000-0000-0000-0000000000a1', endpoint_kind: 'direct_stream', stream_format: 'hls', url: 'https://cdn.example/a.m3u8', ordering: 0, enabled: true, label: null },
+    { id: 'e2000001-0000-0000-0000-0000000000b2', source_channel_id: 'e1000001-0000-0000-0000-0000000000a1', endpoint_kind: 'direct_stream', stream_format: 'dash', url: 'https://cdn.example/a.mpd', ordering: 1, enabled: false, label: null },
+    { id: 'e2000001-0000-0000-0000-0000000000b3', source_channel_id: 'e1000001-0000-0000-0000-0000000000a2', endpoint_kind: 'embed_page', stream_format: null, url: 'https://embed.example/b', ordering: 0, enabled: true, label: null }
+  );
+
+  const page = await listLivetvSourceChannelsForAdmin(db.client as never, { sourceId: UUIDS.source });
+  ok(page.rows.length === 2 && page.total === 2, '§13.1 ONLY the requested source\u2019s entries are listed (cross-source rows never leak)');
+  ok(page.rows[0]!.name === 'Alpha TV' && page.rows[1]!.name === 'Beta TV', '§13.2 deterministic name order');
+  ok(page.rows[0]!.enabled === true && page.rows[1]!.enabled === false, '§13.3 the persisted entry status is carried');
+  ok(page.rows[0]!.mapped === false && page.rows[1]!.mapped === true, '§13.4 the mapped provenance hint is derived from canonical_channel_id');
+  const alpha = page.rows[0]!;
+  ok(JSON.stringify(alpha.streamKinds) === JSON.stringify(['HLS']), '§13.5 stream kinds derive from ENABLED endpoints only (a disabled DASH endpoint is not usable)');
+  ok(page.rows[1]!.streamKinds.length === 1 && page.rows[1]!.streamKinds[0] === 'Embed', '§13.6 embed entries carry the Embed kind');
+  ok(page.pageSize === 50 && page.page === 0, '§13.7 the default page shape is bounded (50/page)');
+
+  const searched = await listLivetvSourceChannelsForAdmin(db.client as never, { sourceId: UUIDS.source, query: 'alpha' });
+  ok(searched.rows.length === 1 && searched.rows[0]!.name === 'Alpha TV', '§13.8 the bounded search filters by name');
+
+  const paged = await listLivetvSourceChannelsForAdmin(db.client as never, { sourceId: UUIDS.source, page: 1, pageSize: 1 });
+  ok(paged.rows.length === 1 && paged.rows[0]!.name === 'Beta TV' && paged.page === 1, '§13.9 pagination slices the bounded page');
+
+  await assert.rejects(
+    () => listLivetvSourceChannelsForAdmin(db.client as never, { sourceId: 'not-a-uuid' }),
+    /Source is invalid/,
+    '§13.10 a malformed source id is refused (never an unbounded scan)'
+  );
+
+  // Stream-kind read failure degrades to empty kinds — the page still loads.
+  const failingDb = createMockDb();
+  failingDb.state.livetv_source_channels.push({ id: 'e1000001-0000-0000-0000-0000000000a1', source_id: UUIDS.source, source_channel_id: 'a', canonical_channel_id: null, name: 'Alpha TV', category: null, logo_url: null, tvg_id: null, enabled: true, metadata: {}, created_at: '', updated_at: '' });
+  const originalFrom = failingDb.client.from.bind(failingDb.client);
+  (failingDb.client as unknown as { from: (table: string) => unknown }).from = (table: string) => {
+    if (table === 'livetv_playback_endpoints') throw new Error('mock endpoint read failure');
+    return originalFrom(table);
+  };
+  const degraded = await listLivetvSourceChannelsForAdmin(failingDb.client as never, { sourceId: UUIDS.source });
+  ok(degraded.rows.length === 1 && degraded.rows[0]!.streamKinds.length === 0, '§13.11 a stream-kind read failure degrades to empty kinds (the page stays loadable)');
 }
 
 console.log(`\nLIVETV PHASE 4 ADMIN SERVICE TESTS: ${passed} checks passed`);

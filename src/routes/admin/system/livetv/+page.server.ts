@@ -1,8 +1,7 @@
 /**
- * Admin 2.0 — Unified Live TV management workspace (Phase 4).
+ * Admin 2.0 — Unified Live TV management workspace (Phase 4, R-1 workflow).
  *
- * The server layer of /admin/system/livetv: per-tab data loads + EVERY
- * mutation as a SvelteKit form action. SECURITY CONTRACT:
+ * The server layer of /admin/system/livetv. SECURITY CONTRACT:
  *
  *   * `requireAdmin()` on the load AND on every action (repo convention —
  *     client-side visibility is never authorization).
@@ -18,12 +17,18 @@
  *     the standard `fail()` envelope; no stack traces, no raw provider
  *     responses, no signed URLs.
  *
- * Tab routing: ?tab=overview|sources|entries|channels|epg.
- * Inspector params: ?channel=<uuid> (candidates), ?epg=<uuid> (mappings +
- * guide diagnostics); entries/channels support bounded search + pagination.
+ * R-1 SOURCE-FIRST WORKFLOW: the page's PRIMARY interface is the source
+ * list — heading, one Add Source button, one row per source (name, type,
+ * persisted ON/OFF toggle, Edit). The five-tab workflow, the overview
+ * dashboard and the mapping/EPG tables are GONE from the primary UI (the
+ * canonical/EPG/mapping model remains fully implemented server-side below
+ * — nothing was deleted; `?tab=` URLs are accepted and harmlessly ignored
+ * so old links never 400). The Edit sheet's channel section is served by
+ * the bounded `?/sourceChannels` read action (paginated, searchable,
+ * admin-gated) — no unbounded entry load ever reaches the browser.
  */
 
-import { error, fail } from '@sveltejs/kit';
+import { fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { requireAdmin } from '$lib/server/streaming/admin-auth';
 import { checkRateLimit, clientIdentity, RATE_LIMITED_ERROR_CODE, RATE_LIMITED_MESSAGE } from '$lib/server/http/rate-limit';
@@ -49,6 +54,7 @@ import {
   listLivetvEntries,
   listLivetvEpgMappings,
   listLivetvEpgSources,
+  listLivetvSourceChannelsForAdmin,
   listLivetvSourceDeleteImpacts,
   listLivetvSources,
   removeLivetvChannelCandidate,
@@ -72,9 +78,8 @@ import {
   refreshAllEligibleLivetvSources,
   refreshLivetvSource
 } from '$lib/server/livetv/refresh-service';
-import { getLivetvEpgRefreshOutcomes, previewLivetvEpgSource, refreshAllEligibleLivetvEpgSources, refreshLivetvEpgSource } from '$lib/server/livetv/epg/guide-service';
+import { previewLivetvEpgSource, refreshAllEligibleLivetvEpgSources, refreshLivetvEpgSource } from '$lib/server/livetv/epg/guide-service';
 
-const VALID_TABS = new Set(['overview', 'sources', 'entries', 'channels', 'epg']);
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // ---------------------------------------------------------------------------
@@ -117,7 +122,7 @@ function requireUuidOr400(form: FormData, key: string, label: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Load — per-tab bounded reads (auth first, always)
+// Load — the bounded source-first read (auth first, always).
 // ---------------------------------------------------------------------------
 
 function parsePositiveInt(raw: string | null): number | undefined {
@@ -129,85 +134,21 @@ function parsePositiveInt(raw: string | null): number | undefined {
 export const load: PageServerLoad = async ({ locals, url }) => {
   await requireAdmin(locals, { redirectTo: '/admin/system/livetv' });
 
-  const tab = url.searchParams.get('tab') ?? 'overview';
-  if (!VALID_TABS.has(tab)) {
-    throw error(400, 'Invalid tab. Use ?tab=overview|sources|entries|channels|epg.');
-  }
+  // R-1: the primary interface is the SOURCE LIST. Legacy `?tab=` URLs are
+  // accepted and harmlessly ignored (old links never 400; no tab state
+  // exists anymore). One bounded read serves the whole view: the source
+  // rows, the delete-impact map (the Edit sheet's confirmed delete), the
+  // per-source durable last-refresh slice and the instance-local outcome
+  // records (the sheet's refresh/preview result fallbacks).
+  void url.searchParams.get('tab');
 
-  // Per-instance recent refresh outcomes (bounded, report-only). Shared by
-  // the overview + management tabs; labeled "instance-local" in the UI.
   const sourceOutcomes = getLivetvRefreshOutcomes().slice(0, 25);
-  const epgOutcomes = getLivetvEpgRefreshOutcomes().slice(0, 25);
-
-  // UNIFORM return shape (every key present on every tab, nullable when not
-  // applicable) — keeps PageData non-union so the template stays type-safe.
-  if (tab === 'overview') {
-    const [overview, sources, latestSourceHistory] = await Promise.all([getLivetvAdminOverview(locals.supabase), listLivetvSources(locals.supabase), getLatestLivetvRefreshHistoryBySource(locals.supabase)]);
-    return { tab, overview, sources, latestSourceHistory, impacts: null, entries: null, entryFilter: null, entryEndpoints: null, channels: null, channelFilter: null, candidates: null, epgSources: null, selectedEpg: null, mappings: null, diagnostics: null, sourceOutcomes, epgOutcomes };
-  }
-
-  if (tab === 'sources') {
-    const [sources, impacts, latestSourceHistory] = await Promise.all([listLivetvSources(locals.supabase), listLivetvSourceDeleteImpacts(locals.supabase), getLatestLivetvRefreshHistoryBySource(locals.supabase)]);
-    return { tab, overview: null, sources, latestSourceHistory, impacts, entries: null, entryFilter: null, entryEndpoints: null, channels: null, channelFilter: null, candidates: null, epgSources: null, selectedEpg: null, mappings: null, diagnostics: null, sourceOutcomes, epgOutcomes };
-  }
-
-  if (tab === 'entries') {
-    const entryFilter = url.searchParams.get('entry');
-    const [entries, sources, channels, entryEndpoints] = await Promise.all([
-      listLivetvEntries(locals.supabase, {
-        sourceId: url.searchParams.get('source'),
-        mappingState: (url.searchParams.get('state') as 'all' | 'mapped' | 'unmapped' | null) ?? 'all',
-        query: url.searchParams.get('q'),
-        page: parsePositiveInt(url.searchParams.get('page'))
-      }),
-      listLivetvSources(locals.supabase),
-      listLivetvChannels(locals.supabase, { pageSize: 500 }),
-      entryFilter && UUID_PATTERN.test(entryFilter) ? getLivetvEntryEndpoints(locals.supabase, entryFilter) : Promise.resolve(null)
-    ]);
-    return {
-      tab,
-      overview: null,
-      sources,
-      latestSourceHistory: null,
-      impacts: null,
-      entries,
-      entryFilter: {
-        source: url.searchParams.get('source'),
-        state: url.searchParams.get('state') ?? 'all',
-        q: url.searchParams.get('q') ?? '',
-        page: parsePositiveInt(url.searchParams.get('page')) ?? 0,
-        entry: entryFilter && UUID_PATTERN.test(entryFilter) ? entryFilter : null
-      },
-      entryEndpoints,
-      channels,
-      channelFilter: null,
-      candidates: null,
-      epgSources: null,
-      selectedEpg: null,
-      mappings: null,
-      diagnostics: null,
-      sourceOutcomes,
-      epgOutcomes
-    };
-  }
-
-  if (tab === 'channels') {
-    const channelFilter = url.searchParams.get('channel');
-    const [channels, candidates] = await Promise.all([
-      listLivetvChannels(locals.supabase, { query: url.searchParams.get('q'), page: parsePositiveInt(url.searchParams.get('page')) }),
-      channelFilter && UUID_PATTERN.test(channelFilter) ? getLivetvChannelCandidates(locals.supabase, channelFilter) : Promise.resolve(null)
-    ]);
-    return { tab, overview: null, sources: null, latestSourceHistory: null, impacts: null, entries: null, entryFilter: null, entryEndpoints: null, channels, channelFilter: { q: url.searchParams.get('q') ?? '', page: parsePositiveInt(url.searchParams.get('page')) ?? 0 }, candidates, epgSources: null, selectedEpg: null, mappings: null, diagnostics: null, sourceOutcomes, epgOutcomes };
-  }
-
-  // EPG tab — sources + (when selected) mappings + guide diagnostics.
-  const [epgSources, channels] = await Promise.all([listLivetvEpgSources(locals.supabase), listLivetvChannels(locals.supabase, { pageSize: 500 })]);
-  const selectedEpg = url.searchParams.get('epg');
-  const [mappings, diagnostics] = await Promise.all([
-    selectedEpg && UUID_PATTERN.test(selectedEpg) ? listLivetvEpgMappings(locals.supabase, selectedEpg, parsePositiveInt(url.searchParams.get('mpage')) ?? 0) : Promise.resolve(null),
-    selectedEpg && UUID_PATTERN.test(selectedEpg) ? getLivetvEpgGuideDiagnostics(locals.supabase, selectedEpg) : Promise.resolve(null)
+  const [sources, impacts, latestSourceHistory] = await Promise.all([
+    listLivetvSources(locals.supabase),
+    listLivetvSourceDeleteImpacts(locals.supabase),
+    getLatestLivetvRefreshHistoryBySource(locals.supabase)
   ]);
-  return { tab, overview: null, sources: null, latestSourceHistory: null, impacts: null, entries: null, entryFilter: null, entryEndpoints: null, channels, channelFilter: null, candidates: null, epgSources, selectedEpg: selectedEpg && UUID_PATTERN.test(selectedEpg) ? selectedEpg : null, mappings, diagnostics, sourceOutcomes, epgOutcomes };
+  return { sources, impacts, latestSourceHistory, sourceOutcomes };
 };
 
 // ---------------------------------------------------------------------------
@@ -332,6 +273,28 @@ export const actions: Actions = {
       return { outcome, refreshKind: 'source-preview' as const };
     } catch (caught) {
       return toFailure(caught, 'The preview failed.');
+    }
+  },
+
+  /**
+   * R-1 — the Edit sheet's bounded channel-section read: ONE source's
+   * imported entries, paginated (50/page) and searchable. Authorization is
+   * re-checked here; the ids and page bounds are validated; the underlying
+   * read is bounded (no unbounded entry load can reach the browser). The
+   * response carries the sourceId it was computed for — the UI renders it
+   * only while it still matches the sheet's source (no cross-source leak).
+   */
+  sourceChannels: async ({ request, locals }) => {
+    await requireAdmin(locals, { redirectTo: '/admin/system/livetv' });
+    try {
+      const form = await request.formData();
+      const sourceId = requireUuidOr400(form, 'sourceId', 'Source');
+      const page = parsePositiveInt(formText(form, 'page') ?? null) ?? 0;
+      const query = formText(form, 'q') ?? null;
+      const entries = await listLivetvSourceChannelsForAdmin(locals.supabase, { sourceId, page, query });
+      return { sourceChannels: { sourceId, ...entries } };
+    } catch (caught) {
+      return toFailure(caught, 'Unable to load the source channels.');
     }
   },
 

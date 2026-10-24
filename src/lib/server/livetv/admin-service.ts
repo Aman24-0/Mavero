@@ -717,6 +717,141 @@ export async function setLivetvEntryEnabled(client: SupabaseClient<Database>, en
   }, 'Unable to change the entry state.');
 }
 
+// ---------------------------------------------------------------------------
+// R-1 — the bounded per-source channel page (the Edit sheet's channel
+// section). Display-oriented: one bounded page of a source's imported
+// entries plus the USABLE stream kinds derived from each entry's ENABLED
+// endpoints (one extra bounded read scoped to exactly the page's entry ids —
+// cross-source endpoints are never read). No mutation, no mapping writes.
+// ---------------------------------------------------------------------------
+
+export type LivetvAdminSourceChannelRow = {
+  id: string;
+  name: string;
+  category: string | null;
+  logo_url: string | null;
+  enabled: boolean;
+  /** True when the entry is canonically mapped (display-only provenance hint). */
+  mapped: boolean;
+  /** Bounded usable stream kinds (deterministic order; empty when none). */
+  streamKinds: string[];
+};
+
+export type LivetvSourceChannelPage = {
+  rows: LivetvAdminSourceChannelRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+};
+
+const SOURCE_CHANNEL_PAGE_SIZE = 50;
+/** Deterministic stream-kind display order (endpoint-derived, never configured). */
+const STREAM_KIND_ORDER = ['DASH', 'HLS', 'Direct', 'Embed'];
+
+function describeStreamKind(endpointKind: unknown, streamFormat: unknown): string | null {
+  if (endpointKind === 'embed_page') return 'Embed';
+  if (endpointKind === 'direct_stream') {
+    if (streamFormat === 'dash') return 'DASH';
+    if (streamFormat === 'hls') return 'HLS';
+    return 'Direct';
+  }
+  return null;
+}
+
+/** Bounded endpoint-kind read scoped to EXACTLY the page's entry ids. */
+async function loadUsableStreamKinds(client: SupabaseClient<Database>, entryIds: string[]): Promise<Map<string, string[]>> {
+  const kindsByEntry = new Map<string, string[]>();
+  if (entryIds.length === 0) return kindsByEntry;
+  // Diagnostics-only column: ANY read problem (error payload or a thrown
+  // client failure) degrades to empty kinds, never a failed page — the
+  // channel section stays loadable without the kind chips.
+  type EndpointKindRow = { source_channel_id: string; endpoint_kind: string; stream_format: string | null; enabled: boolean };
+  let rows: EndpointKindRow[] | null = null;
+  try {
+    const { data, error } = await client
+      .from('livetv_playback_endpoints')
+      .select('source_channel_id, endpoint_kind, stream_format, enabled')
+      .in('source_channel_id', entryIds)
+      .limit(400);
+    if (!error && data) rows = data as unknown as EndpointKindRow[];
+  } catch {
+    rows = null;
+  }
+  if (!rows) return kindsByEntry;
+  for (const row of rows) {
+    if (row.enabled !== true) continue; // only USABLE endpoints describe the stream type
+    const kind = describeStreamKind(row.endpoint_kind, row.stream_format);
+    if (!kind) continue;
+    const bucket = kindsByEntry.get(row.source_channel_id) ?? [];
+    if (!bucket.includes(kind)) bucket.push(kind);
+    kindsByEntry.set(row.source_channel_id, bucket);
+  }
+  for (const bucket of kindsByEntry.values()) {
+    bucket.sort((a, b) => STREAM_KIND_ORDER.indexOf(a) - STREAM_KIND_ORDER.indexOf(b));
+  }
+  return kindsByEntry;
+}
+
+/**
+ * One bounded, searchable page of ONE source's imported channel entries
+ * (R-1 Edit-sheet channel section). `sourceId` must be a valid UUID; page
+ * and query are bounded exactly like `listLivetvEntries`. The stream-kind
+ * read is scoped to the page's entry ids only.
+ */
+export async function listLivetvSourceChannelsForAdmin(
+  client: SupabaseClient<Database>,
+  filter: { sourceId: unknown; page?: number; query?: string | null; pageSize?: number }
+): Promise<LivetvSourceChannelPage> {
+  const sourceId = requireUuid(filter.sourceId, 'Source');
+  const pageSize = Math.max(1, Math.min(100, Math.floor(filter.pageSize ?? SOURCE_CHANNEL_PAGE_SIZE)));
+  const page = Math.max(0, Math.floor(filter.page ?? 0));
+
+  let query = client
+    .from('livetv_source_channels')
+    .select('id, name, category, logo_url, enabled, canonical_channel_id');
+  let countQuery = client.from('livetv_source_channels').select('id', { count: 'exact', head: true }).eq('source_id', sourceId);
+  query = query.eq('source_id', sourceId);
+
+  const search = filter.query ? String(filter.query).trim().slice(0, 80) : '';
+  if (search) {
+    const escaped = search.replace(/[%_,()]/g, (match) => `\\${match}`);
+    query = query.ilike('name', `%${escaped}%`);
+    countQuery = countQuery.ilike('name', `%${escaped}%`);
+  }
+
+  const [{ data, error }, counted] = await Promise.all([
+    query
+      .order('name', { ascending: true })
+      .order('id', { ascending: true })
+      .range(page * pageSize, page * pageSize + pageSize - 1),
+    countQuery
+  ]);
+  if (error) fail('The source channel list could not be loaded.');
+
+  const rows: LivetvAdminSourceChannelRow[] = [];
+  const entryIds: string[] = [];
+  for (const row of (data ?? []) as unknown as Array<Record<string, unknown>>) {
+    const id = typeof row['id'] === 'string' ? row['id'] : '';
+    const name = typeof row['name'] === 'string' ? row['name'].trim() : '';
+    if (!id || !name) continue; // unusable rows are dropped, never coerced
+    entryIds.push(id);
+    rows.push({
+      id,
+      name,
+      category: (row['category'] as string | null) ?? null,
+      logo_url: (row['logo_url'] as string | null) ?? null,
+      enabled: row['enabled'] === true,
+      mapped: typeof row['canonical_channel_id'] === 'string' && row['canonical_channel_id'] !== '',
+      streamKinds: [] // filled below from the scoped endpoint read
+    });
+  }
+
+  const kindsByEntry = await loadUsableStreamKinds(client, entryIds);
+  for (const row of rows) row.streamKinds = kindsByEntry.get(row.id) ?? [];
+
+  return { rows, total: counted.count ?? 0, page, pageSize };
+}
+
 /**
  * Sets (or clears) the canonical mapping of one imported entry. The channel
  * must exist; clearing is always allowed. This is the EXACT field the Phase 2

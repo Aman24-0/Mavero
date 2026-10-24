@@ -384,6 +384,123 @@
   let unifiedEmbedSrc = $state<string | null>(null);
   let playbackRouter: LiveTvPlaybackRouter | null = null;
 
+  // ---------------------------------------------------------------------
+  // R-1 — source switching (the same channel, another provider).
+  //
+  // `activeSourceId` is the selection id the CURRENT stream was resolved
+  // from: null = the default resolution for the card (the card id itself —
+  // the canonical path for canonical groups, the preferred entry for
+  // name-groups), or one of the card's catalogue-provided alternative
+  // selection ids (`entry:<rowId>`) after an explicit switch. The CHANNEL
+  // identity (card id, guide, recents, info line) never changes on a
+  // switch — only the source does.
+  //
+  // `sourceSwitchMessage` is a NON-BLOCKING status line beside the Source
+  // control: a failed switch reports there while the prior stream keeps
+  // playing (the blocking player error overlay is reserved for sessions
+  // where playback genuinely ended).
+  // ---------------------------------------------------------------------
+  let activeSourceId = $state<string | null>(null);
+  let sourceSwitchMessage = $state<string | null>(null);
+
+  /** The catalogue-provided switcher options (only when ≥2 usable exist). */
+  const sourceOptions = $derived(selectedChannel?.sources ?? []);
+  /** Whether the card anchors on a default (auto) resolution vs an entry. */
+  const hasAutoSource = $derived(selectedChannel !== null && !selectedChannel.id.startsWith('entry:'));
+
+  function handleSourceSwitch(event: Event): void {
+    const select = event.currentTarget as HTMLSelectElement | null;
+    const value = select?.value ?? '';
+    if (!selectedChannel) return;
+    const target = value === 'auto' ? null : value;
+    void switchSource(selectedChannel, target, 0);
+  }
+
+  /**
+   * Switch the active playback source for the CURRENT channel.
+   *
+   * Failure contract (plan §18.3):
+   *   * The alternative is PROBED first (a read-only resolution through the
+   *     same bounded endpoint) — a failure leaves the current stream
+   *     completely untouched and reports a clear, non-technical message.
+   *   * If the switch session itself exhausts (the probe passed but the
+   *     stream failed), the page makes ONE bounded restore attempt of the
+   *     previous selection; if that also fails, the honest retryable
+   *     message is shown. The lifecycle always settles — the player can
+   *     never be left permanently loading or black.
+   *   * The channel identity, guide and recents are never touched.
+   */
+  async function switchSource(channel: LiveTvChannel, sourceId: string | null, restoreDepth: number): Promise<void> {
+    const targetId = sourceId ?? channel.id;
+    if (restoreDepth === 0 && targetId === activeSourceId) return; // no-op switch
+    const seq = ++sessionSeq;
+    const probeController = new AbortController();
+
+    if (restoreDepth === 0) {
+      sourceSwitchMessage = null;
+      if (!playbackRouter) playbackRouter = createLivetvPlaybackRouter();
+      // 1. Pre-resolve BEFORE touching current playback (read-only).
+      let probeOk = false;
+      try {
+        probeOk = await playbackRouter.probeSelection(targetId, probeController.signal);
+      } catch {
+        probeOk = false;
+      }
+      if (seq !== sessionSeq) return; // superseded by a newer selection/switch — silent
+      if (!probeOk) {
+        sourceSwitchMessage = 'That source is not available right now. The current stream keeps playing.';
+        return;
+      }
+    }
+
+    // 2. Take over the session (the same lifecycle as a selection — a fresh
+    //    resolution + engine; the stream material is never reused).
+    const previousSourceId = activeSourceId;
+    sessionController?.abort();
+    const controller = new AbortController();
+    sessionController = controller;
+    activeSourceId = sourceId;
+    resolving = true;
+    sessionErrorMessage = null;
+
+    if (!videoEl) {
+      resolving = false;
+      sourceSwitchMessage = 'Live TV playback could not start in this browser.';
+      return;
+    }
+    if (!playbackRouter) playbackRouter = createLivetvPlaybackRouter();
+
+    const outcome = await playbackRouter.start({ id: targetId, name: channel.name }, videoEl, controller.signal);
+    if (seq !== sessionSeq || controller.signal.aborted) return; // superseded — silent
+
+    if (outcome === 'legacy') {
+      // The selection is not under unified management (e.g. the source was
+      // disabled between listing and the switch — the resolver answered
+      // honestly). One bounded restore attempt, then the honest message.
+      resolving = false;
+      await restoreAfterFailedSwitch(channel, previousSourceId, restoreDepth, seq);
+      return;
+    }
+    if (playbackRouter.getState() === 'exhausted') {
+      // The switch's stream genuinely failed after the engine swap — one
+      // bounded restore attempt of the prior selection.
+      resolving = false;
+      await restoreAfterFailedSwitch(channel, previousSourceId, restoreDepth, seq);
+      return;
+    }
+    if (restoreDepth > 0) sourceSwitchMessage = null; // restore succeeded
+  }
+
+  /** ONE bounded restore attempt after a failed switch (never a loop). */
+  async function restoreAfterFailedSwitch(channel: LiveTvChannel, previousSourceId: string | null, restoreDepth: number, seq: number): Promise<void> {
+    if (restoreDepth > 0 || seq !== sessionSeq) {
+      sourceSwitchMessage = 'That source could not be played. Try another one.';
+      return;
+    }
+    sourceSwitchMessage = 'That source could not be played. Restoring the previous one…';
+    await switchSource(channel, previousSourceId, restoreDepth + 1);
+  }
+
   const resolvingChannel = $derived(resolving ? selectedChannel : null);
 
   function destroyEngineSafely(target: LiveTvPlaybackEngine | null): void {
@@ -451,6 +568,12 @@
     selectedChannel = channel;
     resolving = true;
     sessionErrorMessage = null;
+    // R-1 — a fresh selection resets the source dimension: entry-anchored
+    // cards default to their (preferred-entry) selection id; everything
+    // else plays the default (auto) resolution. A non-blocking switch
+    // message from a previous session is cleared with it.
+    activeSourceId = channel.id.startsWith('entry:') ? channel.id : null;
+    sourceSwitchMessage = null;
 
     // Guide for the new channel — independent of playback (§13).
     void loadGuide(channel);
@@ -779,6 +902,28 @@
           {#if currentProgramme}
             <span class="info-now">Now: {currentProgramme.title}</span>
           {/if}
+          <!-- R-1 — the compact Source control (page-level player section,
+               visible in native AND embed mode; the embed iframe surface
+               itself stays Mavero-control-free per LT-18). Shown ONLY when
+               the catalogue provides ≥2 usable alternatives; labels are
+               provider display names, never raw ids. Switching keeps the
+               SAME channel (guide, recents and info line untouched). -->
+          {#if sourceOptions.length >= 2}
+            <label class="ltv-source-switch">
+              <span class="source-switch-label">Source</span>
+              <select class="source-switch-select" value={activeSourceId ?? (hasAutoSource ? 'auto' : (sourceOptions[0]?.id ?? ''))} onchange={handleSourceSwitch} aria-label="Playback source for {selectedChannel.name}">
+                {#if hasAutoSource}
+                  <option value="auto">Auto</option>
+                {/if}
+                {#each sourceOptions as option (option.id)}
+                  <option value={option.id}>{option.label}</option>
+                {/each}
+              </select>
+            </label>
+          {/if}
+          {#if sourceSwitchMessage}
+            <span class="source-switch-message" role="status">{sourceSwitchMessage}</span>
+          {/if}
         </div>
       {/if}
     </section>
@@ -1089,6 +1234,47 @@
     font-weight: 600;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  /* ---- R-1 — the compact Source switch (page player section) ---- */
+  .ltv-source-switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    flex: 0 0 auto;
+    min-width: 0;
+  }
+  .source-switch-label {
+    color: var(--color-text-muted);
+    font-size: .68rem;
+    font-weight: 800;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+  }
+  .source-switch-select {
+    max-width: 190px;
+    min-width: 0;
+    padding: 6px 26px 6px 10px;
+    border: 1px solid var(--color-border);
+    border-radius: 10px;
+    background: var(--color-surface);
+    color: var(--color-text);
+    font-size: .78rem;
+    font-weight: 700;
+    text-overflow: ellipsis;
+    cursor: pointer;
+  }
+  .source-switch-select:focus-visible {
+    outline: 2px solid var(--color-accent, #4cc9f0);
+    outline-offset: 2px;
+  }
+  .source-switch-message {
+    flex: 1 1 100%;
+    min-width: 0;
+    color: var(--color-text-muted);
+    font-size: .72rem;
+    font-weight: 600;
+    overflow-wrap: anywhere;
   }
 
   /* ---- Task 5 — recently played channels row ---- */

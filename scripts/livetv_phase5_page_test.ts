@@ -180,6 +180,42 @@ const rateLimit = read('../src/lib/server/http/rate-limit.ts');
   ok('§7 isolation verified');
 }
 
+// ============================================================
+// §8 — R-1 source switching (the page + router contract).
+// ============================================================
+{
+  // The switch flow exists on the page and pre-probes before touching
+  // current playback (the read-only router probe).
+  const switchFlow = sliceOf(page, 'async function switchSource', '/** ONE bounded restore attempt');
+  ok(switchFlow.includes('probeSelection(targetId'), 'P8.1 an explicit switch PRE-PROBES the alternative through the read-only router probe');
+  ok(switchFlow.indexOf('probeSelection') < switchFlow.indexOf('playbackRouter.start'), 'P8.2 the probe runs BEFORE the switch session starts (a failed probe never touches current playback)');
+  ok(switchFlow.includes("sourceSwitchMessage = 'That source is not available right now. The current stream keeps playing.'"), 'P8.3 an unavailable alternative reports a clear non-technical message and keeps the current stream');
+  ok(switchFlow.includes('restoreAfterFailedSwitch(channel, previousSourceId, restoreDepth, seq)'), 'P8.4 a failed switch session makes ONE bounded restore attempt of the previous selection');
+  ok(page.includes("sourceSwitchMessage = 'That source could not be played. Try another one.'"), 'P8.5 a restore failure settles in the honest retryable message (never a permanent loading/black state)');
+  ok(switchFlow.includes('sessionSeq'), 'P8.6 the switch is wrapped in the page\u2019s seq guard (stale continuations drop)');
+  ok(!switchFlow.includes('rememberPlayedChannel'), 'P8.7 a source switch never rewrites the recents (the channel identity is untouched)');
+  // The selection flow resets the source dimension; a switch never changes
+  // the selected channel object.
+  const selectFlow = sliceOf(page, 'async function selectChannel', 'function createLivetvPlaybackRouter');
+  ok(selectFlow.includes("activeSourceId = channel.id.startsWith('entry:') ? channel.id : null"), 'P8.8 a fresh selection resets the source dimension (entry-anchored cards default to their preferred entry)');
+  ok(switchFlow.includes('selectedChannel') === false, 'P8.9 the switch flow never reassigns the selected channel (same channel identity)');
+  ok(page.includes('activeSourceId = sourceId;'), 'P8.10 the switch adopts the target source id as active');
+
+  // The router exposes the READ-ONLY probe; the switch control renders only
+  // for >=2 alternatives and labels are provider names (never raw ids).
+  ok(routerModule.includes('async probeSelection(selectionId: string, signal?: AbortSignal): Promise<boolean>'), 'P8.11 the router exposes the read-only probe (the pre-check API)');
+  ok(page.includes('{#if sourceOptions.length >= 2}'), 'P8.12 the Source control renders ONLY when >=2 usable alternatives exist');
+  ok(page.includes('aria-label="Playback source for {selectedChannel.name}"'), 'P8.13 the Source control is labeled per channel (a11y)');
+  ok(page.includes('<option value="auto">Auto</option>'), 'P8.14 canonical cards offer the default (auto) resolution as a switch target');
+  ok(page.includes('handleSourceSwitch'), 'P8.15 the switch control is wired to the switch flow');
+  ok(page.includes('role="status"') && page.includes('sourceSwitchMessage}'), 'P8.16 switch outcomes surface as a NON-BLOCKING status line (the playing stream is never overlaid on a probe failure)');
+
+  // The catalogue alternatives cross the page boundary ONLY as metadata.
+  ok(page.includes('selectedChannel?.sources ?? []'), 'P8.17 the page reads ONLY the catalogue-provided alternatives (never fabricates any)');
+  ok(routerModule.includes("if (signal?.aborted) return false;"), 'P8.18 the probe fail-closes on an already-aborted signal');
+  ok('§8 R-1 source switching verified');
+}
+
 console.log(`\nPhase 5 page/route integration suite: ${passed} checks PASS`);
 if (passed < 40) {
   console.error('FAIL: expected at least 40 checks');

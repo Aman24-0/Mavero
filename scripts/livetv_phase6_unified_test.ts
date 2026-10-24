@@ -252,6 +252,134 @@ const CHAN_1 = { id: 'chan-1', name: 'Zeta One', category: 'News', logo_url: 'ht
   }, { failTable: 'livetv_channels' });
   const catalogue4 = await getUnifiedLivetvCatalogue(client4 as unknown as Parameters<typeof getUnifiedLivetvCatalogue>[0]);
   ok(catalogue4.channels.length === 0 && catalogue4.unifiedEnabled === true, '1e.1 a channel-read failure yields the honest empty catalogue');
+
+  // 1f. R-1 GROUPING — equivalent channels from TWO enabled sources render
+  //     ONE card with bounded, labeled, preferred-first alternatives.
+  resetLivetvPlaybackFlagCacheForTests();
+  const SRC_B = { ...SRC_M3U, id: 'src-b', slug: 'bee-m3u', name: 'Bee TV', priority: 20 };
+  const client5 = createMockClient({
+    livetv_config_meta: FLAG_ON,
+    livetv_sources: [SRC_M3U, SRC_B],
+    livetv_source_channels: [
+      { ...ENTRY_M3U, id: 'e1', source_id: 'src-m3u', canonical_channel_id: null, source_channel_id: 'acme-1', name: 'CNN' },
+      { ...ENTRY_M3U, id: 'e2', source_id: 'src-b', canonical_channel_id: null, source_channel_id: 'bee-1', name: 'CNN' }
+    ],
+    livetv_channels: []
+  });
+  const catalogue5 = await getUnifiedLivetvCatalogue(client5 as unknown as Parameters<typeof getUnifiedLivetvCatalogue>[0]);
+  ok(catalogue5.channels.length === 1 && catalogue5.channels[0]!.id === 'entry:e1', '1f.1 two sources identical unmapped entries render ONE card anchored on the PREFERRED source (priority 10 beats 20)');
+  const sources5 = catalogue5.channels[0]!.sources ?? [];
+  ok(sources5.length === 2 && sources5[0]!.id === 'entry:e1' && sources5[0]!.label === 'Acme M3U' && sources5[1]!.id === 'entry:e2' && sources5[1]!.label === 'Bee TV', '1f.2 the alternatives are preferred-first, source-labeled, selection-id form');
+  ok(JSON.stringify(Object.keys(catalogue5.channels[0]!).sort()) === JSON.stringify(['category', 'id', 'logoUrl', 'name', 'sources']), '1f.3 the multi-source row carries the bounded DTO + the alternatives field');
+  ok(!JSON.stringify(catalogue5).includes('src-b') && !JSON.stringify(catalogue5).includes('bee-m3u') && !JSON.stringify(catalogue5).includes('config'), '1f.4 no source ids/slugs/config leak (labels + selection ids only)');
+
+  // 1g. EXACT-match grouping only — similar names never merge (no fuzzy).
+  resetLivetvPlaybackFlagCacheForTests();
+  const client6 = createMockClient({
+    livetv_config_meta: FLAG_ON,
+    livetv_sources: [SRC_M3U, SRC_B],
+    livetv_source_channels: [
+      { ...ENTRY_M3U, id: 'e1', source_id: 'src-m3u', canonical_channel_id: null, name: 'CNN' },
+      { ...ENTRY_M3U, id: 'e2', source_id: 'src-b', canonical_channel_id: null, name: 'CNN HD' },
+      { ...ENTRY_M3U, id: 'e3', source_id: 'src-b', canonical_channel_id: null, name: 'CNNX' }
+    ],
+    livetv_channels: []
+  });
+  const catalogue6 = await getUnifiedLivetvCatalogue(client6 as unknown as Parameters<typeof getUnifiedLivetvCatalogue>[0]);
+  ok(catalogue6.channels.length === 3 && catalogue6.channels.every((c) => c.sources === undefined), '1g.1 similar-but-not-exact names NEVER merge (each is its own single-source card without a switcher)');
+
+  // 1h. Normalized EXACT equality (case/whitespace) merges; duplicate entry
+  //     row ids are dropped (one visit per DB entry, never emitted twice).
+  resetLivetvPlaybackFlagCacheForTests();
+  const client7 = createMockClient({
+    livetv_config_meta: FLAG_ON,
+    livetv_sources: [SRC_M3U, SRC_B],
+    livetv_source_channels: [
+      { ...ENTRY_M3U, id: 'e1', source_id: 'src-m3u', canonical_channel_id: null, name: 'HBO' },
+      { ...ENTRY_M3U, id: 'e2', source_id: 'src-b', canonical_channel_id: null, name: '  hbo  ' }
+    ],
+    livetv_channels: []
+  });
+  const catalogue7 = await getUnifiedLivetvCatalogue(client7 as unknown as Parameters<typeof getUnifiedLivetvCatalogue>[0]);
+  ok(catalogue7.channels.length === 1 && (catalogue7.channels[0]!.sources?.length ?? 0) === 2, '1h.1 case/whitespace-variant names group (exact NORMALIZED equality), one card + two alternatives');
+
+  // 1i. Canonical groups stay SEPARATE from name groups (mapping is the
+  //     trusted identity; an unmapped twin never merges into it).
+  resetLivetvPlaybackFlagCacheForTests();
+  const client8 = createMockClient({
+    livetv_config_meta: FLAG_ON,
+    livetv_sources: [SRC_BUILTIN, SRC_M3U],
+    livetv_source_channels: [
+      ENTRY_BUILTIN, // mapped → chan-1 (canonical display: "Zeta One")
+      { ...ENTRY_M3U, id: 'e5', source_id: 'src-m3u', canonical_channel_id: null, name: 'Zeta One' }
+    ],
+    livetv_channels: [CHAN_1]
+  });
+  const catalogue8 = await getUnifiedLivetvCatalogue(client8 as unknown as Parameters<typeof getUnifiedLivetvCatalogue>[0]);
+  ok(catalogue8.channels.length === 2 && catalogue8.channels[0]!.id === 'chan-1' && catalogue8.channels[1]!.id === 'entry:e5', '1i.1 the canonical card leads and the unmapped twin stays its own card (no name merge into the canonical space)');
+
+  // 1j. Disabled sources contribute NOTHING; disabling the preferred source
+  //     re-anchors deterministically (or removes the card when no
+  //     alternative remains); mapped-to-disabled-canonical contributes
+  //     nothing (C1 parity).
+  resetLivetvPlaybackFlagCacheForTests();
+  const client9 = createMockClient({
+    livetv_config_meta: FLAG_ON,
+    livetv_sources: [{ ...SRC_M3U, enabled: false }, SRC_B],
+    livetv_source_channels: [
+      { ...ENTRY_M3U, id: 'e1', source_id: 'src-m3u', canonical_channel_id: null, name: 'CNN' },
+      { ...ENTRY_M3U, id: 'e2', source_id: 'src-b', canonical_channel_id: null, name: 'CNN' }
+    ],
+    livetv_channels: []
+  });
+  const catalogue9 = await getUnifiedLivetvCatalogue(client9 as unknown as Parameters<typeof getUnifiedLivetvCatalogue>[0]);
+  ok(catalogue9.channels.length === 1 && catalogue9.channels[0]!.id === 'entry:e2' && catalogue9.channels[0]!.sources === undefined, '1j.1 with the preferred source disabled the card re-anchors on the eligible alternative (a single alternative carries NO switcher field)');
+  resetLivetvPlaybackFlagCacheForTests();
+  const client10 = createMockClient({
+    livetv_config_meta: FLAG_ON,
+    livetv_sources: [{ ...SRC_BUILTIN, enabled: false }, { ...SRC_M3U, enabled: false }],
+    livetv_source_channels: [ENTRY_BUILTIN, ENTRY_M3U],
+    livetv_channels: [CHAN_1]
+  });
+  const catalogue10 = await getUnifiedLivetvCatalogue(client10 as unknown as Parameters<typeof getUnifiedLivetvCatalogue>[0]);
+  ok(catalogue10.channels.length === 0, '1j.2 with every source disabled the catalogue is honestly EMPTY (no card without an eligible source)');
+  resetLivetvPlaybackFlagCacheForTests();
+  const client11 = createMockClient({
+    livetv_config_meta: FLAG_ON,
+    livetv_sources: [SRC_BUILTIN],
+    livetv_source_channels: [{ ...ENTRY_BUILTIN, canonical_channel_id: 'chan-dead' }],
+    livetv_channels: [{ ...CHAN_1, id: 'chan-dead', enabled: false }]
+  });
+  const catalogue11 = await getUnifiedLivetvCatalogue(client11 as unknown as Parameters<typeof getUnifiedLivetvCatalogue>[0]);
+  ok(catalogue11.channels.length === 0, '1j.3 an entry mapped to a DISABLED canonical contributes nothing (C1 preserved, no name-group fallback)');
+
+  // 1k. The alternatives bound (≤6) — an 8-source duplicate collapses into
+  //     one card with exactly the bounded, preferred-first six.
+  resetLivetvPlaybackFlagCacheForTests();
+  const manySources = Array.from({ length: 8 }, (_, index) => ({ ...SRC_M3U, id: `src-m${index}`, slug: `m${index}`, name: `M3U ${index}`, priority: index }));
+  const manyEntries = manySources.map((source, index) => ({ ...ENTRY_M3U, id: `em${index}`, source_id: source.id, canonical_channel_id: null, name: 'CNN' }));
+  const client12 = createMockClient({
+    livetv_config_meta: FLAG_ON,
+    livetv_sources: manySources,
+    livetv_source_channels: manyEntries,
+    livetv_channels: []
+  });
+  const catalogue12 = await getUnifiedLivetvCatalogue(client12 as unknown as Parameters<typeof getUnifiedLivetvCatalogue>[0]);
+  ok(catalogue12.channels.length === 1 && (catalogue12.channels[0]!.sources?.length ?? 0) === 6, '1k.1 eight equivalent sources render ONE card bounded to SIX alternatives');
+  ok(catalogue12.channels[0]!.sources?.every((option) => option.id.startsWith('entry:')) === true, '1k.2 every alternative keeps the resolver-compatible selection-id form');
+
+  // 1l. Mapped multi-source groups carry per-source alternatives too (the
+  //     R-1 switch surface works for canonical cards).
+  resetLivetvPlaybackFlagCacheForTests();
+  const client13 = createMockClient({
+    livetv_config_meta: FLAG_ON,
+    livetv_sources: [SRC_BUILTIN, SRC_M3U],
+    livetv_source_channels: [ENTRY_BUILTIN, ENTRY_M3U],
+    livetv_channels: [CHAN_1]
+  });
+  const catalogue13 = await getUnifiedLivetvCatalogue(client13 as unknown as Parameters<typeof getUnifiedLivetvCatalogue>[0]);
+  const chan13 = catalogue13.channels.find((c) => c.id === 'chan-1');
+  ok(catalogue13.channels.length === 1 && (chan13?.sources?.length ?? 0) === 2 && chan13!.sources![0]!.id === 'entry:e1' && chan13!.sources![1]!.id === 'entry:e2', '1l.1 two sources mapped to ONE canonical render one card with both sources alternatives (builtin preferred at priority 0)');
 }
 
 // ============================================================
@@ -529,6 +657,34 @@ const CHAN_1 = { id: 'chan-1', name: 'Zeta One', category: 'News', logo_url: 'ht
     ok(list.length === 3 && list[0]?.id === 'chan-1', '4a.1 unusable and duplicate rows are dropped (first id wins)');
     ok(list[0]?.logo === 'https://cdn.example.com/a.png' && list[1]?.logo === undefined && list[2]?.logo === undefined, '4a.2 logos are carried only when usable (missing/bad → the initials fallback)');
     ok(requestedUrl.endsWith('/api/livetv/catalogue'), '4a.3 the ONLY fetch target is the fixed catalogue path on the app origin');
+
+    // 4a-R1. The bounded per-source alternatives — normalized, gated, deduped.
+    clearLiveTvCache();
+    withFetch(async () => {
+      return jsonResponse({
+        ok: true,
+        unifiedEnabled: true,
+        channels: [
+          {
+            id: 'chan-1', name: 'Alpha',
+            sources: [
+              { id: 'entry:a1', label: 'Acme TV' },
+              { id: 'entry:a2', label: 'Bee TV' },
+              { id: 'entry:a2', label: 'Bee Duplicate' }, // duplicate id — dropped
+              { id: '', label: 'No Id' }, // unusable — dropped
+              { id: 'entry:a3', label: '' }, // unusable — dropped
+              'not-an-object' // unusable — dropped
+            ]
+          },
+          { id: 'chan-2', name: 'Single', sources: [{ id: 'entry:b1', label: 'Only One' }] }, // <2 → no switcher field
+          { id: 'chan-3', name: 'Garbage', sources: 'not-an-array' } // ignored
+        ]
+      });
+    });
+    const listR1 = await unified.getUnifiedLivetvCatalogue();
+    ok(listR1[0]?.sources?.length === 2 && listR1[0]?.sources?.[0]?.id === 'entry:a1' && listR1[0]?.sources?.[0]?.label === 'Acme TV', '4a-R1.1 alternatives normalize (unusable/duplicate options dropped, usable ones carried in order)');
+    ok(listR1[1]?.sources === undefined, '4a-R1.2 a single alternative carries NO switcher field (the ≥2 gate is re-checked client-side)');
+    ok(listR1[2]?.sources === undefined, '4a-R1.3 a malformed sources payload is ignored (never trusted)');
 
     // 4b. Cache reuse (the EXISTING catalogue cache) + forceRefetch bypass.
     withFetch(async () => {

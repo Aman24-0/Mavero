@@ -39,6 +39,16 @@
 //   field names (`startSeconds`/`stopSeconds`). Provider display strings
 //   (`startTime`/`stopTime`) are carried as optional display-only values.
 
+/**
+ * One switchable playback-source alternative (R-1). The id is the
+ * catalogue-provided selection id the server resolver accepts; the label is
+ * the source's display name. Both are display/selection metadata only.
+ */
+export type LiveTvChannelSourceOption = {
+        id: string;
+        label: string;
+};
+
 /** Normalized LiveGT V1 channel (catalogue entry). */
 export type LiveTvChannel = {
         /** LiveGT channel id — the source identifier used for /channels/{id} and /guide/{id}. */
@@ -49,6 +59,13 @@ export type LiveTvChannel = {
         category?: string;
         /** Logo URL exactly as LiveGT provides it. Omitted when the source has no usable logo. */
         logo?: string;
+        /**
+         * R-1 — bounded alternative playback sources for this channel group
+         * (preferred first; present ONLY when at least two usable
+         * alternatives exist). Catalogue-provided only — never constructed
+         * from untrusted input; playback always re-resolves server-side.
+         */
+        sources?: LiveTvChannelSourceOption[];
 };
 
 /**

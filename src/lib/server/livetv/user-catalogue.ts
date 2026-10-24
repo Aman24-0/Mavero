@@ -9,25 +9,33 @@
 // pipeline and NO ordering logic of its own:
 //
 //   * Catalogue exposure = the registry contract's own rules, applied to
-//     the EXISTING tables: a canonical channel is user-facing when it is
-//     `enabled` AND at least one of its mapped source entries is `enabled`
-//     on a source that is `enabled`, playback-eligible
+//     the EXISTING tables: a channel card is user-facing when it is enabled
+//     AND backed by at least one `enabled` entry on a source that is
+//     `enabled`, playback-eligible
 //     (`LIVETV_PLAYBACK_ELIGIBLE_STATUSES`) and `visibility='public'`
 //     (the column's documented user-facing exposure control; the seeded
 //     builtin row is `public`, admin-created sources default to
 //     `internal` and must be made public deliberately).
 //   * R-0 ADDITIVE — safe SOURCE-ENTRY selection: UNMAPPED, enabled entries
 //     of the SAME eligible public sources ALSO surface (as `entry:<rowId>`
-//     rows after the canonical rows). Without this, a real-world registry
-//     whose entries are not canonically mapped (e.g. a freshly imported
-//     playlist) would produce an EMPTY catalogue the moment the flag turns
-//     on — unmapped-ness alone never meant the stream was invalid. The
-//     model is NOT weakened: no mapping is fabricated, no name-similarity
-//     merging happens (Phase 1 D-3), mapped entries still render ONCE via
-//     their canonical channel (never double-listed), every row keeps the
-//     bounded DTO (id/name/category/logoUrl only — no source identity
-//     crosses), and playback for `entry:` selections is resolved by the
-//     Phase 5 resolver's re-validated direct-entry path.
+//     rows). Without this, a real-world registry whose entries are not
+//     canonically mapped (e.g. a freshly imported playlist) would produce an
+//     EMPTY catalogue the moment the flag turns on — unmapped-ness alone
+//     never meant the stream was invalid. The model is NOT weakened: no
+//     mapping is fabricated, no name-SIMILARITY merging happens (Phase 1
+//     D-3), mapped entries still render ONCE via their canonical channel
+//     (never double-listed), every row keeps the bounded DTO (id/name/
+//     category/logoUrl — no source config/URLs cross), and playback for
+//     `entry:` selections is resolved by the Phase 5 resolver's
+//     re-validated direct-entry path.
+//   * R-1 ADDITIVE — deterministic GROUPING (the pure
+//     `catalogue-groups.ts` model): equivalent channels from multiple
+//     eligible sources collapse into ONE card. Identity precedence:
+//     the canonical mapping (trusted) first, then EXACT normalized
+//     display-name equality for unmapped entries (never fuzzy). Each card
+//     may carry bounded, labeled per-source ALTERNATIVES (`sources`) —
+//     the selection ids the resolver already accepts — so the player can
+//     offer source switching without any new resolver surface.
 //   * Canonical PK uniqueness makes duplicate rendering structurally
 //     impossible: several source entries mapping to one canonical channel
 //     collapse into ONE row (the entries are never listed themselves).
@@ -60,17 +68,42 @@ import type { Database } from '$lib/server/supabase/database.types';
 import { LIVETV_PLAYBACK_ELIGIBLE_STATUSES, type LivetvSourceStatus } from './registry';
 import { isUnifiedLivetvEnabled } from './playback-resolver';
 import { getCurrentEpgProgramme, getUpcomingEpgProgrammes } from './epg/queries';
+import {
+  MAX_CATALOGUE_GROUP_SOURCES,
+  buildLivetvCatalogueGroups,
+  type CatalogueGroupAlternative,
+  type CatalogueGroupEntryRef,
+  type CatalogueGroupSourceRef
+} from './catalogue-groups';
 
 // ---------------------------------------------------------------------------
 // Catalogue wire contract (the ONLY data that ever crosses for the list).
 // ---------------------------------------------------------------------------
 
+/** One switchable source alternative (R-1) — a selection id + display label. */
+export type LivetvCatalogueSourceWire = {
+        /** The selection id that resolves THIS source's stream for the channel. */
+        id: string;
+        /** The source's admin display name (never config, URLs or slugs). */
+        label: string;
+};
+
 export type LivetvCatalogueChannelWire = {
-        /** The STABLE canonical channel id (UI keys, recents, selection). */
+        /** The STABLE group id (UI keys, recents, selection). */
         id: string;
         name: string;
         category: string | null;
         logoUrl: string | null;
+        /**
+         * R-1 (ADDITIVE) — the bounded, preferred-first alternative playback
+         * sources for this group (one per contributing source, ≤
+         * MAX_CATALOGUE_GROUP_SOURCES). Present ONLY when at least two usable
+         * alternatives exist (the player switcher is otherwise hidden).
+         * Deliberate bounded extension of the DTO: labels are admin display
+         * names; ids are the established `entry:` selection ids the resolver
+         * already accepts. No config, URLs, slugs or visibility data crosses.
+         */
+        sources?: LivetvCatalogueSourceWire[];
 };
 
 export type LivetvCatalogueWire = {
@@ -86,6 +119,8 @@ export const MAX_CATALOGUE_CHANNELS = 2000;
 const MAX_MAPPED_ENTRIES_LOAD = 5000;
 /** Bounded source load (the exposure source pool). */
 const MAX_SOURCES_LOAD = 500;
+/** Re-exported bound (the switcher payload size lives with the grouping model). */
+export const MAX_CATALOGUE_SOURCE_ALTERNATIVES = MAX_CATALOGUE_GROUP_SOURCES;
 
 /** Stable selection-id prefix for direct source-entry rows (R-0). */
 export const LIVETV_ENTRY_SELECTION_PREFIX = 'entry:';
@@ -150,10 +185,20 @@ function isEligibleStatus(status: string): boolean {
 // ---------------------------------------------------------------------------
 
 /**
- * The merged, exposure-filtered canonical channel catalogue.
+ * The merged, exposure-filtered CHANNEL GROUP catalogue (R-1).
  *
  * Flag off (or any read failure) ⇒ an empty list — the client stays on the
  * untouched legacy path (fail-closed; the flag is the rollback lever).
+ *
+ * R-1 evolution (ADDITIVE over R-0's direct-entry surface): equivalent
+ * channels from multiple eligible sources now collapse into ONE card with
+ * bounded, labeled per-source alternatives. The reads below are the SAME
+ * bounded, exposure-filtered reads as before (plus the display/priority
+ * columns the grouping model needs); the deterministic grouping itself is
+ * the pure `buildLivetvCatalogueGroups` model — identity precedence:
+ * canonical mapping first (trusted), then EXACT normalized name equality
+ * for unmapped entries (never fuzzy). Mapped-to-disabled-canonical entries
+ * contribute nothing (C1 preserved, R-0 parity).
  */
 export async function getUnifiedLivetvCatalogue(client: SupabaseClient<Database>): Promise<LivetvCatalogueWire> {
         const unifiedEnabled = await isUnifiedLivetvEnabled(client);
@@ -161,89 +206,98 @@ export async function getUnifiedLivetvCatalogue(client: SupabaseClient<Database>
 
         // 1. User-facing sources: enabled + playback-eligible + PUBLIC
         //    (visibility is the registry's user-facing exposure control).
+        //    R-1: the read also carries the display/priority columns the
+        //    grouping model needs (labels + deterministic preferred source).
         const sourcesResult = await client
                 .from('livetv_sources')
-                .select('id,enabled,status,visibility')
+                .select('id,name,slug,priority,enabled,status,visibility')
                 .limit(MAX_SOURCES_LOAD);
         if (sourcesResult.error) return { unifiedEnabled: true, channels: [], truncated: false };
-        const sourceRows = (sourcesResult.data ?? []) as { id: string; enabled: boolean; status: string; visibility: string }[];
-        const publicSourceIds = sourceRows
-                .filter((row) => row.enabled === true && row.visibility === 'public' && isEligibleStatus(String(row.status)))
-                .map((row) => row.id);
-        if (publicSourceIds.length === 0) return { unifiedEnabled: true, channels: [], truncated: false };
+        const sourceRows = (sourcesResult.data ?? []) as { id: string; name: string; slug: string; priority: number; enabled: boolean; status: string; visibility: string }[];
+        const sourceRefs: CatalogueGroupSourceRef[] = [];
+        for (const row of sourceRows) {
+                if (row.enabled !== true || row.visibility !== 'public' || !isEligibleStatus(String(row.status))) continue;
+                const id = nonEmptyString(row.id);
+                if (!id) continue; // unusable rows are dropped, never coerced
+                sourceRefs.push({ id, name: nonEmptyString(row.name) ?? id, slug: nonEmptyString(row.slug) ?? '', priority: typeof row.priority === 'number' && Number.isFinite(row.priority) ? row.priority : 0 });
+        }
+        if (sourceRefs.length === 0) return { unifiedEnabled: true, channels: [], truncated: false };
 
-        // 2. Enabled entries on those sources — mapped ones expose their
-        //    canonical ids; UNMAPPED ones (R-0) become direct source-entry
-        //    rows. Entries' source attribution stays internal (provenance
-        //    never crosses the wire — see the DTO discipline above).
+        // 2. Enabled entries on those sources — the grouping candidate pool.
+        //    Source attribution stays internal (provenance never crosses the
+        //    wire — only the bounded DTO + labeled alternatives below cross).
         const entriesResult = await client
                 .from('livetv_source_channels')
-                .select('id,source_id,canonical_channel_id,enabled,name,category,logo_url')
-                .in('source_id', publicSourceIds)
+                .select('id,source_id,source_channel_id,canonical_channel_id,enabled,name,category,logo_url')
+                .in('source_id', sourceRefs.map((source) => source.id))
                 .limit(MAX_MAPPED_ENTRIES_LOAD);
         if (entriesResult.error) return { unifiedEnabled: true, channels: [], truncated: false };
-        const entryRows = (entriesResult.data ?? []) as { id: string; canonical_channel_id: string | null; enabled: boolean; source_id: string; name: string | null; category: string | null; logo_url: string | null }[];
-        const exposedIds = new Set<string>();
-        const directEntryRows: LivetvCatalogueChannelWire[] = [];
+        const entryRows = (entriesResult.data ?? []) as { id: string; source_id: string; source_channel_id: string; canonical_channel_id: string | null; enabled: boolean; name: string | null; category: string | null; logo_url: string | null }[];
+        const entryRefs: CatalogueGroupEntryRef[] = [];
+        const mappedCanonicalIds = new Set<string>();
         for (const row of entryRows) {
-                if (row.enabled !== true) continue;
+                if (row.enabled !== true) continue; // M1 — a disabled entry never contributes
                 if (typeof row.canonical_channel_id === 'string' && row.canonical_channel_id.length > 0) {
-                        exposedIds.add(row.canonical_channel_id);
-                        continue; // mapped — contributes through its canonical channel ONLY (never double-listed)
+                        mappedCanonicalIds.add(row.canonical_channel_id); // C1 pool (enabled-only read below)
                 }
-                // R-0 — unmapped: a bounded, display-safe source-entry row.
-                // The stable selection id is the entry ROW id (globally unique
-                // uuid, namespaced so it can never collide with a canonical
-                // channel id); unusable rows are dropped, never coerced.
-                const name = nonEmptyString(row.name);
-                if (!name) continue;
-                directEntryRows.push({
-                        id: `${LIVETV_ENTRY_SELECTION_PREFIX}${row.id}`,
-                        name,
-                        category: nonEmptyString(row.category),
-                        logoUrl: safeDisplayUrl(row.logo_url)
+                entryRefs.push({
+                        id: row.id,
+                        sourceId: row.source_id,
+                        sourceChannelId: nonEmptyString(row.source_channel_id) ?? '',
+                        canonicalChannelId: typeof row.canonical_channel_id === 'string' && row.canonical_channel_id.length > 0 ? row.canonical_channel_id : null,
+                        name: row.name,
+                        category: row.category,
+                        logoUrl: row.logo_url
                 });
         }
-        if (exposedIds.size === 0 && directEntryRows.length === 0) return { unifiedEnabled: true, channels: [], truncated: false };
+        if (entryRefs.length === 0) return { unifiedEnabled: true, channels: [], truncated: false };
 
-        // 3. The enabled canonical channels, deterministically ordered
-        //    (name ASC, then id ASC) and bounded.
-        const channelRows: { id: string; name: string; category: string | null; logo_url: string | null; enabled: boolean }[] = [];
-        if (exposedIds.size > 0) {
+        // 3. The ENABLED canonical channels hosting mapped entries
+        //    (deterministically ordered, bounded — same read as R-0).
+        const canonicalRows: { id: string; name: string; category: string | null; logo_url: string | null; enabled: boolean }[] = [];
+        if (mappedCanonicalIds.size > 0) {
                 const channelsResult = await client
                         .from('livetv_channels')
                         .select('id,name,category,logo_url,enabled')
                         .eq('enabled', true)
-                        .in('id', [...exposedIds])
+                        .in('id', [...mappedCanonicalIds])
                         .order('name', { ascending: true })
                         .order('id', { ascending: true })
                         .limit(MAX_CATALOGUE_CHANNELS);
                 if (channelsResult.error) return { unifiedEnabled: true, channels: [], truncated: false };
-                channelRows.push(...((channelsResult.data ?? []) as { id: string; name: string; category: string | null; logo_url: string | null; enabled: boolean }[]));
+                canonicalRows.push(...((channelsResult.data ?? []) as { id: string; name: string; category: string | null; logo_url: string | null; enabled: boolean }[]));
         }
 
+        // 4. The PURE deterministic grouping (identity precedence + preferred
+        //    source + bounded labeled alternatives — plan §18.2).
+        const { groups } = buildLivetvCatalogueGroups({
+                sources: sourceRefs,
+                entries: entryRefs,
+                canonicals: canonicalRows.map((row) => ({ id: row.id, name: row.name, category: row.category, logoUrl: row.logo_url }))
+        });
+        if (groups.length === 0) return { unifiedEnabled: true, channels: [], truncated: false };
+
+        // 5. Wire projection — the bounded DTO; `sources` present only when
+        //    at least TWO usable alternatives exist (the switcher gate).
         const channels: LivetvCatalogueChannelWire[] = [];
-        for (const row of channelRows) {
-                const id = nonEmptyString(row.id);
-                const name = nonEmptyString(row.name);
-                if (!id || !name) continue; // unusable rows are dropped, never coerced
-                channels.push({
-                        id,
+        for (const group of groups) {
+                const name = nonEmptyString(group.name);
+                if (!name) continue; // unusable groups are dropped, never coerced
+                const row: LivetvCatalogueChannelWire = {
+                        id: group.id,
                         name,
-                        category: nonEmptyString(row.category),
-                        logoUrl: safeDisplayUrl(row.logo_url)
-                });
+                        category: nonEmptyString(group.category),
+                        logoUrl: safeDisplayUrl(group.logoUrl)
+                };
+                if (group.alternatives.length >= 2) {
+                        row.sources = group.alternatives.map((alternative: CatalogueGroupAlternative) => ({ id: alternative.id, label: alternative.label }));
+                }
+                channels.push(row);
         }
-
-        // R-0 — the direct source-entry rows, deterministically ordered
-        // (name ASC, then row id ASC) and appended AFTER the canonical rows
-        // (canonical channels remain the stable leading surface).
-        directEntryRows.sort((a, b) => (a.name === b.name ? (a.id < b.id ? -1 : a.id > b.id ? 1 : 0) : a.name < b.name ? -1 : 1));
-        channels.push(...directEntryRows);
 
         // Honest truncation: the entry pool hit its load cap, or the combined
         // response hit the response bound (sliced to the bound, flagged).
-        const truncated = entryRows.length >= MAX_MAPPED_ENTRIES_LOAD || channelRows.length >= MAX_CATALOGUE_CHANNELS || channels.length > MAX_CATALOGUE_CHANNELS;
+        const truncated = entryRows.length >= MAX_MAPPED_ENTRIES_LOAD || groups.length > MAX_CATALOGUE_CHANNELS;
         if (channels.length > MAX_CATALOGUE_CHANNELS) channels.length = MAX_CATALOGUE_CHANNELS;
         return { unifiedEnabled: true, channels, truncated };
 }

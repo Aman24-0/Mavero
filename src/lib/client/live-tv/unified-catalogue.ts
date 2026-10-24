@@ -52,7 +52,7 @@ import {
         setCachedLiveTvChannels,
         setCachedLiveTvGuide
 } from './cache';
-import type { LiveTvChannel, LiveTvGuide, LiveTvGuideProgramme } from './types';
+import type { LiveTvChannel, LiveTvChannelSourceOption, LiveTvGuide, LiveTvGuideProgramme } from './types';
 
 /** Conservative metadata timeout (same class as the LT-2 client). */
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
@@ -163,6 +163,22 @@ function normalizeUnifiedChannel(raw: unknown): LiveTvChannel | null {
         const channel: LiveTvChannel = { id: raw.id.trim(), name: raw.name.trim() };
         if (isNonEmptyString(raw.category)) channel.category = raw.category.trim();
         if (isUsableDisplayUrl(raw.logoUrl)) channel.logo = raw.logoUrl;
+        // R-1 — the bounded per-source alternatives (preferred first). Every
+        // option must carry a usable bounded id + label; unusable/duplicate
+        // options are dropped. The switcher gate (≥2) is re-checked here so a
+        // malformed or single-option payload can never render the control.
+        if (Array.isArray(raw.sources)) {
+                const options: LiveTvChannelSourceOption[] = [];
+                for (const entry of raw.sources) {
+                        if (!isRecord(entry) || !isNonEmptyString(entry.id) || !isNonEmptyString(entry.label)) continue;
+                        const id = entry.id.trim();
+                        const label = entry.label.trim();
+                        if (id.length === 0 || id.length > 220 || label.length === 0 || label.length > 200) continue;
+                        if (options.some((option) => option.id === id)) continue;
+                        options.push({ id, label });
+                }
+                if (options.length >= 2) channel.sources = options;
+        }
         return channel;
 }
 

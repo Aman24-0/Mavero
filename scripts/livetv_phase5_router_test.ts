@@ -646,6 +646,39 @@ const CONFIG_FALSE: FetchRoute = { match: (url) => url.includes('/api/livetv/pla
   ok('R11 embed-src guard verified');
 }
 
+// ============================================================
+// R12 — R-1 probeSelection: the READ-ONLY switch pre-check.
+// ============================================================
+{
+  const timers = createFakeTimers();
+  // A probe against a USABLE selection (resolved, non-empty candidates).
+  const availableRouter = makeRouter(timers, {
+    fetchRoutes: [CONFIG_TRUE, resolveRoute([{ candidateId: 'default:ep1', engine: 'shaka_media_player', endpointKind: 'direct_stream', streamFormat: 'hls', url: 'https://cdn.example/live.m3u8', resolver: null, sourceChannelId: null, label: null }])]
+  });
+  const probeAvailable = await availableRouter.router.probeSelection('entry:e1');
+  ok(probeAvailable === true, 'R12.1 a resolved selection with a usable candidate probes AVAILABLE');
+  ok(availableRouter.recorder.resolving.length === 0 && availableRouter.recorder.engines.length === 0 && availableRouter.recorder.embeds.length === 0 && availableRouter.recorder.sessionErrors.length === 0, 'R12.2 the probe mutated NO session state (no resolving, no engine, no embed, no error)');
+  ok(availableRouter.router.getState() === 'idle', 'R12.3 the router lifecycle state is untouched by a probe');
+
+  // Unresolved (nothing configured) and empty (managed but nothing eligible)
+  // selections probe UNAVAILABLE — the switcher's honest failure direction.
+  const unavailableRouter = makeRouter(timers, { fetchRoutes: [CONFIG_TRUE, resolveRoute([], false)] });
+  ok(await unavailableRouter.router.probeSelection('entry:e9') === false, 'R12.4 resolved:false probes UNAVAILABLE');
+  const emptyRouter = makeRouter(timers, { fetchRoutes: [CONFIG_TRUE, resolveRoute([])] });
+  ok(await emptyRouter.router.probeSelection('entry:e9') === false, 'R12.5 a managed selection with ZERO eligible candidates probes UNAVAILABLE');
+
+  // Transport failure (timeout) — fail-closed, and the probe never throws.
+  const failingRouter = makeRouter(timers, { fetchRoutes: [CONFIG_TRUE] }); // no resolve route → 404 → LiveTvError
+  ok(await failingRouter.router.probeSelection('entry:e9') === false, 'R12.6 a transport failure probes UNAVAILABLE (never throws)');
+
+  // A probe honors an externally aborted signal (fail-closed, silent).
+  const abortRouter = makeRouter(timers, { fetchRoutes: [CONFIG_TRUE, resolveRoute([{ candidateId: 'default:ep1', engine: 'shaka_media_player', endpointKind: 'direct_stream', streamFormat: 'hls', url: 'https://cdn.example/live.m3u8', resolver: null, sourceChannelId: null, label: null }])] });
+  const external = new AbortController();
+  external.abort();
+  ok(await abortRouter.router.probeSelection('entry:e1', external.signal) === false, 'R12.7 an already-aborted signal probes UNAVAILABLE (fail-closed)');
+  ok('R12 probeSelection verified');
+}
+
 console.log(`\nPhase 5 router suite: ${passed} checks PASS`);
 if (passed < 40) {
   console.error('FAIL: expected at least 40 checks');

@@ -192,7 +192,14 @@ const NOW = 1_700_000_000; // fixed absolute instant for determinism
         assert.match(selectFlow, /const resolution = await resolveLiveTvPlayback\(channel\.id, \{ signal: controller\.signal \}\);/, 'fresh LT-2 resolution, signal-wired');
         assert.match(selectFlow, /await eng\.load\(videoEl, resolution, \{ signal: controller\.signal \}\);/, 'resolution handed straight to the LT-3 engine load');
         assert.doesNotMatch(page, /\$state<.*Resolution/, 'resolution objects are never stored in reactive state');
-        assert.doesNotMatch(selectFlow, /sources|drm/i, 'the select flow never touches sources/drm fields itself');
+        // R-1 REVISED: the original broad /sources|drm/i scan predates the R-1
+        // catalogue's `LiveTvChannel.sources` field (bounded selection ids +
+        // display labels — catalogue METADATA, never playback material). The
+        // precise security intent is kept: the selection flow never touches
+        // the RESOLUTION wire's playback fields, and never reads DRM
+        // material. (The switch dimension's state names legitimately contain
+        // the word "source" — see the R-1 switchSource contract below.)
+        assert.doesNotMatch(selectFlow, /resolution\.sources|resolution\.drm|\.drm\b|clearKeys/i, 'the select flow never touches resolution playback/DRM fields itself');
         assert.match(selectFlow, /resolving = true;/, 'resolving phase is signalled to the UI');
         assert.match(page, /const resolvingChannel = \$derived\(resolving \? selectedChannel : null\);/, 'resolving channel is derived for the player');
         ok('selection: fresh resolve -> engine.load, resolution never in reactive state');
@@ -422,8 +429,14 @@ const NOW = 1_700_000_000; // fixed absolute instant for determinism
         assert.doesNotMatch(player, /keyId|clearKeys|\.drm\b/i, 'player never touches DRM fields');
         assert.doesNotMatch(player, /resolution\.sources|\.mpd|signed/i, 'player never reads playback sources');
         // The page hands the resolution straight to the engine and only keeps
-        // catalogue metadata in state — no sources/drm fields anywhere.
-        assert.doesNotMatch(page, /resolution\.sources|resolution\.drm|\.sources\b/i, 'page never reads source/DRM fields');
+        // catalogue metadata in state. R-1 REVISED: the page legitimately
+        // reads `selectedChannel.sources` — the catalogue's bounded
+        // alternatives (selection ids + display labels, normalize-gated,
+        // playback always re-resolved server-side). The kept intent: the page
+        // never reads the RESOLUTION wire's playback fields (`resolution.
+        // sources` / `resolution.drm`) and never touches DRM material.
+        assert.doesNotMatch(page, /resolution\.sources|resolution\.drm/i, 'page never reads resolution playback/DRM fields');
+        assert.doesNotMatch(page, /\.sources\s*\[|\.sources\.[a-zA-Z]/i, 'page reads .sources only to adopt the catalogue list (no element/url access)');
         ok('security: zero console/storage/cookie/LiveGT-URL/DRM-field surfaces in all UI sources');
 }
 
