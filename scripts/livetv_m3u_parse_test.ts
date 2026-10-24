@@ -505,8 +505,13 @@ console.log('§11 R-3 — tvg-logo normalization (Issue 6: Sony missing logos)')
   // 11.1 — https:// logos pass through unchanged.
   ok(normalizeM3ULogoUrl('https://cdn.example/logo.png') === 'https://cdn.example/logo.png', '§11.1 an https logo URL passes through unchanged');
 
-  // 11.2 — http:// logos are UPGRADED to https:// (the DB requires https).
-  ok(normalizeM3ULogoUrl('http://cdn.example/logo.png') === 'https://cdn.example/logo.png', '§11.2 an http logo URL is upgraded to https (the DB requires https)');
+  // 11.2 — R-5: http:// logos are REJECTED (no unverified http→https upgrade).
+  // The DB requires https; the upgrade was unverified (the CDN may not support https).
+  ok(normalizeM3ULogoUrl('http://cdn.example/logo.png') === null, '§11.2 R-5: an http logo URL is REJECTED (no unverified http→https upgrade — the CDN may not support https)');
+
+  // 11.2b — R-5: relative logo URLs are resolved against the playlist base URL.
+  ok(normalizeM3ULogoUrl('/logos/sony.png', 'https://provider.example/playlist.php') === 'https://provider.example/logos/sony.png', '§11.2b R-5: a relative logo URL resolves against the playlist base URL');
+  ok(normalizeM3ULogoUrl('logos/sony.png', 'https://provider.example/playlist.php') === 'https://provider.example/logos/sony.png', '§11.2c R-5: a relative logo URL (no leading slash) resolves against the base path');
 
   // 11.3 — protocol-relative URLs are REJECTED (the DB requires absolute https).
   ok(normalizeM3ULogoUrl('//cdn.example/logo.png') === null, '§11.3 a protocol-relative logo URL is rejected (the DB requires absolute https)');
@@ -535,10 +540,16 @@ console.log('§11 R-3 — tvg-logo normalization (Issue 6: Sony missing logos)')
   // 11.10 — over-long URLs are REJECTED.
   ok(normalizeM3ULogoUrl(`https://cdn.example/${'a'.repeat(3000)}.png`) === null, '§11.15 an over-long logo URL is rejected');
 
-  // 11.11 — the parser uses normalizeM3ULogoUrl for tvg-logo (end-to-end).
-  const playlist = '#EXTM3U\n#EXTINF:-1 tvg-id="logo.1" tvg-logo="http://cdn.example/legacy.png",Logo Test\nhttps://cdn.example/stream.m3u8';
+  // 11.11 — R-5: the parser REJECTS http tvg-logo (no unverified upgrade).
+  // A relative tvg-logo is resolved against the playlist base URL.
+  const playlist = '#EXTM3U\n#EXTINF:-1 tvg-id="logo.1" tvg-logo="/logos/legacy.png",Logo Test\nhttps://cdn.example/stream.m3u8';
   const result = parseM3UPlaylist(playlist, { playlistBaseUrl: 'https://provider.example/playlist.php' });
-  ok(result.channels.length === 1 && result.channels[0]!.logoUrl === 'https://cdn.example/legacy.png', '§11.16 the parser upgrades an http tvg-logo to https end-to-end');
+  ok(result.channels.length === 1 && result.channels[0]!.logoUrl === 'https://provider.example/logos/legacy.png', '§11.16 R-5: the parser resolves a relative tvg-logo against the playlist base URL end-to-end');
+
+  // 11.11b — R-5: an http tvg-logo is REJECTED (no unverified upgrade).
+  const httpLogoPlaylist = '#EXTM3U\n#EXTINF:-1 tvg-id="httplogo.1" tvg-logo="http://cdn.example/legacy.png",HTTP Logo\nhttps://cdn.example/stream.m3u8';
+  const httpLogoResult = parseM3UPlaylist(httpLogoPlaylist);
+  ok(httpLogoResult.channels.length === 1 && httpLogoResult.channels[0]!.logoUrl === null, '§11.16b R-5: an http tvg-logo is REJECTED (no unverified http→https upgrade — the CDN may not support https)');
 
   // 11.12 — a playlist with NO tvg-logo → logoUrl is null (honest, no fabrication).
   const noLogoPlaylist = '#EXTM3U\n#EXTINF:-1 tvg-id="nologo.1",No Logo\nhttps://cdn.example/stream.m3u8';

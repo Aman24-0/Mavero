@@ -160,14 +160,17 @@ console.log('§6 — Sony logos: parse, persist, preserve (Issue 6)');
 {
   // 6.1 — the M3U parser uses normalizeM3ULogoUrl for tvg-logo (not the generic text normalizer).
   ok(m3uAdapter.includes('logoUrl: normalizeM3ULogoUrl(attributes.values.get(\'tvg-logo\')'), '§6.1 the M3U parser uses normalizeM3ULogoUrl for tvg-logo (not the generic text normalizer)');
-  // 6.2 — normalizeM3ULogoUrl upgrades http:// to https:// (the DB requires https).
-  ok(m3uAdapter.includes("if (normalized.startsWith('http://'))") && m3uAdapter.includes("normalized = 'https://' + normalized.slice('http://'.length)"), '§6.2 normalizeM3ULogoUrl upgrades http:// to https:// (the DB requires https)');
-  // 6.3 — normalizeM3ULogoUrl rejects protocol-relative and relative URLs.
-  ok(m3uAdapter.includes("if (!normalized.startsWith('https://')) return null"), '§6.3 normalizeM3ULogoUrl rejects protocol-relative and relative URLs (the DB requires absolute https)');
+  // 6.2 — R-5: normalizeM3ULogoUrl NO LONGER upgrades http→https (unverified).
+  // It rejects http:// logos (the DB requires https; the upgrade was unverified).
+  // It resolves relative logo URLs against the playlist base URL (R-5 fix).
+  ok(!m3uAdapter.includes("normalized = 'https://' + normalized.slice('http://'.length)"), '§6.2 R-5: normalizeM3ULogoUrl NO LONGER upgrades http→https (unverified — the CDN may not support https)');
+  ok(m3uAdapter.includes('playlistBaseUrl') && m3uAdapter.includes("new URL(trimmed, base)"), '§6.2b R-5: normalizeM3ULogoUrl resolves relative logo URLs against the playlist base URL');
+  // 6.3 — R-5: normalizeM3ULogoUrl rejects non-https URLs (no http→https upgrade).
+  ok(m3uAdapter.includes("if (url.protocol !== 'https:') return null"), '§6.3 R-5: normalizeM3ULogoUrl rejects non-https URLs (no http→https upgrade — the DB requires https)');
   // 6.4 — normalizeM3ULogoUrl rejects control chars and whitespace.
   ok(/normalizeM3ULogoUrl[\s\S]{0,400}\/\[\\u0000-\\u001f\\u007f\]\/\.test\(trimmed\)[\s\S]{0,100}\\s/.test(m3uAdapter), '§6.4 normalizeM3ULogoUrl rejects control chars and whitespace');
   // 6.5 — normalizeM3ULogoUrl rejects credentials in the URL.
-  ok(/normalizeM3ULogoUrl[\s\S]{0,800}url\.username \|\| url\.password/.test(m3uAdapter), '§6.5 normalizeM3ULogoUrl rejects credentials in the URL');
+  ok(m3uAdapter.includes('url.username || url.password'), '§6.5 normalizeM3ULogoUrl rejects credentials in the URL');
   // 6.6 — ingestion preserves a valid existing logo when the new playlist omits tvg-logo.
   ok(ingestion.includes('entryPlan.logoUrl ?? entryPlan.preserved.logoUrl ?? null'), '§6.6 ingestion preserves a valid existing logo when the new playlist omits tvg-logo (R-3 fix)');
   // 6.7 — the preserved field carries logoUrl.

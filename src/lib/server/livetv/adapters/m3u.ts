@@ -291,40 +291,59 @@ export function m3uIdentityForUrl(url: string): string {
 }
 
 /**
- * R-3 — validates and normalizes a `tvg-logo` URL.
+ * R-3/R-5 — validates and normalizes a `tvg-logo` URL.
  *
  * The DB constraint requires `https://` (migration
- * `20261120000000_livetv_source_registry.sql:158,202`). Many playlists
- * provide `http://` logos (legacy CDNs) — these are UPGRADED to `https://`
- * (most CDNs support both, and the DB rejects `http://`). Protocol-relative
- * (`//cdn.example/logo.png`), relative, and non-http(s) URLs are REJECTED
- * (the DB cannot store them, and inventing a host would be unsafe). Control
- * characters and whitespace are rejected (a URL is a single token).
+ * `20261120000000_livetv_source_registry.sql:158,202`). R-5 changes:
+ *   * NO http→https upgrade (the task says "Do not silently upgrade HTTP
+ *     URLs to HTTPS unless the HTTPS endpoint is verified"). An `http://`
+ *     logo is REJECTED (the DB requires https; the upgrade was unverified).
+ *   * RELATIVE logo URLs are resolved against the playlist's own URL when
+ *     `playlistBaseUrl` is supplied (R-5 fix — the R-2 fix added relative
+ *     resolution for STREAM URLs but not for logos; Sony playlists may
+ *     use relative logo URLs).
+ *   * Protocol-relative (`//cdn.example/logo.png`), relative, and non-
+ *     http(s) URLs are REJECTED when no base is supplied (the DB requires
+ *     absolute https). When a base IS supplied, relative URLs are resolved
+ *     against it; the resolved URL must still be `https://`.
+ *   * Control characters and whitespace are rejected (a URL is a single token).
  *
- * This is the ONLY normalization that converts `http://` to `https://` —
- * stream URLs (classifyM3UStreamUrl) require `https://` strictly (no
- * upgrade), matching the DB's playback-endpoint constraint.
+ * This is the ONLY logo normalization. Stream URLs (classifyM3UStreamUrl)
+ * have their own validation (https-only, no upgrade, relative resolution).
  */
-export function normalizeM3ULogoUrl(raw: unknown): string | null {
+export function normalizeM3ULogoUrl(raw: unknown, playlistBaseUrl?: string): string | null {
         if (raw === undefined || raw === null) return null;
         if (typeof raw !== 'string') return null;
         const trimmed = raw.trim();
         if (!trimmed) return null;
         if (trimmed.length > 2048) return null;
         if (/[\u0000-\u001f\u007f]/.test(trimmed) || /\s/.test(trimmed)) return null;
-        // Upgrade http:// → https:// (legacy CDN logos). The DB requires https.
-        let normalized = trimmed;
-        if (normalized.startsWith('http://')) {
-                normalized = 'https://' + normalized.slice('http://'.length);
+
+        // R-5 — resolve relative logo URLs against the playlist's own URL
+        // (same as stream URL resolution). The base must be https.
+        let base: URL | null = null;
+        if (playlistBaseUrl) {
+                try {
+                        const parsedBase = new URL(playlistBaseUrl);
+                        if (parsedBase.protocol === 'https:' && !parsedBase.username && !parsedBase.password) base = parsedBase;
+                } catch {
+                        base = null;
+                }
         }
-        if (!normalized.startsWith('https://')) return null; // protocol-relative, relative, ftp://, etc.
+
+        let url: URL;
         try {
-                const url = new URL(normalized);
-                if (url.username || url.password) return null;
+                url = base !== null ? new URL(trimmed, base) : new URL(trimmed);
         } catch {
                 return null;
         }
-        return normalized;
+        // R-5 — NO http→https upgrade. The DB requires https; an http logo
+        // is rejected (the upgrade was unverified — the CDN may not support https).
+        if (url.protocol !== 'https:') return null;
+        if (url.username || url.password) return null;
+        const resolved = url.toString();
+        if (resolved.length > 2048) return null;
+        return resolved;
 }
 
 // ---------------------------------------------------------------------------
@@ -482,7 +501,7 @@ export function parseM3UPlaylist(text: string, options: M3UParseOptions = {}): M
                         title: split.title,
                         tvgName: normalizeOptionalTextField(attributes.values.get('tvg-name') ?? null, 200, true),
                         tvgIdRaw,
-                        logoUrl: normalizeM3ULogoUrl(attributes.values.get('tvg-logo') ?? null),
+                        logoUrl: normalizeM3ULogoUrl(attributes.values.get('tvg-logo') ?? null, options.playlistBaseUrl),
                         groupTitle: normalizeOptionalTextField(attributes.values.get('group-title') ?? null, 120, true),
                         extraAttributes: {},
                         attrCount: attributes.values.size

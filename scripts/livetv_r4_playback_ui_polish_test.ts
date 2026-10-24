@@ -141,9 +141,12 @@ console.log('§4 — SvelteKit/base-URL/build warnings: cleanup + classification
   // 4.4 — the PRODUCTION_ORIGIN is intentionally hardcoded (SEO canonical policy — documented).
   const seo = readCode('src/lib/shared/seo.ts');
   ok(seo.includes("export const PRODUCTION_ORIGIN = 'https://maveroweb.space';"), '§4.4 PRODUCTION_ORIGIN is intentionally hardcoded (SEO canonical policy — documented design, not a warning)');
-  // 4.5 — the jsconfig baseUrl/paths warning is benign (test scripts need the path aliases).
+  // 4.5 — R-5: jsconfig.json NO LONGER carries baseUrl/paths (the SvelteKit
+  //     warning is resolved). The test-only aliases moved to tsconfig.test.json.
+  //     The app aliases come from SvelteKit's generated tsconfig (rootDirs +
+  //     moduleResolution: bundler). svelte-check reports 0 warnings.
   const jsconfig = JSON.parse(readCode('jsconfig.json'));
-  ok(jsconfig.compilerOptions.baseUrl === '.' && jsconfig.compilerOptions.paths, '§4.5 jsconfig baseUrl/paths is benign (the test scripts need the $env stubs + $components aliases — removing would break tests)');
+  ok(jsconfig.compilerOptions.baseUrl === undefined && jsconfig.compilerOptions.paths === undefined, '§4.5 R-5: jsconfig.json no longer carries baseUrl/paths (the SvelteKit warning is resolved — test aliases moved to tsconfig.test.json)');
 }
 
 // ============================================================

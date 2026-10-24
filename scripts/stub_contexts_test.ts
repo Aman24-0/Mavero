@@ -64,11 +64,14 @@ ok(GENERAL_VERSION === '', '§2: jsconfig app-environment version is the empty s
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MAPPING_TARGETS: Array<{ config: string; file: string }> = [
-  { config: 'jsconfig.json', file: 'scripts/env-stubs/dynamic-private.ts' },
-  { config: 'jsconfig.json', file: 'scripts/env-stubs/dynamic-public.ts' },
-  { config: 'jsconfig.json', file: 'scripts/env-stubs/app-environment.ts' },
-  { config: 'jsconfig.json', file: 'scripts/env-stubs/app-navigation.ts' },
-  { config: 'jsconfig.json', file: 'scripts/env-stubs/app-forms.ts' },
+  // R-5: the test-only aliases moved from jsconfig.json to tsconfig.test.json
+  // (jsconfig.json no longer carries baseUrl/paths — the SvelteKit warning
+  // is resolved). tsconfig.behavioral.json now extends tsconfig.test.json.
+  { config: 'tsconfig.test.json', file: 'scripts/env-stubs/dynamic-private.ts' },
+  { config: 'tsconfig.test.json', file: 'scripts/env-stubs/dynamic-public.ts' },
+  { config: 'tsconfig.test.json', file: 'scripts/env-stubs/app-environment.ts' },
+  { config: 'tsconfig.test.json', file: 'scripts/env-stubs/app-navigation.ts' },
+  { config: 'tsconfig.test.json', file: 'scripts/env-stubs/app-forms.ts' },
   { config: 'tsconfig.behavioral.json', file: 'scripts/stubs/env-dynamic-private.ts' },
   { config: 'tsconfig.behavioral.json', file: 'scripts/stubs/app-environment.ts' },
 ];

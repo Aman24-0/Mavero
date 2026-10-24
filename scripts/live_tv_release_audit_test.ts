@@ -49,11 +49,13 @@ const testChain = testGateText();
   for (const script of chained) {
     assert.ok(testChain.includes(script), `${script} is chained into pnpm test`);
   }
-  // They are invoked with the repo-standard tsx + jsconfig convention.
+  // R-5: tests now use tsconfig.test.json (the test-only alias config).
+  // The jsconfig.json no longer carries baseUrl/paths (SvelteKit warning
+  // fix); the test aliases live in tsconfig.test.json.
   for (const script of chained) {
     assert.ok(
-      testChain.includes(`pnpm exec tsx --tsconfig ./jsconfig.json ${script}`),
-      `${script} uses the standard tsx invocation`
+      testChain.includes(`pnpm exec tsx --tsconfig ./tsconfig.test.json ${script}`),
+      `${script} uses the standard tsx invocation (tsconfig.test.json)`
     );
   }
   // The real-browser/manual QA probes are NOT in the chain (brief §16).

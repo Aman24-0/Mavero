@@ -683,7 +683,7 @@
           </div>
 
           <div class="search-input-wrap">
-            <Search size={14} class="search-icon" />
+            <span class="search-icon"><Search size={14} aria-hidden="true" /></span>
             <input
               type="text"
               class="search-input"
@@ -693,7 +693,7 @@
               autocomplete="off"
               aria-label="Search TMDB by title"
             />
-            {#if tmdbSearching}<Loader2 size={14} class="spinner" />{/if}
+            {#if tmdbSearching}<span class="spinner"><Loader2 size={14} aria-hidden="true" /></span>{/if}
           </div>
 
           <div class="results-list">
@@ -750,7 +750,7 @@
             <div class="field-group">
               <label class="field-label" for="season-select">Season</label>
               {#if seasonsLoading}
-                <div class="field-status"><Loader2 size={13} class="spinner" /> Loading seasons…</div>
+                <div class="field-status"><span class="spinner"><Loader2 size={13} aria-hidden="true" /></span> Loading seasons…</div>
               {:else if seasonsError}
                 <div class="field-status field-status-error" role="alert">
                   <AlertCircle size={13} /> {seasonsError}
@@ -778,7 +778,7 @@
               <label class="field-label" for="episode-select">Episode</label>
               {#if !seasonsError && selectedSeason != null}
                 {#if episodesLoading}
-                  <div class="field-status"><Loader2 size={13} class="spinner" /> Loading episodes…</div>
+                  <div class="field-status"><span class="spinner"><Loader2 size={13} aria-hidden="true" /></span> Loading episodes…</div>
                 {:else if episodesError}
                   <div class="field-status field-status-error" role="alert">
                     <AlertCircle size={13} /> {episodesError}
@@ -851,7 +851,7 @@
           <div class="wizard-footer">
             <button type="button" class="btn btn-cancel" onclick={closeSheet} disabled={saving}>Cancel</button>
             <button type="button" class="btn btn-save" onclick={saveLink} disabled={saving || !selectedProvider || !providerReference.trim()}>
-              {#if saving}<Loader2 size={12} class="spinner" /> Saving…{:else}{updateTarget ? 'Update' : 'Save'}{/if}
+              {#if saving}<span class="spinner"><Loader2 size={12} aria-hidden="true" /></span> Saving…{:else}{updateTarget ? 'Update' : 'Save'}{/if}
             </button>
           </div>
         </div>
@@ -882,8 +882,8 @@
   .search-input-wrap:focus-within { border-color: #0ff; }
   .search-input { flex: 1; border: 0; outline: 0; background: transparent; color: var(--a2-text, #ddd); font-size: 0.82rem; }
   .search-input::placeholder { color: var(--a2-text-dim, #555); }
-  .search-icon { color: var(--a2-text-dim, #555); flex-shrink: 0; }
-  .spinner { animation: spin 1s linear infinite; }
+  .search-icon { color: var(--a2-text-dim, #555); flex-shrink: 0; display: inline-flex; align-items: center; }
+  .spinner { animation: spin 1s linear infinite; display: inline-flex; align-items: center; }
 
   .results-list { max-height: 300px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
   .results-empty { padding: 20px; text-align: center; color: var(--a2-text-dim, #555); font-size: 0.8rem; display: flex; align-items: center; justify-content: center; gap: 6px; }
