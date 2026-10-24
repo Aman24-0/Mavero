@@ -109,12 +109,18 @@ const NOW = 1_700_000_000; // fixed absolute instant for determinism
         assert.match(page, /getLiveTvChannels,\s*\n\s*getLiveTvGuide,\s*\n\s*resolveLiveTvPlayback/);
         assert.match(page, /from '\$lib\/client\/live-tv\/api'/, 'catalogue comes from the LT-2 client only');
         assert.doesNotMatch(page, /livetgtv/i, 'no LiveGT hostname anywhere in the page');
+        // R-3: the page now uses the unified catalogue endpoint (source-first)
+        // exclusively — no raw fetch, no flag-gated legacy branch. The legacy
+        // getLiveTvChannels/getLiveTvGuide imports remain (the playback
+        // resolver and embed builder still use the LT-2 client), but the
+        // catalogue/guide LOADS go through the unified endpoint.
         assert.doesNotMatch(page, /fetch\(/, 'no raw fetch in the page');
         assert.match(page, /onMount\(\(\) => \{\s*void loadCatalogue\(\);/, 'catalogue loads on mount');
-        assert.match(page, /const list = await getLiveTvChannels\(\{ signal: controller\.signal \}\);/, 'catalogue request is signal-wired');
+        // R-3: the catalogue load is signal-wired through the unified client.
+        assert.match(page, /const list = await getUnifiedLivetvCatalogue\(\{ signal: controller\.signal[^}]*\}\);/, 'R-3 catalogue request is signal-wired through the unified client (source-first)');
         assert.match(page, /aria-busy="true"/, 'loading state is announced (skeleton)');
         assert.match(page, /channel-skeleton/, 'skeleton cards render while loading');
-        ok('initial catalogue loading: LT-2 call on mount, signal-wired, skeleton state');
+        ok('initial catalogue loading: R-3 unified call on mount, signal-wired, skeleton state');
 }
 
 // ============================================================
@@ -309,7 +315,10 @@ const NOW = 1_700_000_000; // fixed absolute instant for determinism
 // §11 Guide: loading/success/empty/failure — independent of playback
 // ============================================================
 {
-        assert.match(guideFlow, /await getLiveTvGuide\(channel\.id, \{ signal: controller\.signal \}\);/, 'guide loaded per channel via LT-2');
+        // R-3: the guide load goes through the unified endpoint (source-first),
+        // NOT the legacy LT-2 client. The legacy getLiveTvGuide is no longer
+        // called by loadGuide (it was causing timeouts for non-LiveGT channels).
+        assert.match(guideFlow, /await getUnifiedLivetvGuide\(channel\.id, \{ signal: controller\.signal \}\);/, 'R-3 guide loaded per channel via the unified client (source-first, no legacy LT-2 call)');
         assert.match(guideFlow, /guideSeq/, 'guide requests carry their own sequence guard');
         // Independence: the guide flow never touches playback session state.
         assert.doesNotMatch(guideFlow, /engine|sessionErrorMessage|selectedChannel|resolving(?!\s*=)/, 'guide flow never mutates playback state');

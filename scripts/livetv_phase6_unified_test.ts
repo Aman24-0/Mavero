@@ -804,26 +804,31 @@ const CHAN_1 = { id: 'chan-1', name: 'Zeta One', category: 'News', logo_url: 'ht
   const routerModule = read('../src/lib/client/live-tv/resolution-router.ts');
   const unifiedClient = read('../src/lib/client/live-tv/unified-catalogue.ts');
 
-  // 5a. The catalogue loader: gated branch + byte-identical legacy line.
+  // 5a. The catalogue loader: R-3 source-first (no flag gate).
+  //     The page now uses the unified catalogue endpoint unconditionally —
+  //     the source-first contract. The flag remains the owner's lever for
+  //     the UNIFIED PLAYBACK ROUTER (Phase 5); it no longer gates the
+  //     catalogue surface. This closes the R-2 regression where turning
+  //     LiveGT OFF blanked JioHotstar/Sony channels.
   const catalogueFlow = sliceOf(page, 'async function loadCatalogue', '// ---------------------------------------------------------------------\n  // Search');
-  ok(catalogueFlow.includes('if (await isUnifiedLivetvGateEnabled()) {'), '5a.1 the catalogue loader consults the SHARED gate first');
-  ok(catalogueFlow.includes('getUnifiedLivetvCatalogue({ signal: controller.signal })'), '5a.2 the unified branch fetches the bounded catalogue with the same signal discipline');
+  ok(!catalogueFlow.includes('if (await isUnifiedLivetvGateEnabled()) {'), '5a.1 R-3: the catalogue loader NO LONGER consults the flag gate (source-first)');
+  ok(catalogueFlow.includes('getUnifiedLivetvCatalogue({ signal: controller.signal, sourceId: selectedSourceFilter })'), '5a.2 R-3: the catalogue fetch is signal-wired + carries the sourceId filter (the heading-row Source selector)');
   const iUnifiedAbort = catalogueFlow.indexOf('if (controller.signal.aborted) return;');
-  const iAssign = catalogueFlow.indexOf('channels = unifiedList;');
-  ok(iUnifiedAbort !== -1 && iAssign !== -1 && iUnifiedAbort < iAssign, '5a.3 the unified branch re-checks the abort BEFORE the assignment (a superseded load never clobbers a newer one)');
-  ok(catalogueFlow.includes('const list = await getLiveTvChannels({ signal: controller.signal });'), '5a.4 the legacy LiveGT load line is byte-identical (flag FALSE path)');
-  const iGate = catalogueFlow.indexOf('isUnifiedLivetvGateEnabled()');
-  const iLegacy = catalogueFlow.indexOf('const list = await getLiveTvChannels(');
-  ok(iGate !== -1 && iLegacy !== -1 && iGate < iLegacy, '5a.5 the gate strictly precedes the legacy load (the legacy path runs only when the gate is FALSE)');
+  const iAssign = catalogueFlow.indexOf('channels = list;');
+  ok(iUnifiedAbort !== -1 && iAssign !== -1 && iUnifiedAbort < iAssign, '5a.3 the catalogue branch re-checks the abort BEFORE the assignment (a superseded load never clobbers a newer one)');
+  ok(!catalogueFlow.includes('const list = await getLiveTvChannels('), '5a.4 R-3: the legacy LiveGT load line is GONE (the catalogue is source-first, no legacy branch)');
 
-  // 5b. The guide loader: gated branch + byte-identical legacy line.
+  // 5b. The guide loader: R-3 source-first (no flag gate).
+  //     The page now uses the unified guide endpoint unconditionally — the
+  //     source-first contract. The legacy LiveGT guide API is NEVER called
+  //     for non-LiveGT channels (fixing the R-2 "Live TV took too long to
+  //     respond" regression for JioHotstar/Sony).
   const guideFlow = sliceOf(page, 'async function loadGuide', 'function retryGuide');
-  ok(guideFlow.includes('if (await isUnifiedLivetvGateEnabled()) {'), '5b.1 the guide loader consults the SHARED gate first');
-  ok(guideFlow.includes('getUnifiedLivetvGuide(channel.id, { signal: controller.signal })'), '5b.2 the unified guide is loaded for the SELECTED canonical channel id');
-  ok(guideFlow.includes('await getLiveTvGuide(channel.id, { signal: controller.signal });'), '5b.3 the legacy LiveGT guide line is byte-identical (flag FALSE path)');
+  ok(!guideFlow.includes('if (await isUnifiedLivetvGateEnabled()) {'), '5b.1 R-3: the guide loader NO LONGER consults the flag gate (source-first)');
+  ok(guideFlow.includes('getUnifiedLivetvGuide(channel.id, { signal: controller.signal })'), '5b.2 R-3: the unified guide is loaded for the SELECTED channel id (entry:<uuid> or canonical)');
+  ok(!guideFlow.includes('await getLiveTvGuide(channel.id'), '5b.3 R-3: the legacy LiveGT guide line is GONE (no legacy branch — fixes the timeout regression)');
   ok(!/engine|sessionErrorMessage|selectedChannel|resolving(?!\s*=)/.test(guideFlow), '5b.4 the guide flow still never mutates playback state (pre-existing pin preserved)');
-  const iGuideSeq = guideFlow.indexOf('if (seq !== guideSeq || controller.signal.aborted) return;');
-  ok(guideFlow.indexOf(iGuideSeq >= 0 ? guideFlow.slice(iGuideSeq + 10).indexOf('seq !== guideSeq') >= 0 ? 'x' : 'seq !== guideSeq' : 'x') !== -1 || guideFlow.split('seq !== guideSeq').length >= 3, '5b.5 BOTH guide branches carry the sequence guard (selection stays synchronized)');
+  ok(guideFlow.split('seq !== guideSeq').length >= 3, '5b.5 the guide branch carries the sequence guard (selection stays synchronized)');
 
   // 5c. One flag, one read — the page never fetches the flag; the gate
   //     lives in the router module (Phase 5 single-gate ownership).

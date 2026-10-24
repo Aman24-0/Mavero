@@ -267,18 +267,26 @@ function normalizeUnifiedGuide(body: unknown, channelId: string): LiveTvGuide {
  * (the EXISTING catalogue cache conventions); pass `forceRefetch: true` to
  * bypass. Eligibility is never granted from the cache — playback always
  * re-resolves through the Phase 5 resolve endpoint.
+ *
+ * R-3: the optional `sourceId` filter scopes the catalogue to ONE source's
+ * channels (the heading-row Source selector). The cache key includes the
+ * sourceId so scoped and unscoped loads don't collide.
  */
-export async function getUnifiedLivetvCatalogue(options: { signal?: AbortSignal; forceRefetch?: boolean } = {}): Promise<LiveTvChannel[]> {
+export async function getUnifiedLivetvCatalogue(options: { signal?: AbortSignal; forceRefetch?: boolean; sourceId?: string | null } = {}): Promise<LiveTvChannel[]> {
         if (options.signal?.aborted) {
                 throw new LiveTvError('aborted', { endpoint: 'catalogue' });
         }
+        const sourceId = typeof options.sourceId === 'string' && options.sourceId.length > 0 ? options.sourceId : null;
+        const cacheKey = sourceId ? `${UNIFIED_CATALOGUE_CACHE_KEY}:src:${sourceId}` : UNIFIED_CATALOGUE_CACHE_KEY;
         if (!options.forceRefetch) {
-                const cached = getCachedLiveTvChannels(UNIFIED_CATALOGUE_CACHE_KEY);
+                const cached = getCachedLiveTvChannels(cacheKey);
                 if (cached) return cached;
         }
-        const body = await unifiedFetch(new URL(CATALOGUE_PATH, appOrigin()), 'catalogue', { signal: options.signal });
+        const url = new URL(CATALOGUE_PATH, appOrigin());
+        if (sourceId) url.searchParams.set('sourceId', sourceId);
+        const body = await unifiedFetch(url, 'catalogue', { signal: options.signal });
         const channels = normalizeCatalogueList(body);
-        setCachedLiveTvChannels(UNIFIED_CATALOGUE_CACHE_KEY, channels);
+        setCachedLiveTvChannels(cacheKey, channels);
         return channels;
 }
 

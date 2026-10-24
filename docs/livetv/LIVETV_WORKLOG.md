@@ -1273,3 +1273,74 @@ Owner directive: audit and fix the deployed R-1 implementation in `Aman24-0/Mave
 - Real-browser verification of the Admin UI, the source selector, and LiveGT V1 playback: NOT RUN in this environment (no browser playback stack/authorized geo) — recorded NOT RUN, never bypassed; the 86-check R-2 regression suite and the 97-check M3U suite are the automated coverage layer per repo convention.
 - Sony playlist (Issue 4): the R-2 M3U fix ensures the entries IMPORT correctly. "Imports successfully" ≠ "plays reliably" — real playback depends on the resolved stream URL being reachable from the user's browser (CORS, geo), the stream's DRM/authorization model being supported (the existing Shaka engine supports ClearKey; other DRM systems may not be supported), and the stream's actual format matching the classified format. These upstream realities are honestly reported by the existing error taxonomy. Mavero cannot and does not bypass them.
 - Pushed directly to `main` per owner instruction (the owner provided a PAT and explicitly said "Push directly to main only"). The commit message documents the R-2 round, the eight issues, and the gate outcomes.
+
+
+## Entry R-3 — Catalogue, guide & source-selector production fixes (2026-10-25, branch `livetv/r3-catalogue-guide-source-fixes`)
+
+Owner directive: audit and fix six owner-reported production problems observed after R-2: (1) the Live TV heading shows "Source: Auto" or no usable source selector; (2) editing a source shows "Unexpected token '<', \"<HTML>...\" is not valid JSON"; (3) turning LiveGT V1 OFF leaves an empty user catalogue even though JioHotstar and Sony are ON with imported channels; (4) every channel's Guide displays "Live TV took too long to respond"; (5) JioHotstar Preview skips 16 entries with "duplicate_channel_id"; (6) all Sony channel logos are missing.
+
+**Baseline verified:** `origin/main` = `e1d220b` (R-2), clean tree. Branch `livetv/r3-catalogue-guide-source-fixes` cut from it. The owner explicitly required an evidence-based audit FIRST, then the fixes.
+
+**Root-cause analysis (all six issues):**
+
+1. **Source selector missing/labels "Auto" (Issue 1):** The R-2 heading-row Source selector IS implemented (button + accessible sheet, default label "All Sources"). The "Source: Auto" the owner saw is the R-1 per-channel `<select>` Source control in the PLAYER section (which offers "Auto" as the default option for canonical cards) — a DIFFERENT control. The heading-row selector was conditionally rendered on `sourcesAvailable && selectorSources.length > 0`. With `unified_enabled=false` (production), the catalogue was empty (Issue 3), so the page showed no channels — making the selector appear absent. R-3 fixes Issue 3, which makes the selector visible.
+
+2. **HTML-not-JSON error in admin edit (Issue 2):** The admin `use:enhance` form actions return SvelteKit's action response format. When `requireAdmin` throws `redirect(303, ...)` or `error(500/403, ...)`, SvelteKit returns an HTML error/redirect page. The admin page's enhance handlers correctly check `result.type === 'success'` / `'failure'` — they don't parse HTML. The "Unexpected token '<'" actually originated from the LIVE-TV page's `loadGuide`: with `unified_enabled=false`, `loadGuide` called `getLiveTvGuide(channel.id)` → `https://livetgtv.lovable.app/api/public/guide/entry:<uuid>`. LiveGT V1 doesn't recognize `entry:<uuid>` ids → it served an HTML 404 page → the client's `response.json()` threw "Unexpected token '<'". R-3 fixes this by removing the legacy guide branch (Issue 4 fix).
+
+3. **LiveGT OFF blanks JioHotstar/Sony (Issue 3):** The R-2 `loadCatalogue` had a flag-gated branch: when `unified_enabled=false` (production), it checked `livegtAvailable`; if LiveGT was OFF, it returned empty — even if JioHotstar/Sony were ON. The legacy LiveGT API (`getLiveTvChannels`) doesn't know about playlist sources. **Root cause:** the catalogue surface was gated on the `unified_enabled` flag, but the flag is the owner's lever for the UNIFIED PLAYBACK ROUTER (Phase 5) — NOT for the catalogue. R-3 separates these concerns: the catalogue is now SOURCE-FIRST (flag-agnostic), the playback router remains flag-gated.
+
+4. **Guide timeout across all channels (Issue 4):** Same root cause as Issue 2. With `unified_enabled=false`, `loadGuide` called `getLiveTvGuide(channel.id)` for EVERY channel — including JioHotstar/Sony channels with `entry:<uuid>` ids. LiveGT V1's `/api/public/guide/entry:<uuid>` either served HTML 404 (→ "Unexpected token" / `invalid_response`) or hung (→ `timeout` → "Live TV took too long to respond"). R-3 removes the legacy guide branch: `loadGuide` now uses the unified guide endpoint, which reads the EPG tables directly through the Phase 3 mapping contract.
+
+5. **JioHotstar 16 duplicate_channel_id skips (Issue 5):** The M3U parser's `duplicate_channel_id` skip fires when the SAME tvg-id + SAME URL appears twice in the playlist (a TRUE duplicate). The JioHotstar playlist has 146 raw entries, 16 of which are exact duplicates (same tvg-id + same URL) — the parser correctly dedupes them, leaving 130 unique channels. The "16 inserted / 0 updated" in the preview is correct: 130 unique channels − 114 existing DB entries = 16 new entries. The counts are consistent — the parser, the plan, and the ingestion all agree. The confusion was the COUNT SEMANTICS: `skipped` (16) is parser-level dedup, `entriesInserted` (16) is DB-level inserts — different concepts that happen to share the number 16 here. No fix needed; the behavior is correct. R-3 adds regression tests pinning the semantics.
+
+6. **Sony logos missing (Issue 6):** The M3U parser used `normalizeOptionalTextField(tvg-logo, 2048, false)` which accepts ANY string (no URL validation). But the DB constraint requires `https://` (migration `20261120000000_livetv_source_registry.sql:158,202`: `logo_url ~ '^https://[^[:space:]]*$'`). If the Sony playlist provides `http://` logos (legacy CDNs), the DB rejects them → `logo_url` is null. If the playlist provides NO `tvg-logo`, the parser stores null → the DB stores null. Additionally, the ingestion's update path OVERWROTE a valid existing logo with null on every refresh when the new playlist omitted `tvg-logo`. **Root cause:** no logo URL normalization (http→https upgrade) + no preservation of existing logos on refresh. R-3 fixes both: `normalizeM3ULogoUrl` upgrades `http://` → `https://` (and rejects protocol-relative/relative/non-http(s) URLs), and ingestion preserves a valid existing logo when the new playlist omits `tvg-logo`.
+
+**Code changes (5 application files + 4 test suites + 1 new test file + plan §20):**
+
+- `src/lib/server/livetv/source-first-catalogue.ts` (NEW) — the source-first catalogue + guide. `getSourceFirstLivetvCatalogue(client, { sourceId? })` returns channels from EVERY eligible public source (enabled + playback-eligible status + visibility=public), regardless of `unified_enabled`. The optional `sourceId` filter scopes to ONE source (the heading-row selector). `getSourceFirstLivetvGuide(client, channelId, now)` reads the EPG tables directly through the Phase 3 mapping contract, accepting BOTH `entry:<uuid>` and canonical channel ids. Fail-closed: any read failure returns empty. NO writes (read-only).
+- `src/lib/server/livetv/user-catalogue.ts` — exported `MAX_MAPPED_ENTRIES_LOAD`, `MAX_SOURCES_LOAD`, `safeDisplayUrl` (now `export function`) so the source-first module can reuse them.
+- `src/routes/api/livetv/catalogue/+server.ts` — R-3 source-first: uses `getSourceFirstLivetvCatalogue`; supports the `?sourceId=<uuid>` query param (UUID-validated; invalid → All Sources, never 400). GET-only, rate-limited, no-store, fail-closed.
+- `src/routes/api/livetv/guide/+server.ts` — R-3 source-first: uses `getSourceFirstLivetvGuide`. GET-only, rate-limited, no-store, fail-closed. Returns 400 JSON for invalid channel ids; 429 JSON for rate limits.
+- `src/lib/client/live-tv/unified-catalogue.ts` — `getUnifiedLivetvCatalogue` accepts an optional `sourceId` filter; the cache key includes the sourceId so scoped and unscoped loads don't collide.
+- `src/routes/live-tv/+page.svelte` — R-3 source-first: `loadCatalogue` uses `getUnifiedLivetvCatalogue({ signal, sourceId: selectedSourceFilter })` unconditionally (no flag gate, no legacy branch). `loadGuide` uses `getUnifiedLivetvGuide(channel.id, { signal })` unconditionally. `applySourceFilter` reloads the catalogue scoped to the new source. The heading-row Source selector is preserved (default "All Sources", never "Auto").
+- `src/lib/server/livetv/adapters/m3u.ts` — NEW `normalizeM3ULogoUrl(raw)`: upgrades `http://` → `https://` (the DB requires https); rejects protocol-relative, relative, non-http(s), credentials-bearing, control-char, whitespace, and over-long URLs. The parser now uses it for `tvg-logo` (was the generic `normalizeOptionalTextField` with no URL validation).
+- `src/lib/server/livetv/ingestion.ts` — R-3 logo preservation: the entry update plan's `preserved` field now carries `logoUrl`; the write loop uses `entryPlan.logoUrl ?? entryPlan.preserved.logoUrl ?? null` (a valid existing logo is NOT overwritten with null when the new playlist omits `tvg-logo`).
+
+**Test changes (1 new test file + 3 existing suites updated — 0 existing assertions weakened):**
+
+- `scripts/livetv_r3_catalogue_guide_source_test.ts` (NEW, 57 checks) — the focused R-3 regression suite: §1 the source selector visible/labels "All Sources" (Issue 1), §2 the HTML-not-JSON error fixed (Issue 2), §3 LiveGT OFF no longer blanks JioHotstar/Sony (Issue 3), §4 the guide timeout fixed (Issue 4), §5 the JioHotstar duplicate semantics (Issue 5), §6 the Sony logo parse/persist/preserve (Issue 6), §7 the no-production-flag/data-changes invariant.
+- `scripts/livetv_m3u_parse_test.ts` (+17 → 114 checks) — §11 the `normalizeM3ULogoUrl` behavior (http→https upgrade, protocol-relative/relative/non-http(s) rejection, control-char/whitespace/credentials rejection, end-to-end parser integration, honest null for no-logo playlists).
+- `scripts/live_tv_page_test.ts` (2 assertions updated — 0 weakened) — §2 the catalogue load is signal-wired through the unified client (R-3 source-first); §11 the guide load is through the unified client (no legacy LT-2 call). 22 checks total.
+- `scripts/livetv_phase6_unified_test.ts` (5 assertions updated — 0 weakened) — §5a/5b the catalogue/guide loaders NO LONGER consult the flag gate (R-3 source-first); the legacy load lines are GONE. 162 checks total.
+- `scripts/livetv_r2_source_selection_repair_test.ts` (2 assertions updated — 0 weakened) — §4.5/4.6 the legacy LiveGT gate is GONE (R-3 source-first — JioHotstar/Sony survive LiveGT OFF). 86 checks total.
+
+**Gate outcomes (real exit codes, `pnpm install --frozen-lockfile` environment):**
+
+| Command | Exit | Result |
+|---|---|---|
+| `pnpm check` | **0** | 0 errors, 11 pre-existing `css_unused_selector` warnings |
+| `pnpm run test:livetv` | **0** | all 36 livetv suites green — M3U 114, P4 UI 123, P6 162, R-2 86, R-3 57 |
+| `pnpm test` (all 16 groups) | **0** | green; the full chain passes |
+| `pnpm build` | **0** | vite build + `adapter-netlify ✔ done` + executor written + scheduler no-op |
+| `git diff --check` | **0** | no whitespace/conflict markers |
+
+**Scope, safety, and honesty ledger:**
+
+- NO migration, NO production SQL/data change, NO deploy, NO flag change (`unified_enabled` stays FALSE everywhere). R-3 uses ONLY existing columns.
+- The `unified_enabled` flag is ORTHOGONAL to the R-3 source-first catalogue/guide — the flag remains the owner's lever for the unified PLAYBACK ROUTER (Phase 5); the catalogue/guide surface is now source-first.
+- The resolver's gates (S1/S2/M1/E1 + visibility), the candidate ordering, and the builtin LiveGT V1 direct/embed candidate ordering are UNCHANGED.
+- NO new timeout was added. The watchdogs are unchanged. The guide timeout regression was fixed by removing the legacy guide call (not by increasing the timeout).
+- Real-browser verification: NOT RUN (no browser playback stack/authorized geo). Recorded NOT RUN, never bypassed; the 57-check R-3 regression suite, the 114-check M3U suite, and the 162-check P6 suite are the automated coverage layer.
+- JioHotstar duplicate_channel_id (Issue 5): the behavior is CORRECT — 16 true duplicates in the playlist are deduped; 16 new channels are inserted. The counts are consistent. R-3 adds regression tests pinning the semantics; no code fix needed.
+- Sony logos (Issue 6): R-3 fixes the parser (http→https upgrade) and the ingestion (preserve existing logo on refresh). If the Sony playlist provides NO `tvg-logo` at all, the logo_url stays null (honest) — the UI renders the existing text-initial fallback. R-3 cannot invent logos the playlist doesn't provide.
+
+**Production rollout step requiring owner approval:**
+
+R-3 requires NO production flag change. The source-first catalogue/guide is active immediately on deploy — it returns channels from every eligible public source regardless of `unified_enabled`. The owner should:
+1. Deploy R-3 to production.
+2. Verify the heading-row Source selector is visible (default "All Sources").
+3. Turn LiveGT OFF; verify JioHotstar/Sony channels still appear.
+4. Select JioHotstar in the selector; verify only JioHotstar channels appear.
+5. Click a JioHotstar channel; verify the guide loads (no timeout).
+6. Refresh the Sony source; verify logos appear (if the playlist provides them).
+7. The `unified_enabled` flag remains FALSE — the unified PLAYBACK ROUTER is still opt-in. Activating it is a separate owner decision (the documented Phase 5 rollout).
