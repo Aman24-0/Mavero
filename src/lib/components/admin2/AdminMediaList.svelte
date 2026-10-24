@@ -706,7 +706,7 @@
   <div class="toolbar" data-media-toolbar>
     <div class="search-row">
       <div class="search-input-wrap">
-        <Search size={14} class="search-icon" />
+        <span class="search-icon"><Search size={14} aria-hidden="true" /></span>
         <input type="text" class="search-input" placeholder="Search by title or TMDB ID…" bind:value={searchQuery} oninput={onFilterChange} autocomplete="off" aria-label="Search media library" />
       </div>
     </div>
@@ -737,7 +737,7 @@
        LAST card always scrolls fully into view above the bottom nav. -->
   <div class="cards-scroll" data-media-cards-scroll onscroll={onScroll}>
     {#if loading}
-      <div class="state-msg"><Loader2 size={20} class="spinner" /> Loading media library…</div>
+      <div class="state-msg"><span class="spinner"><Loader2 size={20} aria-hidden="true" /></span> Loading media library…</div>
     {:else if error}
       <div class="state-msg state-error" role="alert"><AlertCircle size={20} /> {error}<button class="retry-btn" onclick={() => loadList(true)}>Retry</button></div>
     {:else if items.length === 0}
@@ -856,7 +856,7 @@
 
     <!-- Loading more indicator -->
     {#if loadingMore}
-      <div class="loading-more"><Loader2 size={16} class="spinner" /> Loading more…</div>
+      <div class="loading-more"><span class="spinner"><Loader2 size={16} aria-hidden="true" /></span> Loading more…</div>
     {/if}
     {#if !loading && !loadingMore && !hasMore && items.length > 0}
       <div class="end-of-list">End of list</div>
@@ -1010,7 +1010,7 @@
       <div class="confirm-actions">
         <button type="button" class="btn btn-cancel" onclick={() => { deleteTarget = null; }} disabled={deleting}>Cancel</button>
         <button type="button" class="btn btn-danger" onclick={confirmDelete} disabled={deleting}>
-          {#if deleting}<Loader2 size={12} class="spinner" /> Deleting…{:else}<Trash2 size={12} /> Delete{/if}
+          {#if deleting}<span class="spinner"><Loader2 size={12} aria-hidden="true" /></span> Deleting…{:else}<Trash2 size={12} /> Delete{/if}
         </button>
       </div>
     </div>
@@ -1047,7 +1047,7 @@
   .search-input-wrap:focus-within { border-color: var(--a2-cyan); }
   .search-input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--a2-text); font-size: var(--a2-text-sm); }
   .search-input::placeholder { color: var(--a2-text-dim); }
-  .search-icon { color: var(--a2-text-dim); flex-shrink: 0; }
+  .search-icon { color: var(--a2-text-dim); flex-shrink: 0; display: inline-flex; align-items: center; }
   .controls-row { display: flex; align-items: center; justify-content: space-between; gap: var(--a2-space-2); }
   .controls-right { display: flex; align-items: center; gap: var(--a2-space-2); flex-shrink: 0; }
   .add-file-btn { display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 14px; border: 1px solid var(--a2-cyan-border); border-radius: var(--a2-radius-sm); background: var(--a2-cyan-soft); color: var(--a2-cyan); font-size: var(--a2-text-sm); font-weight: 600; cursor: pointer; transition: background var(--a2-motion-micro) var(--a2-ease-out), border-color var(--a2-motion-micro) var(--a2-ease-out); }
@@ -1180,7 +1180,7 @@
   .btn-cancel { background: var(--a2-surface-3, #1a1a1a); border-color: var(--a2-border, #222); color: var(--a2-text-muted, #888); }
   .btn-danger { background: rgba(220,60,60,0.12); border-color: rgba(220,60,60,0.3); color: #c44; }
   .btn-danger:hover { background: rgba(220,60,60,0.2); }
-  .spinner { animation: spin 1s linear infinite; }
+  .spinner { animation: spin 1s linear infinite; display: inline-flex; align-items: center; }
 
   @keyframes spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
 

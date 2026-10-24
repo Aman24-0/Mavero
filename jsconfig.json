@@ -9,45 +9,6 @@
     "skipLibCheck": true,
     "sourceMap": true,
     "strict": true,
-    "moduleResolution": "bundler",
-    "baseUrl": ".",
-    "paths": {
-      "$env/dynamic/private": [
-        "./scripts/env-stubs/dynamic-private.ts"
-      ],
-      "$env/dynamic/public": [
-        "./scripts/env-stubs/dynamic-public.ts"
-      ],
-      "$components": [
-        "./src/lib/components"
-      ],
-      "$components/*": [
-        "./src/lib/components/*"
-      ],
-      "$data": [
-        "./src/lib/data"
-      ],
-      "$data/*": [
-        "./src/lib/data/*"
-      ],
-      "$lib": [
-        "./src/lib"
-      ],
-      "$lib/*": [
-        "./src/lib/*"
-      ],
-      "$app/types": [
-        "./.svelte-kit/types/index.d.ts"
-      ],
-      "$app/environment": [
-        "./scripts/env-stubs/app-environment.ts"
-      ],
-      "$app/navigation": [
-        "./scripts/env-stubs/app-navigation.ts"
-      ],
-      "$app/forms": [
-        "./scripts/env-stubs/app-forms.ts"
-      ]
-    }
+    "moduleResolution": "bundler"
   }
 }

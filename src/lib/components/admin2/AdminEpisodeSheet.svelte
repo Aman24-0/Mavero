@@ -784,7 +784,7 @@
           <p class="head-eyebrow">{parent.contentType === 'anime' ? 'Anime Series' : 'TV Series'} · TMDB {parent.tmdbId}</p>
           <h2 id="episode-sheet-title" class="head-title">{parent.title}{parent.year ? ` (${parent.year})` : ''}</h2>
           {#if linkedLoading}
-            <p class="head-progress" aria-live="polite"><Loader2 size={12} class="spinner" /> Loading episodes…</p>
+            <p class="head-progress" aria-live="polite"><span class="spinner"><Loader2 size={12} aria-hidden="true" /></span> Loading episodes…</p>
           {:else if linkedError}
             <p class="head-progress head-progress-error">{linkedError}</p>
           {:else if headerTotalEpisodes != null}
@@ -809,7 +809,7 @@
            label + padding only, count via aria-label, rail scrolls, no
            page overflow). -->
       {#if seasonsLoading}
-        <div class="season-state" aria-live="polite"><Loader2 size={14} class="spinner" /> Loading seasons…</div>
+        <div class="season-state" aria-live="polite"><span class="spinner"><Loader2 size={14} aria-hidden="true" /></span> Loading seasons…</div>
       {:else if seasonsError}
         <div class="season-state season-state-error" role="alert">
           <AlertCircle size={14} /> {seasonsError}
@@ -841,7 +841,7 @@
         <div class="season-toolbar">
           <span class="season-progress" aria-live="polite">
             {#if seasonLoading}
-              <Loader2 size={11} class="spinner" /> Loading…
+              <span class="spinner"><Loader2 size={11} aria-hidden="true" /></span> Loading…
             {:else}
               {#if seasonEpisodes.length > 0}
                 {linkedCountThisSeason}/{seasonEpisodes.length} linked
@@ -946,7 +946,7 @@
               <div class="bulk-actions">
                 <span class="bulk-count">{bulkRefsFilled()} reference{bulkRefsFilled() === 1 ? '' : 's'} entered</span>
                 <button type="button" class="btn btn-apply" onclick={submitBulk} disabled={bulkSubmitting || bulkRefsFilled() === 0}>
-                  {#if bulkSubmitting}<Loader2 size={13} class="spinner" /> Linking…{:else}<Link2 size={13} /> Link {bulkRefsFilled() || ''} episode{bulkRefsFilled() === 1 ? '' : 's'}{/if}
+                  {#if bulkSubmitting}<span class="spinner"><Loader2 size={13} aria-hidden="true" /></span> Linking…{:else}<Link2 size={13} /> Link {bulkRefsFilled() || ''} episode{bulkRefsFilled() === 1 ? '' : 's'}{/if}
                 </button>
               </div>
             {/if}
@@ -1015,7 +1015,7 @@
             </div>
           </div>
         {:else if seasonLoading}
-          <div class="season-state" aria-live="polite"><Loader2 size={14} class="spinner" /> Loading episodes…</div>
+          <div class="season-state" aria-live="polite"><span class="spinner"><Loader2 size={14} aria-hidden="true" /></span> Loading episodes…</div>
         {:else if seasonError}
           <div class="season-state season-state-error" role="alert">
             <AlertCircle size={14} /> {seasonError}
@@ -1106,7 +1106,7 @@
           <div class="bulk-delete-actions">
             {#if bulkDeleteFailedCount() > 0}
               <button type="button" class="bulk-delete-btn" onclick={retryBulkDeleteFailed} disabled={bulkDeleting}>
-                {#if bulkDeleting}<Loader2 size={12} class="spinner" /> Retrying…{:else}<RotateCw size={12} /> Retry failed{/if}
+                {#if bulkDeleting}<span class="spinner"><Loader2 size={12} aria-hidden="true" /></span> Retrying…{:else}<RotateCw size={12} /> Retry failed{/if}
               </button>
             {/if}
             <button type="button" class="bulk-delete-btn bulk-delete-btn-primary" onclick={closeBulkDeleteConfirm} disabled={bulkDeleting}>Done</button>
@@ -1141,7 +1141,7 @@
           <div class="bulk-delete-actions">
             <button type="button" class="bulk-delete-btn" onclick={closeBulkDeleteConfirm} disabled={bulkDeleting}>Cancel</button>
             <button type="button" class="bulk-delete-btn bulk-delete-btn-danger" onclick={submitBulkDelete} disabled={bulkDeleting}>
-              {#if bulkDeleting}<Loader2 size={12} class="spinner" /> Deleting…{:else}<Trash2 size={12} /> Delete {bulkDeleteSelected.size} association{bulkDeleteSelected.size === 1 ? '' : 's'}{/if}
+              {#if bulkDeleting}<span class="spinner"><Loader2 size={12} aria-hidden="true" /></span> Deleting…{:else}<Trash2 size={12} /> Delete {bulkDeleteSelected.size} association{bulkDeleteSelected.size === 1 ? '' : 's'}{/if}
             </button>
           </div>
         {/if}
@@ -1293,7 +1293,7 @@
   .outcome-row.outcome-fail { color: #e5484d; }
   .bulk-outcomes .retry-btn { align-self: flex-start; margin-top: 6px; }
 
-  .spinner { animation: spin 1s linear infinite; }
+  .spinner { animation: spin 1s linear infinite; display: inline-flex; align-items: center; }
   @keyframes spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
 
   /* Task 4 — bulk-delete confirmation: ABOVE the sheet (93), BELOW the
