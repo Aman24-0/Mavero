@@ -387,4 +387,114 @@ console.log('§8 R-0 — adapter run: the playlist URL is body-validated, not ex
   ok(mixed.diagnostics.entryErrors.every((entryError) => !entryError.reason.includes('http')), '§8.8 per-entry diagnostics carry static reasons only (never signed material or URLs)');
 }
 
+// ============================================================
+console.log('§9 R-2 — relative stream URLs are resolved against the playlist base URL');
+// ============================================================
+{
+  // 9.1 — relative URL with NO base: rejected (preserves pre-R-2 behavior).
+  const noBase = classifyM3UStreamUrl('stream.m3u8');
+  ok(noBase.ok === false && noBase.reason === 'invalid_stream_url', '§9.1 a relative URL with no base is rejected as invalid_stream_url (no invented host)');
+
+  // 9.2 — relative URL WITH a valid https base: resolved and classified.
+  const resolved = classifyM3UStreamUrl('stream.m3u8', 'https://provider.example/playlist.php?playlist=1');
+  ok(resolved.ok === true && resolved.value.streamFormat === 'hls', '§9.2 a relative .m3u8 resolves against the playlist base URL');
+  ok(resolved.value.url === 'https://provider.example/stream.m3u8', '§9.3 the resolved URL is the absolute https URL (query string of the base is dropped per RFC 3986)');
+
+  // 9.3 — root-relative URL resolves against the base origin.
+  const rootRel = classifyM3UStreamUrl('/live/channel.m3u8?token=abc', 'https://provider.example/path/playlist.php?id=1');
+  ok(rootRel.ok === true && rootRel.value.url === 'https://provider.example/live/channel.m3u8?token=abc', '§9.4 root-relative URL keeps the base origin + its own path/query');
+
+  // 9.4 — relative URL with .mpd extension resolves to dash.
+  const relDash = classifyM3UStreamUrl('./dash/stream.mpd', 'https://provider.example/playlist.php');
+  ok(relDash.ok === true && relDash.value.streamFormat === 'dash', '§9.5 relative .mpd resolves to dash');
+
+  // 9.5 — relative URL resolving to a NON-https base is rejected (a base
+  // protocol downgrade can never smuggle a non-https stream through).
+  const httpBase = classifyM3UStreamUrl('stream.m3u8', 'http://provider.example/playlist.php');
+  ok(httpBase.ok === false && httpBase.reason === 'invalid_stream_url', '§9.6 a non-https base is treated as no base (relative URL still rejected)');
+
+  // 9.6 — base with credentials is rejected as a base (credentials never
+  // leak into per-entry stream URLs through base resolution).
+  const credsBase = classifyM3UStreamUrl('stream.m3u8', 'https://user:pass@provider.example/playlist.php');
+  ok(credsBase.ok === false && credsBase.reason === 'invalid_stream_url', '§9.7 a base with credentials is treated as no base (no credential leakage)');
+
+  // 9.7 — absolute URLs continue to work when a base is supplied (base is
+  // ignored for absolute inputs — `new URL(abs, base)` returns abs).
+  const abs = classifyM3UStreamUrl('https://cdn.example/live/news.m3u8?token=x', 'https://provider.example/playlist.php');
+  ok(abs.ok === true && abs.value.url === 'https://cdn.example/live/news.m3u8?token=x', '§9.8 absolute URLs are unaffected by the presence of a base');
+
+  // 9.8 — relative URL resolving to a NON-media path extension is still
+  // rejected with `unknown_stream_format` (no format invented).
+  const relUnknown = classifyM3UStreamUrl('player.html?id=1', 'https://provider.example/playlist.php');
+  ok(relUnknown.ok === false && relUnknown.reason === 'unknown_stream_format', '§9.9 relative URL resolving to .html still rejected (no invented format)');
+
+  // 9.9 — a relative URL with control characters is still rejected.
+  const relCtl = classifyM3UStreamUrl('stream\x01.m3u8', 'https://provider.example/playlist.php');
+  ok(relCtl.ok === false && relCtl.reason === 'invalid_stream_url', '§9.10 relative URL with control chars rejected');
+
+  // 9.10 — the full parse flow with a base resolves a playlist of relative
+  // URLs end-to-end (the production regression: 146 entries skipped with
+  // `invalid_stream_url` because no base was supplied).
+  const playlistBody = [
+    '#EXTM3U',
+    '#EXTINF:-1 tvg-id="rel.1" tvg-name="Rel One" tvg-logo="https://cdn.example/one.png" group-title="News",Rel One',
+    'stream/one.m3u8?token=abc',
+    '#EXTINF:-1 tvg-id="rel.2" tvg-name="Rel Two",Rel Two',
+    '/live/two.m3u8',
+    '#EXTINF:-1 tvg-id="rel.3",Rel Three',
+    './dash/three.mpd',
+    '#EXTINF:-1 tvg-id="rel.4",Bad Ext',
+    'player.html?id=4'
+  ].join('\n');
+  const result = parseM3UPlaylist(playlistBody, { playlistBaseUrl: 'https://provider.example/htt/hot.php?playlist=1' });
+  ok(result.channels.length === 3, '§9.11 a PHP-style playlist of relative URLs ingests 3/4 entries (the .html one is rejected)');
+  ok(result.channels[0]!.sourceChannelId === 'rel.1' && result.channels[0]!.endpoints[0]!.url === 'https://provider.example/htt/stream/one.m3u8?token=abc', '§9.12 first entry resolved against the base path');
+  ok(result.channels[1]!.sourceChannelId === 'rel.2' && result.channels[1]!.endpoints[0]!.url === 'https://provider.example/live/two.m3u8', '§9.13 root-relative entry resolved against the base origin');
+  ok(result.channels[2]!.sourceChannelId === 'rel.3' && result.channels[2]!.endpoints[0]!.streamFormat === 'dash', '§9.14 ./-relative .mpd resolved and classified dash');
+  ok(result.diagnostics.skippedCount === 1 && result.diagnostics.skippedReasons['unknown_stream_format'] === 1, '§9.15 the .html entry skipped with the static unknown_stream_format reason');
+
+  // 9.11 — same playlist with NO base: 0 entries (the pre-R-2 regression).
+  const noBaseResult = parseM3UPlaylist(playlistBody);
+  ok(noBaseResult.channels.length === 0, '§9.16 the same playlist without a base ingests zero entries (the documented regression)');
+  ok(noBaseResult.diagnostics.skippedCount === 4 && noBaseResult.diagnostics.skippedReasons['invalid_stream_url'] === 4, '§9.17 all four entries skipped with invalid_stream_url (relative URLs cannot parse without a base)');
+
+  // 9.12 — diagnostics NEVER carry the resolved URL (no signed material).
+  // The diagnostics object carries only static counts and reason strings —
+  // never a URL or query parameter. (The channels array carries the resolved
+  // https URL by design — that is the entry's stream URL, not diagnostics.)
+  const serializedDiag = JSON.stringify(result.diagnostics);
+  ok(!serializedDiag.includes('token=abc'), '§9.18 resolved URLs (with tokens) never appear in diagnostics');
+  ok(!serializedDiag.includes('provider.example'), '§9.19 the upstream origin never appears in diagnostics (only static reason codes)');
+}
+
+// ============================================================
+console.log('§10 R-2 — adapter run: relative stream URLs resolve via the fetched final URL');
+// ============================================================
+{
+  const PUBLIC_DNS = async () => [{ address: '93.184.216.34', family: 4 }];
+  const RUN_SOURCE = { id: 'src-1', slug: 'acme', sourceType: 'm3u_playlist' as const, config: { playlistUrl: 'https://provider.example/htt/hot.php?playlist=1' } };
+
+  // 10.1 — the adapter passes the FETCHED final URL (post-redirect) as the
+  // base. A playlist body of relative URLs now ingests correctly.
+  const run = await m3uPlaylistAdapter.run(RUN_SOURCE, {
+    fetcher: async () => new Response([
+      '#EXTM3U',
+      '#EXTINF:-1 tvg-id="hot.1" tvg-name="Hot One" tvg-logo="https://cdn.example/hot.png" group-title="Hot",Hot One',
+      'stream/hot.m3u8?sig=abc',
+      '#EXTINF:-1 tvg-id="hot.2",Hot Two',
+      '/live/hot2.m3u8'
+    ].join('\n'), { status: 200, headers: { 'content-type': 'application/vnd.apple.mpegurl' } }),
+    dnsResolver: PUBLIC_DNS
+  });
+  ok(run.channels.length === 2, '§10.1 a PHP-endpoint playlist of relative URLs ingests both entries through the adapter run');
+  ok(run.channels[0]!.sourceChannelId === 'hot.1' && run.channels[0]!.endpoints[0]!.url === 'https://provider.example/htt/stream/hot.m3u8?sig=abc', '§10.2 the first relative URL resolved against the fetched playlist URL');
+  ok(run.channels[1]!.sourceChannelId === 'hot.2' && run.channels[1]!.endpoints[0]!.url === 'https://provider.example/live/hot2.m3u8', '§10.3 a root-relative URL resolved against the origin');
+  ok(run.channels[0]!.endpoints[0]!.streamFormat === 'hls', '§10.4 the resolved URL is classified hls by its path extension');
+
+  // 10.2 — diagnostics remain safe (no resolved URL or query string surfaces).
+  const serialized = JSON.stringify(run.diagnostics);
+  ok(!serialized.includes('sig='), '§10.5 the resolved URL query string never appears in diagnostics');
+  ok(!serialized.includes('provider.example'), '§10.6 the upstream origin never appears in diagnostics (only static reason codes)');
+}
+
 console.log(`\n=== livetv Phase 2 M3U parse verification: ${passed} checks PASSED ===`);

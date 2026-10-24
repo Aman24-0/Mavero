@@ -71,7 +71,7 @@
   import { onDestroy, onMount } from 'svelte';
   import { page as appPage } from '$app/state';
   import { PRODUCTION_ORIGIN } from '$lib/shared/seo';
-  import { Search, X, Radio, RefreshCw, LoaderCircle, SlidersHorizontal, BookOpen, ChevronLeft, ChevronRight } from 'lucide-svelte';
+  import { Search, X, Radio, RefreshCw, LoaderCircle, SlidersHorizontal, BookOpen, ChevronLeft, ChevronRight, ChevronDown, Check } from 'lucide-svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import ScrollToTop from '$components/ScrollToTop.svelte';
   import ErrorState from '$components/ErrorState.svelte';
@@ -114,6 +114,26 @@
     trackLiveTvFallbackEmbed
   } from '$lib/client/live-tv/analytics';
   import type { LiveTvChannel, LiveTvGuide as LiveTvGuideModel } from '$lib/client/live-tv/types';
+  import type { PageData } from './$types';
+
+  // ---------------------------------------------------------------------
+  // R-2 — SSR availability guard. `data.availability.available` is the
+  // AUTHORITATIVE source ON/OFF contract: when false (no eligible public
+  // source — every source OFF / non-eligible / non-public) the page renders
+  // the honest unavailable state and NEVER calls the legacy LiveGT
+  // catalogue path. This closes the R-1 regression where a disabled
+  // LiveGT source could bypass the owner's decision through the legacy
+  // fallback (the unified catalogue path already filtered by source.enabled
+  // in R-1, but the legacy path ran unconditionally when the unified flag
+  // was OFF — which is the production default).
+  // ---------------------------------------------------------------------
+  let { data } = $props<{ data: PageData }>();
+  const availability = $derived(data.availability);
+  const sourcesAvailable = $derived(availability?.available === true);
+  // The bounded list of eligible public sources for the Source selector.
+  const selectorSources = $derived(availability?.sources ?? []);
+  /** The currently-applied source filter (null = All Sources). */
+  let selectedSourceFilter = $state<string | null>(null);
 
   // ---------------------------------------------------------------------
   // Safe message mapping — ONLY fixed LT-2/LT-3 table text is ever shown.
@@ -149,6 +169,27 @@
   let catalogueController: AbortController | undefined;
 
   async function loadCatalogue(): Promise<void> {
+    // R-2 — the SSR availability guard. When no eligible public source
+    // exists, render the honest unavailable state and NEVER call the legacy
+    // LiveGT catalogue path (closing the R-1 regression where a disabled
+    // LiveGT source could bypass the owner's decision through the legacy
+    // fallback). The unified flag is irrelevant here: the source ON/OFF
+    // contract is the AUTHORITATIVE gate, applied before any catalogue
+    // fetch is attempted.
+    if (!sourcesAvailable) {
+      catalogueState = 'ready';
+      channels = [];
+      catalogueMessage = null;
+      return;
+    }
+    // R-2 — the legacy LiveGT catalogue path is LiveGT-SPECIFIC. When the
+    // unified flag is OFF (production default) the page can ONLY show the
+    // LiveGT V1 catalogue. If the LiveGT source is not in the eligible
+    // public set (the owner turned it OFF), the legacy path must NOT run
+    // — even if other sources are available (the legacy catalogue API
+    // does not know about them). The unified catalogue path (flag ON)
+    // already respects per-source enabled state in R-1.
+    const livegtAvailable = selectorSources.some((s: AvailabilitySource) => s.builtin === true);
     catalogueController?.abort();
     const controller = new AbortController();
     catalogueController = controller;
@@ -166,11 +207,25 @@
       // A flag-ON catalogue that is empty (no admin-mapped channels yet)
       // renders the existing honest empty state below — never a fallback
       // to the legacy list.
+      //
+      // R-2 — the legacy branch is gated on `livegtAvailable` (the LiveGT
+      // source is in the eligible public set). A disabled LiveGT source
+      // produces an honest empty list, never a bypass.
       // -----------------------------------------------------------------
       if (await isUnifiedLivetvGateEnabled()) {
         const unifiedList = await getUnifiedLivetvCatalogue({ signal: controller.signal });
         if (controller.signal.aborted) return; // superseded/unmounted — silent
         channels = unifiedList;
+        catalogueState = 'ready';
+        return;
+      }
+      // R-2 — the legacy LiveGT catalogue path. The LiveGT source must be
+      // in the eligible public set (the `builtin` marker on the availability
+      // wire). If the owner turned the LiveGT source OFF, the legacy path
+      // produces an honest empty list — NEVER a bypass through the LiveGT
+      // V1 API (which doesn't know about the source registry).
+      if (!livegtAvailable) {
+        channels = [];
         catalogueState = 'ready';
         return;
       }
@@ -195,6 +250,14 @@
   // immediately and composes with the toolbar search. Category values are
   // the ORIGINAL provider taxonomy (language-like values included as
   // ordinary categories; no separate language dimension).
+  //
+  // R-2 — the SOURCE filter. A channel belongs to a source when one of its
+  // catalogue-provided alternatives carries that source's display name
+  // (the alternatives' labels ARE the admin display names; never raw ids).
+  // The filter is applied FIRST so the search/category filters compose on
+  // the already-source-scoped list. In All Sources mode (null) every
+  // channel remains visible — the deduplication model in R-1 already
+  // guarantees no duplicate cards.
   // ---------------------------------------------------------------------
   let query = $state('');
   let category = $state(''); // '' = All
@@ -203,16 +266,90 @@
   // LT-18 sheet open state (page-owned; overlays, never page sections).
   let filterSheetOpen = $state(false);
   let guideSheetOpen = $state(false);
+  // R-2 — the Source selector sheet (heading-row affordance).
+  let sourceSheetOpen = $state(false);
+
+  /**
+   * R-2 — the active source filter's DISPLAY NAME (or null = All Sources).
+   * Resolved from `selectorSources` by id so the catalogue's source labels
+   * (the alternatives' `label` field) match exactly. Selecting a source
+   * scopes the catalogue to that source's channels: a channel survives
+   * the filter iff it carries an alternative whose label equals the
+   * selected source's display name. The channel identity, guide and
+   * recents are NEVER touched by the filter — only the visible set.
+   */
+  type AvailabilitySource = { id: string; name: string; builtin: boolean };
+  const selectedSourceName = $derived.by<string | null>(() => {
+    if (selectedSourceFilter === null) return null;
+    const match = selectorSources.find((s: AvailabilitySource) => s.id === selectedSourceFilter);
+    return match ? match.name : null;
+  });
+  /** The currently-displayed source label for the heading-row button. */
+  const sourceSelectorLabel = $derived(selectedSourceName ?? 'All Sources');
 
   const categories = $derived(extractLiveTvCategories(channels));
   const visibleChannels = $derived.by(() => {
-    let list = filterLiveTvChannelsByCategory(channels, category);
+    // R-2 — source filter first (cheap predicate; narrows the working set
+    // before the category/search filters run).
+    let list = channels;
+    if (selectedSourceName !== null) {
+      list = list.filter((channel) => {
+        const alts = channel.sources ?? [];
+        return alts.some((alt) => alt.label === selectedSourceName);
+      });
+    }
+    list = filterLiveTvChannelsByCategory(list, category);
     const trimmed = query.trim();
     if (trimmed) list = filterLiveTvChannelsByQuery(list, trimmed);
     return list;
   });
-  const filtersActive = $derived(Boolean(category));
-  const activeFilterCount = $derived(category ? 1 : 0);
+  const filtersActive = $derived(Boolean(category) || selectedSourceFilter !== null);
+  const activeFilterCount = $derived((category ? 1 : 0) + (selectedSourceFilter !== null ? 1 : 0));
+
+  /**
+   * R-2 — select a source from the heading-row Source selector. Switching
+   * the source dimension is a CATALOGUE-CONTEXT change, not a playback
+   * change: the visible set narrows to that source's channels, the
+   * selected-channel state is cleared when the current selection is no
+   * longer in the filtered set (incompatible source), and any in-flight
+   * catalogue/guide request is aborted to resist stale overwrites. The
+   * selected source is preserved while browsing and selecting channels.
+   */
+  function applySourceFilter(sourceId: string | null): void {
+    if (sourceId === selectedSourceFilter) {
+      sourceSheetOpen = false;
+      return;
+    }
+    selectedSourceFilter = sourceId;
+    sourceSheetOpen = false;
+    // If the current selection is no longer in the filtered set, clear it
+    // (the user is now browsing a different source — the prior channel
+    // is incompatible). The guide recents remain in storage; only the
+    // active session is reset.
+    if (selectedChannel) {
+      const selectedId = selectedChannel.id;
+      const stillVisible = visibleChannels.some((c) => c.id === selectedId);
+      if (!stillVisible) {
+        sessionController?.abort();
+        destroyEngineSafely(engine);
+        embedFallbackChannelId = null;
+        unifiedEmbedSrc = null;
+        selectedChannel = null;
+        activeSourceId = null;
+        sourceSwitchMessage = null;
+        guide = null;
+      }
+    }
+    resetVisibleLimit();
+  }
+
+  function clearSourceFilter(): void {
+    applySourceFilter(null);
+  }
+
+  function toggleSourceSheet(): void {
+    sourceSheetOpen = !sourceSheetOpen;
+  }
 
   // Incremental rendering: the catalogue can exceed 1000 channels; the grid
   // renders in bounded batches behind an IntersectionObserver sentinel (the
@@ -862,8 +999,10 @@
 </svelte:head>
 
 <div class="live-tv-page">
-  <!-- LT-18 — the compact hero: heading only (search moved to the toolbar,
-       categories into the Filter sheet). -->
+  <!-- LT-18 — the compact hero: heading + the R-2 Source selector on the
+       far right of the row. Search moved to the toolbar, categories into
+       the Filter sheet. The Source selector scopes the catalogue to ONE
+       eligible source's channels (or All Sources — the explicit default). -->
   <section class="ltv-hero" aria-label="Live TV">
     <div class="ltv-hero-inner">
       <h1 class="ltv-heading">
@@ -872,23 +1011,77 @@
         <span class="heading-sep" aria-hidden="true">/</span>
         <span class="heading-page">Live TV</span>
       </h1>
+      {#if sourcesAvailable && selectorSources.length > 0}
+        <div class="ltv-source-picker">
+          <button
+            type="button"
+            class="ltv-source-button"
+            onclick={toggleSourceSheet}
+            aria-haspopup="dialog"
+            aria-expanded={sourceSheetOpen}
+            aria-label="Filter channels by source. Current: {sourceSelectorLabel}"
+          >
+            <span class="ltv-source-label">Source</span>
+            <span class="ltv-source-value">{sourceSelectorLabel}</span>
+            <ChevronDown size={14} aria-hidden="true" />
+          </button>
+          {#if sourceSheetOpen}
+            <div class="ltv-source-sheet" role="dialog" aria-label="Choose a source" aria-modal="true">
+              <button
+                type="button"
+                class="ltv-source-option"
+                class:active={selectedSourceFilter === null}
+                onclick={() => applySourceFilter(null)}
+              >
+                <span class="ltv-source-option-label">All Sources</span>
+                {#if selectedSourceFilter === null}<Check size={14} aria-hidden="true" />{/if}
+              </button>
+              {#each selectorSources as source (source.id)}
+                <button
+                  type="button"
+                  class="ltv-source-option"
+                  class:active={selectedSourceFilter === source.id}
+                  onclick={() => applySourceFilter(source.id)}
+                >
+                  <span class="ltv-source-option-label">{source.name}</span>
+                  {#if selectedSourceFilter === source.id}<Check size={14} aria-hidden="true" />{/if}
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      {/if}
     </div>
   </section>
 
-  <div class="ltv-body">
-    <!-- Player + channel information (player receives visual priority;
-         native controls live INSIDE the player surface — LT-18). -->
-    <section class="ltv-player-column" aria-label="Live TV player and channel information">
-      <LiveTvPlayer
-        bind:video={videoEl}
-        {engine}
-        {resolvingChannel}
-        {sessionErrorMessage}
-        embedChannelId={embedFallbackChannelId}
-        {embedReloadToken}
-        unifiedEmbedSrc={unifiedEmbedSrc}
-        onembedready={handleUnifiedEmbedReady}
-        onretry={retryPlayback}
+  {#if !sourcesAvailable}
+    <!-- R-2 — the SSR availability guard's honest unavailable state. No
+         eligible public source exists (every source OFF / non-eligible /
+         non-public); the legacy LiveGT catalogue path is NEVER loaded. The
+         navbar also hides the link (defense in depth); the route guard is
+         the authority. -->
+    <section class="ltv-unavailable" aria-label="Live TV unavailable">
+      <div class="ltv-unavailable-card">
+        <Radio size={28} aria-hidden="true" />
+        <h2 class="ltv-unavailable-title">Live TV is unavailable</h2>
+        <p class="ltv-unavailable-message">No Live TV sources are turned on right now. Try again later.</p>
+      </div>
+    </section>
+  {:else}
+    <div class="ltv-body">
+      <!-- Player + channel information (player receives visual priority;
+           native controls live INSIDE the player surface — LT-18). -->
+      <section class="ltv-player-column" aria-label="Live TV player and channel information">
+        <LiveTvPlayer
+          bind:video={videoEl}
+          {engine}
+          {resolvingChannel}
+          {sessionErrorMessage}
+          embedChannelId={embedFallbackChannelId}
+          {embedReloadToken}
+          unifiedEmbedSrc={unifiedEmbedSrc}
+          onembedready={handleUnifiedEmbedReady}
+          onretry={retryPlayback}
         onuseraction={handlePlayerUserAction}
       />
 
@@ -1105,6 +1298,7 @@
       </div>
     </section>
   </div>
+  {/if}
 </div>
 
 <!-- LT-18 — the filter + guide sheets: overlays, never page sections. -->
@@ -1144,7 +1338,96 @@
       radial-gradient(circle at 80% -30%, var(--color-primary-soft), transparent 50%),
       var(--color-bg);
   }
-  .ltv-hero-inner { width: min(1040px, 100%); margin-inline: auto; }
+  .ltv-hero-inner {
+    width: min(1040px, 100%);
+    margin-inline: auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  /* R-2 — the heading-row Source selector (compact button + sheet). */
+  .ltv-source-picker { position: relative; display: inline-flex; }
+  .ltv-source-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: var(--color-surface-2, var(--color-bg));
+    border: 1px solid var(--color-border-strong, var(--color-border));
+    border-radius: 10px;
+    color: var(--color-text);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background .15s ease, border-color .15s ease;
+    max-width: 60vw;
+  }
+  .ltv-source-button:hover { background: var(--color-surface-3, var(--color-surface-2)); }
+  .ltv-source-button:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+  .ltv-source-label { color: var(--color-text-muted); font-weight: 500; font-size: 12px; }
+  .ltv-source-value {
+    color: var(--color-text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 40vw;
+  }
+  .ltv-source-sheet {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    min-width: 220px;
+    max-width: 90vw;
+    background: var(--color-surface-1, var(--color-bg));
+    border: 1px solid var(--color-border-strong, var(--color-border));
+    border-radius: 12px;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, .32);
+    z-index: 60;
+    padding: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .ltv-source-option {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 9px 12px;
+    background: transparent;
+    border: none;
+    border-radius: 8px;
+    color: var(--color-text);
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    text-align: left;
+    transition: background .12s ease;
+  }
+  .ltv-source-option:hover { background: var(--color-surface-2, rgba(255,255,255,.06)); }
+  .ltv-source-option.active { background: var(--color-primary-soft); color: var(--color-primary); }
+  .ltv-source-option-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* R-2 — the honest unavailable state (no eligible public source). */
+  .ltv-unavailable { padding: 60px var(--ltv-gutter); display: flex; justify-content: center; }
+  .ltv-unavailable-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    padding: 40px 28px;
+    background: var(--color-surface-1, var(--color-bg));
+    border: 1px solid var(--color-border);
+    border-radius: 16px;
+    max-width: 440px;
+    text-align: center;
+    color: var(--color-text-muted);
+  }
+  .ltv-unavailable-title { margin: 0; font-size: 1.15rem; color: var(--color-text); font-weight: 700; }
+  .ltv-unavailable-message { margin: 0; font-size: 14px; line-height: 1.5; }
 
   .ltv-heading {
     display: inline-flex;

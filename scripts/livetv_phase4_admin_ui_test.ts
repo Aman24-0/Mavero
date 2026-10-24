@@ -171,7 +171,7 @@ console.log('\n§7 — R-1 create sheet (per-type fields, availability defaults)
   ok(/\{#if !editingSource\}[\s\S]{0,200}type="checkbox" name="enabled"[\s\S]{0,200}Enabled immediately/.test(livetvPage), '7b. enablement is an explicit admin opt-in checkbox (never automatic)');
   ok(!/checked={true}/.test(livetvPage.slice(livetvPage.indexOf('name="enabled"'))), '7c. the enabled checkbox defaults to OFF');
   const configSection = livetvPage.slice(livetvPage.indexOf('heading="Configuration"'));
-  ok(/a playlist endpoint may be a script\/PHP URL with a query string/.test(configSection), '7d. the configuration copy documents the query-string playlist URL (body-validated)');
+  ok(/a playlist URL may be a PHP script with a query string/i.test(configSection), '7d. the configuration copy documents the query-string playlist URL (body-validated) — concise R-2 wording');
   ok(/Source type \*<\/span>/.test(livetvPage), '7e. the create sheet exposes the source-type selection');
 }
 
@@ -193,7 +193,7 @@ console.log('\n§9 — Refresh semantics inside the source sheet');
   ok(/<form method="POST" action="\?\/refreshSource" use:enhance>/.test(sheetBlock), '9a. per-source Refresh is wired to the existing rate-limited action');
   ok(/<form method="POST" action="\?\/previewSource" use:enhance>/.test(sheetBlock), '9b. per-source Preview (dry run) is wired to the existing rate-limited action');
   ok(/refreshKind === 'source' \|\| refreshOutcome\.kind === 'source-preview'|\{#if refreshOutcome\}/.test(livetvPage), '9c. the outcome block renders the typed refresh result');
-  ok(/'source-preview'/.test(livetvPage) && /Preview \(dry run — nothing was written\)/.test(livetvPage), '9d. preview results are explicitly labeled as a dry run');
+  ok(/'source-preview'/.test(livetvPage) && /Dry run — nothing was written/.test(livetvPage), '9d. preview results are explicitly labeled as a dry run (concise R-2 wording)');
   ok(!/new XMLHttpRequest|fetch\(/.test(livetvPage), '9e. the page builds NO competing fetch pipeline (mutations are form actions)');
   ok(!/\/api\/admin\/livetv/.test(livetvPage), '9f. the page does not round-trip through the JSON endpoints (it calls the services server-side)');
 }
@@ -217,7 +217,7 @@ console.log('\n§11 — Isolation + unified enablement');
   const refreshEndpoint = readCode('src/routes/api/admin/livetv/sources/refresh/+server.ts');
   ok(/requireAdmin/.test(refreshEndpoint), '11e. the Phase 2 JSON endpoints remain intact (admin-only)');
   ok(!/engine:\s*'/.test(livetvServer), '11f. no engine is ever CONFIGURED in the admin service');
-  ok(/playback METHODS derived from the typed endpoint kind/.test(livetvPage), '11g. the UI documents the derived-engine contract');
+  ok(/playback engines \(DASH\/HLS\/iframe\) are derived from the typed endpoint kind/i.test(livetvPage), '11g. the UI documents the derived-engine contract (concise R-2 wording in the Identity section description)');
   ok(!/unified_enabled/.test(livetvPage), '11h. the primary UI no longer surfaces the owner rollback lever (the overview is gone; the lever is not admin-page writable either)');
 }
 

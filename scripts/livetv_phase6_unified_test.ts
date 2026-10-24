@@ -840,7 +840,11 @@ const CHAN_1 = { id: 'chan-1', name: 'Zeta One', category: 'News', logo_url: 'ht
   ok(page.includes('const byId = new Map(channels.map((channel) => [channel.id, channel]));'), '5d.3 recent rows resolve against the LIVE catalogue (stale/deleted ids drop out gracefully)');
 
   // 5e. Existing UX markers intact (search/filter/a11y — no redesign).
-  ok(page.includes('filterLiveTvChannelsByCategory(channels, category)') && page.includes('filterLiveTvChannelsByQuery(list, trimmed)'), '5e.1 search + category filtering run over the merged list via the EXISTING pure utilities');
+  // R-2: the source filter is applied FIRST (narrowing `channels` to `list`),
+  // then the existing pure utilities run over the narrowed list. The test
+  // checks both utilities are still called (the variable name changed from
+  // `channels` to `list` to accommodate the source-filter step).
+  ok(page.includes('filterLiveTvChannelsByCategory(') && page.includes('filterLiveTvChannelsByQuery('), '5e.1 search + category filtering run via the EXISTING pure utilities (R-2: source filter narrows the input first)');
   ok(page.includes('aria-label="Channels"') && page.includes('aria-label="Channel tools"'), '5e.2 the existing section labels are intact');
   ok(page.includes('<LiveTvFilterSheet') && page.includes('<LiveTvGuideSheet'), '5e.3 the filter + guide sheets are unchanged page chrome');
   ok(page.includes('channel-skeleton') && page.includes('aria-busy="true"'), '5e.4 the loading skeleton state is intact');

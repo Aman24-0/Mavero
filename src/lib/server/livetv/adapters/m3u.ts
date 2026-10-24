@@ -79,6 +79,17 @@ export type M3UParseOptions = {
         now?: () => number;
         /** Cancellation signal honored between lines. */
         signal?: AbortSignal;
+        /**
+         * R-2 — the playlist's OWN absolute https URL, used as the base for
+         * resolving RELATIVE stream URLs (`stream.m3u8`, `/path/a.m3u8`,
+         * `./b.mpd?token=1`). Real-world playlists (e.g. PHP-generated ones)
+         * frequently emit relative stream URLs; without base resolution they
+         * fail `new URL()` and produce `invalid_stream_url` for every entry.
+         * When omitted, relative URLs are still rejected (the prior behavior).
+         * The base is itself https-validated before any resolution attempt;
+         * it is NEVER echoed into diagnostics or per-entry errors.
+         */
+        playlistBaseUrl?: string;
 };
 
 export type M3UParseResult = {
@@ -212,27 +223,62 @@ export type M3UStreamClassification = {
 };
 
 /**
- * Validates one playlist stream URL and classifies its format from the URL
- * PATH EXTENSION ONLY (.mpd → dash; .m3u8/.m3u → hls). Anything else is
- * rejected — no format is ever invented, and a web page is never treated as
- * a manifest. Returns a static reason string on failure.
+ * Validates one playlist stream URL and classifies its format. The format is
+ * established from the URL PATH EXTENSION (.mpd → dash; .m3u8/.m3u → hls) OR,
+ * when a base URL is supplied and the entry is RELATIVE, from the resolved
+ * URL's path. Anything else is rejected — no format is ever invented, and a
+ * web page is never treated as a manifest. Returns a static reason string on
+ * failure.
+ *
+ * R-2: when `playlistBaseUrl` is supplied, RELATIVE stream URLs are resolved
+ * against it BEFORE validation. This fixes the production regression where
+ * PHP-generated playlists (e.g. hot.php?playlist=1) emit relative stream
+ * URLs that previously failed `new URL()` and produced `invalid_stream_url`
+ * for every entry. The base is itself https-validated here (defense in
+ * depth — the fetcher already enforces this); a non-https base is treated
+ * as "no base" so relative URLs are rejected (preserves the prior fail-closed
+ * behavior for unsafe bases).
  */
-export function classifyM3UStreamUrl(raw: string): { ok: true; value: M3UStreamClassification } | { ok: false; reason: LivetvEntryErrorReason } {
+export function classifyM3UStreamUrl(raw: string, playlistBaseUrl?: string): { ok: true; value: M3UStreamClassification } | { ok: false; reason: LivetvEntryErrorReason } {
         const trimmed = raw.trim();
         if (!trimmed) return { ok: false, reason: 'missing_stream_url' };
         if (trimmed.length > 2048) return { ok: false, reason: 'url_too_long' };
-        if (/\s/.test(trimmed) || /[\u0000-\u001f\u007f]/.test(trimmed)) return { ok: false, reason: 'invalid_stream_url' };
+        if (/[\u0000-\u001f\u007f]/.test(trimmed)) return { ok: false, reason: 'invalid_stream_url' };
+        // Whitespace INSIDE the trimmed URL is invalid (a stream URL is a single
+        // token). The earlier /\s/ check is retained for parity with the
+        // pre-R-2 behavior (control characters already covered above).
+        if (/\s/.test(trimmed)) return { ok: false, reason: 'invalid_stream_url' };
+
+        // R-2 — resolve relative URLs against the playlist's own URL when one
+        // was supplied. The base must itself be a valid https URL; anything
+        // unsafe degrades to "no base" (relative URLs then fail `new URL()`
+        // and return `invalid_stream_url`, matching the pre-R-2 behavior).
+        let base: URL | null = null;
+        if (playlistBaseUrl) {
+                try {
+                        const parsedBase = new URL(playlistBaseUrl);
+                        if (parsedBase.protocol === 'https:' && !parsedBase.username && !parsedBase.password) base = parsedBase;
+                } catch {
+                        base = null;
+                }
+        }
+
         let url: URL;
         try {
-                url = new URL(trimmed);
+                url = base !== null ? new URL(trimmed, base) : new URL(trimmed);
         } catch {
                 return { ok: false, reason: 'invalid_stream_url' };
         }
         if (url.protocol !== 'https:') return { ok: false, reason: 'non_https_stream_url' };
         if (url.username || url.password) return { ok: false, reason: 'url_credentials_rejected' };
+        // The resolved URL's full string is bounded (a relative URL resolved
+        // against a long base CAN exceed 2048 — reject the entry rather than
+        // truncate, matching the absolute-URL behavior).
+        const resolvedString = url.toString();
+        if (resolvedString.length > 2048) return { ok: false, reason: 'url_too_long' };
         const pathname = url.pathname.toLowerCase();
-        if (pathname.endsWith('.mpd')) return { ok: true, value: { url: trimmed, streamFormat: 'dash' } };
-        if (pathname.endsWith('.m3u8') || pathname.endsWith('.m3u')) return { ok: true, value: { url: trimmed, streamFormat: 'hls' } };
+        if (pathname.endsWith('.mpd')) return { ok: true, value: { url: resolvedString, streamFormat: 'dash' } };
+        if (pathname.endsWith('.m3u8') || pathname.endsWith('.m3u')) return { ok: true, value: { url: resolvedString, streamFormat: 'hls' } };
         // Unknown (includes .html/.php player pages, bare hosts, extensionless
         // streams, query-param format hints) — format cannot be established
         // safely, so the entry is skipped rather than guessed.
@@ -294,7 +340,7 @@ export function parseM3UPlaylist(text: string, options: M3UParseOptions = {}): M
         };
 
         const flushEntry = (entry: PendingEntry, url: string): void => {
-                const classification = classifyM3UStreamUrl(url);
+                const classification = classifyM3UStreamUrl(url, options.playlistBaseUrl);
                 if (!classification.ok) {
                         diagnostics.noteError(entry.entryIndex, normalizeSourceChannelId(entry.tvgIdRaw), classification.reason);
                         return;
@@ -518,6 +564,12 @@ export const m3uPlaylistAdapter: LivetvSourceAdapter = {
                         throw error;
                 }
 
+                // R-2 — parse options carry the injected clock/signal (tests
+                // and cancellation); `playlistBaseUrl` is filled in AFTER the
+                // fetch returns the configuration-data URL the fetcher
+                // already https-validated at every redirect hop.
+                const parseOptions: M3UParseOptions = { now: deps.now, signal: deps.signal };
+
                 let text: string;
                 try {
                         const document = await fetchLivetvSourceText(config.playlistUrl, {
@@ -529,11 +581,18 @@ export const m3uPlaylistAdapter: LivetvSourceAdapter = {
                                 signal: deps.signal
                         });
                         text = document.text;
+                        // R-2 — pass the playlist's own final URL (after the
+                        // bounded, SSRF-guarded redirect chain) as the base
+                        // for resolving RELATIVE stream URLs inside the body.
+                        // `finalUrl` is the configuration-data URL the fetcher
+                        // already https-validated at every hop; re-validating
+                        // https-ness inside the classifier is defense in depth.
+                        parseOptions.playlistBaseUrl = document.finalUrl;
                 } catch (error) {
                         throw adapterErrorFromFetch(error);
                 }
 
-                const parsed = parseM3UPlaylist(text, { now: deps.now, signal: deps.signal });
+                const parsed = parseM3UPlaylist(text, parseOptions);
                 return { adapterId: 'm3u_playlist', channels: parsed.channels, diagnostics: parsed.diagnostics };
         }
 };

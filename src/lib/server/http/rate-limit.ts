@@ -144,6 +144,12 @@ export const RATE_LIMIT_RULES = {
   // legacy catalogue); each call is a handful of scoped DB reads. 30/min
   // per identity mirrors the Phase 5 public probe budget.
   livetvCatalogue: { limit: 30, windowMs: 60_000 },
+  // Unified Live TV R-2 — public availability probe. Called by the navbar
+  // (every page load, when the consumer AppShell renders) and by the
+  // /live-tv SSR guard. ONE bounded DB read per call (sources table only).
+  // 60/min per identity covers a typical browsing session without caching
+  // a stale answer (the owner may toggle a source at any time).
+  livetvAvailability: { limit: 60, windowMs: 60_000 },
   // Unified Live TV Phase 6 — public unified guide (Phase 3 mapping
   // contract). One call per channel selection (client-cached 30 seconds
   // like the legacy guide); bounded current+upcoming reads per call.

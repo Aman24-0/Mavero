@@ -638,3 +638,103 @@ A complete, production-conscious redesign of the Live TV ADMIN SURFACE and the u
 - `requireAdmin` remains on the load and EVERY action (including the new `sourceChannels`); RLS unchanged; SSRF/https validation unchanged; the resolver's gates unchanged; pagination and ids validated/bounded.
 - `unified_enabled` stays FALSE everywhere in code and tests; the legacy path stays byte-identical and suite-pinned. Activation/deployment remains the owner's documented process.
 
+---
+
+## 19. R-2 — Source-Selection Repair & Production Regression Audit (owner-initiated 2026-10-24, branch `main`)
+
+> Naming note: the owner's task codename **R-2** names THIS round. The worklog's R-0/R-1 entries are retained verbatim as history.
+
+An evidence-based audit and repair of the deployed R-1 implementation against eight owner-reported production problems. NOT a data-model redesign: every table, migration, RLS policy and Phase 1–8 + R-0/R-1 backend capability remains intact. The owner's `unified_enabled` lever is untouched; R-2 adds an AUTHORITATIVE source ON/OFF contract that the legacy fallback can no longer bypass.
+
+### 19.1 Root cause: the LiveGT V1 timeout regression (Issue 5)
+
+**Audit conclusion:** the R-1 commit `c8fe7bb` did NOT modify the LiveGT V1 legacy playback path. The legacy `selectChannel` flow (`resolveLiveTvPlayback` → `LiveTvPlaybackEngine.load`) is byte-identical pre/post R-1. The R-1 additions (`probeSelection`, `switchSource`, the per-channel `<select>` Source control, the unified catalogue's per-source alternatives DTO) are gated on the unified flag — they cannot affect the production-default legacy path.
+
+**The correlated defect (Issue 3):** when the LiveGT source is switched OFF but the unified flag is OFF (production default), the legacy catalogue path ran UNCONDITIONALLY — bypassing the owner's OFF decision. The legacy `getLiveTvChannels()` calls LiveGT V1's `/api/public/channels` directly (a third-party API that does not know about the Mavero source registry). When LiveGT V1's upstream (livetgtv.lovable.app — a Lovable-hosted app with intermittent availability) is slow, the unconditional legacy call compounds any perceived timeout regression.
+
+**Fix:** the R-2 source ON/OFF contract (§19.2) makes the legacy path HONOR the source registry state. When the LiveGT source is OFF, the legacy path returns an honest empty list — never an upstream call. This eliminates the redundant latency when the source is OFF.
+
+**Honest disclosure:** real-browser playback verification of LiveGT V1 was NOT RUN in this environment (no authorized playback stack/geo). The R-1 worklog records the same. The code-trace evidence above is the authoritative finding; upstream LiveGT V1 CDN/DRM/geo realities remain honestly reported by the existing error taxonomy.
+
+### 19.2 The authoritative source ON/OFF contract (Issues 3, 5)
+
+A source contributes user-visible channels ONLY when ALL of:
+- `enabled = true` (the persisted ON/OFF control — the operational `status` NEVER overrides this)
+- `status` is playback-eligible (`LIVETV_PLAYBACK_ELIGIBLE_STATUSES`: active/experimental/maintenance)
+- `visibility = 'public'`
+
+The contract is enforced at FOUR layers (defense in depth):
+
+1. **Server function** `getLivetvAvailabilityState(client)` in `user-catalogue.ts` — the authoritative read. Returns `{ available: boolean, sources: LivetvAvailabilitySourceWire[] }` where each source carries `{ id, name, builtin }` (the `builtin` marker identifies the seeded LiveGT V1 source so the page can decide whether the legacy path is allowed). Fail-closed: any read error returns `available: false, sources: []`.
+2. **Public API endpoint** `GET /api/livetv/availability` — rate-limited (`livetvAvailability`, 60/min/identity), `no-store`, GET-only, zero writes. Read via the service-role admin client (the public-read precedent).
+3. **SSR route guard** `src/routes/live-tv/+page.server.ts` — calls `getLivetvAvailabilityState` and passes `{ availability }` to the page. When `available: false`, the page renders an honest unavailable state WITHOUT calling the legacy `getLiveTvChannels()` path.
+4. **Navbar hide** `src/lib/components/AppShell.svelte` — fetches `/api/livetv/availability` on mount (bounded 5s timeout) and conditionally includes the Live TV link. Fail-open: a fetch error keeps the link visible (the route guard is the authority).
+
+The page's `loadCatalogue()` applies the contract at THREE gates:
+- If `!sourcesAvailable`: render unavailable, return early (no legacy/unified fetch).
+- If unified flag is ON: use the unified catalogue (which already filtered by source.enabled in R-1).
+- If unified flag is OFF: check `livegtAvailable` (the LiveGT source's `builtin` marker). If LiveGT source is OFF, return empty — NEVER call the legacy LiveGT V1 API.
+
+The legacy fallback in the unified router (`resolution-router.ts` `start()` returns `'legacy'`) is unchanged structurally — but the SSR guard prevents a stale-client cache from bypassing the contract: when the LiveGT source is OFF, the catalogue is empty (no channel to select), so the legacy fallback cannot fire for a LiveGT channel.
+
+### 19.3 M3U relative-URL resolution (Issue 2 — the 146-entry regression)
+
+**Root cause:** `classifyM3UStreamUrl` in `src/lib/server/livetv/adapters/m3u.ts` rejected any URL that failed `new URL(trimmed)`. PHP-generated playlists (e.g. `https://premiumplugx.com/htt/hot.php?playlist=1`) frequently emit RELATIVE stream URLs (`stream.m3u8?token=abc`, `/live/channel.m3u8`). Without a base, `new URL('stream.m3u8?token=abc')` throws → `invalid_stream_url` for every entry. The 146-entry regression is the expected behavior for a relative-URL playlist under the pre-R-2 classifier.
+
+**Fix:** `classifyM3UStreamUrl(raw, playlistBaseUrl?)` now resolves relative URLs against the playlist's own final URL (post-redirect, https-validated by the fetcher). The base is https-validated AGAIN inside the classifier (defense in depth); a non-https base or a base with credentials degrades to "no base" (relative URLs then fail `invalid_stream_url`, preserving the pre-R-2 fail-closed behavior for unsafe bases). The adapter passes `document.finalUrl` from `fetchLivetvSourceText` as the base. All SSRF defenses (https-only, no credentials, length cap, response-size cap, per-entry error isolation) are preserved.
+
+**Security:** the resolved URL is re-validated https+absolute post-resolution; the resolved URL never appears in diagnostics (only static reason codes). 25 new regression checks in `livetv_m3u_parse_test.ts` §9-§10 pin the contract.
+
+### 19.4 The heading-row Source selector (Issue 6)
+
+A compact "Source" button at the far right of the `MAVERO / Live TV` heading row. Clicking opens an accessible sheet (role=dialog, aria-modal=true) listing "All Sources" + each eligible public source by display name (never raw ids). Selecting a source scopes the catalogue to that source's channels via the `selectedSourceFilter` page state. The filter narrows `visibleChannels` by matching the catalogue alternatives' `label` field against the selected source's display name. Switching source clears an incompatible selected-channel session (engine destroyed, embed torn down). The source filter is preserved while browsing. Internal source UUIDs are used as Svelte each-keys but never rendered as labels.
+
+The pre-existing per-channel `<select>` Source control in the player section (R-1) is preserved for in-channel source switching. The new heading-row selector is for catalogue-scoping (a different concern).
+
+### 19.5 Compact admin source cards (Issue 1)
+
+The source row stays HORIZONTAL on every breakpoint. The mobile media query no longer flips it to `flex-direction: column`. Compact padding (`var(--a2-space-2) var(--a2-space-3)`), `min-height: 0`, `flex-wrap: nowrap`, name truncation with ellipsis, controls `flex: 0 0 auto` (stay on the right). The verbose source-list footnote is removed.
+
+### 19.6 Removed excessive admin copy (Issue 7)
+
+Audit of `/admin/system/livetv/+page.svelte`: removed the verbose source-list footnote, the verbose "channel entries this source provides" paragraph, the verbose AdminFormSection Identity/Configuration descriptions. Kept: field labels, short status messages, the cascade-delete security warning, the impact-confirm dialog. Added concise short descriptions where the contract is non-obvious (Identity section: "Source types are provider identities; playback engines are derived from the typed endpoint kind, never configured here").
+
+### 19.7 Eye/Preview button affordance (Issue 8)
+
+The eye icon is now a LABELED "Preview" button (with the eye icon), distinct from the LABELED "Refresh" button (with the refresh icon). Both are `a2-btn a2-btn-sm` (not icon-only). The Preview button's title documents the dry-run semantics ("Preview this source (dry run — nothing is written)"); the Refresh button's title documents the write semantics ("Refresh this source (fetches its upstream catalogue and writes entries/endpoints)"). The refresh outcome block labels preview results as "Dry run — nothing was written."
+
+### 19.8 Production diagnostics (Issue 9)
+
+The refresh outcome block now distinguishes:
+- "Refresh complete: N channels, N skipped" — concise success.
+- "No entries imported." — discovered > 0 but inserted + updated = 0.
+- "Entries imported without usable endpoints." — entries imported but no endpoints.
+- "Refresh failed — {kind}." — concise failure (no message interpolation).
+- Skip-reason chips (`invalid_stream_url: 5`, etc.) — static reason codes only, never URLs.
+
+Diagnostics NEVER expose: signed media URLs, tokens/passwords/secrets, full playlist lines, internal config objects, or stack traces.
+
+### 19.9 Sony playlist limitation (Issue 4)
+
+**Honest assessment:** the Sony playlist (`https://premiumplugx.com/Sliv/sony_playlist.php?m3u`) imports successfully with the R-2 M3U fix (relative URLs now resolve). However, "imports successfully" ≠ "plays reliably." The M3U parser establishes the stream FORMAT from the URL path extension (.m3u8 → hls, .mpd → dash); it does NOT verify the stream is actually playable. Real playback depends on:
+- The resolved stream URL being reachable from the user's browser (CORS, geo).
+- The stream's DRM/authorization model being supported (the existing Shaka engine supports ClearKey; other DRM systems may not be supported).
+- The stream's actual format matching the classified format (a .m3u8 URL serving HTML would fail at load time).
+
+These upstream realities are honestly reported by the existing error taxonomy (`network_failed`, `manifest_load_failed`, `drm_playback_failed`, `playback_failed`). Mavero cannot and does not bypass them. The R-2 fix ensures the entries IMPORT correctly; remaining playback limitations are upstream/geo/DRM realities, not Mavero defects.
+
+### 19.10 Regression tests
+
+A new test file `scripts/livetv_r2_source_selection_repair_test.ts` (86 checks) covers: the availability server function and wire type, the API endpoint contract, the SSR guard, the page's honoring of the guard, the heading-row Source selector UI, compact admin source cards, the Preview/Refresh button affordance, removed excessive copy, the LiveGT V1 contract preservation, the M3U relative-URL resolution, the navbar hide, and the no-production-modification invariant.
+
+The M3U parser gained 25 new R-2 checks in `livetv_m3u_parse_test.ts` §9-§10 (97 total). The admin UI test (123 checks), the P6 unified test (163 checks), the P5 page test (81 checks), the navigation primary test, and the account route migration test were updated to reflect the new concise contract — no existing assertion was weakened; the revisions document the intentional R-2 contract changes.
+
+### 19.11 Security, safety and delivery constraints
+
+- No migration, no production SQL, no production data change, no deploy. The R-2 contract uses ONLY existing columns (`id, name, enabled, status, visibility, builtin, source_type`).
+- `unified_enabled` stays FALSE everywhere in code and tests; the R-2 contract is ORTHOGONAL to the flag — it enforces source ON/OFF regardless of whether the unified or legacy catalogue path is active.
+- The resolver's gates (S1/S2/M1/E1 + visibility) are unchanged; the candidate ordering is unchanged; the direct/embed candidate ordering for the builtin LiveGT V1 pair is unchanged.
+- No new timeout was added to "fix" the LiveGT regression (the task forbids hiding timeouts). The watchdogs (`LIVETV_ROUTER_DIRECT_WATCHDOG_MS = 20_000`, `LIVETV_ROUTER_EMBED_WINDOW_MS = 12_000`, `LIVETV_ROUTER_RESOLVE_TIMEOUT_MS = 10_000`) are unchanged.
+- Real-browser verification of the Admin UI, the source selector, and LiveGT V1 playback: NOT RUN in this environment (no browser playback stack/authorized geo). The 86-check R-2 regression suite and the 97-check M3U suite are the automated coverage layer per repo convention.
+
+

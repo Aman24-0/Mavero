@@ -181,6 +181,101 @@ function isEligibleStatus(status: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Public availability state (R-2 — authoritative source ON/OFF contract).
+// ---------------------------------------------------------------------------
+
+/**
+ * The bounded public availability wire (R-2). Surfaces ONLY:
+ *   * `available` — true iff at least ONE source contributes user-visible
+ *     channels (enabled + playback-eligible status + visibility='public').
+ *   * `sources` — the bounded list of eligible public sources (id + display
+ *     name + a `builtin` marker) for the navbar/source-selector. The
+ *     `builtin` flag is the ONLY property that distinguishes the seeded
+ *     LiveGT V1 source from admin-created sources — it lets the page
+ *     decide whether the legacy LiveGT V1 catalogue path is allowed
+ *     (the legacy path is LiveGT-specific; an admin-created source OFF
+ *     must NOT cause LiveGT channels to bypass the contract through the
+ *     legacy fallback). NEVER config, URLs, slugs, capabilities,
+ *     visibility/status labels, source_type, or any internal identity.
+ *
+ * Used by:
+ *   * `/api/livetv/availability` — the public, rate-limited, no-store endpoint.
+ *   * `/live-tv/+page.server.ts` — the SSR guard that returns an honest
+ *     unavailable state when no eligible public source exists (so the legacy
+ *     LiveGT catalogue is NEVER loaded against an owner's OFF decision).
+ *   * `+layout.server.ts` — the navbar's link visibility (defense in depth
+ *     on top of the route guard; the API/route enforcement is the authority).
+ *
+ * The function is PURELY a read; it owns no caching (the caller's endpoint
+ * sets `no-store` so an owner's toggle reflects immediately). Fail-closed:
+ * any read failure returns `available: false, sources: []` (the safe
+ * direction is always "no Live TV right now").
+ */
+export type LivetvAvailabilitySourceWire = {
+        /** The source's stable UUID — never the slug, never the config. */
+        id: string;
+        /** The admin display name (the only label material that crosses). */
+        name: string;
+        /**
+         * R-2 — true iff this is the SEEDED built-in LiveGT V1 source. The
+         * page uses this to decide whether the legacy LiveGT catalogue path
+         * is allowed (the legacy path is LiveGT-specific and bypasses the
+         * unified catalogue; an OFF LiveGT source must NEVER trigger it).
+         */
+        builtin: boolean;
+};
+
+export type LivetvAvailabilityWire = {
+        available: boolean;
+        sources: LivetvAvailabilitySourceWire[];
+};
+
+/** Bounded source load (the exposure candidate pool — same as the catalogue). */
+const MAX_AVAILABILITY_SOURCES_LOAD = 500;
+
+/**
+ * R-2 — the authoritative public-availability read. A source contributes
+ * user-visible channels ONLY when ALL of:
+ *   * `enabled = true`           (the persisted ON/OFF control — the
+ *                                 operational `status` NEVER overrides this)
+ *   * `status` is playback-eligible  (LIVETV_PLAYBACK_ELIGIBLE_STATUSES)
+ *   * `visibility = 'public'`    (the column's documented user-facing
+ *                                 exposure control)
+ *
+ * The legacy LiveGT V1 catalogue path on `/live-tv` is gated on this read
+ * via the SSR guard — a disabled LiveGT source can never again bypass the
+ * owner's decision through the legacy fallback. The unified catalogue path
+ * already enforced this in R-1; R-2 extends the contract to the legacy
+ * path AND the navbar.
+ */
+export async function getLivetvAvailabilityState(client: SupabaseClient<Database>): Promise<LivetvAvailabilityWire> {
+        try {
+                const sourcesResult = await client
+                        .from('livetv_sources')
+                        .select('id,name,enabled,status,visibility,builtin,source_type')
+                        .limit(MAX_AVAILABILITY_SOURCES_LOAD);
+                if (sourcesResult.error) return { available: false, sources: [] };
+                const rows = (sourcesResult.data ?? []) as { id: string; name: string; enabled: boolean; status: string; visibility: string; builtin: boolean; source_type: string }[];
+                const sources: LivetvAvailabilitySourceWire[] = [];
+                for (const row of rows) {
+                        if (row.enabled !== true || row.visibility !== 'public' || !isEligibleStatus(String(row.status))) continue;
+                        const id = nonEmptyString(row.id);
+                        if (!id) continue;
+                        const name = nonEmptyString(row.name) ?? id;
+                        // The seeded LiveGT V1 source is identified by BOTH
+                        // `builtin = true` AND `source_type = 'builtin_livegt_v1'`.
+                        // The source_type itself never crosses the wire — only
+                        // the boolean marker does.
+                        const builtin = row.builtin === true && row.source_type === 'builtin_livegt_v1';
+                        sources.push({ id, name, builtin });
+                }
+                return { available: sources.length > 0, sources };
+        } catch {
+                return { available: false, sources: [] };
+        }
+}
+
+// ---------------------------------------------------------------------------
 // Catalogue read.
 // ---------------------------------------------------------------------------
 

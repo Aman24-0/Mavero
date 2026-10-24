@@ -7,6 +7,39 @@
   let { children, currentPath = '/', user = null, isAuthenticated = false }: { children: Snippet; currentPath?: string; user?: { id: string; email?: string | null; displayName?: string | null } | null; isAuthenticated?: boolean } = $props();
   let shell: HTMLElement;
 
+  // R-2 — the Live TV availability state. Fetched ONCE per AppShell mount
+  // (a full page load — SvelteKit's SPA navigations don't remount the
+  // layout, so the state survives in-app navigation). When `available` is
+  // false the Live TV link is hidden from BOTH the desktop sidebar and the
+  // mobile bottom nav. Fail-open: a fetch failure keeps the link visible
+  // (the /live-tv SSR guard is the authoritative gate; the navbar hide is
+  // defense-in-depth — never the sole enforcement).
+  let liveTvAvailable = $state(true);
+  $effect(() => {
+    if (typeof window === 'undefined') return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 5_000);
+        try {
+          const response = await fetch('/api/livetv/availability', { signal: controller.signal, headers: { accept: 'application/json' } });
+          if (response.ok) {
+            const body: unknown = await response.json();
+            if (body && typeof body === 'object' && 'available' in body && typeof (body as { available: unknown }).available === 'boolean') {
+              if (!cancelled) liveTvAvailable = (body as { available: boolean }).available;
+            }
+          }
+        } finally {
+          clearTimeout(timer);
+        }
+      } catch {
+        // Fail-open: keep the link visible (the route guard is the authority).
+      }
+    })();
+    return () => { cancelled = true; };
+  });
+
   // Navigation & Settings Redesign, Phase 1 — the six primary destinations.
   // ONE source of truth feeds BOTH the desktop sidebar and the mobile
   // bottom nav (no duplicated hardcoded nav logic anywhere). My List is
@@ -17,6 +50,10 @@
   // the primary nav and now lives in the Account sheet (above My List);
   // the /upcoming route itself is unchanged.
   //
+  // R-2: the Live TV entry is hidden when no eligible public source exists
+  // (the navbar hide is defense-in-depth on top of the /live-tv SSR guard
+  // — the route/API enforcement is the authority).
+  //
   // Phase 2 — responsive compositions:
   //   MOBILE + TABLET (≤1024px): floating pill bottom nav (touch
   //   composition) + topbar with the Account control on the right.
@@ -24,14 +61,14 @@
   //   collapse behavior) + the Account control in the header right side.
   // The pill and the sidebar are intentionally DIFFERENT compositions —
   // the mobile pill is never copied onto desktop and vice versa.
-  const primaryLinks = [
+  const primaryLinks = $derived([
     { label: 'Discover', href: '/discover', key: '/discover', icon: Compass },
     { label: 'Movies', href: '/movies', key: '/movies', icon: Film },
     { label: 'TV Shows', href: '/tv-shows', key: '/tv-shows', icon: Tv },
     { label: 'Anime', href: '/anime', key: '/anime', icon: Sparkles },
-    { label: 'Live TV', href: '/live-tv', key: '/live-tv', icon: Radio },
+    ...(liveTvAvailable ? [{ label: 'Live TV', href: '/live-tv', key: '/live-tv', icon: Radio }] : []),
     { label: 'Search', href: '/search', key: '/search', icon: Search }
-  ];
+  ]);
 
   const isActive = (key: string) => currentPath === key || currentPath.startsWith(`${key}/`);
 

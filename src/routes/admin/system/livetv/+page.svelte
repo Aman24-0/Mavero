@@ -311,7 +311,7 @@
 
     {#if data.sources.length === 0}
       <section class="a2-section source-empty">
-        <p class="a2-muted">No Live TV sources are configured yet. Add a source (for example a Playlist URL) to bring its channels into Mavero.</p>
+        <p class="a2-muted">No Live TV sources configured. Add one to bring its channels into Mavero.</p>
       </section>
     {:else}
       <ul class="source-list">
@@ -319,14 +319,9 @@
           <li class="source-row">
             <div class="source-main">
               <div class="a2-cell-title">{source.name} {#if source.builtin}<span class="a2-chip">built-in</span>{/if}</div>
-              <div class="a2-cell-sub">{SOURCE_TYPE_LABELS[source.source_type] ?? source.source_type} · {source.slug}</div>
+              <div class="a2-cell-sub">{SOURCE_TYPE_LABELS[source.source_type] ?? source.source_type}</div>
             </div>
             <div class="source-controls">
-              <!-- The PRIMARY availability control, bound to the PERSISTED
-                   `enabled` column (never the operational `status`). While a
-                   request is in flight the switch shows its target, is
-                   disabled, and repeats are cancelled; on failure the
-                   override clears and the persisted value re-renders. -->
               <form method="POST" action="?/toggleSource" use:enhance={toggleEnhanceFor(source)} class="source-toggle-form">
                 <input type="hidden" name="id" value={source.id} />
                 <input type="hidden" name="enabled" value={displayedEnabled(source) ? 'false' : 'true'} />
@@ -338,9 +333,7 @@
                   role="switch"
                   aria-checked={displayedEnabled(source)}
                   aria-label="{displayedEnabled(source) ? 'Disable' : 'Enable'} source {source.name}"
-                  title={displayedEnabled(source)
-                    ? 'ON — its eligible channels may appear on the Live TV page. Click to disable.'
-                    : 'OFF — its channels are excluded from the Live TV page. Click to enable.'}
+                  title={displayedEnabled(source) ? 'ON — click to disable' : 'OFF — click to enable'}
                 >
                   <span class="switch-text" aria-hidden="true">{isToggling(source) ? '…' : displayedEnabled(source) ? 'ON' : 'OFF'}</span>
                   <span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span>
@@ -351,14 +344,13 @@
           </li>
         {/each}
       </ul>
-      <p class="a2-footnote">ON/OFF is the availability control for the user-facing Live TV page (subject to the master unified switch). Source types are provider identities — playlist, API catalogue, embed provider, manual direct stream and the built-in LiveGT V1; the DASH/HLS player engine and the iframe embed are playback METHODS derived from the typed endpoint kind, never source types. Edit exposes refresh, the source's channels and advanced state.</p>
     {/if}
 
     <!-- ==================== Source create/edit sheet ==================== -->
     <AdminSheet open={sourceSheetOpen} title={editingSource ? `Edit source — ${editingSource.name}` : 'Add source'} onClose={closeSheets} size="wide">
       <form method="POST" action={editingSource ? '?/updateSource' : '?/createSource'} use:enhance={sourceFormEnhance}>
         {#if editingSource}<input type="hidden" name="id" value={editingSource.id} />{/if}
-        <AdminFormSection heading="Identity" description="Slug and type are immutable after creation (slugs are stored references; the type selects the server adapter).">
+        <AdminFormSection heading="Identity" description="Slug and type are immutable after creation. Source types are provider identities; playback engines (DASH/HLS/iframe) are derived from the typed endpoint kind, never configured here.">
           <label class="a2-field"><span>Display name *</span>
             <input class="a2-input" type="text" name="name" value={editingSource?.name ?? ''} maxlength="120" required />
           </label>
@@ -378,7 +370,7 @@
             <div class="a2-field"><span>Type</span><div>{SOURCE_TYPE_LABELS[editingSource.source_type] ?? editingSource.source_type}</div></div>
           {/if}
         </AdminFormSection>
-        <AdminFormSection heading="Configuration" description="Server-fetched URLs are https-only and validated by the SSRF guard (stage 1) at save time and per fetch. The URL need not end in .m3u8 — a playlist endpoint may be a script/PHP URL with a query string; the fetched BODY must be a valid #EXTM3U playlist.">
+        <AdminFormSection heading="Configuration" description="https-only, SSRF-guarded. A playlist URL may be a PHP script with a query string — the body is validated.">
           {#if effectiveSourceType() === 'm3u_playlist'}
             <label class="a2-field a2-field-wide"><span>Playlist URL (https) *</span>
               <input class="a2-input" type="url" name="playlistUrl" required value={String((editingSource?.config as Record<string, unknown> | null)?.playlistUrl ?? '')} maxlength="2048" placeholder="https://example.com/playlist.m3u8" />
@@ -395,7 +387,7 @@
             </label>
           {/if}
           {#if effectiveSourceType() === 'manual_stream' || effectiveSourceType() === 'builtin_livegt_v1'}
-            <p class="a2-muted a2-field-wide">This source type carries no server-side config{effectiveSourceType() === 'manual_stream' ? ' — add its endpoints from the advanced tooling' : ' — behavior lives in the existing client modules'}.</p>
+            <p class="a2-muted a2-field-wide">No server-side config for this source type.</p>
           {/if}
         </AdminFormSection>
         <AdminFormSection heading="Availability & registry state">
@@ -443,16 +435,15 @@
             <div class="a2-actions">
               <form method="POST" action="?/refreshSource" use:enhance>
                 <input type="hidden" name="id" value={sourceId} />
-                <button type="submit" class="a2-icon-btn" title="Refresh this source (fetches its upstream catalogue)" aria-label="Refresh source {editingSource.name}"><RefreshCw size={14} /></button>
+                <button type="submit" class="a2-btn a2-btn-sm" title="Refresh this source (fetches its upstream catalogue and writes entries/endpoints)" aria-label="Refresh source {editingSource.name}"><RefreshCw size={14} /> Refresh</button>
               </form>
               <form method="POST" action="?/previewSource" use:enhance>
                 <input type="hidden" name="id" value={sourceId} />
-                <button type="submit" class="a2-icon-btn" title="Preview this source (dry run — nothing is written)" aria-label="Preview source {editingSource.name}"><Eye size={14} /></button>
+                <button type="submit" class="a2-btn a2-btn-sm" title="Preview this source (dry run — nothing is written)" aria-label="Preview source {editingSource.name}"><Eye size={14} /> Preview</button>
               </form>
             </div>
           </div>
           <p class="a2-muted">
-            The channel entries this source currently provides. Unmapped entries are normal (mapping is optional advanced tooling) and remain eligible.
             Last refresh: {openSourceLatestHistory() ? `${openSourceLatestHistory()!.status} · ${formatTime(openSourceLatestHistory()!.finishedAt)} · ${openSourceLatestHistory()!.trigger}` : openSourceLatestLocal() ? `${openSourceLatestLocal()!.ok ? 'ok' : (openSourceLatestLocal()!.failure?.kind ?? 'failed')} · ${formatTime(openSourceLatestLocal()!.finishedAt)} · instance-local` : '—'}
           </p>
 
@@ -523,25 +514,29 @@
         {#if refreshOutcome}
           {@const outcome = refreshOutcome.outcome}
           <section class="sheet-channels" aria-label="Refresh result">
-            <h3 class="a2-h3">Refresh result</h3>
+            <h3 class="a2-h3">{refreshOutcome.kind === 'source-preview' ? 'Preview result' : 'Refresh result'}</h3>
             {#if refreshOutcome.kind === 'source-preview'}
-              <p class="a2-muted"><strong>Preview (dry run — nothing was written).</strong> These are the counts a real refresh WOULD apply.</p>
+              <p class="a2-muted">Dry run — nothing was written.</p>
             {/if}
             {#if outcome.ok && outcome.counts && 'discovered' in outcome.counts}
+              {@const c = outcome.counts}
               <p class="a2-muted">
-                Refresh ok — {outcome.counts.discovered} discovered · {outcome.counts.entriesInserted} inserted / {outcome.counts.entriesUpdated} updated entries ·
-                {outcome.counts.endpointsInserted} inserted / {outcome.counts.endpointsUpdated} updated endpoints ·
-                {outcome.counts.skipped} skipped · {outcome.counts.failed} write failures.
+                {refreshOutcome.kind === 'source-preview' ? 'Preview' : 'Refresh'} complete: {c.discovered} channels, {c.skipped} skipped{c.failed > 0 ? `, ${c.failed} write failures` : ''}.
               </p>
               {#if 'skippedReasons' in outcome && outcome.skippedReasons && Object.keys(outcome.skippedReasons).length > 0}
-                <div class="a2-chip-row">
+                <div class="a2-chip-row" aria-label="Skip reasons">
                   {#each Object.entries(outcome.skippedReasons).slice(0, 6) as [reason, count]}
                     <span class="a2-chip">{reason}: {count}</span>
                   {/each}
                 </div>
               {/if}
+              {#if c.discovered > 0 && c.entriesInserted === 0 && c.entriesUpdated === 0}
+                <p class="a2-cell-sub">No entries imported.</p>
+              {:else if (c.entriesInserted + c.entriesUpdated) > 0 && c.endpointsInserted === 0 && c.endpointsUpdated === 0}
+                <p class="a2-cell-sub">Entries imported without usable endpoints.</p>
+              {/if}
             {:else if outcome.failure}
-              <div class="notice notice-error" role="alert">Refresh failed — {outcome.failure.kind}: {outcome.failure.message}</div>
+              <div class="notice notice-error" role="alert">{refreshOutcome.kind === 'source-preview' ? 'Preview' : 'Refresh'} failed — {outcome.failure.kind}.</div>
             {/if}
           </section>
         {/if}
@@ -623,14 +618,20 @@
   .source-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--a2-space-2); }
   .source-row {
     display: flex; align-items: center; justify-content: space-between; gap: var(--a2-space-3);
-    padding: var(--a2-space-3) var(--a2-space-4);
+    padding: var(--a2-space-2) var(--a2-space-3);
     background: var(--a2-surface-2);
     border: 1px solid var(--a2-border);
     border-radius: var(--a2-radius-md);
-    flex-wrap: wrap;
+    /* R-2 — compact, content-based height. The row stays horizontal on
+       every breakpoint; long source names wrap internally rather than
+       flipping the row to a tall column on mobile. */
+    min-height: 0;
+    flex-wrap: nowrap;
   }
-  .source-main { min-width: 0; flex: 1 1 240px; }
-  .source-controls { display: flex; align-items: center; gap: var(--a2-space-2); }
+  .source-main { min-width: 0; flex: 1 1 auto; display: flex; flex-direction: column; gap: 2px; overflow: hidden; }
+  .source-main .a2-cell-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .source-main .a2-cell-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .source-controls { display: flex; align-items: center; gap: var(--a2-space-2); flex: 0 0 auto; }
   .source-toggle-form { display: inline-flex; }
 
   /* The ON/OFF switch (bound to the persisted enabled column). */
@@ -746,8 +747,12 @@
   @media (max-width: 640px) {
     .livetv-head { justify-content: stretch; }
     .livetv-head .a2-btn { width: 100%; justify-content: center; }
-    .source-row { align-items: stretch; flex-direction: column; }
-    .source-controls { justify-content: space-between; }
+    /* R-2 — the source row stays horizontal on mobile. The name truncates
+       with ellipsis; the ON/OFF switch and Edit button stay on the right
+       at their touch-target sizes. The row never flips to a tall column. */
+    .source-row { padding: 8px 10px; gap: 8px; }
+    .source-main { min-width: 0; }
+    .source-controls { gap: 6px; }
     .channels-form input[type='search'] { min-width: 0; flex: 1 1 160px; }
   }
   @media (prefers-reduced-motion: reduce) {

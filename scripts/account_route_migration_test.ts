@@ -121,15 +121,19 @@ ok('6. Upcoming back-pill removed (Account sheet destination since LT-1); Upcomi
 //    (LT-1 — LiveGT V1: Discover, Movies, TV Shows, Anime, Live TV,
 //    Search. My List + Account left the primary nav; Upcoming moved
 //    into the compact Account sheet; Account opens the sheet.)
+//    R-2 — Live TV is conditionally included based on `liveTvAvailable`
+//    (the /api/livetv/availability gate). The base set is the five
+//    always-on destinations + the conditional Live TV entry.
 // ============================================================
-const linksBlock = appShell.match(/const primaryLinks = \[([\s\S]*?)\];/);
-assert.ok(linksBlock, 'AppShell still defines primaryLinks');
+const linksBlock = appShell.match(/const primaryLinks = \$derived\(\[([\s\S]*?)\]\);/);
+assert.ok(linksBlock, 'AppShell still defines primaryLinks (R-2: now $derived for the liveTvAvailable gate)');
 const labels = [...linksBlock![1].matchAll(/label: '([^']+)'/g)].map((m) => m[1]);
-assert.deepEqual(labels, ['Discover', 'Movies', 'TV Shows', 'Anime', 'Live TV', 'Search'], 'primary nav: Discover, Movies, TV Shows, Anime, Live TV, Search');
+assert.deepEqual(labels, ['Discover', 'Movies', 'TV Shows', 'Anime', 'Live TV', 'Search'], 'R-2: primary nav contains all six labels (Live TV is in the conditional liveTvAvailable spread)');
+assert.match(appShell, /\.\.\.\(liveTvAvailable \?\s*\[\{ label: 'Live TV'[\s\S]{0,200}\] : \[\]\)/, 'R-2: Live TV is conditionally included via the liveTvAvailable spread');
 assert.match(appShell, /class="topbar-account"/, 'the mobile/tablet account control exists');
 assert.match(appShell, /class="header-account"/, 'the desktop header account control exists');
 assert.match(appShell, /aria-haspopup="dialog"/, 'the account controls open the Account sheet (dialog)');
-ok('7. primary navigation: Discover, Movies, TV Shows, Anime, Live TV, Search + header account sheet control');
+ok('7. primary navigation: Discover, Movies, TV Shows, Anime, [Live TV when available], Search + header account sheet control');
 
 // ============================================================
 // 7b. ACCOUNT SHEET — the compact Phase 3 sheet contract

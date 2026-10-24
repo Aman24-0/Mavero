@@ -61,9 +61,13 @@ const legacyAnimeServer = read('../src/routes/discover/anime/+page.server.ts');
 
 // ============================================================
 // 1. SOURCE — a single primaryLinks definition feeds both rails
+//    R-2 — primaryLinks is now a $derived (reactive to liveTvAvailable,
+//    the /api/livetv/availability gate). The base set is the five
+//    always-on destinations + the conditional Live TV entry (spread
+//    when liveTvAvailable is true).
 // ============================================================
-const linksBlock = appShell.match(/const primaryLinks = \[([\s\S]*?)\];/);
-assert.ok(linksBlock, 'AppShell defines a primaryLinks array');
+const linksBlock = appShell.match(/const primaryLinks = \$derived\(\[([\s\S]*?)\]\);/);
+assert.ok(linksBlock, 'AppShell defines a primaryLinks $derived array (R-2: reactive to liveTvAvailable)');
 const entries = [...linksBlock![1].matchAll(/\{\s*label: '([^']+)',\s*href: '([^']+)',\s*key: '([^']+)',\s*icon: (\w+)\s*\}/g)]
   .map((m) => ({ label: m[1], href: m[2], key: m[3], icon: m[4] }));
 const loopCount = (appShell.match(/\{#each primaryLinks as link\}/g) ?? []).length;
