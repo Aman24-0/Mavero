@@ -71,7 +71,7 @@
   import { onDestroy, onMount } from 'svelte';
   import { page as appPage } from '$app/state';
   import { PRODUCTION_ORIGIN } from '$lib/shared/seo';
-  import { Search, X, Radio, RefreshCw, LoaderCircle, SlidersHorizontal, BookOpen, ChevronLeft, ChevronRight, ChevronDown, Check } from 'lucide-svelte';
+  import { Search, X, Radio, RefreshCw, LoaderCircle, SlidersHorizontal, BookOpen, ChevronLeft, ChevronRight, ChevronDown, Check, Filter } from 'lucide-svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import ScrollToTop from '$components/ScrollToTop.svelte';
   import ErrorState from '$components/ErrorState.svelte';
@@ -254,16 +254,15 @@
 
   const categories = $derived(extractLiveTvCategories(channels));
   const visibleChannels = $derived.by(() => {
-    // R-2 — source filter first (cheap predicate; narrows the working set
-    // before the category/search filters run).
-    let list = channels;
-    if (selectedSourceName !== null) {
-      list = list.filter((channel) => {
-        const alts = channel.sources ?? [];
-        return alts.some((alt) => alt.label === selectedSourceName);
-      });
-    }
-    list = filterLiveTvChannelsByCategory(list, category);
+    // R-4 — the source filter is applied SERVER-SIDE (the sourceId query
+    // param). The catalogue returned by the API is ALREADY scoped to the
+    // selected source. The previous client-side label-match filter was
+    // REDUNDANT and BROKEN: when the server scopes to one source, each
+    // channel's `sources` (alternatives) array has only 1 entry, which is
+    // < 2, so the `sources` field is OMITTED from the wire → the client
+    // filter found no match → 0 channels. The server filter is the
+    // authority; the client only applies category + search on top.
+    let list = filterLiveTvChannelsByCategory(channels, category);
     const trimmed = query.trim();
     if (trimmed) list = filterLiveTvChannelsByQuery(list, trimmed);
     return list;
@@ -317,6 +316,11 @@
 
   function toggleSourceSheet(): void {
     sourceSheetOpen = !sourceSheetOpen;
+  }
+
+  /** R-4 — close the source selector sheet WITHOUT changing the selection. */
+  function closeSourceSheet(): void {
+    sourceSheetOpen = false;
   }
 
   // Incremental rendering: the catalogue can exceed 1000 channels; the grid
@@ -964,10 +968,13 @@
 </svelte:head>
 
 <div class="live-tv-page">
-  <!-- LT-18 — the compact hero: heading + the R-2 Source selector on the
-       far right of the row. Search moved to the toolbar, categories into
-       the Filter sheet. The Source selector scopes the catalogue to ONE
-       eligible source's channels (or All Sources — the explicit default). -->
+  <!-- LT-18 — the compact hero: heading + the R-4 compact Source selector
+       icon button on the far right of the SAME row (no separate row, no
+       large "Source: All Sources" control). Search moved to the toolbar,
+       categories into the Filter sheet. The Source selector scopes the
+       catalogue to ONE eligible source's channels (or All Sources — the
+       explicit default). On mobile the selector opens a bottom sheet;
+       on desktop a popover anchored to the button. -->
   <section class="ltv-hero" aria-label="Live TV">
     <div class="ltv-hero-inner">
       <h1 class="ltv-heading">
@@ -977,47 +984,68 @@
         <span class="heading-page">Live TV</span>
       </h1>
       {#if sourcesAvailable && selectorSources.length > 0}
-        <div class="ltv-source-picker">
-          <button
-            type="button"
-            class="ltv-source-button"
-            onclick={toggleSourceSheet}
-            aria-haspopup="dialog"
-            aria-expanded={sourceSheetOpen}
-            aria-label="Filter channels by source. Current: {sourceSelectorLabel}"
-          >
-            <span class="ltv-source-label">Source</span>
-            <span class="ltv-source-value">{sourceSelectorLabel}</span>
-            <ChevronDown size={14} aria-hidden="true" />
-          </button>
-          {#if sourceSheetOpen}
-            <div class="ltv-source-sheet" role="dialog" aria-label="Choose a source" aria-modal="true">
-              <button
-                type="button"
-                class="ltv-source-option"
-                class:active={selectedSourceFilter === null}
-                onclick={() => applySourceFilter(null)}
-              >
-                <span class="ltv-source-option-label">All Sources</span>
-                {#if selectedSourceFilter === null}<Check size={14} aria-hidden="true" />{/if}
-              </button>
-              {#each selectorSources as source (source.id)}
-                <button
-                  type="button"
-                  class="ltv-source-option"
-                  class:active={selectedSourceFilter === source.id}
-                  onclick={() => applySourceFilter(source.id)}
-                >
-                  <span class="ltv-source-option-label">{source.name}</span>
-                  {#if selectedSourceFilter === source.id}<Check size={14} aria-hidden="true" />{/if}
-                </button>
-              {/each}
-            </div>
+        <button
+          type="button"
+          class="ltv-source-icon-btn"
+          class:active={selectedSourceFilter !== null}
+          onclick={toggleSourceSheet}
+          aria-haspopup="dialog"
+          aria-expanded={sourceSheetOpen}
+          aria-label="Filter channels by source. Current: {sourceSelectorLabel}"
+          title="Source: {sourceSelectorLabel}"
+        >
+          <Filter size={16} aria-hidden="true" />
+          {#if selectedSourceFilter !== null}
+            <span class="ltv-source-icon-dot" aria-hidden="true"></span>
           {/if}
-        </div>
+        </button>
       {/if}
     </div>
   </section>
+
+  <!-- R-4 — the Source selector bottom sheet (mobile) / popover (desktop).
+       A single accessible dialog with a backdrop. On mobile it docks to
+       the bottom (safe-area aware, internal scroll); on desktop it
+       anchors to the top-right under the button. Closing the sheet
+       preserves the current selection. -->
+  {#if sourceSheetOpen}
+    <div
+      class="ltv-source-backdrop"
+      role="presentation"
+      onclick={closeSourceSheet}
+      onkeydown={(e) => { if (e.key === 'Escape') closeSourceSheet(); }}
+    ></div>
+    <div class="ltv-source-dialog" role="dialog" aria-label="Choose a source" aria-modal="true">
+      <div class="ltv-source-dialog-head">
+        <span class="ltv-source-dialog-title">Source</span>
+        <button type="button" class="ltv-source-dialog-close" onclick={closeSourceSheet} aria-label="Close source selector">
+          <X size={16} aria-hidden="true" />
+        </button>
+      </div>
+      <div class="ltv-source-dialog-list">
+        <button
+          type="button"
+          class="ltv-source-option"
+          class:active={selectedSourceFilter === null}
+          onclick={() => applySourceFilter(null)}
+        >
+          <span class="ltv-source-option-label">All Sources</span>
+          {#if selectedSourceFilter === null}<Check size={16} aria-hidden="true" />{/if}
+        </button>
+        {#each selectorSources as source (source.id)}
+          <button
+            type="button"
+            class="ltv-source-option"
+            class:active={selectedSourceFilter === source.id}
+            onclick={() => applySourceFilter(source.id)}
+          >
+            <span class="ltv-source-option-label">{source.name}</span>
+            {#if selectedSourceFilter === source.id}<Check size={16} aria-hidden="true" />{/if}
+          </button>
+        {/each}
+      </div>
+    </div>
+  {/if}
 
   {#if !sourcesAvailable}
     <!-- R-2 — the SSR availability guard's honest unavailable state. No
@@ -1310,71 +1338,145 @@
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    flex-wrap: wrap;
+    /* R-4 — NO flex-wrap: the source icon button stays on the SAME row as
+       the heading (no separate row, no large control). The button is a
+       compact icon (≤44px) so it fits every viewport ≥320px. */
+    flex-wrap: nowrap;
   }
 
-  /* R-2 — the heading-row Source selector (compact button + sheet). */
-  .ltv-source-picker { position: relative; display: inline-flex; }
-  .ltv-source-button {
+  /* R-4 — the compact Source selector ICON button (far right of the heading
+     row). A 40px square touch target with a filter icon + a selected-state
+     dot. Never wraps, never creates a separate row. */
+  .ltv-source-icon-btn {
+    position: relative;
     display: inline-flex;
     align-items: center;
-    gap: 8px;
-    padding: 8px 12px;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    flex: 0 0 40px;
     background: var(--color-surface-2, var(--color-bg));
     border: 1px solid var(--color-border-strong, var(--color-border));
     border-radius: 10px;
-    color: var(--color-text);
-    font-size: 13px;
-    font-weight: 600;
+    color: var(--color-text-muted, var(--color-text));
     cursor: pointer;
-    transition: background .15s ease, border-color .15s ease;
-    max-width: 60vw;
+    transition: background .15s ease, border-color .15s ease, color .15s ease;
   }
-  .ltv-source-button:hover { background: var(--color-surface-3, var(--color-surface-2)); }
-  .ltv-source-button:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
-  .ltv-source-label { color: var(--color-text-muted); font-weight: 500; font-size: 12px; }
-  .ltv-source-value {
-    color: var(--color-text);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    max-width: 40vw;
-  }
-  .ltv-source-sheet {
+  .ltv-source-icon-btn:hover { background: var(--color-surface-3, var(--color-surface-2)); color: var(--color-text); }
+  .ltv-source-icon-btn:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+  .ltv-source-icon-btn.active { color: var(--color-primary); border-color: var(--color-primary); background: var(--color-primary-soft); }
+  .ltv-source-icon-dot {
     position: absolute;
-    top: calc(100% + 6px);
+    top: 8px;
+    right: 8px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--color-primary);
+    border: 1.5px solid var(--color-bg);
+  }
+
+  /* R-4 — the source selector backdrop + dialog. Mobile: bottom sheet
+     (safe-area aware, internal scroll). Desktop ≥641px: top-right popover. */
+  .ltv-source-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, .5);
+    z-index: 90;
+    animation: ltv-source-fade .15s ease;
+  }
+  @keyframes ltv-source-fade { from { opacity: 0; } to { opacity: 1; } }
+  .ltv-source-dialog {
+    position: fixed;
+    left: 0;
     right: 0;
-    min-width: 220px;
-    max-width: 90vw;
+    bottom: 0;
+    max-height: 60vh;
+    display: flex;
+    flex-direction: column;
     background: var(--color-surface-1, var(--color-bg));
     border: 1px solid var(--color-border-strong, var(--color-border));
-    border-radius: 12px;
-    box-shadow: 0 8px 28px rgba(0, 0, 0, .32);
-    z-index: 60;
-    padding: 4px;
+    border-radius: 16px 16px 0 0;
+    box-shadow: 0 -8px 32px rgba(0, 0, 0, .4);
+    z-index: 91;
+    padding-bottom: env(safe-area-inset-bottom, 0);
+    animation: ltv-source-slide .2s ease;
+  }
+  @keyframes ltv-source-slide { from { transform: translateY(100%); } to { transform: translateY(0); } }
+  .ltv-source-dialog-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 16px 10px;
+    border-bottom: 1px solid var(--color-border);
+    flex: 0 0 auto;
+  }
+  .ltv-source-dialog-title { font-size: 15px; font-weight: 600; color: var(--color-text); }
+  .ltv-source-dialog-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    background: transparent;
+    border: none;
+    border-radius: 8px;
+    color: var(--color-text-muted);
+    cursor: pointer;
+  }
+  .ltv-source-dialog-close:hover { background: var(--color-surface-2); color: var(--color-text); }
+  .ltv-source-dialog-close:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 1px; }
+  .ltv-source-dialog-list {
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 6px;
     display: flex;
     flex-direction: column;
     gap: 2px;
+    flex: 1 1 auto;
   }
   .ltv-source-option {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 8px;
-    padding: 9px 12px;
+    padding: 12px 14px;
     background: transparent;
     border: none;
-    border-radius: 8px;
+    border-radius: 10px;
     color: var(--color-text);
-    font-size: 14px;
+    font-size: 15px;
     font-weight: 500;
     cursor: pointer;
     text-align: left;
+    min-height: 44px;
     transition: background .12s ease;
   }
   .ltv-source-option:hover { background: var(--color-surface-2, rgba(255,255,255,.06)); }
+  .ltv-source-option:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -2px; }
   .ltv-source-option.active { background: var(--color-primary-soft); color: var(--color-primary); }
   .ltv-source-option-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* Desktop ≥641px: popover anchored to the top-right (under the button). */
+  @media (min-width: 641px) {
+    .ltv-source-backdrop { background: rgba(0, 0, 0, .3); }
+    .ltv-source-dialog {
+      position: fixed;
+      left: auto;
+      right: max(16px, calc((100vw - 1040px) / 2));
+      bottom: auto;
+      top: 88px;
+      width: min(320px, calc(100vw - 32px));
+      max-height: 70vh;
+      border-radius: 14px;
+      box-shadow: 0 12px 36px rgba(0, 0, 0, .36);
+      padding-bottom: 6px;
+      animation: ltv-source-pop .15s ease;
+    }
+    @keyframes ltv-source-pop { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
+    .ltv-source-dialog-head { padding: 12px 14px 8px; }
+    .ltv-source-option { padding: 10px 12px; font-size: 14px; min-height: 40px; border-radius: 8px; }
+  }
 
   /* R-2 — the honest unavailable state (no eligible public source). */
   .ltv-unavailable { padding: 60px var(--ltv-gutter); display: flex; justify-content: center; }

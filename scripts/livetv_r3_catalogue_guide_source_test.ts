@@ -44,7 +44,7 @@ console.log('§1 — Source selector visible, labels "All Sources" (Issue 1)');
 // ============================================================
 {
   // 1.1 — the heading-row Source selector is rendered when sources are available.
-  ok(liveTvPage.includes('ltv-source-picker') && liveTvPage.includes('ltv-source-button'), '§1.1 the Source selector button is rendered in the hero row');
+  ok(liveTvPage.includes('ltv-source-icon-btn'), '§1.1 R-4: the compact Source selector ICON button is rendered in the hero row (no large button, no separate row)');
   // 1.2 — the default label is "All Sources" (never "Auto").
   ok(liveTvPage.includes("'All Sources'"), '§1.2 the default selector label is "All Sources" (never "Auto")');
   ok(!/\bAuto\b/.test(liveTvPage.match(/sourceSelectorLabel[\s\S]{0,200}/)?.[0] ?? ''), '§1.3 the sourceSelectorLabel never resolves to "Auto" (the per-channel switcher "Auto" is a different control)');

@@ -130,15 +130,19 @@ console.log('§5 — The heading-row Source selector UI (Issue 6)');
 // ============================================================
 {
   // 5.1 — the Source selector button is in the hero row (far right of the heading).
-  ok(liveTvPage.includes('ltv-source-picker') && liveTvPage.includes('ltv-source-button'), '§5.1 the Source selector button is rendered in the hero row');
+  ok(liveTvPage.includes('ltv-source-icon-btn'), '§5.1 R-4: the compact Source selector ICON button is rendered in the hero row (no large button, no separate row)');
   // 5.2 — the selector is only shown when sources are available.
   ok(liveTvPage.includes('{#if sourcesAvailable && selectorSources.length > 0}'), '§5.2 the Source selector is shown only when sources are available');
   // 5.3 — the selector opens a sheet/dialog with All Sources + each eligible source.
-  ok(liveTvPage.includes('ltv-source-sheet') && liveTvPage.includes('All Sources'), '§5.3 the selector sheet offers All Sources + each eligible source');
+  ok(liveTvPage.includes('ltv-source-dialog') && liveTvPage.includes('All Sources'), '§5.3 R-4: the selector dialog offers All Sources + each eligible source (bottom sheet / popover)');
   // 5.4 — selecting a source filters the catalogue to that source's channels.
   ok(liveTvPage.includes('applySourceFilter') && liveTvPage.includes('selectedSourceFilter'), '§5.4 applySourceFilter sets selectedSourceFilter');
   // 5.5 — the filter narrows visibleChannels by the selected source's display name.
-  ok(liveTvPage.includes("alts.some((alt) => alt.label === selectedSourceName)"), '§5.5 the source filter narrows visibleChannels by the selected source display name (catalogue alternatives)');
+  // 5.5 — R-4: the source filter is applied SERVER-SIDE (the sourceId query
+  //     param). The client-side label-match filter was REMOVED (it was
+  //     broken — see Issue 2 root cause). The catalogue API returns only
+  //     the selected source's channels; the client applies category + search.
+  ok(!liveTvPage.includes("alts.some((alt) => alt.label === selectedSourceName)"), '§5.5 R-4: the broken client-side label-match filter is GONE (the sourceId query param is the authority)');
   // 5.6 — switching source clears incompatible selected-channel state.
   ok(liveTvPage.includes('stillVisible') && liveTvPage.includes('destroyEngineSafely(engine)'), '§5.6 switching source clears an incompatible selected-channel session (engine destroyed, embed torn down)');
   // 5.7 — the selector is keyboard-accessible (aria-haspopup, aria-expanded).

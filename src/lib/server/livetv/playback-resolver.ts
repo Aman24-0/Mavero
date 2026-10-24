@@ -344,6 +344,14 @@ function unresolvedWire(unifiedEnabled: boolean): LivetvPlaybackResolutionWire {
  * candidate list, never an error surface.
  */
 async function resolveLivetvDirectEntry(client: SupabaseClient<Database>, entryRowId: string, unifiedEnabled: boolean): Promise<LivetvPlaybackResolutionWire> {
+        // R-4 — for an `entry:<uuid>` selection, the resolver is the
+        // AUTHORITY (the legacy LiveGT API doesn't recognize entry: ids).
+        // A missing/disabled entry or source returns `resolved: true` with
+        // an EMPTY candidate list (the honest "nothing eligible" answer),
+        // NEVER `resolved: false` (which would make the client fall through
+        // to the legacy path → "Live TV rejected the request").
+        const emptyResolved = { unifiedEnabled: true, resolved: true, mode: 'default' as const, candidates: [] };
+
         // 1. The entry row (by its PRIMARY KEY — the catalogue emits exactly this id).
         const entryResult = await client
                 .from('livetv_source_channels')
@@ -351,9 +359,9 @@ async function resolveLivetvDirectEntry(client: SupabaseClient<Database>, entryR
                 .eq('id', entryRowId)
                 .limit(1)
                 .maybeSingle();
-        if (entryResult.error) return unresolvedWire(unifiedEnabled);
+        if (entryResult.error) return emptyResolved;
         const entryRow = entryResult.data as SourceChannelRow | null;
-        if (!entryRow) return unresolvedWire(unifiedEnabled);
+        if (!entryRow) return emptyResolved;
         const entryRef = toSourceChannelRef(entryRow);
 
         // 2. The entry's source row — the full gate context, visibility included.
@@ -363,11 +371,11 @@ async function resolveLivetvDirectEntry(client: SupabaseClient<Database>, entryR
                 .eq('id', entryRow.source_id)
                 .limit(1)
                 .maybeSingle();
-        if (sourceResult.error) return unresolvedWire(unifiedEnabled);
+        if (sourceResult.error) return emptyResolved;
         const sourceRow = sourceResult.data as SourceRow | null;
-        if (!sourceRow) return unresolvedWire(unifiedEnabled);
+        if (!sourceRow) return emptyResolved;
         const sourceRef = toSourceRef(sourceRow);
-        if (!sourceRef) return unresolvedWire(unifiedEnabled);
+        if (!sourceRef) return emptyResolved;
         // Catalogue exposure parity: only PUBLIC sources' entries were
         // surfaced. A selection must not resolve past a visibility change —
         // but it also must never fall to the legacy path (a registry-governed
@@ -387,7 +395,7 @@ async function resolveLivetvDirectEntry(client: SupabaseClient<Database>, entryR
                         .select('id,source_channel_id,endpoint_kind,stream_format,url,ordering,enabled,label')
                         .eq('source_channel_id', entryRow.id)
                         .limit(MAX_ENDPOINTS_PER_LOAD);
-                if (endpointsResult.error) return unresolvedWire(unifiedEnabled);
+                if (endpointsResult.error) return emptyResolved;
                 for (const row of (endpointsResult.data ?? []) as EndpointRow[]) {
                         const ref = toEndpointRef(row);
                         if (ref) endpoints.push(ref);
@@ -437,16 +445,36 @@ export async function resolveLivetvPlaybackForSelection(
         selectionId: string
 ): Promise<LivetvPlaybackResolutionWire> {
         const unifiedEnabled = await isUnifiedLivetvEnabled(client);
-        if (!unifiedEnabled) return unresolvedWire(false);
 
-        // Identity (c) — R-0: a DIRECT entry selection (`entry:<uuid>`, the
-        // unified catalogue's unmapped-entry rows). Handled BEFORE the
-        // canonical identities; the flag gate above is unchanged.
+        // R-4 — SOURCE-FIRST playback for direct entry selections. An
+        // `entry:<uuid>` identity is a REGISTRY-GOVERNED reference to a
+        // specific `livetv_source_channels` row. It is NOT a LiveGT V1
+        // channel id — the legacy LiveGT API does not recognize it (it
+        // returns HTML 404 → "Live TV rejected the request"). The
+        // `unified_enabled` flag is the owner's lever for the UNIFIED
+        // PLAYBACK ROUTER (the LiveGT V1 canonical path + the builtin
+        // virtual pair synthesis); it must NOT gate the resolution of a
+        // playlist source's own endpoint rows. The source's own
+        // enabled + eligible-status + visibility + entry-enabled gates
+        // (re-enforced inside resolveLivetvDirectEntry) are the authority.
+        //
+        // This closes the R-3 regression where JioHotstar/Sony channels
+        // (entry:<uuid>) were rejected with "Live TV rejected the request"
+        // when unified_enabled was FALSE (production default): the resolver
+        // returned unresolvedWire(false) → the page fell through to the
+        // legacy LT-2 client → LiveGT V1 returned 404 for the entry id.
         if (selectionId.startsWith(ENTRY_SELECTION_PREFIX)) {
                 const entryRowId = selectionId.slice(ENTRY_SELECTION_PREFIX.length);
                 if (!ENTRY_ROW_ID_PATTERN.test(entryRowId)) return unresolvedWire(unifiedEnabled);
                 return resolveLivetvDirectEntry(client, entryRowId, unifiedEnabled);
         }
+
+        // The canonical path (mapped entries + the builtin virtual pair)
+        // remains flag-gated — the flag is the owner's lever for the
+        // unified playback router. A canonical selection with the flag OFF
+        // resolves unresolvedWire(false) → the page's legacy fallback
+        // handles it (the legacy LiveGT client recognizes canonical ids).
+        if (!unifiedEnabled) return unresolvedWire(false);
 
         // 1. The builtin source row (seeded; builtin flag is the identity).
         const { data: builtinRow, error: builtinError } = await client

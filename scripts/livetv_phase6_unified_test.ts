@@ -596,21 +596,28 @@ const CHAN_1 = { id: 'chan-1', name: 'Zeta One', category: 'News', logo_url: 'ht
   const viaDisabledEntryDirect = await resolveLivetvPlaybackForSelection(clientM as unknown as Parameters<typeof resolveLivetvPlaybackForSelection>[0], `entry:${DIRECT_ENTRY_ID}`);
   ok(viaDisabledEntryDirect.resolved === true && viaDisabledEntryDirect.candidates.length === 0, '3m.1 a disabled entry contributes an EMPTY managed list (M1)');
 
-  // 3n. Structural unknowns fail closed to the legacy path (Phase 5 parity):
-  //     a malformed entry id and a deleted entry row.
+  // 3n. R-4 — structural unknowns for entry: selections return resolved:true
+  //     with an EMPTY candidate list (the honest "nothing eligible" answer),
+  //     NEVER resolved:false. The legacy LiveGT API doesn't recognize entry:
+  //     ids — falling through to legacy would produce "Live TV rejected the
+  //     request". A malformed entry id still returns resolved:false (it never
+  //     reaches the entry-row lookup — the UUID pattern gate fails first).
   resetLivetvPlaybackFlagCacheForTests();
   const clientN = createMockClient(directEntryTables());
   const viaGarbage = await resolveLivetvPlaybackForSelection(clientN as unknown as Parameters<typeof resolveLivetvPlaybackForSelection>[0], 'entry:not-a-uuid');
-  ok(viaGarbage.resolved === false && viaGarbage.candidates.length === 0, '3n.1 a malformed entry id resolves false (legacy compat — unreachable from the catalogue)');
+  ok(viaGarbage.resolved === false && viaGarbage.candidates.length === 0, '3n.1 a malformed entry id resolves false (UUID pattern gate — never reaches the entry-row lookup)');
   const viaDeleted = await resolveLivetvPlaybackForSelection(clientN as unknown as Parameters<typeof resolveLivetvPlaybackForSelection>[0], 'entry:d9999999-0000-4000-8000-000000000009');
-  ok(viaDeleted.resolved === false && viaDeleted.candidates.length === 0, '3n.2 a deleted entry resolves false (Phase 5 unknown-identity parity)');
+  ok(viaDeleted.resolved === true && viaDeleted.candidates.length === 0, '3n.2 R-4: a deleted entry resolves TRUE with an empty candidate list (honest exhausted — never falls through to the legacy path that would reject it)');
 
-  // 3o. Flag OFF — the entry path is unreachable, exactly like every other
-  //     identity (the master switch stays the rollback lever).
+  // 3o. R-4 — flag OFF no longer gates entry: selections. The resolver
+  //     resolves entry: ids regardless of the unified flag (the source's
+  //     own gates are the authority). The flag remains the owner's lever
+  //     for the CANONICAL path (mapped entries + the LiveGT V1 builtin
+  //     virtual pair).
   resetLivetvPlaybackFlagCacheForTests();
   const clientO = createMockClient({ ...directEntryTables(), livetv_config_meta: FLAG_OFF });
   const viaFlagOff = await resolveLivetvPlaybackForSelection(clientO as unknown as Parameters<typeof resolveLivetvPlaybackForSelection>[0], `entry:${DIRECT_ENTRY_ID}`);
-  ok(viaFlagOff.unifiedEnabled === false && viaFlagOff.resolved === false, '3o.1 flag OFF ⇒ resolved:false for entry selections too (fail-closed master switch)');
+  ok(viaFlagOff.resolved === true && viaFlagOff.candidates.length > 0, '3o.1 R-4: flag OFF ⇒ entry: selections STILL resolve (source-first playback — the flag no longer gates entry: ids)');
 }
 
 // ============================================================

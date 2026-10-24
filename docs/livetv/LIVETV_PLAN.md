@@ -804,3 +804,54 @@ A new test file `scripts/livetv_r3_catalogue_guide_source_test.ts` (57 checks) c
 - NO new timeout was added. The watchdogs are unchanged.
 - Real-browser verification: NOT RUN (no browser playback stack/authorized geo). The 57-check R-3 regression suite, the 114-check M3U suite, and the 162-check P6 suite are the automated coverage layer.
 - The source-first catalogue/guide performs NO writes (read-only). The SSR guard and API endpoints are GET-only.
+
+
+---
+
+## 21. R-4 — Playback repair, source-selector UI polish & warning cleanup (owner-initiated 2026-10-25, branch `livetv/r4-playback-ui-polish`)
+
+> Naming note: the owner's task codename **R-4** names THIS round. The worklog's R-0/R-1/R-2/R-3 entries are retained verbatim as history.
+
+An evidence-based audit and repair of five owner-reported production problems observed after R-3. NOT a data-model redesign: every table, migration, RLS policy and Phase 1–8 + R-0/R-1/R-2/R-3 backend capability remains intact. The `unified_enabled` flag is untouched; R-4 separates the entry: playback path from the flag (the flag remains the owner's lever for the canonical path).
+
+### 21.1 Root cause: the source-selector / source-filtering / playback-rejection triangle (Issues 1, 2, 3)
+
+These three issues share a common theme: the R-2/R-3 source selector was functionally correct but had a broken CLIENT-SIDE filter, and the playback path still fell through to the legacy LiveGT API for `entry:` channels when the flag was OFF.
+
+**Issue 1 (UI):** The selector used a large labeled button + `flex-wrap: wrap` → wrapped to a new row on mobile. The dropdown used `position: absolute; right: 0` → extended beyond the viewport on narrow screens. R-4 replaces it with a compact 40px icon button + bottom sheet (mobile) / popover (desktop).
+
+**Issue 2 (filtering):** The page applied a CLIENT-SIDE label-match filter on `visibleChannels` — but when the server filters to one source, each channel's `sources` (alternatives) array has only 1 entry → omitted from the wire (the ≥2 switcher gate) → the client filter found no match → "0 of N". R-4 removes the client-side filter; the server-side `sourceId` query param is the authority.
+
+**Issue 3 (playback):** With `unified_enabled=false`, the router returned `'legacy'` for `entry:` channels → the page called the legacy LiveGT API → LiveGT didn't recognize `entry:<uuid>` → "Live TV rejected the request". R-4 makes the resolver resolve `entry:` selections BEFORE the flag gate; the router skips the flag gate for `entry:` channels. The flag remains the owner's lever for the canonical path.
+
+### 21.2 The compact Source selector (Issue 1)
+
+A 40px square icon button (Filter icon + selected-state dot) on the far right of the `MAVERO / Live TV` heading row. `flex-wrap: nowrap` on `.ltv-hero-inner` ensures it stays on the SAME row (no separate row, no large control). On mobile (≤640px) the selector opens a bottom sheet (position:fixed; bottom:0; safe-area-inset-bottom; internal vertical scroll; min-height:44px touch targets). On desktop (≥641px) it opens a popover anchored to top:88px right-aligned (width:min(320px, calc(100vw - 32px))). A backdrop closes the sheet on click; closing preserves the selection (`closeSourceSheet` only sets `sourceSheetOpen = false`).
+
+### 21.3 The source-filtering contract (Issue 2)
+
+The server-side `sourceId` query param is the authority. The catalogue endpoint (`/api/livetv/catalogue?sourceId=<uuid>`) returns ONLY the selected source's channels. The page's `loadCatalogue` passes `sourceId: selectedSourceFilter`. The client's `visibleChannels` only applies category + search on top — NO client-side source filter. The previous broken label-match filter (`alts.some((alt) => alt.label === selectedSourceName)`) is REMOVED. Selecting Sony shows Sony's eligible entries; selecting JioHotstar shows JioHotstar's; selecting LiveGT shows LiveGT's; All Sources shows every eligible source's channels.
+
+### 21.4 The source-first playback path (Issue 3)
+
+The resolver's `resolveLivetvPlaybackForSelection` now resolves `entry:<uuid>` selections BEFORE the flag gate. The `entry:` branch is handled first; the flag gate (`if (!unifiedEnabled) return unresolvedWire(false)`) only applies to the canonical path. `resolveLivetvDirectEntry` returns `resolved: true` with empty candidates for missing/disabled entries (honest exhausted — never falls through to the legacy path). The router's `start()` skips the flag gate for `entry:` channels (`const isEntrySelection = channel.id.startsWith('entry:'); if (!isEntrySelection) { const enabled = await this.isUnifiedEnabled(); ... }`). The flag remains the owner's lever for the CANONICAL path (mapped entries + the LiveGT V1 builtin virtual pair).
+
+### 21.5 The warning cleanup (Issue 4)
+
+- **Fixed:** 6 `css_unused_selector` warnings in the admin livetv page (`.a2-footnote`, `.a2-icon-btn` — R-2 removed the icon buttons and footnote but left the CSS). R-4 removed the dead CSS.
+- **Benign (false positives):** 5 `css_unused_selector` warnings in `AdminAddFileWizard.svelte`, `AdminEpisodeSheet.svelte`, `AdminMediaList.svelte` — they reference `.search-icon`/`.spinner` classes passed to lucide-svelte components. Lucide-svelte forwards the `class` prop to the SVG element at runtime, so the CSS IS applied; Svelte's static analyzer can't see through the component boundary. Removing the CSS would break the spinner animation.
+- **Benign (build):** 2 build warnings — (a) chunk size limit (large bundles), (b) `jsconfig.json` baseUrl/paths (the test scripts need the `$env` stubs + `$components` aliases; removing would break tests).
+- **Intentional design:** `PRODUCTION_ORIGIN = 'https://maveroweb.space'` is intentionally hardcoded for SEO canonical URLs (documented in `seo.ts` — Netlify serves multiple hosts; canonical URLs must be request-independent).
+
+### 21.6 Regression tests
+
+A new test file `scripts/livetv_r4_playback_ui_polish_test.ts` (53 checks) covers all 5 issues + R-3 preservation + no-production-changes invariant. The P6 unified test (3 assertions), R-2 test (3 assertions), and R-3 test (1 assertion) were updated to reflect the R-4 contract — 0 existing assertions weakened.
+
+### 21.7 Security, safety and delivery constraints
+
+- No migration, no production SQL/data change, no deploy, no flag change. R-4 uses ONLY existing columns.
+- `unified_enabled` stays FALSE everywhere; R-4 is ORTHOGONAL to the flag for `entry:` selections — the flag gates only the canonical path.
+- The resolver's gates (S1/S2/M1/E1 + visibility), candidate ordering, and the builtin LiveGT V1 direct/embed contract are UNCHANGED. SSRF defenses (https-only, no credentials) preserved.
+- NO new timeout. NO security validation weakened. NO streams proxied.
+- Real-browser verification: NOT RUN. The 53-check R-4 suite + 162-check P6 suite + 114-check M3U suite are the automated coverage layer.
+- Branch `livetv/r4-playback-ui-polish` — NOT merged to main, NOT deployed (per owner instruction).

@@ -339,9 +339,24 @@ export class LiveTvPlaybackRouter {
          * unavailable, or nothing configured for this selection).
          */
         async start(channel: { id: string; name: string }, video: HTMLVideoElement, signal?: AbortSignal): Promise<'handled' | 'legacy'> {
-                // The flag gate FIRST — false means the router never starts.
-                const enabled = await this.isUnifiedEnabled();
-                if (!enabled) return 'legacy';
+                // R-4 — SOURCE-FIRST playback for direct entry selections. An
+                // `entry:<uuid>` identity is registry-governed (a specific
+                // livetv_source_channels row). The resolver endpoint resolves
+                // it regardless of the unified flag (the source's own gates
+                // are the authority). The flag remains the owner's lever for
+                // the CANONICAL path (mapped entries + the LiveGT V1 builtin
+                // virtual pair); it must NOT gate entry: selections.
+                //
+                // This closes the R-3 regression where JioHotstar/Sony
+                // channels (entry:<uuid>) were rejected with "Live TV
+                // rejected the request" when unified_enabled was FALSE.
+                const isEntrySelection = channel.id.startsWith('entry:');
+                if (!isEntrySelection) {
+                        // The flag gate FIRST — false means the router never starts
+                        // for canonical selections (the legacy path handles them).
+                        const enabled = await this.isUnifiedEnabled();
+                        if (!enabled) return 'legacy';
+                }
 
                 // Teardown ANY previous session (duplicate-concurrent guard):
                 // engines destroyed, timers cleared, iframe unmounted.

@@ -597,7 +597,6 @@
   .a2-row-head { display: flex; align-items: center; justify-content: space-between; gap: var(--a2-space-3); flex-wrap: wrap; margin-bottom: var(--a2-space-2); }
   .a2-h3 { margin: var(--a2-space-4) 0 var(--a2-space-2); font-size: var(--a2-text-md); font-weight: 600; color: var(--a2-text); }
   .a2-muted { color: var(--a2-text-muted); font-size: var(--a2-text-sm); line-height: 1.55; margin: 0 0 var(--a2-space-2); }
-  .a2-footnote { color: var(--a2-text-dim); font-size: var(--a2-text-xs); border-top: 1px solid var(--a2-border); padding-top: var(--a2-space-3); }
 
   .a2-chip-row { display: flex; flex-wrap: wrap; gap: var(--a2-space-2); margin-top: var(--a2-space-2); }
   .a2-chip {
@@ -690,21 +689,6 @@
   .a2-btn-primary:hover { background: var(--a2-cyan-soft); filter: brightness(1.08); }
   .a2-btn-sm { padding: 4px var(--a2-space-2); font-size: var(--a2-text-xs); }
 
-  .a2-icon-btn {
-    display: inline-flex; align-items: center; justify-content: center;
-    min-width: 30px; min-height: 30px;
-    background: transparent;
-    border: 1px solid transparent;
-    border-radius: var(--a2-radius-xs);
-    color: var(--a2-text-muted);
-    cursor: pointer;
-    text-decoration: none;
-    transition: color var(--a2-motion-micro) var(--a2-ease-out), background var(--a2-motion-micro) var(--a2-ease-out);
-  }
-  .a2-icon-btn:hover { background: var(--a2-surface-3); color: var(--a2-text); }
-  .a2-icon-btn:focus-visible { outline: 2px solid var(--a2-cyan); outline-offset: 1px; }
-  .a2-icon-btn:disabled { opacity: 0.35; cursor: not-allowed; }
-
   .a2-actions { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; }
   .a2-actions form { display: inline-flex; }
 
@@ -756,6 +740,6 @@
     .channels-form input[type='search'] { min-width: 0; flex: 1 1 160px; }
   }
   @media (prefers-reduced-motion: reduce) {
-    .a2-btn, .a2-icon-btn, .switch, .switch-track, .switch-thumb { transition: none; }
+    .a2-btn, .switch, .switch-track, .switch-thumb { transition: none; }
   }
 </style>
