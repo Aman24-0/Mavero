@@ -653,6 +653,77 @@ export function buildDefaultLivetvOrder(input: LivetvDefaultOrderInput): LivetvO
 }
 
 // ---------------------------------------------------------------------------
+// Direct ENTRY resolution (R-0, additive): the ordered endpoints of ONE
+// source entry selected directly (the `entry:<rowId>` catalogue identity).
+// The canonical mapping gates (C1/M0) deliberately do NOT participate — an
+// unmapped entry has no canonical row — but every other gate is re-enforced:
+//
+//   S1  source.enabled = true                       else source_disabled
+//   S2  source.status ∈ {active,experimental,maintenance}
+//                                                   else source_status_ineligible
+//   M1  entry.enabled = true                        else source_channel_disabled
+//   E1  endpoint.enabled = true                     else endpoint_disabled
+//
+// SOURCE VISIBILITY is additionally enforced by the RESOLVER (the row is
+// loaded there) so a direct-entry selection can never bypass the catalogue's
+// `visibility='public'` exposure rule. Ordering/dedupe/engine derivation
+// follow buildDefaultLivetvOrder's conventions exactly.
+// ---------------------------------------------------------------------------
+
+export type LivetvDirectEntryOrderInput = {
+        source: LivetvSourceRef;
+        entry: LivetvSourceChannelRef;
+        endpoints: readonly LivetvEndpointRef[];
+};
+
+/** Why a direct-entry selection contributes nothing (same taxonomy). */
+export type LivetvDirectEntryBlockReason =
+        | 'source_disabled'
+        | 'source_status_ineligible'
+        | 'source_channel_disabled';
+
+/** Returns WHY the entry-direct selection is blocked, or null when eligible. */
+export function explainLivetvDirectEntryBlock(input: LivetvDirectEntryOrderInput): LivetvDirectEntryBlockReason | null {
+        if (!input.source.enabled) return 'source_disabled';
+        if (!PLAYBACK_ELIGIBLE_STATUSES.has(input.source.status)) return 'source_status_ineligible';
+        if (!input.entry.enabled) return 'source_channel_disabled';
+        return null;
+}
+
+/**
+ * The ordered, eligible endpoints of ONE directly-selected source entry
+ * (endpoint ordering ASC, endpoint id ASC; defensive dedupe; engine derived
+ * from the endpoint kind). A disabled source/entry contributes nothing.
+ */
+export function buildDirectLivetvEntryOrder(input: LivetvDirectEntryOrderInput): LivetvOrderedCandidate[] {
+        if (explainLivetvDirectEntryBlock(input) !== null) return [];
+        const results: LivetvOrderedCandidate[] = [];
+        const seenEndpoints = new Set<string>();
+        const endpoints = [...input.endpoints].sort((a, b) => {
+                if (a.ordering !== b.ordering) return a.ordering - b.ordering;
+                return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+        });
+        for (const endpoint of endpoints) {
+                // Rule E1 + defensive endpoint dedupe (no duplicate attempts).
+                if (!endpoint.enabled || seenEndpoints.has(endpoint.id)) continue;
+                if (endpoint.sourceChannelId !== input.entry.id) continue; // cross-entry guard (defense in depth)
+                seenEndpoints.add(endpoint.id);
+                results.push({
+                        candidateId: `default:${endpoint.id}`,
+                        endpointId: endpoint.id,
+                        sourceSlug: input.source.slug,
+                        sourceType: input.source.sourceType,
+                        endpointKind: endpoint.kind,
+                        streamFormat: endpoint.streamFormat,
+                        engine: playbackEngineForEndpoint(endpoint.kind),
+                        endpointUrl: endpoint.url,
+                        endpointLabel: endpoint.label
+                });
+        }
+        return results;
+}
+
+// ---------------------------------------------------------------------------
 // Top-level resolution (mode detection only — no DB I/O in Phase 1).
 // ---------------------------------------------------------------------------
 

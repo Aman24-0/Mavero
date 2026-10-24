@@ -57,6 +57,7 @@ import {
         LIVETV_SOURCE_STATUSES,
         LIVETV_SOURCE_TYPES,
         LIVETV_STREAM_FORMATS,
+        buildDirectLivetvEntryOrder,
         type LivetvCandidateRecord,
         type LivetvEndpointRef,
         type LivetvEndpointKind,
@@ -252,6 +253,14 @@ const BUILTIN_SOURCE_TYPE = 'builtin_livegt_v1';
 /** Virtual endpoint ids carry the `virtual:` prefix — never real row ids. */
 const VIRTUAL_ID_PREFIX = 'virtual:';
 
+/**
+ * R-0 — the direct ENTRY selection identity: `entry:<entry-row-uuid>`.
+ * Emitted by the unified catalogue for UNMAPPED entries (safe source-entry
+ * selection); resolved below WITHOUT touching the canonical mapping model.
+ */
+const ENTRY_SELECTION_PREFIX = 'entry:';
+const ENTRY_ROW_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 type VirtualPair = { direct: LivetvEndpointRef; embed: LivetvEndpointRef };
 
 function buildBuiltinVirtualEndpoints(entry: LivetvSourceChannelRef): VirtualPair {
@@ -307,12 +316,137 @@ function unresolvedWire(unifiedEnabled: boolean): LivetvPlaybackResolutionWire {
  * NEITHER identity resolves `resolved:false` (the client's documented
  * legacy compatibility path — never a fake candidate list).
  */
+/**
+ * R-0 — direct ENTRY resolution (identity (c): `entry:<entry-row-uuid>`).
+ *
+ * Resolves ONE selected source entry DIRECTLY — the safe source-entry path
+ * that keeps UNMAPPED entries playable (the canonical path requires M0).
+ * The gates are re-enforced here from the loaded rows, never trusted from
+ * the catalogue:
+ *
+ *   * flag OFF        → handled by the caller (resolved:false) — unchanged.
+ *   * source row      → enabled + playback-eligible status + `visibility
+ *                       ='public'` (catalogue exposure parity — a direct
+ *                       entry selection can never bypass visibility).
+ *   * entry row       → enabled (M1).
+ *   * endpoints       → for the builtin source, the SAME synthesized virtual
+ *                       direct→embed pair as the canonical path (its entries
+ *                       carry no endpoint rows by design); for every other
+ *                       source the entry's OWN endpoint rows, https
+ *                       re-validated (fail-closed), ordered by the registry's
+ *                       pure `buildDirectLivetvEntryOrder` (S1/S2/M1/E1).
+ *   * bounded         → ≤ MAX_PLAYBACK_CANDIDATES candidates, mode 'default'
+ *                       (an unmapped entry cannot have explicit candidate
+ *                       rows — those reference canonical channels).
+ *
+ * Fail-closed: an unknown/garbage/blocked selection resolves `resolved:false`
+ * (the client's documented legacy compatibility path) — never a fake
+ * candidate list, never an error surface.
+ */
+async function resolveLivetvDirectEntry(client: SupabaseClient<Database>, entryRowId: string, unifiedEnabled: boolean): Promise<LivetvPlaybackResolutionWire> {
+        // 1. The entry row (by its PRIMARY KEY — the catalogue emits exactly this id).
+        const entryResult = await client
+                .from('livetv_source_channels')
+                .select('id,source_id,source_channel_id,canonical_channel_id,enabled')
+                .eq('id', entryRowId)
+                .limit(1)
+                .maybeSingle();
+        if (entryResult.error) return unresolvedWire(unifiedEnabled);
+        const entryRow = entryResult.data as SourceChannelRow | null;
+        if (!entryRow) return unresolvedWire(unifiedEnabled);
+        const entryRef = toSourceChannelRef(entryRow);
+
+        // 2. The entry's source row — the full gate context, visibility included.
+        const sourceResult = await client
+                .from('livetv_sources')
+                .select('id,slug,name,source_type,builtin,enabled,status,priority,visibility,capabilities,config,description')
+                .eq('id', entryRow.source_id)
+                .limit(1)
+                .maybeSingle();
+        if (sourceResult.error) return unresolvedWire(unifiedEnabled);
+        const sourceRow = sourceResult.data as SourceRow | null;
+        if (!sourceRow) return unresolvedWire(unifiedEnabled);
+        const sourceRef = toSourceRef(sourceRow);
+        if (!sourceRef) return unresolvedWire(unifiedEnabled);
+        // Catalogue exposure parity: only PUBLIC sources' entries were
+        // surfaced. A selection must not resolve past a visibility change —
+        // but it also must never fall to the legacy path (a registry-governed
+        // entry id means nothing to the legacy client), so this is the honest
+        // managed-empty answer, matching the disabled-source/entry gates.
+        const visibilityEligible = sourceRow.visibility === 'public';
+
+        // 3. The entry's endpoints: the builtin's synthesized pair, or its own rows.
+        const isBuiltin = sourceRow.source_type === BUILTIN_SOURCE_TYPE && sourceRow.builtin === true;
+        const endpoints: LivetvEndpointRef[] = [];
+        if (isBuiltin) {
+                const pair = buildBuiltinVirtualEndpoints(entryRef);
+                endpoints.push(pair.direct, pair.embed);
+        } else {
+                const endpointsResult = await client
+                        .from('livetv_playback_endpoints')
+                        .select('id,source_channel_id,endpoint_kind,stream_format,url,ordering,enabled,label')
+                        .eq('source_channel_id', entryRow.id)
+                        .limit(MAX_ENDPOINTS_PER_LOAD);
+                if (endpointsResult.error) return unresolvedWire(unifiedEnabled);
+                for (const row of (endpointsResult.data ?? []) as EndpointRow[]) {
+                        const ref = toEndpointRef(row);
+                        if (ref) endpoints.push(ref);
+                }
+        }
+
+        // 4. The PURE registry ordering (S1/S2/M1/E1 — a disabled source or
+        //    entry, or a visibility-lost selection, contributes an EMPTY
+        //    managed list, never an error and never a legacy fallback).
+        const ordered = visibilityEligible
+                ? buildDirectLivetvEntryOrder({ source: sourceRef, entry: entryRef, endpoints })
+                : [];
+
+        // 5. Wire projection — virtual-aware, bounded, redacted.
+        const candidates: LivetvPlaybackCandidateWire[] = [];
+        for (const candidate of ordered) {
+                if (candidates.length >= MAX_PLAYBACK_CANDIDATES) break;
+                if (candidate.endpointId.startsWith(VIRTUAL_ID_PREFIX)) {
+                        candidates.push({
+                                candidateId: candidate.candidateId,
+                                engine: candidate.engine === 'iframe_embed' ? 'iframe_embed' : 'shaka_media_player',
+                                endpointKind: candidate.endpointKind,
+                                streamFormat: candidate.streamFormat,
+                                url: null,
+                                resolver: 'builtin_livegt_v1',
+                                sourceChannelId: entryRow.source_channel_id,
+                                label: null
+                        });
+                        continue;
+                }
+                candidates.push({
+                        candidateId: candidate.candidateId,
+                        engine: candidate.engine === 'iframe_embed' ? 'iframe_embed' : 'shaka_media_player',
+                        endpointKind: candidate.endpointKind,
+                        streamFormat: candidate.streamFormat,
+                        url: candidate.endpointUrl,
+                        resolver: null,
+                        sourceChannelId: null,
+                        label: candidate.endpointLabel
+                });
+        }
+        return { unifiedEnabled: true, resolved: true, mode: 'default', candidates };
+}
+
 export async function resolveLivetvPlaybackForSelection(
         client: SupabaseClient<Database>,
         selectionId: string
 ): Promise<LivetvPlaybackResolutionWire> {
         const unifiedEnabled = await isUnifiedLivetvEnabled(client);
         if (!unifiedEnabled) return unresolvedWire(false);
+
+        // Identity (c) — R-0: a DIRECT entry selection (`entry:<uuid>`, the
+        // unified catalogue's unmapped-entry rows). Handled BEFORE the
+        // canonical identities; the flag gate above is unchanged.
+        if (selectionId.startsWith(ENTRY_SELECTION_PREFIX)) {
+                const entryRowId = selectionId.slice(ENTRY_SELECTION_PREFIX.length);
+                if (!ENTRY_ROW_ID_PATTERN.test(entryRowId)) return unresolvedWire(unifiedEnabled);
+                return resolveLivetvDirectEntry(client, entryRowId, unifiedEnabled);
+        }
 
         // 1. The builtin source row (seeded; builtin flag is the identity).
         const { data: builtinRow, error: builtinError } = await client

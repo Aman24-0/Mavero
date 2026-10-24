@@ -34,6 +34,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database, Json } from '../supabase/database.types';
+import { getLivetvRefreshHistoryPage } from './history';
 import {
   LIVETV_SOURCE_STATUSES,
   LIVETV_SOURCE_TYPES,
@@ -440,8 +441,11 @@ export async function updateLivetvSource(client: SupabaseClient<Database>, sourc
   if (Object.keys(patch).length === 0) fail('Nothing to update.');
 
   await executeOrMap(async () => {
-    const { error } = await client.from('livetv_sources').update(patch).eq('id', id);
-    if (error) throw error;
+    // R-0 honesty fix: an UPDATE matching zero rows (the source was deleted
+    // concurrently between the edit-open and the submit) previously resolved
+    // as SUCCESS. The write is only successful when the row really changed.
+    const { data, error } = await client.from('livetv_sources').update(patch).eq('id', id).select('id').single();
+    if (error || !data) fail('The source no longer exists.');
   }, 'Unable to update the source.');
 }
 
@@ -449,9 +453,46 @@ export async function setLivetvSourceEnabled(client: SupabaseClient<Database>, s
   const id = requireUuid(sourceId, 'Source');
   const value = requireBoolean(enabled, 'Enabled');
   await executeOrMap(async () => {
-    const { error } = await client.from('livetv_sources').update({ enabled: value }).eq('id', id);
-    if (error) throw error;
+    // R-0 honesty fix: the toggle reports success only when the row really
+    // changed (a 0-row match — concurrent delete — is a typed failure, never
+    // a silent "Source state updated.").
+    const { data, error } = await client.from('livetv_sources').update({ enabled: value }).eq('id', id).select('id').single();
+    if (error || !data) fail('The source no longer exists.');
   }, 'Unable to change the source state.');
+}
+
+/** The per-source slice of the latest DURABLE refresh attempt (R-0). */
+export type LivetvSourceLatestHistory = {
+  status: string;
+  finishedAt: string | null;
+  trigger: string;
+};
+
+/**
+ * The latest durable refresh-history row per SOURCE (R-0): the Playback
+ * Sources table shows, when available, each source's last durable attempt
+ * (status + finished time + trigger) instead of only the instance-local
+ * in-memory record. Bounded read (LIVETV_HISTORY_MAX_PAGE newest rows,
+ * grouped in memory). NEVER throws: a missing/unreadable history table
+ * (RLS surprise, migration not yet applied) degrades to an empty map —
+ * the column then falls back to the instance-local outcomes, and to '—'
+ * when neither exists. Fail-open DIAGNOSTICS only: this surface never
+ * gates refresh or playback.
+ */
+export async function getLatestLivetvRefreshHistoryBySource(client: SupabaseClient<Database>): Promise<Map<string, LivetvSourceLatestHistory>> {
+  const latest = new Map<string, LivetvSourceLatestHistory>();
+  const rows = await getLivetvRefreshHistoryPage(client, { limit: 300, subjectKind: 'source' });
+  for (const row of rows) {
+    // Rows arrive newest-first; the FIRST occurrence per source is the
+    // most recent durable attempt.
+    if (latest.has(row.subject_id)) continue;
+    latest.set(row.subject_id, {
+      status: String(row.status),
+      finishedAt: (row.finished_at as string | null) ?? null,
+      trigger: String(row.trigger_type ?? 'manual')
+    });
+  }
+  return latest;
 }
 
 /**

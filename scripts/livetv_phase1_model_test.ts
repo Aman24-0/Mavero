@@ -40,6 +40,8 @@ import {
   isLivetvCandidateEligible,
   orderExplicitLivetvCandidates,
   buildDefaultLivetvOrder,
+  buildDirectLivetvEntryOrder,
+  explainLivetvDirectEntryBlock,
   resolveLivetvPlaybackOrder,
   type LivetvCandidateRecord,
   type LivetvEndpointKind,
@@ -282,6 +284,25 @@ const resolvedExplicit = resolveLivetvPlaybackOrder({ channelId: 'ch-1', explici
 ok(resolvedExplicit.mode === 'explicit' && resolvedExplicit.candidates.length === 1, '§6.12 explicit rows make the resolution authoritative (explicit mode)');
 const resolvedDefault = resolveLivetvPlaybackOrder({ channelId: 'ch-1', explicitRecords: [], defaults: { channelEnabled: true, sources, sourceChannels: entries, endpoints } });
 ok(resolvedDefault.mode === 'default' && resolvedDefault.candidates.length === 3, '§6.13 with no rows the source-priority default applies (default mode)');
+
+// §6b — R-0: DIRECT entry resolution (the `entry:<rowId>` selection path).
+// The canonical gates (C1/M0) deliberately do NOT apply; S1/S2/M1/E1 do.
+console.log('§6b direct-entry resolution (R-0)');
+{
+  const playlistSource = sources[0]!;
+  const unmappedEntry = entries[3]!;
+  const unmappedEndpoints = [endpoints[4]!];
+  const direct = buildDirectLivetvEntryOrder({ source: playlistSource, entry: unmappedEntry, endpoints: unmappedEndpoints });
+  ok(direct.length === 1 && direct[0]!.endpointId === 'ep-unmapped-direct' && direct[0]!.engine === 'shaka_media_player', '§6b.1 an UNMAPPED entry resolves through its own endpoints (M0 deliberately absent; engine derived)');
+  ok(direct[0]!.candidateId === 'default:ep-unmapped-direct', '§6b.2 direct-entry candidates carry the same synthetic id convention');
+  ok(explainLivetvDirectEntryBlock({ source: playlistSource, entry: unmappedEntry, endpoints: unmappedEndpoints }) === null, '§6b.3 a fully eligible direct entry reports NO block');
+  ok(buildDirectLivetvEntryOrder({ source: sources[3]!, entry: { ...unmappedEntry, sourceId: 'src-off' }, endpoints: unmappedEndpoints }).length === 0, '§6b.4 a disabled source contributes NOTHING (S1)');
+  ok(buildDirectLivetvEntryOrder({ source: { ...playlistSource, status: 'unavailable' }, entry: unmappedEntry, endpoints: unmappedEndpoints }).length === 0, '§6b.5 a non-eligible status contributes NOTHING (S2)');
+  ok(buildDirectLivetvEntryOrder({ source: playlistSource, entry: { ...unmappedEntry, enabled: false }, endpoints: unmappedEndpoints }).length === 0, '§6b.6 a disabled entry contributes NOTHING (M1)');
+  ok(buildDirectLivetvEntryOrder({ source: playlistSource, entry: unmappedEntry, endpoints: [{ ...endpoints[4]!, enabled: false }] }).length === 0, '§6b.7 a disabled endpoint contributes NOTHING (E1)');
+  const crossEntry = buildDirectLivetvEntryOrder({ source: playlistSource, entry: unmappedEntry, endpoints: [{ ...endpoints[4]!, sourceChannelId: 'entry-playlist' }] });
+  ok(crossEntry.length === 0, '§6b.8 a cross-entry endpoint never contributes (defense in depth)');
+}
 
 // ---------------------------------------------------------------------------
 // §7 — LiveGT direct vs embed endpoint separation
