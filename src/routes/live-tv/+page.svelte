@@ -169,67 +169,32 @@
   let catalogueController: AbortController | undefined;
 
   async function loadCatalogue(): Promise<void> {
-    // R-2 — the SSR availability guard. When no eligible public source
-    // exists, render the honest unavailable state and NEVER call the legacy
-    // LiveGT catalogue path (closing the R-1 regression where a disabled
-    // LiveGT source could bypass the owner's decision through the legacy
-    // fallback). The unified flag is irrelevant here: the source ON/OFF
-    // contract is the AUTHORITATIVE gate, applied before any catalogue
-    // fetch is attempted.
+    // R-3 — the SOURCE-FIRST catalogue. The page now uses the unified
+    // catalogue endpoint unconditionally (no flag gate). The endpoint
+    // returns channels from EVERY eligible public source (enabled +
+    // playback-eligible status + visibility=public), regardless of the
+    // `unified_enabled` flag. This closes the R-2 regression where turning
+    // LiveGT OFF blanked JioHotstar/Sony channels (the legacy LiveGT API
+    // doesn't know about playlist sources).
+    //
+    // The SSR availability guard still applies: when no eligible public
+    // source exists, render the honest unavailable state and never fetch.
     if (!sourcesAvailable) {
       catalogueState = 'ready';
       channels = [];
       catalogueMessage = null;
       return;
     }
-    // R-2 — the legacy LiveGT catalogue path is LiveGT-SPECIFIC. When the
-    // unified flag is OFF (production default) the page can ONLY show the
-    // LiveGT V1 catalogue. If the LiveGT source is not in the eligible
-    // public set (the owner turned it OFF), the legacy path must NOT run
-    // — even if other sources are available (the legacy catalogue API
-    // does not know about them). The unified catalogue path (flag ON)
-    // already respects per-source enabled state in R-1.
-    const livegtAvailable = selectorSources.some((s: AvailabilitySource) => s.builtin === true);
     catalogueController?.abort();
     const controller = new AbortController();
     catalogueController = controller;
     catalogueState = 'loading';
     catalogueMessage = null;
     try {
-      // -----------------------------------------------------------------
-      // Phase 6 — the flag-gated catalogue source. The shared gate is the
-      // ONE flag read (same module cache the playback router uses); while
-      // it is FALSE (production default) the legacy LiveGT load below runs
-      // byte-identical. When TRUE, the merged, exposure-filtered canonical
-      // catalogue is loaded through the bounded unified endpoint instead —
-      // same abort/sequence discipline (the abort is re-checked BEFORE the
-      // assignment, so a superseded load can never clobber a newer one).
-      // A flag-ON catalogue that is empty (no admin-mapped channels yet)
-      // renders the existing honest empty state below — never a fallback
-      // to the legacy list.
-      //
-      // R-2 — the legacy branch is gated on `livegtAvailable` (the LiveGT
-      // source is in the eligible public set). A disabled LiveGT source
-      // produces an honest empty list, never a bypass.
-      // -----------------------------------------------------------------
-      if (await isUnifiedLivetvGateEnabled()) {
-        const unifiedList = await getUnifiedLivetvCatalogue({ signal: controller.signal });
-        if (controller.signal.aborted) return; // superseded/unmounted — silent
-        channels = unifiedList;
-        catalogueState = 'ready';
-        return;
-      }
-      // R-2 — the legacy LiveGT catalogue path. The LiveGT source must be
-      // in the eligible public set (the `builtin` marker on the availability
-      // wire). If the owner turned the LiveGT source OFF, the legacy path
-      // produces an honest empty list — NEVER a bypass through the LiveGT
-      // V1 API (which doesn't know about the source registry).
-      if (!livegtAvailable) {
-        channels = [];
-        catalogueState = 'ready';
-        return;
-      }
-      const list = await getLiveTvChannels({ signal: controller.signal });
+      // R-3 — the source-first catalogue. The optional sourceId filter
+      // scopes the catalogue to ONE source's channels (the heading-row
+      // Source selector). When null, all eligible sources contribute.
+      const list = await getUnifiedLivetvCatalogue({ signal: controller.signal, sourceId: selectedSourceFilter });
       if (controller.signal.aborted) return; // superseded/unmounted — silent
       channels = list;
       catalogueState = 'ready';
@@ -307,9 +272,9 @@
   const activeFilterCount = $derived((category ? 1 : 0) + (selectedSourceFilter !== null ? 1 : 0));
 
   /**
-   * R-2 — select a source from the heading-row Source selector. Switching
-   * the source dimension is a CATALOGUE-CONTEXT change, not a playback
-   * change: the visible set narrows to that source's channels, the
+   * R-3 — select a source from the heading-row Source selector. Switching
+   * the source dimension is a CATALOGUE-CONTEXT change: the catalogue is
+   * reloaded scoped to the selected source (the sourceId query param), the
    * selected-channel state is cleared when the current selection is no
    * longer in the filtered set (incompatible source), and any in-flight
    * catalogue/guide request is aborted to resist stale overwrites. The
@@ -322,6 +287,9 @@
     }
     selectedSourceFilter = sourceId;
     sourceSheetOpen = false;
+    // R-3 — reload the catalogue scoped to the new source. The sourceId is
+    // passed to the unified catalogue endpoint (the source-first path).
+    void loadCatalogue();
     // If the current selection is no longer in the filtered set, clear it
     // (the user is now browsing a different source — the prior channel
     // is incompatible). The guide recents remain in storage; only the
@@ -898,23 +866,20 @@
     guide = null;
     try {
       // -----------------------------------------------------------------
-      // Phase 6 — the flag-gated guide source. The unified guide reads the
-      // ESTABLISHED Phase 3 mapping contract (explicit mappings first, then
-      // the ambiguity-guarded tvgId derivation) through the bounded server
-      // endpoint — never a browser XMLTV fetch, never a second pipeline.
-      // While the shared gate is FALSE the legacy LiveGT guide below runs
-      // byte-identical. Missing/unmatched guide data normalizes to the
-      // honest empty guide (never fabricated); a failure lands in the same
-      // catch below — a guide outage can never touch the playback session.
+      // R-3 — the SOURCE-FIRST guide. The page now uses the unified guide
+      // endpoint unconditionally (no flag gate). The endpoint reads the
+      // EPG tables directly through the ESTABLISHED Phase 3 mapping
+      // contract, regardless of the `unified_enabled` flag. This closes
+      // the R-2 "Live TV took too long to respond" regression for
+      // JioHotstar/Sony channels: the legacy LiveGT guide API was being
+      // called for non-LiveGT channel ids (`entry:<uuid>`), which it
+      // doesn't recognize — causing timeouts and HTML 404 responses.
+      //
+      // A channel with no matching guide data honestly returns an empty
+      // guide (now: null, upcoming: []) — never a fabricated programme,
+      // never a timeout. The guide cache (30s TTL) is preserved.
       // -----------------------------------------------------------------
-      if (await isUnifiedLivetvGateEnabled()) {
-        const unifiedGuide = await getUnifiedLivetvGuide(channel.id, { signal: controller.signal });
-        if (seq !== guideSeq || controller.signal.aborted) return;
-        guide = unifiedGuide;
-        guideLoading = false;
-        return;
-      }
-      const result = await getLiveTvGuide(channel.id, { signal: controller.signal });
+      const result = await getUnifiedLivetvGuide(channel.id, { signal: controller.signal });
       if (seq !== guideSeq || controller.signal.aborted) return;
       guide = result;
       guideLoading = false;

@@ -115,9 +115,14 @@ console.log('§4 — The /live-tv page honors the SSR availability guard');
   ok(/if \(!sourcesAvailable\) \{[\s\S]{0,400}channels = \[\];[\s\S]{0,200}return;[\s\S]{0,80}\}/.test(liveTvPage), '§4.3 when unavailable, loadCatalogue returns early with channels=[] (no legacy/unified fetch)');
   // 4.4 — the page renders an honest unavailable state when !sourcesAvailable.
   ok(liveTvPage.includes('ltv-unavailable') && liveTvPage.includes('Live TV is unavailable'), '§4.4 the page renders an honest unavailable state when no eligible public source exists');
-  // 4.5 — the legacy LiveGT path is gated on `livegtAvailable` (the builtin marker).
-  ok(liveTvPage.includes('const livegtAvailable = selectorSources.some'), '§4.5 the legacy LiveGT path is gated on livegtAvailable (the builtin marker on the availability wire)');
-  ok(/if \(!livegtAvailable\) \{[\s\S]{0,200}channels = \[\];[\s\S]{0,100}return;/.test(liveTvPage), '§4.6 when LiveGT source is OFF (not in the eligible public set), the legacy path returns empty — NEVER bypasses through the LiveGT V1 API');
+  // 4.5 — R-3: the legacy LiveGT catalogue path is GONE (source-first).
+  //     The page now uses the unified catalogue endpoint unconditionally —
+  //     no legacy branch, no livegtAvailable gate. The catalogue returns
+  //     channels from EVERY eligible public source (LiveGT, JioHotstar,
+  //     Sony) regardless of the unified flag. This closes the R-2
+  //     regression where turning LiveGT OFF blanked JioHotstar/Sony.
+  ok(!liveTvPage.includes('const livegtAvailable = selectorSources.some'), '§4.5 R-3: the legacy LiveGT gate is GONE (source-first — no livegtAvailable branch)');
+  ok(!liveTvPage.includes('await getLiveTvChannels(') || liveTvPage.indexOf('await getLiveTvChannels(') > liveTvPage.indexOf('loadCatalogue'), '§4.6 R-3: loadCatalogue does NOT call the legacy getLiveTvChannels (the catalogue is source-first — JioHotstar/Sony survive LiveGT OFF)');
 }
 
 // ============================================================

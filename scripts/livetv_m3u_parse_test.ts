@@ -37,6 +37,7 @@ import {
   parseM3UAttributes,
   splitExtinfLine,
   m3uIdentityForUrl,
+  normalizeM3ULogoUrl,
   m3uPlaylistAdapter,
   M3U_MAX_ENTRIES
 } from '../src/lib/server/livetv/adapters/m3u';
@@ -495,6 +496,54 @@ console.log('§10 R-2 — adapter run: relative stream URLs resolve via the fetc
   const serialized = JSON.stringify(run.diagnostics);
   ok(!serialized.includes('sig='), '§10.5 the resolved URL query string never appears in diagnostics');
   ok(!serialized.includes('provider.example'), '§10.6 the upstream origin never appears in diagnostics (only static reason codes)');
+}
+
+// ============================================================
+console.log('§11 R-3 — tvg-logo normalization (Issue 6: Sony missing logos)');
+// ============================================================
+{
+  // 11.1 — https:// logos pass through unchanged.
+  ok(normalizeM3ULogoUrl('https://cdn.example/logo.png') === 'https://cdn.example/logo.png', '§11.1 an https logo URL passes through unchanged');
+
+  // 11.2 — http:// logos are UPGRADED to https:// (the DB requires https).
+  ok(normalizeM3ULogoUrl('http://cdn.example/logo.png') === 'https://cdn.example/logo.png', '§11.2 an http logo URL is upgraded to https (the DB requires https)');
+
+  // 11.3 — protocol-relative URLs are REJECTED (the DB requires absolute https).
+  ok(normalizeM3ULogoUrl('//cdn.example/logo.png') === null, '§11.3 a protocol-relative logo URL is rejected (the DB requires absolute https)');
+
+  // 11.4 — relative URLs are REJECTED.
+  ok(normalizeM3ULogoUrl('/logo.png') === null, '§11.4 a relative logo URL is rejected (no invented host)');
+  ok(normalizeM3ULogoUrl('logo.png') === null, '§11.5 a bare-filename logo URL is rejected (no invented host)');
+
+  // 11.6 — non-http(s) schemes are REJECTED.
+  ok(normalizeM3ULogoUrl('ftp://cdn.example/logo.png') === null, '§11.6 an ftp logo URL is rejected (non-http(s))');
+  ok(normalizeM3ULogoUrl('data:image/png;base64,abc') === null, '§11.7 a data: logo URL is rejected (non-http(s))');
+
+  // 11.7 — control characters and whitespace are REJECTED.
+  ok(normalizeM3ULogoUrl('https://cdn.example/logo\x01.png') === null, '§11.8 a logo URL with a control character is rejected');
+  ok(normalizeM3ULogoUrl('https://cdn.example/ logo.png') === null, '§11.9 a logo URL with whitespace is rejected');
+
+  // 11.8 — credentials in the URL are REJECTED.
+  ok(normalizeM3ULogoUrl('https://user:pass@cdn.example/logo.png') === null, '§11.10 a logo URL with credentials is rejected');
+
+  // 11.9 — empty/null/undefined → null (no logo).
+  ok(normalizeM3ULogoUrl('') === null, '§11.11 an empty logo URL returns null');
+  ok(normalizeM3ULogoUrl(null) === null, '§11.12 a null logo URL returns null');
+  ok(normalizeM3ULogoUrl(undefined) === null, '§11.13 an undefined logo URL returns null');
+  ok(normalizeM3ULogoUrl(123) === null, '§11.14 a non-string logo URL returns null');
+
+  // 11.10 — over-long URLs are REJECTED.
+  ok(normalizeM3ULogoUrl(`https://cdn.example/${'a'.repeat(3000)}.png`) === null, '§11.15 an over-long logo URL is rejected');
+
+  // 11.11 — the parser uses normalizeM3ULogoUrl for tvg-logo (end-to-end).
+  const playlist = '#EXTM3U\n#EXTINF:-1 tvg-id="logo.1" tvg-logo="http://cdn.example/legacy.png",Logo Test\nhttps://cdn.example/stream.m3u8';
+  const result = parseM3UPlaylist(playlist, { playlistBaseUrl: 'https://provider.example/playlist.php' });
+  ok(result.channels.length === 1 && result.channels[0]!.logoUrl === 'https://cdn.example/legacy.png', '§11.16 the parser upgrades an http tvg-logo to https end-to-end');
+
+  // 11.12 — a playlist with NO tvg-logo → logoUrl is null (honest, no fabrication).
+  const noLogoPlaylist = '#EXTM3U\n#EXTINF:-1 tvg-id="nologo.1",No Logo\nhttps://cdn.example/stream.m3u8';
+  const noLogoResult = parseM3UPlaylist(noLogoPlaylist);
+  ok(noLogoResult.channels.length === 1 && noLogoResult.channels[0]!.logoUrl === null, '§11.17 a playlist with no tvg-logo → logoUrl is null (honest, no fabrication)');
 }
 
 console.log(`\n=== livetv Phase 2 M3U parse verification: ${passed} checks PASSED ===`);

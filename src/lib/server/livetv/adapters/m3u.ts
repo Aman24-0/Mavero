@@ -290,6 +290,43 @@ export function m3uIdentityForUrl(url: string): string {
         return `m3u-${createHash('sha256').update(url, 'utf8').digest('hex').slice(0, 32)}`;
 }
 
+/**
+ * R-3 — validates and normalizes a `tvg-logo` URL.
+ *
+ * The DB constraint requires `https://` (migration
+ * `20261120000000_livetv_source_registry.sql:158,202`). Many playlists
+ * provide `http://` logos (legacy CDNs) — these are UPGRADED to `https://`
+ * (most CDNs support both, and the DB rejects `http://`). Protocol-relative
+ * (`//cdn.example/logo.png`), relative, and non-http(s) URLs are REJECTED
+ * (the DB cannot store them, and inventing a host would be unsafe). Control
+ * characters and whitespace are rejected (a URL is a single token).
+ *
+ * This is the ONLY normalization that converts `http://` to `https://` —
+ * stream URLs (classifyM3UStreamUrl) require `https://` strictly (no
+ * upgrade), matching the DB's playback-endpoint constraint.
+ */
+export function normalizeM3ULogoUrl(raw: unknown): string | null {
+        if (raw === undefined || raw === null) return null;
+        if (typeof raw !== 'string') return null;
+        const trimmed = raw.trim();
+        if (!trimmed) return null;
+        if (trimmed.length > 2048) return null;
+        if (/[\u0000-\u001f\u007f]/.test(trimmed) || /\s/.test(trimmed)) return null;
+        // Upgrade http:// → https:// (legacy CDN logos). The DB requires https.
+        let normalized = trimmed;
+        if (normalized.startsWith('http://')) {
+                normalized = 'https://' + normalized.slice('http://'.length);
+        }
+        if (!normalized.startsWith('https://')) return null; // protocol-relative, relative, ftp://, etc.
+        try {
+                const url = new URL(normalized);
+                if (url.username || url.password) return null;
+        } catch {
+                return null;
+        }
+        return normalized;
+}
+
 // ---------------------------------------------------------------------------
 // The parser
 // ---------------------------------------------------------------------------
@@ -445,7 +482,7 @@ export function parseM3UPlaylist(text: string, options: M3UParseOptions = {}): M
                         title: split.title,
                         tvgName: normalizeOptionalTextField(attributes.values.get('tvg-name') ?? null, 200, true),
                         tvgIdRaw,
-                        logoUrl: normalizeOptionalTextField(attributes.values.get('tvg-logo') ?? null, 2048, false),
+                        logoUrl: normalizeM3ULogoUrl(attributes.values.get('tvg-logo') ?? null),
                         groupTitle: normalizeOptionalTextField(attributes.values.get('group-title') ?? null, 120, true),
                         extraAttributes: {},
                         attrCount: attributes.values.size

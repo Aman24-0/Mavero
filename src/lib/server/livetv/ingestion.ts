@@ -94,7 +94,7 @@ export type LivetvEntryPlan =
                   metadata: Record<string, unknown>;
                   endpointCount: number;
                   /** Admin-owned values this plan deliberately preserves. */
-                  preserved: { canonicalChannelId: string | null; enabled: boolean };
+                  preserved: { canonicalChannelId: string | null; enabled: boolean; logoUrl: string | null };
                   /** True when at least one writable field actually changes (idempotency evidence). */
                   changes: boolean;
           };
@@ -235,7 +235,7 @@ export function planSourceIngestion(input: {
                         tvgId: channel.tvgId,
                         metadata: channel.metadata,
                         endpointCount: channel.endpoints.length,
-                        preserved: { canonicalChannelId: existing.canonical_channel_id, enabled: existing.enabled },
+                        preserved: { canonicalChannelId: existing.canonical_channel_id, enabled: existing.enabled, logoUrl: existing.logo_url },
                         changes
                 });
                 if (changes) entriesUpdated += 1;
@@ -397,7 +397,15 @@ export async function applySourceIngestion(client: SupabaseClient<Database>, pla
                                         .update({
                                                 name: entryPlan.name,
                                                 category: entryPlan.category,
-                                                logo_url: entryPlan.logoUrl,
+                                                // R-3 — preserve a valid existing logo when the
+                                                // new playlist omits tvg-logo. Overwriting a
+                                                // valid https logo with null on every refresh
+                                                // was the R-2 Sony-logo regression root cause
+                                                // (the playlist intermittently omits tvg-logo;
+                                                // the DB lost the logo each refresh). When the
+                                                // new playlist provides a logo (even a different
+                                                // one), it wins — the upstream is authoritative.
+                                                logo_url: entryPlan.logoUrl ?? entryPlan.preserved.logoUrl ?? null,
                                                 tvg_id: entryPlan.tvgId,
                                                 metadata: entryPlan.metadata as Json
                                                 // canonical_channel_id + enabled NEVER written.

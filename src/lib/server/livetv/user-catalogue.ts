@@ -116,9 +116,9 @@ export type LivetvCatalogueWire = {
 /** Hard response bound (bounded payload regardless of registry size). */
 export const MAX_CATALOGUE_CHANNELS = 2000;
 /** Bounded mapped-entry load (the exposure candidate pool). */
-const MAX_MAPPED_ENTRIES_LOAD = 5000;
+export const MAX_MAPPED_ENTRIES_LOAD = 5000;
 /** Bounded source load (the exposure source pool). */
-const MAX_SOURCES_LOAD = 500;
+export const MAX_SOURCES_LOAD = 500;
 /** Re-exported bound (the switcher payload size lives with the grouping model). */
 export const MAX_CATALOGUE_SOURCE_ALTERNATIVES = MAX_CATALOGUE_GROUP_SOURCES;
 
@@ -165,7 +165,7 @@ function nonEmptyString(value: unknown): string | null {
 }
 
 /** Only http(s) absolute URLs are usable display material; else null. */
-function safeDisplayUrl(value: unknown): string | null {
+export function safeDisplayUrl(value: unknown): string | null {
         const raw = nonEmptyString(value);
         if (!raw || raw.length > 2048) return null;
         try {
