@@ -41,6 +41,7 @@ import {
   deleteLivetvEndpoint,
   deleteLivetvSource,
   getLivetvAdminOverview,
+  getLatestLivetvRefreshHistoryBySource,
   getLivetvChannelCandidates,
   getLivetvEpgGuideDiagnostics,
   getLivetvEntryEndpoints,
@@ -141,13 +142,13 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   // UNIFORM return shape (every key present on every tab, nullable when not
   // applicable) — keeps PageData non-union so the template stays type-safe.
   if (tab === 'overview') {
-    const [overview, sources] = await Promise.all([getLivetvAdminOverview(locals.supabase), listLivetvSources(locals.supabase)]);
-    return { tab, overview, sources, impacts: null, entries: null, entryFilter: null, entryEndpoints: null, channels: null, channelFilter: null, candidates: null, epgSources: null, selectedEpg: null, mappings: null, diagnostics: null, sourceOutcomes, epgOutcomes };
+    const [overview, sources, latestSourceHistory] = await Promise.all([getLivetvAdminOverview(locals.supabase), listLivetvSources(locals.supabase), getLatestLivetvRefreshHistoryBySource(locals.supabase)]);
+    return { tab, overview, sources, latestSourceHistory, impacts: null, entries: null, entryFilter: null, entryEndpoints: null, channels: null, channelFilter: null, candidates: null, epgSources: null, selectedEpg: null, mappings: null, diagnostics: null, sourceOutcomes, epgOutcomes };
   }
 
   if (tab === 'sources') {
-    const [sources, impacts] = await Promise.all([listLivetvSources(locals.supabase), listLivetvSourceDeleteImpacts(locals.supabase)]);
-    return { tab, overview: null, sources, impacts, entries: null, entryFilter: null, entryEndpoints: null, channels: null, channelFilter: null, candidates: null, epgSources: null, selectedEpg: null, mappings: null, diagnostics: null, sourceOutcomes, epgOutcomes };
+    const [sources, impacts, latestSourceHistory] = await Promise.all([listLivetvSources(locals.supabase), listLivetvSourceDeleteImpacts(locals.supabase), getLatestLivetvRefreshHistoryBySource(locals.supabase)]);
+    return { tab, overview: null, sources, latestSourceHistory, impacts, entries: null, entryFilter: null, entryEndpoints: null, channels: null, channelFilter: null, candidates: null, epgSources: null, selectedEpg: null, mappings: null, diagnostics: null, sourceOutcomes, epgOutcomes };
   }
 
   if (tab === 'entries') {
@@ -167,6 +168,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
       tab,
       overview: null,
       sources,
+      latestSourceHistory: null,
       impacts: null,
       entries,
       entryFilter: {
@@ -195,7 +197,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
       listLivetvChannels(locals.supabase, { query: url.searchParams.get('q'), page: parsePositiveInt(url.searchParams.get('page')) }),
       channelFilter && UUID_PATTERN.test(channelFilter) ? getLivetvChannelCandidates(locals.supabase, channelFilter) : Promise.resolve(null)
     ]);
-    return { tab, overview: null, sources: null, impacts: null, entries: null, entryFilter: null, entryEndpoints: null, channels, channelFilter: { q: url.searchParams.get('q') ?? '', page: parsePositiveInt(url.searchParams.get('page')) ?? 0 }, candidates, epgSources: null, selectedEpg: null, mappings: null, diagnostics: null, sourceOutcomes, epgOutcomes };
+    return { tab, overview: null, sources: null, latestSourceHistory: null, impacts: null, entries: null, entryFilter: null, entryEndpoints: null, channels, channelFilter: { q: url.searchParams.get('q') ?? '', page: parsePositiveInt(url.searchParams.get('page')) ?? 0 }, candidates, epgSources: null, selectedEpg: null, mappings: null, diagnostics: null, sourceOutcomes, epgOutcomes };
   }
 
   // EPG tab — sources + (when selected) mappings + guide diagnostics.
@@ -205,7 +207,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     selectedEpg && UUID_PATTERN.test(selectedEpg) ? listLivetvEpgMappings(locals.supabase, selectedEpg, parsePositiveInt(url.searchParams.get('mpage')) ?? 0) : Promise.resolve(null),
     selectedEpg && UUID_PATTERN.test(selectedEpg) ? getLivetvEpgGuideDiagnostics(locals.supabase, selectedEpg) : Promise.resolve(null)
   ]);
-  return { tab, overview: null, sources: null, impacts: null, entries: null, entryFilter: null, entryEndpoints: null, channels, channelFilter: null, candidates: null, epgSources, selectedEpg: selectedEpg && UUID_PATTERN.test(selectedEpg) ? selectedEpg : null, mappings, diagnostics, sourceOutcomes, epgOutcomes };
+  return { tab, overview: null, sources: null, latestSourceHistory: null, impacts: null, entries: null, entryFilter: null, entryEndpoints: null, channels, channelFilter: null, candidates: null, epgSources, selectedEpg: selectedEpg && UUID_PATTERN.test(selectedEpg) ? selectedEpg : null, mappings, diagnostics, sourceOutcomes, epgOutcomes };
 };
 
 // ---------------------------------------------------------------------------

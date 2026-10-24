@@ -75,7 +75,8 @@ import {
   updateLivetvChannelCandidate,
   updateLivetvEpgSource,
   updateLivetvEndpoint,
-  updateLivetvSource
+  updateLivetvSource,
+  getLatestLivetvRefreshHistoryBySource
 } from '../src/lib/server/livetv/admin-service';
 
 // ---------------------------------------------------------------------------
@@ -337,6 +338,26 @@ function createMockDb() {
         const runUpdate = (target: [string, string, unknown][]) => ({
           eq(col: string, val: unknown) {
             return runUpdate([...target, [col, 'eq', val]]);
+          },
+          // R-0 parity: the services verify a mutation via
+          // update(...).select('id').single() — a 0-row match must surface
+          // as the PGRST116 no-rows error, exactly like PostgREST.
+          select(_cols?: string) {
+            return {
+              single: async () => {
+                const rows = applyFilters(state[table] ?? [], target);
+                for (const row of rows) {
+                  if (table === 'livetv_sources' && typeof payload['slug'] === 'string') {
+                    const dup = uniquenessViolation(table, { ...row, ...payload });
+                    if (dup) return { data: null, error: { message: dup } };
+                  }
+                  Object.assign(row, payload);
+                }
+                writes.push({ table, op: 'update', payload });
+                if (rows.length === 0) return { data: null, error: { message: 'PGRST116: json object requested, multiple (or no) rows returned' } };
+                return { data: { id: rows[0]?.['id'] }, error: null };
+              }
+            };
           },
           then: (resolve: (value: unknown) => void, reject: (reason: unknown) => void) => {
             (async () => {
@@ -854,6 +875,49 @@ console.log('§11 error mapping + redaction');
   ok(!mapLivetvDbError(hostile, 'fallback message').message.includes('https://'), '§11.7 URL-bearing DB text never passes through unmapped');
   ok(!/token=|user:pass/.test(mapLivetvDbError(hostile, 'fallback message').message), '§11.8 credentials never leak through the error mapper');
   ok(mapLivetvDbError(new Error('plain failure'), 'safe fallback').message === 'plain failure', '§11.9 plain Error messages pass through (already safe by contract)');
+}
+
+console.log('§12 — R-0: mutation honesty + durable last-refresh map');
+// ============================================================
+{
+  const db = createMockDb();
+  // §12.1-§12.4 — the toggle and the update report success ONLY when the
+  // row really changed (a 0-row match — e.g. concurrent delete — is a
+  // typed failure, never a silent success).
+  db.state.livetv_sources.push({ id: UUIDS.source, slug: 'src', name: 'Src', source_type: 'm3u_playlist', builtin: false, enabled: true, status: 'active', priority: 1, visibility: 'internal', config: {}, description: null, created_at: '', updated_at: '' });
+  await setLivetvSourceEnabled(db.client as never, UUIDS.source, false);
+  ok(db.state.livetv_sources.find((row) => row['id'] === UUIDS.source)!['enabled'] === false, '§12.1 the toggle updates an existing row');
+  const rejectsWith = async (run: () => Promise<unknown>, pattern: RegExp, label: string) => {
+    try {
+      await run();
+      ok(false, label);
+    } catch (caught) {
+      ok(caught instanceof Error && pattern.test(caught.message), label);
+    }
+  };
+  await rejectsWith(() => setLivetvSourceEnabled(db.client as never, UUIDS.channel2, false), /no longer exists/, '§12.2 a toggle matching ZERO rows fails (never a silent success)');
+  await rejectsWith(() => setLivetvSourceEnabled(db.client as never, 'not-a-uuid', false), /Source is invalid/, '§12.3 a toggle with a malformed id is rejected');
+  await rejectsWith(() => updateLivetvSource(db.client as never, UUIDS.channel2, { name: 'Ghost' }), /no longer exists/, '§12.4 an update matching ZERO rows fails (never a silent success)');
+  ok(db.state.livetv_sources.every((row) => row['name'] !== 'Ghost'), '§12.5 the failed update wrote nothing');
+
+  // §12.6-§12.9 — the durable last-refresh map (bounded read, graceful
+  // degradation, latest row per source).
+  db.state['livetv_refresh_history'] = [
+    // NOTE: this mock's read path ignores .order() — rows are seeded in the
+    // order the real query returns them (started_at DESC, newest first).
+    { subject_kind: 'source', subject_id: UUIDS.source, subject_slug: 'src', status: 'failure', started_at: '2026-10-23T09:30:00Z', finished_at: '2026-10-23T09:30:02Z', trigger_type: 'manual' },
+    { subject_kind: 'epg_source', subject_id: UUIDS.epgSource, subject_slug: 'epg', status: 'success', started_at: '2026-10-23T09:40:00Z', finished_at: '2026-10-23T09:40:01Z', trigger_type: 'scheduled' },
+    { subject_kind: 'source', subject_id: UUIDS.builtin, subject_slug: 'builtin-livegt-v1', status: 'timeout', started_at: '2026-10-23T09:00:00Z', finished_at: '2026-10-23T09:00:45Z', trigger_type: 'manual' },
+    { subject_kind: 'source', subject_id: UUIDS.source, subject_slug: 'src', status: 'success', started_at: '2026-10-23T08:00:00Z', finished_at: '2026-10-23T08:00:05Z', trigger_type: 'scheduled' }
+  ];
+  const map = await getLatestLivetvRefreshHistoryBySource(db.client as never);
+  ok(map.get(UUIDS.source)?.status === 'failure' && map.get(UUIDS.source)?.trigger === 'manual', '§12.6 the LATEST row per source wins (newest-first first-occurrence)');
+  ok(map.get(UUIDS.source)?.finishedAt === '2026-10-23T09:30:02Z', '§12.7 the finished time of the latest attempt is carried');
+  ok(map.get(UUIDS.builtin)?.status === 'timeout', '§12.8 other sources keep their own latest attempt');
+  ok(!map.has(UUIDS.epgSource), '§12.9 EPG-source rows are filtered out (subject_kind=source only)');
+  db.state['livetv_refresh_history'] = [];
+  const empty = await getLatestLivetvRefreshHistoryBySource(db.client as never);
+  ok(empty instanceof Map && empty.size === 0, '§12.10 a missing/empty history table degrades to an EMPTY map (diagnostics only, never an error)');
 }
 
 console.log(`\nLIVETV PHASE 4 ADMIN SERVICE TESTS: ${passed} checks passed`);

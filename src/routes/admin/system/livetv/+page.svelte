@@ -102,6 +102,23 @@
   // --- sheet/dialog state ---
   let sourceSheetOpen = $state(false);
   let editingSource: LivetvAdminSourceRow | null = $state(null);
+  /**
+   * The SELECTED source type of the CREATE sheet — real form state, bound to
+   * the create `<select>` (the R-0 fix: the per-type Configuration fields
+   * must key on what the admin SELECTED, not on `editingSource`, which is
+   * always null while creating). Edit mode keys on the immutable row type.
+   */
+  let newSourceType: string = $state(CREATE_TYPES[0]);
+  /**
+   * The source type whose Configuration fields the sheet renders right now:
+   * edit mode keys on the immutable row type; create mode keys on the live
+   * select binding (a plain function, so the template call site stays
+   * reactive and the row type is never top-level-narrowed to its initial
+   * value).
+   */
+  function effectiveSourceType(): string {
+    return editingSource !== null ? editingSource.source_type : newSourceType;
+  }
   let channelSheetOpen = $state(false);
   let editingChannel: LivetvAdminChannelRow | null = $state(null);
   let epgSheetOpen = $state(false);
@@ -123,6 +140,7 @@
 
   function openCreateSource() {
     editingSource = null;
+    newSourceType = CREATE_TYPES[0];
     sourceSheetOpen = true;
   }
   function openEditSource(source: LivetvAdminSourceRow) {
@@ -260,8 +278,9 @@
           <AdminStatusBadge label="instance-local (per server instance)" tone="info" />
         </div>
         <p class="a2-muted">
-          Report-only, bounded, per-instance records — NOT persistent history (the P2-8 proposal remains deferred to the scheduling
-          phase). An instance without recent activity reports none.
+          Report-only, bounded, per-instance records. Durable attempts live in the <code>livetv_refresh_history</code> table
+          (Phase 7, best-effort writes, 30-day bounded retention) — the Playback Sources table shows each source's latest
+          durable row when present, falling back to these instance-local records.
         </p>
         {#if data.sourceOutcomes.length === 0 && data.epgOutcomes.length === 0}
           <p class="a2-muted">No refresh has run on this instance yet. Trigger one from the Playback Sources or EPG Guides tab.</p>
@@ -323,11 +342,13 @@
           <table class="a2-table">
             <thead>
               <tr>
-                <th>Priority</th><th>Source</th><th>Type</th><th>Status</th><th>Entries</th><th>Visibility</th><th>Updated</th><th>Actions</th>
+                <th>Priority</th><th>Source</th><th>Type</th><th>Enabled</th><th>Status</th><th>Entries</th><th>Last refresh</th><th>Visibility</th><th>Updated</th><th>Actions</th>
               </tr>
             </thead>
             <tbody>
               {#each data.sources as source (source.id)}
+                {@const latestHistory = data.latestSourceHistory?.get(source.id) ?? null}
+                {@const latestLocal = data.sourceOutcomes.find((outcome) => outcome.sourceId === source.id) ?? null}
                 <tr>
                   <td>
                     <input class="a2-input a2-input-num" type="number" form="livetv-priority-form" name="priority_{source.id}" value={source.priority} min="0" max="100000" step="1" aria-label="Priority for {source.name}" />
@@ -337,17 +358,44 @@
                     <div class="a2-cell-sub">{source.slug}</div>
                   </td>
                   <td>{SOURCE_TYPE_LABELS[source.source_type] ?? source.source_type}</td>
+                  <td>
+                    <!-- The PRIMARY operational control's state, displayed
+                         independently of the operational status badge: a
+                         source can be `active` (status) and still disabled
+                         (enabled=false) — it is then excluded from refresh
+                         AND playback. -->
+                    <AdminStatusBadge label={source.enabled ? 'Enabled' : 'Disabled'} tone={source.enabled ? 'good' : 'neutral'} />
+                  </td>
                   <td><AdminStatusBadge label={SOURCE_STATUS_LABELS[source.status] ?? source.status} tone={statusTone(source.status)} /></td>
                   <td>{formatCount(source.entry_count)}</td>
+                  <td class="a2-dim">
+                    {#if latestHistory}
+                      <AdminStatusBadge label={latestHistory.status} tone={latestHistory.status === 'success' || latestHistory.status === 'partial' ? 'good' : latestHistory.status === 'skipped' ? 'info' : 'bad'} />
+                      <div class="a2-cell-sub">{formatTime(latestHistory.finishedAt)} · {latestHistory.trigger}</div>
+                    {:else if latestLocal}
+                      <AdminStatusBadge label={latestLocal.ok ? 'ok' : (latestLocal.failure?.kind ?? 'failed')} tone={latestLocal.ok ? 'good' : 'bad'} />
+                      <div class="a2-cell-sub">{formatTime(latestLocal.finishedAt)} · instance-local</div>
+                    {:else}
+                      —
+                    {/if}
+                  </td>
                   <td>{source.visibility}</td>
                   <td class="a2-dim">{formatTime(source.updated_at)}</td>
                   <td class="a2-actions">
                     <form method="POST" action="?/toggleSource" use:enhance>
                       <input type="hidden" name="id" value={source.id} />
                       <input type="hidden" name="enabled" value={source.enabled ? 'false' : 'true'} />
-                      <button type="submit" class="a2-icon-btn" title={source.enabled ? 'Disable source' : 'Enable source'} aria-label={source.enabled ? 'Disable source' : 'Enable source'}>
+                      <button type="submit" class="a2-icon-btn" title={source.enabled ? 'Disable source (excludes it from refresh and playback)' : 'Enable source'} aria-label={source.enabled ? 'Disable source' : 'Enable source'}>
                         <Power size={14} />
                       </button>
+                    </form>
+                    <form method="POST" action="?/refreshSource" use:enhance>
+                      <input type="hidden" name="id" value={source.id} />
+                      <button type="submit" class="a2-icon-btn" title="Refresh this source" aria-label="Refresh source {source.name}"><RefreshCw size={14} /></button>
+                    </form>
+                    <form method="POST" action="?/previewSource" use:enhance>
+                      <input type="hidden" name="id" value={source.id} />
+                      <button type="submit" class="a2-icon-btn" title="Preview this source (dry run — nothing is written)" aria-label="Preview source {source.name}"><Eye size={14} /></button>
                     </form>
                     <button type="button" class="a2-icon-btn" title="Edit source" aria-label="Edit source" onclick={() => openEditSource(source)}><Pencil size={14} /></button>
                     <button type="button" class="a2-icon-btn" title="Delete source" aria-label="Delete source" disabled={source.builtin} onclick={() => {
@@ -372,8 +420,11 @@
 
       <section class="a2-section">
         <h2 class="a2-h2">Refresh results (last action)</h2>
-        {#if form && 'refreshKind' in form && form.refreshKind === 'source' && 'outcome' in form && form.outcome}
+        {#if form && 'refreshKind' in form && (form.refreshKind === 'source' || form.refreshKind === 'source-preview') && 'outcome' in form && form.outcome}
           {@const outcome = form.outcome}
+          {#if form.refreshKind === 'source-preview'}
+            <p class="a2-muted"><strong>Preview (dry run — nothing was written).</strong> These are the counts a real refresh WOULD apply.</p>
+          {/if}
           {#if outcome.ok && outcome.counts && 'discovered' in outcome.counts}
             <p class="a2-muted">
               Refresh ok — {outcome.counts.discovered} discovered · {outcome.counts.entriesInserted} inserted / {outcome.counts.entriesUpdated} updated entries ·
@@ -419,6 +470,17 @@
       </form>
 
       <p class="a2-muted">{formatCount(data.entries?.total)} entries · page {(data.entries?.page ?? 0) + 1} ({data.entries?.pageSize}/page)</p>
+
+      <section class="a2-section">
+        <h2 class="a2-h2">What this tab shows</h2>
+        <p class="a2-muted">
+          <strong>Imported entry</strong> — one channel discovered in ONE source's playlist/catalogue (this table; its source is shown per row).
+          <strong>Canonical channel</strong> — a normalized shared record that can represent equivalent entries from MULTIPLE sources (the Canonical Channels tab).
+          <strong>Mapped</strong> — the entry is explicitly linked to a canonical channel (the Mapping select below — an ADVANCED, optional action; ordinary playlist ingestion never requires it).
+          <strong>Unmapped</strong> — the entry has no canonical link yet. This alone does NOT make its stream invalid: an enabled entry of an enabled, public, playback-eligible source still contributes to the user-facing catalogue and plays through its own endpoints (once the master unified switch is on).
+          Entries are never auto-mapped by name similarity — mapping is always a reviewed, admin-owned decision, and a refresh preserves it together with per-entry enablement.
+        </p>
+      </section>
 
       <div class="a2-table-wrap">
         <table class="a2-table">
@@ -900,7 +962,7 @@
               <input class="a2-input" type="text" name="slug" value="" maxlength="120" pattern="[a-z0-9]+(-[a-z0-9]+)*" />
             </label>
             <label class="a2-field"><span>Source type *</span>
-              <select class="a2-input" name="sourceType" required>
+              <select class="a2-input" name="sourceType" required bind:value={newSourceType}>
                 {#each CREATE_TYPES as type}
                   <option value={type}>{SOURCE_TYPE_LABELS[type]}</option>
                 {/each}
@@ -911,24 +973,24 @@
             <div class="a2-field"><span>Type</span><div>{SOURCE_TYPE_LABELS[editingSource.source_type] ?? editingSource.source_type}</div></div>
           {/if}
         </AdminFormSection>
-        <AdminFormSection heading="Configuration" description="Server-fetched URLs are https-only and validated by the SSRF guard (stage 1) at save time and per fetch.">
-          {#if (editingSource?.source_type ?? '') === 'm3u_playlist'}
+        <AdminFormSection heading="Configuration" description="Server-fetched URLs are https-only and validated by the SSRF guard (stage 1) at save time and per fetch. The URL need not end in .m3u8 — a playlist endpoint may be a script/PHP URL with a query string; the fetched BODY must be a valid #EXTM3U playlist.">
+          {#if effectiveSourceType() === 'm3u_playlist'}
             <label class="a2-field a2-field-wide"><span>Playlist URL (https) *</span>
-              <input class="a2-input" type="url" name="playlistUrl" value={String((editingSource?.config as Record<string, unknown> | null)?.playlistUrl ?? '')} maxlength="2048" placeholder="https://example.com/playlist.m3u8" />
+              <input class="a2-input" type="url" name="playlistUrl" required value={String((editingSource?.config as Record<string, unknown> | null)?.playlistUrl ?? '')} maxlength="2048" placeholder="https://example.com/playlist.m3u8" />
             </label>
           {/if}
-          {#if (editingSource?.source_type ?? '') === 'api_provider'}
+          {#if effectiveSourceType() === 'api_provider'}
             <label class="a2-field a2-field-wide"><span>API base URL (https) *</span>
-              <input class="a2-input" type="url" name="baseUrl" value={String((editingSource?.config as Record<string, unknown> | null)?.baseUrl ?? '')} maxlength="2048" placeholder="https://api.example.com" />
+              <input class="a2-input" type="url" name="baseUrl" required value={String((editingSource?.config as Record<string, unknown> | null)?.baseUrl ?? '')} maxlength="2048" placeholder="https://api.example.com" />
             </label>
           {/if}
-          {#if (editingSource?.source_type ?? '') === 'embed_provider'}
+          {#if effectiveSourceType() === 'embed_provider'}
             <label class="a2-field a2-field-wide"><span>Allowed embed origins (https origins, whitespace/comma separated) *</span>
-              <input class="a2-input" type="text" name="allowedOrigins" value={Array.isArray((editingSource?.config as Record<string, unknown> | null)?.allowedOrigins) ? ((editingSource!.config as Record<string, unknown>).allowedOrigins as string[]).join(', ') : ''} placeholder="https://player.example.com, https://embed.example.net" />
+              <input class="a2-input" type="text" name="allowedOrigins" required value={Array.isArray((editingSource?.config as Record<string, unknown> | null)?.allowedOrigins) ? ((editingSource!.config as Record<string, unknown>).allowedOrigins as string[]).join(', ') : ''} placeholder="https://player.example.com, https://embed.example.net" />
             </label>
           {/if}
-          {#if (editingSource?.source_type ?? '') === 'manual_stream' || (editingSource?.source_type ?? '') === 'builtin_livegt_v1'}
-            <p class="a2-muted a2-field-wide">This source type carries no server-side config{editingSource?.source_type === 'manual_stream' ? ' — add its endpoints from the Imported Channels tab' : ' — behavior lives in the existing client modules'}.</p>
+          {#if effectiveSourceType() === 'manual_stream' || effectiveSourceType() === 'builtin_livegt_v1'}
+            <p class="a2-muted a2-field-wide">This source type carries no server-side config{effectiveSourceType() === 'manual_stream' ? ' — add its endpoints from the Imported Channels tab' : ' — behavior lives in the existing client modules'}.</p>
           {/if}
         </AdminFormSection>
         <AdminFormSection heading="Registry state">

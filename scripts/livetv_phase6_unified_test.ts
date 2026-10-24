@@ -164,6 +164,7 @@ const CHAN_1 = { id: 'chan-1', name: 'Zeta One', category: 'News', logo_url: 'ht
     livetv_config_meta: FLAG_ON,
     livetv_sources: [
       SRC_BUILTIN,
+      SRC_M3U, // the eligible PUBLIC playlist source (its unmapped entry now surfaces — R-0)
       { ...SRC_M3U, id: 'src-internal', slug: 'internal-src', visibility: 'internal' },
       { ...SRC_M3U, id: 'src-disabled', slug: 'disabled-src', enabled: false },
       { ...SRC_M3U, id: 'src-unavailable', slug: 'down-src', status: 'unavailable' },
@@ -185,8 +186,13 @@ const CHAN_1 = { id: 'chan-1', name: 'Zeta One', category: 'News', logo_url: 'ht
   });
   const catalogue1 = await getUnifiedLivetvCatalogue(client1 as unknown as Parameters<typeof getUnifiedLivetvCatalogue>[0]);
   ok(catalogue1.unifiedEnabled === true, '1a.1 the catalogue reports the unified flag');
-  ok(catalogue1.channels.length === 1 && catalogue1.channels[0]?.id === 'chan-1', '1a.2 only the fully-exposed canonical channel is returned');
+  // R-0: the canonical channel LEADS; the unmapped+enabled entry of the
+  // eligible public source surfaces as a direct `entry:` row AFTER it.
+  ok(JSON.stringify(catalogue1.channels.map((c) => c.id)) === JSON.stringify(['chan-1', 'entry:e5']), '1a.2 the canonical channel leads and the UNMAPPED entry surfaces as a direct row (R-0, deterministic order)');
   ok(catalogue1.truncated === false, '1a.3 the bounded response reports no truncation');
+  ok(!catalogue1.channels.some((c) => ['entry:e2', 'entry:e3', 'entry:e4'].includes(c.id)), '1a.4 internal-source/disabled-source/disabled-entry entries contribute NOTHING (same exposure pool)');
+  const entryRow1 = catalogue1.channels.find((c) => c.id === 'entry:e5');
+  ok(entryRow1?.name === 'Alpha (Acme)' && entryRow1?.category === null && entryRow1?.logoUrl === null, '1a.5 the direct row carries the entry\u2019s own display metadata (no canonical coercion)');
 
   // 1b. DTO discipline — minimal, redacted fields only.
   const row1 = catalogue1.channels[0] ?? {};
@@ -195,6 +201,9 @@ const CHAN_1 = { id: 'chan-1', name: 'Zeta One', category: 'News', logo_url: 'ht
   ok(row1.logoUrl === 'https://cdn.example.com/alpha.png', '1b.3 a usable https logo is carried');
   const source1 = client1.queriesFor('livetv_sources');
   ok(source1.length === 1 && source1[0] && !JSON.stringify(source1[0]).includes('config'), '1b.4 the source probe selects only id/enabled/status/visibility');
+  const entryDto = catalogue1.channels.find((c) => c.id === 'entry:e5') ?? {};
+  ok(JSON.stringify(Object.keys(entryDto).sort()) === JSON.stringify(['category', 'id', 'logoUrl', 'name']), '1b.5 the DIRECT row carries the same bounded DTO (no source identity crosses — provenance stays internal)');
+  ok(!JSON.stringify(catalogue1).includes('src-m3u') && !JSON.stringify(catalogue1).includes('internal-src'), '1b.6 no source slug/id/visibility leaks into the catalogue response');
 
   // 1c. Duplicates render once — several source entries mapping to ONE
   //     canonical channel collapse into a single row.
@@ -206,7 +215,7 @@ const CHAN_1 = { id: 'chan-1', name: 'Zeta One', category: 'News', logo_url: 'ht
     livetv_channels: [CHAN_1]
   });
   const catalogue2 = await getUnifiedLivetvCatalogue(client2 as unknown as Parameters<typeof getUnifiedLivetvCatalogue>[0]);
-  ok(catalogue2.channels.length === 1 && catalogue2.channels[0]?.id === 'chan-1', '1c.1 two mapped entries render ONE canonical row (no name-based merging — PK identity)');
+  ok(catalogue2.channels.length === 1 && catalogue2.channels[0]?.id === 'chan-1', '1c.1 two mapped entries render ONE canonical row (no name-based merging, NO double-listing as entry rows)');
 
   // 1d. Deterministic order + logo/category honesty.
   resetLivetvPlaybackFlagCacheForTests();
@@ -388,6 +397,92 @@ const CHAN_1 = { id: 'chan-1', name: 'Zeta One', category: 'News', logo_url: 'ht
   }));
   const viaPriority = await resolveLivetvPlaybackForSelection(clientH as unknown as Parameters<typeof resolveLivetvPlaybackForSelection>[0], 'chan-1');
   ok(viaPriority.candidates.length === 3 && viaPriority.candidates[0]?.resolver === null && viaPriority.candidates[0]?.url === 'https://cdn.example.com/live.m3u8' && viaPriority.candidates[1]?.resolver === 'builtin_livegt_v1' && viaPriority.candidates[1]?.endpointKind === 'direct_stream' && viaPriority.candidates[2]?.endpointKind === 'embed_page', '3h.1 priority -5 m3u sorts BEFORE the builtin pair (source priority, never hardcoded)');
+
+  // ---- R-0: identity (c) — DIRECT entry selections (`entry:<row uuid>`) ----
+  // The unmapped-entry companion of the catalogue's source-entry rows.
+  const DIRECT_ENTRY_ID = 'd1000000-0000-4000-8000-000000000001';
+  const DIRECT_ENTRY = { id: DIRECT_ENTRY_ID, source_id: 'src-m3u', source_channel_id: 'acme-direct-1', canonical_channel_id: null, name: 'Direct One', category: null, logo_url: null, tvg_id: null, enabled: true, metadata: {}, created_at: '', updated_at: '' };
+  const DIRECT_EP_1 = { id: 'ep-d1', source_channel_id: DIRECT_ENTRY_ID, endpoint_kind: 'direct_stream', stream_format: 'hls', url: 'https://cdn.example.com/one.m3u8', ordering: 1, enabled: true, label: 'first' };
+  const DIRECT_EP_0 = { id: 'ep-d0', source_channel_id: DIRECT_ENTRY_ID, endpoint_kind: 'direct_stream', stream_format: 'dash', url: 'https://cdn.example.com/zero.mpd', ordering: 0, enabled: true, label: null };
+  const DIRECT_EP_OFF = { id: 'ep-d2', source_channel_id: DIRECT_ENTRY_ID, endpoint_kind: 'direct_stream', stream_format: 'hls', url: 'https://cdn.example.com/off.m3u8', ordering: 2, enabled: false, label: null };
+
+  function directEntryTables(overrides: Record<string, Row[]> = {}): Record<string, Row[]> {
+    return {
+      livetv_config_meta: FLAG_ON,
+      livetv_sources: [SRC_BUILTIN, SRC_M3U],
+      livetv_source_channels: [ENTRY_BUILTIN, ENTRY_M3U, DIRECT_ENTRY],
+      livetv_channels: [CHAN_1],
+      livetv_playback_endpoints: [EP_M3U, DIRECT_EP_0, DIRECT_EP_1, DIRECT_EP_OFF],
+      livetv_playback_candidates: [],
+      ...overrides
+    };
+  }
+
+  // 3i. Happy path — the direct entry resolves ITS OWN endpoints, ordered
+  //     (ordering ASC, id ASC), with the https re-validation and E1 gate.
+  resetLivetvPlaybackFlagCacheForTests();
+  const clientI = createMockClient(directEntryTables());
+  const viaDirect = await resolveLivetvPlaybackForSelection(clientI as unknown as Parameters<typeof resolveLivetvPlaybackForSelection>[0], `entry:${DIRECT_ENTRY_ID}`);
+  ok(viaDirect.unifiedEnabled === true && viaDirect.resolved === true && viaDirect.mode === 'default', '3i.1 a direct entry selection is managed and resolves in default mode');
+  ok(viaDirect.candidates.length === 2, '3i.2 only the entry\u2019s OWN enabled endpoints are candidates (the disabled endpoint is gated out, E1)');
+  ok(viaDirect.candidates[0]?.url === 'https://cdn.example.com/zero.mpd' && viaDirect.candidates[0]?.streamFormat === 'dash' && viaDirect.candidates[0]?.engine === 'shaka_media_player', '3i.3 ordering 0 first — a DASH manifest routes to the Shaka engine');
+  ok(viaDirect.candidates[1]?.url === 'https://cdn.example.com/one.m3u8' && viaDirect.candidates[1]?.streamFormat === 'hls', '3i.4 ordering 1 second — an HLS manifest routed to the same derived engine');
+  ok(viaDirect.candidates.every((c) => c.resolver === null && c.sourceChannelId === null && c.endpointKind === 'direct_stream'), '3i.5 row-backed candidates carry their own url and NO resolver marker');
+  const directEndpointQuery = clientI.queriesFor('livetv_playback_endpoints')[0];
+  ok(directEndpointQuery !== undefined && directEndpointQuery.filters.some((f) => f.op === 'eq' && f.col === 'source_channel_id' && f.val === DIRECT_ENTRY_ID), '3i.6 the endpoint read is scoped to EXACTLY this entry row');
+
+  // 3j. The builtin's unmapped entry resolves through the SAME virtual pair
+  //     contract (fresh client-side resolution; no endpoint rows exist).
+  resetLivetvPlaybackFlagCacheForTests();
+  const BUILTIN_DIRECT_ID = 'd2000000-0000-4000-8000-000000000002';
+  const clientJ = createMockClient(directEntryTables({
+    livetv_source_channels: [ENTRY_BUILTIN, ENTRY_M3U, { ...DIRECT_ENTRY, id: BUILTIN_DIRECT_ID, source_id: 'src-builtin', source_channel_id: '555' }]
+  }));
+  const viaBuiltinDirect = await resolveLivetvPlaybackForSelection(clientJ as unknown as Parameters<typeof resolveLivetvPlaybackForSelection>[0], `entry:${BUILTIN_DIRECT_ID}`);
+  ok(viaBuiltinDirect.resolved === true && viaBuiltinDirect.candidates.length === 2, '3j.1 an unmapped builtin entry synthesizes the direct→embed pair (fresh-resolution contract)');
+  ok(viaBuiltinDirect.candidates[0]?.resolver === 'builtin_livegt_v1' && viaBuiltinDirect.candidates[0]?.url === null && viaBuiltinDirect.candidates[0]?.sourceChannelId === '555', '3j.2 the virtual pair carries the builtin ENTRY\u2019s public catalogue id and NO url');
+  ok(viaBuiltinDirect.candidates[1]?.endpointKind === 'embed_page' && viaBuiltinDirect.candidates[1]?.resolver === 'builtin_livegt_v1', '3j.3 the embed fallback candidate follows (LT-15 semantics preserved)');
+
+  // 3k. S1 — a disabled source: managed-empty (honest exhausted), never a
+  //     legacy fallback for a registry-governed id.
+  resetLivetvPlaybackFlagCacheForTests();
+  const clientK = createMockClient(directEntryTables({
+    livetv_sources: [SRC_BUILTIN, { ...SRC_M3U, enabled: false }]
+  }));
+  const viaDisabledSource = await resolveLivetvPlaybackForSelection(clientK as unknown as Parameters<typeof resolveLivetvPlaybackForSelection>[0], `entry:${DIRECT_ENTRY_ID}`);
+  ok(viaDisabledSource.resolved === true && viaDisabledSource.candidates.length === 0, '3k.1 a disabled source contributes an EMPTY managed list (S1, no legacy bypass)');
+
+  // 3l. Visibility parity — a source demoted to internal: managed-empty.
+  resetLivetvPlaybackFlagCacheForTests();
+  const clientL = createMockClient(directEntryTables({
+    livetv_sources: [SRC_BUILTIN, { ...SRC_M3U, visibility: 'internal' }]
+  }));
+  const viaInternal = await resolveLivetvPlaybackForSelection(clientL as unknown as Parameters<typeof resolveLivetvPlaybackForSelection>[0], `entry:${DIRECT_ENTRY_ID}`);
+  ok(viaInternal.resolved === true && viaInternal.candidates.length === 0, '3l.1 a non-public source\u2019s entry cannot resolve (catalogue exposure parity)');
+
+  // 3m. M1 — a disabled entry: managed-empty.
+  resetLivetvPlaybackFlagCacheForTests();
+  const clientM = createMockClient(directEntryTables({
+    livetv_source_channels: [ENTRY_BUILTIN, ENTRY_M3U, { ...DIRECT_ENTRY, enabled: false }]
+  }));
+  const viaDisabledEntryDirect = await resolveLivetvPlaybackForSelection(clientM as unknown as Parameters<typeof resolveLivetvPlaybackForSelection>[0], `entry:${DIRECT_ENTRY_ID}`);
+  ok(viaDisabledEntryDirect.resolved === true && viaDisabledEntryDirect.candidates.length === 0, '3m.1 a disabled entry contributes an EMPTY managed list (M1)');
+
+  // 3n. Structural unknowns fail closed to the legacy path (Phase 5 parity):
+  //     a malformed entry id and a deleted entry row.
+  resetLivetvPlaybackFlagCacheForTests();
+  const clientN = createMockClient(directEntryTables());
+  const viaGarbage = await resolveLivetvPlaybackForSelection(clientN as unknown as Parameters<typeof resolveLivetvPlaybackForSelection>[0], 'entry:not-a-uuid');
+  ok(viaGarbage.resolved === false && viaGarbage.candidates.length === 0, '3n.1 a malformed entry id resolves false (legacy compat — unreachable from the catalogue)');
+  const viaDeleted = await resolveLivetvPlaybackForSelection(clientN as unknown as Parameters<typeof resolveLivetvPlaybackForSelection>[0], 'entry:d9999999-0000-4000-8000-000000000009');
+  ok(viaDeleted.resolved === false && viaDeleted.candidates.length === 0, '3n.2 a deleted entry resolves false (Phase 5 unknown-identity parity)');
+
+  // 3o. Flag OFF — the entry path is unreachable, exactly like every other
+  //     identity (the master switch stays the rollback lever).
+  resetLivetvPlaybackFlagCacheForTests();
+  const clientO = createMockClient({ ...directEntryTables(), livetv_config_meta: FLAG_OFF });
+  const viaFlagOff = await resolveLivetvPlaybackForSelection(clientO as unknown as Parameters<typeof resolveLivetvPlaybackForSelection>[0], `entry:${DIRECT_ENTRY_ID}`);
+  ok(viaFlagOff.unifiedEnabled === false && viaFlagOff.resolved === false, '3o.1 flag OFF ⇒ resolved:false for entry selections too (fail-closed master switch)');
 }
 
 // ============================================================

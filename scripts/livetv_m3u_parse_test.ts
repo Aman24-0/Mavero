@@ -37,6 +37,7 @@ import {
   parseM3UAttributes,
   splitExtinfLine,
   m3uIdentityForUrl,
+  m3uPlaylistAdapter,
   M3U_MAX_ENTRIES
 } from '../src/lib/server/livetv/adapters/m3u';
 import { LivetvAdapterError } from '../src/lib/server/livetv/adapters/types';
@@ -322,6 +323,68 @@ console.log('§7 hostile-input safety');
   const meta = JSON.stringify(result.channels[0]!.metadata);
   ok(result.channels.length === 1, '§7.9 attribute-heavy entry parses');
   ok(!meta.includes('xattr29'), '§7.10 extra-attribute preservation is bounded');
+}
+
+// ============================================================
+console.log('§8 R-0 — adapter run: the playlist URL is body-validated, not extension-validated');
+// ============================================================
+{
+  const PUBLIC_DNS = async () => [{ address: '93.184.216.34', family: 4 }];
+  const RUN_SOURCE = { id: 'src-1', slug: 'acme', sourceType: 'm3u_playlist' as const, config: { playlistUrl: 'https://provider.example/get_playlist.php?username=u&password=p&type=m3u_plus' } };
+
+  // 8.1-8.3 — a PHP endpoint with a query string is a VALID playlist URL as
+  // long as the fetched BODY is a valid #EXTM3U playlist (the owner's real
+  // provider shape). The URL extension never mattered.
+  const phpOk = await m3uPlaylistAdapter.run(RUN_SOURCE, {
+    fetcher: async () => new Response('#EXTM3U\n#EXTINF:-1 tvg-id="a.one" tvg-name="Alpha" tvg-logo="https://cdn.example/a.png" group-title="News",Alpha One\nhttps://cdn.example/live/a.m3u8?token=x', { status: 200, headers: { 'content-type': 'application/vnd.apple.mpegurl' } }),
+    dnsResolver: PUBLIC_DNS
+  });
+  ok(phpOk.channels.length === 1 && phpOk.channels[0]!.sourceChannelId === 'a.one', '§8.1 a query-string (PHP) playlist URL fetches and parses end-to-end via the adapter');
+  ok(phpOk.channels[0]!.name === 'Alpha One' && phpOk.channels[0]!.category === 'News' && phpOk.channels[0]!.logoUrl === 'https://cdn.example/a.png', '§8.2 EXTINF metadata (name/group-title/tvg-logo) is preserved through the run');
+  ok(phpOk.channels[0]!.endpoints[0]!.streamFormat === 'hls' && phpOk.channels[0]!.endpoints[0]!.url === 'https://cdn.example/live/a.m3u8?token=x', '§8.3 the entry\u2019s own stream URL is independently classified (query string kept, format from the path)');
+
+  // 8.4 — the fetch-level HTML gate: an HTML document (the PHP endpoint
+  // answering with a login page) fails SAFELY with a typed error.
+  let htmlError: unknown = null;
+  try {
+    await m3uPlaylistAdapter.run(RUN_SOURCE, {
+      fetcher: async () => new Response('<html><body><h1>Sign in</h1></body></html>', { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } }),
+      dnsResolver: PUBLIC_DNS
+    });
+  } catch (error) {
+    htmlError = error;
+  }
+  ok(htmlError instanceof LivetvAdapterError && htmlError.kind === 'unsupported_media_type', '§8.4 an HTML body fails safely (unsupported_media_type, never a fake empty playlist)');
+
+  // 8.5 — an HTML-shaped body WITHOUT the html content-type still fails at
+  // the parser (the #EXTM3U header gate — body validation is independent of
+  // any content-type claim).
+  let parseError: unknown = null;
+  try {
+    await m3uPlaylistAdapter.run(RUN_SOURCE, {
+      fetcher: async () => new Response('<html><body>not a playlist</body></html>', { status: 200, headers: { 'content-type': 'text/plain' } }),
+      dnsResolver: PUBLIC_DNS
+    });
+  } catch (error) {
+    parseError = error;
+  }
+  ok(parseError instanceof LivetvAdapterError && parseError.kind === 'parse_failed', '§8.5 a non-playlist body fails the #EXTM3U header gate (parse_failed, content-type alone is never trusted)');
+
+  // 8.6-8.7 — malformed entries inside an otherwise valid playlist stay
+  // isolated: bounded diagnostics, the valid entries survive.
+  const mixed = await m3uPlaylistAdapter.run(RUN_SOURCE, {
+    fetcher: async () => new Response([
+      '#EXTM3U',
+      '#EXTINF:-1 tvg-id="good.one",Good\nhttps://cdn.example/good.m3u8',
+      '#EXTINF:-1 tvg-id="bad.one",Bad\nhttps://cdn.example/player.php?id=1',
+      '#EXTINF:-1,NoUrl',
+      '#EXTINF:-1 tvg-id="good.two",Also Good\nhttps://cdn.example/two.mpd'
+    ].join('\n'), { status: 200, headers: { 'content-type': 'application/vnd.apple.mpegurl' } }),
+    dnsResolver: PUBLIC_DNS
+  });
+  ok(mixed.channels.length === 2 && mixed.channels[0]!.sourceChannelId === 'good.one' && mixed.channels[1]!.sourceChannelId === 'good.two', '§8.6 malformed entries never crash an otherwise valid playlist (per-entry isolation)');
+  ok(mixed.diagnostics.skippedCount === 2 && JSON.stringify(mixed.diagnostics.skippedReasons) === JSON.stringify({ unknown_stream_format: 1, missing_stream_url: 1 }), '§8.7 skipped entries carry bounded, static reasons (no URLs in diagnostics)');
+  ok(mixed.diagnostics.entryErrors.every((entryError) => !entryError.reason.includes('http')), '§8.8 per-entry diagnostics carry static reasons only (never signed material or URLs)');
 }
 
 console.log(`\n=== livetv Phase 2 M3U parse verification: ${passed} checks PASSED ===`);

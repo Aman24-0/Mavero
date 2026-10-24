@@ -16,6 +16,18 @@
 //     (the column's documented user-facing exposure control; the seeded
 //     builtin row is `public`, admin-created sources default to
 //     `internal` and must be made public deliberately).
+//   * R-0 ADDITIVE — safe SOURCE-ENTRY selection: UNMAPPED, enabled entries
+//     of the SAME eligible public sources ALSO surface (as `entry:<rowId>`
+//     rows after the canonical rows). Without this, a real-world registry
+//     whose entries are not canonically mapped (e.g. a freshly imported
+//     playlist) would produce an EMPTY catalogue the moment the flag turns
+//     on — unmapped-ness alone never meant the stream was invalid. The
+//     model is NOT weakened: no mapping is fabricated, no name-similarity
+//     merging happens (Phase 1 D-3), mapped entries still render ONCE via
+//     their canonical channel (never double-listed), every row keeps the
+//     bounded DTO (id/name/category/logoUrl only — no source identity
+//     crosses), and playback for `entry:` selections is resolved by the
+//     Phase 5 resolver's re-validated direct-entry path.
 //   * Canonical PK uniqueness makes duplicate rendering structurally
 //     impossible: several source entries mapping to one canonical channel
 //     collapse into ONE row (the entries are never listed themselves).
@@ -74,6 +86,9 @@ export const MAX_CATALOGUE_CHANNELS = 2000;
 const MAX_MAPPED_ENTRIES_LOAD = 5000;
 /** Bounded source load (the exposure source pool). */
 const MAX_SOURCES_LOAD = 500;
+
+/** Stable selection-id prefix for direct source-entry rows (R-0). */
+export const LIVETV_ENTRY_SELECTION_PREFIX = 'entry:';
 
 // ---------------------------------------------------------------------------
 // Guide wire contract (the ONLY data that ever crosses for the guide).
@@ -157,36 +172,55 @@ export async function getUnifiedLivetvCatalogue(client: SupabaseClient<Database>
                 .map((row) => row.id);
         if (publicSourceIds.length === 0) return { unifiedEnabled: true, channels: [], truncated: false };
 
-        // 2. Mapped + enabled entries on those sources — the canonical ids
-        //    they expose. Entries themselves are NEVER listed (provenance
-        //    stays internal); the DISTINCT canonical id set is the dedup.
+        // 2. Enabled entries on those sources — mapped ones expose their
+        //    canonical ids; UNMAPPED ones (R-0) become direct source-entry
+        //    rows. Entries' source attribution stays internal (provenance
+        //    never crosses the wire — see the DTO discipline above).
         const entriesResult = await client
                 .from('livetv_source_channels')
-                .select('canonical_channel_id,enabled,source_id')
+                .select('id,source_id,canonical_channel_id,enabled,name,category,logo_url')
                 .in('source_id', publicSourceIds)
                 .limit(MAX_MAPPED_ENTRIES_LOAD);
         if (entriesResult.error) return { unifiedEnabled: true, channels: [], truncated: false };
-        const entryRows = (entriesResult.data ?? []) as { canonical_channel_id: string | null; enabled: boolean; source_id: string }[];
+        const entryRows = (entriesResult.data ?? []) as { id: string; canonical_channel_id: string | null; enabled: boolean; source_id: string; name: string | null; category: string | null; logo_url: string | null }[];
         const exposedIds = new Set<string>();
+        const directEntryRows: LivetvCatalogueChannelWire[] = [];
         for (const row of entryRows) {
                 if (row.enabled !== true) continue;
-                if (typeof row.canonical_channel_id !== 'string' || row.canonical_channel_id.length === 0) continue; // M0 — unmapped never exposes
-                exposedIds.add(row.canonical_channel_id);
+                if (typeof row.canonical_channel_id === 'string' && row.canonical_channel_id.length > 0) {
+                        exposedIds.add(row.canonical_channel_id);
+                        continue; // mapped — contributes through its canonical channel ONLY (never double-listed)
+                }
+                // R-0 — unmapped: a bounded, display-safe source-entry row.
+                // The stable selection id is the entry ROW id (globally unique
+                // uuid, namespaced so it can never collide with a canonical
+                // channel id); unusable rows are dropped, never coerced.
+                const name = nonEmptyString(row.name);
+                if (!name) continue;
+                directEntryRows.push({
+                        id: `${LIVETV_ENTRY_SELECTION_PREFIX}${row.id}`,
+                        name,
+                        category: nonEmptyString(row.category),
+                        logoUrl: safeDisplayUrl(row.logo_url)
+                });
         }
-        if (exposedIds.size === 0) return { unifiedEnabled: true, channels: [], truncated: false };
+        if (exposedIds.size === 0 && directEntryRows.length === 0) return { unifiedEnabled: true, channels: [], truncated: false };
 
         // 3. The enabled canonical channels, deterministically ordered
         //    (name ASC, then id ASC) and bounded.
-        const channelsResult = await client
-                .from('livetv_channels')
-                .select('id,name,category,logo_url,enabled')
-                .eq('enabled', true)
-                .in('id', [...exposedIds])
-                .order('name', { ascending: true })
-                .order('id', { ascending: true })
-                .limit(MAX_CATALOGUE_CHANNELS);
-        if (channelsResult.error) return { unifiedEnabled: true, channels: [], truncated: false };
-        const channelRows = (channelsResult.data ?? []) as { id: string; name: string; category: string | null; logo_url: string | null; enabled: boolean }[];
+        const channelRows: { id: string; name: string; category: string | null; logo_url: string | null; enabled: boolean }[] = [];
+        if (exposedIds.size > 0) {
+                const channelsResult = await client
+                        .from('livetv_channels')
+                        .select('id,name,category,logo_url,enabled')
+                        .eq('enabled', true)
+                        .in('id', [...exposedIds])
+                        .order('name', { ascending: true })
+                        .order('id', { ascending: true })
+                        .limit(MAX_CATALOGUE_CHANNELS);
+                if (channelsResult.error) return { unifiedEnabled: true, channels: [], truncated: false };
+                channelRows.push(...((channelsResult.data ?? []) as { id: string; name: string; category: string | null; logo_url: string | null; enabled: boolean }[]));
+        }
 
         const channels: LivetvCatalogueChannelWire[] = [];
         for (const row of channelRows) {
@@ -201,9 +235,16 @@ export async function getUnifiedLivetvCatalogue(client: SupabaseClient<Database>
                 });
         }
 
-        // Honest truncation: the entry pool hit its load cap, or the
-        // channel response itself hit the response bound.
-        const truncated = entryRows.length >= MAX_MAPPED_ENTRIES_LOAD || channelRows.length >= MAX_CATALOGUE_CHANNELS;
+        // R-0 — the direct source-entry rows, deterministically ordered
+        // (name ASC, then row id ASC) and appended AFTER the canonical rows
+        // (canonical channels remain the stable leading surface).
+        directEntryRows.sort((a, b) => (a.name === b.name ? (a.id < b.id ? -1 : a.id > b.id ? 1 : 0) : a.name < b.name ? -1 : 1));
+        channels.push(...directEntryRows);
+
+        // Honest truncation: the entry pool hit its load cap, or the combined
+        // response hit the response bound (sliced to the bound, flagged).
+        const truncated = entryRows.length >= MAX_MAPPED_ENTRIES_LOAD || channelRows.length >= MAX_CATALOGUE_CHANNELS || channels.length > MAX_CATALOGUE_CHANNELS;
+        if (channels.length > MAX_CATALOGUE_CHANNELS) channels.length = MAX_CATALOGUE_CHANNELS;
         return { unifiedEnabled: true, channels, truncated };
 }
 

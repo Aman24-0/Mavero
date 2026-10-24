@@ -153,5 +153,52 @@ console.log('\n§8 — Dialog stacking + design-system reuse');
   ok(livetvPage.includes('<AdminStatusBadge'), '8e. status rendering through the shared badge component');
 }
 
+console.log('\n§9 — R-0: source-sheet form state (create-mode configuration inputs)');
+{
+  // The core fix: the per-type Configuration fields key on the SELECTED
+  // type (create mode = the live form state; edit mode = the immutable row
+  // type) — never on `editingSource` alone, which is null while creating.
+  ok(/let newSourceType: string = \$state\(CREATE_TYPES\[0\]\)/.test(livetvPage), '9a. the selected source type is REAL form state (defaults to the first create type)');
+  ok(/function openCreateSource\(\)[\s\S]{0,200}newSourceType = CREATE_TYPES\[0\]/.test(livetvPage), '9b. opening the create sheet resets the selection (no stale carry-over)');
+  ok(/name="sourceType" required bind:value=\{newSourceType\}/.test(livetvPage), '9c. the create select is BOUND to the form state (two-way, still submits sourceType)');
+  ok(/function effectiveSourceType\(\): string \{[\s\S]{0,200}editingSource !== null \? editingSource\.source_type : newSourceType/.test(livetvPage), '9d. the sheet renders Configuration fields for the EFFECTIVE type (edit = row, create = selection)');
+  const configSection = livetvPage.slice(livetvPage.indexOf('heading="Configuration"'));
+  ok(/\{#if effectiveSourceType\(\) === 'm3u_playlist'\}/.test(configSection), '9e. the playlist field keys on the effective type (visible at creation)');
+  ok(/\{#if effectiveSourceType\(\) === 'api_provider'\}/.test(configSection) && /\{#if effectiveSourceType\(\) === 'embed_provider'\}/.test(configSection), '9f. the api/embed fields key on the effective type too');
+  const playlistField = configSection.slice(configSection.indexOf("effectiveSourceType() === 'm3u_playlist'"), configSection.indexOf("{/if}", configSection.indexOf("effectiveSourceType() === 'm3u_playlist'")));
+  ok(playlistField.includes('type="url"') && playlistField.includes('name="playlistUrl"'), '9g. the playlist input binds the server action\u2019s existing playlistUrl field');
+  ok(playlistField.includes('required'), '9h. the playlist URL is client-required too (the server validator stays the authority)');
+  ok(playlistField.includes('maxlength="2048"'), '9i. the playlist URL length bound matches the server validator');
+  ok(/The URL need not end in \.m3u8/.test(configSection), '9j. the UI documents that a playlist URL may be a script/PHP endpoint with a query string (body-validated)');
+  // Edit mode keeps the immutable type display + hidden field.
+  ok(/name="sourceType" value=\{editingSource\.source_type\}/.test(livetvPage), '9k. edit mode still submits the immutable row type (hidden field preserved)');
+}
+
+console.log('\n§10 — R-0: source workflow surface (enablement, per-row actions, history)');
+{
+  // Enablement is displayed INDEPENDENTLY of the operational status badge.
+  ok(/<th>Priority<\/th><th>Source<\/th><th>Type<\/th><th>Enabled<\/th><th>Status<\/th>/.test(livetvPage), '10a. the sources table carries a dedicated Enabled column beside the operational Status');
+  ok(/source\.enabled \? 'Enabled' : 'Disabled'/.test(livetvPage), '10b. the enabled state renders from source.enabled (never conflated with status)');
+  ok(/excludes it from refresh and playback/.test(livetvPage), '10c. the disable control explains its effect');
+  // The previously dead refreshSource/previewSource actions are reachable.
+  ok(/<form method="POST" action="\?\/refreshSource" use:enhance>/.test(livetvPage), '10d. per-source Refresh is wired to the existing rate-limited action');
+  ok(/<form method="POST" action="\?\/previewSource" use:enhance>/.test(livetvPage), '10e. per-source Preview (dry run) is wired to the existing rate-limited action');
+  ok(/form\.refreshKind === 'source' \|\| form\.refreshKind === 'source-preview'/.test(livetvPage), '10f. the outcome block renders BOTH refresh kinds (previews were previously swallowed)');
+  ok(/Preview \(dry run — nothing was written\)/.test(livetvPage), '10g. preview results are explicitly labeled as a dry run');
+  // Durable last-refresh column (history first, instance-local fallback).
+  ok(/<th>Last refresh<\/th>/.test(livetvPage), '10h. the sources table shows each source\u2019s last refresh');
+  ok(/latestSourceHistory\?\.get\(source\.id\)/.test(livetvPage) && /instance-local/.test(livetvPage), '10i. durable history is preferred, with the instance-local record as a labeled fallback');
+  ok(/getLatestLivetvRefreshHistoryBySource/.test(livetvServer), '10j. the load provides the durable per-source history map');
+  // Imported-entry vocabulary (mapped ≠ required; unmapped ≠ invalid).
+  ok(/Imported entry<\/strong> — one channel discovered in ONE source/.test(livetvPage), '10k. the entries tab defines "imported entry"');
+  ok(/Canonical channel<\/strong> — a normalized shared record/.test(livetvPage), '10l. the entries tab defines "canonical channel"');
+  ok(/Unmapped<\/strong> — the entry has no canonical link yet\. This alone does NOT make its stream invalid/.test(livetvPage), '10m. the entries tab explains that unmapped ≠ invalid');
+  ok(/never auto-mapped by name similarity/.test(livetvPage), '10n. the entries tab states the no-name-similarity-mapping rule');
+  ok(/ADVANCED, optional action/.test(livetvPage), '10o. manual mapping is presented as the advanced/optional path');
+  // The stale "history is deferred" copy is gone (Phase 7 shipped it).
+  ok(!/P2-8 proposal remains deferred/.test(livetvPage), '10p. the outdated "history deferred" claim is removed');
+  ok(/livetv_refresh_history<\/code>/.test(livetvPage), '10q. the overview names the durable history table truthfully');
+}
+
 console.log(`\nlivetv_phase4_admin_ui_test: ${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
