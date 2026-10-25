@@ -557,4 +557,55 @@ console.log('§11 R-3 — tvg-logo normalization (Issue 6: Sony missing logos)')
   ok(noLogoResult.channels.length === 1 && noLogoResult.channels[0]!.logoUrl === null, '§11.17 a playlist with no tvg-logo → logoUrl is null (honest, no fabrication)');
 }
 
+// ============================================================
+console.log('§12 R-8 — Pipe-delimited stream URLs (JioHotstar/Akindi format)');
+// ============================================================
+{
+  // 12.1 — A pipe-delimited URL with spaces in the pipe section is accepted.
+  // This is the JioHotstar format: https://...m3u8?|cookie=...&user-agent=...Plugx(Android/15)
+  const pipeUrl = 'https://jcevents.hotstar.com/bpk-tv/abc/JioHotstar/abc.m3u8?|cookie=hdntl=exp=123~acl=%2f*~id=abc~data=hdntl~hmac=abc&referer=https://www.hotstar.com/&origin=https://www.hotstar.com&user-agent=Hotstar;in.startv.hotstar/25.02.24.8.11169@Premium Plugx(Android/15)';
+  const result = classifyM3UStreamUrl(pipeUrl);
+  ok(result.ok === true, '§12.1 a pipe-delimited URL with spaces in the pipe section is accepted (R-8 fix)');
+  if (result.ok) {
+    ok(result.value.streamFormat === 'hls', '§12.2 the stream format is HLS (.m3u8 in the HTTP path)');
+    ok(!result.value.url.includes('|'), '§12.3 the stored URL does NOT include the pipe section (DB constraint requires no whitespace)');
+    ok(!result.value.url.includes('Premium Plugx'), '§12.4 the stored URL does NOT include the space-containing user-agent');
+    ok(result.value.url.startsWith('https://jcevents.hotstar.com'), '§12.5 the stored URL is the real HTTP URL');
+  }
+
+  // 12.2 — A pipe-delimited DASH URL (Akindi format).
+  const dashPipeUrl = 'https://jiotvpllive.cdn.jio.com/bpk-tv/ZeeTVHD_BTS/WDVLive/index.mpd?__hdnea__=st=123~exp=456~acl=/bpk-tv/ZeeTVHD_BTS/WDVLive/*~hmac=abc|cookie=__hdnea__=st=123~exp=456~acl=/bpk-tv/ZeeTVHD_BTS/WDVLive/*~hmac=abc&User-Agent=plaYtv%2F7.1.3%20(Linux%3BAndroid%2013)';
+  const dashResult = classifyM3UStreamUrl(dashPipeUrl);
+  ok(dashResult.ok === true, '§12.6 a pipe-delimited DASH URL is accepted (Akindi format)');
+  if (dashResult.ok) {
+    ok(dashResult.value.streamFormat === 'dash', '§12.7 the stream format is DASH (.mpd in the HTTP path)');
+    ok(!dashResult.value.url.includes('|'), '§12.8 the stored URL does NOT include the pipe section');
+  }
+
+  // 12.3 — A URL without a pipe still works (no regression).
+  const plainUrl = 'https://cdn.example/live/stream.m3u8';
+  const plainResult = classifyM3UStreamUrl(plainUrl);
+  ok(plainResult.ok === true && plainResult.value.streamFormat === 'hls', '§12.9 a plain URL without a pipe still works (no regression)');
+
+  // 12.4 — A URL with whitespace in the HTTP part (before the pipe) is still rejected.
+  const badUrl = 'https://cdn.example/live stream.m3u8|cookie=abc';
+  const badResult = classifyM3UStreamUrl(badUrl);
+  ok(badResult.ok === false && badResult.reason === 'invalid_stream_url', '§12.10 a URL with whitespace in the HTTP part is still rejected');
+
+  // 12.5 — End-to-end: a JioHotstar-style playlist with pipe URLs and spaces.
+  const playlist = [
+    '#EXTM3U',
+    '#EXTINF:-1 tvg-name="STAR SPORTS 2 Hindi HD" tvg-logo="https://i.ibb.co/abc.jpg" group-title="Sports", STAR SPORTS 2 Hindi HD',
+    '#EXTVLCOPT:http-user-agent=Hotstar;in.startv.hotstar/25.02.24.8.11169@Premium Plugx(Android/15)',
+    '#EXTHTTP:{"Origin":"https://www.hotstar.com","Referer":"https://www.hotstar.com/","Cookie":"hdntl=exp=123~acl=%2f*~id=abc~data=hdntl~hmac=abc"}',
+    'https://jcevents.hotstar.com/bpk-tv/abc/JioHotstar/abc.m3u8?|cookie=hdntl=exp=123~acl=%2f*~id=abc~data=hdntl~hmac=abc&referer=https://www.hotstar.com/&origin=https://www.hotstar.com&user-agent=Hotstar;in.startv.hotstar/25.02.24.8.11169@Premium Plugx(Android/15)'
+  ].join('\n');
+  const parseResult = parseM3UPlaylist(playlist);
+  ok(parseResult.channels.length === 1, '§12.11 a JioHotstar-style playlist with pipe URLs and spaces parses successfully (R-8 fix)');
+  ok(parseResult.channels[0]!.endpoints[0]!.streamFormat === 'hls', '§12.12 the channel is classified as HLS');
+  ok(!parseResult.channels[0]!.endpoints[0]!.url.includes('|'), '§12.13 the stored endpoint URL does NOT include the pipe section');
+  ok(parseResult.diagnostics.skippedCount === 0, '§12.14 zero entries skipped (the pipe-URL whitespace bug is fixed)');
+  ok(parseResult.channels[0]!.logoUrl === 'https://i.ibb.co/abc.jpg', '§12.15 the tvg-logo is preserved');
+}
+
 console.log(`\n=== livetv Phase 2 M3U parse verification: ${passed} checks PASSED ===`);
