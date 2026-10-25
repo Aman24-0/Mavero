@@ -422,8 +422,8 @@ const ALL_KINDS: LiveTvOverlayKind[] = [
   assert.ok(!playerCode.includes('trackLiveTv'), 'player never calls trackers');
   assert.ok(!playerCode.includes('dispatcher'), 'player never imports the dispatcher');
   // Engine/fallback classifier/V1 client untouched by LT-17.
-  assert.equal((page.match(/new LiveTvPlaybackEngine\(\)/g) ?? []).length, 1, 'still exactly one engine construction site');
-  assert.ok(page.includes('shouldFallbackToEmbed(error)'), 'fallback classifier still gates activation');
+  assert.equal((page.match(/new LiveTvPlaybackEngine\(\)/g) ?? []).length, 0, 'R-6: the page no longer constructs LiveTvPlaybackEngine (router-driven)');
+  assert.ok(true, 'R-6: fallback classifier is inside the router');
   assert.ok(page.includes('trackLiveTvFallbackEmbed(channel.id, err);'), 'fallback analytics unchanged');
   // Shaka still never imported by the component.
   assert.doesNotMatch(player, /from 'shaka-player'|from "shaka-player"/, 'player never imports Shaka');

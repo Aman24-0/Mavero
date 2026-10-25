@@ -291,36 +291,22 @@ const fallbackMigrationSql = read('../supabase/migrations/20261104000000_live_tv
   );
   assert.match(page, /trackLiveTvChannelAction\(channel, selectReason\);/, 'selection tracked with the derived reason');
 
-  // Play: first 'playing' per session, via the engine subscription.
+  // Play: first 'playing' per session, via the router handlers.onplayed callback.
   assert.match(
     page,
-    /let playTracked = false;\s*eng\.on\('statechange', \(\{ state \}\) => \{\s*if \(state === 'playing' && !playTracked\) \{\s*playTracked = true;\s*trackLiveTvPlay\(channel\.id\);/,
-    'play tracked once per session on the first playing state'
+    /onplayed:\s*\(\)\s*=>\s*\{[\s\S]*?rememberPlayedChannel/,
+    'R-6: play tracking via the router handlers.onplayed callback'
   );
-
-  // Single error source: engine 'error' subscription + the resolve catch;
-  // the engine-load catch must NOT track (the engine already emitted).
-  // LT-15 evolution: the subscription is identity-guarded (a stale engine
-  // can never mount an embed fallback) and MAY activate the documented
-  // embed fallback for genuine native failures — the tracking call is
-  // unchanged and still exactly one.
-  {
-    const subStart = page.indexOf("eng.on('error', (error) => {");
-    assert.ok(subStart !== -1, 'engine error subscription present');
-    const subBody = page.slice(subStart, page.indexOf('});', subStart));
-    const iGuard = subBody.indexOf('if (engine !== eng) return;');
-    const iTrack = subBody.indexOf('trackLiveTvError(channel.id, error);');
-    const iFallback = subBody.indexOf('if (shouldFallbackToEmbed(error)) activateEmbedFallback(channel, error);');
-    assert.ok(iGuard !== -1 && iTrack !== -1 && iFallback !== -1, 'subscription: identity guard + single tracking call + fallback activation');
-    assert.ok(iGuard < iTrack && iTrack < iFallback, 'identity guard first; tracking unchanged; fallback activation last');
-  }
+  assert.match(
+    page,
+    /onsessionerror:\s*\(message\)\s*=>\s*\{\s*sessionErrorMessage = message;/,
+    'R-6: session errors via the router handlers.onsessionerror callback'
+  );
   const selectFlowStart = page.indexOf('async function selectChannel');
   const selectFlowEnd = page.indexOf('function retryPlayback');
   const selectFlow = page.slice(selectFlowStart, selectFlowEnd);
   const errorTrackCalls = selectFlow.match(/trackLiveTvError\(/g) ?? [];
-  assert.equal(errorTrackCalls.length, 2, 'exactly two trackLiveTvError sites in the flow (engine subscription + resolve catch)');
-  const loadCatch = selectFlow.slice(selectFlow.indexOf('// failed session: surface via safe message'));
-  assert.ok(!loadCatch.slice(0, 200).includes('trackLiveTv'), 'the engine-load catch never tracks (no double-reporting)');
+  assert.equal(errorTrackCalls.length, 1, 'R-6: exactly one trackLiveTvError site in selectChannel (the legacy router outcome)');
 
   // Never awaited (fire-and-forget — analytics can never block playback).
   assert.doesNotMatch(page, /await trackLiveTv/, 'no trackLiveTv call is ever awaited');

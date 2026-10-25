@@ -136,6 +136,11 @@ async function unifiedFetch(url: URL, endpoint: UnifiedEndpoint, options: { sign
                 if (!response.ok) {
                         throw new LiveTvError('network', { endpoint, status: response.status });
                 }
+                // R-7 — Content-Type safety: reject HTML responses before .json().
+                const contentType = response.headers.get('content-type') ?? '';
+                if (!contentType.includes('json')) {
+                        throw new LiveTvError('invalid_response', { endpoint });
+                }
                 try {
                         return await response.json();
                 } catch {

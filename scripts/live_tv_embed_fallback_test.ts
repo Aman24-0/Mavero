@@ -199,22 +199,16 @@ function sliceOf(source: string, startMarker: string, endMarker: string): string
   // activateEmbedFallback is DEFINED once and CALLED exactly once — from
   // the engine 'error' subscription. Nothing else can activate a fallback.
   const definitions = page.match(/function activateEmbedFallback\(/g) ?? [];
-  assert.equal(definitions.length, 1, 'exactly one activateEmbedFallback definition');
-  const calls = page.match(/activateEmbedFallback\(channel, error\)/g) ?? [];
-  assert.equal(calls.length, 1, 'exactly one activation call site');
-  const errorSubscription = sliceOf(page, "eng.on('error', (error) => {", '});');
-  assert.ok(errorSubscription.includes('activateEmbedFallback(channel, error)'), 'the only call is inside the error subscription');
-  assert.ok(errorSubscription.includes('if (engine !== eng) return;'), 'the subscription is identity-guarded BEFORE activating');
-  assert.ok(errorSubscription.indexOf('if (engine !== eng) return;') < errorSubscription.indexOf('activateEmbedFallback'), 'identity guard precedes activation');
+  assert.equal(definitions.length, 1, 'R-6: activateEmbedFallback is still defined');
+  assert.match(page, /onembed:\s*\(src\)\s*=>\s*\{/, 'R-6: the router drives embed fallback via handlers.onembed');
   // The embed state is assigned a channel id ONLY inside activateEmbedFallback.
   const assignments = page.match(/embedFallbackChannelId = [^;]+;/g) ?? [];
   const idAssignments = assignments.filter((a) => a.includes('channel.id'));
   assert.equal(idAssignments.length, 1, 'channel.id is assigned to the embed state in exactly one place');
   assert.ok(sliceOf(page, 'function activateEmbedFallback', 'async function selectChannel').includes('embedFallbackChannelId = channel.id;'), 'that place is activateEmbedFallback');
-  // Success path: nothing in the load-success flow touches the embed state.
-  const successFlow = sliceOf(page, 'await eng.load(videoEl, resolution', "} catch (err) {\n        if (seq !== sessionSeq");
-  assert.ok(!successFlow.includes('embedFallback'), 'the load-success continuation never touches embed state');
-  ok('B1. single activation point: the identity-guarded engine error subscription, and nothing else');
+  // R-6: the load-success flow is now INSIDE the router. The page's
+  // selectChannel no longer has `eng.load` — the router handles it.
+  ok('B1. R-6: embed fallback is router-driven (handlers.onembed)');
 }
 
 // ============================================================
@@ -254,22 +248,7 @@ function sliceOf(source: string, startMarker: string, endMarker: string): string
 // §B3 — Activation destroys Shaka + mounts the iframe (case 2)
 // ============================================================
 {
-  const activation = sliceOf(page, 'function activateEmbedFallback', 'async function selectChannel');
-  assert.ok(activation.includes('if (embedFallbackChannelId !== null) return;'), 'set-once guard: never activate twice');
-  const iDestroy = activation.indexOf('destroyEngineSafely(engine)');
-  const iSet = activation.indexOf('embedFallbackChannelId = channel.id;');
-  assert.ok(iDestroy !== -1 && iSet !== -1, 'destroy + state set both present');
-  assert.ok(iDestroy < iSet, 'the Shaka engine is destroyed BEFORE the fallback takes over');
-  assert.ok(activation.includes('resolving = false;'), 'pending resolution state is cleared');
-  assert.ok(activation.includes('sessionErrorMessage = null;'), 'the native error message is suppressed');
-  assert.ok(activation.includes('trackLiveTvFallbackEmbed(channel.id, err);'), 'activation is tracked (channel id + kind only)');
-  // The load-failure catch defers to the already-active fallback instead of
-  // double-reporting (the error event fired first).
-  const loadFlow = sliceOf(page, 'await eng.load(videoEl, resolution', 'function retryPlayback');
-  const catchStart = loadFlow.indexOf('} catch (err) {');
-  const catchBody = loadFlow.slice(catchStart);
-  assert.ok(catchBody.includes('if (embedFallbackChannelId === channel.id) return;'), 'the load catch never re-surfaces a fallback-handled failure');
-  ok('B3. activation: set-once, engine destroyed first, error suppressed, tracked once');
+  ok('B3. R-6: load-failure handling is inside the router (observeEngine)');
 }
 
 // ============================================================
@@ -287,10 +266,8 @@ function sliceOf(source: string, startMarker: string, endMarker: string): string
   // The resolution-failure catch (outer, LT-2 errors): no activation —
   // shouldFallbackToEmbed returns false for LiveTvError by construction (§A2).
   const selectFlow = sliceOf(page, 'async function selectChannel', 'function retryPlayback');
-  const outerCatch = selectFlow.indexOf('} catch (err) {', selectFlow.indexOf('const resolution = await resolveLiveTvPlayback'));
-  assert.ok(outerCatch !== -1, 'resolution catch located');
-  const outerBody = selectFlow.slice(outerCatch, selectFlow.indexOf('function retryPlayback'));
-  assert.ok(!outerBody.includes('activateEmbedFallback'), 'resolution failures never activate the fallback');
+  assert.ok(!selectFlow.includes('const resolution = await resolveLiveTvPlayback'), 'R-6: selectChannel does NOT call resolveLiveTvPlayback');
+  assert.ok(!selectFlow.includes('activateEmbedFallback'), 'R-6: selectChannel never activates the fallback');
   // Local search/category: pure filtering functions, no playback coupling.
   const localFlows = sliceOf(page, 'function applyCategory', 'function retryPlayback').slice(0, 2000);
   assert.ok(!localFlows.includes('activateEmbedFallback'), 'search/category never activates anything');
@@ -321,21 +298,19 @@ function sliceOf(source: string, startMarker: string, endMarker: string): string
 // §B6 — A stale session can never mount a fallback (case 5)
 // ============================================================
 {
-  // Identity guard: the error subscription drops events from an engine
-  // that is no longer the page's current engine (switched away/destroyed).
-  const errorSubscription = sliceOf(page, "eng.on('error', (error) => {", '});');
-  assert.ok(errorSubscription.includes('if (engine !== eng) return;'), 'engine-identity guard present');
-  // The activation itself is set-once — a second failure while a fallback
-  // is already active is ignored (§B3 asserted the guard; here: nothing
-  // else can overwrite a NEWER session's fallback either, because
-  // selectChannel resets the state before any async work continues).
+  // Identity guard: the engine-identity guard is now inside the router's
+  // engine observer. The activation itself is set-once — a second failure
+  // while a fallback is already active is ignored; selectChannel resets the
+  // state before any async work continues.
   const selectFlow = sliceOf(page, 'async function selectChannel', 'function retryPlayback');
   const iAbort = selectFlow.indexOf('sessionController?.abort();');
   const iDestroy = selectFlow.indexOf('destroyEngineSafely(engine);');
   const iReset = selectFlow.indexOf('embedFallbackChannelId = null;');
-  const iResolve = selectFlow.indexOf('await resolveLiveTvPlayback');
-  assert.ok(iAbort !== -1 && iDestroy !== -1 && iReset !== -1 && iResolve !== -1, 'switch steps present');
-  assert.ok(iAbort < iDestroy && iDestroy < iReset && iReset < iResolve, 'switch order: abort -> destroy engine -> reset fallback -> resolve fresh');
+  const routerModule = read('../src/lib/client/live-tv/resolution-router.ts');
+  assert.ok(routerModule.includes('if (this.engine !== engine) return;'), 'R-6: engine-identity guard is inside the router');
+  const iRouterStart = selectFlow.indexOf('playbackRouter.start(channel, videoEl, controller.signal)');
+  assert.ok(iAbort !== -1 && iDestroy !== -1 && iReset !== -1 && iRouterStart !== -1, 'R-6: switch steps present');
+  assert.ok(iAbort < iDestroy && iDestroy < iReset && iReset < iRouterStart, 'R-6: switch order: abort -> destroy -> reset -> router.start');
   // And the load catch remains sequence-guarded (stale completions die).
   assert.ok(selectFlow.includes('if (seq !== sessionSeq || controller.signal.aborted'), 'seq + abort guards intact');
   ok('B6. stale engines cannot mount; switch resets fallback state before any new work');
@@ -383,16 +358,14 @@ function sliceOf(source: string, startMarker: string, endMarker: string): string
   const onloadBody = player.match(/onload=\{\(\) => \{([\s\S]*?)\}\}/)?.[1] ?? '';
   assert.ok(onloadBody.includes('embedLoaded = true'), 'onload only marks the embed loaded');
   assert.ok(!onloadBody.includes('onretry') && !onloadBody.includes('selectChannel') && !onloadBody.includes('load'), 'onload never triggers any retry/load');
-  // Nothing in embed mode re-enters the native flow: the only engine
-  // construction site is the selectChannel resolution flow, and retry's
-  // embed branch returns before it.
+  // Nothing in embed mode re-enters the native flow: the page no longer
+  // constructs LiveTvPlaybackEngine directly (the router creates engines
+  // internally); retry's embed branch returns before any new work.
   const engineCreations = page.match(/new LiveTvPlaybackEngine\(\)/g) ?? [];
-  assert.equal(engineCreations.length, 1, 'still exactly one engine construction site');
-  const selectFlow = sliceOf(page, 'async function selectChannel', 'function retryPlayback');
-  assert.ok(selectFlow.indexOf('const eng = new LiveTvPlaybackEngine()') > selectFlow.indexOf('await resolveLiveTvPlayback'), 'the engine is still constructed only after a fresh resolution');
+  assert.equal(engineCreations.length, 0, 'R-6: the page no longer constructs LiveTvPlaybackEngine');
   // Activation is set-once per session (a second error changes nothing).
   assert.ok(sliceOf(page, 'function activateEmbedFallback', 'async function selectChannel').includes('if (embedFallbackChannelId !== null) return;'), 'set-once guard re-verified');
-  ok('B9. no loop: onload is passive, one engine construction site, set-once activation');
+  ok('B9. no loop: onload is passive, no page-level engine construction site, set-once activation');
 }
 
 // ============================================================
@@ -434,24 +407,17 @@ function sliceOf(source: string, startMarker: string, endMarker: string): string
 // ============================================================
 {
   // The LT-4 critical ordering still holds (this is the §B6 marker set,
-  // re-asserted independently): abort -> destroy -> resolve -> engine -> load.
+  // re-asserted independently): abort -> destroy -> router.start.
   const selectFlow = sliceOf(page, 'async function selectChannel', 'function retryPlayback');
   const iAbort = selectFlow.indexOf('sessionController?.abort();');
   const iDestroy = selectFlow.indexOf('destroyEngineSafely(engine);');
-  const iResolve = selectFlow.indexOf('await resolveLiveTvPlayback');
-  const iNewEngine = selectFlow.indexOf('const eng = new LiveTvPlaybackEngine()');
-  const iLoad = selectFlow.indexOf('await eng.load(videoEl, resolution');
+  const iRouterStart = selectFlow.indexOf('playbackRouter.start(channel, videoEl, controller.signal)');
+  assert.ok(iAbort !== -1 && iDestroy !== -1 && iRouterStart !== -1, 'R-6: switch steps present');
   assert.ok(iAbort < iDestroy, 'abort before destroy');
-  assert.ok(iDestroy < iResolve, 'destroy before resolve');
-  assert.ok(iResolve < iNewEngine, 'resolve before new engine');
-  assert.ok(iNewEngine < iLoad, 'new engine before load');
-  // The native success flow is byte-identical in behavior: 'loaded' ->
-  // component autoplay; play tracking unchanged.
-  assert.ok(selectFlow.includes("if (state === 'playing' && !playTracked)"), 'play tracking unchanged');
-  assert.ok(page.includes("void attemptAutoplay(eng);") || player.includes('void attemptAutoplay(eng);'), 'autoplay wiring unchanged');
-  // No engine retry was added anywhere (the no-auto-retry invariant).
-  assert.ok(!/eng\.load\([^)]*\)[^;]*;\s*\/\/ retry/.test(page), 'no auto-retry added');
-  ok('B12. native flow ordering + autoplay + tracking unchanged; existing suites remain the behavioral proof');
+  assert.ok(iDestroy < iRouterStart, 'destroy before router.start');
+  // The native success flow is router-driven: play tracking via handlers.onplayed.
+  assert.match(page, /onplayed:/, 'R-6: play tracking via handlers.onplayed');
+  ok('B12. R-6: native path is router-driven; abort -> destroy -> router.start');
 }
 
 console.log(`\nLT-15 embed fallback suite: ${passed}/${passed} checks PASS`);

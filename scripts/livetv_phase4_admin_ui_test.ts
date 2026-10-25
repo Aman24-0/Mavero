@@ -190,8 +190,8 @@ console.log('\n§8 — Delete flows confirm with impact');
 console.log('\n§9 — Refresh semantics inside the source sheet');
 {
   const sheetBlock = livetvPage.slice(livetvPage.indexOf('<AdminSheet'));
-  ok(/<form method="POST" action="\?\/refreshSource" use:enhance>/.test(sheetBlock), '9a. per-source Refresh is wired to the existing rate-limited action');
-  ok(/<form method="POST" action="\?\/previewSource" use:enhance>/.test(sheetBlock), '9b. per-source Preview (dry run) is wired to the existing rate-limited action');
+  ok(/<form method="POST" action="\?\/refreshSource" use:enhance=/.test(sheetBlock), '9a. per-source Refresh is wired to the existing rate-limited action');
+  ok(/<form method="POST" action="\?\/previewSource" use:enhance=/.test(sheetBlock), '9b. per-source Preview (dry run) is wired to the existing rate-limited action');
   ok(/refreshKind === 'source' \|\| refreshOutcome\.kind === 'source-preview'|\{#if refreshOutcome\}/.test(livetvPage), '9c. the outcome block renders the typed refresh result');
   ok(/'source-preview'/.test(livetvPage) && /Dry run — nothing was written/.test(livetvPage), '9d. preview results are explicitly labeled as a dry run (concise R-2 wording)');
   ok(!/new XMLHttpRequest|fetch\(/.test(livetvPage), '9e. the page builds NO competing fetch pipeline (mutations are form actions)');

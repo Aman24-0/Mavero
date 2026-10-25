@@ -68,7 +68,7 @@ console.log('§1 — Source selector UI: compact icon button, no separate row (I
   // 1.14 — options have min-height 44px (touch target).
   ok(/\.ltv-source-option\s*\{[\s\S]{0,400}min-height:\s*44px/.test(liveTvPage), '§1.14 the options have min-height:44px (touch target)');
   // 1.15 — the Filter icon is imported.
-  ok(liveTvPage.includes('Filter') && liveTvPage.includes('<Filter size={16}'), '§1.15 the Filter icon is imported and rendered');
+  ok(liveTvPage.includes('<Tv size={16}'), '§1.15 R-6: the Tv (broadcast/source) icon is rendered (replaced Filter)');
   // 1.16 — the button has a title attribute (tooltip).
   ok(liveTvPage.includes('title="Source: {sourceSelectorLabel}"'), '§1.16 the button has a title attribute (tooltip with the current selection)');
 }
@@ -146,7 +146,7 @@ console.log('§4 — SvelteKit/base-URL/build warnings: cleanup + classification
   //     The app aliases come from SvelteKit's generated tsconfig (rootDirs +
   //     moduleResolution: bundler). svelte-check reports 0 warnings.
   const jsconfig = JSON.parse(readCode('jsconfig.json'));
-  ok(jsconfig.compilerOptions.baseUrl === undefined && jsconfig.compilerOptions.paths === undefined, '§4.5 R-5: jsconfig.json no longer carries baseUrl/paths (the SvelteKit warning is resolved — test aliases moved to tsconfig.test.json)');
+  ok(jsconfig.compilerOptions.baseUrl === undefined && jsconfig.compilerOptions.paths === undefined, '§4.5 R-5: jsconfig.json no longer carries baseUrl/paths');
 }
 
 // ============================================================

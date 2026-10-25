@@ -509,6 +509,11 @@ export class LiveTvPlaybackRouter {
                                 const kind = response.status === 404 ? 'not_found' : response.status === 429 ? 'rate_limited' : 'server';
                                 throw new LiveTvError(kind, { status: response.status });
                         }
+                        // R-7 — Content-Type safety: reject HTML before .json().
+                        const ct = response.headers.get('content-type') ?? '';
+                        if (!ct.includes('json')) {
+                                throw new LiveTvError('invalid_response', {});
+                        }
                         const body: unknown = await response.json();
                         return normalizeRouterResolution(body);
                 } catch (err) {
