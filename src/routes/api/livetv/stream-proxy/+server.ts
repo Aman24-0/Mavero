@@ -29,7 +29,8 @@ import {
 	RATE_LIMITED_MESSAGE
 } from '$lib/server/http/rate-limit';
 import { assertSafeManifestUrl, assertSafeManifestDestination } from '$lib/server/streaming/stremio/ssrf';
-import { isLivetvProxyHost, LIVETV_STREAM_PROXY_PATH } from '$lib/shared/livetv-proxy';
+import { isLivetvProxyHost } from '$lib/shared/livetv-proxy';
+import { rewriteHlsManifest } from '$lib/server/livetv/hls-manifest';
 
 const MAX_URL_LENGTH = 2048;
 const UPSTREAM_TIMEOUT_MS = 15_000;
@@ -48,46 +49,6 @@ function jsonError(status: number, code: string, message: string): Response {
 	});
 }
 
-/** Same-origin proxy URL for an absolute media URL. */
-function proxify(absUrl: string): string {
-	return `${LIVETV_STREAM_PROXY_PATH}?u=${encodeURIComponent(absUrl)}`;
-}
-
-/**
- * Rewrite an HLS manifest so every URI (segment lines, and URI="…" attributes
- * on #EXT-X-KEY / #EXT-X-MAP / #EXT-X-MEDIA / #EXT-X-I-FRAME-STREAM-INF …)
- * points back through this proxy. Relative URIs are resolved against the
- * manifest's FINAL url.
- */
-export function rewriteHlsManifest(body: string, baseUrl: string): string {
-	const base = new URL(baseUrl);
-	const out: string[] = [];
-	for (const rawLine of body.split('\n')) {
-		const line = rawLine.replace(/\r$/, '');
-		if (line.length === 0) {
-			out.push(line);
-			continue;
-		}
-		if (line.startsWith('#')) {
-			out.push(
-				line.replace(/URI="([^"]+)"/g, (match, uri: string) => {
-					try {
-						return `URI="${proxify(new URL(uri, base).toString())}"`;
-					} catch {
-						return match;
-					}
-				})
-			);
-			continue;
-		}
-		try {
-			out.push(proxify(new URL(line.trim(), base).toString()));
-		} catch {
-			out.push(line);
-		}
-	}
-	return out.join('\n');
-}
 
 /** Validate one hop: https + allowlisted host + SSRF guard. Null = reject. */
 async function safeHop(raw: string): Promise<URL | null> {

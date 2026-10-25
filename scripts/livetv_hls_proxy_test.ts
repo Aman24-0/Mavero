@@ -1,7 +1,7 @@
 // Live TV HLS stream proxy — deterministic tests for the PURE logic
 // (manifest rewriting + the shared allowlist/URL helpers). No network.
 import assert from 'node:assert/strict';
-import { rewriteHlsManifest } from '../src/routes/api/livetv/stream-proxy/+server';
+import { rewriteHlsManifest } from '../src/lib/server/livetv/hls-manifest';
 import {
 	isLivetvProxyHost,
 	isLivetvProxyUrl,
