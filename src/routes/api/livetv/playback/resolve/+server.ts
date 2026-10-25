@@ -60,13 +60,41 @@ export const GET: RequestHandler = async ({ request, locals, url }) => {
                 return json({ ok: false, error: { code: 'INVALID_REQUEST', message: 'The playback resolution request is invalid.' } }, { status: 400, headers: NO_STORE });
         }
 
+        // R-10 — Bounded resolver deadline. Netlify functions have a ~10-30s
+        // timeout (depending on tier). The resolver's Supabase queries must
+        // complete within a safe budget. If they don't, return a JSON 503
+        // (NOT an HTML 504) so the client can handle it gracefully.
+        const RESOLVER_DEADLINE_MS = 8_000;
+        const deadlineController = new AbortController();
+        const deadlineTimer = setTimeout(() => deadlineController.abort(), RESOLVER_DEADLINE_MS);
+
         try {
                 const client = createSupabaseAdminClient();
-                const resolution = await resolveLivetvPlaybackForSelection(client, channelId);
+                const resolution = await Promise.race([
+                        resolveLivetvPlaybackForSelection(client, channelId),
+                        new Promise<never>((_, reject) => {
+                                deadlineController.signal.addEventListener('abort', () => {
+                                        reject(new Error('RESOLVER_DEADLINE'));
+                                }, { once: true });
+                        })
+                ]);
+                clearTimeout(deadlineTimer);
                 return json({ ok: true, ...resolution }, { headers: NO_STORE });
-        } catch {
-                // Fail-closed: the client treats any transport failure as
-                // "not resolvable" and runs the legacy compatibility path.
-                return json({ ok: false, error: { code: 'RESOLUTION_UNAVAILABLE', message: 'Live TV playback resolution is temporarily unavailable.' } }, { status: 503, headers: NO_STORE });
+        } catch (err) {
+                clearTimeout(deadlineTimer);
+                const isDeadline = err instanceof Error && err.message === 'RESOLVER_DEADLINE';
+                // R-10 — ALWAYS return JSON (never HTML). A 503 JSON response
+                // lets the client router handle it gracefully (transport failure
+                // → 'legacy' → honest error). An HTML 504 would crash the JSON
+                // parser with "Unexpected token '<'".
+                return json({
+                        ok: false,
+                        error: {
+                                code: isDeadline ? 'RESOLVER_TIMEOUT' : 'RESOLUTION_UNAVAILABLE',
+                                message: isDeadline
+                                        ? 'Live TV playback resolution timed out.'
+                                        : 'Live TV playback resolution is temporarily unavailable.'
+                        }
+                }, { status: 503, headers: NO_STORE });
         }
 };

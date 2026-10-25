@@ -239,40 +239,40 @@ export const actions: Actions = {
     }
   },
   refreshSource: async ({ request, locals }) => {
-    await requireAdmin(locals, { redirectTo: '/admin/system/livetv?tab=sources' });
     const verdict = checkRateLimit('livetvAdminRefresh', clientIdentity(request.headers, locals.user?.id));
     if (!verdict.allowed) return fail(429, { message: RATE_LIMITED_MESSAGE, code: RATE_LIMITED_ERROR_CODE });
     try {
+      await requireAdmin(locals, { redirectTo: '/admin/system/livetv?tab=sources' });
       const form = await request.formData();
       const id = requireUuidOr400(form, 'id', 'Source');
       const outcome = await refreshLivetvSource(locals.supabase, { id });
       return { outcome, refreshKind: 'source' as const };
     } catch (caught) {
-      return toFailure(caught, 'The refresh failed.');
+      return toFailure(caught, 'The refresh failed or timed out. Try again.');
     }
   },
   refreshAllSources: async ({ request, locals }) => {
-    await requireAdmin(locals, { redirectTo: '/admin/system/livetv?tab=sources' });
     const verdict = checkRateLimit('livetvAdminRefresh', clientIdentity(request.headers, locals.user?.id));
     if (!verdict.allowed) return fail(429, { message: RATE_LIMITED_MESSAGE, code: RATE_LIMITED_ERROR_CODE });
     try {
+      await requireAdmin(locals, { redirectTo: '/admin/system/livetv?tab=sources' });
       const result = await refreshAllEligibleLivetvSources(locals.supabase);
       return { batchOutcome: result, refreshKind: 'source' as const };
     } catch (caught) {
-      return toFailure(caught, 'The refresh failed.');
+      return toFailure(caught, 'The refresh failed or timed out. Try again.');
     }
   },
   previewSource: async ({ request, locals }) => {
-    await requireAdmin(locals, { redirectTo: '/admin/system/livetv?tab=sources' });
     const verdict = checkRateLimit('livetvAdminPreview', clientIdentity(request.headers, locals.user?.id));
     if (!verdict.allowed) return fail(429, { message: RATE_LIMITED_MESSAGE, code: RATE_LIMITED_ERROR_CODE });
     try {
+      await requireAdmin(locals, { redirectTo: '/admin/system/livetv?tab=sources' });
       const form = await request.formData();
       const id = requireUuidOr400(form, 'id', 'Source');
       const outcome = await previewLivetvSource(locals.supabase, { id });
       return { outcome, refreshKind: 'source-preview' as const };
     } catch (caught) {
-      return toFailure(caught, 'The preview failed.');
+      return toFailure(caught, 'The preview failed or timed out. Try again.');
     }
   },
 
