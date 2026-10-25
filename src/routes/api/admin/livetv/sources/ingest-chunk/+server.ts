@@ -49,9 +49,9 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		return fail(403, 'FORBIDDEN', 'Admin access is required.');
 	}
 
-	const body = await readJsonBody(request);
-	if (!body || typeof body !== 'object') return fail(400, 'INVALID_REQUEST', 'A JSON body is required.');
-	const { sourceId, text } = body as { sourceId?: unknown; text?: unknown };
+	const parsed = await readJsonBody<{ sourceId?: unknown; text?: unknown }>(request);
+	if (!parsed.ok) return fail(parsed.status, 'INVALID_REQUEST', parsed.message);
+	const { sourceId, text } = parsed.value ?? {};
 	if (typeof sourceId !== 'string' || !UUID_RE.test(sourceId)) {
 		return fail(400, 'INVALID_REQUEST', 'A valid sourceId is required.');
 	}

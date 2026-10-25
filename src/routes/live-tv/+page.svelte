@@ -69,6 +69,7 @@
   // server paints the hero, player shell and catalogue skeleton; everything
   //   data-related starts in onMount (existing Mavero page pattern).
   import { onDestroy, onMount } from 'svelte';
+  import { env as publicEnv } from '$env/dynamic/public';
   import { page as appPage } from '$app/state';
   import { PRODUCTION_ORIGIN } from '$lib/shared/seo';
   import { Search, X, Radio, RefreshCw, LoaderCircle, SlidersHorizontal, BookOpen, ChevronLeft, ChevronRight, ChevronDown, Check, Tv } from 'lucide-svelte';
@@ -726,6 +727,8 @@
    */
   function createLivetvPlaybackRouter(): LiveTvPlaybackRouter {
     return new LiveTvPlaybackRouter({
+      // Optional external proxy (Cloudflare Worker) via PUBLIC_STREAM_PROXY_URL.
+      streamProxyBase: publicEnv.PUBLIC_STREAM_PROXY_URL ?? '',
       handlers: {
         onengine: (eng) => {
           engine = eng;

@@ -42,8 +42,9 @@ export function isLivetvProxyUrl(rawUrl: string): boolean {
 }
 
 /** The same-origin proxy URL for an absolute media URL. */
-export function livetvStreamProxyUrl(absUrl: string): string {
-	return `${LIVETV_STREAM_PROXY_PATH}?u=${encodeURIComponent(absUrl)}`;
+export function livetvStreamProxyUrl(absUrl: string, base = ''): string {
+	const root = base ? `${base.replace(/\/+$/, '')}/` : LIVETV_STREAM_PROXY_PATH;
+	return `${root}?u=${encodeURIComponent(absUrl)}`;
 }
 
 /**

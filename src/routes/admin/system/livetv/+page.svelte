@@ -736,7 +736,7 @@
 
   .source-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--a2-space-2); }
   .source-row {
-    display: flex; align-items: center; justify-content: space-between; gap: var(--a2-space-3);
+    display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start; gap: var(--a2-space-2);
     padding: var(--a2-space-2) var(--a2-space-3);
     background: var(--a2-surface-2);
     border: 1px solid var(--a2-border);
@@ -745,12 +745,11 @@
        every breakpoint; long source names wrap internally rather than
        flipping the row to a tall column on mobile. */
     min-height: 0;
-    flex-wrap: nowrap;
   }
-  .source-main { min-width: 0; flex: 1 1 auto; display: flex; flex-direction: column; gap: 2px; overflow: hidden; }
+  .source-main { min-width: 0; flex: 1 1 auto; width: 100%; display: flex; flex-direction: column; gap: 2px; overflow: hidden; }
   .source-main .a2-cell-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .source-main .a2-cell-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .source-controls { display: flex; align-items: center; gap: var(--a2-space-2); flex: 0 0 auto; }
+  .source-controls { display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: var(--a2-space-2); width: 100%; flex: 0 0 auto; }
   .source-toggle-form { display: inline-flex; }
 
   /* The ON/OFF switch (bound to the persisted enabled column). */

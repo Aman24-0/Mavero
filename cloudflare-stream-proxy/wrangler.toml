@@ -1,0 +1,8 @@
+name = "mavero-stream-proxy"
+main = "worker.ts"
+compatibility_date = "2026-01-01"
+
+# No bindings required — this Worker is a pure HTTP proxy.
+# After `wrangler deploy` you get a URL like:
+#   https://mavero-stream-proxy.<your-subdomain>.workers.dev
+# Set that as PUBLIC_STREAM_PROXY_URL in the Mavero app (Netlify env).

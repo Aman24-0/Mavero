@@ -250,6 +250,8 @@ export type LiveTvRouterOptions = {
         timers?: Timers;
         /** Injectable base origin for the two endpoints (tests). */
         baseUrl?: string;
+        /** Absolute base of an external stream proxy (Cloudflare Worker); omit for same-origin. */
+        streamProxyBase?: string;
 };
 
 /** Router lifecycle states (the Phase 5 brief's deterministic machine). */
@@ -278,6 +280,8 @@ export class LiveTvPlaybackRouter {
         private readonly fetchFn: typeof fetch;
         private readonly timers: Timers;
         private readonly baseUrl: string;
+        /** Absolute base of an external stream proxy (e.g. a Cloudflare Worker); '' = same-origin. */
+        private readonly streamProxyBase: string;
 
         /** Monotonic session token — the stale-guard root. */
         private sessionToken = 0;
@@ -318,6 +322,7 @@ export class LiveTvPlaybackRouter {
                 this.fetchFn = options.fetchFn ?? ((...args: Parameters<typeof fetch>) => fetch(...args));
                 this.timers = options.timers ?? defaultTimers;
                 this.baseUrl = options.baseUrl ?? '';
+                this.streamProxyBase = options.streamProxyBase ?? '';
         }
 
         /** The current lifecycle state (diagnostics/tests). */
@@ -671,7 +676,7 @@ export class LiveTvPlaybackRouter {
                         if (candidate.streamFormat === 'hls' && isLivetvProxyUrl(mediaUrl)) {
                                 // HLS from a CORS-blocked CDN → route via the server proxy.
                                 const origin = typeof location !== 'undefined' ? location.origin : '';
-                                if (origin) mediaUrl = new URL(livetvStreamProxyUrl(mediaUrl), origin).toString();
+                                if (origin) mediaUrl = new URL(livetvStreamProxyUrl(mediaUrl, this.streamProxyBase), origin).toString();
                         }
                         resolution = { channel: { id: channel.id, name: channel.name }, sources: [{ url: mediaUrl }], drm: null };
                 }
