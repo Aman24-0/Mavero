@@ -67,4 +67,13 @@ const base = 'https://live09p.hotstar.com/live/abc/master.m3u8';
 	ok(out.includes('u='), 'rewrite: CRLF handled');
 }
 
+// referer replay (&r=) — segments carry the SAME Referer that loaded the manifest
+{
+	const ref = 'https://premiumplugx.com/';
+	const out = rewriteHlsManifest('#EXTM3U\nseg.ts\n#EXT-X-KEY:METHOD=AES-128,URI="k.bin"', base, ref);
+	const marker = `&r=${encodeURIComponent(ref)}`;
+	ok(out.includes(marker), 'referer: &r= embedded on rewritten URIs');
+	ok((out.split(marker).length - 1) >= 2, 'referer: &r= applied to every rewritten line (segment + key)');
+}
+
 console.log(`\nHLS stream proxy suite: ${passed} checks PASS`);

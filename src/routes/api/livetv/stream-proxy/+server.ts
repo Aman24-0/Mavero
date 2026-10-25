@@ -1,22 +1,27 @@
 // ============================================================================
-// Live TV HLS stream proxy — GET /api/livetv/stream-proxy?u=<absolute url>
+// Live TV HLS stream proxy — GET /api/livetv/stream-proxy?u=<absolute url>[&r=<referer>]
 //
 // Fetches an HLS manifest or media segment SERVER-SIDE and returns it to the
 // browser, working around CDNs that block cross-origin browser requests
-// (CORS / 403). For a manifest it REWRITES every segment, key and variant URI
-// so they also travel back through this proxy.
+// (CORS / 403 / Akamai 475 bot protection). For a manifest it REWRITES every
+// segment, key and variant URI so they also travel back through this proxy,
+// carrying the SAME Referer (&r=) that loaded the manifest.
+//
+// BROWSER MIMICRY (applied to EVERY request — manifest AND segments):
+//   * Referer/Origin = the PROVIDER origin (per-CDN map), replayed on segments
+//     via &r= so a CDN that 403s a same-origin Referer still sees the right one.
+//   * A standard desktop-Chrome User-Agent.
+//   * Sec-Fetch-* / Accept / Accept-Language — Akamai (Hotstar) 475s requests
+//     that look scripted; these match a cross-origin media fetch from a page.
+//   * Cookie passthrough: cookies the CDN sets on the manifest are replayed on
+//     segment requests (best-effort, per instance — see the jar below).
 //
 // SECURITY (this is a proxy — treat it like one):
 //   * https + absolute only; no credentials; length-bounded.
-//   * Origin ALLOWLIST (shared with the client): only the CDN suffixes in
-//     $lib/shared/livetv-proxy are ever fetched — this is NOT an open relay.
-//   * SSRF guard: the shared `assertSafeManifestUrl` (numeric IP forms, IPv6
-//     mapped, metadata hosts) + `assertSafeManifestDestination` (DNS resolution
-//     against blocked ranges) run for the FIRST hop AND every redirect hop.
-//   * Redirects are followed MANUALLY (max 3) with each hop re-validated, so a
-//     CDN cannot bounce us onto an internal address.
-//   * Rate-limited per identity.
-//   * Range requests are forwarded so segment seeking works (206 passthrough).
+//   * Origin ALLOWLIST (shared with the client) — NOT an open relay.
+//   * SSRF guard (assertSafeManifestUrl + assertSafeManifestDestination) on the
+//     first hop AND every manually-followed redirect hop (max 3).
+//   * Rate-limited per identity. Range forwarded (206 passthrough).
 //
 // SCOPE: HLS only. DASH is not proxied.
 // ============================================================================
@@ -35,6 +40,7 @@ import { rewriteHlsManifest } from '$lib/server/livetv/hls-manifest';
 const MAX_URL_LENGTH = 2048;
 const UPSTREAM_TIMEOUT_MS = 15_000;
 const MAX_REDIRECTS = 3;
+const MAX_COOKIE_HOSTS = 200;
 
 const CORS_HEADERS: Record<string, string> = {
 	'access-control-allow-origin': '*',
@@ -42,13 +48,62 @@ const CORS_HEADERS: Record<string, string> = {
 	'cache-control': 'no-store'
 };
 
+// ---------------------------------------------------------------------------
+// Cookie jar (best-effort, per function instance). CDNs such as Akamai hand out
+// a session cookie on the manifest and expect it back on every segment. Keyed by
+// the CDN host. Bounded; LRU-ish eviction. Not a guarantee (instances are not
+// shared), but it is what a stateless proxy can do.
+// ---------------------------------------------------------------------------
+const cookieJar = new Map<string, Map<string, string>>();
+
+function rememberCookies(host: string, response: Response): void {
+	let setCookies: string[] = [];
+	const headers = response.headers as Headers & { getSetCookie?: () => string[] };
+	if (typeof headers.getSetCookie === 'function') {
+		setCookies = headers.getSetCookie();
+	} else {
+		const raw = response.headers.get('set-cookie');
+		if (raw) setCookies = [raw];
+	}
+	if (setCookies.length === 0) return;
+	const jar = cookieJar.get(host) ?? new Map<string, string>();
+	for (const sc of setCookies) {
+		const firstPair = sc.split(';')[0] ?? '';
+		const eq = firstPair.indexOf('=');
+		if (eq > 0) jar.set(firstPair.slice(0, eq).trim(), firstPair.slice(eq + 1).trim());
+	}
+	cookieJar.set(host, jar);
+	if (cookieJar.size > MAX_COOKIE_HOSTS) {
+		const oldest = cookieJar.keys().next().value;
+		if (oldest !== undefined) cookieJar.delete(oldest);
+	}
+}
+
+function cookieHeaderFor(host: string): string | null {
+	const jar = cookieJar.get(host);
+	if (!jar || jar.size === 0) return null;
+	return [...jar.entries()].map(([name, value]) => `${name}=${value}`).join('; ');
+}
+
+/** Validate the optional `r` (Referer) param — http(s) only, no creds, bounded. */
+function safeReferer(raw: string | null): string | null {
+	if (!raw || raw.length > 512) return null;
+	try {
+		const url = new URL(raw);
+		if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
+		if (url.username || url.password) return null;
+		return url.toString();
+	} catch {
+		return null;
+	}
+}
+
 function jsonError(status: number, code: string, message: string): Response {
 	return new Response(JSON.stringify({ ok: false, error: { code, message } }), {
 		status,
 		headers: { 'content-type': 'application/json', 'cache-control': 'no-store' }
 	});
 }
-
 
 /** Validate one hop: https + allowlisted host + SSRF guard. Null = reject. */
 async function safeHop(raw: string): Promise<URL | null> {
@@ -85,22 +140,29 @@ export const GET: RequestHandler = async ({ request, url, locals }) => {
 	const first = await safeHop(raw);
 	if (!first) return jsonError(403, 'URL_NOT_ALLOWED', 'This media host is not allowed.');
 
-	// Some IPTV CDNs 403 the browser AND a same-origin Referer — they want the
-	// PROVIDER site's origin (per-source via the shared mapping). Fall back to
-	// the client's own Referer/Origin, then the media origin.
-	const requiredReferer = livetvProxyRefererFor(first.hostname);
+	// Referer/Origin: prefer the replayed `r` (set by the rewriter on segments),
+	// then the per-CDN provider mapping, then the client's own, then the media
+	// origin. This guarantees segments get the SAME Referer that loaded the
+	// manifest — the fix for "manifest loads but segments 403".
+	const requiredReferer = safeReferer(url.searchParams.get('r')) ?? livetvProxyRefererFor(first.hostname);
 	const referer = requiredReferer ?? request.headers.get('referer') ?? `${first.origin}/`;
 	const origin = requiredReferer ? requiredReferer.replace(/\/$/, '') : (request.headers.get('origin') ?? first.origin);
+
 	const upstreamHeaders: Record<string, string> = {
 		referer,
 		origin,
-		// A standard desktop Chrome UA — CDNs frequently block non-browser UAs.
-		'user-agent': LIVETV_PROXY_BROWSER_UA
+		'user-agent': LIVETV_PROXY_BROWSER_UA,
+		accept: '*/*',
+		'accept-language': 'en-US,en;q=0.9',
+		// Browser fetch-metadata — Akamai 475s requests that look scripted.
+		'sec-fetch-dest': 'video',
+		'sec-fetch-mode': 'cors',
+		'sec-fetch-site': 'cross-site'
 	};
 	const range = request.headers.get('range');
 	if (range) upstreamHeaders.range = range;
-	const accept = request.headers.get('accept');
-	if (accept) upstreamHeaders.accept = accept;
+	const cookie = cookieHeaderFor(first.hostname);
+	if (cookie) upstreamHeaders.cookie = cookie;
 
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
@@ -116,6 +178,7 @@ export const GET: RequestHandler = async ({ request, url, locals }) => {
 				redirect: 'manual',
 				signal: controller.signal
 			});
+			rememberCookies(current.hostname, res);
 			if (res.status >= 300 && res.status < 400) {
 				const location = res.headers.get('location');
 				if (!location) break;
@@ -152,18 +215,16 @@ export const GET: RequestHandler = async ({ request, url, locals }) => {
 
 	if (isManifest) {
 		if (!response.ok) {
-			// Surface the upstream failure to hls.js (it will fail the candidate).
 			return new Response(null, { status: response.status, headers: { ...CORS_HEADERS } });
 		}
 		const text = await response.text();
-		return new Response(rewriteHlsManifest(text, finalUrl.toString()), {
+		// Embed the SAME referer on every rewritten URI so segments replay it.
+		return new Response(rewriteHlsManifest(text, finalUrl.toString(), referer), {
 			status: 200,
 			headers: { 'content-type': 'application/vnd.apple.mpegurl', ...CORS_HEADERS }
 		});
 	}
 
-	// Segment / key / init — stream through, preserving status (incl. 206) and
-	// range-related headers so seeking works.
 	const headers = new Headers(CORS_HEADERS);
 	for (const name of ['content-type', 'content-length', 'content-range', 'accept-ranges', 'etag', 'last-modified']) {
 		const value = response.headers.get(name);
