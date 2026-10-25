@@ -244,10 +244,20 @@ export function classifyM3UStreamUrl(raw: string, playlistBaseUrl?: string): { o
         if (!trimmed) return { ok: false, reason: 'missing_stream_url' };
         if (trimmed.length > 2048) return { ok: false, reason: 'url_too_long' };
         if (/[\u0000-\u001f\u007f]/.test(trimmed)) return { ok: false, reason: 'invalid_stream_url' };
-        // Whitespace INSIDE the trimmed URL is invalid (a stream URL is a single
-        // token). The earlier /\s/ check is retained for parity with the
-        // pre-R-2 behavior (control characters already covered above).
-        if (/\s/.test(trimmed)) return { ok: false, reason: 'invalid_stream_url' };
+        // R-8 — Many real-world IPTV playlists (JioHotstar, Akindi/JioTV)
+        // use a pipe-delimited URL format where everything after the first
+        // `|` carries provider-specific helper parameters (cookies,
+        // referrer, user-agent, origin). These helper params are NOT part
+        // of the HTTP URL — they are metadata for the player. The pipe
+        // section may contain spaces (e.g. `@Premium Plugx(Android/15)`)
+        // which would fail the whitespace check. We split on the FIRST
+        // pipe: the part before it is the real HTTP URL (validated); the
+        // pipe section is preserved in the stored URL for the player to
+        // use but does not affect format classification or URL validation.
+        const pipeIndex = trimmed.indexOf('|');
+        const httpPart = pipeIndex >= 0 ? trimmed.slice(0, pipeIndex) : trimmed;
+        // The HTTP part must have no whitespace (a URL is a single token).
+        if (/\s/.test(httpPart)) return { ok: false, reason: 'invalid_stream_url' };
 
         // R-2 — resolve relative URLs against the playlist's own URL when one
         // was supplied. The base must itself be a valid https URL; anything
@@ -265,7 +275,7 @@ export function classifyM3UStreamUrl(raw: string, playlistBaseUrl?: string): { o
 
         let url: URL;
         try {
-                url = base !== null ? new URL(trimmed, base) : new URL(trimmed);
+                url = base !== null ? new URL(httpPart, base) : new URL(httpPart);
         } catch {
                 return { ok: false, reason: 'invalid_stream_url' };
         }
@@ -274,11 +284,20 @@ export function classifyM3UStreamUrl(raw: string, playlistBaseUrl?: string): { o
         // The resolved URL's full string is bounded (a relative URL resolved
         // against a long base CAN exceed 2048 — reject the entry rather than
         // truncate, matching the absolute-URL behavior).
-        const resolvedString = url.toString();
-        if (resolvedString.length > 2048) return { ok: false, reason: 'url_too_long' };
+        const resolvedHttp = url.toString();
+        if (resolvedHttp.length > 2048) return { ok: false, reason: 'url_too_long' };
         const pathname = url.pathname.toLowerCase();
-        if (pathname.endsWith('.mpd')) return { ok: true, value: { url: resolvedString, streamFormat: 'dash' } };
-        if (pathname.endsWith('.m3u8') || pathname.endsWith('.m3u')) return { ok: true, value: { url: resolvedString, streamFormat: 'hls' } };
+        // R-8 — the STORED url is the HTTP part only (without the pipe
+        // section). The pipe section carries player metadata (cookies,
+        // referrer, user-agent) that is ALSO present in the #EXTVLCOPT
+        // and #EXTHTTP directive lines (which the parser already ignores).
+        // The DB CHECK constraint requires `url ~ '^https://[^[:space:]]*$'`
+        // — a pipe URL with spaces would be rejected. Storing only the HTTP
+        // part satisfies the constraint and is sufficient for playback
+        // (the player requests the manifest directly; CORS/cookies are
+        // browser-managed, not URL-embedded).
+        if (pathname.endsWith('.mpd')) return { ok: true, value: { url: resolvedHttp, streamFormat: 'dash' } };
+        if (pathname.endsWith('.m3u8') || pathname.endsWith('.m3u')) return { ok: true, value: { url: resolvedHttp, streamFormat: 'hls' } };
         // Unknown (includes .html/.php player pages, bare hosts, extensionless
         // streams, query-param format hints) — format cannot be established
         // safely, so the entry is skipped rather than guessed.
