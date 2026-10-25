@@ -29,7 +29,7 @@ import {
 	RATE_LIMITED_MESSAGE
 } from '$lib/server/http/rate-limit';
 import { assertSafeManifestUrl, assertSafeManifestDestination } from '$lib/server/streaming/stremio/ssrf';
-import { isLivetvProxyHost } from '$lib/shared/livetv-proxy';
+import { isLivetvProxyHost, livetvProxyRefererFor, LIVETV_PROXY_BROWSER_UA } from '$lib/shared/livetv-proxy';
 import { rewriteHlsManifest } from '$lib/server/livetv/hls-manifest';
 
 const MAX_URL_LENGTH = 2048;
@@ -85,13 +85,17 @@ export const GET: RequestHandler = async ({ request, url, locals }) => {
 	const first = await safeHop(raw);
 	if (!first) return jsonError(403, 'URL_NOT_ALLOWED', 'This media host is not allowed.');
 
-	// Headers a CDN may require to stop 403-ing. The browser's Referer/Origin are
-	// forwarded when present (some CDNs check them); otherwise we present the
-	// media origin, which is the common "same-origin Referer" requirement.
+	// Some IPTV CDNs 403 the browser AND a same-origin Referer — they want the
+	// PROVIDER site's origin (per-source via the shared mapping). Fall back to
+	// the client's own Referer/Origin, then the media origin.
+	const requiredReferer = livetvProxyRefererFor(first.hostname);
+	const referer = requiredReferer ?? request.headers.get('referer') ?? `${first.origin}/`;
+	const origin = requiredReferer ? requiredReferer.replace(/\/$/, '') : (request.headers.get('origin') ?? first.origin);
 	const upstreamHeaders: Record<string, string> = {
-		referer: request.headers.get('referer') ?? `${first.origin}/`,
-		origin: request.headers.get('origin') ?? first.origin,
-		'user-agent': request.headers.get('user-agent') ?? 'Mozilla/5.0'
+		referer,
+		origin,
+		// A standard desktop Chrome UA — CDNs frequently block non-browser UAs.
+		'user-agent': LIVETV_PROXY_BROWSER_UA
 	};
 	const range = request.headers.get('range');
 	if (range) upstreamHeaders.range = range;

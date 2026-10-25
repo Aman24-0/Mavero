@@ -318,14 +318,8 @@
 
 <AdminAppShell>
   <AdminPage eyebrow="Mavero / System" title="Live TV" accent="cyan">
-    {#if form?.notice}
-      <div class="notice notice-ok" role="status">{form.notice}</div>
-    {:else if form?.message}
-      <div class="notice notice-error" role="alert">{form.message}</div>
-    {/if}
-
-    <!-- ===== The ONE toolbar action (top-right) + the source list ===== -->
-    <div class="livetv-head">
+    <!-- Single header row: heading on the left (AdminPage), controls on the right. -->
+    {#snippet actions()}
       <form method="POST" action="?/setNavVisibility" class="nav-toggle-form" title={data.navVisible ? 'Live TV is shown in the nav for everyone. Click to hide it from guests/users (admins still see it).' : 'Live TV is hidden from guests/users (admins still see it). Click to show it for everyone.'}>
         <input type="hidden" name="visible" value={data.navVisible ? 'false' : 'true'} />
         <button type="submit" class="a2-btn" aria-pressed={data.navVisible} aria-label="Toggle Live TV nav visibility">
@@ -333,7 +327,14 @@
         </button>
       </form>
       <button type="button" class="a2-btn a2-btn-primary" onclick={openCreateSource}><Plus size={15} /> Add Source</button>
-    </div>
+    {/snippet}
+    {#if form?.notice}
+      <div class="notice notice-ok" role="status">{form.notice}</div>
+    {:else if form?.message}
+      <div class="notice notice-error" role="alert">{form.message}</div>
+    {/if}
+
+    <!-- ===== The ONE toolbar action (top-right) + the source list ===== -->
 
     {#if data.sources.length === 0}
       <section class="a2-section source-empty">
@@ -647,7 +648,6 @@
     overflow-wrap: anywhere;
   }
 
-  .livetv-head { display: flex; align-items: center; justify-content: flex-end; margin: var(--a2-space-3) 0; }
   .source-empty { border: 1px dashed var(--a2-border); border-radius: var(--a2-radius-md); padding: var(--a2-space-5); }
 
   .source-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--a2-space-2); }
@@ -765,8 +765,6 @@
   .sheet-danger { border-top: 1px solid var(--a2-border); padding-top: var(--a2-space-4); }
 
   @media (max-width: 640px) {
-    .livetv-head { justify-content: stretch; }
-    .livetv-head .a2-btn { width: 100%; justify-content: center; }
     /* R-2 — the source row stays horizontal on mobile. The name truncates
        with ellipsis; the ON/OFF switch and Edit button stay on the right
        at their touch-target sizes. The row never flips to a tall column. */

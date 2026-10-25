@@ -45,3 +45,27 @@ export function isLivetvProxyUrl(rawUrl: string): boolean {
 export function livetvStreamProxyUrl(absUrl: string): string {
 	return `${LIVETV_STREAM_PROXY_PATH}?u=${encodeURIComponent(absUrl)}`;
 }
+
+/**
+ * Per-CDN Referer/Origin the upstream REQUIRES. Several IPTV CDNs 403 both the
+ * browser and a same-origin Referer — they want the PROVIDER site's origin.
+ * Keyed by CDN host suffix so a new source only needs an entry here (the
+ * "dynamic Referer mapping" — no code changes per source).
+ */
+export const LIVETV_PROXY_REFERER_BY_HOST: ReadonlyArray<{ suffix: string; referer: string }> = [
+	{ suffix: 'slivcdn.com', referer: 'https://premiumplugx.com/' },
+	{ suffix: 'hotstar.com', referer: 'https://premiumplugx.com/' }
+];
+
+/** The required Referer for a host (provider origin), or null. */
+export function livetvProxyRefererFor(hostname: string): string | null {
+	const host = hostname.toLowerCase().replace(/\.$/, '');
+	for (const entry of LIVETV_PROXY_REFERER_BY_HOST) {
+		if (host === entry.suffix || host.endsWith(`.${entry.suffix}`)) return entry.referer;
+	}
+	return null;
+}
+
+/** A standard desktop Chrome User-Agent (CDNs frequently block non-browser UAs). */
+export const LIVETV_PROXY_BROWSER_UA =
+	'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
