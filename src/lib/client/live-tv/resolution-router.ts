@@ -339,6 +339,8 @@ export class LiveTvPlaybackRouter {
          * unavailable, or nothing configured for this selection).
          */
         async start(channel: { id: string; name: string }, video: HTMLVideoElement, signal?: AbortSignal): Promise<'handled' | 'legacy'> {
+                // R-11 — Diagnostic logging to pinpoint the playback failure.
+                console.log('[LiveTV] start() called', { channelId: channel.id, hasVideo: !!video, signalAborted: signal?.aborted });
                 // R-9 — UNIFIED PLAYBACK FOR ALL CATALOGUE IDS. After R-3, the
                 // catalogue is ALWAYS source-first — ALL channel IDs are
                 // registry-governed (entry:<uuid> for unmapped, canonical UUID
@@ -399,7 +401,8 @@ export class LiveTvPlaybackRouter {
                 let resolution: LivetvRouterResolution | null = null;
                 try {
                         resolution = await this.fetchCandidates(channel.id, controller.signal);
-                } catch {
+                } catch (err) {
+                        console.log('[LiveTV] start() fetchCandidates threw:', { error: err instanceof Error ? err.message : String(err), kind: err instanceof LiveTvError ? err.kind : 'unknown' });
                         // Transport failure — fail-closed to the legacy path
                         // (documented compat rule; playback must not die with
                         // a transient resolution outage).
@@ -410,6 +413,7 @@ export class LiveTvPlaybackRouter {
                 if (token !== this.sessionToken || controller.signal.aborted) return 'handled';
 
                 if (!resolution.resolved) {
+                        console.log('[LiveTV] start() resolved:false — returning legacy');
                         // Nothing configured for this selection — the documented
                         // legacy compatibility path keeps LiveGT playback alive.
                         this.setState('idle');
@@ -499,7 +503,11 @@ export class LiveTvPlaybackRouter {
         }
 
         private async fetchCandidates(channelId: string, signal: AbortSignal): Promise<LivetvRouterResolution> {
-                if (signal.aborted) throw new LiveTvError('aborted', {});
+                console.log('[LiveTV] fetchCandidates() called', { channelId, signalAborted: signal.aborted });
+                if (signal.aborted) {
+                        console.log('[LiveTV] fetchCandidates ABORTED before fetch');
+                        throw new LiveTvError('aborted', {});
+                }
                 const controller = new AbortController();
                 let timedOut = false;
                 const timer = this.timers.setTimeout(() => {
@@ -510,7 +518,9 @@ export class LiveTvPlaybackRouter {
                 signal.addEventListener('abort', onExternalAbort, { once: true });
                 try {
                         const url = `${this.baseUrl}/api/livetv/playback/resolve?channelId=${encodeURIComponent(channelId)}`;
+                        console.log('[LiveTV] fetchCandidates fetching:', url);
                         const response = await this.fetchFn(url, { signal: controller.signal, headers: { accept: 'application/json' } });
+                        console.log('[LiveTV] fetchCandidates response:', { status: response.status, ok: response.ok });
                         if (!response.ok) {
                                 const kind = response.status === 404 ? 'not_found' : response.status === 429 ? 'rate_limited' : 'server';
                                 throw new LiveTvError(kind, { status: response.status });
@@ -523,6 +533,7 @@ export class LiveTvPlaybackRouter {
                         const body: unknown = await response.json();
                         return normalizeRouterResolution(body);
                 } catch (err) {
+                        console.log('[LiveTV] fetchCandidates ERROR:', { error: err instanceof Error ? err.message : String(err), signalAborted: signal.aborted, timedOut });
                         if (signal.aborted) throw new LiveTvError('aborted', {});
                         if (timedOut) throw new LiveTvError('timeout', {});
                         if (err instanceof LiveTvError) throw err;
