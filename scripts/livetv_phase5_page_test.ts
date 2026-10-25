@@ -93,7 +93,7 @@ const rateLimit = read('../src/lib/server/http/rate-limit.ts');
   ok(retryFlow.indexOf('unifiedEmbedSrc') < retryFlow.indexOf('embedFallbackChannelId === selectedChannel.id'), 'P2.6 the unified retry branch precedes the legacy one (same remount-only semantics)');
   // The flag gate lives in the ROUTER (one gate, not two).
   ok(routerModule.includes('async isUnifiedEnabled()'), 'P2.7 the router owns the flag gate');
-  ok(routerModule.includes('if (!enabled) return'), 'P2.8 flag FALSE stops the router before ANY session work');
+  ok(!routerModule.includes('if (!enabled) return'), 'P2.8 R-9: the flag gate is REMOVED from the router (the router always calls fetchCandidates)');
   ok(!page.includes('/api/livetv/playback/config'), 'P2.9 the page never fetches the flag itself (single-gate ownership)');
   ok('§2 legacy preservation verified');
 }

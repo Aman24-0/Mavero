@@ -339,24 +339,30 @@ export class LiveTvPlaybackRouter {
          * unavailable, or nothing configured for this selection).
          */
         async start(channel: { id: string; name: string }, video: HTMLVideoElement, signal?: AbortSignal): Promise<'handled' | 'legacy'> {
-                // R-4 — SOURCE-FIRST playback for direct entry selections. An
-                // `entry:<uuid>` identity is registry-governed (a specific
-                // livetv_source_channels row). The resolver endpoint resolves
-                // it regardless of the unified flag (the source's own gates
-                // are the authority). The flag remains the owner's lever for
-                // the CANONICAL path (mapped entries + the LiveGT V1 builtin
-                // virtual pair); it must NOT gate entry: selections.
+                // R-9 — UNIFIED PLAYBACK FOR ALL CATALOGUE IDS. After R-3, the
+                // catalogue is ALWAYS source-first — ALL channel IDs are
+                // registry-governed (entry:<uuid> for unmapped, canonical UUID
+                // for mapped). The legacy LiveGT V1 API does NOT recognize
+                // either ID type. The router must call fetchCandidates() for
+                // ALL selections and let the server resolver decide what to
+                // return.
                 //
-                // This closes the R-3 regression where JioHotstar/Sony
-                // channels (entry:<uuid>) were rejected with "Live TV
-                // rejected the request" when unified_enabled was FALSE.
-                const isEntrySelection = channel.id.startsWith('entry:');
-                if (!isEntrySelection) {
-                        // The flag gate FIRST — false means the router never starts
-                        // for canonical selections (the legacy path handles them).
-                        const enabled = await this.isUnifiedEnabled();
-                        if (!enabled) return 'legacy';
-                }
+                // The unified_enabled flag is the owner's lever for the
+                // BUILTIN LiveGT V1 VIRTUAL PAIR SYNTHESIS (server-side, in
+                // the resolver). It does NOT gate the client-side router's
+                // fetchCandidates call. When the flag is OFF:
+                //   - entry: IDs → resolved by the entry's own endpoints (R-4)
+                //   - canonical IDs → resolved: false (the resolver returns
+                //     unresolvedWire(false) for the builtin path)
+                // When the flag is ON:
+                //   - entry: IDs → same
+                //   - canonical IDs → resolved through the builtin virtual pair
+                //     + default-mode ordering (source priority + endpoints)
+                //
+                // The 'legacy' return value is preserved ONLY for transport
+                // failures and resolved: false (genuine "nothing configured").
+                // The page shows an honest error for 'legacy' — it does NOT
+                // call resolveLiveTvPlayback with a catalogue ID.
 
                 // Teardown ANY previous session (duplicate-concurrent guard):
                 // engines destroyed, timers cleared, iframe unmounted.

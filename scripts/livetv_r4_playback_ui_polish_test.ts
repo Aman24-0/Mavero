@@ -103,13 +103,18 @@ console.log('§3 — Playback resolver: entry: selections resolve regardless of 
 {
   // 3.1 — the resolver resolves entry: selections BEFORE the flag gate.
   ok(/if \(selectionId\.startsWith\(ENTRY_SELECTION_PREFIX\)\)[\s\S]{0,300}return resolveLivetvDirectEntry/.test(playbackResolver), '§3.1 the resolver resolves entry: selections BEFORE the flag gate');
-  // 3.2 — the flag gate comes AFTER the entry: branch.
-  ok(/if \(selectionId\.startsWith\(ENTRY_SELECTION_PREFIX\)\)[\s\S]{0,800}if \(!unifiedEnabled\) return unresolvedWire\(false\)/.test(playbackResolver), '§3.2 the flag gate (if (!unifiedEnabled) return unresolvedWire(false)) comes AFTER the entry: branch');
+  // 3.2 — R-9: the flag gate is REMOVED from the canonical path.
+  // The resolver now resolves canonical IDs regardless of the flag.
+  // The flag ONLY gates the builtin virtual pair synthesis (server-side).
+  ok(!/if \(!unifiedEnabled\) return unresolvedWire\(false\)/.test(playbackResolver), '§3.2 R-9: the flag gate is REMOVED from the canonical path (the resolver resolves regardless of the flag)');
   // 3.3 — resolveLivetvDirectEntry returns resolved:true with empty candidates for missing entries (NOT resolved:false).
   ok(playbackResolver.includes('const emptyResolved = { unifiedEnabled: true, resolved: true, mode: \'default\' as const, candidates: [] };'), '§3.3 resolveLivetvDirectEntry returns resolved:true with empty candidates for missing entries (honest exhausted — never falls through to legacy)');
-  // 3.4 — the router skips the flag gate for entry: selections.
-  ok(resolutionRouter.includes("const isEntrySelection = channel.id.startsWith('entry:');"), '§3.4 the router identifies entry: selections (isEntrySelection)');
-  ok(/if \(!isEntrySelection\) \{[\s\S]{0,300}const enabled = await this\.isUnifiedEnabled\(\)[\s\S]{0,200}if \(!enabled\) return 'legacy'/.test(resolutionRouter), '§3.5 the router skips the flag gate for entry: selections (only checks the flag for non-entry selections)');
+  // 3.4 — R-9: the router no longer has an entry: special case.
+  // ALL catalogue IDs go through fetchCandidates() regardless.
+  ok(!resolutionRouter.includes("const isEntrySelection = channel.id.startsWith('entry:');"), '§3.4 R-9: the router no longer has an entry: special case (ALL IDs go through fetchCandidates)');
+  // 3.5 — R-9: the router no longer checks the flag at all.
+  // The flag gate is entirely server-side (in the resolver).
+  ok(!/if \(!enabled\) return 'legacy'/.test(resolutionRouter), '§3.5 R-9: the router no longer checks the flag (the gate is entirely server-side)');
   // 3.6 — the "Live TV rejected the request" message is still defined (bad_request kind).
   const errors = readCode('src/lib/client/live-tv/errors.ts');
   ok(errors.includes("bad_request: 'Live TV rejected the request.'"), '§3.6 the bad_request message is still defined (the resolver now prevents it from firing for entry: selections)');
