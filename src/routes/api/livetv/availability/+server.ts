@@ -37,6 +37,7 @@ import type { RequestHandler } from './$types';
 import { createSupabaseAdminClient } from '$lib/server/supabase/admin';
 import { RATE_LIMITED_ERROR_CODE, RATE_LIMITED_MESSAGE, checkRateLimit, clientIdentity } from '$lib/server/http/rate-limit';
 import { getLivetvAvailabilityState } from '$lib/server/livetv/user-catalogue';
+import { getLivetvNavVisible } from '$lib/server/livetv/nav-visibility';
 
 const NO_STORE = { 'cache-control': 'no-store' } as const;
 
@@ -49,11 +50,14 @@ export const GET: RequestHandler = async ({ request, locals }) => {
         try {
                 const client = createSupabaseAdminClient();
                 const availability = await getLivetvAvailabilityState(client);
-                return json({ ok: true, ...availability }, { headers: NO_STORE });
+                // Admin nav toggle (fail-open true) — the AppShell hides Live TV for
+                // non-admins when this is false. Not an access control.
+                const navVisible = await getLivetvNavVisible(client);
+                return json({ ok: true, ...availability, navVisible }, { headers: NO_STORE });
         } catch {
                 // Fail-closed: an unexpected failure is an unavailable answer
                 // (the page renders its honest unavailable state and the
                 // navbar hides the link — never a leaked partial source).
-                return json({ ok: true, available: false, sources: [] }, { headers: NO_STORE });
+                return json({ ok: true, available: false, sources: [], navVisible: true }, { headers: NO_STORE });
         }
 };

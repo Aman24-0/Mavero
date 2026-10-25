@@ -326,6 +326,12 @@
 
     <!-- ===== The ONE toolbar action (top-right) + the source list ===== -->
     <div class="livetv-head">
+      <form method="POST" action="?/setNavVisibility" class="nav-toggle-form" title={data.navVisible ? 'Live TV is shown in the nav for everyone. Click to hide it from guests/users (admins still see it).' : 'Live TV is hidden from guests/users (admins still see it). Click to show it for everyone.'}>
+        <input type="hidden" name="visible" value={data.navVisible ? 'false' : 'true'} />
+        <button type="submit" class="a2-btn" aria-pressed={data.navVisible} aria-label="Toggle Live TV nav visibility">
+          {data.navVisible ? 'Nav: Visible' : 'Nav: Hidden (admins only)'}
+        </button>
+      </form>
       <button type="button" class="a2-btn a2-btn-primary" onclick={openCreateSource}><Plus size={15} /> Add Source</button>
     </div>
 

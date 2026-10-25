@@ -4,7 +4,7 @@
   import AccountSheet from '$components/AccountSheet.svelte';
   import { haptic } from '$lib/client/haptics';
 
-  let { children, currentPath = '/', user = null, isAuthenticated = false }: { children: Snippet; currentPath?: string; user?: { id: string; email?: string | null; displayName?: string | null } | null; isAuthenticated?: boolean } = $props();
+  let { children, currentPath = '/', user = null, isAuthenticated = false, isAdmin = false }: { children: Snippet; currentPath?: string; user?: { id: string; email?: string | null; displayName?: string | null } | null; isAuthenticated?: boolean; isAdmin?: boolean } = $props();
   let shell: HTMLElement;
 
   // R-2 — the Live TV availability state. Fetched ONCE per AppShell mount
@@ -15,6 +15,9 @@
   // (the /live-tv SSR guard is the authoritative gate; the navbar hide is
   // defense-in-depth — never the sole enforcement).
   let liveTvAvailable = $state(true);
+  // Admin nav toggle (from /api/livetv/availability). FALSE hides Live TV from
+  // guests/standard users; admins ALWAYS see it (isAdmin prop).
+  let livetvNavVisible = $state(true);
   $effect(() => {
     if (typeof window === 'undefined') return;
     let cancelled = false;
@@ -28,6 +31,9 @@
             const body: unknown = await response.json();
             if (body && typeof body === 'object' && 'available' in body && typeof (body as { available: unknown }).available === 'boolean') {
               if (!cancelled) liveTvAvailable = (body as { available: boolean }).available;
+            }
+            if (body && typeof body === 'object' && 'navVisible' in body && typeof (body as { navVisible: unknown }).navVisible === 'boolean') {
+              if (!cancelled) livetvNavVisible = (body as { navVisible: boolean }).navVisible;
             }
           }
         } finally {
@@ -66,7 +72,7 @@
     { label: 'Movies', href: '/movies', key: '/movies', icon: Film },
     { label: 'TV Shows', href: '/tv-shows', key: '/tv-shows', icon: Tv },
     { label: 'Anime', href: '/anime', key: '/anime', icon: Sparkles },
-    ...(liveTvAvailable ? [{ label: 'Live TV', href: '/live-tv', key: '/live-tv', icon: Radio }] : []),
+    ...((liveTvAvailable && (isAdmin || livetvNavVisible)) ? [{ label: 'Live TV', href: '/live-tv', key: '/live-tv', icon: Radio }] : []),
     { label: 'Search', href: '/search', key: '/search', icon: Search }
   ]);
 

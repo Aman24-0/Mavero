@@ -2028,18 +2028,21 @@ export type Database = {
           id: number
           version: number
           unified_enabled: boolean
+          nav_visible: boolean
           updated_at: string
         }
         Insert: {
           id?: number
           version?: number
           unified_enabled?: boolean
+          nav_visible?: boolean
           updated_at?: string
         }
         Update: {
           id?: number
           version?: number
           unified_enabled?: boolean
+          nav_visible?: boolean
           updated_at?: string
         }
         Relationships: []

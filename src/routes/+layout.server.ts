@@ -73,7 +73,7 @@ export const load: LayoutServerLoad = async ({ locals, request, cookies }) => {
     // Guests are NOT exempt — DevTools protection is enabled for them,
     // and no profiles lookup is needed (zero extra DB cost for the
     // unauthenticated majority).
-    return { user: null, isAuthenticated: false, deviceType, devtoolExempt: false, anonymousId, analyticsEnabled: true };
+    return { user: null, isAuthenticated: false, deviceType, devtoolExempt: false, isAdmin: false, anonymousId, analyticsEnabled: true };
   }
   const userMeta = user.user_metadata;
   const displayName = typeof userMeta?.display_name === 'string' && userMeta.display_name.trim()
@@ -95,6 +95,7 @@ export const load: LayoutServerLoad = async ({ locals, request, cookies }) => {
     isAuthenticated: true,
     deviceType,
     devtoolExempt,
+    isAdmin: devtoolExempt,
     anonymousId,
     analyticsEnabled: true
   };

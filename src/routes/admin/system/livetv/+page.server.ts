@@ -78,6 +78,7 @@ import {
   refreshAllEligibleLivetvSources,
   refreshLivetvSource
 } from '$lib/server/livetv/refresh-service';
+import { getLivetvNavVisible, setLivetvNavVisible } from '$lib/server/livetv/nav-visibility';
 import { previewLivetvEpgSource, refreshAllEligibleLivetvEpgSources, refreshLivetvEpgSource } from '$lib/server/livetv/epg/guide-service';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -148,7 +149,8 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     listLivetvSourceDeleteImpacts(locals.supabase),
     getLatestLivetvRefreshHistoryBySource(locals.supabase)
   ]);
-  return { sources, impacts, latestSourceHistory, sourceOutcomes };
+  const navVisible = await getLivetvNavVisible(locals.supabase);
+  return { sources, impacts, latestSourceHistory, sourceOutcomes, navVisible };
 };
 
 // ---------------------------------------------------------------------------
@@ -206,6 +208,16 @@ export const actions: Actions = {
       return { notice: 'Source state updated.' };
     } catch (caught) {
       return toFailure(caught, 'Unable to change the source state.');
+    }
+  },
+  setNavVisibility: async ({ request, locals }) => {
+    await requireAdmin(locals, { redirectTo: '/admin/system/livetv' });
+    try {
+      const form = await request.formData();
+      await setLivetvNavVisible(locals.supabase, formText(form, 'visible') === 'true');
+      return { notice: 'Live TV nav visibility updated.' };
+    } catch (caught) {
+      return toFailure(caught, 'Unable to change Live TV nav visibility.');
     }
   },
   reorderSources: async ({ request, locals }) => {
