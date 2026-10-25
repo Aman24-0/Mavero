@@ -121,6 +121,9 @@ export const RATE_LIMIT_RULES = {
   // generous (it is a safety valve, not a per-viewer throttle); the real abuse
   // control is the origin ALLOWLIST in the proxy itself.
   livetvStreamProxy: { limit: 1500, windowMs: 60_000 },
+  // Live TV chunked ingestion (admin) — one call per ~50-channel chunk; a
+  // 648-channel playlist is ~13 calls. Generous but bounded.
+  livetvIngestChunk: { limit: 120, windowMs: 60_000 },
   // Unified Live TV Phase 2 — admin source refresh. Each call drives one
   // bounded upstream fetch + ingestion per source (≤25 sources for "all").
   // Admin-only endpoints, but rate-limited anyway: a refresh spends an

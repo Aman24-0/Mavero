@@ -35,6 +35,7 @@
 
   import { enhance } from '$app/forms';
   import type { SubmitFunction } from '@sveltejs/kit';
+  import { invalidateAll } from '$app/navigation';
   import AdminAppShell from '$lib/components/admin2/AdminAppShell.svelte';
   import AdminPage from '$lib/components/admin2/AdminPage.svelte';
   import AdminStatusBadge from '$lib/components/admin/AdminStatusBadge.svelte';
@@ -51,6 +52,76 @@
   // R-7 — Refresh/Preview loading state.
   let refreshing = $state(false);
   let previewing = $state(false);
+
+  // Chunked "Fetch & Save" — large playlists (e.g. akindi ~648 channels) that
+  // exceed the server fetch timeout. The BROWSER downloads the playlist, splits
+  // it into ~50-channel chunks, and POSTs each to the ingest-chunk endpoint.
+  let chunkNotice = $state<{ kind: 'ok' | 'error'; message: string } | null>(null);
+  let chunkSaving = $state<{ id: string; done: number; total: number } | null>(null);
+
+  function splitM3uIntoChunks(text: string, perChunk = 50): string[] {
+    const lines = text.split(/\r?\n/);
+    const firstExtinf = lines.findIndex((line) => line.startsWith('#EXTINF'));
+    const headerLines = (firstExtinf > 0 ? lines.slice(0, firstExtinf) : lines).filter((line) => line.startsWith('#'));
+    const header = headerLines.length > 0 ? headerLines.join('\n') : '#EXTM3U';
+    const body = firstExtinf >= 0 ? lines.slice(firstExtinf) : [];
+    const entries: string[] = [];
+    let current: string[] = [];
+    for (const line of body) {
+      if (line.startsWith('#EXTINF')) {
+        if (current.length) entries.push(current.join('\n'));
+        current = [line];
+      } else if (current.length) {
+        current.push(line);
+      }
+    }
+    if (current.length) entries.push(current.join('\n'));
+    if (entries.length === 0) return [];
+    const chunks: string[] = [];
+    for (let i = 0; i < entries.length; i += perChunk) {
+      chunks.push(`${header}\n${entries.slice(i, i + perChunk).join('\n')}`);
+    }
+    return chunks;
+  }
+
+  async function fetchAndSaveChunked(source: LivetvAdminSourceRow) {
+    const playlistUrl = typeof source.config?.playlistUrl === 'string' ? source.config.playlistUrl : '';
+    if (!playlistUrl) {
+      chunkNotice = { kind: 'error', message: 'This source has no playlist URL.' };
+      return;
+    }
+    chunkNotice = null;
+    chunkSaving = { id: source.id, done: 0, total: 0 };
+    try {
+      const playlistResponse = await fetch(playlistUrl, { headers: { accept: 'text/plain,*/*' } });
+      if (!playlistResponse.ok) throw new Error(`Playlist fetch failed (${playlistResponse.status}).`);
+      const chunks = splitM3uIntoChunks(await playlistResponse.text(), 50);
+      if (chunks.length === 0) throw new Error('The playlist had no channels.');
+      chunkSaving = { id: source.id, done: 0, total: chunks.length };
+      let parsed = 0;
+      let entryWrites = 0;
+      let endpointWrites = 0;
+      for (let i = 0; i < chunks.length; i += 1) {
+        const response = await fetch('/api/admin/livetv/sources/ingest-chunk', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ sourceId: source.id, text: chunks[i] })
+        });
+        const result = (await response.json().catch(() => null)) as { ok?: boolean; parsed?: number; entryWrites?: number; endpointWrites?: number; error?: { message?: string } } | null;
+        if (!response.ok || !result?.ok) throw new Error(result?.error?.message ?? `Chunk ${i + 1} failed.`);
+        parsed += result.parsed ?? 0;
+        entryWrites += result.entryWrites ?? 0;
+        endpointWrites += result.endpointWrites ?? 0;
+        chunkSaving = { id: source.id, done: i + 1, total: chunks.length };
+      }
+      chunkNotice = { kind: 'ok', message: `Saved ${parsed} channels (${entryWrites} writes, ${endpointWrites} endpoints).` };
+      await invalidateAll();
+    } catch (error) {
+      chunkNotice = { kind: 'error', message: error instanceof Error ? error.message : 'Fetch & Save failed.' };
+    } finally {
+      chunkSaving = null;
+    }
+  }
 
   const refreshEnhance: SubmitFunction = () => {
     refreshing = true;
@@ -333,6 +404,9 @@
     {:else if form?.message}
       <div class="notice notice-error" role="alert">{form.message}</div>
     {/if}
+    {#if chunkNotice}
+      <div class="notice" class:notice-ok={chunkNotice.kind === 'ok'} class:notice-error={chunkNotice.kind === 'error'} role="status">{chunkNotice.message}</div>
+    {/if}
 
     <!-- ===== The ONE toolbar action (top-right) + the source list ===== -->
 
@@ -367,6 +441,17 @@
                 </button>
               </form>
               <button type="button" class="a2-btn" onclick={() => openEditSource(source)}><Pencil size={14} /> Edit</button>
+              {#if source.source_type === 'm3u_playlist'}
+                <button
+                  type="button"
+                  class="a2-btn"
+                  disabled={chunkSaving?.id === source.id}
+                  onclick={() => void fetchAndSaveChunked(source)}
+                  title="Download this playlist in the browser and save it in ~50-channel chunks (bypasses the server fetch timeout)"
+                >
+                  {chunkSaving?.id === source.id ? `Saving ${chunkSaving.done}/${chunkSaving.total}…` : 'Fetch & Save'}
+                </button>
+              {/if}
             </div>
           </li>
         {/each}
