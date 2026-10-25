@@ -62,7 +62,11 @@ import {
 
 export const M3U_MAX_ENTRIES = 20_000;
 export const M3U_MAX_LINE_LENGTH = 64_000;
-export const M3U_PARSE_DEADLINE_MS = 5_000;
+// Raised 5s -> 20s (2026-10-25): a large playlist (e.g. akindi, 564 channels)
+// can legitimately take longer than 5s to parse. NOTE: the dominant cost for a
+// slow source is usually the FETCH (LIVETV_FETCH_TIMEOUT_MS), not the parse —
+// this bound only stops the parse itself from being the ceiling.
+export const M3U_PARSE_DEADLINE_MS = 20_000;
 export const M3U_MAX_ATTRIBUTES_PER_ENTRY = 16;
 // Raw capture cap — field VALIDATORS (id ≤200, name ≤200, logo ≤2048, …)
 // decide usability per field, so identity values are never silently

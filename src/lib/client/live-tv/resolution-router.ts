@@ -122,6 +122,12 @@ const TRAIL_LIMIT = 64;
 
 /** The fixed generic exhausted-state message (no interpolation, ever). */
 export const LIVETV_ROUTER_EXHAUSTED_MESSAGE = 'This channel could not be played right now. Try again.';
+/**
+ * Distinct message for a managed channel with ZERO eligible candidates at all
+ * (e.g. the source has no playback endpoints yet) — clearer than the generic
+ * 'could not be played / retry' text, which implies a transient failure.
+ */
+export const LIVETV_ROUTER_NO_STREAM_MESSAGE = 'No stream available for this source.';
 
 // ---------------------------------------------------------------------------
 // The pure iframe-src guard (also used by the player component for its
@@ -447,7 +453,9 @@ export class LiveTvPlaybackRouter {
                         this.handlers.onengine(null);
                         this.handlers.onresolving(false);
                         this.setState('exhausted');
-                        this.handlers.onsessionerror(LIVETV_ROUTER_EXHAUSTED_MESSAGE);
+                        // Nothing eligible is configured for this selection — a
+                        // distinct, non-transient message (not 'try again').
+                        this.handlers.onsessionerror(LIVETV_ROUTER_NO_STREAM_MESSAGE);
                         return 'handled';
                 }
 

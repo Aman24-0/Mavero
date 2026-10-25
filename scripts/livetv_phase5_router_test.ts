@@ -35,7 +35,7 @@ function ok(condition: unknown, label: string, hint?: string) {
   console.log(`  ok ${passed} - ${label}`);
 }
 
-import { LiveTvPlaybackRouter, isSafeLivetvEmbedSrc, LIVETV_ROUTER_EXHAUSTED_MESSAGE, resetUnifiedFlagCacheForTests, type LivetvRouterCandidate } from '../src/lib/client/live-tv/resolution-router';
+import { LiveTvPlaybackRouter, isSafeLivetvEmbedSrc, LIVETV_ROUTER_EXHAUSTED_MESSAGE, LIVETV_ROUTER_NO_STREAM_MESSAGE, resetUnifiedFlagCacheForTests, type LivetvRouterCandidate } from '../src/lib/client/live-tv/resolution-router';
 import { LiveTvPlaybackError } from '../src/lib/client/live-tv/player-errors';
 import { LiveTvError } from '../src/lib/client/live-tv/errors';
 
@@ -624,7 +624,12 @@ const CONFIG_FALSE: FetchRoute = { match: (url) => url.includes('/api/livetv/pla
     fetchRoutes: [CONFIG_TRUE, resolveRoute([])]
   });
   ok((await router4.start(CHANNEL, VIDEO)) === 'handled', 'R10.5 a managed-empty channel is handled by the router');
-  ok(recorder4.sessionErrors.includes(LIVETV_ROUTER_EXHAUSTED_MESSAGE), 'R10.6 managed-empty → the honest retryable error (no silent bypass)');
+  // CONTRACT CHANGE (2026-10-25): a managed channel with ZERO eligible candidates
+  // now surfaces a DISTINCT message ('No stream available for this source.') instead
+  // of the generic retry text, so the UI can tell 'nothing configured' from
+  // 'playback failed'. Stronger assertion for the new behavior:
+  ok(recorder4.sessionErrors.includes(LIVETV_ROUTER_NO_STREAM_MESSAGE), 'R10.6 managed-empty → the DISTINCT no-stream message (not the generic retry text)');
+  ok(!recorder4.sessionErrors.includes(LIVETV_ROUTER_EXHAUSTED_MESSAGE), 'R10.6b managed-empty does NOT use the generic retry message');
 
   // Resolution transport failure → legacy.
   resetUnifiedFlagCacheForTests();

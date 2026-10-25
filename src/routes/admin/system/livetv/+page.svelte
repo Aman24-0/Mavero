@@ -516,7 +516,13 @@
                         <span class="a2-chip">{kind}</span>
                       {/each}
                       {#if channel.streamKinds.length === 0}
-                        <span class="a2-cell-sub">no usable stream</span>
+                        {#if editingSource?.source_type === 'builtin_livegt_v1'}
+                          <!-- Builtin sources synthesize their endpoints at resolve
+                               time, so they legitimately have no DB endpoint rows. -->
+                          <span class="a2-cell-sub">Built-in (synthesized at runtime)</span>
+                        {:else}
+                          <span class="a2-cell-sub">no usable stream</span>
+                        {/if}
                       {/if}
                     </div>
                   </li>
