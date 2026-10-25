@@ -47,6 +47,13 @@ export { livetvAdapterIdFor };
 export const LIVETV_REFRESH_TIMEOUT_MS = 20_000;
 export const LIVETV_REFRESH_MAX_SOURCES_PER_RUN = 25;
 /**
+ * Overall wall-clock budget for ONE batch run. Keeps the admin
+ * `refreshAllSources` action inside the Netlify synchronous-function
+ * limit so it ALWAYS returns JSON (a platform kill returns an HTML 504,
+ * which the client then fails to parse as JSON).
+ */
+export const LIVETV_REFRESH_BATCH_BUDGET_MS = 8_000;
+/**
  * Phase 7 — bounded state reads: the staleness report reads at most this
  * many entry/endpoint rows per refresh (far above any realistic catalogue;
  * beyond the cap the outcome honestly reports `stateTruncated`).
@@ -281,8 +288,10 @@ function linkDeadline(deps: LivetvRefreshDeps, deadlineMs: number): { signal: Ab
 export type LivetvRefreshDeps = {
         fetcher?: typeof fetch;
         dnsResolver?: LivetvAdapterDeps['dnsResolver'];
-        /** Overall deadline for the whole refresh (default 45s). */
+        /** Overall deadline for ONE source refresh (default LIVETV_REFRESH_TIMEOUT_MS = 20s). */
         refreshTimeoutMs?: number;
+        /** Overall wall-clock budget for the WHOLE batch (default LIVETV_REFRESH_BATCH_BUDGET_MS = 8s). */
+        batchBudgetMs?: number;
         /** Per-fetch timeout budget passed to the adapter. */
         timeoutMs?: number;
         maxBytes?: number;
@@ -477,16 +486,29 @@ export async function refreshAllEligibleLivetvSources(client: SupabaseClient<Dat
 
         const outcomes: LivetvRefreshSourceOutcome[] = [];
         const bounded = eligible.slice(0, LIVETV_REFRESH_MAX_SOURCES_PER_RUN);
+        // Netlify-504 fix: bound the WHOLE batch to a wall-clock budget so the
+        // admin action always returns JSON well inside the platform function
+        // limit, instead of being killed mid-run and answered with an HTML 504.
+        // Each source's own deadline is additionally clamped to the batch's
+        // remaining budget, so one slow source can never spend the whole
+        // allowance and starve the rest.
+        const batchBudgetMs = Math.max(1_000, deps.batchBudgetMs ?? LIVETV_REFRESH_BATCH_BUDGET_MS);
+        const batchDeadline = started.ms + batchBudgetMs;
         for (const row of bounded) {
+                const remainingMs = batchDeadline - Date.now();
+                if (remainingMs <= 0) break; // budget reached — stop cleanly, still JSON
                 try {
-                        outcomes.push(await refreshLivetvSource(client, { id: row.id }, deps));
+                        outcomes.push(await refreshLivetvSource(client, { id: row.id }, {
+                                ...deps,
+                                refreshTimeoutMs: Math.min(deps.refreshTimeoutMs ?? LIVETV_REFRESH_TIMEOUT_MS, remainingMs)
+                        }));
                 } catch {
                         // Defensive isolation — refreshLivetvSource never throws,
                         // but one source must never break the batch even if it did.
                         outcomes.push(failureOutcome(started, row, 'unexpected', 'The source refresh failed unexpectedly.'));
                 }
         }
-        return { startedAt: started.at, finishedAt: nowIso(), durationMs: Date.now() - started.ms, eligibleSources: eligible.length, refreshedSources: bounded.length, outcomes };
+        return { startedAt: started.at, finishedAt: nowIso(), durationMs: Date.now() - started.ms, eligibleSources: eligible.length, refreshedSources: outcomes.length, outcomes };
 }
 
 // ---------------------------------------------------------------------------

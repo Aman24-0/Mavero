@@ -50,7 +50,11 @@ import {
 import { ssrfSafeFetch } from '../streaming/stremio/connect-guard';
 
 /** Bounded defaults (plan §8.3 — "oversized inputs fail with typed errors"). */
-export const LIVETV_FETCH_TIMEOUT_MS = 12_000;
+// Raised 12s -> 18s (2026-10-25): large M3U playlists (e.g. the 564-channel
+// akindi source) legitimately need more than 12s to download+parse. Still
+// bounded BELOW the per-source refresh deadline (LIVETV_REFRESH_TIMEOUT_MS =
+// 20s) so the fetch always resolves before the deadline aborts it.
+export const LIVETV_FETCH_TIMEOUT_MS = 18_000;
 export const LIVETV_FETCH_MAX_BYTES = 8 * 1024 * 1024; // 8 MiB
 export const LIVETV_FETCH_MAX_REDIRECTS = 3;
 

@@ -688,7 +688,6 @@
     void loadGuide(channel);
 
     if (!videoEl) {
-      console.log('[LiveTV] selectChannel: videoEl is UNDEFINED — early return');
       // Structurally unreachable after mount; kept as a safe guard.
       resolving = false;
       sessionErrorMessage = 'Live TV playback could not start in this browser.';
@@ -705,10 +704,8 @@
     if (!playbackRouter) {
       playbackRouter = createLivetvPlaybackRouter();
     }
-    console.log('[LiveTV] selectChannel: calling playbackRouter.start()', { channelId: channel.id, hasVideo: !!videoEl, signalAborted: controller.signal.aborted });
     {
       const outcome = await playbackRouter.start(channel, videoEl, controller.signal);
-      console.log('[LiveTV] selectChannel: router returned', { outcome });
       if (outcome === 'handled') return;
       // R-6 — the router returned 'legacy'. Show an honest error instead
       // of calling resolveLiveTvPlayback with a catalogue ID the LiveGT
