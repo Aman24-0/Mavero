@@ -116,6 +116,11 @@ export const RATE_LIMIT_RULES = {
   // client, generous for any realistic UX. Per-identity (user or IP)
   // so a single misbehaving client cannot drive unbounded DB writes.
   eventsIngest: { limit: 60, windowMs: 60_000 },
+  // Live TV HLS stream proxy — one request per manifest + one per segment/key.
+  // A live stream is ~30-60 segment requests/min per viewer, so the ceiling is
+  // generous (it is a safety valve, not a per-viewer throttle); the real abuse
+  // control is the origin ALLOWLIST in the proxy itself.
+  livetvStreamProxy: { limit: 1500, windowMs: 60_000 },
   // Unified Live TV Phase 2 — admin source refresh. Each call drives one
   // bounded upstream fetch + ingestion per source (≤25 sources for "all").
   // Admin-only endpoints, but rate-limited anyway: a refresh spends an

@@ -79,6 +79,7 @@ import { LiveTvError, isLiveTvError } from './errors';
 import { LiveTvPlaybackError, shouldFallbackToEmbed } from './player-errors';
 import { buildLiveTvEmbedUrl, resolveLiveTvPlayback } from './api';
 import { trackLiveTvError, trackLiveTvFallbackEmbed, trackLiveTvPlay } from './analytics';
+import { isLivetvProxyUrl, livetvStreamProxyUrl } from '$lib/shared/livetv-proxy';
 
 // ---------------------------------------------------------------------------
 // Wire mirrors (structurally identical to the server's playback-resolver
@@ -128,6 +129,11 @@ export const LIVETV_ROUTER_EXHAUSTED_MESSAGE = 'This channel could not be played
  * 'could not be played / retry' text, which implies a transient failure.
  */
 export const LIVETV_ROUTER_NO_STREAM_MESSAGE = 'No stream available for this source.';
+/**
+ * Shown when the only remaining candidates are DASH streams on a CORS-blocked
+ * CDN — DASH is not proxied (out of scope), so it cannot play in the browser.
+ */
+export const LIVETV_ROUTER_DASH_UNSUPPORTED_MESSAGE = 'This channel uses DASH, which this browser cannot play directly. Try another source.';
 
 // ---------------------------------------------------------------------------
 // The pure iframe-src guard (also used by the player component for its
@@ -289,6 +295,8 @@ export class LiveTvPlaybackRouter {
         private embedLoaded = false;
         /** The session's most recent failure (drives the fallback-embed event). */
         private lastFailure: unknown = null;
+        /** True once a candidate was skipped as DASH on a CORS-blocked CDN. */
+        private sawDashBlocked = false;
         private trail: LiveTvRouterTrailEntry[] = [];
 
         /** The in-flight attempt (exactly one at a time). */
@@ -410,6 +418,7 @@ export class LiveTvPlaybackRouter {
                 this.embedMountedSrc = null;
                 this.embedLoaded = false;
                 this.lastFailure = null;
+                this.sawDashBlocked = false;
                 this.currentVideo = video;
                 this.trail = [];
                 this.setState('resolving');
@@ -512,7 +521,7 @@ export class LiveTvPlaybackRouter {
                                 this.teardownPlayback('exhausted');
                                 this.handlers.onresolving(false);
                                 this.setState('exhausted');
-                                this.handlers.onsessionerror(LIVETV_ROUTER_EXHAUSTED_MESSAGE);
+                                this.handlers.onsessionerror(this.sawDashBlocked ? LIVETV_ROUTER_DASH_UNSUPPORTED_MESSAGE : LIVETV_ROUTER_EXHAUSTED_MESSAGE);
                                 return;
                         }
                         this.attempted.add(candidate.candidateId);
@@ -649,7 +658,22 @@ export class LiveTvPlaybackRouter {
                                 this.settleCurrent('failed');
                                 return;
                         }
-                        resolution = { channel: { id: channel.id, name: channel.name }, sources: [{ url: candidate.url }], drm: null };
+                        // HLS proxy routing / DASH fallback (see $lib/shared/livetv-proxy).
+                        let mediaUrl = candidate.url;
+                        if (candidate.streamFormat === 'dash' && isLivetvProxyUrl(mediaUrl)) {
+                                // DASH from a CORS-blocked CDN cannot be played without a DASH
+                                // proxy (out of scope) — skip it honestly, remember why.
+                                this.trailPush({ attemptId, candidateId: candidate.candidateId, outcome: 'skipped', detail: 'dash_unsupported' });
+                                this.sawDashBlocked = true;
+                                this.settleCurrent('failed');
+                                return;
+                        }
+                        if (candidate.streamFormat === 'hls' && isLivetvProxyUrl(mediaUrl)) {
+                                // HLS from a CORS-blocked CDN → route via the server proxy.
+                                const origin = typeof location !== 'undefined' ? location.origin : '';
+                                if (origin) mediaUrl = new URL(livetvStreamProxyUrl(mediaUrl), origin).toString();
+                        }
+                        resolution = { channel: { id: channel.id, name: channel.name }, sources: [{ url: mediaUrl }], drm: null };
                 }
                 if (token !== this.sessionToken || signal.aborted) {
                         this.trailPush({ attemptId, candidateId: candidate.candidateId, outcome: 'aborted', detail: 'session_superseded' });
