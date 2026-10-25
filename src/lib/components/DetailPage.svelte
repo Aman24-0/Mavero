@@ -244,7 +244,7 @@
     const d = new Date(iso + 'T00:00:00Z');
     if (isNaN(d.getTime())) return String(item.year > 0 ? item.year : '');
     // Use en-GB for day-before-month format (07 Mar 2026).
-    return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' });
+    return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
   }
 
   // ============================================================

@@ -36,6 +36,7 @@
   import { enhance } from '$app/forms';
   import type { SubmitFunction } from '@sveltejs/kit';
   import { invalidateAll } from '$app/navigation';
+  import { formatLocalDateTimeWithZone } from '$lib/shared/datetime';
   import AdminAppShell from '$lib/components/admin2/AdminAppShell.svelte';
   import AdminPage from '$lib/components/admin2/AdminPage.svelte';
   import AdminStatusBadge from '$lib/components/admin/AdminStatusBadge.svelte';
@@ -169,10 +170,8 @@
   }
 
   function formatTime(iso: string | null | undefined): string {
-    if (!iso) return '—';
-    const ms = Date.parse(iso);
-    if (!Number.isFinite(ms)) return '—';
-    return new Date(ms).toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
+    // LOCAL (device) timezone with its abbreviation — e.g. "25/10/2026, 11:21 am IST".
+    return formatLocalDateTimeWithZone(iso);
   }
 
   // --- sheet state ---
