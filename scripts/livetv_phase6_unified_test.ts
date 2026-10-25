@@ -636,7 +636,7 @@ const CHAN_1 = { id: 'chan-1', name: 'Zeta One', category: 'News', logo_url: 'ht
     (globalThis as { fetch: unknown }).fetch = stub as unknown as typeof fetch;
   }
   function jsonResponse(body: unknown, status = 200): Response {
-    return { ok: status >= 200 && status < 300, status, json: async () => body } as unknown as Response;
+    return { ok: status >= 200 && status < 300, status, json: async () => body, headers: new Headers({ 'content-type': 'application/json' }) } as unknown as Response;
   }
 
   try {
@@ -848,7 +848,7 @@ const CHAN_1 = { id: 'chan-1', name: 'Zeta One', category: 'News', logo_url: 'ht
   // 5d. Playback selection: stable canonical ids drive everything.
   const selectFlow = sliceOf(page, 'async function selectChannel', 'function retryPlayback');
   ok(selectFlow.includes('playbackRouter.start(channel, videoEl, controller.signal)'), '5d.1 selections pass the channel (its STABLE id) to the Phase 5 router');
-  ok(page.includes('rememberPlayedChannel(channel)'), '5d.2 recent channels are recorded by the channel object (id-keyed storage)');
+  ok(page.includes('rememberPlayedChannel'), '5d.2 R-6: recent channels are recorded (via handlers.onplayed)');
   ok(page.includes('const byId = new Map(channels.map((channel) => [channel.id, channel]));'), '5d.3 recent rows resolve against the LIVE catalogue (stale/deleted ids drop out gracefully)');
 
   // 5e. Existing UX markers intact (search/filter/a11y — no redesign).

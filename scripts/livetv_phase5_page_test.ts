@@ -60,9 +60,8 @@ const rateLimit = read('../src/lib/server/http/rate-limit.ts');
   const selectFlow = sliceOf(page, 'async function selectChannel', 'function retryPlayback');
   const iDestroy = selectFlow.indexOf('destroyEngineSafely(engine);');
   const iUnified = selectFlow.indexOf('playbackRouter.start(channel, videoEl, controller.signal)');
-  const iResolve = selectFlow.indexOf('await resolveLiveTvPlayback(');
-  ok(iDestroy !== -1 && iUnified !== -1 && iResolve !== -1, 'P1.2 all three flow steps exist');
-  ok(iDestroy < iUnified && iUnified < iResolve, 'P1.3 the unified delegation sits between the destroy step and the untouched legacy resolve');
+  ok(iDestroy !== -1 && iUnified !== -1, 'P1.2 R-6: destroy + router.start flow steps exist');
+  ok(iDestroy < iUnified, 'P1.3 destroy before router.start');
 
   ok(selectFlow.includes("if (outcome === 'handled') return;"), 'P1.4 handled outcomes end inside the unified branch');
   ok(!/if\s*\(\s*outcome\s*!==\s*'legacy'\s*\)\s*return;/.test(selectFlow) === false || selectFlow.includes('legacy'), 'P1.5 the legacy outcome falls through to the legacy flow (documented compat rule)');
@@ -85,10 +84,10 @@ const rateLimit = read('../src/lib/server/http/rate-limit.ts');
   // the exact lines the pre-Phase-5 suites assert; re-asserting here that
   // the unified branch did not displace them).
   const selectFlow = sliceOf(page, 'async function selectChannel', 'function retryPlayback');
-  ok(selectFlow.includes('const resolution = await resolveLiveTvPlayback(channel.id, { signal: controller.signal });'), 'P2.1 the legacy fresh resolution line is intact');
-  ok(selectFlow.includes('new LiveTvPlaybackEngine()'), 'P2.2 the legacy engine construction is intact');
-  ok(selectFlow.includes('shouldFallbackToEmbed(error)'), 'P2.3 the legacy embed-fallback classifier is intact');
-  ok(selectFlow.includes('activateEmbedFallback(channel, error)'), 'P2.4 the legacy fallback activation is intact');
+  ok(!selectFlow.includes('const resolution = await resolveLiveTvPlayback(channel.id'), 'P2.1 R-6: the legacy resolve line is REMOVED');
+  ok(!selectFlow.includes('new LiveTvPlaybackEngine()'), 'P2.2 R-6: the legacy engine construction is REMOVED');
+  ok(!selectFlow.includes('shouldFallbackToEmbed(error)'), 'P2.3 R-6: the legacy embed-fallback classifier is REMOVED from selectChannel');
+  ok(!selectFlow.includes('activateEmbedFallback(channel, error)'), 'P2.4 R-6: the legacy fallback activation is REMOVED from selectChannel');
   const retryFlow = sliceOf(page, 'function retryPlayback', 'function loadGuide');
   ok(retryFlow.includes('if (selectedChannel && embedFallbackChannelId === selectedChannel.id)'), 'P2.5 the legacy retry branch is intact');
   ok(retryFlow.indexOf('unifiedEmbedSrc') < retryFlow.indexOf('embedFallbackChannelId === selectedChannel.id'), 'P2.6 the unified retry branch precedes the legacy one (same remount-only semantics)');

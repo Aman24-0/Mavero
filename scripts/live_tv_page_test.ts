@@ -195,8 +195,8 @@ const NOW = 1_700_000_000; // fixed absolute instant for determinism
 {
         assert.match(page, /onselect=\{\(c\) => void selectChannel\(c\)\}/, 'channel cards drive selectChannel');
         assert.match(selectFlow, /selectedChannel = channel;/, 'selection is adopted immediately');
-        assert.match(selectFlow, /const resolution = await resolveLiveTvPlayback\(channel\.id, \{ signal: controller\.signal \}\);/, 'fresh LT-2 resolution, signal-wired');
-        assert.match(selectFlow, /await eng\.load\(videoEl, resolution, \{ signal: controller\.signal \}\);/, 'resolution handed straight to the LT-3 engine load');
+        assert.doesNotMatch(selectFlow, /const resolution = await resolveLiveTvPlayback\(channel\.id/, 'R-6: the legacy LT-2 fallback with the catalogue ID is REMOVED');
+        assert.match(selectFlow, /playbackRouter\.start\(channel, videoEl, controller\.signal\)/, 'R-6: the router handles ALL playback for catalogue IDs');
         assert.doesNotMatch(page, /\$state<.*Resolution/, 'resolution objects are never stored in reactive state');
         // R-1 REVISED: the original broad /sources|drm/i scan predates the R-1
         // catalogue's `LiveTvChannel.sources` field (bounded selection ids +
@@ -219,21 +219,15 @@ const NOW = 1_700_000_000; // fixed absolute instant for determinism
         // engine -> resolve -> new engine -> load. (Plan §9 order.)
         const iAbort = selectFlow.indexOf('sessionController?.abort();');
         const iDestroy = selectFlow.indexOf('destroyEngineSafely(engine);');
-        const iResolve = selectFlow.indexOf('await resolveLiveTvPlayback(');
-        const iNewEngine = selectFlow.indexOf('new LiveTvPlaybackEngine()');
-        const iLoad = selectFlow.indexOf('await eng.load(');
-        assert.ok(iAbort !== -1 && iDestroy !== -1 && iResolve !== -1 && iNewEngine !== -1 && iLoad !== -1, 'all switch steps present');
+        const iRouterStart = selectFlow.indexOf('playbackRouter.start(channel, videoEl, controller.signal)');
+        assert.ok(iAbort !== -1 && iDestroy !== -1 && iRouterStart !== -1, 'R-6: abort -> destroy -> router.start steps present');
         assert.ok(iAbort < iDestroy, 'previous selection aborted BEFORE anything else');
-        assert.ok(iDestroy < iResolve, 'previous playback session destroyed BEFORE resolving the new one (plan §9)');
-        assert.ok(iResolve < iNewEngine, 'new engine created only after a fresh resolution exists');
-        assert.ok(iNewEngine < iLoad, 'load happens on the new engine instance');
-        ok('switching order: abort previous -> destroy previous engine -> fresh resolve -> new engine -> load');
+        assert.ok(iDestroy < iRouterStart, 'previous playback session destroyed BEFORE the router starts (plan §9)');
+        ok('switching order: abort previous -> destroy previous engine -> router.start');
 
         // Stale guards: every continuation re-checks the sequence + abort state.
-        const guard = /if \(seq !== sessionSeq \|\| controller\.signal\.aborted(?: \|\| isSilentAbort\(err\))?\) \{?\s*(?:destroyEngineSafely\(eng\);\s*)?return;/;
-        assert.match(selectFlow.slice(iResolve), guard, 'post-resolve stale guard exists');
-        assert.match(selectFlow.slice(iLoad), /if \(seq !== sessionSeq \|\| controller\.signal\.aborted\) \{/, 'post-load stale guard exists');
-        assert.match(selectFlow, /isSilentAbort\(err\)/, 'aborted errors are classified silent (never surfaced)');
+        assert.match(selectFlow, /if \(seq !== sessionSeq \|\| controller\.signal\.aborted\) return;/, 'R-6: post-router stale guard exists in selectChannel');
+        assert.match(page, /isSilentAbort\(err\)/, 'aborted errors are classified silent (used by loadCatalogue/loadGuide)');
         assert.match(page, /function isSilentAbort[\s\S]*?kind === 'aborted'[\s\S]*?kind === 'aborted'/, 'both LT-2 and LT-3 abort kinds are silent');
         assert.match(page, /if \(engine === target\) engine = null;/, 'a late continuation can never null a newer session engine');
         ok('stale async protection: seq + abort guards on every continuation, silent aborts');
@@ -468,7 +462,7 @@ const NOW = 1_700_000_000; // fixed absolute instant for determinism
 // ============================================================
 {
         const engineCreations = page.match(/new LiveTvPlaybackEngine\(\)/g) ?? [];
-        assert.equal(engineCreations.length, 1, 'exactly one engine construction site in the page');
+        assert.equal(engineCreations.length, 0, 'R-6: the page no longer constructs LiveTvPlaybackEngine directly (the router creates engines internally)');
         assert.doesNotMatch(player, /new LiveTvPlaybackEngine/, 'components never construct engines');
         const videoTags = [page, player, card, categoryBar, filterSheet, guideSheet, guideList]
                 .map((s) => stripComments(s).match(/<video[\s>]/g) ?? []).reduce((a, b) => a + b.length, 0);

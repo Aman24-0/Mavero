@@ -71,7 +71,7 @@
   import { onDestroy, onMount } from 'svelte';
   import { page as appPage } from '$app/state';
   import { PRODUCTION_ORIGIN } from '$lib/shared/seo';
-  import { Search, X, Radio, RefreshCw, LoaderCircle, SlidersHorizontal, BookOpen, ChevronLeft, ChevronRight, ChevronDown, Check, Filter } from 'lucide-svelte';
+  import { Search, X, Radio, RefreshCw, LoaderCircle, SlidersHorizontal, BookOpen, ChevronLeft, ChevronRight, ChevronDown, Check, Tv } from 'lucide-svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import ScrollToTop from '$components/ScrollToTop.svelte';
   import ErrorState from '$components/ErrorState.svelte';
@@ -87,7 +87,7 @@
     filterLiveTvChannelsByCategory,
     filterLiveTvChannelsByQuery
   } from '$lib/client/live-tv/api';
-  import { isLiveTvError } from '$lib/client/live-tv/errors';
+  import { isLiveTvError, LiveTvError } from '$lib/client/live-tv/errors';
   import { isLiveTvPlaybackError, shouldFallbackToEmbed } from '$lib/client/live-tv/player-errors';
   import { LiveTvPlaybackEngine } from '$lib/client/live-tv/player';
   // Phase 5 — unified playback routing (behind the unified_enabled lever).
@@ -695,14 +695,11 @@
     }
 
     // -------------------------------------------------------------------
-    // Phase 5 — unified playback routing (behind the owner-controlled
-    // unified_enabled lever). While the lever is FALSE (production default)
-    // the router's flag gate stops it before ANY work and 'legacy' is
-    // returned — the flow below runs byte-identical to the shipped page.
-    // 'handled' outcomes (including the honest exhausted error) end here;
-    // 'legacy' outcomes (nothing configured for this selection, or a
-    // resolution outage — the documented compatibility rule) fall through
-    // to the legacy flow below.
+    // R-6/R-7 — unified playback routing. The router handles ALL playback
+    // for catalogue IDs (entry:<rowId> and canonical UUIDs). After R-3,
+    // the catalogue is source-first — ALL channel IDs are registry-
+    // governed identities that the legacy LiveGT V1 API does NOT
+    // recognize. The legacy fallback is REMOVED.
     // -------------------------------------------------------------------
     if (!playbackRouter) {
       playbackRouter = createLivetvPlaybackRouter();
@@ -710,85 +707,13 @@
     {
       const outcome = await playbackRouter.start(channel, videoEl, controller.signal);
       if (outcome === 'handled') return;
-    }
-
-    try {
-      // 1. Fresh resolution (LT-2 — every call hits the network; the result
-      //    lives only in this local variable and is handed straight to the
-      //    engine; it is never stored in reactive state).
-      const resolution = await resolveLiveTvPlayback(channel.id, { signal: controller.signal });
-      if (seq !== sessionSeq || controller.signal.aborted) return; // superseded — silent
-
-      // 2. Fresh engine for the new session; it attaches to the SAME
-      //    caller-owned <video> element (never two instances — the old one
-      //    was destroyed above; LT-3 load also tears down defensively).
-      const eng = new LiveTvPlaybackEngine();
-      engine = eng;
-
-      // Analytics (LT-5): the engine's normalized events are the single
-      // source of playback truth — 'statechange' → 'playing' marks the
-      // FIRST actual playback of this session (once per session; resumes
-      // after a pause are deliberately not re-tracked), and 'error' carries
-      // the normalized failure exactly once per surfaced session failure
-      // (load failures AND mid-session failures both arrive here — the
-      // catches below therefore never track errors twice). The
-      // subscriptions die with the engine on destroy/switch (LT-3 clears
-      // its listener map), so no explicit unsubscribe is needed.
-      let playTracked = false;
-      eng.on('statechange', ({ state }) => {
-        if (state === 'playing' && !playTracked) {
-          playTracked = true;
-          trackLiveTvPlay(channel.id);
-        }
-      });
-      eng.on('error', (error) => {
-        // LT-15: a stale engine's failure can NEVER mount a fallback for a
-        // newer session — the identity guard drops everything that arrives
-        // after this engine stopped being the page's current engine.
-        if (engine !== eng) return;
-        trackLiveTvError(channel.id, error);
-        // Automatic embed fallback: activate ONLY for genuine native
-        // playback failures (shouldFallbackToEmbed excludes autoplay
-        // blocks, aborts and every data-layer error by construction).
-        if (shouldFallbackToEmbed(error)) activateEmbedFallback(channel, error);
-      });
-
-      try {
-        await eng.load(videoEl, resolution, { signal: controller.signal });
-        if (seq !== sessionSeq || controller.signal.aborted) {
-          destroyEngineSafely(eng); // stale completion — discard silently
-          return;
-        }
-        resolving = false;
-        // Task 5: the session reached 'loaded' — this channel is the most
-        // recently PLAYED one. Recording here (not at selection time) means
-        // failed resolutions never enter the recent row.
-        rememberPlayedChannel(channel);
-        // 'loaded' has fired; the player component attempts autoplay.
-      } catch (err) {
-        if (seq !== sessionSeq || controller.signal.aborted || isSilentAbort(err)) {
-          destroyEngineSafely(eng);
-          return;
-        }
-        // LT-15: for fallback-eligible failures the engine 'error' event
-        // (the single activation point, above) has ALREADY moved this
-        // session to the embed fallback — the engine is destroyed and the
-        // native error message is deliberately suppressed. Never surface
-        // it here as well.
-        if (embedFallbackChannelId === channel.id) return;
-        destroyEngineSafely(eng); // failed session: surface via safe message
-        resolving = false;
-        sessionErrorMessage = playbackSafeMessage(err);
-      }
-    } catch (err) {
-      // Resolution failure (LT-2) — silent when superseded/aborted.
-      if (seq !== sessionSeq || controller.signal.aborted || isSilentAbort(err)) return;
+      // R-6 — the router returned 'legacy'. Show an honest error instead
+      // of calling resolveLiveTvPlayback with a catalogue ID the LiveGT
+      // V1 API can't recognize.
+      if (seq !== sessionSeq || controller.signal.aborted) return;
       resolving = false;
-      sessionErrorMessage = playbackSafeMessage(err);
-      // Analytics: resolution failures never reach an engine, so this is
-      // the one place they are tracked (normalized kind only). Engine-side
-      // failures are tracked via the engine 'error' subscription above.
-      trackLiveTvError(channel.id, err);
+      sessionErrorMessage = 'This channel could not be played right now. Try again.';
+      trackLiveTvError(channel.id, new LiveTvError('server', {}));
     }
   }
 
@@ -991,10 +916,10 @@
           onclick={toggleSourceSheet}
           aria-haspopup="dialog"
           aria-expanded={sourceSheetOpen}
-          aria-label="Filter channels by source. Current: {sourceSelectorLabel}"
+          aria-label="Select source. Current: {sourceSelectorLabel}"
           title="Source: {sourceSelectorLabel}"
         >
-          <Filter size={16} aria-hidden="true" />
+          <Tv size={16} aria-hidden="true" />
           {#if selectedSourceFilter !== null}
             <span class="ltv-source-icon-dot" aria-hidden="true"></span>
           {/if}

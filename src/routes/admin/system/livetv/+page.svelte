@@ -41,12 +41,32 @@
   import AdminSheet from '$lib/components/admin/AdminSheet.svelte';
   import AdminFormSection from '$lib/components/admin/AdminFormSection.svelte';
   import AdminConfirmDialog from '$lib/components/admin2/AdminConfirmDialog.svelte';
-  import { Plus, RefreshCw, Eye, Pencil, Trash2 } from 'lucide-svelte';
+  import { Plus, RefreshCw, Eye, Pencil, Trash2, LoaderCircle } from 'lucide-svelte';
   import type { PageData, ActionData } from './$types';
   import type { LivetvAdminSourceRow, LivetvSourceChannelPage, LivetvSourceLatestHistory } from '$lib/server/livetv/admin-service';
   import type { LivetvRefreshSourceOutcome } from '$lib/server/livetv/refresh-service';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
+
+  // R-7 — Refresh/Preview loading state.
+  let refreshing = $state(false);
+  let previewing = $state(false);
+
+  const refreshEnhance: SubmitFunction = () => {
+    refreshing = true;
+    return async ({ update }) => {
+      refreshing = false;
+      await update({ reset: false });
+    };
+  };
+
+  const previewEnhance: SubmitFunction = () => {
+    previewing = true;
+    return async ({ update }) => {
+      previewing = false;
+      await update({ reset: false });
+    };
+  };
 
   // --- shared vocabularies (display-only; the server validates everything) ---
   const SOURCE_TYPE_LABELS: Record<string, string> = {
@@ -433,13 +453,17 @@
           <div class="a2-row-head">
             <h3 class="a2-h3">Channels{channelsForOpenSource() ? ` (${formatCount(channelsForOpenSource()!.total)})` : ''}</h3>
             <div class="a2-actions">
-              <form method="POST" action="?/refreshSource" use:enhance>
+              <form method="POST" action="?/refreshSource" use:enhance={refreshEnhance}>
                 <input type="hidden" name="id" value={sourceId} />
-                <button type="submit" class="a2-btn a2-btn-sm" title="Refresh this source (fetches its upstream catalogue and writes entries/endpoints)" aria-label="Refresh source {editingSource.name}"><RefreshCw size={14} /> Refresh</button>
+                <button type="submit" class="a2-btn a2-btn-sm" disabled={refreshing || previewing} title="Refresh this source (fetches its upstream catalogue and writes entries/endpoints)" aria-label="Refresh source {editingSource.name}">
+                  {#if refreshing}<span class="spinner-icon"><LoaderCircle size={14} aria-hidden="true" /></span> Refreshing…{:else}<RefreshCw size={14} /> Refresh{/if}
+                </button>
               </form>
-              <form method="POST" action="?/previewSource" use:enhance>
+              <form method="POST" action="?/previewSource" use:enhance={previewEnhance}>
                 <input type="hidden" name="id" value={sourceId} />
-                <button type="submit" class="a2-btn a2-btn-sm" title="Preview this source (dry run — nothing is written)" aria-label="Preview source {editingSource.name}"><Eye size={14} /> Preview</button>
+                <button type="submit" class="a2-btn a2-btn-sm" disabled={refreshing || previewing} title="Preview this source (dry run — nothing is written)" aria-label="Preview source {editingSource.name}">
+                  {#if previewing}<span class="spinner-icon"><LoaderCircle size={14} aria-hidden="true" /></span> Previewing…{:else}<Eye size={14} /> Preview{/if}
+                </button>
               </form>
             </div>
           </div>
@@ -742,4 +766,7 @@
   @media (prefers-reduced-motion: reduce) {
     .a2-btn, .switch, .switch-track, .switch-thumb { transition: none; }
   }
+  /* R-7 — Refresh/Preview spinner animation. */
+  .spinner-icon { animation: spin 1s linear infinite; display: inline-flex; align-items: center; }
+  @keyframes spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
 </style>

@@ -106,10 +106,9 @@ async function run() {
     ok(playerColumnEnd > 0 && playerColumnEnd < toolbarStart, 'C1. the row renders immediately below the player and above the toolbar');
 
     // Recording point: INSIDE the engine-load success path.
-    const loadOkIdx = page.indexOf('await eng.load(videoEl, resolution, { signal: controller.signal });');
-    const recordIdx = page.indexOf('rememberPlayedChannel(channel);');
-    const resolvingFalseIdx = page.indexOf('resolving = false;', loadOkIdx);
-    ok(loadOkIdx > 0 && recordIdx > loadOkIdx && recordIdx > resolvingFalseIdx, 'C2. recording happens at engine \'loaded\' (failed resolutions never enter the row)');
+    const onplayedIdx = page.indexOf('onplayed:');
+    const recordIdx = page.indexOf('rememberPlayedChannel', onplayedIdx);
+    ok(onplayedIdx > 0 && recordIdx > onplayedIdx, 'C2. R-6: recording happens via the router handlers.onplayed callback');
 
     // Selection reuses the EXISTING lifecycle.
     ok(/onclick=\{\(\) => void selectChannel\(channel\)\}/.test(page), 'C3. recent-channel click reuses the existing selectChannel flow (abort/destroy/resolve/load)');

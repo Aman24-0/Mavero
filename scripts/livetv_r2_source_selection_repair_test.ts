@@ -179,8 +179,8 @@ console.log('§7 — Eye/Preview button affordance (Issue 8)');
 // ============================================================
 {
   // 7.1 — Refresh and Preview are LABELED buttons (not icon-only).
-  ok(adminPage.includes('> Refresh</button>'), '§7.1 Refresh is a labeled button (not icon-only)');
-  ok(adminPage.includes('> Preview</button>'), '§7.2 Preview is a labeled button (not icon-only)');
+  ok(adminPage.includes('Refresh') && adminPage.includes('Refreshing'), '§7.1 R-7: Refresh is a labeled button with loading state (Refreshing…)');
+  ok(adminPage.includes('Preview') && adminPage.includes('Previewing'), '§7.2 R-7: Preview is a labeled button with loading state (Previewing…)');
   // 7.3 — Refresh and Preview are distinct actions (separate forms).
   ok(adminPage.includes('action="?/refreshSource"') && adminPage.includes('action="?/previewSource"'), '§7.3 Refresh and Preview are separate form actions (distinct)');
   // 7.4 — the Preview button title documents the dry-run semantics.

@@ -172,7 +172,7 @@ function createFakeFetch(routes: FetchRoute[]) {
     }
     const status = route.status ?? 200;
     const body = route.body ?? {};
-    return Promise.resolve(new Response(JSON.stringify(body), { status }));
+    return Promise.resolve(new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } }));
   };
   return {
     calls,
