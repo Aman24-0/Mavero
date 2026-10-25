@@ -469,14 +469,30 @@ export async function resolveLivetvPlaybackForSelection(
                 return resolveLivetvDirectEntry(client, entryRowId, unifiedEnabled);
         }
 
-        // The canonical path (mapped entries + the builtin virtual pair)
-        // remains flag-gated — the flag is the owner's lever for the
-        // unified playback router. A canonical selection with the flag OFF
-        // resolves unresolvedWire(false) → the page's legacy fallback
-        // handles it (the legacy LiveGT client recognizes canonical ids).
-        if (!unifiedEnabled) return unresolvedWire(false);
+        // The canonical path (mapped entries + the builtin virtual pair).
+        // R-9: the flag gates ONLY the builtin virtual pair synthesis.
+        // Non-builtin sources' endpoints are resolved regardless of the
+        // flag (the source's own gates are the authority). This is
+        // consistent with the entry: path (R-4) — registry-governed
+        // endpoints resolve without the flag.
+        //
+        // When the flag is OFF:
+        //   - Non-builtin entries' endpoints → resolved (source's own gates)
+        //   - Builtin virtual pair → NOT synthesized (flag-gated)
+        // When the flag is ON:
+        //   - Non-builtin entries' endpoints → resolved
+        //   - Builtin virtual pair → synthesized (added to the candidate list)
+        //
+        // If the flag is OFF and the canonical channel has ONLY builtin
+        // entries (no non-builtin endpoints), the resolver returns
+        // resolved: true with an empty candidate list (honest exhausted).
 
         // 1. The builtin source row (seeded; builtin flag is the identity).
+        // R-9: the builtin source is OPTIONAL for canonical resolution.
+        // A canonical channel may have entries from non-builtin sources
+        // (Sony, JioHotstar, etc.) that resolve through their own
+        // endpoints. The builtin source is only needed for the virtual
+        // pair synthesis (which is flag-gated).
         const { data: builtinRow, error: builtinError } = await client
                 .from('livetv_sources')
                 .select('id,slug,name,source_type,builtin,enabled,status,priority,visibility,capabilities,config,description')
@@ -484,20 +500,26 @@ export async function resolveLivetvPlaybackForSelection(
                 .eq('builtin', true)
                 .limit(1)
                 .maybeSingle();
-        if (builtinError || !builtinRow) return unresolvedWire(unifiedEnabled);
+        // If the builtin source read fails, proceed without it (non-builtin
+        // endpoints can still resolve). The builtin pair won't be synthesized.
+        const builtinSourceRow = (!builtinError && builtinRow) ? builtinRow : null;
 
-        // 2. The builtin entry for the selection — must be MAPPED to a
-        //    canonical channel (M0). Unmapped selections are NOT under
-        //    unified management → legacy compatibility path client-side.
-        const { data: entryRow, error: entryError } = await client
-                .from('livetv_source_channels')
-                .select('id,source_id,source_channel_id,canonical_channel_id,enabled')
-                .eq('source_id', builtinRow.id)
-                .eq('source_channel_id', selectionId)
-                .limit(1)
-                .maybeSingle();
-        if (entryError) return unresolvedWire(unifiedEnabled);
-        if (entryRow && !entryRow.canonical_channel_id) return unresolvedWire(unifiedEnabled);
+        // 2. The builtin entry for the selection (only if the builtin source exists).
+        // R-9: if there's no builtin source, skip this lookup — the selection
+        // is treated as a canonical channel ID directly.
+        let entryRow: SourceChannelRow | null = null;
+        if (builtinSourceRow) {
+                const builtinEntryResult = await client
+                        .from('livetv_source_channels')
+                        .select('id,source_id,source_channel_id,canonical_channel_id,enabled')
+                        .eq('source_id', builtinSourceRow.id)
+                        .eq('source_channel_id', selectionId)
+                        .limit(1)
+                        .maybeSingle();
+                if (builtinEntryResult.error) return unresolvedWire(unifiedEnabled);
+                entryRow = builtinEntryResult.data as SourceChannelRow | null;
+                if (entryRow && !entryRow.canonical_channel_id) return unresolvedWire(unifiedEnabled);
+        }
 
         // 3. The canonical channel (FK guarantees existence; a missing row is
         //    treated as not-managed → legacy path, never a fake error).
@@ -628,7 +650,7 @@ export async function resolveLivetvPlaybackForSelection(
         let builtinEntryForPair: SelectionEntryRow | null = entryRow ?? null;
         if (!builtinEntryForPair) {
                 for (const row of entryRows) {
-                        if (row.source_id !== builtinRow.id) continue;
+                        if (!builtinSourceRow || row.source_id !== builtinSourceRow.id) continue;
                         if (row.canonical_channel_id !== channelId) continue;
                         if (builtinEntryForPair === null || row.source_channel_id < builtinEntryForPair.source_channel_id) {
                                 builtinEntryForPair = row;
@@ -636,8 +658,12 @@ export async function resolveLivetvPlaybackForSelection(
                 }
         }
         const mutableEndpoints: LivetvEndpointRef[] = [...endpoints];
-        if (explicitRecords.length === 0) {
-                const builtinSource = sources.find((source) => source.id === builtinRow.id);
+        if (explicitRecords.length === 0 && unifiedEnabled) {
+                // R-9: the builtin virtual pair is ONLY synthesized when the
+                // flag is ON. When the flag is OFF, only non-builtin
+                // endpoints contribute (the source's own gates are the
+                // authority). This is consistent with the entry: path.
+                const builtinSource = builtinSourceRow ? sources.find((source) => source.id === builtinSourceRow.id) : undefined;
                 const builtinEntry = builtinEntryForPair ? sourceChannels.find((entry) => entry.id === builtinEntryForPair.id) : undefined;
                 const builtinEligible =
                         builtinSource !== undefined &&

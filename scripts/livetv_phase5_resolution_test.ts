@@ -275,11 +275,14 @@ async function resolve(client: MockClient, selectionId: string = SELECTION_ID) {
   resetLivetvPlaybackFlagCacheForTests();
   ok(cached.queriesFor('livetv_config_meta').every((spec) => spec.filters.some((f) => f.col === 'id' && f.val === 1)), 'S1.6 the flag query is scoped to the config row id=1');
 
-  // Flag FALSE short-circuits resolve: zero registry reads.
+  // R-9: Flag FALSE no longer short-circuits canonical resolution.
+  // The resolver now resolves non-builtin endpoints regardless of the flag.
+  // The flag ONLY gates the builtin virtual pair synthesis.
   const offClient = createMockClient(baseTables({ livetv_config_meta: [{ id: 1, version: 7, unified_enabled: false, updated_at: '2026-01-01T00:00:00Z' }] }));
   const offResult = await resolve(offClient);
-  ok(offResult.unifiedEnabled === false && offResult.resolved === false && offResult.candidates.length === 0, 'S1.7 flag off → resolved:false with an empty candidate list');
-  ok(offClient.queriesFor('livetv_playback_endpoints').length === 0 && offClient.queriesFor('livetv_playback_candidates').length === 0, 'S1.8 flag off issues NO registry reads (legacy path authoritative)');
+  ok(offResult.resolved === true, 'S1.7 R-9: flag off → resolved:true (canonical IDs resolve through non-builtin endpoints regardless of the flag)');
+  // The builtin virtual pair is NOT synthesized when the flag is off.
+  ok(!offResult.candidates.some((c) => c.resolver === 'builtin_livegt_v1'), 'S1.7b R-9: the builtin virtual pair is NOT synthesized when the flag is off');
   resetLivetvPlaybackFlagCacheForTests();
   ok('S1 flag gate verified');
 }

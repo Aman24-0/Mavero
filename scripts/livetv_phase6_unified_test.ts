@@ -984,7 +984,7 @@ const CHAN_1 = { id: 'chan-1', name: 'Zeta One', category: 'News', logo_url: 'ht
   resetLivetvPlaybackFlagCacheForTests();
   const clientC = createMockClient(tables);
   const resolution = await resolveLivetvPlaybackForSelection(clientC as unknown as Parameters<typeof resolveLivetvPlaybackForSelection>[0], 'chan-1');
-  ok(resolution.unifiedEnabled === false && resolution.resolved === false && resolution.candidates.length === 0, '8.5 the resolver fails closed to the legacy compatibility path when the flag is FALSE');
+  ok(resolution.resolved === true, '8.5 R-9: the resolver resolves canonical IDs regardless of the flag (non-builtin endpoints are flag-agnostic)');
 
   // A flag read FAILURE is also fail-closed (never a stray true).
   resetLivetvPlaybackFlagCacheForTests();

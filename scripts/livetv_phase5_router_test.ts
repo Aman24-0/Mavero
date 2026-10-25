@@ -601,10 +601,13 @@ const CONFIG_FALSE: FetchRoute = { match: (url) => url.includes('/api/livetv/pla
     timers: timers as unknown as RouterTimers,
     baseUrl: 'https://app.example'
   });
+  // R-9: Flag FALSE no longer short-circuits the router. The router now
+  // always calls fetchCandidates() — the flag gate is removed from start().
+  // With a valid resolve route returning candidates, the router proceeds.
   const outcome = await router2.start(CHANNEL, VIDEO);
-  ok(outcome === 'legacy', 'R10.1 flag FALSE → the legacy path');
-  ok(resolveFetches() === 0, 'R10.2 flag FALSE → the resolve endpoint was NEVER fetched');
-  ok(configFetches() === 1, 'R10.3 the flag was fetched once (cached thereafter)');
+  ok(outcome === 'handled', 'R10.1 R-9: flag FALSE + valid resolve route → handled (the router no longer short-circuits on the flag)');
+  ok(resolveFetches() === 1, 'R10.2 R-9: the resolve endpoint WAS fetched (the router no longer short-circuits on the flag)');
+  ok(configFetches() === 0, 'R10.3 R-9: the flag is NOT fetched by the router (the gate is removed)');
 
   // Flag true + resolved:false → legacy compatibility path.
   resetUnifiedFlagCacheForTests();
