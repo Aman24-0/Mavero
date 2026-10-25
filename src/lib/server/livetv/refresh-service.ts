@@ -44,7 +44,7 @@ import { livetvHistoryRowFromSourceOutcome, recordLivetvRefreshHistory, type Liv
 export { livetvAdapterIdFor };
 
 /** Bounded defaults for one refresh run. */
-export const LIVETV_REFRESH_TIMEOUT_MS = 45_000;
+export const LIVETV_REFRESH_TIMEOUT_MS = 20_000;
 export const LIVETV_REFRESH_MAX_SOURCES_PER_RUN = 25;
 /**
  * Phase 7 — bounded state reads: the staleness report reads at most this
