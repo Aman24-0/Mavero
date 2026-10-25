@@ -156,7 +156,19 @@ type Timers = {
         clearTimeout(handle: ReturnType<typeof setTimeout>): void;
 };
 
-const defaultTimers: Timers = { setTimeout, clearTimeout };
+// CRITICAL (Illegal invocation fix #2): these must NOT be the bare globals.
+// They are stored on an object and called as `this.timers.setTimeout(...)`,
+// which binds `this` to the timers object; browsers brand-check
+// setTimeout/clearTimeout (this must be a Window/WorkerGlobalScope) and throw
+// `TypeError: Illegal invocation` SYNCHRONOUSLY. In fetchCandidates the first
+// timer call runs BEFORE the try block, so it escaped as a raw TypeError
+// (kind 'unknown') and the resolve fetch was never issued — every source failed
+// with no network request. Node does not brand-check, so the tsx suite passed.
+// The arrow wrappers call the globals with the global (lexical) context.
+const defaultTimers: Timers = {
+	setTimeout: (fn: () => void, ms: number) => setTimeout(fn, ms),
+	clearTimeout: (handle: ReturnType<typeof setTimeout>) => clearTimeout(handle)
+};
 
 // ---------------------------------------------------------------------------
 // The shared unified-flag gate (ONE flag, ONE read, ONE cache).
@@ -512,9 +524,15 @@ export class LiveTvPlaybackRouter {
                 if (signal.aborted) {
                         throw new LiveTvError('aborted', {});
                 }
+                // Bind the timers to LOCALS before use: `this.timers.setTimeout(...)`
+                // binds `this` to the timers object, and browsers brand-check
+                // setTimeout — that throws `TypeError: Illegal invocation` before the
+                // fetch is ever issued. Locals keep the global context.
+                const setT = this.timers.setTimeout;
+                const clearT = this.timers.clearTimeout;
                 const controller = new AbortController();
                 let timedOut = false;
-                const timer = this.timers.setTimeout(() => {
+                const timer = setT(() => {
                         timedOut = true;
                         controller.abort();
                 }, LIVETV_ROUTER_RESOLVE_TIMEOUT_MS);
@@ -543,7 +561,7 @@ export class LiveTvPlaybackRouter {
                         if (err instanceof LiveTvError) throw err;
                         throw new LiveTvError('network', {});
                 } finally {
-                        this.timers.clearTimeout(timer);
+                        clearT(timer);
                         signal.removeEventListener('abort', onExternalAbort);
                 }
         }
