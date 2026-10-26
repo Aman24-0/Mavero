@@ -11,11 +11,12 @@
  * the same &r=), Range passthrough, permissive CORS. HLS only.
  */
 
-const ALLOWED_HOST_SUFFIXES = ['hotstar.com', 'slivcdn.com'];
+const ALLOWED_HOST_SUFFIXES = ['hotstar.com', 'slivcdn.com', 'jio.com'];
 
 const REFERER_BY_HOST: ReadonlyArray<{ suffix: string; referer: string }> = [
 	{ suffix: 'slivcdn.com', referer: 'https://premiumplugx.com/' },
-	{ suffix: 'hotstar.com', referer: 'https://premiumplugx.com/' }
+	{ suffix: 'hotstar.com', referer: 'https://premiumplugx.com/' },
+	{ suffix: 'jio.com', referer: 'https://www.jio.com/' }
 ];
 
 const BROWSER_UA =

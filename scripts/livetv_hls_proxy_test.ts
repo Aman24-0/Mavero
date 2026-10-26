@@ -19,6 +19,7 @@ function ok(cond: boolean, name: string) {
 // ---- shared allowlist ----
 ok(isLivetvProxyHost('live09p.hotstar.com'), 'host: subdomain of hotstar.com is proxied');
 ok(isLivetvProxyHost('dishmt.slivcdn.com'), 'host: subdomain of slivcdn.com is proxied');
+ok(isLivetvProxyHost('jiotvpllive.cdn.jio.com'), 'host: subdomain of jio.com is proxied (akindi HLS)');
 ok(isLivetvProxyHost('hotstar.com'), 'host: bare allowlisted domain is proxied');
 ok(!isLivetvProxyHost('evil.com'), 'host: unrelated domain is NOT proxied');
 ok(!isLivetvProxyHost('nothotstar.com'), 'host: suffix-lookalike is NOT proxied');

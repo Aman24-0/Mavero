@@ -665,9 +665,9 @@ export class LiveTvPlaybackRouter {
                         }
                         // HLS proxy routing / DASH fallback (see $lib/shared/livetv-proxy).
                         let mediaUrl = candidate.url;
-                        if (candidate.streamFormat === 'dash' && isLivetvProxyUrl(mediaUrl)) {
-                                // DASH from a CORS-blocked CDN cannot be played without a DASH
-                                // proxy (out of scope) — skip it honestly, remember why.
+                        if (candidate.streamFormat === 'dash') {
+                                // DASH is NOT supported in the browser (dropped). Skip it
+                                // honestly and remember why so the terminal message is clear.
                                 this.trailPush({ attemptId, candidateId: candidate.candidateId, outcome: 'skipped', detail: 'dash_unsupported' });
                                 this.sawDashBlocked = true;
                                 this.settleCurrent('failed');

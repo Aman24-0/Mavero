@@ -24,7 +24,7 @@
 export const LIVETV_STREAM_PROXY_PATH = '/api/livetv/stream-proxy';
 
 /** CDN host suffixes whose HLS playback must go through the proxy. */
-export const LIVETV_PROXY_HOST_SUFFIXES: readonly string[] = ['hotstar.com', 'slivcdn.com'];
+export const LIVETV_PROXY_HOST_SUFFIXES: readonly string[] = ['hotstar.com', 'slivcdn.com', 'jio.com'];
 
 /** True when `hostname` is (or is a subdomain of) an allowlisted proxy CDN. */
 export function isLivetvProxyHost(hostname: string): boolean {
@@ -55,7 +55,8 @@ export function livetvStreamProxyUrl(absUrl: string, base = ''): string {
  */
 export const LIVETV_PROXY_REFERER_BY_HOST: ReadonlyArray<{ suffix: string; referer: string }> = [
 	{ suffix: 'slivcdn.com', referer: 'https://premiumplugx.com/' },
-	{ suffix: 'hotstar.com', referer: 'https://premiumplugx.com/' }
+	{ suffix: 'hotstar.com', referer: 'https://premiumplugx.com/' },
+	{ suffix: 'jio.com', referer: 'https://www.jio.com/' }
 ];
 
 /** The required Referer for a host (provider origin), or null. */
