@@ -342,6 +342,20 @@ export async function parseProviderForm(form: FormData, options: { forUpdate?: b
 const CONTROLS_POSITION_H_ANCHORS = ['left', 'right', 'center'] as const;
 const CONTROLS_POSITION_V_ANCHORS = ['top', 'bottom', 'center'] as const;
 
+// 3x3 grid cells accepted by the server validator (mirrors the shared contract).
+const CONTROLS_POSITION_GRID_CELLS = ['top-left','top-center','top-right','mid-left','mid-center','mid-right','bottom-left','bottom-center','bottom-right'] as const;
+
+function controlsPositionGridJson(value: unknown): { back?: string; landscape?: string } | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const read = (raw: unknown): string | null =>
+    typeof raw === 'string' && (CONTROLS_POSITION_GRID_CELLS as readonly string[]).includes(raw) ? raw : null;
+  const back = read(record.back);
+  const landscape = read(record.landscape);
+  if (!back && !landscape) return null;
+  return { ...(back ? { back } : {}), ...(landscape ? { landscape } : {}) };
+}
+
 // MAVP-3 size bounds — mirrored from $lib/shared/player-controls-position.ts
 // (the module cannot be imported here because this file is the server gate
 // and must stay dependency-light; the shared parser re-normalises on read,
@@ -470,10 +484,12 @@ function playerControlsPositionFromJson(raw: string): JsonObject | null {
   // unknown-key tolerance: ignored and dropped from the canonical value.
   // MAVP-3: independent per-control sizes (Back button, Landscape button).
   const sizes = controlsPositionSizesJson(record.sizes);
+  // 3x3 grid placement (the Admin's simple model; takes priority at runtime).
+  const grid = controlsPositionGridJson(record.grid);
   // A custom payload needs at least one anchor OR at least one size — a
   // sizes-only save (resize without repositioning) is valid.
-  if (!horizontal && !vertical && !portrait && !landscape && !back && !sizes) {
-    throw new StreamingValidationError('Custom Player Controls Position needs at least one anchor (horizontal or vertical).');
+  if (!horizontal && !vertical && !portrait && !landscape && !back && !sizes && !grid) {
+    throw new StreamingValidationError('Custom Player Controls Position needs at least one anchor, size, or grid cell.');
   }
   return {
     mode: 'custom',
@@ -483,6 +499,7 @@ function playerControlsPositionFromJson(raw: string): JsonObject | null {
     ...(landscape ? { landscape } : {}),
     ...(back ? { back } : {}),
     ...(sizes ? { sizes } : {}),
+    ...(grid ? { grid } : {}),
   };
 }
 
