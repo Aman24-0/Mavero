@@ -2093,7 +2093,7 @@
           // better than permanently inaccessible controls.
           releaseEmbedFocusForRecovery();
         }
-      }, 5_000);
+      }, 3_000);
     }
   }
 
@@ -2630,7 +2630,24 @@
 
   <!-- Immersive redesign: stage fills the ENTIRE viewport — no header/footer consuming space. -->
   <section class="stage-wrap" aria-label="Player viewport">
+      <div class="video-wrapper">
     <PlayerViewport bind:this={viewport} bind:videoElement bind:iframeElement {source} {mediaUrl} sandboxEnabled={effectiveSandboxEnabled} sandboxPolicy={effectiveSandboxPolicy} poster={content.backdrop ?? content.poster ?? ''} title={content.title} state={effectiveState} subtitles={mergedSubtitles} {displayMode} selectedSubtitleUrl={selectedSubtitle} subtitlePrefs={subtitlePrefs} {subtitleOverlaySuppressed} on:loadedmetadata={handleLoadedMetadata} on:timeupdate={handleTimeUpdate} on:play={handlePlay} on:pause={handlePause} on:waiting={handleWaiting} on:playing={handlePlaying} on:seeking={handleSeeking} on:seeked={handleSeeked} on:ended={handleEnded} on:error={handleMediaError} on:embedload={handleEmbedLoad} on:enginequality={handleEngineQuality} on:durationchange={handleSeekOpportunity} on:loadeddata={handleSeekOpportunity} on:canplay={handleSeekOpportunity} on:progress={handleSeekOpportunity} />
+      <button class="back-fab" class:custom-position={Boolean(backControlStyle)} class:custom-size={backSizePx !== null} type="button" aria-label="Close player" style={backControlStyle} onclick={onClose}>
+        <ArrowLeft size={20} />
+      </button>
+      {#if source?.type === 'embed'}
+      <div class="control-fab-group" class:visible={controlsVisible} style={landscapeControlStyle}>
+        <!-- MAVP-5 (Issue 4): the Episodes entry point moved OUT of the
+             Landscape control group into the dedicated left-edge episode chip
+             (mirroring the right-edge source chip) with its own independent
+             position contract. The group now carries only the Landscape FAB,
+             whose per-source positioning/sizing is byte-unchanged. -->
+        <button class="control-fab landscape-fab" class:custom-size={landscapeSizePx !== null} type="button" aria-label={landscapeMode ? 'Exit landscape player' : 'Enter landscape player'} aria-pressed={landscapeMode} onclick={() => { void toggleLandscape(); }}>
+          {#if landscapeMode}<Minimize2 size={22} />{:else}<Maximize2 size={22} />{/if}
+        </button>
+      </div>
+      {/if}
+      </div>
 
     <!-- MAVP-4 Issue 1: embed presentation veil. While the provider iframe is
          mounted but not yet presenting, this opaque layer covers the stage
@@ -2734,9 +2751,7 @@
        FAB; every source without a custom profile keeps the safe-area-aware
        top-left default. While touch-locked the FAB stays reachable
        (essential navigation is never blocked). -->
-  <button class="back-fab" class:custom-position={Boolean(backControlStyle)} class:custom-size={backSizePx !== null} type="button" aria-label="Close player" style={backControlStyle} onclick={onClose}>
-    <ArrowLeft size={20} />
-  </button>
+
 
   <!-- Immersive redesign: Direct source playback controls as an overlay (auto-hiding).
        Player V2 corrections (approved layout): PlayerControls is the
@@ -2761,18 +2776,7 @@
        floating FAB renders ONLY for embed sources — their provider-owned
        surface has no Mavero control row, and losing fullscreen there would
        remove an existing feature. -->
-  {#if source?.type === 'embed'}
-  <div class="control-fab-group" class:visible={controlsVisible} style={landscapeControlStyle}>
-    <!-- MAVP-5 (Issue 4): the Episodes entry point moved OUT of the
-         Landscape control group into the dedicated left-edge episode chip
-         (mirroring the right-edge source chip) with its own independent
-         position contract. The group now carries only the Landscape FAB,
-         whose per-source positioning/sizing is byte-unchanged. -->
-    <button class="control-fab landscape-fab" class:custom-size={landscapeSizePx !== null} type="button" aria-label={landscapeMode ? 'Exit landscape player' : 'Enter landscape player'} aria-pressed={landscapeMode} onclick={() => { void toggleLandscape(); }}>
-      {#if landscapeMode}<Minimize2 size={22} />{:else}<Maximize2 size={22} />{/if}
-    </button>
-  </div>
-  {/if}
+
 
   <!-- Player UI V2 (Part 1, Phase 2C): persistent unlock FAB. Rendered ONLY
        while touch-locked and INDEPENDENT of the auto-hide cycle — the player
@@ -2908,7 +2912,15 @@
      with shell-painted bands around it (the reported portrait black
      space). The provider keeps its OWN presentation inside the full-viewport
      iframe (no stretch, no crop, object-fit untouched). */
-  .stage-wrap { position: absolute; inset: 0; display: grid; place-items: center; overflow: hidden; }
+  .stage-wrap { position: absolute; inset: 0; display: grid; place-items: center; overflow: hidden; container-type: size; }
+  /* 16:9 video rectangle. The Back + Fullscreen FABs live INSIDE this box, so
+     per-source percentage positions resolve against the VIDEO, not the
+     viewport — fixes controls floating in the black bars on laptops/TVs. */
+  .video-wrapper { position: relative; width: min(100cqw, calc(100cqh * 16 / 9)); aspect-ratio: 16 / 9; max-width: 100%; max-height: 100%; }
+  /* Opaque FAB so it fully masks the provider's now-dead native fullscreen
+     button sitting underneath at the bottom-right of the video. */
+  .video-wrapper .control-fab { background: #0d0d0d; }
+  .video-wrapper .control-fab:hover, .video-wrapper .control-fab:focus-visible { background: #1a1a1a; }
   .stage-wrap :global(.viewport) { width: 100%; height: 100%; min-height: 0; max-height: none; border-radius: 0; box-shadow: none; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
   .stage-wrap :global(.viewport.embed) { width: 100%; }
   .stage-wrap :global(.viewport iframe), .stage-wrap :global(.viewport video) { width: 100%; height: 100%; }
