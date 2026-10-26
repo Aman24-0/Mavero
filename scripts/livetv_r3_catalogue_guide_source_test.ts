@@ -49,7 +49,7 @@ console.log('§1 — Source selector visible, labels "All Sources" (Issue 1)');
   ok(liveTvPage.includes("'All Sources'"), '§1.2 the default selector label is "All Sources" (never "Auto")');
   ok(!/\bAuto\b/.test(liveTvPage.match(/sourceSelectorLabel[\s\S]{0,200}/)?.[0] ?? ''), '§1.3 the sourceSelectorLabel never resolves to "Auto" (the per-channel switcher "Auto" is a different control)');
   // 1.4 — the selector is shown when sourcesAvailable && selectorSources.length > 0.
-  ok(liveTvPage.includes('{#if sourcesAvailable && selectorSources.length > 0}'), '§1.4 the Source selector is shown only when sources are available');
+  ok(liveTvPage.includes('{#if sourcesAvailable && selectorSources.length > 1}'), '§1.4 the Source selector is shown only when more than one source is available');
   // 1.5 — the selector sheet lists All Sources + each eligible source by name.
   ok(liveTvPage.includes('All Sources') && liveTvPage.includes('{source.name}'), '§1.5 the selector sheet lists All Sources + each eligible source by display name');
   // 1.6 — the selector is keyboard-accessible.

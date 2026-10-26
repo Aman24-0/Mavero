@@ -80,7 +80,7 @@ console.log('§2 — The availability API endpoint (rate-limited, no-store, fail
   // 2.4 — the rate-limit key is registered.
   ok(rateLimit.includes('livetvAvailability:'), '§2.4 the livetvAvailability rate-limit key is registered');
   // 2.5 — fail-closed: any error returns available=false.
-  ok(availabilityEndpoint.includes('return json({ ok: true, available: false, sources: [] }'), '§2.5 any error fail-closes to available=false, sources=[]');
+  ok(availabilityEndpoint.includes('return json({ ok: true, available: false, sources: [], navVisible: true }'), '§2.5 any error fail-closes to available=false, sources=[]');
   // 2.6 — GET-only (no body, no writes — CSRF not applicable).
   ok(!availabilityEndpoint.includes('export const POST'), '§2.6 the endpoint is GET-only (no body, no writes)');
   // 2.7 — reads via the service-role admin client (RLS bypass for public reads).
@@ -132,7 +132,7 @@ console.log('§5 — The heading-row Source selector UI (Issue 6)');
   // 5.1 — the Source selector button is in the hero row (far right of the heading).
   ok(liveTvPage.includes('ltv-source-icon-btn'), '§5.1 R-4: the compact Source selector ICON button is rendered in the hero row (no large button, no separate row)');
   // 5.2 — the selector is only shown when sources are available.
-  ok(liveTvPage.includes('{#if sourcesAvailable && selectorSources.length > 0}'), '§5.2 the Source selector is shown only when sources are available');
+  ok(liveTvPage.includes('{#if sourcesAvailable && selectorSources.length > 1}'), '§5.2 the Source selector is shown only when more than one source is available');
   // 5.3 — the selector opens a sheet/dialog with All Sources + each eligible source.
   ok(liveTvPage.includes('ltv-source-dialog') && liveTvPage.includes('All Sources'), '§5.3 R-4: the selector dialog offers All Sources + each eligible source (bottom sheet / popover)');
   // 5.4 — selecting a source filters the catalogue to that source's channels.
@@ -171,7 +171,7 @@ console.log('§6 — Compact admin source cards (Issue 1)');
   // 6.5 — the controls stay on the right (flex: 0 0 auto).
   ok(/\.source-controls\s*\{[\s\S]{0,200}flex:\s*0 0 auto/.test(adminPage), '§6.5 the controls container is flex:0 0 auto (stays on the right)');
   // 6.6 — the source row no longer wraps (flex-wrap: nowrap).
-  ok(/\.source-row\s*\{[\s\S]{0,800}flex-wrap:\s*nowrap/.test(adminPage), '§6.6 the source row uses flex-wrap:nowrap (no mobile column flip)');
+  ok(/\.source-row\s*\{[\s\S]{0,800}flex-direction:\s*column/.test(adminPage), '§6.6 the source row uses a 2-row column layout (title row + control row)');
 }
 
 // ============================================================
@@ -276,7 +276,7 @@ console.log('§11 — Navbar hides Live TV when no eligible public source exists
   // 11.2 — the result drives liveTvAvailable state.
   ok(appShell.includes('let liveTvAvailable = $state(true)'), '§11.2 the AppShell has liveTvAvailable state');
   // 11.3 — the Live TV link is conditionally included based on liveTvAvailable.
-  ok(appShell.includes("...(liveTvAvailable ? [{ label: 'Live TV', href: '/live-tv', key: '/live-tv', icon: Radio }] : [])"), '§11.3 the Live TV link is conditionally included based on liveTvAvailable');
+  ok(appShell.includes("...((liveTvAvailable && (isAdmin || livetvNavVisible)) ? [{ label: 'Live TV', href: '/live-tv', key: '/live-tv', icon: Radio }] : [])"), '§11.3 the Live TV link is conditionally included based on liveTvAvailable + nav visibility');
   // 11.4 — the primaryLinks is now a $derived (reactive to liveTvAvailable changes).
   ok(appShell.includes('const primaryLinks = $derived(['), '§11.4 primaryLinks is $derived (reactive to liveTvAvailable)');
   // 11.5 — fail-open: a fetch error keeps the link visible (the route guard is the authority).

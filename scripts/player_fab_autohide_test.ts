@@ -32,7 +32,7 @@ assert.match(shell, /let controlsVisible = true/, 'controlsVisible initial state
 // ============================================================
 // 2. 10s inactivity hides FABs
 // ============================================================
-assert.match(shell, /5_000/, '5s auto-hide timer value present (player redesign)');
+assert.match(shell, /3_000/, '3s auto-hide timer value present (player redesign)');
 assert.match(shell, /hideTimer = setTimeout\(\(\) => \{[^}]*controlsVisible = false/, 'timer callback sets controlsVisible = false');
 
 // ============================================================

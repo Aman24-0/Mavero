@@ -168,7 +168,7 @@ ok('6. single isActive() system (exact + nested routes) drives active state');
 // ============================================================
 // 7. MOBILE + TABLET — six equal columns across the touch range
 // ============================================================
-assert.match(appShell, /grid-template-columns: repeat\(6, 1fr\)/, 'mobile pill grid is six equal columns');
+assert.match(appShell, /\.mobile-nav a \{[^}]*flex: 1 1 0/, 'mobile pill nav distributes six items equally (flex 1 1 0)');
 assert.match(appShell, /width: min\(calc\(100% - 24px\), 420px\)/, 'floating pill keeps its phone-size viewport width model');
 assert.match(appShell, /backdrop-filter: blur\(20px\)/, 'glass/blur treatment preserved');
 assert.match(appShell, /border-radius: 999px/, 'pill shape preserved');

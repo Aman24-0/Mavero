@@ -10,7 +10,7 @@
   // REMOVED — playback must open in the device's existing orientation; the
   // manual Landscape control in the player remains the only orientation
   // entry point (no automatic rotation from any playback path).
-  import { ArrowLeft, Heart, Play, Share2, Star, ListPlus, Film, Download, AlertCircle, LoaderCircle, AlertTriangle, Maximize, Minimize } from 'lucide-svelte';
+  import { ArrowLeft, Heart, Play, Share2, Star, ListPlus, Film, Download, AlertCircle, LoaderCircle, AlertTriangle, Maximize, Minimize, Clock, X } from 'lucide-svelte';
   import SelectionSheet from '$components/SelectionSheet.svelte';
   import DownloadSheet from '$components/DownloadSheet.svelte';
   import type { ContentType } from '$data/content';
@@ -205,6 +205,14 @@
   );
   const playSubLabel = $derived(isSeriesLike && resumeEpisode ? `S${resumeEpisode.season} · E${resumeEpisode.episode}` : '');
 
+  // Upcoming MOVIES (release date in the future): no Play/Download — a
+  // disabled "Upcoming" state with the release date instead.
+  const isUpcoming = $derived.by(() => {
+    if (isSeriesLike || !item.releaseDate) return false;
+    const d = new Date(item.releaseDate + 'T00:00:00Z');
+    return !isNaN(d.getTime()) && d.getTime() > Date.now();
+  });
+
   // Compact genre presentation for the first viewport: at most 4 genre
   // chips on bounded rows; the FULL list lives in the Overview facts
   // (never let a long genre list dominate the hero).
@@ -244,7 +252,7 @@
     const d = new Date(iso + 'T00:00:00Z');
     if (isNaN(d.getTime())) return String(item.year > 0 ? item.year : '');
     // Use en-GB for day-before-month format (07 Mar 2026).
-    return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+    return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' });
   }
 
   // ============================================================
@@ -811,6 +819,7 @@
            backdrop exactly. The iframe uses the existing trailer source
            contract (item.trailerKey → YouTube embed). -->
       <div class="trailer-inline" bind:this={trailerContainer}>
+        <button type="button" class="trailer-inline-close" onclick={stopTrailer} aria-label="Close trailer"><X size={18} aria-hidden="true" /></button>
         {#if trailerStatus !== 'error'}
           {#key trailerAttempt}
             <iframe
@@ -930,6 +939,15 @@
              approved secondary row immediately beneath it. -->
         <div class="actions">
           <div class="primary-actions">
+            {#if isUpcoming}
+              <span class="play-btn upcoming-btn" aria-disabled="true" title={`Releases ${formatDate(item.releaseDate)}`}>
+                <Clock size={17} aria-hidden="true" />
+                <span class="play-copy">
+                  <span class="play-label">Upcoming</span>
+                  <span class="play-sub">Releases {formatDate(item.releaseDate)}</span>
+                </span>
+              </span>
+            {:else}
             <a class="play-btn" href={watchHrefVal} aria-label={playSubLabel ? `${playLabel} — season ${resumeEpisode?.season}, episode ${resumeEpisode?.episode}` : `${playLabel} ${item.title}`} onclick={() => { markPlayerMilestone('mavero:play'); }}>
               <Play size={17} fill="currentColor" strokeWidth={0} />
               <span class="play-copy">
@@ -950,6 +968,7 @@
                 {#if downloadProvidersLoading}<LoaderCircle size={17} />{:else}<AlertCircle size={17} />{/if}
                 <span>{downloadProvidersLoading ? 'Retrying…' : 'Download unavailable · Retry'}</span>
               </button>
+            {/if}
             {/if}
           </div>
           <div class="secondary-actions">
@@ -1666,9 +1685,20 @@
      the player fills it (letterboxed by the provider), the loading and
      error states sit above it, and the back button stays reachable. */
   .trailer-inline {
-    position: absolute; inset: 0; z-index: 2;
+    /* Above the hero title/actions (hero-body z-index 3) so YouTube's own
+       controls are reachable while the trailer plays. */
+    position: absolute; inset: 0; z-index: 5;
     background: #000;
   }
+  .trailer-inline-close {
+    position: absolute; top: 10px; right: 10px; z-index: 2;
+    display: grid; place-items: center; width: 38px; height: 38px;
+    border: 1px solid rgba(255,255,255,.35); border-radius: 50%;
+    background: rgba(0,0,0,.6); color: #fff; cursor: pointer;
+    backdrop-filter: blur(8px);
+  }
+  .trailer-inline-close:hover { background: rgba(0,0,0,.85); }
+  .upcoming-btn { cursor: default; opacity: .85; }
   .trailer-inline iframe {
     position: absolute; inset: 0;
     width: 100%; height: 100%;
