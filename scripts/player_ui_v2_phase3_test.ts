@@ -176,16 +176,20 @@ function mockVttFetch(response: { status?: number; body?: string; contentType?: 
 }
 {
   clearVttCacheForTests();
-  const result = await fetchUpstreamVttText(buildUpstreamVttUrl('movie', 278, 'English2'));
-  ok(result.ok && result.text.startsWith('WEBVTT') && !result.fromCache, '2c. a text/vtt upstream passes through');
-  const cached = await fetchUpstreamVttText(buildUpstreamVttUrl('movie', 278, 'English2'));
-  ok(cached.ok && cached.fromCache, '2c. the in-process TTL cache serves repeats (bounded upstream load)');
+  const original = globalThis.fetch;
+  globalThis.fetch = mockVttFetch({ body: 'WEBVTT\n\n00:00.000 --> 00:01.000\nHi' });
+  try {
+    const result = await fetchUpstreamVttText(buildUpstreamVttUrl('movie', 278, 'English2'));
+    ok(result.ok && result.text.startsWith('WEBVTT') && !result.fromCache, '2c. a text/vtt upstream passes through');
+    const cached = await fetchUpstreamVttText(buildUpstreamVttUrl('movie', 278, 'English2'));
+    ok(cached.ok && cached.fromCache, '2c. the in-process TTL cache serves repeats (bounded upstream load)');
+  } finally {
+    globalThis.fetch = original;
+  }
   clearVttCacheForTests();
 }
 {
   clearVttCacheForTests();
-  const result = await fetchUpstreamVttText(buildUpstreamVttUrl('movie', 278, 'Wrong'));
-  void result;
   const bad = await (async () => {
     const fetchVtt = mockVttFetch({ contentType: 'text/html' });
     const original = globalThis.fetch;
