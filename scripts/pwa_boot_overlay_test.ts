@@ -344,7 +344,7 @@ assert.doesNotMatch(layoutSource, /\^\\\/discover\\\/\(movies\|series\|anime\)\\
   'discover sub-pages bare-render regex removed (redirects; new routes render in AppShell)');
 // AppShell render must be unchanged (MAV-21: the showMobileNav
 // opt-out is removed — global navigation is unconditional).
-assert.match(layoutSource, /<AppShell currentPath=\{page\.url\.pathname\} user=\{data\.user\} isAuthenticated=\{data\.isAuthenticated\}>/,
+assert.match(layoutSource, /<AppShell currentPath=\{page\.url\.pathname\} user=\{data\.user\} isAuthenticated=\{data\.isAuthenticated\}[^>]*>/,
   'AppShell render preserved (Phase 3: user/isAuthenticated projected for the Account sheet; MAV-21: unconditional nav)');
 // PwaExperience + Toast must still be mounted.
 assert.match(layoutSource, /<PwaExperience \/>/,

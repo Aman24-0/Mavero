@@ -111,7 +111,7 @@ console.log('\n§4 — R-1 source-first main page (heading + ONE Add Source + th
 {
   ok(/<AdminPage eyebrow="Mavero \/ System" title="Live TV" accent="cyan">/.test(livetvPage), '4a. a clear Live TV page heading through the shared AdminPage');
   ok(!/tabs=/.test(livetvPage), '4b. NO tabs prop (the primary interface has no tab workflow)');
-  ok(/class="livetv-head">[\s\S]{0,200}openCreateSource[\s\S]{0,200}Add Source<\/button>/.test(livetvPage), '4c. exactly ONE top-right "Add Source" button');
+  ok(/openCreateSource[\s\S]{0,120}Add Source<\/button>/.test(livetvPage), '4c. exactly ONE top-right "Add Source" button (in the actions snippet)');
   ok((livetvPage.match(/onclick=\{openCreateSource\}/g) ?? []).length === 1, '4d. exactly ONE Add Source trigger renders');
   ok(/\{#each data\.sources as source \(source\.id\)\}/.test(livetvPage), '4e. the main content is ONE list of all configured sources');
   ok(/class="source-main"/.test(livetvPage) && /SOURCE_TYPE_LABELS\[source\.source_type\]/.test(livetvPage), '4f. each row shows the source name + type');
@@ -194,8 +194,8 @@ console.log('\n§9 — Refresh semantics inside the source sheet');
   ok(/<form method="POST" action="\?\/previewSource" use:enhance=/.test(sheetBlock), '9b. per-source Preview (dry run) is wired to the existing rate-limited action');
   ok(/refreshKind === 'source' \|\| refreshOutcome\.kind === 'source-preview'|\{#if refreshOutcome\}/.test(livetvPage), '9c. the outcome block renders the typed refresh result');
   ok(/'source-preview'/.test(livetvPage) && /Dry run — nothing was written/.test(livetvPage), '9d. preview results are explicitly labeled as a dry run (concise R-2 wording)');
-  ok(!/new XMLHttpRequest|fetch\(/.test(livetvPage), '9e. the page builds NO competing fetch pipeline (mutations are form actions)');
-  ok(!/\/api\/admin\/livetv/.test(livetvPage), '9f. the page does not round-trip through the JSON endpoints (it calls the services server-side)');
+  ok(!/new XMLHttpRequest/.test(livetvPage) && (livetvPage.match(/fetch\(/g) ?? []).length === 2 && livetvPage.includes('ingest-chunk'), '9e. the only client fetches are the chunked-ingestion playlist download + ingest-chunk POST (all other mutations are form actions)');
+  ok((livetvPage.match(/\/api\/admin\/livetv/g) ?? []).length === 1 && livetvPage.includes('/api/admin/livetv/sources/ingest-chunk'), '9f. the only JSON endpoint is the chunked ingest-chunk POST (everything else is server-side)');
 }
 
 console.log('\n§10 — Redaction + bounded rendering');
