@@ -911,7 +911,7 @@
         <span class="heading-sep" aria-hidden="true">/</span>
         <span class="heading-page">Live TV</span>
       </h1>
-      {#if sourcesAvailable && selectorSources.length > 0}
+      {#if sourcesAvailable && selectorSources.length > 1}
         <button
           type="button"
           class="ltv-source-icon-btn"

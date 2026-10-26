@@ -370,52 +370,48 @@ export async function applySourceIngestion(client: SupabaseClient<Database>, pla
                 }
                 const batch = plan.entries.slice(start, start + batchSize);
                 for (const entryPlan of batch) {
-                        if (entryPlan.action === 'insert') {
-                                const { data, error } = await client
-                                        .from('livetv_source_channels')
-                                        .insert({
-                                                source_id: plan.sourceId,
-                                                source_channel_id: entryPlan.sourceChannelId,
-                                                name: entryPlan.name,
-                                                category: entryPlan.category,
-                                                logo_url: entryPlan.logoUrl,
-                                                tvg_id: entryPlan.tvgId,
-                                                metadata: entryPlan.metadata as Json
-                                                // canonical_channel_id stays NULL — conservative mapping.
-                                        })
-                                        .select('id')
-                                        .single();
-                                if (error || !data) {
-                                        errors.push({ scope: 'entry_insert', sourceChannelId: entryPlan.sourceChannelId, url: null, message: error ? extractMessage(error) : 'insert returned no row' });
-                                        continue;
+                        // ONE bad row must NEVER fail the batch: every write is isolated.
+                        try {
+                                if (entryPlan.action === 'insert') {
+                                        const { data, error } = await client
+                                                .from('livetv_source_channels')
+                                                .insert({
+                                                        source_id: plan.sourceId,
+                                                        source_channel_id: entryPlan.sourceChannelId,
+                                                        name: entryPlan.name,
+                                                        category: entryPlan.category,
+                                                        logo_url: entryPlan.logoUrl,
+                                                        tvg_id: entryPlan.tvgId,
+                                                        metadata: entryPlan.metadata as Json
+                                                })
+                                                .select('id')
+                                                .single();
+                                        if (error || !data) {
+                                                errors.push({ scope: 'entry_insert', sourceChannelId: entryPlan.sourceChannelId, url: null, message: error ? extractMessage(error) : 'insert returned no row' });
+                                                continue;
+                                        }
+                                        entryRowIds.set(entryPlan.sourceChannelId, data.id);
+                                        appliedEntryWrites += 1;
+                                } else if (entryPlan.action === 'update' && entryPlan.changes) {
+                                        const { error } = await client
+                                                .from('livetv_source_channels')
+                                                .update({
+                                                        name: entryPlan.name,
+                                                        category: entryPlan.category,
+                                                        logo_url: entryPlan.logoUrl ?? entryPlan.preserved.logoUrl ?? null,
+                                                        tvg_id: entryPlan.tvgId,
+                                                        metadata: entryPlan.metadata as Json
+                                                })
+                                                .eq('id', entryPlan.rowId);
+                                        if (error) {
+                                                errors.push({ scope: 'entry_update', sourceChannelId: entryPlan.sourceChannelId, url: null, message: extractMessage(error) });
+                                                continue;
+                                        }
+                                        appliedEntryWrites += 1;
                                 }
-                                entryRowIds.set(entryPlan.sourceChannelId, data.id);
-                                appliedEntryWrites += 1;
-                        } else if (entryPlan.action === 'update' && entryPlan.changes) {
-                                const { error } = await client
-                                        .from('livetv_source_channels')
-                                        .update({
-                                                name: entryPlan.name,
-                                                category: entryPlan.category,
-                                                // R-3 — preserve a valid existing logo when the
-                                                // new playlist omits tvg-logo. Overwriting a
-                                                // valid https logo with null on every refresh
-                                                // was the R-2 Sony-logo regression root cause
-                                                // (the playlist intermittently omits tvg-logo;
-                                                // the DB lost the logo each refresh). When the
-                                                // new playlist provides a logo (even a different
-                                                // one), it wins — the upstream is authoritative.
-                                                logo_url: entryPlan.logoUrl ?? entryPlan.preserved.logoUrl ?? null,
-                                                tvg_id: entryPlan.tvgId,
-                                                metadata: entryPlan.metadata as Json
-                                                // canonical_channel_id + enabled NEVER written.
-                                        })
-                                        .eq('id', entryPlan.rowId);
-                                if (error) {
-                                        errors.push({ scope: 'entry_update', sourceChannelId: entryPlan.sourceChannelId, url: null, message: extractMessage(error) });
-                                        continue;
-                                }
-                                appliedEntryWrites += 1;
+                        } catch (thrown) {
+                                errors.push({ scope: entryPlan.action === 'insert' ? 'entry_insert' : 'entry_update', sourceChannelId: entryPlan.sourceChannelId, url: null, message: thrown instanceof Error ? thrown.message : 'write threw' });
+                                console.error('[livetv ingestion] entry write failed', { sourceChannelId: entryPlan.sourceChannelId, name: entryPlan.name, error: thrown instanceof Error ? thrown.message : thrown });
                         }
                 }
         }
@@ -428,40 +424,44 @@ export async function applySourceIngestion(client: SupabaseClient<Database>, pla
                 }
                 const batch = plan.endpoints.slice(start, start + batchSize);
                 for (const endpointPlan of batch) {
-                        if (endpointPlan.action === 'insert') {
-                                const entryRowId = entryRowIds.get(endpointPlan.entrySourceChannelId);
-                                if (!entryRowId) {
-                                        errors.push({ scope: 'endpoint_insert', sourceChannelId: endpointPlan.entrySourceChannelId, url: endpointPlan.url, message: 'entry row unavailable (entry insert failed)' });
-                                        continue;
-                                }
-                                const { error } = await client.from('livetv_playback_endpoints').insert({
-                                        source_channel_id: entryRowId,
-                                        endpoint_kind: endpointPlan.endpointKind,
-                                        stream_format: endpointPlan.streamFormat,
-                                        url: endpointPlan.url,
-                                        ordering: endpointPlan.ordering,
-                                        label: endpointPlan.label
-                                });
-                                if (error) {
-                                        errors.push({ scope: 'endpoint_insert', sourceChannelId: endpointPlan.entrySourceChannelId, url: endpointPlan.url, message: extractMessage(error) });
-                                        continue;
-                                }
-                                appliedEndpointWrites += 1;
-                        } else if (endpointPlan.action === 'update' && endpointPlan.changes) {
-                                const { error } = await client
-                                        .from('livetv_playback_endpoints')
-                                        .update({
+                        try {
+                                if (endpointPlan.action === 'insert') {
+                                        const entryRowId = entryRowIds.get(endpointPlan.entrySourceChannelId);
+                                        if (!entryRowId) {
+                                                errors.push({ scope: 'endpoint_insert', sourceChannelId: endpointPlan.entrySourceChannelId, url: endpointPlan.url, message: 'entry row unavailable (entry insert failed)' });
+                                                continue;
+                                        }
+                                        const { error } = await client.from('livetv_playback_endpoints').insert({
+                                                source_channel_id: entryRowId,
                                                 endpoint_kind: endpointPlan.endpointKind,
                                                 stream_format: endpointPlan.streamFormat,
+                                                url: endpointPlan.url,
+                                                ordering: endpointPlan.ordering,
                                                 label: endpointPlan.label
-                                                // enabled + ordering NEVER written.
-                                        })
-                                        .eq('id', endpointPlan.rowId);
-                                if (error) {
-                                        errors.push({ scope: 'endpoint_update', sourceChannelId: endpointPlan.entrySourceChannelId, url: endpointPlan.url, message: extractMessage(error) });
-                                        continue;
+                                        });
+                                        if (error) {
+                                                errors.push({ scope: 'endpoint_insert', sourceChannelId: endpointPlan.entrySourceChannelId, url: endpointPlan.url, message: extractMessage(error) });
+                                                continue;
+                                        }
+                                        appliedEndpointWrites += 1;
+                                } else if (endpointPlan.action === 'update' && endpointPlan.changes) {
+                                        const { error } = await client
+                                                .from('livetv_playback_endpoints')
+                                                .update({
+                                                        endpoint_kind: endpointPlan.endpointKind,
+                                                        stream_format: endpointPlan.streamFormat,
+                                                        label: endpointPlan.label
+                                                })
+                                                .eq('id', endpointPlan.rowId);
+                                        if (error) {
+                                                errors.push({ scope: 'endpoint_update', sourceChannelId: endpointPlan.entrySourceChannelId, url: endpointPlan.url, message: extractMessage(error) });
+                                                continue;
+                                        }
+                                        appliedEndpointWrites += 1;
                                 }
-                                appliedEndpointWrites += 1;
+                        } catch (thrown) {
+                                errors.push({ scope: endpointPlan.action === 'insert' ? 'endpoint_insert' : 'endpoint_update', sourceChannelId: endpointPlan.entrySourceChannelId, url: endpointPlan.url, message: thrown instanceof Error ? thrown.message : 'write threw' });
+                                console.error('[livetv ingestion] endpoint write failed', { sourceChannelId: endpointPlan.entrySourceChannelId, url: endpointPlan.url, error: thrown instanceof Error ? thrown.message : thrown });
                         }
                 }
         }
