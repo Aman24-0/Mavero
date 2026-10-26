@@ -269,8 +269,8 @@ assert.match(shell, /\{pictureInPictureSupported\} \{pictureInPicture\}/, 'Playe
 // 7. PlayerViewport — iframe permissions preserved (Phase 5 contract)
 // ============================================================
 
-assert.match(viewport, /allow="autoplay; fullscreen; picture-in-picture; encrypted-media"/, 'iframe allow attribute preserved');
-assert.match(viewport, /allowfullscreen/, 'allowfullscreen preserved');
+assert.match(viewport, /allow="autoplay; picture-in-picture; encrypted-media"/, 'iframe allow attribute preserved (fullscreen removed — Mavero owns it)');
+assert.doesNotMatch(viewport, /allowfullscreen/, 'allowfullscreen removed (Mavero owns fullscreen)');
 assert.match(viewport, /sandbox=\{sandboxAttribute\}/, 'sandbox attribute preserved');
 
 // ============================================================

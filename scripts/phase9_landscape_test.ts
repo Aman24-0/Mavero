@@ -41,7 +41,7 @@ assert.match(shell, /@keyframes sheet-left/, 'left drawer animation exists (MAVP
 // 5. Auto-hide — UPDATED: FIVE-second timer (player redesign; was 10s)
 // ============================================================
 
-assert.match(shell, /5_000/, '5s auto-hide timer');
+assert.match(shell, /3_000/, '3s auto-hide timer');
 // The retired streams sheet (0111d7f) no longer contributes a state; the
 // auto-hide guard still checks every live open state (both sheets) plus the
 // keyboard-focus a11y guard added by the player redesign.
