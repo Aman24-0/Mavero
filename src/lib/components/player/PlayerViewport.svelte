@@ -385,10 +385,9 @@
         src={source.url}
         title={`${title} provider embed`}
         loading="eager"
-        allow="autoplay; fullscreen; picture-in-picture; encrypted-media"
+        allow="autoplay; picture-in-picture; encrypted-media"
         sandbox={sandboxAttribute}
         referrerpolicy="no-referrer"
-        allowfullscreen
         on:load={() => { markPlayerMilestone('mavero:iframe-load'); dispatch('embedload'); }}
       ></iframe>
     {/key}

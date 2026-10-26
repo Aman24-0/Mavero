@@ -816,6 +816,17 @@
   }
 
   const handleFullscreen = () => {
+    // Fullscreen ownership (Step C fallback): if the PROVIDER iframe grabbed
+    // fullscreen via its native button, evict it and hand fullscreen to Mavero's
+    // playerRoot so the browser toast names Mavero, not the provider. (Step A —
+    // removing the iframe's fullscreen permission — prevents this up front; this
+    // is the safety net if a provider/browser still allows it.)
+    const fsElement = document.fullscreenElement;
+    if (fsElement && fsElement instanceof HTMLIFrameElement) {
+      try { void document.exitFullscreen?.(); } catch { /* already exited */ }
+      void Promise.resolve(playerRoot?.requestFullscreen?.()).catch(() => { /* needs a gesture; CSS landscape remains */ });
+      return;
+    }
     fullscreen = document.fullscreenElement === playerRoot;
     // Focused fixes (Issue 1): native VIDEO fullscreen hands the surface to
     // the OS — subtitles flip back to the native painter there (the overlay
@@ -1425,6 +1436,10 @@
     playerRoot?.addEventListener('pointermove', showControls, { passive: true });
     playerRoot?.addEventListener('pointerdown', showControls, { passive: true });
     playerRoot?.addEventListener('touchstart', showControls, { passive: true });
+    // Auto-hide fix: a CLICK must also reset the 5s timer (previously only
+    // pointermove/pointerdown/touchstart did), so controls never get "stuck"
+    // needing multiple taps to reappear.
+    playerRoot?.addEventListener('click', showControls, { passive: true });
     return () => {
       if (hideTimer) clearTimeout(hideTimer);
       // MAVP-4 Issue 2: release the document scroll lock with the shell.
@@ -1467,6 +1482,7 @@
       playerRoot?.removeEventListener('pointermove', showControls);
       playerRoot?.removeEventListener('pointerdown', showControls);
       playerRoot?.removeEventListener('touchstart', showControls);
+      playerRoot?.removeEventListener('click', showControls);
       // Phase 4: release the Cast controller (removes its SDK listeners; the
       // receiver session itself is intentionally left running — documented).
       castController?.destroy();
