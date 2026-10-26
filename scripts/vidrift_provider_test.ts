@@ -609,7 +609,7 @@ ok(watchRoute.includes('candidate.season === event.season && candidate.number ==
 // PlayerViewport regression: the iframe stays referrerpolicy-default for all
 // providers — no per-provider referrer change was introduced.
 const viewport = readFileSync(resolve('src/lib/components/player/PlayerViewport.svelte'), 'utf-8');
-ok(viewport.includes('allowfullscreen'), 'iframe allowfullscreen preserved (Mavero fullscreen)');
+ok(!viewport.includes('allowfullscreen'), 'R-11: allowfullscreen removed from iframe (architectural change)');
 ok(!viewport.includes('vidrift'), 'PlayerViewport unchanged by the VidRift integration (no provider-specific viewport logic)');
 
 console.log(`VidRift provider integration tests passed: ${passed} checks — exact URLs (movie/TV/anime TV-shape) + approved parameter set (brand=MAVERO, showTitle=1, watermark=1, hide=fullscreen ONLY; no poster/exit/uiScale/controlBg/font/muted/autoplay/mobileSheets), unrestricted sandbox (documented requirement), dynamic brandLogo (deployed Mavero origin) + brandColor (live --color-primary, no hardcoding), documented vidrift:resume postMessage (never a URL param) with idempotent re-delivery, vidrift:nextup-info with Mavero's authoritative next (null on finale, none for movies), progress/paused/unpaused/ended → canonical pipeline, nextup-play → ended + navigation through the existing architecture, strict origin validation + invalid/foreign-message rejection, episode-leak defense, teardown/retry/provider-switch safety, registry + regression assertions.`);

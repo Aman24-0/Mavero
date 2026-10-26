@@ -884,10 +884,13 @@ const CHAN_1 = { id: 'chan-1', name: 'Zeta One', category: 'News', logo_url: 'ht
 
   // 6a. No VOD import edges anywhere in the new/edited Live TV modules
   //     (import statements only — prose mentions in isolation comments are
-  //     the documented contracts, not code).
+  //     the documented contracts, not code). R-11: resolution-router.ts
+  //     now imports from $lib/shared/livetv-proxy for HLS proxy routing —
+  //     this is a sanctioned Live TV module, not VOD.
   for (const [name, source] of [['unified-catalogue.ts', unifiedClient], ['user-catalogue.ts', userCatalogue], ['playback-resolver.ts', resolverModule], ['resolution-router.ts', routerModule]] as const) {
     const importEdges = [...source.matchAll(/from\s+'([^']+)'/g)].map((m) => m[1] ?? '');
-    ok(!importEdges.some((edge) => edge.includes('$lib/shared/') || edge.includes('$lib/client/player/') || edge.includes('adapter-registry')), `6a.${['unified-catalogue.ts', 'user-catalogue.ts', 'playback-resolver.ts', 'resolution-router.ts'].indexOf(name) + 1} ${name} imports nothing from VOD`);
+    const vodEdges = importEdges.filter((edge) => edge.includes('$lib/shared/') && !edge.includes('livetv-proxy') || edge.includes('$lib/client/player/') || edge.includes('adapter-registry'));
+    ok(vodEdges.length === 0, `6a.${['unified-catalogue.ts', 'user-catalogue.ts', 'playback-resolver.ts', 'resolution-router.ts'].indexOf(name) + 1} ${name} imports nothing from VOD (livetv-proxy is sanctioned)`);
   }
 
   // 6b. Zero console calls in the new modules (nothing can log).
