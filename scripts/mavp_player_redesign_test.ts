@@ -197,7 +197,7 @@ ok(/name="sandbox_policy"/.test(adminPage), 'B29. Admin provider form remains th
 // ============================================================================
 section_ok('§C inactivity');
 
-ok(/, 5_000\)/.test(shell), 'C1. controls hide after FIVE seconds of inactivity');
+ok(/, 3_000\)/.test(shell), 'C1. controls hide after THREE seconds of inactivity');
 ok(!/10_000/.test(shell), 'C2. old 10s timer fully removed');
 const revealStart = shell.indexOf('function revealControls()');
 const revealBody = shell.slice(revealStart, shell.indexOf('\n  }\n', revealStart));
@@ -343,12 +343,12 @@ ok(/name="controls_position_mode"/.test(adminPage), 'E29. Admin position mode se
 //      reported "offsets require a matching anchor" save error).
 ok(/name="controls_position_json"/.test(adminPage), 'E30. Admin submits the structured controls_position_json payload');
 ok(/name="controls_position_mode"/.test(adminPage), 'E30b. Admin position mode select exists');
-ok(/Portrait configuration/.test(adminPage) && /Landscape configuration/.test(adminPage), 'E30c. Admin has independent Portrait + Landscape configuration blocks');
-ok(/a2-position-preview/.test(adminPage), 'E32. Admin calibration preview exists');
-ok(/a2-position-preview-back/.test(adminPage) && /a2-position-preview-dot/.test(adminPage), 'E32b. Admin preview shows BOTH control markers');
-ok(/Reset all positioning/.test(adminPage) && /resetControlProfile\(/.test(adminPage), 'E33. Admin per-control-per-orientation resets + reset-all exist (one control/orientation reset never touches another)');
+ok(/a2-grid-picker/.test(adminPage) && /GRID_CELLS/.test(adminPage), 'E30c. Admin uses the 3x3 grid picker (Back + Fullscreen cells)');
+ok(/a2-grid-picker/.test(adminPage), 'E32. Admin 3x3 grid picker exists');
+ok(/gridBack/.test(adminPage) && /gridLandscape/.test(adminPage), 'E32b. Admin grid covers BOTH controls (Back + Fullscreen)');
+ok(/Reset positioning/.test(adminPage) && /function setGridCell\(/.test(adminPage), 'E33. Admin grid toggles + reset exist');
 ok(/loadControlsPositionState\(source\)/.test(adminPage) && /loadControlsPositionState\(null\)/.test(adminPage), 'E34. saved settings load when the sheet opens (and defaults on create)');
-ok(/min="0" max="100"/.test(adminPage), 'E35. Admin inputs bound 0..100');
+ok(/a2-grid-picker/.test(adminPage), 'E35. Admin uses the 3x3 grid picker');
 ok(/playerControlsPositionCapability\(form\)/.test(read('../src/lib/server/streaming/validation.ts')), 'E36. server validation wired into parseSourceForm');
 ok(/mergedCapabilities = \{ \.\.\.existingCapabilities, \.\.\.parsed\.capabilities \}/.test(adminServer), 'E37. update path merges position into existing capabilities (no other capability keys touched)');
 ok(!watchPage.includes('migrations') && !read('../supabase/migrations/20260820010000_phase7a_streaming_registry.sql').includes('player_controls_position') === false || true, 'E38. (doc anchor) no schema change required — capabilities JSONB already carries the key');
@@ -399,7 +399,7 @@ ok(/enterpictureinpicture/.test(shell) && /leavepictureinpicture/.test(shell), '
 // The capability gate itself is unchanged — now asserted together with the
 // cast gate as one stronger behavior-level assertion.
 ok(/\{#if !castActive && pictureInPictureSupported\}\s*<button class="control-button"[^>]*aria-label=\{pictureInPicture \? 'Exit Picture-in-Picture' : 'Enter Picture-in-Picture'\}/.test(read('../src/lib/components/player/PlayerControls.svelte')), 'G4. PiP button is capability-driven AND hidden while casting (renders only when supported + no active cast session; Player V2 corrections moved it to the top-right utility zone — class list updated, gate unchanged)');
-ok(/allow="autoplay; fullscreen; picture-in-picture; encrypted-media"/.test(viewport), 'G5. embedded-provider PiP stays provider-owned via the iframe allow list');
+ok(/allow="autoplay; picture-in-picture; encrypted-media"/.test(viewport), 'G5. provider PiP stays in the allow list; fullscreen removed (Mavero owns fullscreen)');
 ok(detectDocumentPipApi(undefined) === false, 'G6. Document PiP detector safe without a browser context');
 ok(detectDocumentPipApi({}) === false, 'G7. Document PiP detector returns false when the API is absent');
 ok(detectDocumentPipApi({ documentPictureInPicture: { requestWindow: () => Promise.resolve({}) } }) === true, 'G8. Document PiP detector recognises the API shape');

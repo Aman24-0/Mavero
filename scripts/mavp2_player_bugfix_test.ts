@@ -194,7 +194,7 @@ ok(/function handleEmbedLoad\(\) \{[\s\S]*?revealControls\(\);/.test(shell), 'B3
 const revealStart = shell.indexOf('function revealControls()');
 const revealEnd = shell.indexOf('function focusWithinMaveroControls');
 const revealBody = shell.slice(revealStart, revealEnd);
-ok(revealBody.includes("setTimeout") && revealBody.includes('5_000'), 'B4. single 5s timer body in revealControls');
+ok(revealBody.includes("setTimeout") && revealBody.includes('3_000'), 'B4. single 3s timer body in revealControls');
 ok((revealBody.match(/setTimeout/g) ?? []).length === 1, 'B5. exactly ONE timer body (no competing inactivity timers)');
 ok(/class:controls-hidden=\{!controlsVisible\}/.test(shell) && /class:visible=\{controlsVisible\}/.test(shell), 'B6. back FAB, control group and chip are all driven by the SAME visibility state');
 ok(/\.player-shell\.controls-hidden \.back-fab \{[^}]*pointer-events: none/.test(shell) && /\.player-shell\.controls-hidden \.source-chip \{[^}]*pointer-events: none/.test(shell) && /\.player-shell\.controls-hidden \.control-fab-group \{[^}]*pointer-events: none/.test(shell), 'B7. all three controls become non-interactive when hidden (no invisible click-intercepting layer)');
@@ -341,18 +341,18 @@ ok(!/style=\{landscapeControlStyle\} type="button" aria-label=\{landscapeMode/.t
 
 // D25. Admin draft model: two controls × two orientations, per-control +
 //      per-orientation resets, reset-all, JSON payload contract.
-ok(/type ControlsControlDraft = \{ portrait: ControlsProfileDraft; landscape: ControlsProfileDraft \}/.test(adminPage), 'D25. Admin draft model has independent portrait/landscape profiles');
-ok(/landscapeControl: emptyControlDraft\(\),\s*back: emptyControlDraft\(\)/.test(adminPage), 'D26. Admin draft covers BOTH controls independently');
+ok(/let gridBack = \$state/.test(adminPage) && /gridLandscape/.test(adminPage), 'D25. Admin grid draft model (back + fullscreen cells)');
+ok(/gridPickers/.test(adminPage) && /id: 'back' as const/.test(adminPage) && /id: 'landscape' as const/.test(adminPage), 'D26. Admin grid covers BOTH controls independently');
 // MAVP-6 (Issues 2+3) supersession of the MAVP-5 'episodes' reset union: the
 // episode-chip position editor was REMOVED from the Admin source editor (the
 // chip is fixed like the source chip), so the reset union covers EXACTLY the
 // two positionable controls — the stricter shape.
-ok(/function resetControlProfile\(control: 'landscapeControl' \| 'back', orientation: 'portrait' \| 'landscape'\)/.test(adminPage) && !/'episodes'/.test(codeOnly(adminPage).match(/function resetControlProfile[\s\S]{0,80}/)?.[0] ?? ''),
-  'D27. per-control per-orientation reset exists (MAVP-6: exactly the two positionable controls)');
-ok(/positionDraft\[control\]\[orientation\] = emptyProfileDraft\(\)/.test(adminPage), 'D28. resetting one profile touches ONLY that profile');
+ok(/function setGridCell\(control: 'back' \| 'landscape', cell: ControlsGridCell\)/.test(adminPage),
+  'D27. per-control grid toggle exists (exactly the two positionable controls)');
+ok(/gridBack = gridBack === cell \? '' : cell/.test(adminPage), 'D28. grid cell toggles independently per control');
 ok(/function resetAllControlsPosition\(\)/.test(adminPage), 'D29. reset-all exists');
-ok(/readLegacyAxis\(custom\?\.back\?\.portrait\?\.horizontal/.test(adminPage) && !/custom\?\.back\?\.portrait\?\.horizontal \?\? custom\?\.horizontal/.test(adminPage), 'D30. back control NEVER prefills from the landscape control legacy base');
-ok(/readLegacyAxis\(custom\?\.portrait\?\.horizontal \?\? custom\?\.horizontal/.test(adminPage), 'D31. landscape control prefills per-orientation from its legacy base (backward compatible)');
+ok(/isGridCell\(grid\?\.back\)/.test(adminPage) && /isGridCell\(grid\?\.landscape\)/.test(adminPage), 'D30. back and fullscreen prefill independently from the grid');
+ok(/gridBack = isGridCell\(grid\?\.back\)/.test(adminPage), 'D31. grid prefill replaces the legacy base prefill');
 
 // ============================================================================
 // §E Admin positioning validation — the exact reported error, reproduced
@@ -471,7 +471,7 @@ ok(!/name="controls_position_h_offset"/.test(adminPage), 'E11c. flat base offset
 section_ok('§F protected behavior');
 
 ok(/resolveSandboxRuntime\(provider\?\.capabilities, source\.capabilities\)/.test(watchPage), 'F1. server-resolved sandbox pipeline untouched');
-ok(/sandbox=\{sandboxAttribute\}/.test(viewport) && /allow="autoplay; fullscreen; picture-in-picture; encrypted-media"/.test(viewport), 'F2. iframe sandbox attribute + allow list untouched');
+ok(/sandbox=\{sandboxAttribute\}/.test(viewport) && /allow="autoplay; picture-in-picture; encrypted-media"/.test(viewport), 'F2. iframe sandbox + allow list (fullscreen removed for Mavero ownership)');
 ok(/markPlayerMilestone\('mavero:resolver-request'\)/.test(manager) && /markPlayerMilestone\('mavero:resolver-response'\)/.test(manager), 'F3. resolver instrumentation preserved');
 ok(/sessionWidthGuard|sessionId/.test(manager), 'F4. resolver session guards preserved');
 ok(/document\.pictureInPictureElement === videoElement[\s\S]*?exitPipQuietly\(\)/.test(shell), 'F5. PiP cleanup on source switch preserved');

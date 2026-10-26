@@ -36,7 +36,6 @@
   // the runtime player — the serialized payload is parsed by the real total
   // parser and mapped by the shared preview geometry helper, so the preview
   // can never diverge from the runtime interpretation.
-  import { CONTROLS_SIZE_MIN_PX, CONTROLS_SIZE_MAX_PX, BACK_CONTROL_DEFAULT_SIZE_PX, LANDSCAPE_CONTROL_DEFAULT_SIZE_PX, parsePlayerControlsPosition, controlsPreviewMarkerStyle, CONTROLS_PREVIEW_REFERENCE_PORTRAIT, CONTROLS_PREVIEW_REFERENCE_LANDSCAPE } from '$lib/shared/player-controls-position';
   // 2026-10-16 round (Issue 5): the unified bulk-reposition validation
   // contract shared by every Admin ordering list (live duplicate/blank/
   // zero/negative/decimal rejection with the server as the authority).
@@ -309,246 +308,66 @@
     return Boolean(value) && (sourceIconKeys as readonly string[]).includes(value);
   }
 
-  // --- Player Controls Position (per-source floating-control placement) ---
-  // MAVP-2 contract: the Admin sheet edits TWO independent controls
-  // ('landscape' = Landscape/fullscreen FAB group, 'back' = Back FAB), each
-  // with an independent PORTRAIT and LANDSCAPE profile, each profile holding
-  // an independent horizontal + vertical axis (anchor + offset). The sheet
-  // serializes the draft into ONE hidden `controls_position_json` form field
-  // (the stored shape verbatim); the server validates it strictly
-  // (playerControlsPositionCapability). Legacy sources saved before MAVP-2
-  // (base axes + orientation overrides for the Landscape control only) are
-  // prefilled into the visible profiles on load; saving rewrites them as
-  // explicit per-orientation profiles. Loading is TOTAL — malformed legacy
-  // values degrade to the unset (default) state instead of throwing.
-  type ControlsAxisDraft = { anchor: string; offset: string };
-  type ControlsProfileDraft = { h: ControlsAxisDraft; v: ControlsAxisDraft };
-  type ControlsControlDraft = { portrait: ControlsProfileDraft; landscape: ControlsProfileDraft };
-  const emptyAxisDraft = (): ControlsAxisDraft => ({ anchor: '', offset: '' });
-  const emptyProfileDraft = (): ControlsProfileDraft => ({ h: emptyAxisDraft(), v: emptyAxisDraft() });
-  const emptyControlDraft = (): ControlsControlDraft => ({ portrait: emptyProfileDraft(), landscape: emptyProfileDraft() });
+  // --- Player Controls Position (3x3 grid) ---
+  // The Admin picks a 3x3 cell for the Back button and for the Fullscreen
+  // (landscape) FAB. Stored inside capabilities.player_controls_position as
+  // { mode:'custom', grid:{ back, landscape } }. Legacy percentage configs are
+  // still parsed + rendered by the runtime (backward-compatible); saving here
+  // writes the grid form.
+  type ControlsGridCell =
+    | 'top-left' | 'top-center' | 'top-right'
+    | 'mid-left' | 'mid-center' | 'mid-right'
+    | 'bottom-left' | 'bottom-center' | 'bottom-right';
+  const GRID_CELLS: ControlsGridCell[] = [
+    'top-left', 'top-center', 'top-right',
+    'mid-left', 'mid-center', 'mid-right',
+    'bottom-left', 'bottom-center', 'bottom-right',
+  ];
+  const GRID_CELL_LABELS: Record<string, string> = {
+    'top-left': 'Top-left', 'top-center': 'Top-center', 'top-right': 'Top-right',
+    'mid-left': 'Mid-left', 'mid-center': 'Center', 'mid-right': 'Mid-right',
+    'bottom-left': 'Bottom-left', 'bottom-center': 'Bottom-center', 'bottom-right': 'Bottom-right',
+  };
+  const isGridCell = (value: unknown): value is ControlsGridCell =>
+    typeof value === 'string' && (GRID_CELLS as string[]).includes(value);
 
   let controlsPositionMode = $state('default');
-  // MAVP-6 (Issues 2+3): the EPISODES chip position/size editor was REMOVED
-  // from this form. The chip is fixed (left edge, vertical centre, mirroring
-  // the source chip — the alignment is structural); only the Back button and
-  // the Landscape control remain per-source positionable/sizeable here.
-  let positionDraft = $state<{ landscapeControl: ControlsControlDraft; back: ControlsControlDraft }>({
-    landscapeControl: emptyControlDraft(),
-    back: emptyControlDraft(),
-  });
-  // MAVP-3 Issue 5: independent per-control SIZE drafts (Back button,
-  // Landscape button) in px. Empty string = default size (44/48 — the
-  // player's stylesheet values). Sizes are orientation-independent and fully
-  // independent of the placement axes: editing a size never touches any
-  // anchor/offset draft and vice versa, and each control's size is its own.
-  // MAVP-6 (Issues 2+3): the episode chip has NO size draft (fixed 64px,
-  // matching the source chip); a legacy stored sizes.episodes value is
-  // ignored by the shared parser and never prefilled here.
-  let controlsSizesDraft = $state<{ back: string; landscape: string }>({ back: '', landscape: '' });
-  // Preview/calibration orientation — which orientation the preview stage and
-  // its control markers are currently showing.
-  let positionPreviewOrientation = $state<'portrait' | 'landscape'>('landscape');
-
-  type LegacyAxisLike = { anchor?: unknown; offsetPercent?: unknown } | null | undefined;
-
-  /** Total legacy-axis read: valid anchor enum + finite 0..100 offset, else unset. */
-  function readLegacyAxis(axis: LegacyAxisLike, anchors: string[]): ControlsAxisDraft {
-    if (!axis || typeof axis !== 'object') return emptyAxisDraft();
-    const anchor = typeof axis.anchor === 'string' && anchors.includes(axis.anchor) ? axis.anchor : '';
-    if (!anchor) return emptyAxisDraft();
-    const offset = typeof axis.offsetPercent === 'number' && Number.isFinite(axis.offsetPercent) && axis.offsetPercent >= 0 && axis.offsetPercent <= 100
-      ? String(axis.offsetPercent)
-      : '';
-    return { anchor, offset };
-  }
+  let gridBack = $state<ControlsGridCell | ''>('');
+  let gridLandscape = $state<ControlsGridCell | ''>('');
 
   function loadControlsPositionState(source: any) {
     const raw = source?.capabilities?.player_controls_position;
     const custom = raw && typeof raw === 'object' && !Array.isArray(raw) && raw.mode === 'custom' ? raw : null;
+    const grid = custom && typeof custom.grid === 'object' && custom.grid !== null && !Array.isArray(custom.grid) ? custom.grid : null;
+    gridBack = isGridCell(grid?.back) ? grid.back : '';
+    gridLandscape = isGridCell(grid?.landscape) ? grid.landscape : '';
     controlsPositionMode = custom ? 'custom' : 'default';
-    // MAVP-3 Issue 5: prefill the per-control size drafts from the stored
-    // sizes section (valid bounded numbers only; anything else → default).
-    const storedSizes = custom && typeof custom.sizes === 'object' && custom.sizes !== null && !Array.isArray(custom.sizes) ? custom.sizes : null;
-    const readSizeDraft = (value: unknown): string =>
-      typeof value === 'number' && Number.isFinite(value) && value >= CONTROLS_SIZE_MIN_PX && value <= CONTROLS_SIZE_MAX_PX ? String(value) : '';
-    controlsSizesDraft = {
-      back: readSizeDraft(storedSizes?.back),
-      landscape: readSizeDraft(storedSizes?.landscape),
-    };
-    positionDraft = {
-      // Landscape control: prefill each orientation profile from its stored
-      // override, falling back to the LEGACY base axes (pre-MAVP-2 saves).
-      landscapeControl: {
-        portrait: {
-          h: readLegacyAxis(custom?.portrait?.horizontal ?? custom?.horizontal, ['left', 'right', 'center']),
-          v: readLegacyAxis(custom?.portrait?.vertical ?? custom?.vertical, ['top', 'bottom', 'center']),
-        },
-        landscape: {
-          h: readLegacyAxis(custom?.landscape?.horizontal ?? custom?.horizontal, ['left', 'right', 'center']),
-          v: readLegacyAxis(custom?.landscape?.vertical ?? custom?.vertical, ['top', 'bottom', 'center']),
-        },
-      },
-      // Back control (MAVP-2): independent — never inherits the Landscape
-      // control's stored axes.
-      back: {
-        portrait: {
-          h: readLegacyAxis(custom?.back?.portrait?.horizontal, ['left', 'right', 'center']),
-          v: readLegacyAxis(custom?.back?.portrait?.vertical, ['top', 'bottom', 'center']),
-        },
-        landscape: {
-          h: readLegacyAxis(custom?.back?.landscape?.horizontal, ['left', 'right', 'center']),
-          v: readLegacyAxis(custom?.back?.landscape?.vertical, ['top', 'bottom', 'center']),
-        },
-      },
-      // MAVP-6 (Issues 2+3): the former episodes prefill was REMOVED with the
-      // Admin position editor for the chip — a legacy stored `episodes`
-      // section is ignored (the runtime drops it; the form never shows it).
-    };
-  }
-
-  function resetControlProfile(control: 'landscapeControl' | 'back', orientation: 'portrait' | 'landscape') {
-    positionDraft[control][orientation] = emptyProfileDraft();
-  }
-
-  /** MAVP-3 Issue 5: reset ONE control's size without touching any other
-   *  setting (its placement profiles, its axes, and the other control's
-   *  size all stay exactly as edited). */
-  function resetControlSize(control: 'back' | 'landscape') {
-    controlsSizesDraft = { ...controlsSizesDraft, [control]: '' };
   }
 
   function resetAllControlsPosition() {
-    positionDraft = { landscapeControl: emptyControlDraft(), back: emptyControlDraft() };
-    controlsSizesDraft = { back: '', landscape: '' };
+    gridBack = '';
+    gridLandscape = '';
     controlsPositionMode = 'default';
   }
 
-  /** One axis object in the stored contract shape, or null when unset. */
-  function serializeAxisDraft(axis: ControlsAxisDraft, anchors: string[]): { anchor: string; offsetPercent: number } | null {
-    if (!axis.anchor || !anchors.includes(axis.anchor)) return null;
-    const raw = String(axis.offset ?? '').trim();
-    let offsetPercent: number;
-    if (!raw) {
-      offsetPercent = axis.anchor === 'center' ? 50 : 0; // anchor-default semantics, mirrors the server
-    } else {
-      const parsed = Number(raw);
-      if (!Number.isFinite(parsed) || parsed < 0 || parsed > 100) return null; // invalid input → axis unset (server re-validates authoritatively)
-      offsetPercent = Math.round(parsed * 10) / 10;
-    }
-    return { anchor: axis.anchor, offsetPercent };
+  function setGridCell(control: 'back' | 'landscape', cell: ControlsGridCell) {
+    if (control === 'back') gridBack = gridBack === cell ? '' : cell;
+    else gridLandscape = gridLandscape === cell ? '' : cell;
   }
 
-  /**
-   * MAVP-3 Issue 5: one control's size in the stored contract shape, or null
-   * when unset/invalid. Mirrors the axis precedent: an invalid non-empty
-   * value serializes as unset here (the server re-validates authoritatively
-   * for direct API callers; the inputs carry min/max for interactive guardrails).
-   */
-  function serializeSizeDraft(raw: string): number | null {
-    const trimmed = String(raw ?? '').trim();
-    if (!trimmed) return null;
-    const parsed = Number(trimmed);
-    if (!Number.isFinite(parsed) || parsed < CONTROLS_SIZE_MIN_PX || parsed > CONTROLS_SIZE_MAX_PX) return null;
-    return Math.round(parsed);
-  }
+  const gridPickers = $derived([
+    { id: 'back' as const, title: 'Back button', value: gridBack },
+    { id: 'landscape' as const, title: 'Fullscreen button', value: gridLandscape },
+  ]);
 
-  /** MAVP-3 Issue 5: the active size draft for the calibration preview markers. */
-  function previewMarkerSize(control: 'back' | 'landscape'): number | null {
-    return serializeSizeDraft(controlsSizesDraft[control]);
-  }
-
-  /**
-   * Serialize the draft into the `controls_position_json` payload — the
-   * EXACT stored contract shape. Unset axes/sections/sizes are omitted; custom
-   * mode with no usable axis or size at all serializes as 'default' (the server's
-   * "at least one anchor" rule then never rejects a UI-driven save).
-   */
   const controlsPositionJson = $derived.by(() => {
     if (controlsPositionMode !== 'custom') return JSON.stringify({ mode: 'default' });
-    const landscapeControl = {
-      portrait: {
-        horizontal: serializeAxisDraft(positionDraft.landscapeControl.portrait.h, ['left', 'right', 'center']),
-        vertical: serializeAxisDraft(positionDraft.landscapeControl.portrait.v, ['top', 'bottom', 'center']),
-      },
-      landscape: {
-        horizontal: serializeAxisDraft(positionDraft.landscapeControl.landscape.h, ['left', 'right', 'center']),
-        vertical: serializeAxisDraft(positionDraft.landscapeControl.landscape.v, ['top', 'bottom', 'center']),
-      },
-    };
-    const back = {
-      portrait: {
-        horizontal: serializeAxisDraft(positionDraft.back.portrait.h, ['left', 'right', 'center']),
-        vertical: serializeAxisDraft(positionDraft.back.portrait.v, ['top', 'bottom', 'center']),
-      },
-      landscape: {
-        horizontal: serializeAxisDraft(positionDraft.back.landscape.h, ['left', 'right', 'center']),
-        vertical: serializeAxisDraft(positionDraft.back.landscape.v, ['top', 'bottom', 'center']),
-      },
-    };
-    const payload: Record<string, unknown> = { mode: 'custom' };
-    const lcPortrait: Record<string, unknown> = {};
-    const lcLandscape: Record<string, unknown> = {};
-    if (landscapeControl.portrait.horizontal || landscapeControl.portrait.vertical) lcPortrait.portrait = Object.fromEntries(Object.entries(landscapeControl.portrait).filter(([, v]) => v !== null));
-    if (landscapeControl.landscape.horizontal || landscapeControl.landscape.vertical) lcLandscape.landscape = Object.fromEntries(Object.entries(landscapeControl.landscape).filter(([, v]) => v !== null));
-    if (lcPortrait.portrait) payload.portrait = lcPortrait.portrait;
-    if (lcLandscape.landscape) payload.landscape = lcLandscape.landscape;
-    const backOut: Record<string, unknown> = {};
-    if (back.portrait.horizontal || back.portrait.vertical) backOut.portrait = Object.fromEntries(Object.entries(back.portrait).filter(([, v]) => v !== null));
-    if (back.landscape.horizontal || back.landscape.vertical) backOut.landscape = Object.fromEntries(Object.entries(back.landscape).filter(([, v]) => v !== null));
-    if (Object.keys(backOut).length) payload.back = backOut;
-    // MAVP-6 (Issues 2+3): no episodes section is serialized — the chip is
-    // fixed (left edge, vertical centre, mirroring the source chip); a
-    // legacy stored section is dropped on the next save of this form.
-    // MAVP-3 Issue 5: independent per-control sizes — serialized ONLY when at
-    // least one is set; each entry stands alone (one control's size never
-    // carries or resets the other's).
-    const backSize = serializeSizeDraft(controlsSizesDraft.back);
-    const landscapeSize = serializeSizeDraft(controlsSizesDraft.landscape);
-    if (backSize !== null || landscapeSize !== null) {
-      payload.sizes = {
-        ...(backSize !== null ? { back: backSize } : {}),
-        ...(landscapeSize !== null ? { landscape: landscapeSize } : {}),
-      };
-    }
-    if (Object.keys(payload).length === 1) return JSON.stringify({ mode: 'default' });
-    return JSON.stringify(payload);
+    const grid: Record<string, string> = {};
+    if (isGridCell(gridBack)) grid.back = gridBack;
+    if (isGridCell(gridLandscape)) grid.landscape = gridLandscape;
+    if (!grid.back && !grid.landscape) return JSON.stringify({ mode: 'default' });
+    return JSON.stringify({ mode: 'custom', grid });
   });
-
-  /**
-   * MAVP-4 Issue 3: the preview interprets the configuration EXACTLY like the
-   * runtime player. The serialized draft payload (the same string the form
-   * submits) is parsed by the REAL shared total parser
-   * (`parsePlayerControlsPosition`) and both markers are styled by the
-   * SHARED `controlsPreviewMarkerStyle` resolver — inheritance (per-
-   * orientation overrides falling back to prefill), unset axes (the
-   * control's stylesheet default corner, scaled), configured sizes, and
-   * resets all render through ONE code path with the runtime.
-   * Malformed values degrade to the default positioning through the parser
-   * (never a plausible-looking but wrong preview — an unparseable payload
-   * simply shows the default corners).
-   */
-  const previewPosition = $derived.by(() => {
-    try {
-      return parsePlayerControlsPosition(JSON.parse(controlsPositionJson));
-    } catch {
-      return null;
-    }
-  });
-
-  /** Shared-resolver inline styles for the preview markers. */
-  const previewBackStyle = $derived(controlsPreviewMarkerStyle(previewPosition, 'back', positionPreviewOrientation));
-  const previewLandscapeStyle = $derived(controlsPreviewMarkerStyle(previewPosition, 'landscape', positionPreviewOrientation));
-  // MAVP-6 (Issues 2+3): the Episodes chip preview marker was REMOVED — the
-  // preview shows only the per-source configurable controls (Back, Landscape).
-
-  // Section template loops (typed so the per-control reset + bindings stay
-  // literal-union safe).
-  const POSITION_ORIENTATIONS: Array<'portrait' | 'landscape'> = ['portrait', 'landscape'];
-  const POSITION_CONTROLS: Array<{ id: 'landscapeControl' | 'back'; title: string; sizeKey: 'landscape' | 'back'; defaultSize: number }> = [
-    { id: 'landscapeControl', title: 'Landscape button', sizeKey: 'landscape', defaultSize: LANDSCAPE_CONTROL_DEFAULT_SIZE_PX },
-    { id: 'back', title: 'Back button', sizeKey: 'back', defaultSize: BACK_CONTROL_DEFAULT_SIZE_PX },
-  ];
 
   function openCreateSource(event?: Event) {
     if (event) sourceSheetTrigger = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
@@ -1151,95 +970,31 @@
            Unset axes keep the player's stylesheet defaults (Landscape button
            = bottom-right, Back button = top-left — both safe-area aware). -->
       <AdminFormSection heading="Player Controls Position">
-        <p class="a2-field-hint">Position the MAVERO floating controls per source. Each control has an independent portrait and landscape profile; each profile has an independent horizontal and vertical axis. Percentages are viewport-relative (0–100), measured from the anchor edge toward the centre. Each control also has an independent size ({CONTROLS_SIZE_MIN_PX}–{CONTROLS_SIZE_MAX_PX} px; empty = default: Back {BACK_CONTROL_DEFAULT_SIZE_PX} px, Landscape {LANDSCAPE_CONTROL_DEFAULT_SIZE_PX} px). Sources without a custom placement use the defaults: Landscape button bottom-right, Back button top-left. To inspect a saved placement in the running player, open any title's watch URL with <code>?controls=calibrate</code> appended — the player then holds the controls visible for that calibration session only (normal playback keeps the 5s auto-hide).</p>
+        <p class="a2-field-hint">Pick a 3×3 cell for each MAVERO floating control. The cell anchors the button to that corner/edge of the screen (safe-area aware). Defaults: Back button top-left, Fullscreen button bottom-right. To hold the controls visible while you align them, open a watch URL with <code>?controls=calibrate</code>.</p>
         <input type="hidden" name="controls_position_json" value={controlsPositionJson} />
         <label class="a2-field"><span>Position Mode</span>
           <select name="controls_position_mode" bind:value={controlsPositionMode}>
             <option value="default">Default — stylesheet corners</option>
-            <option value="custom">Custom — manual placement</option>
+            <option value="custom">Custom — 3×3 grid</option>
           </select>
         </label>
         {#if controlsPositionMode === 'custom'}
-          {#each POSITION_ORIENTATIONS as orientation}
-            <div class="a2-position-orientation-block">
-              <span class="a2-position-axis-label">{orientation === 'portrait' ? 'Portrait configuration' : 'Landscape configuration'}</span>
-              {#each POSITION_CONTROLS as control}
-                <div class="a2-position-control-group">
-                  <div class="a2-position-control-head">
-                    <span class="a2-position-control-title">{control.title} — {orientation === 'portrait' ? 'Portrait' : 'Landscape'}</span>
-                    <button type="button" class="a2-btn-mini" onclick={() => resetControlProfile(control.id, orientation)}>Reset</button>
-                  </div>
-                  <div class="a2-position-grid">
-                    <label class="a2-field"><span>H anchor</span>
-                      <select bind:value={positionDraft[control.id][orientation].h.anchor}>
-                        <option value="">Default</option>
-                        <option value="right">From right</option>
-                        <option value="left">From left</option>
-                        <option value="center">Centered</option>
-                      </select>
-                    </label>
-                    <label class="a2-field"><span>H offset %</span>
-                      <input type="number" min="0" max="100" step="0.5" bind:value={positionDraft[control.id][orientation].h.offset} disabled={!positionDraft[control.id][orientation].h.anchor || positionDraft[control.id][orientation].h.anchor === 'center'} />
-                    </label>
-                    <label class="a2-field"><span>V anchor</span>
-                      <select bind:value={positionDraft[control.id][orientation].v.anchor}>
-                        <option value="">Default</option>
-                        <option value="bottom">From bottom</option>
-                        <option value="top">From top</option>
-                        <option value="center">Centered</option>
-                      </select>
-                    </label>
-                    <label class="a2-field"><span>V offset %</span>
-                      <input type="number" min="0" max="100" step="0.5" bind:value={positionDraft[control.id][orientation].v.offset} disabled={!positionDraft[control.id][orientation].v.anchor || positionDraft[control.id][orientation].v.anchor === 'center'} />
-                    </label>
-                  </div>
+          <div class="a2-grid-picker-wrap">
+            {#each gridPickers as control (control.id)}
+              <div class="a2-grid-picker">
+                <span class="a2-grid-picker-title">{control.title}</span>
+                <div class="a2-grid-picker-cells" role="group" aria-label={`${control.title} position`}>
+                  {#each GRID_CELLS as cell}
+                    <button type="button" class="a2-grid-cell" class:selected={control.value === cell} aria-pressed={control.value === cell} aria-label={`${control.title}: ${GRID_CELL_LABELS[cell]}`} title={GRID_CELL_LABELS[cell]} onclick={() => setGridCell(control.id, cell)}>
+                      {#if control.value === cell}<span class="a2-grid-cell-dot" aria-hidden="true"></span>{/if}
+                    </button>
+                  {/each}
                 </div>
-              {/each}
-            </div>
-          {/each}
-          <!-- MAVP-3 Issue 5: independent per-control SIZE settings. Sizes are
-               orientation-independent (one size per control per source) and
-               fully independent of the placement profiles above: editing a
-               size never mutates any anchor/offset and vice versa. Empty =
-               the control's default stylesheet size. -->
-          <div class="a2-position-orientation-block">
-            <span class="a2-position-axis-label">Control size (both orientations)</span>
-            {#each POSITION_CONTROLS as control}
-              <div class="a2-position-control-group">
-                <div class="a2-position-control-head">
-                  <span class="a2-position-control-title">{control.title} size (px, {CONTROLS_SIZE_MIN_PX}–{CONTROLS_SIZE_MAX_PX}, default {control.defaultSize})</span>
-                  <button type="button" class="a2-btn-mini" onclick={() => resetControlSize(control.sizeKey)}>Reset size</button>
-                </div>
-                <div class="a2-position-grid">
-                  <label class="a2-field"><span>Size px</span>
-                    <input type="number" min={CONTROLS_SIZE_MIN_PX} max={CONTROLS_SIZE_MAX_PX} step="1" bind:value={controlsSizesDraft[control.sizeKey]} placeholder="default" />
-                  </label>
-                </div>
+                <span class="a2-grid-picker-current">Current: {control.value ? GRID_CELL_LABELS[control.value] : 'Default'}</span>
               </div>
             {/each}
           </div>
-          <!-- Calibration preview (MAVP-4 Issue 3): the orientation toggle
-               switches the stage between the two documented REFERENCE
-               viewports (landscape 844×390, portrait 390×844 — the same
-               shapes the runtime viewport takes). Both markers are styled by
-               the SHARED resolver (player-controls-position.ts) over the
-               exact payload the form submits, so configured anchors,
-               offsets, inheritance, defaults, resets and SIZES render
-               identically (scaled) to the real player. The square marker is
-               the Back button, the round dot the Landscape control group,
-               the dashed corner marker the provider's typical fullscreen
-               control position for reference. -->
-          <div class="a2-position-preview-orientation" role="group" aria-label="Preview orientation">
-            <button type="button" class:active={positionPreviewOrientation === 'landscape'} onclick={() => (positionPreviewOrientation = 'landscape')}>Landscape preview</button>
-            <button type="button" class:active={positionPreviewOrientation === 'portrait'} onclick={() => (positionPreviewOrientation = 'portrait')}>Portrait preview</button>
-          </div>
-          <div class="a2-position-preview" class:portrait={positionPreviewOrientation === 'portrait'} role="img" aria-label={`Preview of the floating-control placement in ${positionPreviewOrientation} orientation`}>
-            <span class="a2-position-preview-provider" aria-hidden="true"></span>
-            <span class="a2-position-preview-back" aria-hidden="true" style={previewBackStyle}></span>
-            <span class="a2-position-preview-dot" aria-hidden="true" style={previewLandscapeStyle}></span>
-            <span class="a2-position-preview-caption" aria-hidden="true">{positionPreviewOrientation} preview · back {previewMarkerSize('back') ?? BACK_CONTROL_DEFAULT_SIZE_PX}px · landscape {previewMarkerSize('landscape') ?? LANDSCAPE_CONTROL_DEFAULT_SIZE_PX}px · scaled from {positionPreviewOrientation === 'portrait' ? `${CONTROLS_PREVIEW_REFERENCE_PORTRAIT.width}×${CONTROLS_PREVIEW_REFERENCE_PORTRAIT.height}` : `${CONTROLS_PREVIEW_REFERENCE_LANDSCAPE.width}×${CONTROLS_PREVIEW_REFERENCE_LANDSCAPE.height}`} reference</span>
-          </div>
-          <button type="button" class="a2-btn-secondary" onclick={resetAllControlsPosition}>Reset all positioning</button>
+          <button type="button" class="a2-btn-secondary" onclick={resetAllControlsPosition}>Reset positioning</button>
         {/if}
       </AdminFormSection>
       <div class="a2-form-actions">
@@ -1315,13 +1070,6 @@
   .a2-assigned-list { display: flex; flex-direction: column; gap: var(--a2-space-1); }
   .a2-assigned-row { display: flex; align-items: center; gap: var(--a2-space-2); padding: var(--a2-space-1) var(--a2-space-2); background: var(--a2-surface-2); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); flex-wrap: wrap; }
   .a2-assigned-name { font-size: var(--a2-text-sm); font-weight: 600; color: var(--a2-text-bright); }
-  .a2-position-field { display: flex; flex-direction: column; gap: 2px; }
-  .a2-position-field span { font-size: var(--a2-text-2xs); color: var(--a2-text-dim); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; }
-  .a2-position-field input { width: 4.5rem; min-height: 44px; padding: 6px 8px; background: var(--a2-surface-3); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); color: var(--a2-text); font-size: var(--a2-text-sm); text-align: center; }
-  .a2-position-field input:focus { outline: none; border-color: var(--a2-cyan); }
-  .a2-position-field input.invalid { border-color: var(--a2-red); color: var(--a2-red); }
-  .a2-position-field input.invalid:focus { border-color: var(--a2-red); }
-  .a2-position-row-error { font-size: var(--a2-text-2xs); color: var(--a2-red); }
   /* Issue 4 (2026-10-16 round): provider icon editor inputs + explicit
      remove rows (shared by the provider and source sheets). */
   .a2-provider-icon-inputs { display: flex; flex-direction: column; gap: var(--a2-space-2); flex: 1 1 auto; min-width: 0; }
@@ -1353,17 +1101,8 @@
   /* Player Controls Position section (player redesign; MAVP-2 per-control,
      per-orientation profiles). */
   .a2-field-hint { margin: 0; font-size: var(--a2-text-2xs); color: var(--a2-text-muted); line-height: 1.5; }
-  .a2-position-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--a2-space-2); align-items: end; }
-  .a2-position-axis-label { font-size: var(--a2-text-2xs); font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--a2-text-dim); padding-top: var(--a2-space-2); }
-  .a2-position-orientation-block { display: flex; flex-direction: column; gap: var(--a2-space-2); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); padding: var(--a2-space-2) var(--a2-space-3); }
-  .a2-position-control-group { display: flex; flex-direction: column; gap: var(--a2-space-1); }
-  .a2-position-control-head { display: flex; align-items: center; justify-content: space-between; gap: var(--a2-space-2); }
-  .a2-position-control-title { font-size: var(--a2-text-2xs); font-weight: 600; color: var(--a2-text-muted); }
   .a2-btn-mini { padding: 4px 10px; background: var(--a2-surface-3); border: 1px solid var(--a2-border-strong); border-radius: var(--a2-radius-sm); color: var(--a2-text-muted); font-size: var(--a2-text-2xs); font-weight: 600; cursor: pointer; }
   .a2-btn-mini:hover { color: var(--a2-cyan); border-color: var(--a2-cyan-border); }
-  .a2-position-preview-orientation { display: inline-flex; gap: 6px; }
-  .a2-position-preview-orientation button { padding: 6px 12px; background: var(--a2-surface-3); border: 1px solid var(--a2-border-strong); border-radius: var(--a2-radius-sm); color: var(--a2-text-muted); font-size: var(--a2-text-2xs); font-weight: 600; cursor: pointer; }
-  .a2-position-preview-orientation button.active { color: var(--a2-cyan); border-color: var(--a2-cyan-border); background: var(--a2-cyan-soft); }
   /* MAVP-4 Issue 3: the preview stages are SCALED REFERENCE VIEWPORTS —
      portrait 390×844, landscape 844×390 (the shared contract's documented
      references, same aspect ratio as the modelled runtime viewport so
@@ -1372,12 +1111,6 @@
      scaled by the shared geometry helper instead of treating preview pixels
      as runtime pixels. Both markers are ALWAYS explicitly positioned by the
      shared resolver (no auto-position pile-up in either orientation). */
-  .a2-position-preview { position: relative; container-type: size; aspect-ratio: 844 / 390; border: 1px solid var(--a2-border-strong); border-radius: var(--a2-radius-sm); background: linear-gradient(160deg, #0c0c14, #16161f); overflow: hidden; }
-  .a2-position-preview.portrait { aspect-ratio: 390 / 844; max-width: 220px; margin: 0 auto; }
-  .a2-position-preview-provider { position: absolute; right: 8%; bottom: 10%; width: 18px; height: 10px; border: 1px dashed rgba(255,255,255,.35); border-radius: 2px; }
-  .a2-position-preview-dot { position: absolute; border-radius: 50%; background: var(--a2-cyan); box-shadow: 0 0 0 4px rgba(0,0,0,.35), 0 0 10px var(--a2-cyan); }
-  .a2-position-preview-back { position: absolute; border-radius: 4px; background: var(--a2-green, #7ee2a8); box-shadow: 0 0 0 4px rgba(0,0,0,.35), 0 0 10px var(--a2-green, #7ee2a8); }
-  .a2-position-preview-caption { position: absolute; left: 8px; top: 6px; font-size: 9px; letter-spacing: .08em; text-transform: uppercase; color: rgba(255,255,255,.45); }
 
   @media (max-width: 768px) {
     .a2-sheet { max-width: 100%; }
@@ -1385,4 +1118,21 @@
     .a2-provider-row-actions, .a2-source-row-actions { justify-content: flex-end; }
     .a2-default-row-control { flex-wrap: wrap; }
   }
+  .a2-position-field { display: flex; flex-direction: column; gap: 2px; }
+  .a2-position-field span { font-size: var(--a2-text-2xs); color: var(--a2-text-dim); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; }
+  .a2-position-field input { width: 4.5rem; min-height: 44px; padding: 6px 8px; background: var(--a2-surface-3); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); color: var(--a2-text); font-size: var(--a2-text-sm); text-align: center; }
+  .a2-position-field input:focus { outline: none; border-color: var(--a2-cyan); }
+  .a2-position-field input.invalid { border-color: var(--a2-red); color: var(--a2-red); }
+  .a2-position-field input.invalid:focus { border-color: var(--a2-red); }
+  .a2-position-row-error { font-size: var(--a2-text-2xs); color: var(--a2-red); }
+  /* Player Controls Position — 3x3 grid picker */
+  .a2-grid-picker-wrap { display: flex; flex-wrap: wrap; gap: var(--a2-space-4); margin-top: var(--a2-space-2); }
+  .a2-grid-picker { display: flex; flex-direction: column; gap: var(--a2-space-2); }
+  .a2-grid-picker-title { font-size: var(--a2-text-2xs); font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--a2-text-dim); }
+  .a2-grid-picker-cells { display: grid; grid-template-columns: repeat(3, 44px); grid-template-rows: repeat(3, 44px); gap: 4px; }
+  .a2-grid-cell { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; background: var(--a2-surface-3); border: 1px solid var(--a2-border); border-radius: var(--a2-radius-sm); cursor: pointer; transition: border-color .12s ease, background .12s ease; }
+  .a2-grid-cell:hover { border-color: var(--a2-border-strong); background: var(--a2-surface-2); }
+  .a2-grid-cell.selected { border-color: var(--a2-cyan); background: var(--a2-cyan-soft); }
+  .a2-grid-cell-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--a2-cyan); box-shadow: 0 0 0 3px rgba(0,0,0,.25); }
+  .a2-grid-picker-current { font-size: var(--a2-text-2xs); color: var(--a2-text-muted); }
 </style>

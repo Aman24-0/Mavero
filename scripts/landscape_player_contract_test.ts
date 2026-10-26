@@ -31,7 +31,7 @@ assert.match(shell, /\.control-fab-group \{[^}]*right: max\(16px, env\(safe-area
 assert.match(shell, /class="episode-chip"/);
 assert.match(shell, /@keyframes sheet-left/);
 // Auto-hide: FIVE-second timer (player redesign; was 10s).
-assert.match(shell, /5_000/);
+assert.match(shell, /3_000/);
 // Sheet-open state + keyboard-focus guard prevent auto-hide.
 assert.match(shell, /sourceMenuOpen && !episodeMenuOpen/);
 assert.match(shell, /focusWithinMaveroControls\(\)/);
@@ -54,8 +54,8 @@ assert.match(shell, /100dvh/);
 // Reduced motion.
 assert.match(shell, /prefers-reduced-motion: reduce/);
 // Viewport permissions preserved.
-assert.match(viewport, /allow="autoplay; fullscreen; picture-in-picture; encrypted-media"/);
-assert.match(viewport, /allowfullscreen/);
+assert.match(viewport, /allow="autoplay; picture-in-picture; encrypted-media"/);
+assert.doesNotMatch(viewport, /allowfullscreen/);
 assert.match(viewport, /sandbox=\{sandboxAttribute\}/);
 
 console.log('Immersive PlayerShell contract tests passed: full viewport, Back FAB, dedicated Landscape FAB + source chip, Episodes pill animation, 5s auto-hide with focus guard, responsive source sheet (bottom/right), safe-area, reduced-motion.');

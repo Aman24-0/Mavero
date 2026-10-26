@@ -92,6 +92,14 @@ export const LANDSCAPE_CONTROL_DEFAULT_SIZE_PX = 48;
 export const CONTROLS_SIZE_MIN_PX = 28;
 export const CONTROLS_SIZE_MAX_PX = 96;
 
+// ----- 3x3 grid placement (simple corner/edge model) ------------------------
+// A control is anchored to one of nine cells; the renderer maps the cell to
+// safe-area-aware top/bottom/left/right. This is the simple model the Admin UI
+// uses; it takes PRIORITY over the legacy percentage axes when present.
+export const CONTROLS_GRID_CELLS = ['top-left','top-center','top-right','mid-left','mid-center','mid-right','bottom-left','bottom-center','bottom-right'] as const;
+export type ControlsGridCell = (typeof CONTROLS_GRID_CELLS)[number];
+export type ControlsGridConfig = { back: ControlsGridCell | null; landscape: ControlsGridCell | null };
+
 export type ControlsPositionAnchor = 'left' | 'right' | 'top' | 'bottom' | 'center';
 
 export type ControlsAxisPosition = {
@@ -120,6 +128,8 @@ export type PlayerControlsPosition = {
   /** MAVP-3: independent per-control size overrides in px (optional).
    *  null entry / absent section = the control's default stylesheet size. */
   sizes: { back: number | null; landscape: number | null } | null;
+  /** 3x3 grid placement (takes priority over the axes above when present). */
+  grid: ControlsGridConfig | null;
 };
 
 /** The floating controls that can be positioned per source. */
@@ -220,11 +230,21 @@ function parseSizesSection(value: unknown): PlayerControlsPosition['sizes'] {
  * Parse the raw capability value. Returns null when absent or malformed —
  * the caller MUST fall back to the default (bottom-right) positioning.
  */
+function parseGridConfig(value: unknown): ControlsGridConfig | null {
+  if (!isRecord(value)) return null;
+  const read = (raw: unknown): ControlsGridCell | null =>
+    typeof raw === 'string' && (CONTROLS_GRID_CELLS as readonly string[]).includes(raw) ? (raw as ControlsGridCell) : null;
+  const back = read(value.back);
+  const landscape = read(value.landscape);
+  if (!back && !landscape) return null;
+  return { back, landscape };
+}
+
 export function parsePlayerControlsPosition(value: unknown): PlayerControlsPosition | null {
   if (!isRecord(value)) return null;
   const mode = value.mode;
   if (mode === 'default') {
-    return { mode: 'default', horizontal: null, vertical: null, portrait: null, landscape: null, back: null, sizes: null };
+    return { mode: 'default', horizontal: null, vertical: null, portrait: null, landscape: null, back: null, sizes: null, grid: null };
   }
   if (mode !== 'custom') return null;
   const position: PlayerControlsPosition = {
@@ -237,6 +257,7 @@ export function parsePlayerControlsPosition(value: unknown): PlayerControlsPosit
     // MAVP-6 (Issues 2+3): a legacy `episodes` section is an unknown key —
     // dropped by construction (never parsed, never consumed by the runtime).
     sizes: value.sizes === undefined ? null : parseSizesSection(value.sizes),
+    grid: value.grid === undefined ? null : parseGridConfig(value.grid),
   };
   // A custom config with NO usable axis and NO usable size is treated as
   // malformed — the admin most likely saved a half-empty config; default
@@ -247,6 +268,7 @@ export function parsePlayerControlsPosition(value: unknown): PlayerControlsPosit
     && !hasUsableAxis(position.portrait) && !hasUsableAxis(position.landscape)
     && !hasUsableAxis(position.back?.portrait ?? null) && !hasUsableAxis(position.back?.landscape ?? null)
     && !position.sizes
+    && !position.grid
   ) return null;
   return position;
 }
@@ -503,4 +525,43 @@ function cqw(px: number, referenceWidth: number): string {
 /** px → container-query height units at a given reference viewport height. */
 function cqh(px: number, referenceHeight: number): string {
   return `calc(${px} / ${referenceHeight} * 100cqh)`;
+}
+
+
+/**
+ * Resolve a control's 3x3 grid cell (priority over legacy axes). Returns null
+ * when the source has no grid placement for that control — the caller then
+ * falls back to the legacy percentage placement (or the stylesheet default).
+ */
+export function resolveGridCell(
+  position: PlayerControlsPosition | null,
+  control: ControlsControlId,
+): ControlsGridCell | null {
+  if (!position || position.mode !== 'custom' || !position.grid) return null;
+  return control === 'back' ? position.grid.back : position.grid.landscape;
+}
+
+/**
+ * Inline CSS for a 3x3 grid cell: safe-area-aware top/bottom/left/right with a
+ * 24px edge margin, plus a translate for centre cells. Empty string for a null
+ * cell (keep the stylesheet default).
+ */
+export function gridCellInlineStyle(cell: ControlsGridCell | null): string {
+  if (!cell) return '';
+  const EDGE = 24;
+  const top = `max(${EDGE}px, env(safe-area-inset-top))`;
+  const bottom = `max(${EDGE}px, env(safe-area-inset-bottom))`;
+  const left = `max(${EDGE}px, env(safe-area-inset-left))`;
+  const right = `max(${EDGE}px, env(safe-area-inset-right))`;
+  const [v, h] = cell.split('-') as ['top' | 'mid' | 'bottom', 'left' | 'center' | 'right'];
+  const decls: string[] = [];
+  const transforms: string[] = [];
+  if (v === 'top') decls.push(`top:${top}`, 'bottom:auto');
+  else if (v === 'bottom') decls.push(`bottom:${bottom}`, 'top:auto');
+  else { decls.push('top:50%', 'bottom:auto'); transforms.push('translateY(-50%)'); }
+  if (h === 'left') decls.push(`left:${left}`, 'right:auto');
+  else if (h === 'right') decls.push(`right:${right}`, 'left:auto');
+  else { decls.push('left:50%', 'right:auto'); transforms.push('translateX(-50%)'); }
+  if (transforms.length) decls.push(`transform:${transforms.join(' ')}`);
+  return decls.join(';');
 }

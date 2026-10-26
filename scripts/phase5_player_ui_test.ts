@@ -105,8 +105,8 @@ assert.match(landscapeBody, /exitFullscreen/, 'toggleLandscape: exitFullscreen')
 assert.match(landscapeBody, /lock\?\.\('landscape'\)/, 'toggleLandscape: lock');
 
 // --- 9. Viewport permissions preserved ---
-assert.match(viewport, /allow="autoplay; fullscreen; picture-in-picture; encrypted-media"/, 'iframe allow');
-assert.match(viewport, /allowfullscreen/, 'allowfullscreen');
+assert.match(viewport, /allow="autoplay; picture-in-picture; encrypted-media"/, 'iframe allow (fullscreen removed — Mavero owns it)');
+assert.doesNotMatch(viewport, /allowfullscreen/, 'allowfullscreen removed (Mavero owns fullscreen)');
 assert.match(viewport, /sandbox=\{sandboxAttribute\}/, 'sandbox');
 
 // --- 10. Accessibility preserved ---
@@ -163,7 +163,7 @@ assert.match(shell, /provider iframe is never invoked or manipulated/, 'cross-or
 // UPDATED (MAVERO player redesign): the inactivity auto-hide is FIVE seconds
 // (was 10s) and the removed menu state is replaced by the sheet-open guards
 // plus the keyboard-focus a11y guard (focused controls are never hidden).
-assert.match(shell, /5_000/, '5s auto-hide timer');
+assert.match(shell, /3_000/, '3s auto-hide timer');
 assert.doesNotMatch(shell, /10_000/, 'old 10s timer removed');
 assert.match(shell, /sourceMenuOpen && !episodeMenuOpen/, 'sheet-open state guards auto-hide');
 assert.match(shell, /focusWithinMaveroControls\(\)/, 'keyboard focus guard: focused controls are never hidden');

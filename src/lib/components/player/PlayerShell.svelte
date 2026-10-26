@@ -52,7 +52,7 @@
   // this shell has one bound (origin validation stays the primary gate).
   import { setActiveIframeWindowResolver } from '$lib/client/player/providers/post-message-utils';
   // Per-source Landscape-control positioning (Admin "Player Controls Position").
-  import { landscapeControlInlineStyle, controlsPlacementInlineStyle, controlsSizeInlineStyle, resolveControlPlacement, resolveControlSize, resolveLandscapeControlPlacement } from '$lib/shared/player-controls-position';
+  import { landscapeControlInlineStyle, controlsPlacementInlineStyle, controlsSizeInlineStyle, resolveControlPlacement, resolveControlSize, resolveLandscapeControlPlacement, resolveGridCell, gridCellInlineStyle } from '$lib/shared/player-controls-position';
   // MAVP-3 Issue 1: the MAVP-2 landscape-first presentation (click-time
   // request + shell mount adoption) was REMOVED — playback opens in the
   // device's EXISTING orientation on every entry path. The manual Landscape
@@ -497,12 +497,15 @@
   // it shows the CURRENT episode ("S2 · E08"), or simply "Episodes" when no
   // specific episode is active.
   $: episodeChipLabel = currentEpisode ? `S${currentEpisode.season} · E${String(currentEpisode.episode).padStart(2, '0')}` : 'Episodes';
+  // 3x3 grid placement takes priority; legacy percentage configs still work.
+  $: backGridCell = resolveGridCell(activeSourceOption?.controlsPosition ?? null, 'back');
   $: backControlStyle = [
-    controlsPlacementInlineStyle(resolveControlPlacement(activeSourceOption?.controlsPosition ?? null, 'back', playerOrientation)),
+    backGridCell ? gridCellInlineStyle(backGridCell) : controlsPlacementInlineStyle(resolveControlPlacement(activeSourceOption?.controlsPosition ?? null, 'back', playerOrientation)),
     controlsSizeInlineStyle(activeSourceOption?.controlsPosition ?? null, 'back', '--back-fab-size'),
   ].filter(Boolean).join(';');
+  $: landscapeGridCell = resolveGridCell(activeSourceOption?.controlsPosition ?? null, 'landscape');
   $: landscapeControlStyle = [
-    landscapeControlInlineStyle(resolveLandscapeControlPlacement(activeSourceOption?.controlsPosition ?? null, playerOrientation)),
+    landscapeGridCell ? gridCellInlineStyle(landscapeGridCell) : landscapeControlInlineStyle(resolveLandscapeControlPlacement(activeSourceOption?.controlsPosition ?? null, playerOrientation)),
     controlsSizeInlineStyle(activeSourceOption?.controlsPosition ?? null, 'landscape', '--landscape-fab-size'),
   ].filter(Boolean).join(';');
   $: effectiveState = resolving ? 'switching-source' : resolutionError ? resolutionKind : state;

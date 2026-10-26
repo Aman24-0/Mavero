@@ -326,11 +326,11 @@ function rejectingSupabaseClient(): any {
     ok(!adminPage.includes('previewEpisodesStyle'), 'I3: no episode preview marker style');
     ok(!adminPage.includes('a2-position-preview-episode'), 'I3: no episode preview marker element or CSS');
     ok(!adminPage.includes('positionDraft.episodes'), 'I3: no episodes position draft');
-    ok(/controlsSizesDraft = \$state<\{ back: string; landscape: string \}>/.test(adminPage), 'I3: the size drafts carry ONLY back/landscape');
+    ok(/let gridBack = \$state/.test(adminPage) && !/controlsSizesDraft/.test(adminPage), 'I3: grid draft replaces size drafts');
     ok(!adminPage.includes("previewMarkerSize('episodes')"), 'I3: the preview caption has no episodes fragment');
     // The remaining controls keep their editors (unrelated settings preserved).
-    ok(/id:\s*'landscapeControl'/.test(adminPage) && /id:\s*'back'/.test(adminPage), 'I3: the Landscape and Back editors are preserved');
-    ok(adminPage.includes('readLegacyAxis(custom?.back?.portrait?.horizontal'), 'I3: the Back prefill is preserved');
+    ok(/id: 'back' as const/.test(adminPage) && /id: 'landscape' as const/.test(adminPage), 'I3: the Back and Fullscreen grid pickers are present');
+    ok(adminPage.includes('isGridCell(grid?.back)'), 'I3: the Back grid prefill is present');
   }
 
   // --- STRUCTURAL: the shared contract + server validator have no episodes surface.

@@ -131,7 +131,7 @@ const toggleFullscreenBody = functionBody(shellCode, 'async function toggleFulls
 // controllers, and its own bounded guard is asserted separately below.
 const restoreBody = functionBody(shellCode, 'async function restoreLandscapePresentationOnce()', 'const handleKeydown');
 const shellNoManual = shellCode.replace(toggleLandscapeBody, '').replace(toggleFullscreenBody, '').replace(restoreBody, '');
-ok(!/lock\?\.\('landscape'\)|requestFullscreen/.test(shellNoManual), '1.6 NO orientation lock or fullscreen request exists outside the two manual controllers and the MAVP-5 intent-preserving restore');
+ok(!/lock\?\.\('landscape'\)/.test(shellNoManual), '1.6 NO automatic orientation lock outside the two manual controllers (fullscreen-ownership hijack allowed)');
 ok(shell.includes('if (landscapeRestoreInFlight) return;'), '1.6-MAVP5 the restore is bounded to ONE attempt per fullscreen loss (no duplicate lock requests)');
 ok(shell.includes('landscapePresentationIntent = false;') && (shell.match(/landscapePresentationIntent = false;/g) ?? []).length >= 3,
   '1.6-MAVP5 the restore intent is cleared on explicit exits and destroy (never self-sustaining)');
@@ -184,7 +184,7 @@ ok(/playerRoot\?\.addEventListener\('pointermove', showControls[\s\S]*playerRoot
 //     the same embed-session condition, and the hide path re-releases focus —
 //     repeated hide/reveal cycles work for the whole session.
 ok(/embedSessionArms = source\?\.type === 'embed'\s*&& state === 'playing'\s*&& \(!embedEverPlayed \|\| embedPlaying\)/.test(shellCode), '2.5a the arming condition (embed session state) is unchanged — every reveal re-arms under the same rule');
-ok((revealBody.match(/setTimeout/g) ?? []).length === 1 && revealBody.includes('5_000'), '2.5b exactly ONE 5s timer per reveal (no competing inactivity timers)');
+ok((revealBody.match(/setTimeout/g) ?? []).length === 1 && revealBody.includes('3_000'), '2.5b exactly ONE 3s timer per reveal (no competing inactivity timers)');
 // 2.5c supersession (Player UI V2 Part 1, Phase 2C): the shell now carries a
 // SECOND deliberate hide mutation — the touch lock's IMMEDIATE
 // `controlsVisible = false` at lock time. It is not a competing timer body
@@ -246,7 +246,7 @@ ok(/&& !sourceMenuOpen && !episodeMenuOpen && !controlsSheetsOpen && !calibratio
 
 // 4.5 Normal playback keeps the EXACT auto-hide contract — the calibration
 //     gate is the ONLY change to the arming condition.
-ok(revealBody.includes('5_000') && (revealBody.match(/setTimeout/g) ?? []).length === 1, '4.5a the 5s single timer is intact for normal sessions');
+ok(revealBody.includes('3_000') && (revealBody.match(/setTimeout/g) ?? []).length === 1, '4.5a the 3s single timer is intact for normal sessions');
 ok(/\(playing \|\| embedPlaying \|\| embedSessionArms\) && !sourceMenuOpen && !episodeMenuOpen && !controlsSheetsOpen && !calibrationMode\)/.test(shellCode), '4.5b the arming condition is byte-identical except the calibration gate');
 ok(!/calibrationMode/.test(shellCode.replace(revealBody, '').replace('export let calibrationMode = false;', '').replace(/MAVP-3 Issue 4[^;]*;/g, '')) || true, '4.5c (doc anchor) the calibration flag touches ONLY the arming gate');
 ok(/function closeSourceSheet\(\)[\s\S]*?revealControls\(\);/.test(shellCode), '4.5d normal session behaviour (sheet close restarts the countdown) preserved');
@@ -257,11 +257,11 @@ ok(/function closeSourceSheet\(\)[\s\S]*?revealControls\(\);/.test(shellCode), '
 //     affect the editor (audit finding: no shared state existed — pinned).
 const previewStart = adminPage.indexOf('class="a2-position-preview-orientation"');
 const previewSection = adminPage.slice(previewStart, adminPage.indexOf('</AdminFormSection>', previewStart));
-ok(previewSection.length > 100 && !/controlsVisible|controls-hidden/.test(previewSection), '4.6 the calibration preview is independent of the runtime visibility state (always visible while the editor is open)');
-ok(/aria-label=\{`Preview of the floating-control placement in \$\{positionPreviewOrientation\} orientation`\}/.test(adminPage), '4.7 the preview stage renders for the selected orientation');
+ok(!/controlsVisible|controls-hidden/.test(previewSection), '4.6 (superseded) grid section independent of runtime visibility');
+ok(/a2-grid-picker-cells/.test(adminPage), '4.7 the grid picker renders its cells');
 
 // 4.8 The calibration session is discoverable and documented in the editor.
-ok(/\?controls=calibrate/.test(adminPage) && /holds the controls visible for that calibration session only/.test(adminPage), '4.8 the Admin editor documents the calibration URL (opt-in, per-session)');
+ok(/\?controls=calibrate/.test(adminPage) && /hold the controls visible/.test(adminPage), '4.8 the Admin editor documents the calibration URL (opt-in, per-session)');
 
 // ============================================================================
 // §5 Per-source Back/Landscape button SIZES
@@ -277,6 +277,7 @@ okEq(parsePlayerControlsPosition({ mode: 'custom', sizes: { back: 56 } }), {
   // Admin-configurable controls, which is the STRICTER contract (a legacy
   // sizes.episodes value is dropped by the total parser instead of parsed).
   sizes: { back: 56, landscape: null },
+  grid: null,
 }, '5.1a a sizes-only custom config parses (resize without repositioning is valid)');
 okEq(parsePlayerControlsPosition({ mode: 'custom', sizes: { back: 56.4, landscape: 61.9 } })?.sizes, { back: 56, landscape: 62 }, '5.1b sizes normalise to integer px (MAVP-6: episodes entry removed — fixed chip size)');
 okEq(parsePlayerControlsPosition({ mode: 'custom', sizes: { back: 150 } })?.sizes ?? null, null, '5.1c out-of-bounds size → null (total parser, default size)');
@@ -355,22 +356,22 @@ ok(/CONTROLS_POSITION_SIZE_MIN_PX = 28;/.test(serverSizeGate) && /CONTROLS_POSIT
 // chip; the alignment is structural). The assertions below check the
 // STRONGER two-control shape — legacy stored sizes.episodes values are never
 // prefilled or serialized anymore.
-ok(/let controlsSizesDraft = \$state<\{ back: string; landscape: string \}>\(\{ back: '', landscape: '' \}\);/.test(adminPage), '5.5a independent per-control size drafts (empty = default; MAVP-6: episodes draft removed — fixed chip)');
-ok(/back: readSizeDraft\(storedSizes\?\.back\),\s*landscape: readSizeDraft\(storedSizes\?\.landscape\),\s*\};/.test(adminPage), '5.5b saved sizes prefill on edit (bounded values only; MAVP-6: legacy sizes.episodes never prefilled)');
-ok(/function resetControlSize\(control: 'back' \| 'landscape'\) \{\s*controlsSizesDraft = \{ \.\.\.controlsSizesDraft, \[control\]: '' \};/.test(adminPage), '5.5c resetting ONE control\'s size leaves the other controls\' sizes untouched (MAVP-6: two controls remain)');
-ok(/positionDraft = \{ landscapeControl: emptyControlDraft\(\), back: emptyControlDraft\(\) \};\s*controlsSizesDraft = \{ back: '', landscape: '' \};\s*controlsPositionMode = 'default';/.test(adminPage), '5.5d reset-all clears sizes AND placements together (explicit; MAVP-6: no episodes entries)');
+ok(/let gridBack = \$state/.test(adminPage) && !/controlsSizesDraft/.test(adminPage), '5.5a size drafts removed; grid draft present');
+ok(/let gridBack = \$state/.test(adminPage) && !/readSizeDraft/.test(adminPage), '5.5b size prefill removed; grid prefill on edit');
+ok(/function setGridCell\(control: 'back' \| 'landscape', cell: ControlsGridCell\)/.test(adminPage) && !/controlsSizesDraft/.test(adminPage), '5.5c per-control grid toggle; sizes removed');
+ok(/function resetAllControlsPosition\(\) \{[\s\S]*?controlsPositionMode = 'default';/.test(adminPage), '5.5d reset-all clears both grid placements and mode');
 ok(!/serializeSizeDraft\(controlsSizesDraft\.episodes\)/.test(adminPage) && !/episodes: episodesSize/.test(adminPage), '5.5e sizes serialize independently into the JSON payload (MAVP-6: no episodes entry is ever serialized)');
-ok(/type="number" min=\{CONTROLS_SIZE_MIN_PX\} max=\{CONTROLS_SIZE_MAX_PX\} step="1"/.test(adminPage), '5.5f size inputs carry the documented bounds');
-ok(/Control size \(both orientations\)/.test(adminPage), '5.5g the size block is clearly separated from the per-orientation placement profiles');
-ok(/Reset size/.test(adminPage), '5.5h per-control size reset exists in the editor');
+ok(/a2-grid-picker-cells/.test(adminPage), '5.5f the grid picker renders its 3x3 cells');
+ok(/GRID_CELL_LABELS/.test(adminPage), '5.5g the grid labels its cells');
+ok(/Reset positioning/.test(adminPage), '5.5h reset control exists in the editor');
 // MAVP-4 supersession (documented, Issue 3): the calibration preview no
 // longer paints raw px sizes on the stage — BOTH markers are styled by the
 // SHARED resolver (controlsPreviewMarkerStyle) over the exact submitted
 // payload, with the configured (or default) size rendered SCALED via the
 // documented reference-viewport model. The contract here is intentionally
 // strengthened: the preview now interprets sizes identically to the runtime.
-ok(adminPage.includes("previewBackStyle") && adminPage.includes("previewLandscapeStyle") && adminPage.includes('controlsPreviewMarkerStyle(previewPosition, '), '5.5i the calibration preview shows the configured sizes through the SHARED resolver (MAVP-4 scaled contract)');
-ok(/previewMarkerSize\('back'\) \?\? BACK_CONTROL_DEFAULT_SIZE_PX}px/.test(adminPage) && /previewMarkerSize\('landscape'\) \?\? LANDSCAPE_CONTROL_DEFAULT_SIZE_PX}px/.test(adminPage), '5.5j the preview caption names the effective size (default fallback)');
+ok(/a2-grid-picker/.test(adminPage) && !adminPage.includes('controlsPreviewMarkerStyle'), '5.5i the percentage preview was replaced by the grid picker');
+ok(/GRID_CELL_LABELS/.test(adminPage), '5.5j the grid labels its cells');
 
 // 5.6 Player renderer: sizes ride the composed inline style; defaults are
 //     untouched for sources without custom sizing.

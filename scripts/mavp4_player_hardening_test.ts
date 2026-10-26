@@ -280,12 +280,12 @@ function rawRegionCode(source: string, startMarker: string, endMarker: string): 
   ok(controlsPreviewMarkerStyle(parsePlayerControlsPosition(null), 'back', 'portrait').includes(`calc(${BACK_CONTROL_DEFAULT_SIZE_PX}`) === true, '3.5c a null/default config falls back to the default size in the preview');
 
   // 3.6 The Admin preview USES the shared resolvers (no local re-implementation).
-  ok(adminPageCode.includes('parsePlayerControlsPosition(JSON.parse(controlsPositionJson))'), '3.6a the preview parses the EXACT payload the form submits through the REAL parser');
-  ok(adminPageCode.includes("controlsPreviewMarkerStyle(previewPosition, 'back', positionPreviewOrientation)") && adminPageCode.includes("controlsPreviewMarkerStyle(previewPosition, 'landscape', positionPreviewOrientation)"), '3.6b both markers are styled by the shared geometry helper');
+  ok(/a2-grid-picker/.test(adminPageCode) && !adminPageCode.includes('controlsPreviewMarkerStyle'), '3.6a the Admin uses the 3x3 grid picker (percentage preview removed)');
+  ok(/a2-grid-picker/.test(adminPageCode), '3.6b the Admin renders the 3x3 grid picker');
   ok(!/function previewProfileStyle/.test(adminPageCode), '3.6c the divergent local preview re-implementation is GONE');
-  ok(adminPageCode.includes("previewBackStyle") && adminPageCode.includes("previewLandscapeStyle"), '3.6d the markers bind the shared styles reactively (draft changes update the preview)');
-  ok(/\.a2-position-preview \{[^}]*container-type:\s*size;/.test(adminPage), '3.6e the stage is a size-query container (cqw/cqh scaling model)');
-  ok(/\.a2-position-preview \{[^}]*aspect-ratio:\s*844\s*\/\s*390;/.test(adminPage) && /\.a2-position-preview\.portrait \{[^}]*aspect-ratio:\s*390\s*\/\s*844;/.test(adminPage), '3.6f the stages keep the REFERENCE viewport aspect ratios in both orientations');
+  ok(!adminPageCode.includes('previewBackStyle'), '3.6d the old preview bindings are gone');
+  ok(/\.a2-grid-picker-cells \{/.test(adminPage), '3.6e the grid picker has its own cell-grid CSS');
+  ok(/\.a2-grid-cell \{/.test(adminPage), '3.6f the grid cells are styled');
   ok(!/width:12px;\s*height:12px|width:14px;\s*height:14px/.test(adminPageCode.replace(/\s+/g, '')), '3.6g the fixed 12/14px marker boxes are gone (sizes come from the shared contract)');
 }
 
