@@ -544,12 +544,17 @@
           <div class="a2-row-head">
             <h3 class="a2-h3">Channels{channelsForOpenSource() ? ` (${formatCount(channelsForOpenSource()!.total)})` : ''}</h3>
             <div class="a2-actions">
-              <form method="POST" action="?/refreshSource" use:enhance={refreshEnhance}>
-                <input type="hidden" name="id" value={sourceId} />
-                <button type="submit" class="a2-btn a2-btn-sm" disabled={refreshing || previewing} title="Refresh this source (fetches its upstream catalogue and writes entries/endpoints)" aria-label="Refresh source {editingSource.name}">
-                  {#if refreshing}<span class="spinner-icon"><LoaderCircle size={14} aria-hidden="true" /></span> Refreshing…{:else}<RefreshCw size={14} /> Refresh{/if}
-                </button>
-              </form>
+              {#if editingSource?.source_type !== 'm3u_playlist'}
+                <!-- m3u_playlist sources use "Fetch & Save" on the card; the old
+                     server-side Refresh times out (HTML 504). Keep Refresh only
+                     for builtin / API sources. -->
+                <form method="POST" action="?/refreshSource" use:enhance={refreshEnhance}>
+                  <input type="hidden" name="id" value={sourceId} />
+                  <button type="submit" class="a2-btn a2-btn-sm" disabled={refreshing || previewing} title="Refresh this source (fetches its upstream catalogue and writes entries/endpoints)" aria-label="Refresh source {editingSource.name}">
+                    {#if refreshing}<span class="spinner-icon"><LoaderCircle size={14} aria-hidden="true" /></span> Refreshing…{:else}<RefreshCw size={14} /> Refresh{/if}
+                  </button>
+                </form>
+              {/if}
               <form method="POST" action="?/previewSource" use:enhance={previewEnhance}>
                 <input type="hidden" name="id" value={sourceId} />
                 <button type="submit" class="a2-btn a2-btn-sm" disabled={refreshing || previewing} title="Preview this source (dry run — nothing is written)" aria-label="Preview source {editingSource.name}">
@@ -583,7 +588,7 @@
                 {#if channelsSearchDraft.trim() !== ''}
                   No channels match this search.
                 {:else}
-                  No channels imported yet — run Refresh (top-right) to fetch this source's catalogue.
+                  No channels imported yet — {editingSource?.source_type === 'm3u_playlist' ? 'use Fetch & Save on the source card to import this playlist.' : "run Refresh (top-right) to fetch this source's catalogue."}
                 {/if}
               </p>
             {:else}

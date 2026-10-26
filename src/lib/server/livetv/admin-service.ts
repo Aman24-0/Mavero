@@ -612,8 +612,16 @@ function sumEmbedCounts(node: unknown): number | null {
 
 export async function deleteLivetvSource(client: SupabaseClient<Database>, sourceId: unknown): Promise<void> {
   const id = requireUuid(sourceId, 'Source');
-  const impact = await describeLivetvSourceDeleteImpact(client, id);
-  if (impact.builtin) fail('The built-in LiveGT V1 source cannot be deleted (it is delete-protected by the database).');
+  // Impact is BEST-EFFORT: if it cannot be computed, still allow the delete —
+  // the database's delete-protection trigger guards the builtin source anyway.
+  let builtin = false;
+  try {
+    const impact = await describeLivetvSourceDeleteImpact(client, id);
+    builtin = impact.builtin;
+  } catch {
+    builtin = false;
+  }
+  if (builtin) fail('The built-in LiveGT V1 source cannot be deleted (it is delete-protected by the database).');
   await executeOrMap(async () => {
     const { error } = await client.from('livetv_sources').delete().eq('id', id);
     if (error) throw error;

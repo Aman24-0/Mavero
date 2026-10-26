@@ -1,22 +1,14 @@
 /**
  * Mavеro Live TV HLS stream proxy — Cloudflare Worker.
  *
- * Drop-in replacement for the SvelteKit /api/livetv/stream-proxy endpoint, for
- * when the CDN has blacklisted Netlify's AWS data-centre IPs (Sony 403 /
- * Hotstar Akamai 475). Runs on Cloudflare's edge, so the origin IP is not the
- * one the CDN blocked.
+ * GET  /?u=<absolute url>[&r=<referer>]  → rewritten manifest / proxied segment
+ * HEAD /?u=…                              → 200 + Content-Type, empty body
+ *   (video players probe with HEAD before fetching; 405 broke them)
  *
- * Behaviour is identical to the in-app proxy:
- *   GET /?u=<absolute url>[&r=<referer>]
- *   - https + allowlisted host only (NOT an open proxy)
- *   - provider Referer/Origin per CDN + desktop-Chrome UA + Sec-Fetch-* headers
- *     on EVERY request (manifest AND segments)
- *   - rewrites the HLS manifest so every segment/key/variant URI points back to
- *     this Worker, carrying the same &r= Referer
- *   - Range passthrough (206) for segments
- *   - permissive CORS so the browser can fetch it cross-origin
- *
- * SCOPE: HLS only. DASH is not proxied.
+ * Same behaviour as the in-app /api/livetv/stream-proxy: https + allowlist only,
+ * provider Referer/Origin + desktop-Chrome UA + Sec-Fetch-* on every request,
+ * manifest rewrite (segments/keys/variants back through this Worker, carrying
+ * the same &r=), Range passthrough, permissive CORS. HLS only.
  */
 
 const ALLOWED_HOST_SUFFIXES = ['hotstar.com', 'slivcdn.com'];
@@ -31,7 +23,7 @@ const BROWSER_UA =
 
 const CORS_HEADERS: Record<string, string> = {
 	'access-control-allow-origin': '*',
-	'access-control-allow-methods': 'GET, OPTIONS',
+	'access-control-allow-methods': 'GET, HEAD, OPTIONS',
 	'access-control-expose-headers': 'content-range, content-length, accept-ranges',
 	'cache-control': 'no-store'
 };
@@ -63,6 +55,16 @@ function safeReferer(raw: string | null): string | null {
 	}
 }
 
+/** Best-effort content type for a HEAD probe when the upstream won't answer one. */
+function guessContentType(pathname: string): string {
+	const path = pathname.toLowerCase();
+	if (path.endsWith('.m3u8')) return 'application/vnd.apple.mpegurl';
+	if (path.endsWith('.ts')) return 'video/mp2t';
+	if (path.endsWith('.m4s') || path.endsWith('.mp4') || path.endsWith('.m4a')) return 'video/mp4';
+	if (path.endsWith('.aac')) return 'audio/aac';
+	return 'application/octet-stream';
+}
+
 function jsonError(status: number, code: string, message: string): Response {
 	return new Response(JSON.stringify({ ok: false, error: { code, message } }), {
 		status,
@@ -73,8 +75,7 @@ function jsonError(status: number, code: string, message: string): Response {
 function rewriteManifest(body: string, baseUrl: string, workerOrigin: string, referer: string | null): string {
 	const base = new URL(baseUrl);
 	const suffix = referer ? `&r=${encodeURIComponent(referer)}` : '';
-	const proxify = (absUrl: string): string =>
-		`${workerOrigin}/?u=${encodeURIComponent(absUrl)}${suffix}`;
+	const proxify = (absUrl: string): string => `${workerOrigin}/?u=${encodeURIComponent(absUrl)}${suffix}`;
 	const out: string[] = [];
 	for (const rawLine of body.split('\n')) {
 		const line = rawLine.replace(/\r$/, '');
@@ -108,9 +109,10 @@ export default {
 		if (request.method === 'OPTIONS') {
 			return new Response(null, { status: 204, headers: CORS_HEADERS });
 		}
-		if (request.method !== 'GET') {
-			return jsonError(405, 'METHOD_NOT_ALLOWED', 'Only GET is supported.');
+		if (request.method !== 'GET' && request.method !== 'HEAD') {
+			return jsonError(405, 'METHOD_NOT_ALLOWED', 'Only GET and HEAD are supported.');
 		}
+		const isHead = request.method === 'HEAD';
 
 		const url = new URL(request.url);
 		const raw = url.searchParams.get('u') ?? '';
@@ -145,6 +147,24 @@ export default {
 			'sec-fetch-mode': 'cors',
 			'sec-fetch-site': 'cross-site'
 		};
+
+		// HEAD probe — players check Content-Type before fetching. Always answer
+		// 200 with the upstream (or a best-guess) type and an empty body.
+		if (isHead) {
+			let contentType = guessContentType(target.pathname);
+			try {
+				const head = await fetch(target.toString(), { method: 'HEAD', headers, redirect: 'follow' });
+				const upstreamType = head.headers.get('content-type');
+				if (upstreamType) contentType = upstreamType;
+			} catch {
+				/* keep the guess */
+			}
+			return new Response(null, {
+				status: 200,
+				headers: { 'content-type': contentType, 'accept-ranges': 'bytes', ...CORS_HEADERS }
+			});
+		}
+
 		const range = request.headers.get('range');
 		if (range) headers.range = range;
 
