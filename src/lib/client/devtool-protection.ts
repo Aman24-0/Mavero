@@ -194,10 +194,10 @@ export const DEVTOOL_BLOCKED_MESSAGE = 'Page unavailable.';
 export const DEVTOOL_BLOCKED_PAGE_HTML =
   '<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><meta name="theme-color" content="#050708"><title>Page unavailable.</title>' +
   '<style>html,body{margin:0;padding:0;height:100%;background:#050708}' +
-  "body{display:flex;align-items:center;justify-content:center;color:#9db3aa;font-family:Inter,ui-sans-serif,system-ui,-apple-system,'Segoe UI',Arial,sans-serif;-webkit-font-smoothing:antialiased}" +
+  "body{display:flex;align-items:center;justify-content:center;color:#9da3a8;font-family:Inter,ui-sans-serif,system-ui,-apple-system,'Segoe UI',Arial,sans-serif;-webkit-font-smoothing:antialiased}" +
   '.card{max-width:340px;padding:0 28px;text-align:center}' +
-  '.brand{margin:0 0 20px;font-size:.68rem;font-weight:800;letter-spacing:.34em;text-transform:uppercase;color:#60736c}' +
-  '.title{margin:0 0 10px;font-size:1.05rem;font-weight:700;letter-spacing:.01em;color:#f2fff8}' +
+  '.brand{margin:0 0 20px;font-size:.68rem;font-weight:800;letter-spacing:.34em;text-transform:uppercase;color:#60686c}' +
+  '.title{margin:0 0 10px;font-size:1.05rem;font-weight:700;letter-spacing:.01em;color:#f5f5f5}' +
   '.note{margin:0;font-size:.8rem;line-height:1.65}' +
   '</style></head>' +
   '<body><main class="card"><p class="brand">Mavero</p><h1 class="title">Page unavailable.</h1>' +

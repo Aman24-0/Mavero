@@ -644,7 +644,7 @@
     color: var(--color-primary);
     font-size: .6rem; font-weight: 800;
     letter-spacing: .14em; text-transform: uppercase;
-    text-shadow: 0 0 10px rgba(0, 255, 156, .3);
+    text-shadow: 0 0 10px rgba(255, 255, 255, .3);
   }
   .upcoming-header h1 {
     margin: 8px 0 6px;
@@ -878,7 +878,7 @@
     letter-spacing: .12em; text-transform: uppercase;
     padding-bottom: 8px;
     border-bottom: 1px solid var(--color-border);
-    text-shadow: 0 0 10px rgba(0, 255, 156, .25);
+    text-shadow: 0 0 10px rgba(255, 255, 255, .25);
   }
 
   .day-cards {
@@ -1033,7 +1033,7 @@
     font: inherit;
     font-size: .76rem; font-weight: 700;
     cursor: pointer;
-    box-shadow: 0 4px 18px rgba(0,255,156,.18), var(--glow-primary);
+    box-shadow: 0 4px 18px rgba(255, 255, 255,.18), var(--glow-primary);
     transition: transform var(--motion-fast) var(--ease-out), filter var(--motion-fast) var(--ease-out);
   }
   .empty-action:hover, .retry-btn:hover { transform: translateY(-1px); filter: brightness(1.06); }

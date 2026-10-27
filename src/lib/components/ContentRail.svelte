@@ -159,7 +159,7 @@
     display: inline-flex; align-items: center; gap: 7px;
     color: var(--color-primary);
     font-size: .58rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase;
-    text-shadow: 0 0 10px rgba(0, 255, 156, .3);
+    text-shadow: 0 0 10px rgba(255, 255, 255, .3);
   }
   .section-title {
     margin: 4px 0 0;
@@ -227,7 +227,7 @@
     outline: 2px solid var(--color-focus); outline-offset: 2px;
   }
   .rail-nav:hover {
-    background: rgba(0, 255, 156, .12);
+    background: rgba(255, 255, 255, .12);
     border-color: var(--color-primary-border);
     box-shadow: var(--glow-primary);
   }

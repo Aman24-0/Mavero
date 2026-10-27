@@ -123,7 +123,7 @@ const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url),
 {
   ok(!adminAppShell.includes('cloudstream'), '6: AdminAppShell has no CloudStream nav entry');
   ok(!adminAppShell.includes("id: 'extensions'"), '6: no new Extensions nav item');
-  ok(adminAppShell.includes("{ id: 'integrations', label: 'Integrations', href: '/admin/system/integrations'"), '6: single System → Integrations entry remains');
+  ok(adminAppShell.includes("{ id: 'integrations', label: 'Add-ons & Extensions', href: '/admin/system/integrations'"), '6: single System → Add-ons & Extensions entry remains (renamed 2026-10)');
   // No dedicated CloudStream admin route was created.
   const routesDir = new URL('../src/routes/admin/system/', import.meta.url);
   const entries = readdirSync(routesDir);

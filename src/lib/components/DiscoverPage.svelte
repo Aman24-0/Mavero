@@ -934,7 +934,7 @@
      object-fit: cover so no letterboxing appears. */
   .hero-slide .hero-image { transform: scale(1); transition: transform var(--motion-slow, 600ms) var(--ease-out, ease-out); }
   .hero-slide.active .hero-image { transform: scale(1.03); }
-  .hero-kicker { color: var(--color-primary); font-size: .62rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; text-shadow: 0 0 12px rgba(0,255,156,.3); }
+  .hero-kicker { color: var(--color-primary); font-size: .62rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; text-shadow: 0 0 12px rgba(255, 255, 255,.3); }
   .hero-copy h1 {
     margin: 8px 0 0; color: var(--color-text); font-size: clamp(2rem, 5.5vw, 3.8rem); font-weight: 900;
     letter-spacing: -.03em; line-height: .95; text-wrap: balance;
@@ -952,10 +952,10 @@
   .hero-play {
     display: inline-flex; align-items: center; gap: 7px; padding: 10px 24px; border-radius: 999px;
     color: #050708; font-size: .82rem; font-weight: 800; text-decoration: none;
-    background: var(--color-primary); box-shadow: 0 4px 20px rgba(0,255,156,.22), var(--glow-primary);
+    background: var(--color-primary); box-shadow: 0 4px 20px rgba(255, 255, 255,.22), var(--glow-primary);
     transition: transform var(--motion-fast) var(--ease-out), filter var(--motion-fast) var(--ease-out), box-shadow var(--motion-fast) var(--ease-out);
   }
-  .hero-play:hover { transform: translateY(-1px); filter: brightness(1.06); box-shadow: 0 6px 24px rgba(0,255,156,.32), var(--glow-primary); }
+  .hero-play:hover { transform: translateY(-1px); filter: brightness(1.06); box-shadow: 0 6px 24px rgba(255, 255, 255,.32), var(--glow-primary); }
   .hero-play:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 3px; }
   .hero-btn {
     display: inline-flex; align-items: center; gap: 5px; padding: 10px 16px; border-radius: 999px;

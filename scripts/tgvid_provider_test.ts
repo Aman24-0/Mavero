@@ -254,12 +254,12 @@ ok(parseTgvidContentTags('not a url') === null, '§4 tag parser: garbage rejecte
 const freshAdapter = new TgvidPlayerAdapter();
 ok(freshAdapter.startAtParam?.() === 't', '§5 startAtParam is the documented t (seconds)');
 
-computedStyles.set('--color-primary', '#00ff9c');
+computedStyles.set('--color-primary', '#ffffff');
 const finalized = freshAdapter.finalizeEmbedUrl?.(MOVIE_URL);
-ok(finalized === `${MOVIE_URL}&color=00ff9c`, '§5 finalizeEmbedUrl appends the live accent token WITHOUT #');
+ok(finalized === `${MOVIE_URL}&color=ffffff`, '§5 finalizeEmbedUrl appends the live accent token WITHOUT #');
 computedStyles.set('--color-primary', '00b4ff');
 ok(freshAdapter.finalizeEmbedUrl?.(MOVIE_URL) === `${MOVIE_URL}&color=00b4ff`, '§5 bare hex accent passes through unchanged');
-computedStyles.set('--color-primary', 'rgb(0, 255, 156)');
+computedStyles.set('--color-primary', 'rgb(255, 255, 255)');
 ok(freshAdapter.finalizeEmbedUrl?.(MOVIE_URL) === null, '§5 invalid accent → null (URL unchanged, never invented)');
 computedStyles.clear();
 
@@ -373,7 +373,7 @@ function content(type: 'movie' | 'series', tmdb?: string): NormalizedMediaItem {
     description: 'Fixture',
     poster: 'https://image.example.test/poster.jpg',
     backdrop: 'https://image.example.test/backdrop.jpg',
-    accent: '#00ff9c',
+    accent: '#ffffff',
     source: { provider: 'tmdb', externalId: tmdb, fetchedAt: new Date().toISOString() },
     externalIds: { tmdb },
   };

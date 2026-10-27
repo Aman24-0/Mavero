@@ -317,15 +317,16 @@
   /* ============================================================
      Navigation spinner — PRIMARY loading feedback.
      Compact circular spinner, fixed top-center, below the mobile
-     status bar / notch. Dark translucent background + Mavero green
+     status bar / notch. Dark translucent background + Mavero white
      rotating ring + subtle glow. This is the clear "navigation is
      loading" signal the user sees immediately on tap.
 
      This spinner lives in the ROOT layout and serves ALL routes
      (both user-facing and admin). It uses the consumer brand token
-     --color-primary (Mavero green #00ff9c), NOT the admin-scoped
-     --a2-cyan token. Admin pages that want a cyan spinner should
-     scope an override inside AdminAppShell, not here.
+     --color-primary (Mavero white #ffffff — 2026-10 rebrand from
+     cyber green), NOT the admin-scoped --a2-cyan token. Admin pages
+     that want a cyan spinner should scope an override inside
+     AdminAppShell, not here.
      ============================================================ */
   .nav-spinner {
     position: fixed;
@@ -342,15 +343,15 @@
     background: rgba(5, 7, 8, .72);
     backdrop-filter: blur(8px);
     -webkit-backdrop-filter: blur(8px);
-    border: 1px solid rgba(0, 255, 156, .22);
-    box-shadow: 0 0 14px rgba(0, 255, 156, .3), 0 2px 8px rgba(0, 0, 0, .4);
+    border: 1px solid rgba(255, 255, 255, .22);
+    box-shadow: 0 0 14px rgba(255, 255, 255, .3), 0 2px 8px rgba(0, 0, 0, .4);
   }
   .nav-spinner-ring {
     width: 20px;
     height: 20px;
     border-radius: 50%;
     border: 2px solid rgba(242, 255, 248, .12);
-    border-top-color: var(--color-primary, #00ff9c);
+    border-top-color: var(--color-primary, #ffffff);
     animation: nav-spinner-rotate 0.7s linear infinite;
   }
   @keyframes nav-spinner-rotate {
@@ -360,7 +361,7 @@
   /* ============================================================
      Navigation progress bar — SECONDARY peripheral cue.
      Thin static accent line at the very top edge. Uses the consumer
-     brand color (--color-primary, Mavero green) — NOT the admin
+     brand color (--color-primary, Mavero white) — NOT the admin
      cyan token. See the nav-spinner comment above for rationale.
      ============================================================ */
   .nav-progress {
@@ -371,7 +372,7 @@
     height: 3px;
     z-index: 9999;
     pointer-events: none;
-    background: linear-gradient(90deg, var(--color-primary, #00ff9c), var(--color-primary-hover, #00e88c));
+    background: linear-gradient(90deg, var(--color-primary, #ffffff), var(--color-primary-hover, #e6e6e6));
     opacity: .55;
   }
 
@@ -381,8 +382,8 @@
     .nav-spinner-ring {
       animation: none;
       border-color: rgba(242, 255, 248, .12);
-      border-top-color: var(--color-primary, #00ff9c);
-      border-right-color: var(--color-primary, #00ff9c);
+      border-top-color: var(--color-primary, #ffffff);
+      border-right-color: var(--color-primary, #ffffff);
     }
   }
 </style>

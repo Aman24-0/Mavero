@@ -307,7 +307,7 @@
     box-shadow: var(--glow-primary);
   }
   .mc-select:focus-visible .mc-select-box {
-    box-shadow: 0 0 0 3px rgba(0, 255, 156, .35);
+    box-shadow: 0 0 0 3px rgba(255, 255, 255, .35);
   }
   .mc-select:active .mc-select-box { transform: scale(.92); }
   .mc-title-btn {
@@ -398,7 +398,7 @@
      hover treatment while Play is hovered/focused so the pointer
      transition poster → Play causes no flicker. Keyboard focus
      (:focus-visible) and TV-style focus were already covered below. */
-  .mc-play:hover { opacity: 1; background: var(--color-primary); filter: brightness(1.06); transform: scale(1.12); box-shadow: 0 6px 20px rgba(0,255,156,.4), var(--glow-primary); }
+  .mc-play:hover { opacity: 1; background: var(--color-primary); filter: brightness(1.06); transform: scale(1.12); box-shadow: 0 6px 20px rgba(255, 255, 255,.4), var(--glow-primary); }
   .mc-wrap:has(.mc-play:hover) .mc-poster, .mc-wrap:has(.mc-play:focus-visible) .mc-poster {
     transform: translateY(-4px) scale(1.04);
     box-shadow: 0 18px 36px rgba(0,0,0,.55), 0 0 0 1px var(--color-primary-border), var(--glow-primary);

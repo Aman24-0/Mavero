@@ -141,7 +141,7 @@
         { id: 'feature-control', label: 'Feature Control', href: '/admin/system/feature-control', icon: Layers, matchPrefix: '/admin/system/feature-control' },
         { id: 'livetv', label: 'Live TV', href: '/admin/system/livetv', icon: Tv, matchPrefix: '/admin/system/livetv' },
         { id: 'downloads', label: 'Downloads', href: '/admin/system/downloads', icon: Download, matchPrefix: '/admin/system/downloads' },
-        { id: 'integrations', label: 'Integrations', href: '/admin/system/integrations', icon: Puzzle, matchPrefix: '/admin/system/integrations' },
+        { id: 'integrations', label: 'Add-ons & Extensions', href: '/admin/system/integrations', icon: Puzzle, matchPrefix: '/admin/system/integrations' },
       ]
     },
     {
@@ -833,7 +833,7 @@
     height: 6px;
     border-radius: 50%;
     background: var(--a2-green);
-    box-shadow: 0 0 8px rgba(0, 255, 156, 0.5);
+    box-shadow: 0 0 8px rgba(255, 255, 255, 0.5);
     animation: a2-pulse-dot var(--a2-motion-ambient) ease-in-out infinite;
   }
   @keyframes a2-pulse-dot {

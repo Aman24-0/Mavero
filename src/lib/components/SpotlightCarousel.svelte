@@ -382,7 +382,7 @@
     font-weight: 800;
     letter-spacing: .12em;
     text-transform: uppercase;
-    text-shadow: 0 0 12px rgba(0, 255, 156, .3);
+    text-shadow: 0 0 12px rgba(255, 255, 255, .3);
   }
   .slide-title {
     margin: 8px 0 0;
@@ -429,7 +429,7 @@
     color: #050708;
     background: var(--color-primary);
     border: 1px solid var(--color-primary);
-    box-shadow: 0 4px 20px rgba(0, 255, 156, .22), var(--glow-primary);
+    box-shadow: 0 4px 20px rgba(255, 255, 255, .22), var(--glow-primary);
   }
   .slide-play:hover { transform: translateY(-1px); filter: brightness(1.06); }
   .slide-play:active { transform: scale(.98); }

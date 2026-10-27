@@ -528,9 +528,9 @@
   }
   .rail-nav:focus-visible { outline: 2px solid var(--color-focus, #f5f5f5); outline-offset: 2px; }
   .rail-nav:hover:not(:disabled) {
-    background: rgba(0, 255, 156, .12);
-    border-color: var(--color-primary-border, rgba(0, 255, 156, .4));
-    box-shadow: var(--glow-primary, 0 0 18px rgba(0, 255, 156, .18));
+    background: rgba(255, 255, 255, .12);
+    border-color: var(--color-primary-border, rgba(255, 255, 255, .4));
+    box-shadow: var(--glow-primary, 0 0 18px rgba(255, 255, 255, .18));
   }
   .rail-nav:disabled { opacity: .22; pointer-events: none; box-shadow: none; }
   .rail-nav-prev { left: 6px; }

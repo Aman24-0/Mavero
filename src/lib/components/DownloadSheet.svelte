@@ -715,12 +715,12 @@
        aliases. Without a palette (standalone entry points) every fallback
        preserves the exact previous neutral styling. The override is
        scoped to THIS layer — it never reaches :root or other routes. */
-    --accent: var(--dp-accent, var(--color-primary, #00ff9c));
-    --accent-strong: var(--dp-accent, var(--color-primary-hover, #00e676));
-    --accent-soft: var(--dp-accent-soft, var(--color-primary-soft, rgba(0, 255, 156, .08)));
+    --accent: var(--dp-accent, var(--color-primary, #ffffff));
+    --accent-strong: var(--dp-accent, var(--color-primary-hover, #e6e6e6));
+    --accent-soft: var(--dp-accent-soft, var(--color-primary-soft, rgba(255, 255, 255, .08)));
     --accent-2: var(--dp-accent-2, var(--color-secondary, #00d9ff));
     --accent-2-soft: var(--dp-accent-2-soft, var(--color-secondary-soft, rgba(0, 217, 255, .08)));
-    --glow-primary: 0 0 20px var(--dp-glow, rgba(0, 255, 156, .15));
+    --glow-primary: 0 0 20px var(--dp-glow, rgba(255, 255, 255, .15));
   }
   .dl-backdrop {
     position: absolute;

@@ -46,7 +46,7 @@
   .tone-good {
     color: var(--color-primary);
     border-color: var(--color-primary-border);
-    background: rgba(0, 255, 156, .06);
+    background: rgba(255, 255, 255, .06);
   }
   .tone-good .status-dot { box-shadow: 0 0 6px var(--color-primary); }
   .tone-warn {

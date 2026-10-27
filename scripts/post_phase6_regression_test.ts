@@ -87,12 +87,14 @@ ok('7. Missing Media demand: created ONLY from user playback attempts (not from 
 // 3. Admin theme scoping — root green + AdminAppShell cyan override
 // ============================================================
 
-// 3a. Root layout uses green (--color-primary)
-assert.match(rootLayout, /border-top-color: var\(--color-primary, #00ff9c\)/, '3a. Root nav-spinner-ring uses --color-primary (green)');
-assert.match(rootLayout, /rgba\(0, 255, 156/, '3b. Root nav-spinner border/glow uses green rgba(0, 255, 156)');
-assert.match(rootLayout, /linear-gradient\(90deg, var\(--color-primary/, '3c. Root nav-progress uses --color-primary gradient (green)');
+// 3a. Root layout uses the consumer brand color (--color-primary, now white)
+// 2026-10 rebrand: --color-primary changed from #00ff9c (cyber green) to
+// #ffffff (white). The "consumer brand, not admin cyan" contract is unchanged.
+assert.match(rootLayout, /border-top-color: var\(--color-primary, #ffffff\)/, '3a. Root nav-spinner-ring uses --color-primary (white — 2026-10 rebrand)');
+assert.match(rootLayout, /rgba\(255, 255, 255/, '3b. Root nav-spinner border/glow uses white rgba(255, 255, 255) — 2026-10 rebrand');
+assert.match(rootLayout, /linear-gradient\(90deg, var\(--color-primary/, '3c. Root nav-progress uses --color-primary gradient (white)');
 assert.doesNotMatch(rootLayout, /var\(--a2-cyan/, '3d. Root layout does NOT reference --a2-cyan (no admin token leak)');
-ok('8. Root layout loading UI: green (--color-primary) — correct for user-facing pages');
+ok('8. Root layout loading UI: white (--color-primary — 2026-10 rebrand from green) — correct for user-facing pages');
 
 // 3b. AdminAppShell has cyan override for admin routes
 assert.match(adminAppShell, /\.a2-shell ~ :global\(\.nav-spinner\)/, '3e. AdminAppShell has .a2-shell ~ :global(.nav-spinner) override');

@@ -1314,7 +1314,7 @@
   .cs-repo-action span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .cs-repo-action:hover { color: var(--a2-cyan); border-color: var(--a2-cyan-border); }
   .cs-repo-action-danger:hover { color: var(--a2-red); border-color: var(--a2-red-border); }
-  .cs-repo-action[data-copied='true'] { color: var(--a2-green); border-color: rgba(0, 255, 156, 0.35); }
+  .cs-repo-action[data-copied='true'] { color: var(--a2-green); border-color: rgba(255, 255, 255, 0.35); }
   .cs-repo-main, .cs-ext-main { min-width: 0; display: flex; flex-direction: column; gap: var(--a2-space-1); flex: 1; }
   .cs-ext-name { font-size: var(--a2-text-sm); font-weight: 600; color: var(--a2-text-bright); }
   .cs-repo-meta, .cs-ext-meta {

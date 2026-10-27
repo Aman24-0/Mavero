@@ -212,7 +212,7 @@
     height: 240px;
   }
   .grid-line {
-    stroke: rgba(0, 255, 156, .06);
+    stroke: rgba(255, 255, 255, .06);
     stroke-width: 1;
   }
   .axis-label {
@@ -222,7 +222,7 @@
     font-weight: 500;
   }
   .area-fill {
-    fill: rgba(0, 255, 156, .08);
+    fill: rgba(255, 255, 255, .08);
     stroke: none;
   }
   .line {
@@ -260,7 +260,7 @@
     text-align: center;
     border: 1px dashed var(--color-border-strong);
     border-radius: var(--radius-md);
-    background: rgba(0, 255, 156, .012);
+    background: rgba(255, 255, 255, .012);
   }
   .chart-empty-text {
     color: var(--color-text-muted);

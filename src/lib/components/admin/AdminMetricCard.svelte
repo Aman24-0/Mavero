@@ -65,7 +65,7 @@
   }
   .metric-card.linked:hover {
     border-color: var(--color-primary-border);
-    background: rgba(0, 255, 156, .03);
+    background: rgba(255, 255, 255, .03);
     transform: translateY(-2px);
   }
   .metric-card.linked:focus-visible {

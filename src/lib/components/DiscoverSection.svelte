@@ -772,9 +772,9 @@
   .type-chip:focus-visible { outline: 2px solid var(--color-focus, #f5f5f5); outline-offset: 1px; }
   .type-chip.active {
     color: #050708;
-    background: var(--color-primary, #00ff9c);
-    border-color: var(--color-primary, #00ff9c);
-    box-shadow: 0 0 14px rgba(0, 255, 156, .22);
+    background: var(--color-primary, #ffffff);
+    border-color: var(--color-primary, #ffffff);
+    box-shadow: 0 0 14px rgba(255, 255, 255, .22);
   }
 
   .section-link {
@@ -818,9 +818,9 @@
     outline: 2px solid var(--color-focus, #f5f5f5); outline-offset: 2px;
   }
   .rail-nav:hover:not(:disabled) {
-    background: rgba(0, 255, 156, .12);
-    border-color: var(--color-primary-border, rgba(0, 255, 156, .4));
-    box-shadow: var(--glow-primary, 0 0 18px rgba(0, 255, 156, .18));
+    background: rgba(255, 255, 255, .12);
+    border-color: var(--color-primary-border, rgba(255, 255, 255, .4));
+    box-shadow: var(--glow-primary, 0 0 18px rgba(255, 255, 255, .18));
   }
   /* Edge state: visibly and functionally off at the scroll ends (the
      layout slot stays — no arrow appear/disappear jumpiness). */

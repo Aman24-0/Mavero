@@ -130,7 +130,7 @@ ok('6. Missing Media sweep: checks both status=ready AND mavero_status=available
 // 7. Theme scoping — root green, admin cyan
 // ============================================================
 
-assert.match(rootLayout, /var\(--color-primary, #00ff9c\)/, '7a. Root layout uses --color-primary (green)');
+assert.match(rootLayout, /var\(--color-primary, #ffffff\)/, '7a. Root layout uses --color-primary (white — 2026-10 rebrand from green)');
 assert.doesNotMatch(rootLayout, /var\(--a2-cyan/, '7b. Root layout does NOT use --a2-cyan (no admin leak)');
 assert.match(adminAppShell, /\.a2-shell ~ :global\(\.nav-spinner\)/, '7c. AdminAppShell has cyan override scoped via .a2-shell ~');
 ok('7. Theme scoping: root green for user pages, admin cyan override via .a2-shell ~ (no regression)');

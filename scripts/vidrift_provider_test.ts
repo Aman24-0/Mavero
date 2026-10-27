@@ -67,7 +67,7 @@ function content(type: 'movie' | 'series', tmdb: string): NormalizedMediaItem {
     id: tmdb, title: 'Fixture', year: 2024, type, runtime: '120 min', rating: 8,
     genres: ['Drama'], description: 'Fixture',
     poster: 'https://image.example.test/poster.jpg', backdrop: 'https://image.example.test/backdrop.jpg',
-    accent: '#00ff9c',
+    accent: '#ffffff',
     source: { provider: 'tmdb', externalId: tmdb, fetchedAt: new Date().toISOString() },
     externalIds: { tmdb },
   };
@@ -164,7 +164,7 @@ class MockMessageEvent {
   }
 }
 const messageListeners = new Set<(event: { type: string; origin: string; data: unknown }) => void>();
-let accentTokenValue = '#00ff9c'; // canonical Mavero --color-primary value
+let accentTokenValue = '#ffffff'; // canonical Mavero --color-primary value
 let mockOrigin = 'https://mavero.example.test';
 const mockWindow = {
   location: { origin: mockOrigin },
@@ -456,19 +456,19 @@ function findSent(fake: ReturnType<typeof makeFakeIframe>, type: string): SentMe
   const finalized = adapter.finalizeEmbedUrl(`${VIDRIFT}/embed/movie/299534?${APPROVED_PARAMS}`)!;
   const u = new URL(finalized);
   ok(u.searchParams.get('brandLogo') === 'https://mavero.example.test/icons/favicon-32.png', `§6 brandLogo from the deployed Mavero origin: ${u.searchParams.get('brandLogo')}`);
-  ok(u.searchParams.get('brandColor') === '00ff9c', '§7 brandColor from the live --color-primary token (no #)');
+  ok(u.searchParams.get('brandColor') === 'ffffff', '§7 brandColor from the live --color-primary token (no #)');
   ok(u.searchParams.get('brand') === 'MAVERO', 'approved static params preserved');
   ok(u.searchParams.get('watermark') === '1', 'watermark preserved (reuses the dynamic brandLogo)');
   ok(!u.searchParams.has('poster'), 'no poster injected');
 }
 // 3-digit token expanded without changing the visual value.
-accentTokenValue = '#0f9';
-ok(new URL(adapter.finalizeEmbedUrl(`${VIDRIFT}/embed/movie/1`)!).searchParams.get('brandColor') === '00ff99', '3-digit accent expanded to 6 digits');
+accentTokenValue = '#fff';
+ok(new URL(adapter.finalizeEmbedUrl(`${VIDRIFT}/embed/movie/1`)!).searchParams.get('brandColor') === 'ffffff', '3-digit accent expanded to 6 digits');
 // 8-digit token: alpha dropped.
-accentTokenValue = '00ff9ccc';
-ok(new URL(adapter.finalizeEmbedUrl(`${VIDRIFT}/embed/movie/1`)!).searchParams.get('brandColor') === '00ff9c', '8-digit accent: alpha dropped');
+accentTokenValue = 'ffffffcc';
+ok(new URL(adapter.finalizeEmbedUrl(`${VIDRIFT}/embed/movie/1`)!).searchParams.get('brandColor') === 'ffffff', '8-digit accent: alpha dropped');
 // No '#' ever.
-accentTokenValue = '#00ff9c';
+accentTokenValue = '#ffffff';
 ok(!new URL(adapter.finalizeEmbedUrl(`${VIDRIFT}/embed/movie/1`)!).searchParams.get('brandColor')!.includes('#'), 'brandColor never contains #');
 // Token missing/invalid → brandColor omitted, other params intact.
 accentTokenValue = 'not-a-color';
@@ -482,7 +482,7 @@ accentTokenValue = '';
 mockWindow.location = { origin: 'http://dev.local' };
 ok(adapter.finalizeEmbedUrl(`${VIDRIFT}/embed/movie/299534`) === null, 'no token + no logo → URL unchanged');
 mockWindow.location = { origin: 'https://mavero.example.test' };
-accentTokenValue = '#00ff9c';
+accentTokenValue = '#ffffff';
 // Non-https origin (http dev) → logo omitted (VidRift requires https).
 mockWindow.location = { origin: 'http://localhost:5173' };
 ok(!new URL(adapter.finalizeEmbedUrl(`${VIDRIFT}/embed/movie/299534`)!).searchParams.has('brandLogo'), 'http origin → brandLogo omitted (https required)');
@@ -492,7 +492,7 @@ mockWindow.location = { origin: 'https://mavero.example.test' };
 {
   const finalized = adapter.finalizeEmbedUrl(`${VIDRIFT}/embed/movie/299534?brandColor=FF0000&brandLogo=https://old.example.test/x.png`)!;
   const u = new URL(finalized);
-  ok(u.searchParams.get('brandColor') === '00ff9c', 'existing brandColor replaced');
+  ok(u.searchParams.get('brandColor') === 'ffffff', 'existing brandColor replaced');
   ok(u.searchParams.get('brandLogo') === 'https://mavero.example.test/icons/favicon-32.png', 'existing brandLogo replaced');
 }
 // Invalid URL input → null, never throws.
@@ -557,7 +557,7 @@ function makeFetch(source: PlayerSource): typeof fetch {
   const source = manager.getSource()!;
   ok(source.url!.startsWith(`${VIDRIFT}/embed/movie/299534?${APPROVED_PARAMS}`), 'manager: approved params preserved');
   ok(new URL(source.url!).searchParams.get('brandLogo') === 'https://mavero.example.test/icons/favicon-32.png', 'manager: dynamic brandLogo injected');
-  ok(new URL(source.url!).searchParams.get('brandColor') === '00ff9c', 'manager: dynamic brandColor injected');
+  ok(new URL(source.url!).searchParams.get('brandColor') === 'ffffff', 'manager: dynamic brandColor injected');
   ok(!source.url!.includes('resume'), '§22 resume NOT in the URL (documented postMessage mechanism instead)');
   // Simulate the provider stream through the REAL window listener the
   // registry adapter registered.

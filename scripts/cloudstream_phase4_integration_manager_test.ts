@@ -1087,8 +1087,14 @@ function pristineFile(relative: string): string | null {
         // are safe cosmetic changes (no registry/global-position logic
         // touched).
         || line.includes('Add-ons & Extensions.')
-        || line.includes('Add an add-on manifest URL.')),
-      `F1: every +page.svelte addition is the FINAL TASK global-position surface (added ${pageAdditions.length}; 2026-10 admin restructure description de-clutter exempted)`,
+        || line.includes('Add an add-on manifest URL.')
+        // 2026-10 rebrand round 4: the page title was renamed from
+        // "Integrations" to "Add-ons & Extensions" (the <svelte:head>
+        // <title> + the AdminPage title prop). Both are safe cosmetic
+        // changes (no registry/global-position logic touched).
+        || line.includes('<title>Add-ons & Extensions — Mavero Admin</title>')
+        || line.includes('title="Add-ons & Extensions"')),
+      `F1: every +page.svelte addition is the FINAL TASK global-position surface (added ${pageAdditions.length}; 2026-10 admin restructure description de-clutter + rebrand exempted)`,
     );
   }
   const pristineServer = pristineFile('src/routes/admin/system/integrations/+page.server.ts');

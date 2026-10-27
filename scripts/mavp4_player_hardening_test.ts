@@ -357,7 +357,7 @@ function rawRegionCode(source: string, startMarker: string, endMarker: string): 
   const sanitized = sanitizeSourceSvgMarkup(clean);
   ok(sanitized.includes('viewBox="0 0 24 24"') && sanitized.includes('d="M4 4h16v16H4z"'), '4.5a safe markup survives verbatim');
   ok(sanitized.includes('xmlns="http://www.w3.org/2000/svg"'), '4.5b the root always gains xmlns (data-URL renderable)');
-  ok(sanitized.includes('color="#f2fff8"'), '4.5c the root gains the dark-theme currentColor anchor');
+  ok(sanitized.includes('color="#f5f5f5"'), '4.5c the root gains the dark-theme currentColor anchor (2026-10 rebrand: #f5f5f5)');
   ok(svgDataUrlToMarkup(svgMarkupToDataUrl(sanitized)) === sanitized, '4.5d the data-URL round-trip is stable');
 
   assert.throws(() => sanitizeSourceSvgMarkup('<svg><script>alert(1)</script></svg>'), SvgValidationError, '4.5e scripts are REJECTED');

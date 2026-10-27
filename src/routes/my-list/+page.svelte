@@ -485,7 +485,7 @@
     width: 6px; height: 6px; border-radius: 50%;
     background: var(--color-warning);
   }
-  .list-status span.online { background: var(--color-primary); box-shadow: 0 0 0 3px rgba(0,255,156,.18); }
+  .list-status span.online { background: var(--color-primary); box-shadow: 0 0 0 3px rgba(255, 255, 255,.18); }
   .list-status span.syncing { background: var(--color-text-muted); animation: pulse 1.6s ease-in-out infinite; }
   @keyframes pulse { 0%,100% { opacity: .4; } 50% { opacity: 1; } }
 
@@ -656,7 +656,7 @@
     border-radius: var(--radius-md);
     background:
       radial-gradient(circle at 50% 30%, var(--color-primary-soft), transparent 60%),
-      rgba(0,255,156,.01);
+      rgba(255, 255, 255,.01);
     text-align: center;
   }
   .empty-mark {
@@ -673,7 +673,7 @@
     color: var(--color-primary);
     font-size: .6rem; font-weight: 800;
     letter-spacing: .14em; text-transform: uppercase;
-    text-shadow: 0 0 10px rgba(0,255,156,.3);
+    text-shadow: 0 0 10px rgba(255, 255, 255,.3);
   }
   .empty-state h2 {
     margin: 4px 0;
@@ -695,7 +695,7 @@
     background: var(--color-primary);
     font-size: .8rem; font-weight: 800;
     text-decoration: none;
-    box-shadow: 0 4px 20px rgba(0,255,156,.22), var(--glow-primary);
+    box-shadow: 0 4px 20px rgba(255, 255, 255,.22), var(--glow-primary);
     transition: transform var(--motion-fast) var(--ease-out), filter var(--motion-fast) var(--ease-out);
   }
   .empty-action:hover { transform: translateY(-1px); filter: brightness(1.06); }

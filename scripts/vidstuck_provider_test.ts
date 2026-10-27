@@ -66,7 +66,7 @@ function content(type: 'movie' | 'series', tmdb: string): NormalizedMediaItem {
     id: tmdb, title: 'Fixture', year: 2024, type, runtime: '120 min', rating: 8,
     genres: ['Drama'], description: 'Fixture',
     poster: 'https://image.example.test/poster.jpg', backdrop: 'https://image.example.test/backdrop.jpg',
-    accent: '#00ff9c',
+    accent: '#ffffff',
     source: { provider: 'tmdb', externalId: tmdb, fetchedAt: new Date().toISOString() },
     externalIds: { tmdb },
   };
@@ -131,7 +131,7 @@ class MockMessageEvent {
   }
 }
 const messageListeners = new Set<(event: { type: string; origin: string; data: unknown }) => void>();
-let accentTokenValue = '#00ff9c'; // canonical Mavero --color-primary value
+let accentTokenValue = '#ffffff'; // canonical Mavero --color-primary value
 const mockWindow = {
   addEventListener: (_t: string, l: (e: { type: string; origin: string; data: unknown }) => void) => { if (_t === 'message') messageListeners.add(l); },
   removeEventListener: (_t: string, l: (e: unknown) => void) => { messageListeners.delete(l as never); },
@@ -271,24 +271,24 @@ assert.equal(events.length, 0, 'no events after destroy');
 // (a) exact token value → color param WITHOUT '#'.
 assert.equal(
   adapter.finalizeEmbedUrl('https://vidstuck.cc/embed/movie/299534?branding=Mavero&server=centaurus'),
-  'https://vidstuck.cc/embed/movie/299534?branding=Mavero&server=centaurus&color=00ff9c',
+  'https://vidstuck.cc/embed/movie/299534?branding=Mavero&server=centaurus&color=ffffff',
 );
 // (b) token without '#' also accepted.
-accentTokenValue = '00ff9c';
-assert.ok(adapter.finalizeEmbedUrl('https://vidstuck.cc/embed/movie/299534')!.endsWith('color=00ff9c'));
+accentTokenValue = 'ffffff';
+assert.ok(adapter.finalizeEmbedUrl('https://vidstuck.cc/embed/movie/299534')!.endsWith('color=ffffff'));
 // (c) invalid token → URL unchanged (null).
 accentTokenValue = 'not-a-color';
 assert.equal(adapter.finalizeEmbedUrl('https://vidstuck.cc/embed/movie/299534'), null);
 accentTokenValue = '';
 assert.equal(adapter.finalizeEmbedUrl('https://vidstuck.cc/embed/movie/299534'), null);
 // (d) invalid URL input → null, never throws.
-accentTokenValue = '#00ff9c';
+accentTokenValue = '#ffffff';
 assert.equal(adapter.finalizeEmbedUrl('not a url'), null);
 // (e) no dupes — an existing color param is replaced, not duplicated.
-accentTokenValue = '#00ff9c';
+accentTokenValue = '#ffffff';
 assert.equal(
   adapter.finalizeEmbedUrl('https://vidstuck.cc/embed/movie/299534?color=FF0000'),
-  'https://vidstuck.cc/embed/movie/299534?color=00ff9c',
+  'https://vidstuck.cc/embed/movie/299534?color=ffffff',
 );
 // (f) non-browser environment → null (URL unchanged).
 const realWindow = (globalThis as unknown as { window: unknown }).window;
@@ -313,7 +313,7 @@ function makeFetch(source: PlayerSource): typeof fetch {
   });
   await manager.loadSource({ sourceId: 's', contentId: '299534', mediaType: 'movie' }, 120, true);
   const url = manager.getSource()!.url!;
-  assert.equal(url, 'https://vidstuck.cc/embed/movie/299534?branding=Mavero&server=centaurus&progress=120&color=00ff9c');
+  assert.equal(url, 'https://vidstuck.cc/embed/movie/299534?branding=Mavero&server=centaurus&progress=120&color=ffffff');
   manager.dispose();
 }
 
@@ -329,7 +329,7 @@ function makeFetch(source: PlayerSource): typeof fetch {
   assert.ok(url.includes('branding=Mavero'), 'branding preserved');
   assert.ok(url.includes('server=centaurus'), 'server preserved');
   assert.ok(url.includes('progress=1200'), 'saved currentTime became the resume parameter');
-  assert.ok(url.includes('color=00ff9c'), 'dynamic accent color injected');
+  assert.ok(url.includes('color=ffffff'), 'dynamic accent color injected');
   manager.dispose();
 }
 
@@ -342,7 +342,7 @@ function makeFetch(source: PlayerSource): typeof fetch {
   await manager.loadSource({ sourceId: 's', contentId: '299534', mediaType: 'movie' }, 0, true);
   const url = manager.getSource()!.url!;
   assert.ok(!url.includes('progress='), 'no resume param without saved progress');
-  assert.ok(url.includes('color=00ff9c'), 'color still applied without resume');
+  assert.ok(url.includes('color=ffffff'), 'color still applied without resume');
   manager.dispose();
 }
 

@@ -62,7 +62,7 @@ function content(type: 'movie' | 'series', tmdb: string): NormalizedMediaItem {
     id: tmdb, title: 'Fixture', year: 2024, type, runtime: '120 min', rating: 8,
     genres: ['Drama'], description: 'Fixture',
     poster: 'https://image.example.test/poster.jpg', backdrop: 'https://image.example.test/backdrop.jpg',
-    accent: '#00ff9c',
+    accent: '#ffffff',
     source: { provider: 'tmdb', externalId: tmdb, fetchedAt: new Date().toISOString() },
     externalIds: { tmdb },
   };

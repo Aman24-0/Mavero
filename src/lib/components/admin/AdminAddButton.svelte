@@ -36,7 +36,7 @@
     font-weight: 800;
     letter-spacing: .01em;
     cursor: pointer;
-    box-shadow: 0 4px 18px rgba(0, 255, 156, .22), var(--glow-primary);
+    box-shadow: 0 4px 18px rgba(255, 255, 255, .22), var(--glow-primary);
     transition: transform var(--motion-fast) var(--ease-out), filter var(--motion-fast) var(--ease-out);
   }
   .admin-add-btn:hover { transform: translateY(-1px); filter: brightness(1.06); }

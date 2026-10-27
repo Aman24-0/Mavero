@@ -624,7 +624,7 @@
 
   .scan-loading { color: #d0d0d0; }
 
-  .scan-validating :global(svg) { color: var(--color-primary, #00e676); }
+  .scan-validating :global(svg) { color: var(--color-primary, #e6e6e6); }
 
   .scan-error :global(svg) { color: var(--color-warning, #ffb74d); }
   .scan-error-actions { display: flex; gap: 10px; margin-top: 6px; flex-wrap: wrap; justify-content: center; }
@@ -639,7 +639,7 @@
   }
   .scan-retry-btn {
     border: 1px solid var(--color-primary-border, rgba(0, 230, 118, .3));
-    color: #050708; background: var(--color-primary, #00e676);
+    color: #050708; background: var(--color-primary, #e6e6e6);
   }
   .scan-back-btn {
     border: 1px solid rgba(255, 255, 255, .15);
@@ -723,7 +723,7 @@
     display: inline-flex; align-items: center; gap: 7px;
     color: #f5f5f5; font-size: .78rem; font-weight: 800;
   }
-  .manual-label :global(svg) { color: var(--color-primary, #00e676); }
+  .manual-label :global(svg) { color: var(--color-primary, #e6e6e6); }
   /* min-width: 0 — .manual-controls is a GRID ITEM of .manual-form
      (display: grid). Grid items default to min-width: auto (automatic
      minimum = min-content), and the input's intrinsic width (default
@@ -746,7 +746,7 @@
     font-size: 1.15rem; font-weight: 800;
     letter-spacing: .18em;
     text-transform: uppercase;
-    caret-color: var(--color-primary, #00e676);
+    caret-color: var(--color-primary, #e6e6e6);
   }
   .manual-input:focus-visible { outline: 2px solid var(--color-focus, #f5f5f5); outline-offset: 2px; }
   .manual-input::placeholder { color: #4a4a4a; letter-spacing: .18em; }
@@ -756,7 +756,7 @@
     display: inline-flex; align-items: center; justify-content: center; gap: 6px;
     min-height: 48px; padding: 0 18px;
     border: 1px solid transparent; border-radius: 12px;
-    color: #050708; background: var(--color-primary, #00e676);
+    color: #050708; background: var(--color-primary, #e6e6e6);
     font: inherit; font-size: .8rem; font-weight: 800;
     cursor: pointer;
     transition: transform 160ms ease, filter 160ms ease;

@@ -29,14 +29,14 @@
     display: grid; place-items: center;
     min-height: 260px; margin-top: 26px; padding: 36px 20px;
     border: 1px solid var(--color-border); border-radius: var(--radius-lg);
-    background: rgba(0,255,156,.012);
+    background: rgba(255, 255, 255,.012);
     text-align: center;
   }
   .empty-orbit {
     display: grid; place-items: center;
     width: 58px; height: 58px; margin-bottom: 15px;
     border: 1px solid var(--color-primary-border); border-radius: 50%;
-    box-shadow: 0 0 0 9px rgba(0,255,156,.025);
+    box-shadow: 0 0 0 9px rgba(255, 255, 255,.025);
   }
   .empty-mark {
     display: grid; place-items: center;

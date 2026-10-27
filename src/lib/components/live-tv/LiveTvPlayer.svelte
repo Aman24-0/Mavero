@@ -909,11 +909,11 @@
     border: 1px solid var(--color-primary-border);
     border-radius: 50%;
     color: var(--color-primary);
-    background: rgba(0, 255, 156, .1);
+    background: rgba(255, 255, 255, .1);
     box-shadow: var(--glow-primary);
     transition: transform var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out);
   }
-  .tap-play:hover { transform: scale(1.06); background: rgba(0, 255, 156, .16); }
+  .tap-play:hover { transform: scale(1.06); background: rgba(255, 255, 255, .16); }
   .tap-play:active { transform: scale(.96); }
 
   /* ── LT-18 — the ONE native control system, INSIDE the surface ──
@@ -1098,7 +1098,7 @@
     cursor: pointer;
     transition: background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
   }
-  .quality-item:hover { background: rgba(0, 255, 156, .1); color: var(--color-primary); }
+  .quality-item:hover { background: rgba(255, 255, 255, .1); color: var(--color-primary); }
   .quality-item:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
   .quality-item[aria-checked='true'] { color: var(--color-primary); font-weight: 800; }
   .quality-item[aria-checked='true']::after {
@@ -1159,13 +1159,13 @@
   .live-seek::-webkit-slider-runnable-track {
     height: 4px;
     border-radius: 999px;
-    background: rgba(0, 255, 156, .18);
+    background: rgba(255, 255, 255, .18);
   }
   .volume::-moz-range-track,
   .live-seek::-moz-range-track {
     height: 4px;
     border-radius: 999px;
-    background: rgba(0, 255, 156, .18);
+    background: rgba(255, 255, 255, .18);
   }
   .volume::-webkit-slider-thumb, .live-seek::-webkit-slider-thumb {
     appearance: none;
@@ -1175,14 +1175,14 @@
     border: 0;
     border-radius: 50%;
     background: var(--color-primary);
-    box-shadow: 0 0 8px rgba(0, 255, 156, .6);
+    box-shadow: 0 0 8px rgba(255, 255, 255, .6);
   }
   .volume::-moz-range-thumb, .live-seek::-moz-range-thumb {
     width: 14px; height: 14px;
     border: 0;
     border-radius: 50%;
     background: var(--color-primary);
-    box-shadow: 0 0 8px rgba(0, 255, 156, .6);
+    box-shadow: 0 0 8px rgba(255, 255, 255, .6);
   }
   .volume:focus-visible, .live-seek:focus-visible {
     outline: 2px solid var(--color-focus);

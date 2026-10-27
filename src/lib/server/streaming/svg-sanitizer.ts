@@ -27,10 +27,11 @@
  *
  *   NORMALIZED (applied, documented):
  *     - The root <svg> always carries xmlns (required for data: URL rendering).
- *     - The root <svg> gains color="#f2fff8" when absent — inside <img>
+ *     - The root <svg> gains color="#f5f5f5" when absent — inside <img>
  *       rendering currentColor would otherwise resolve to black, breaking
  *       dark-theme legibility (the app's text token value, static by design:
- *       data URLs cannot reference app CSS).
+ *       data URLs cannot reference app CSS). 2026-10 rebrand: was #f2fff8
+ *       (greenish-white), now #f5f5f5 (neutral white).
  *
  *   Rendering-side defense in depth: the sanitized markup is stored as a
  *   data URL and rendered via <img> (script-inert by specification) — the
@@ -216,7 +217,9 @@ export function sanitizeSourceSvgMarkup(input: string): string {
   // Canonical root: xmlns is REQUIRED for a standalone data-URL document.
   if (!root.attr('xmlns')) root.attr('xmlns', 'http://www.w3.org/2000/svg');
   // Dark-theme legibility: currentColor inside <img> otherwise resolves black.
-  if (!root.attr('color')) root.attr('color', '#f2fff8');
+  // 2026-10 rebrand: --color-text changed from #f2fff8 (greenish-white) to
+  // #f5f5f5 (neutral white). This static anchor mirrors that token.
+  if (!root.attr('color')) root.attr('color', '#f5f5f5');
 
   const serialized = $.html('svg').trim();
   if (!serialized.startsWith('<svg') || serialized.length > SOURCE_SVG_MAX_LENGTH) {

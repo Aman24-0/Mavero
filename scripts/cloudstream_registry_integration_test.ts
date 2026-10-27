@@ -1054,10 +1054,20 @@ function section_regression(): void {
   // 2026-10 nav redesign removed Hosting/upload nav items) — the
   // "no admin modification REQUIRED by the registry" intent is asserted by
   // the shell carrying NO registry-specific code (generic nav only).
+  // 2026-10 rebrand: the Integrations nav label was renamed to "Add-ons &
+  // Extensions" — the word "Extensions" is a user-facing label, not
+  // registry-specific code, so the regex excludes quoted label strings.
   {
     const shell = read('src/lib/components/admin2/AdminAppShell.svelte');
-    ok(!/cloudstream|registry|extension/i.test(shell.replace(/^[ \t]*\/\/[^\n]*$/gm, '').replace(/^[ \t]*\*[^\n]*$/gm, '')),
-      '§F4: AdminAppShell carries no registry/cloudstream-specific code (generic nav — the integration required no admin shell changes)');
+    // Strip comments + quoted label strings (the "Add-ons & Extensions"
+    // label is a UI string, not registry code).
+    const stripped = shell
+      .replace(/^[ \t]*\/\/[^\n]*$/gm, '')
+      .replace(/^[ \t]*\*[^\n]*$/gm, '')
+      .replace(/'[^']*'/g, '')
+      .replace(/"[^"]*"/g, '');
+    ok(!/cloudstream|registry|extension/i.test(stripped),
+      '§F4: AdminAppShell carries no registry/cloudstream-specific code (generic nav — the integration required no admin shell changes; quoted label strings exempted)');
   }
 
   // §F5 the existing mavero2 API + Downloader 2 service evolved ONLY additively.

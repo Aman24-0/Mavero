@@ -251,22 +251,27 @@ assert.match(libraryService, /const \[assetsRes, demandsRes\] = await Promise\.a
 ok('E7. MediaLibraryService.list: 2 sequential batch queries → parallel Promise.all');
 
 // ============================================================
-// F. Loading UX — root spinner uses consumer green (NOT admin cyan)
+// F. Loading UX — root spinner uses consumer brand color (NOT admin cyan)
 // ============================================================
 // Phase 6 fix: the root layout spinner serves ALL routes (user + admin).
-// It must use --color-primary (Mavero green) NOT --a2-cyan (admin cyan).
-// The Phase 2 migration incorrectly changed it to cyan, leaking admin
-// colors into user-facing pages.
+// It must use --color-primary (the consumer brand token) NOT --a2-cyan
+// (admin cyan). The Phase 2 migration incorrectly changed it to cyan,
+// leaking admin colors into user-facing pages.
+//
+// 2026-10 rebrand: --color-primary changed from cyber green (#00ff9c)
+// to white (#ffffff). The spinner now uses white border/glow/ring +
+// the white gradient. The "consumer brand, not admin cyan" contract
+// is unchanged.
 // ============================================================
 
-// Root nav spinner + progress bar: use consumer green (--color-primary)
-assert.match(rootLayout, /border: 1px solid rgba\(0, 255, 156/, 'root nav spinner: green border (consumer brand color)');
-assert.match(rootLayout, /box-shadow: 0 0 14px rgba\(0, 255, 156/, 'root nav spinner: green glow (consumer brand color)');
-assert.match(rootLayout, /border-top-color: var\(--color-primary, #00ff9c\)/, 'root nav spinner ring: green --color-primary (NOT admin --a2-cyan)');
-assert.match(rootLayout, /background: linear-gradient\(90deg, var\(--color-primary, #00ff9c\)/, 'root nav progress bar: green gradient (--color-primary)');
+// Root nav spinner + progress bar: use consumer brand (--color-primary, now white)
+assert.match(rootLayout, /border: 1px solid rgba\(255, 255, 255/, 'root nav spinner: white border (consumer brand color — 2026-10 rebrand)');
+assert.match(rootLayout, /box-shadow: 0 0 14px rgba\(255, 255, 255/, 'root nav spinner: white glow (consumer brand color — 2026-10 rebrand)');
+assert.match(rootLayout, /border-top-color: var\(--color-primary, #ffffff\)/, 'root nav spinner ring: white --color-primary (NOT admin --a2-cyan)');
+assert.match(rootLayout, /background: linear-gradient\(90deg, var\(--color-primary, #ffffff\)/, 'root nav progress bar: white gradient (--color-primary)');
 // No admin cyan leaked into root layout
 assert.doesNotMatch(rootLayout, /var\(--a2-cyan/, 'root nav: no --a2-cyan admin token leaked into root layout');
-ok('F1. Root navigation spinner uses consumer green (--color-primary), NOT admin cyan — Phase 6 fix reverts the Phase 2 leak');
+ok('F1. Root navigation spinner uses consumer brand white (--color-primary), NOT admin cyan — Phase 6 fix reverts the Phase 2 leak; 2026-10 rebrand changed green to white');
 
 // Reduced motion: still respected
 assert.match(rootLayout, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.nav-spinner-ring \{[\s\S]*?animation: none/, 'root nav: reduced motion disables spinner rotation');

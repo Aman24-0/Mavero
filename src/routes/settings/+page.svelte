@@ -884,7 +884,7 @@
     color: var(--color-primary);
     font-size: .58rem; font-weight: 800;
     letter-spacing: .14em; text-transform: uppercase;
-    text-shadow: 0 0 10px rgba(0, 255, 156, .3);
+    text-shadow: 0 0 10px rgba(255, 255, 255, .3);
   }
   .identity-row {
     display: grid;
@@ -933,7 +933,7 @@
     background: var(--color-warning);
     flex: 0 0 auto;
   }
-  .identity-meta > span.online { background: var(--color-primary); box-shadow: 0 0 0 3px rgba(0,255,156,.18); }
+  .identity-meta > span.online { background: var(--color-primary); box-shadow: 0 0 0 3px rgba(255, 255, 255,.18); }
   .identity-meta > span.syncing { background: var(--color-text-muted); animation: pulse 1.6s ease-in-out infinite; }
   @keyframes pulse { 0%,100% { opacity: .4; } 50% { opacity: 1; } }
   .sign-in-cta {
@@ -947,7 +947,7 @@
     background: var(--color-primary);
     font-size: .74rem; font-weight: 700;
     text-decoration: none;
-    box-shadow: 0 4px 18px rgba(0,255,156,.22), var(--glow-primary);
+    box-shadow: 0 4px 18px rgba(255, 255, 255,.22), var(--glow-primary);
     transition: transform var(--motion-fast) var(--ease-out), filter var(--motion-fast) var(--ease-out);
   }
   .sign-in-cta:hover { transform: translateY(-1px); filter: brightness(1.06); }

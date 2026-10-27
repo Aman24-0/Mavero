@@ -599,7 +599,7 @@
     padding: 40px 20px;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
-    background: rgba(0,255,156,.015);
+    background: rgba(255, 255, 255,.015);
     text-align: center;
   }
   .empty-mark {
@@ -634,7 +634,7 @@
     font-size: .76rem; font-weight: 700;
     cursor: pointer;
     text-decoration: none;
-    box-shadow: 0 4px 18px rgba(0,255,156,.22);
+    box-shadow: 0 4px 18px rgba(255, 255, 255,.22);
     transition: transform var(--motion-fast) var(--ease-out), filter var(--motion-fast) var(--ease-out);
   }
   .empty-action:hover { transform: translateY(-1px); filter: brightness(1.06); }

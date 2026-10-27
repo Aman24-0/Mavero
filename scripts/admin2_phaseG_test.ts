@@ -272,7 +272,7 @@ ok('19a. Downloader configuration shows type + enabled, with full CRUD in-worksp
 // 20. Integrations
 // ============================================================
 
-assert.match(adminAppShell, /id: 'integrations', label: 'Integrations', href: '\/admin\/system\/integrations'/, 'nav has Integrations');
+assert.match(adminAppShell, /id: 'integrations', label: 'Add-ons & Extensions', href: '\/admin\/system\/integrations'/, 'nav has Add-ons & Extensions (renamed 2026-10)');
 assert.match(integrationsPage, /AdminAppShell/, 'Integrations page uses AdminAppShell');
 assert.match(integrationsServer, /listAdminAddons/, 'Integrations server uses existing Stremio admin-addons service');
 assert.match(integrationsPage, /a2-addon-list/, 'Integrations page renders addon list');

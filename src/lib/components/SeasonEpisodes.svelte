@@ -321,7 +321,7 @@
     color: var(--dp-accent, var(--color-primary));
     font-size: .58rem; font-weight: 800;
     letter-spacing: .12em; text-transform: uppercase;
-    text-shadow: 0 0 10px var(--dp-glow, rgba(0, 255, 156, .3));
+    text-shadow: 0 0 10px var(--dp-glow, rgba(255, 255, 255, .3));
   }
   .ep-title {
     color: var(--color-text);
@@ -335,7 +335,7 @@
     max-width: 58%; overflow-x: auto;
     padding: 4px;
     border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm);
-    background: var(--dp-surface, rgba(0, 255, 156, .03));
+    background: var(--dp-surface, rgba(255, 255, 255, .03));
     scrollbar-width: none;
   }
   .season-tabs::-webkit-scrollbar { display: none; }
@@ -352,10 +352,10 @@
   .season-tabs button.active {
     color: #050708;
     background: var(--dp-accent, var(--color-primary));
-    box-shadow: 0 0 18px var(--dp-glow, rgba(0, 255, 156, .25));
+    box-shadow: 0 0 18px var(--dp-glow, rgba(255, 255, 255, .25));
   }
   .season-tabs button:hover:not(.active) {
-    color: var(--color-text); background: var(--dp-accent-soft, rgba(0, 255, 156, .08));
+    color: var(--color-text); background: var(--dp-accent-soft, rgba(255, 255, 255, .08));
   }
   .season-tabs button:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 
@@ -394,9 +394,9 @@
     border-radius: var(--radius-sm);
     transition: background var(--motion-fast) var(--ease-out);
   }
-  .ep-row:hover { background: var(--dp-surface, rgba(0, 255, 156, .03)); }
+  .ep-row:hover { background: var(--dp-surface, rgba(255, 255, 255, .03)); }
   .ep-row:focus-within {
-    background: var(--dp-surface, rgba(0, 255, 156, .04));
+    background: var(--dp-surface, rgba(255, 255, 255, .04));
     /* TV / keyboard focus: lift the row slightly with a palette-derived
        left rail so the focused episode is unambiguous. */
     box-shadow: inset 2px 0 0 var(--dp-accent, var(--color-primary));
@@ -419,7 +419,7 @@
   .ep-row:hover .ep-thumb-wrap img { transform: scale(1.04); }
   .ep-still {
     background:
-      radial-gradient(circle at 30% 30%, var(--dp-accent-soft, rgba(0, 255, 156, .05)), transparent 55%),
+      radial-gradient(circle at 30% 30%, var(--dp-accent-soft, rgba(255, 255, 255, .05)), transparent 55%),
       var(--color-surface-elevated);
   }
   .ep-num {
@@ -467,7 +467,7 @@
     display: grid; place-items: center;
     width: 30px; height: 30px; border-radius: 50%;
     color: #050708; background: var(--dp-accent, var(--color-primary));
-    box-shadow: 0 4px 14px rgba(0, 0, 0, .4), 0 0 16px var(--dp-glow, rgba(0, 255, 156, .15));
+    box-shadow: 0 4px 14px rgba(0, 0, 0, .4), 0 0 16px var(--dp-glow, rgba(255, 255, 255, .15));
     text-decoration: none;
     transition: transform var(--motion-fast) var(--ease-out), filter var(--motion-fast) var(--ease-out);
   }

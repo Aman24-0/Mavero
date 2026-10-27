@@ -135,8 +135,8 @@ await adapter.destroy();
 // §3 — Runtime theme accent (color, hex WITHOUT #)
 // ============================================================
 
-computedStyles.set('--color-primary', '#00ff9c');
-ok(adapter.finalizeEmbedUrl?.(MOVIE_URL) === `${MOVIE_URL}&color=00ff9c`, '§3 finalizeEmbedUrl appends the live accent token without #');
+computedStyles.set('--color-primary', '#ffffff');
+ok(adapter.finalizeEmbedUrl?.(MOVIE_URL) === `${MOVIE_URL}&color=ffffff`, '§3 finalizeEmbedUrl appends the live accent token without #');
 computedStyles.set('--color-primary', 'fafafa');
 ok(adapter.finalizeEmbedUrl?.(TV_URL) === `${TV_URL}&color=fafafa`, '§3 documented example hex (fafafa) passes through');
 computedStyles.set('--color-primary', 'not-a-color');
@@ -212,7 +212,7 @@ function content(type: 'movie' | 'series', tmdb?: string): NormalizedMediaItem {
     description: 'Fixture',
     poster: 'https://image.example.test/poster.jpg',
     backdrop: 'https://image.example.test/backdrop.jpg',
-    accent: '#00ff9c',
+    accent: '#ffffff',
     source: { provider: 'tmdb', externalId: tmdb, fetchedAt: new Date().toISOString() },
     externalIds: { tmdb },
   };

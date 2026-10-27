@@ -154,12 +154,12 @@
   }
 </script>
 
-<svelte:head><title>Integrations — Mavero Admin</title><meta name="robots" content="noindex,nofollow" /></svelte:head>
+<svelte:head><title>Add-ons & Extensions — Mavero Admin</title><meta name="robots" content="noindex,nofollow" /></svelte:head>
 
 <AdminAppShell active="integrations">
   <AdminPage
     eyebrow="System"
-    title="Integrations"
+    title="Add-ons & Extensions"
     accent="cyan"
     tabs={[
       { id: 'addon', label: 'Add-on', href: '?tab=addon', active: tab === 'addon' },
@@ -167,7 +167,6 @@
     ]}
   >
     {#snippet actions()}<AdminAddButton label="Add Integration" onclick={openAddSheet} />{/snippet}
-    {#snippet description()}<p>Add-ons & Extensions.</p>{/snippet}
 
     {#if data.notice}<div class="a2-notice" role="status"><Check size={14} /> {data.notice}</div>{/if}
     {#if form?.message}<div class="a2-form-error" role="alert">{form.message}</div>{/if}

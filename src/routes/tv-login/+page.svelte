@@ -93,7 +93,7 @@
         qrDataUrl = await QRCode.toDataURL(qrUrl, {
           width: 480,
           margin: 2,
-          color: { dark: '#050708', light: '#f2fff8' },
+          color: { dark: '#050708', light: '#f5f5f5' },
         });
       } catch {
         // If local QR generation fails, show the short code fallback.

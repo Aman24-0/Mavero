@@ -391,7 +391,7 @@
       align-items: center; gap: 2px; padding: 6px;
       border: 1px solid var(--color-border-strong); border-radius: 999px;
       background: rgba(8, 11, 13, .85); backdrop-filter: blur(20px);
-      box-shadow: 0 12px 32px rgba(0, 0, 0, .55), 0 0 0 1px rgba(0, 255, 156, .03);
+      box-shadow: 0 12px 32px rgba(0, 0, 0, .55), 0 0 0 1px rgba(255, 255, 255, .03);
     }
     .mobile-nav a {
       display: grid; place-items: center; gap: 2px; flex: 1 1 0;

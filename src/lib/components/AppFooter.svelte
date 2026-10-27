@@ -25,6 +25,7 @@
     </a>
     {#if telegramUrl || discordUrl}
       <div class="footer-social">
+        <span class="footer-social-label">Join</span>
         {#if telegramUrl}
           <a class="social-link" href={telegramUrl} target="_blank" rel="noreferrer" aria-label="Join us on Telegram">
             <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true"><path d="M9.78 18.65l.28-4.23 7.68-6.92c.34-.31-.07-.46-.52-.19L7.74 13.3 3.64 12c-.88-.25-.89-.86.2-1.3l15.97-6.16c.73-.33 1.43.18 1.15 1.3l-2.72 12.81c-.19.91-.74 1.13-1.5.71L12.6 16.3l-1.99 1.93c-.23.23-.42.42-.83.42z"/></svg>
@@ -60,6 +61,7 @@
   .tmdb-credit:hover { color: var(--ink-soft, #b7b7bd); }
   .tmdb-logo { height: 12px; width: auto; opacity: .8; }
   .footer-social { display: inline-flex; align-items: center; gap: 16px; }
+  .footer-social-label { color: var(--muted, #77777f); font-size: .6rem; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; }
   .social-link { display: inline-flex; align-items: center; gap: 5px; color: var(--ink-soft, #b7b7bd); font-size: .6rem; font-weight: 600; text-decoration: none; transition: color 160ms ease; }
   .social-link:hover { color: var(--ink, #f5f5f5); }
   .footer-disclaimer {

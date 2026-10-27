@@ -248,7 +248,7 @@
     cursor: pointer;
     transition: background var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out);
   }
-  .sheet-apply:hover { background: rgba(0, 255, 156, .16); border-color: var(--color-primary); }
+  .sheet-apply:hover { background: rgba(255, 255, 255, .16); border-color: var(--color-primary); }
   .sheet-apply:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 
   @media (prefers-reduced-motion: reduce) {

@@ -92,7 +92,7 @@ ok('1d. nav has NO Operations item and NO Hosting item (both workspaces reachabl
 assert.match(adminAppShell, /\{ id: 'api-sources', label: 'API & Sources', href: '\/admin\/system\/api-sources'/, 'nav: Settings → API & Sources');
 assert.match(adminAppShell, /\{ id: 'feature-control', label: 'Feature Control', href: '\/admin\/system\/feature-control'/, 'nav: Settings → Feature Control');
 assert.match(adminAppShell, /\{ id: 'downloads', label: 'Downloads', href: '\/admin\/system\/downloads'/, 'nav: Settings → Downloads');
-assert.match(adminAppShell, /\{ id: 'integrations', label: 'Integrations', href: '\/admin\/system\/integrations'/, 'nav: Settings → Integrations');
+assert.match(adminAppShell, /\{ id: 'integrations', label: 'Add-ons & Extensions', href: '\/admin\/system\/integrations'/, 'nav: Settings → Add-ons & Extensions (renamed 2026-10)');
 // Phase G: configItems (Defaults + Feature Control) are now consolidated
 // inside the Content Rules and API & Sources workspaces. The topbar
 // Configure dropdown is retired — configItems is now an empty array.

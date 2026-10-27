@@ -99,7 +99,7 @@ function content(type: 'movie' | 'series', tmdb?: string, imdb?: string): Normal
     description: 'Fixture',
     poster: 'https://image.example.test/poster.jpg',
     backdrop: 'https://image.example.test/backdrop.jpg',
-    accent: '#00ff9c',
+    accent: '#ffffff',
     source: { provider: 'tmdb', externalId: tmdb, fetchedAt: new Date().toISOString() },
     externalIds: { tmdb, imdb },
   };

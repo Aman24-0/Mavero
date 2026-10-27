@@ -148,7 +148,7 @@ ok('10. Missing Media sweep: checks both filters (no regression)');
 // 11. Theme scoping — root green, admin cyan
 // ============================================================
 
-assert.match(rootLayout, /var\(--color-primary, #00ff9c\)/, '11a. Root layout uses --color-primary (green)');
+assert.match(rootLayout, /var\(--color-primary, #ffffff\)/, '11a. Root layout uses --color-primary (white — 2026-10 rebrand from green)');
 assert.doesNotMatch(rootLayout, /var\(--a2-cyan/, '11b. Root layout does NOT use --a2-cyan');
 assert.match(adminAppShell, /\.a2-shell ~ :global\(\.nav-spinner\)/, '11c. AdminAppShell has cyan override scoped via .a2-shell ~');
 ok('11. Theme scoping: root green for user pages, admin cyan override via .a2-shell ~ (no regression)');

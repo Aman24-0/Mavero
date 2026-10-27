@@ -696,7 +696,7 @@
     color: var(--color-primary);
     background: var(--color-primary-soft);
     border-color: var(--color-primary-border);
-    box-shadow: 0 0 0 1px rgba(0, 255, 156, .12);
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, .12);
   }
   .filter-chip.active :global(svg) { color: var(--color-primary); }
 

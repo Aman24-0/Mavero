@@ -32,7 +32,7 @@
     text-align: center;
     border: 1px dashed var(--color-border-strong);
     border-radius: var(--radius-md);
-    background: rgba(0, 255, 156, .012);
+    background: rgba(255, 255, 255, .012);
   }
   .empty-icon {
     display: inline-grid;

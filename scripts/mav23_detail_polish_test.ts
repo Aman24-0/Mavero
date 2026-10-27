@@ -102,16 +102,17 @@ for (const g of gradientUses) {
 // SeasonEpisodes consumes the title palette through dp vars with safe fallbacks.
 const dpVarUses = seasonEpisodes.match(/var\(--dp-[a-z0-9-]+,/g) ?? [];
 ok(dpVarUses.length >= 10, `F2: SeasonEpisodes consumes the --dp-* palette with fallbacks (${dpVarUses.length} usages)`);
-ok(/\.ep-eyebrow\s*\{[^}]*var\(--dp-accent,\s*var\(--color-primary\)\)/.test(seasonEpisodes), 'F2: eyebrow accent is title-derived (falls back to the global green standalone)');
-ok(/\.ep-eyebrow\s*\{[^}]*var\(--dp-glow,\s*rgba\(0, 255, 156, \.3\)\)/.test(seasonEpisodes), 'F2: eyebrow glow follows the palette');
+ok(/\.ep-eyebrow\s*\{[^}]*var\(--dp-accent,\s*var\(--color-primary\)\)/.test(seasonEpisodes), 'F2: eyebrow accent is title-derived (falls back to the global brand color standalone)');
+ok(/\.ep-eyebrow\s*\{[^}]*var\(--dp-glow,\s*rgba\(255, 255, 255, \.3\)\)/.test(seasonEpisodes), 'F2: eyebrow glow follows the palette (white — 2026-10 rebrand)');
 ok(/\.season-tabs\s*\{[^}]*var\(--dp-surface,/.test(seasonEpisodes), 'F2: season tab tray surface is palette-derived');
 ok(/\.season-tabs button\.active\s*\{[^}]*var\(--dp-accent,\s*var\(--color-primary\)\)/.test(seasonEpisodes), 'F2: active season chip uses the title accent');
 ok(/\.ep-play\s*\{[^}]*var\(--dp-accent,\s*var\(--color-primary\)\)/.test(seasonEpisodes), 'F2: episode play button uses the title accent');
 ok(/\.ep-row:focus-within\s*\{[^}]*var\(--dp-accent,/.test(seasonEpisodes), 'F2: episode focus rail uses the title accent (focus visibility preserved)');
 ok(/\.ep-row:hover\s*\{[^}]*var\(--dp-surface,/.test(seasonEpisodes), 'F2: episode hover surface is palette-derived');
-// No BARE global-green usages remain (every green literal is now a fallback arg).
-const bareGreen = seasonEpisodes.match(/(?<!var\(--dp-[a-z0-9-]+,\s*)rgba\(0, 255, 156/g) ?? [];
-ok(bareGreen.length === 0, `F2: no un-guarded global-green literals remain in SeasonEpisodes (${bareGreen.length} found)`);
+// No BARE global-brand-color usages remain (every white literal is now a fallback arg).
+// 2026-10 rebrand: was rgba(0, 255, 156) (green), now rgba(255, 255, 255) (white).
+const bareGreen = seasonEpisodes.match(/(?<!var\(--dp-[a-z0-9-]+,\s*)rgba\(255, 255, 255/g) ?? [];
+ok(bareGreen.length === 0, `F2: no un-guarded global-brand-color literals remain in SeasonEpisodes (${bareGreen.length} found)`);
 const withoutDpFallbacks = seasonEpisodes.replace(/var\(--dp-[a-z0-9-]+,\s*var\(--color-primary[a-z-]*\)\)/g, '');
 ok(!withoutDpFallbacks.includes('--color-primary'), 'F2: --color-primary survives ONLY as a fallback argument');
 // Palette engine: sibling accent for the downloader (same hue — never a
@@ -183,7 +184,7 @@ ok(/\.trailer-inline :global\(\.trailer-spinner\) \{ animation: none !important;
 // ============================================================
 ok(/export let paletteStyle: string = ''/.test(downloadSheet), 'F5: DownloadSheet accepts an explicit paletteStyle prop');
 ok(/<div class="dl-layer" role="presentation" style=\{paletteStyle\}>/.test(downloadSheet) || /class="dl-layer"[\s\S]{0,40}style=\{paletteStyle\}/.test(downloadSheet), 'F5: the palette vars are applied inline on the sheet layer (scoped — no global mutation)');
-ok(/--accent:\s*var\(--dp-accent,\s*var\(--color-primary, #00ff9c\)\)/.test(downloadSheet), 'F5: add-on accent maps to the title palette (green fallback preserved)');
+ok(/--accent:\s*var\(--dp-accent,\s*var\(--color-primary, #ffffff\)\)/.test(downloadSheet), 'F5: add-on accent maps to the title palette (white fallback preserved — 2026-10 rebrand from green)');
 ok(/--accent-2:\s*var\(--dp-accent-2,\s*var\(--color-secondary, #00d9ff\)\)/.test(downloadSheet), 'F5: plugin accent maps to the title-palette sibling (blue fallback preserved)');
 ok(/--glow-primary:\s*0 0 20px var\(--dp-glow,/.test(downloadSheet), 'F5: glow follows the title palette');
 ok(/var\(--dp-deep,\s*#0d0d0d\)/.test(downloadSheet), 'F5: sheet background uses the title deep tone (neutral fallback = previous #0d0d0d)');

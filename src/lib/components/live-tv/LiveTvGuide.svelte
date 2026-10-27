@@ -315,7 +315,7 @@
     white-space: nowrap;
     transition: background var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out);
   }
-  .note-retry:hover { background: rgba(0, 255, 156, .14); border-color: var(--color-primary); }
+  .note-retry:hover { background: rgba(255, 255, 255, .14); border-color: var(--color-primary); }
   .note-retry:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 
   .guide-row.skeleton { grid-template-columns: 110px 1fr; align-items: center; }
