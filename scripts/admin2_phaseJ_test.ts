@@ -147,12 +147,12 @@ ok('9a. Global focus-visible ring utility class defined');
 
 // Focus-visible on nav links
 assert.match(adminAppShell, /\.a2-nav-link:focus-visible/, 'nav links have focus-visible');
-// [MAV-FOCUSED 2026-10 redesign] the mobile More sheet (and its
-// .a2-more-link items) was intentionally removed — the bottom nav owns
-// mobile navigation, and its items carry the focus-visible contract.
-assert.doesNotMatch(adminAppShell, /\.a2-more-link/, 'more links removed with the More sheet (no dead surface)');
+// 2026-10 admin restructure round 3: the More sheet was RESTORED so
+// Feature Control + other Settings routes are reachable on mobile. The
+// .a2-more-link items carry the focus-visible contract (re-added).
+assert.match(adminAppShell, /\.a2-more-link:focus-visible/, 'more sheet links have focus-visible (2026-10 round 3 re-add)');
 assert.match(adminAppShell, /\.a2-bottom-item:focus-visible/, 'bottom nav items have focus-visible');
-ok('9b. AdminAppShell nav items have focus-visible styles (sidebar + bottom nav — More sheet intentionally removed)');
+ok('9b. AdminAppShell nav items have focus-visible styles (sidebar + bottom nav + More sheet)');
 
 // Focus-visible on tabs
 assert.match(adminPage, /\.a2-tab:focus-visible/, 'tabs have focus-visible');

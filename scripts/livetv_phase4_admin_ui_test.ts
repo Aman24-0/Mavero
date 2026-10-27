@@ -69,8 +69,14 @@ console.log('\n§1 — Admin2 navigation registration (desktop + mobile parity)'
   ok(overviewPage.includes('href="/admin/system/livetv"'), '1d. Overview carries a Live TV metric card (mobile reachability)');
   ok(overviewServer.includes('getLivetvAdminOverview'), '1e. the Overview load feeds the Live TV card');
   ok(/\.catch\(\(\) => null\)/.test(overviewServer) && overviewServer.indexOf('getLivetvAdminOverview') < overviewServer.lastIndexOf('.catch(() => null)'), '1f. the Live TV overview degrades gracefully (never 500s the admin overview)');
-  ok(!/a2-more-sheet/.test(shell), '1g. no More-sheet resurrection');
-  ok((shell.match(/id:\s*'livetv'/g) ?? []).length === 1, '1h. exactly ONE nav registration (no duplicate surface)');
+  // 2026-10 admin restructure round 3: the More sheet was RESTORED so
+  // the Feature Control route (and other Settings items) are reachable
+  // on mobile. The More sheet surfaces the Settings group; the Live TV
+  // item is in that group, so its nav registration is still singular
+  // (the bottom-nav "More" item is a different id and does not point
+  // at the livetv route).
+  ok(/a2-more-sheet/.test(shell), '1g. More sheet RESTORED (2026-10 round 3 — surfaces Settings group on mobile, including Feature Control)');
+  ok((shell.match(/id:\s*'livetv'/g) ?? []).length === 1, '1h. exactly ONE nav registration for livetv (the More sheet renders navGroups items, not a duplicate livetv registration)');
 }
 
 console.log('\n§2 — Server-side authorization on load + EVERY action');

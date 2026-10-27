@@ -48,7 +48,7 @@
     LayoutGrid, Library, Upload, AlertCircle, HardDrive, RefreshCw,
     Activity, History, TriangleAlert, Settings, Layers, Download, Puzzle,
     BarChart3, PanelLeftClose, PanelLeft, ArrowLeft,
-    Search, Command, ArrowRight, Tv
+    Search, Command, ArrowRight, Tv, Menu, X
   } from 'lucide-svelte';
   import AdminCommandMenu from './AdminCommandMenu.svelte';
 
@@ -164,14 +164,20 @@
   // Configure dropdown and the mobile "Configuration" section are removed
   // (no longer render an empty affordance).
 
-  // Mobile bottom nav: 4 primary destinations.
+  // Mobile bottom nav: 5 primary destinations.
   // Hosting Control removed — replaced with Missing Media (the demand-
   // tracking surface that admins need quick access to).
+  // 2026-10 admin restructure round 3: a 5th "More" item was added. The
+  // More item opens a drawer that surfaces the entire Settings group
+  // (API & Sources, Feature Control, Live TV, Downloads, Integrations)
+  // — without it, Feature Control was unreachable on mobile. The "More"
+  // item is special-cased below (no href — it toggles the drawer).
   const mobileNav: NavItem[] = [
     { id: 'overview', label: 'Home', href: '/admin', icon: LayoutGrid },
     { id: 'media-library', label: 'Media', href: '/admin/media/library', icon: Library, matchPrefix: '/admin/media/library' },
     { id: 'missing-media', label: 'Missing', href: '/admin/media/missing', icon: AlertCircle },
     { id: 'analytics', label: 'Analytics', href: '/admin/analytics', icon: BarChart3, matchPrefix: '/admin/analytics' },
+    { id: 'more', label: 'More', href: '#more', icon: Menu },
   ];
 
   // ============================================================
@@ -230,6 +236,39 @@
   let sidebarCollapsed = $state(false);
   let commandOpen = $state(false);
   let commandTrigger: HTMLElement | null = null;
+
+  // ============================================================
+  // MOBILE MORE SHEET (2026-10 admin restructure round 3).
+  // The 4-item bottom-nav (Home / Media / Missing / Analytics) cannot
+  // fit the entire Settings group, so the More sheet surfaces the rest
+  // (API & Sources, Feature Control, Live TV, Downloads, Integrations).
+  // Tapping any link closes the sheet and navigates. The sheet is
+  // scrollable, focus-trapped via role="dialog" + aria-modal, and
+  // closes on Escape / overlay tap / route change.
+  // ============================================================
+  let moreOpen = $state(false);
+  let moreTrigger = $state<HTMLElement | null>(null);
+
+  function openMore(event?: Event) {
+    if (event) event.preventDefault();
+    moreOpen = true;
+  }
+  function closeMore() {
+    moreOpen = false;
+    moreTrigger?.focus();
+  }
+  function handleMoreKeydown(event: KeyboardEvent) {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeMore();
+    }
+  }
+  // Close the More sheet on route change so back/forward navigation
+  // never leaves it open over the next page.
+  $effect(() => {
+    void page.url.pathname;
+    moreOpen = false;
+  });
 
   onMount(() => {
     try {
@@ -408,15 +447,66 @@
   </header>
 
   <!-- ============================================================
-       MOBILE "MORE" SHEET — REMOVED (MAV-FOCUSED, 2026-10).
-       The More sheet duplicated the desktop sidebar's navGroups. The
-       mobile bottom-nav now carries 4 primary destinations (Home, Media,
-       Hosting, Analytics) and the remaining routes (Missing Media, API &
-       Sources, Content Rules, Downloads, Integrations) are surfaced as
-       quick-action cards on the Overview page — so every route is still
-       reachable on mobile, with no duplicate navigation surface. The
-       desktop sidebar is unchanged.
+       MOBILE "MORE" SHEET — RESTORED (2026-10 admin restructure
+       round 3). The previous MAV-FOCUSED redesign removed the More
+       sheet because every route was assumed reachable via Overview
+       cards — but the Feature Control route (extracted from the
+       deleted Content Rules in the 2026-10 restructure) had no
+       Overview card, leaving it unreachable on mobile. The More
+       sheet now surfaces the entire Settings group; the bottom-nav
+       "More" item toggles it.
        ============================================================ -->
+  {#if moreOpen}
+    <div
+      class="a2-more-overlay"
+      onclick={closeMore}
+      onkeydown={handleMoreKeydown}
+      role="presentation"
+    ></div>
+    <div
+      class="a2-more-sheet"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="a2-more-title"
+      tabindex="-1"
+      onclick={(e) => e.stopPropagation()}
+      onkeydown={handleMoreKeydown}
+    >
+      <header class="a2-more-head">
+        <h2 id="a2-more-title" class="a2-more-title">Settings</h2>
+        <button
+          type="button"
+          class="a2-more-close"
+          onclick={closeMore}
+          aria-label="Close settings"
+        >
+          <X size={18} />
+        </button>
+      </header>
+      <div class="a2-more-body">
+        {#each navGroups as group}
+          {#if group.id === 'system'}
+            <p class="a2-more-group-label">{group.label}</p>
+            <nav class="a2-more-list" aria-label={group.label}>
+              {#each group.items as item}
+                {@const Icon = item.icon}
+                <a
+                  class="a2-more-link"
+                  class:active={activeItemId === item.id}
+                  href={item.href}
+                  aria-current={activeItemId === item.id ? 'page' : undefined}
+                  onclick={closeMore}
+                >
+                  <span class="a2-more-link-icon"><Icon size={18} /></span>
+                  <span class="a2-more-link-label">{item.label}</span>
+                </a>
+              {/each}
+            </nav>
+          {/if}
+        {/each}
+      </div>
+    </div>
+  {/if}
 
   <!-- ============================================================
        MAIN WORKSPACE
@@ -428,23 +518,40 @@
   </main>
 
   <!-- ============================================================
-       MOBILE BOTTOM NAVIGATION (<1024px) — 4 primary destinations.
-       The "More" item + its sheet were removed (MAV-FOCUSED, 2026-10).
-       Every route that was in the More sheet is reachable through the
-       Overview quick-action cards or the System Status metric cards.
+       MOBILE BOTTOM NAVIGATION (<1024px) — 5 primary destinations.
+       2026-10 admin restructure round 3: the "More" item was added
+       back. It is special-cased below — instead of an <a href>, it
+       renders a <button> that toggles the More sheet (the drawer
+       above). The other 4 items keep the existing <a href> behavior.
        ============================================================ -->
   <nav class="a2-bottom-nav" aria-label="Mobile navigation">
     {#each mobileNav as item}
       {@const Icon = item.icon}
-      <a
-        class="a2-bottom-item"
-        class:active={activeItemId === item.id || (item.id === 'overview' && activeItemId === '')}
-        href={item.href}
-        aria-current={activeItemId === item.id || (item.id === 'overview' && activeItemId === '') ? 'page' : undefined}
-      >
-        <span class="a2-bottom-icon"><Icon size={20} /></span>
-        <span class="a2-bottom-label">{item.label}</span>
-      </a>
+      {#if item.id === 'more'}
+        <button
+          type="button"
+          class="a2-bottom-item"
+          class:active={moreOpen}
+          aria-expanded={moreOpen}
+          aria-haspopup="dialog"
+          aria-label="Open settings"
+          bind:this={moreTrigger}
+          onclick={openMore}
+        >
+          <span class="a2-bottom-icon"><Icon size={20} /></span>
+          <span class="a2-bottom-label">{item.label}</span>
+        </button>
+      {:else}
+        <a
+          class="a2-bottom-item"
+          class:active={activeItemId === item.id || (item.id === 'overview' && activeItemId === '')}
+          href={item.href}
+          aria-current={activeItemId === item.id || (item.id === 'overview' && activeItemId === '') ? 'page' : undefined}
+        >
+          <span class="a2-bottom-icon"><Icon size={20} /></span>
+          <span class="a2-bottom-label">{item.label}</span>
+        </a>
+      {/if}
     {/each}
   </nav>
 
@@ -888,6 +995,112 @@
     font-size: 9px;
     letter-spacing: 0.02em;
   }
+
+  /* ============================================================
+     MOBILE MORE SHEET (2026-10 admin restructure round 3)
+     — left-anchored drawer that surfaces the Settings group on
+     mobile. Hidden by default; only rendered when moreOpen=true.
+     ============================================================ */
+  .a2-more-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(2px);
+    display: block;
+  }
+  .a2-more-sheet {
+    position: fixed;
+    bottom: 0; left: 0;
+    z-index: 61;
+    width: 100%;
+    max-width: 420px;
+    max-height: 80dvh;
+    background: var(--a2-surface-1);
+    border-top: 1px solid var(--a2-border-strong);
+    border-right: 1px solid var(--a2-border-strong);
+    border-top-right-radius: var(--a2-radius-lg);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 -8px 40px rgba(0, 0, 0, 0.45);
+  }
+  .a2-more-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--a2-space-3);
+    padding: var(--a2-space-4);
+    padding-top: max(var(--a2-space-4), env(safe-area-inset-top, 0px));
+    border-bottom: 1px solid var(--a2-border);
+    background: var(--a2-surface-1);
+  }
+  .a2-more-title {
+    margin: 0;
+    font-size: var(--a2-text-base);
+    font-weight: 700;
+    color: var(--a2-text-bright);
+  }
+  .a2-more-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    min-height: 44px;
+    background: transparent;
+    border: none;
+    color: var(--a2-text-muted);
+    cursor: pointer;
+    border-radius: var(--a2-radius-sm);
+    -webkit-tap-highlight-color: transparent;
+  }
+  .a2-more-close:hover { color: var(--a2-text); background: var(--a2-surface-3); }
+  .a2-more-body {
+    padding: var(--a2-space-3) var(--a2-space-4) max(var(--a2-space-4), env(safe-area-inset-bottom, 0px));
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .a2-more-group-label {
+    margin: var(--a2-space-2) 0 var(--a2-space-1);
+    font-size: var(--a2-text-2xs);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--a2-text-dim);
+  }
+  .a2-more-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .a2-more-link {
+    display: flex;
+    align-items: center;
+    gap: var(--a2-space-3);
+    padding: var(--a2-space-3);
+    min-height: 44px;
+    color: var(--a2-text);
+    text-decoration: none;
+    border-radius: var(--a2-radius-sm);
+    font-size: var(--a2-text-sm);
+    font-weight: 600;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .a2-more-link:hover { background: var(--a2-surface-3); }
+  .a2-more-link:focus-visible {
+    outline: 2px solid var(--a2-cyan);
+    outline-offset: -2px;
+  }
+  .a2-more-link.active { color: var(--a2-cyan); background: var(--a2-cyan-soft); }
+  .a2-more-link-icon {
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    color: var(--a2-text-muted);
+  }
+  .a2-more-link.active .a2-more-link-icon { color: var(--a2-cyan); }
+  .a2-more-link-label { flex: 1 1 auto; }
 
   /* ============================================================
      RESPONSIVE

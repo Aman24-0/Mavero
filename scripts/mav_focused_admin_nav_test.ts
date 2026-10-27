@@ -27,32 +27,47 @@ function ok(condition: unknown, label: string) {
   else { failed += 1; console.log(`  FAIL - ${label}`); }
 }
 
-console.log('\n§1 — More sheet + More bottom-nav item removed');
+console.log('\n§1 — More sheet RESTORED (2026-10 admin restructure round 3)');
 {
   const shell = readCode('src/lib/components/admin2/AdminAppShell.svelte');
-  // The More sheet markup is gone.
-  ok(!/a2-more-sheet/.test(shell), '1a. the .a2-more-sheet markup is removed');
-  ok(!/mobileMoreOpen/.test(shell), '1b. the mobileMoreOpen state + handlers are removed');
-  ok(!/openMobileMore/.test(shell), '1c. the openMobileMore function is removed');
-  ok(!/closeMobileMore/.test(shell), '1d. the closeMobileMore function is removed');
-  ok(!/handleMoreKeydown/.test(shell), '1e. the handleMoreKeydown function is removed');
-  ok(!/lockBodyScroll/.test(shell), '1f. the lockBodyScroll function is removed (was only used by the More sheet)');
-  ok(!/unlockBodyScroll/.test(shell), '1g. the unlockBodyScroll function is removed');
-  // The "more" item is gone from mobileNav.
-  ok(!/id:\s*['"]more['"]/.test(shell), '1h. the "more" item is removed from mobileNav');
-  ok(!/MoreHorizontal/.test(shell), '1i. the MoreHorizontal icon import is removed');
-  // The More-sheet CSS rules are gone.
-  ok(!/\.a2-more-overlay\b/.test(shell), '1j. the .a2-more-overlay CSS rule is removed');
-  ok(!/\.a2-more-sheet\b/.test(shell), '1k. the .a2-more-sheet CSS rule is removed');
-  ok(!/\.a2-more-head\b/.test(shell), '1l. the .a2-more-head CSS rule is removed');
-  ok(!/\.a2-more-link\b/.test(shell), '1m. the .a2-more-link CSS rule is removed');
-  // The mobileNav now has exactly 4 items (Home, Media, Hosting, Analytics).
+  // 2026-10 admin restructure round 3: the More sheet was RESTORED so
+  // the Feature Control route (and other Settings items) are reachable
+  // on mobile. The MAV-FOCUSED redesign had removed the More sheet on
+  // the assumption that every route was reachable via Overview cards,
+  // but Feature Control had no Overview card, leaving it unreachable
+  // on mobile. The More sheet now surfaces the entire Settings group
+  // (API & Sources, Feature Control, Live TV, Downloads, Integrations).
+  // The old `mobileMoreOpen` / `openMobileMore` / `closeMobileMore` /
+  // `lockBodyScroll` legacy names are NOT restored (the new
+  // implementation uses `moreOpen` / `openMore` / `closeMore` / no body
+  // scroll lock — the sheet uses an overlay instead).
+  ok(/a2-more-sheet/.test(shell), '1a. the .a2-more-sheet markup is RESTORED (2026-10 round 3)');
+  ok(!/mobileMoreOpen/.test(shell), '1b. the LEGACY mobileMoreOpen state is NOT restored (new impl uses moreOpen)');
+  ok(!/openMobileMore/.test(shell), '1c. the LEGACY openMobileMore function is NOT restored (new impl uses openMore)');
+  ok(!/closeMobileMore/.test(shell), '1d. the LEGACY closeMobileMore function is NOT restored (new impl uses closeMore)');
+  ok(!/lockBodyScroll/.test(shell), '1f. the lockBodyScroll function is NOT restored (the new impl uses an overlay, not a body-scroll lock)');
+  ok(!/unlockBodyScroll/.test(shell), '1g. the unlockBodyScroll function is NOT restored');
+  // The "more" item is BACK in mobileNav (it toggles the More sheet).
+  ok(/id:\s*['"]more['"]/.test(shell), '1h. the "more" item is RESTORED in mobileNav (toggles the More sheet)');
+  ok(!/MoreHorizontal/.test(shell), '1i. the MoreHorizontal icon is NOT restored (the new impl uses the Menu icon)');
+  // The More-sheet CSS rules are RESTORED.
+  ok(/\.a2-more-overlay\b/.test(shell), '1j. the .a2-more-overlay CSS rule is RESTORED');
+  ok(/\.a2-more-sheet\b/.test(shell), '1k. the .a2-more-sheet CSS rule is RESTORED');
+  ok(/\.a2-more-head\b/.test(shell), '1l. the .a2-more-head CSS rule is RESTORED');
+  ok(/\.a2-more-link\b/.test(shell), '1m. the .a2-more-link CSS rule is RESTORED');
+  // The mobileNav now has exactly 5 items (Home, Media, Missing, Analytics, More).
   const mobileNavMatch = shell.match(/const mobileNav[^=]*=\s*\[([\s\S]*?)\];/);
   ok(mobileNavMatch !== null, '1n. mobileNav array is present');
   if (mobileNavMatch) {
     const itemCount = (mobileNavMatch[1].match(/id:\s*['"][^'"]+['"]/g) ?? []).length;
-    ok(itemCount === 4, `1o. mobileNav has exactly 4 items (Home, Media, Hosting, Analytics) — got ${itemCount}`);
+    ok(itemCount === 5, `1o. mobileNav has exactly 5 items (Home, Media, Missing, Analytics, More) — got ${itemCount}`);
   }
+  // Feature Control is reachable on mobile via the More sheet. The
+  // More sheet renders the Settings group from navGroups; since
+  // navGroups carries the feature-control item (asserted above), the
+  // More sheet WILL render it. The test below confirms the More sheet
+  // iterates navGroups (so it inherits the feature-control link).
+  ok(/\{#each navGroups as group\}[\s\S]*?a2-more-sheet/.test(shell), '1p. the More sheet iterates navGroups (so feature-control is reachable on mobile)');
 }
 
 console.log('\n§2 — Desktop sidebar unchanged (every route still reachable)');
@@ -127,12 +142,18 @@ console.log('\n§5 — No route is unreachable on mobile');
   ok(overview.includes('href="/admin/system/integrations"'), '5i. Overview card for Integrations (not in bottom-nav)');
 }
 
-console.log('\n§6 — Mobile bottom-nav has NO "more" item (no duplicate navigation)');
+console.log('\n§6 — Mobile bottom-nav has the "More" item (2026-10 round 3 restore)');
 {
   const shell = readCode('src/lib/components/admin2/AdminAppShell.svelte');
-  // The bottom-nav markup must NOT contain a `more` branch.
-  ok(!/item\.id\s*===\s*['"]more['"]/.test(shell), '6a. the bottom-nav markup has no "more" branch');
-  ok(!/<button[^>]*aria-label="More navigation"/.test(shell), '6b. the bottom-nav has no "More navigation" button');
+  // 2026-10 admin restructure round 3: the "More" item is BACK in the
+  // bottom-nav. It toggles a left-anchored drawer (the More sheet)
+  // that surfaces the Settings group. The "More" item is NOT a
+  // duplicate navigation surface — it is the ONLY way to reach
+  // Feature Control / Live TV / Downloads / Integrations on mobile.
+  ok(/item\.id\s*===\s*['"]more['"]/.test(shell), '6a. the bottom-nav markup has a "more" branch (toggles the More sheet)');
+  ok(/<button[^>]*aria-label="Open settings"/.test(shell), '6b. the bottom-nav has an "Open settings" button (the More trigger)');
+  ok(/<button[^>]*aria-haspopup="dialog"/.test(shell), '6c. the More trigger declares aria-haspopup="dialog"');
+  ok(/<button[^>]*aria-expanded=/.test(shell), '6d. the More trigger declares aria-expanded (toggles open/closed)');
 }
 
 console.log('\n§7 — Media Library add-file lives in the toolbar (Upload/Import removed)');

@@ -203,8 +203,8 @@ export const browser = true;
     await page.close();
   }
 
-  // --- §2: Mobile bottom-nav has NO "More" item ---
-  console.log('\n§2 — Mobile bottom-nav has NO "More" item');
+  // --- §2: Mobile bottom-nav has the "More" item (2026-10 round 3) ---
+  console.log('\n§2 — Mobile bottom-nav has the "More" item (2026-10 round 3 restore)');
   {
     const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
     await page.goto(`${baseUrl}/`, { waitUntil: 'networkidle' });
@@ -217,19 +217,25 @@ export const browser = true;
         tagName: el.tagName.toLowerCase(),
       }));
     });
-    ok(bottomNavItems.length === 4, `2a. bottom-nav has exactly 4 items — got ${bottomNavItems.length}`);
-    ok(!bottomNavItems.some((i) => i.label.toLowerCase() === 'more'), '2b. no item labelled "More"');
-    ok(!bottomNavItems.some((i) => i.href === '#more'), '2c. no item with href="#more"');
+    // 2026-10 admin restructure round 3: the bottom-nav has 5 items now
+    // (Home, Media, Missing, Analytics, More). The "More" item is a
+    // <button> (not an <a>) — it toggles the More sheet drawer.
+    ok(bottomNavItems.length === 5, `2a. bottom-nav has exactly 5 items (Home, Media, Missing, Analytics, More) — got ${bottomNavItems.length}`);
+    ok(bottomNavItems.some((i) => i.label.toLowerCase() === 'more'), '2b. More item present (toggles the More sheet)');
     ok(bottomNavItems.some((i) => i.label === 'Home'), '2d. Home item present');
     ok(bottomNavItems.some((i) => i.label === 'Media'), '2e. Media item present');
     ok(!bottomNavItems.some((i) => i.label === 'Hosting'), '2f. Hosting item REMOVED from bottom-nav');
     ok(bottomNavItems.some((i) => i.label === 'Missing'), '2f2. Missing Media item ADDED to bottom-nav');
     ok(bottomNavItems.some((i) => i.label === 'Analytics'), '2g. Analytics item present');
 
+    // 2026-10 round 3: the .a2-more-sheet is NOT in the DOM on initial
+    // load (moreOpen starts false; the sheet is conditionally rendered
+    // only when moreOpen=true). Tapping the "More" button would render
+    // it, but the test does not tap.
     const moreSheet = await page.evaluate(() => document.querySelector('.a2-more-sheet'));
-    ok(moreSheet === null, '2h. no .a2-more-sheet in the DOM');
+    ok(moreSheet === null, '2h. no .a2-more-sheet in the DOM on initial load (closed by default)');
     const moreOverlay = await page.evaluate(() => document.querySelector('.a2-more-overlay'));
-    ok(moreOverlay === null, '2i. no .a2-more-overlay in the DOM');
+    ok(moreOverlay === null, '2i. no .a2-more-overlay in the DOM on initial load (closed by default)');
 
     await page.close();
   }

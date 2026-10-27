@@ -65,19 +65,23 @@ assert.match(adminAppShell, /min-width: 44px.*min-height: 44px/s, 'bottom nav it
 ok('2a. Mobile bottom nav has safe-area + 44px touch targets');
 
 // ============================================================
-// 3. More menu — REMOVED (MAV-FOCUSED 2026-10 redesign)
+// 3. More menu — RESTORED (2026-10 admin restructure round 3)
 // ============================================================
 
-// The mobile "More" sheet + the More bottom-nav item were intentionally
-// removed (AdminAppShell docblock: every route that was in the More sheet
-// is reachable through the sidebar/drawer + mobile bottom nav). Pin the
-// REMOVAL so the dead UI never comes back, and keep the intent of this
-// section (safe-area handling on mobile surfaces) asserted against the
-// bottom nav, which now owns mobile navigation.
-assert.doesNotMatch(adminAppShell, /a2-more-sheet/, 'Mobile More sheet removed (MAV-FOCUSED redesign — no dead sheet surface)');
-assert.doesNotMatch(adminAppShell, /a2-more-link/, 'Mobile More sheet links removed with it');
-assert.match(adminAppShell, /a2-bottom-nav[\s\S]*?padding-bottom: env\(safe-area-inset-bottom/s, 'bottom nav owns the safe-area-inset-bottom padding (the successor surface)');
-ok('3a. More sheet intentionally removed; safe-area-inset-bottom lives on the bottom nav');
+// 2026-10 admin restructure round 3: the More sheet was RESTORED so the
+// Feature Control route (and other Settings items) are reachable on
+// mobile. The MAV-FOCUSED redesign had removed it on the assumption
+// that every route was reachable via Overview cards — but Feature
+// Control had no Overview card, leaving it unreachable on mobile. The
+// More sheet now surfaces the Settings group; the bottom-nav "More"
+// item toggles it. The safe-area handling is asserted against BOTH the
+// bottom nav AND the More sheet (both surfaces must respect the safe
+// area on mobile).
+assert.match(adminAppShell, /a2-more-sheet/, 'Mobile More sheet RESTORED (2026-10 round 3 — surfaces Settings group on mobile)');
+assert.match(adminAppShell, /a2-more-link/, 'Mobile More sheet links RESTORED with it');
+assert.match(adminAppShell, /a2-bottom-nav[\s\S]*?padding-bottom: env\(safe-area-inset-bottom/s, 'bottom nav owns the safe-area-inset-bottom padding (always has)');
+assert.match(adminAppShell, /a2-more-body[\s\S]*?env\(safe-area-inset-bottom/s, 'More sheet body respects the safe-area-inset-bottom (round 3 contract)');
+ok('3a. More sheet RESTORED with safe-area-inset-bottom on both the bottom nav and the More sheet body');
 
 // ============================================================
 // 4. Mobile header touch targets
@@ -298,18 +302,32 @@ ok('24a. All major components respect prefers-reduced-motion');
 // placeholder until Phase C ships.
 // ============================================================
 
-// [MAV-FOCUSED 2026-10 redesign] the mobile bottom nav is 4 primary
-// destinations (Home / Media / Missing / Analytics) — the "More" item,
-// the More sheet, and the Hosting item were INTENTIONALLY removed
-// (commit 24705a1: Media Library is the hosting surface; Missing Media
-// took Hosting's slot as the demand-tracking surface admins need).
+// [MAV-FOCUSED 2026-10 redesign] the mobile bottom nav was reduced to
+// 4 primary destinations (Home / Media / Missing / Analytics) — the
+// "More" item, the More sheet, and the Hosting item were INTENTIONALLY
+// removed (commit 24705a1: Media Library is the hosting surface;
+// Missing Media took Hosting's slot as the demand-tracking surface
+// admins need).
+//
+// [2026-10 admin restructure round 3] the "More" item + the More sheet
+// were RESTORED. The MAV-FOCUSED redesign had assumed every route was
+// reachable via Overview cards, but the Feature Control route
+// (extracted from the deleted Content Rules in the 2026-10 restructure)
+// had no Overview card — leaving it unreachable on mobile. The More
+// sheet now surfaces the entire Settings group; the bottom-nav "More"
+// item toggles it. The Hosting item is still removed (Media Library is
+// the hosting surface).
 assert.match(adminAppShell, /mobileNav[\s\S]*?Home.*\/admin'/, 'mobile nav has Home');
 assert.match(adminAppShell, /\{ id: 'media-library', label: 'Media', href: '\/admin\/media\/library'/, 'mobile nav has Media (Media Library)');
 assert.match(adminAppShell, /mobileNav[\s\S]*?Missing.*\/admin\/media\/missing'/, 'mobile nav has Missing (Missing Media — the Hosting slot replacement)');
 assert.match(adminAppShell, /mobileNav[\s\S]*?Analytics.*\/admin\/analytics'/, 'mobile nav has Analytics');
-assert.doesNotMatch(adminAppShell, /mobileNav[\s\S]*?label: 'More'/, 'mobile nav has no More item (sheet removed with it)');
-assert.doesNotMatch(adminAppShell, /mobileNav[\s\S]*?\/admin\/hosting'/, 'mobile nav has no Hosting item (MAV-FOCUSED redesign)');
+// 2026-10 admin restructure round 3: the More item is RESTORED in the
+// mobile nav. It toggles the More sheet (a left-anchored drawer that
+// surfaces the Settings group on mobile). Without it, Feature Control
+// was unreachable on mobile.
+assert.match(adminAppShell, /mobileNav[\s\S]*?label: 'More'/, 'mobile nav has the More item (2026-10 round 3 restore — toggles the More sheet)');
+assert.doesNotMatch(adminAppShell, /mobileNav[\s\S]*?\/admin\/hosting'/, 'mobile nav has no Hosting item (MAV-FOCUSED redesign — still removed)');
 assert.doesNotMatch(adminAppShell, /id: 'upload', label: 'Upload[^']*',[^\n]*matchPrefix[^\n]*\n[\s\S]{0,400}?a2-bottom-nav/, 'mobile nav no longer has top-level Upload (Phase 2C consolidation)');
-ok('25a. Mobile bottom nav has 4 primary destinations (Home/Media/Missing/Analytics) — More + Hosting intentionally removed');
+ok('25a. Mobile bottom nav has 5 destinations (Home/Media/Missing/Analytics/More) — More restored 2026-10 round 3; Hosting still removed');
 
 console.log(`\nAdmin 2.0 Phase I tests passed (${passed} check groups).`);
