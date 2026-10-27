@@ -142,7 +142,6 @@
         { id: 'livetv', label: 'Live TV', href: '/admin/system/livetv', icon: Tv, matchPrefix: '/admin/system/livetv' },
         { id: 'downloads', label: 'Downloads', href: '/admin/system/downloads', icon: Download, matchPrefix: '/admin/system/downloads' },
         { id: 'integrations', label: 'Integrations', href: '/admin/system/integrations', icon: Puzzle, matchPrefix: '/admin/system/integrations' },
-        { id: 'app-config', label: 'App Config', href: '/admin/system/app-config', icon: Settings, matchPrefix: '/admin/system/app-config' },
       ]
     },
     {

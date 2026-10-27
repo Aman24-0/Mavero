@@ -1079,7 +1079,15 @@ function pristineFile(relative: string): string | null {
         // shorter <p> line is a safe cosmetic change (no registry/global-
         // position logic touched).
         || /^<p>.*<\/p>$/.test(line.trim())
-        || line.includes('Stremio add-ons and CloudStream extensions.')),
+        || line.includes('Stremio add-ons and CloudStream extensions.')
+        // 2026-10 admin restructure round 2: the description was further
+        // trimmed to "Add-ons & Extensions." (a consolidation rename),
+        // and the empty-state copy was reworded ("Add an add-on manifest
+        // URL." instead of "Add a Stremio addon manifest URL."). Both
+        // are safe cosmetic changes (no registry/global-position logic
+        // touched).
+        || line.includes('Add-ons & Extensions.')
+        || line.includes('Add an add-on manifest URL.')),
       `F1: every +page.svelte addition is the FINAL TASK global-position surface (added ${pageAdditions.length}; 2026-10 admin restructure description de-clutter exempted)`,
     );
   }

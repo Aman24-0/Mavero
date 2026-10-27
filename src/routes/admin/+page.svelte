@@ -59,14 +59,6 @@
           <div class="a2-metric-label">Categories</div>
           <div class="a2-metric-status">Custom ordering</div>
         </a>
-        {#if data.livetvOverview}
-          <a class="a2-metric-card" href="/admin/system/livetv">
-            <div class="a2-metric-icon"><Tv size={18} /></div>
-            <div class="a2-metric-value">{data.livetvOverview.sources.total}</div>
-            <div class="a2-metric-label">Live TV Sources</div>
-            <div class="a2-metric-status">{data.livetvOverview.sources.enabled} enabled · {data.livetvOverview.epg.sources} EPG</div>
-          </a>
-        {/if}
         <div class="a2-metric-card">
           <div class="a2-metric-icon"><Database size={18} /></div>
           <div class="a2-metric-value">v{data.overview.configVersion}</div>
@@ -82,13 +74,23 @@
          those destinations are already in the sidebar. The Overview now
          follows the brief — dashboard + summary + contextual shortcuts,
          not a second full admin menu.)
+         2026-10 admin restructure: Live TV Sources moved here from the
+         System Status grid — it's an integration, not a core source.
          ============================================================ -->
-    {#if data.downloadersOverview || data.addonsOverview}
+    {#if data.downloadersOverview || data.addonsOverview || data.livetvOverview}
       <section class="a2-section">
         <div class="a2-section-head">
           <h2 class="a2-section-title">Integrations</h2>
         </div>
         <div class="a2-metric-grid a2-secondary">
+          {#if data.livetvOverview}
+            <a class="a2-metric-card" href="/admin/system/livetv">
+              <div class="a2-metric-icon"><Tv size={18} /></div>
+              <div class="a2-metric-value">{data.livetvOverview.sources.total}</div>
+              <div class="a2-metric-label">Live TV Sources</div>
+              <div class="a2-metric-status">{data.livetvOverview.sources.enabled} enabled · {data.livetvOverview.epg.sources} EPG</div>
+            </a>
+          {/if}
           {#if data.downloadersOverview}
             <a class="a2-metric-card" href="/admin/system/downloads">
               <div class="a2-metric-icon"><Download size={18} /></div>
@@ -101,7 +103,7 @@
             <a class="a2-metric-card" href="/admin/system/integrations">
               <div class="a2-metric-icon"><Puzzle size={18} /></div>
               <div class="a2-metric-value">{data.addonsOverview.addonCount}</div>
-              <div class="a2-metric-label">Stremio Addons</div>
+              <div class="a2-metric-label">Add-ons & Extensions</div>
               <div class="a2-metric-status">{data.addonsOverview.enabledCount} enabled</div>
             </a>
           {/if}

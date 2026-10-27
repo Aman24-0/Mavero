@@ -167,14 +167,14 @@
     ]}
   >
     {#snippet actions()}<AdminAddButton label="Add Integration" onclick={openAddSheet} />{/snippet}
-    {#snippet description()}<p>Stremio add-ons and CloudStream extensions.</p>{/snippet}
+    {#snippet description()}<p>Add-ons & Extensions.</p>{/snippet}
 
     {#if data.notice}<div class="a2-notice" role="status"><Check size={14} /> {data.notice}</div>{/if}
     {#if form?.message}<div class="a2-form-error" role="alert">{form.message}</div>{/if}
 
     {#if tab === 'addon'}
       {#if data.addons.length === 0}
-        <div class="a2-empty"><Puzzle size={32} /><h3>No integrations</h3><p>Add a Stremio addon manifest URL.</p><AdminAddButton label="Add Integration" onclick={openAddSheet} /></div>
+        <div class="a2-empty"><Puzzle size={32} /><h3>No integrations</h3><p>Add an add-on manifest URL.</p><AdminAddButton label="Add Integration" onclick={openAddSheet} /></div>
       {:else}
         <div class="a2-addon-list">
           {#each data.addons as addon (addon.id)}

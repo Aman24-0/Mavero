@@ -6,7 +6,7 @@
   // AdminSheet — reusable modal/bottom-sheet primitive for admin forms.
   //
   // Used for BOTH create and edit flows on every admin registry page
-  // (Providers, Sources, Downloaders, Categories, Stremio Addons).
+  // (Providers, Sources, Downloaders, Categories, Add-ons & Extensions).
   //
   // Behavior:
   //   - Mobile (<640px): full-width bottom sheet anchored to the bottom
