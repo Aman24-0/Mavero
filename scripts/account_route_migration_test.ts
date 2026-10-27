@@ -128,7 +128,7 @@ ok('6. Upcoming back-pill removed (Account sheet destination since LT-1); Upcomi
 const linksBlock = appShell.match(/const primaryLinks = \$derived\(\[([\s\S]*?)\]\);/);
 assert.ok(linksBlock, 'AppShell still defines primaryLinks (R-2: now $derived for the liveTvAvailable gate)');
 const labels = [...linksBlock![1].matchAll(/label: '([^']+)'/g)].map((m) => m[1]);
-assert.deepEqual(labels, ['Discover', 'Movies', 'TV Shows', 'Anime', 'Live TV', 'Search'], 'R-2: primary nav contains all six labels (Live TV is in the conditional liveTvAvailable spread)');
+assert.deepEqual(labels, ['Discover', 'Movies', 'TV Shows', 'Anime', 'Live TV'], 'R-2: primary nav contains the five link labels (Search moved to the header; Live TV is conditional)');
 assert.match(appShell, /\.\.\.\(\(liveTvAvailable && \(isAdmin \|\| livetvNavVisible\)\) \?\s*\[\{ label: 'Live TV'[\s\S]{0,200}\] : \[\]\)/, 'R-2: Live TV is conditionally included via the liveTvAvailable + nav-visibility gate');
 assert.match(appShell, /class="topbar-account"/, 'the mobile/tablet account control exists');
 assert.match(appShell, /class="header-account"/, 'the desktop header account control exists');

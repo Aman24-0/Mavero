@@ -250,7 +250,7 @@
        opt-out is removed together with the Settings/My List
        page-specific Back buttons: global navigation alone provides
        navigation on those pages, at every breakpoint. -->
-  <AppShell currentPath={page.url.pathname} user={data.user} isAuthenticated={data.isAuthenticated} isAdmin={data.isAdmin}>
+  <AppShell currentPath={page.url.pathname} user={data.user} isAuthenticated={data.isAuthenticated} isAdmin={data.isAdmin} appConfig={data.appConfig ?? null}>
     {#snippet children()}
       {@render pageChildren()}
     {/snippet}

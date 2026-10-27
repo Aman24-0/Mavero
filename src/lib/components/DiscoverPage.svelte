@@ -57,6 +57,7 @@
     newMovies = [],
     genreCollections = [],
     errorMessage = '',
+    appConfig = null,
   }: {
     featuredItem: MediaItem | undefined;
     /** Server-selected Hero lineup in strict M/S/M/S/M/S order. May be empty
@@ -78,6 +79,7 @@
     newMovies?: MediaItem[];
     genreCollections?: { title: string; items: MediaItem[]; href: string }[];
     errorMessage?: string;
+    appConfig?: { telegramUrl: string | null; discordUrl: string | null } | null;
   } = $props();
 
   type GalleryCategory = 'Movie' | 'Series' | 'Anime';
@@ -881,7 +883,7 @@
     {:else}
       <EmptyState eyebrow="MAVERO / Catalog unavailable" title="The shelves are quiet." message="The live catalog is temporarily unavailable. Please try again in a moment." actionLabel="Retry Discover" actionHref="/discover" />
     {/if}
-    <AppFooter />
+    <AppFooter telegramUrl={appConfig?.telegramUrl ?? null} discordUrl={appConfig?.discordUrl ?? null} />
   </div>
 </div>
 

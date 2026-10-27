@@ -892,7 +892,7 @@ assert.match(upcomingPageSrc, /'theatrical' \? 'Theatrical' : 'OTT'/, 'release c
 assert.match(upcomingPageSrc, /class="ep-tag kind-tag">\{kindLabel\}/, 'kind tag rendered on movie cards');
 // JustWatch attribution: the shared AppFooter (single attribution system) renders on Upcoming
 assert.match(upcomingPageSrc, /import AppFooter from '\$components\/AppFooter\.svelte'/, 'page imports the shared AppFooter');
-assert.match(upcomingPageSrc, /<AppFooter \/>/, 'page renders the shared AppFooter (JustWatch + TMDB attribution)');
+assert.match(upcomingPageSrc, /<AppFooter\b/, 'page renders the shared AppFooter (TMDB + social links)');
 // ScrollToTop present
 assert.match(upcomingPageSrc, /import ScrollToTop from '\$components\/ScrollToTop\.svelte'/, 'page imports ScrollToTop');
 assert.match(upcomingPageSrc, /<ScrollToTop \/>/, 'ScrollToTop rendered');

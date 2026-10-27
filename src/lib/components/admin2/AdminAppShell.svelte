@@ -142,6 +142,7 @@
         { id: 'content-rules', label: 'Content Rules', href: '/admin/system/content-rules', icon: Layers, matchPrefix: '/admin/system/content-rules' },
         { id: 'downloads', label: 'Downloads', href: '/admin/system/downloads', icon: Download, matchPrefix: '/admin/system/downloads' },
         { id: 'integrations', label: 'Integrations', href: '/admin/system/integrations', icon: Puzzle, matchPrefix: '/admin/system/integrations' },
+        { id: 'app-config', label: 'App Config', href: '/admin/system/app-config', icon: Settings, matchPrefix: '/admin/system/app-config' },
       ]
     },
     {

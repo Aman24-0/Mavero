@@ -79,39 +79,37 @@ ok('1. one primaryLinks source; desktop rail and mobile pill both render from it
 // ============================================================
 assert.deepEqual(
   entries.map((e) => e.label),
-  ['Discover', 'Movies', 'TV Shows', 'Anime', 'Live TV', 'Search'],
-  'labels: Discover, Movies, TV Shows, Anime, Live TV, Search — exact order'
+  ['Discover', 'Movies', 'TV Shows', 'Anime', 'Live TV'],
+  'labels: Discover, Movies, TV Shows, Anime, Live TV — exact order (Search moved to the header)'
 );
 assert.deepEqual(
   entries.map((e) => e.href),
-  ['/discover', '/movies', '/tv-shows', '/anime', '/live-tv', '/search'],
-  'hrefs: /discover, /movies, /tv-shows, /anime, /live-tv, /search — exact order'
+  ['/discover', '/movies', '/tv-shows', '/anime', '/live-tv'],
+  'hrefs: /discover, /movies, /tv-shows, /anime, /live-tv — exact order'
 );
 assert.deepEqual(
   entries.map((e) => e.key),
-  ['/discover', '/movies', '/tv-shows', '/anime', '/live-tv', '/search'],
+  ['/discover', '/movies', '/tv-shows', '/anime', '/live-tv'],
   'active-state keys mirror hrefs — exact order'
 );
-assert.equal(entries.length, 6, 'exactly six primary destinations');
+assert.equal(entries.length, 5, 'exactly five primary destinations (Search is in the header)');
 assert.equal(entries[1].label, 'Movies', 'Movies is second');
 assert.equal(entries[2].label, 'TV Shows', 'TV Shows is third');
 assert.equal(entries[3].label, 'Anime', 'Anime is fourth');
 // LT-1 — Live TV is EXACTLY #5, Search stays #6, Upcoming is gone.
 assert.equal(entries[4].label, 'Live TV', 'Live TV is exactly #5');
 assert.equal(entries[4].href, '/live-tv', 'Live TV targets /live-tv');
-assert.equal(entries[5].label, 'Search', 'Search remains #6');
-assert.equal(entries[5].href, '/search', 'Search keeps /search');
 assert.ok(!entries.some((e) => e.label === 'Upcoming'), 'Upcoming is NOT a primary navigation destination');
 assert.ok(!entries.some((e) => e.href === '/upcoming'), 'no primary entry points at /upcoming');
-ok('2. exact six entries, exact order, exact hrefs (Live TV #5, Search #6, Upcoming removed)');
+ok('2. exact five entries, exact order, exact hrefs (Live TV #5, Upcoming removed, Search in header)');
 
 // ============================================================
 // 3. ICONS — lucide-svelte only, correct icon per destination
 // ============================================================
 assert.deepEqual(
   entries.map((e) => e.icon),
-  ['Compass', 'Film', 'Tv', 'Sparkles', 'Radio', 'Search'],
-  'icons: Compass, Film, Tv, Sparkles, Radio, Search'
+  ['Compass', 'Film', 'Tv', 'Sparkles', 'Radio'],
+  'icons: Compass, Film, Tv, Sparkles, Radio'
 );
 assert.match(appShell, /import \{[^}]*Film[^}]*\} from 'lucide-svelte'/, 'Film imported from lucide-svelte');
 assert.match(appShell, /import \{[^}]*\bTv\b[^}]*\} from 'lucide-svelte'/, 'Tv imported from lucide-svelte');

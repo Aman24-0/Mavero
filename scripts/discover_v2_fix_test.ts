@@ -114,14 +114,14 @@ const railEndpoint = await readFile(path.join(repoRoot, 'src/routes/api/discover
   // MAVERO branding.
   assert.match(appFooter, /MAVERO/, 'AppFooter has MAVERO branding');
   // Tagline.
-  assert.match(appFooter, /Movies, series.*all in one place/, 'AppFooter has tagline');
+  assert.match(appFooter, /Movies, TV Shows, Anime .*Live TV.*all in one place/, 'AppFooter has the updated tagline');
   // TMDB attribution + logo.
   assert.match(appFooter, /tmdb-credit/, 'AppFooter has TMDB credit');
   assert.match(appFooter, /tmdb-logo/, 'AppFooter has TMDB logo');
   assert.match(appFooter, /themoviedb\.org\/about\/logos-attribution/, 'AppFooter links to TMDB attribution page');
-  // JustWatch attribution.
-  assert.match(appFooter, /justwatch-credit/, 'AppFooter has JustWatch credit');
-  assert.match(appFooter, /justwatch\.com/, 'AppFooter links to JustWatch');
+  // Social links (JustWatch removed).
+  assert.doesNotMatch(appFooter, /justwatch-credit|justwatch\.com/, 'AppFooter no longer has a JustWatch credit');
+  assert.match(appFooter, /footer-social|social-link/, 'AppFooter renders the Telegram/Discord social row');
   // Disclaimer.
   assert.match(appFooter, /does not host, upload, or store/, 'AppFooter has third-party content disclaimer');
   assert.match(appFooter, /third-party services available on the internet/, 'disclaimer mentions third-party services');

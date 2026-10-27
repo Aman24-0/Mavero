@@ -1,6 +1,7 @@
 import type { LayoutServerLoad } from './$types';
 import { parseDeviceMetadata, readDeviceHintCookie, DEVICE_HINT_COOKIE } from '$lib/server/auth/device-metadata';
 import { isAdminUser } from '$lib/server/streaming/admin-auth';
+import { getAppConfig } from '$lib/server/app-config';
 import type { ClientDeviceType } from '$lib/shared/device-class';
 
 // Phase 2-A (audit PERF-001) — Session resolution optimization.
@@ -67,13 +68,15 @@ export const load: LayoutServerLoad = async ({ locals, request, cookies }) => {
   // `typeof window !== 'undefined'` so a misconfigured SSR call is a
   // no-op rather than a crash.
   const anonymousId = locals.anonymousId ?? null;
+  // App-wide config (footer/account social links) — fail-safe, never throws.
+  const appConfig = await getAppConfig(locals.supabase);
 
   const user = locals.user;
   if (!user) {
     // Guests are NOT exempt — DevTools protection is enabled for them,
     // and no profiles lookup is needed (zero extra DB cost for the
     // unauthenticated majority).
-    return { user: null, isAuthenticated: false, deviceType, devtoolExempt: false, isAdmin: false, anonymousId, analyticsEnabled: true };
+    return { user: null, isAuthenticated: false, deviceType, devtoolExempt: false, isAdmin: false, anonymousId, analyticsEnabled: true, appConfig };
   }
   const userMeta = user.user_metadata;
   const displayName = typeof userMeta?.display_name === 'string' && userMeta.display_name.trim()
@@ -97,6 +100,7 @@ export const load: LayoutServerLoad = async ({ locals, request, cookies }) => {
     devtoolExempt,
     isAdmin: devtoolExempt,
     anonymousId,
-    analyticsEnabled: true
+    analyticsEnabled: true,
+    appConfig
   };
 };

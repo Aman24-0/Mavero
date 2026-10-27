@@ -838,7 +838,7 @@
       {/if}
     {/if}
 
-    <AppFooter />
+    <AppFooter telegramUrl={data.appConfig?.telegramUrl ?? null} discordUrl={data.appConfig?.discordUrl ?? null} />
   </div>
 </div>
 

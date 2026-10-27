@@ -4,7 +4,7 @@
   import AccountSheet from '$components/AccountSheet.svelte';
   import { haptic } from '$lib/client/haptics';
 
-  let { children, currentPath = '/', user = null, isAuthenticated = false, isAdmin = false }: { children: Snippet; currentPath?: string; user?: { id: string; email?: string | null; displayName?: string | null } | null; isAuthenticated?: boolean; isAdmin?: boolean } = $props();
+  let { children, currentPath = '/', user = null, isAuthenticated = false, isAdmin = false, appConfig = null }: { children: Snippet; currentPath?: string; user?: { id: string; email?: string | null; displayName?: string | null } | null; isAuthenticated?: boolean; isAdmin?: boolean; appConfig?: { telegramUrl: string | null; discordUrl: string | null } | null } = $props();
   let shell: HTMLElement;
 
   // R-2 — the Live TV availability state. Fetched ONCE per AppShell mount
@@ -72,8 +72,7 @@
     { label: 'Movies', href: '/movies', key: '/movies', icon: Film },
     { label: 'TV Shows', href: '/tv-shows', key: '/tv-shows', icon: Tv },
     { label: 'Anime', href: '/anime', key: '/anime', icon: Sparkles },
-    ...((liveTvAvailable && (isAdmin || livetvNavVisible)) ? [{ label: 'Live TV', href: '/live-tv', key: '/live-tv', icon: Radio }] : []),
-    { label: 'Search', href: '/search', key: '/search', icon: Search }
+    ...((liveTvAvailable && (isAdmin || livetvNavVisible)) ? [{ label: 'Live TV', href: '/live-tv', key: '/live-tv', icon: Radio }] : [])
   ]);
 
   const isActive = (key: string) => currentPath === key || currentPath.startsWith(`${key}/`);
@@ -166,18 +165,15 @@
         <span class="brand-symbol"><Clapperboard size={15} strokeWidth={2.2} /></span>
         <span class="brand-word">MAVERO</span>
       </a>
-      <button
-        type="button"
-        class:active={isAccountSurface}
+      <a
+        class:active={isActive('/search')}
         class="topbar-account"
-        aria-haspopup="dialog"
-        aria-expanded={accountSheetOpen}
-        aria-label="Account"
-        aria-current={isAccountSurface ? 'page' : undefined}
-        onclick={openAccountSheet}
+        href="/search"
+        aria-label="Search"
+        aria-current={isActive('/search') ? 'page' : undefined}
       >
-        <UserRound size={20} strokeWidth={isAccountSurface ? 2.3 : 1.8} />
-      </button>
+        <Search size={20} strokeWidth={isActive('/search') ? 2.3 : 1.8} />
+      </a>
     </header>
 
     <main>{@render children()}</main>
@@ -187,22 +183,19 @@
        compact Account sheet (Phase 3). The sidebar carries the six
        content destinations; Account lives in the header per the
        Final IA. -->
-  <button
-    type="button"
-    class:active={isAccountSurface}
+  <a
+    class:active={isActive('/search')}
     class="header-account"
-    aria-haspopup="dialog"
-    aria-expanded={accountSheetOpen}
-    aria-label="Account"
-    aria-current={isAccountSurface ? 'page' : undefined}
-    onclick={openAccountSheet}
+    href="/search"
+    aria-label="Search"
+    aria-current={isActive('/search') ? 'page' : undefined}
   >
-    <UserRound size={20} strokeWidth={isAccountSurface ? 2.3 : 1.8} />
-  </button>
+    <Search size={20} strokeWidth={isActive('/search') ? 2.3 : 1.8} />
+  </a>
 
   <!-- Compact Account sheet (Phase 3 + LT-1): identity + Upcoming + My
        List + Settings -->
-  <AccountSheet open={accountSheetOpen} onClose={closeAccountSheet} {user} {isAuthenticated} />
+  <AccountSheet open={accountSheetOpen} onClose={closeAccountSheet} {user} {isAuthenticated} telegramUrl={appConfig?.telegramUrl ?? null} discordUrl={appConfig?.discordUrl ?? null} />
 
   <!-- Mobile + tablet bottom nav (touch composition, ≤1024px).
        MAV-21 Workstream D — rendered UNCONDITIONALLY on every shell
@@ -224,6 +217,18 @@
             <span class="nav-label">{link.label}</span>
           </a>
         {/each}
+        <button
+          type="button"
+          class:active={isAccountSurface}
+          class="nav-account"
+          aria-haspopup="dialog"
+          aria-expanded={accountSheetOpen}
+          aria-label="Account"
+          onclick={openAccountSheet}
+        >
+          <span class="nav-icon"><UserRound size={20} strokeWidth={isAccountSurface ? 2.3 : 1.8} /></span>
+          <span class="nav-label">Account</span>
+        </button>
       </div>
     </nav>
 </div>
@@ -397,6 +402,15 @@
       text-decoration: none;
       transition: color 180ms ease, background 180ms ease;
     }
+    .mobile-nav button.nav-account {
+      display: grid; place-items: center; gap: 2px; flex: 1 1 0;
+      min-width: 0; min-height: 44px; padding: 6px 2px;
+      border: 0; background: transparent; border-radius: 999px; cursor: pointer;
+      color: var(--color-text-deep);
+      font-size: .58rem; font-weight: 700; letter-spacing: .02em;
+      transition: color 180ms ease, background 180ms ease;
+    }
+    .mobile-nav button.nav-account.active { color: var(--color-text); background: var(--color-surface-raised); }
     .mobile-nav .nav-icon { display: grid; place-items: center; }
     .mobile-nav .nav-label { white-space: nowrap; opacity: .9; }
     .mobile-nav a:hover { color: var(--color-text-muted); }

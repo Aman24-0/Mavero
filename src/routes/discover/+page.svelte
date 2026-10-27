@@ -21,4 +21,5 @@
     newMovies={data.newMovies}
     genreCollections={data.genreCollections}
     errorMessage={data.errorMessage ?? ''}
+    appConfig={data.appConfig ?? null}
   />

@@ -392,8 +392,8 @@ const appFooter = await readFile(path.join(repoRoot, 'src/lib/components/AppFoot
   assert.match(appFooter, /tmdb-credit/, 'TMDB credit present in AppFooter');
   assert.match(appFooter, /tmdb-logo/, 'TMDB logo present in AppFooter');
   assert.match(appFooter, /themoviedb\.org\/about\/logos-attribution/, 'links to TMDB attribution page in AppFooter');
-  assert.match(appFooter, /justwatch-credit/, 'JustWatch credit present in AppFooter');
-  assert.match(appFooter, /justwatch\.com/, 'links to JustWatch in AppFooter');
+  assert.doesNotMatch(appFooter, /justwatch-credit|justwatch\.com/, 'JustWatch credit removed from AppFooter');
+  assert.match(appFooter, /footer-social|social-link/, 'Telegram/Discord social row present in AppFooter');
 }
 
 // ============================================================================

@@ -191,7 +191,7 @@ assert.match(accountPage, /href="\/settings\/scan-tv"/, 'the QR login CTA target
 assert.doesNotMatch(accountPage, /href="\/account\/scan-tv"/, 'no link to the legacy /account/scan-tv path');
 // CineLog + footer stay.
 assert.match(accountPage, /cinelog-strip/, 'CineLog strip kept (Phase 3)');
-assert.match(accountPage, /<AppFooter \/>/, 'footer kept last (Phase 3)');
+assert.match(accountPage, /<AppFooter\b/, 'footer kept last (Phase 3)');
 // The authenticated cloud sync side effect is preserved (library-aware
 // route) — but only for the sync status, not for removed stats.
 assert.match(accountPage, /syncAuthenticatedState\(\)/, 'authenticated sync path preserved (identity sync status)');
@@ -237,7 +237,7 @@ assert.match(accountPage, /aria-live="polite"/, 'sync status is announced polite
 assert.match(accountPage, /role="alert"/, 'errors use alert semantics');
 assert.match(accountPage, /<ConfirmDialog/, 'dialogs use the shared accessible ConfirmDialog');
 assert.match(accountPage, /<ScrollToTop \/>/, 'ScrollToTop preserved');
-assert.match(accountPage, /<AppFooter \/>/, 'AppFooter preserved');
+assert.match(accountPage, /<AppFooter\b/, 'AppFooter preserved');
 ok('14. accessible feedback, dialogs, and shared components preserved');
 
 // ============================================================

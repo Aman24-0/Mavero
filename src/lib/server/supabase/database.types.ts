@@ -2047,6 +2047,27 @@ export type Database = {
         }
         Relationships: []
       }
+      app_config: {
+        Row: {
+          id: number
+          telegram_url: string | null
+          discord_url: string | null
+          updated_at: string
+        }
+        Insert: {
+          id?: number
+          telegram_url?: string | null
+          discord_url?: string | null
+          updated_at?: string
+        }
+        Update: {
+          id?: number
+          telegram_url?: string | null
+          discord_url?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       livetv_sources: {
         Row: {
           id: string

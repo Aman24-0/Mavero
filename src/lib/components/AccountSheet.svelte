@@ -47,12 +47,16 @@
     open = false,
     onClose,
     user = null,
-    isAuthenticated = false
+    isAuthenticated = false,
+    telegramUrl = null,
+    discordUrl = null
   }: {
     open?: boolean;
     onClose: () => void;
     user?: { id: string; email?: string | null; displayName?: string | null } | null;
     isAuthenticated?: boolean;
+    telegramUrl?: string | null;
+    discordUrl?: string | null;
   } = $props();
 
   let sheetElement: HTMLElement | undefined = $state();
@@ -204,6 +208,22 @@
           <small>Profile, security and devices</small>
         </span>
       </a>
+      {#if telegramUrl || discordUrl}
+        <div class="social-row">
+          {#if telegramUrl}
+            <a class="social-btn" href={telegramUrl} target="_blank" rel="noreferrer" aria-label="Join us on Telegram">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M9.78 18.65l.28-4.23 7.68-6.92c.34-.31-.07-.46-.52-.19L7.74 13.3 3.64 12c-.88-.25-.89-.86.2-1.3l15.97-6.16c.73-.33 1.43.18 1.15 1.3l-2.72 12.81c-.19.91-.74 1.13-1.5.71L12.6 16.3l-1.99 1.93c-.23.23-.42.42-.83.42z"/></svg>
+              <span>Telegram</span>
+            </a>
+          {/if}
+          {#if discordUrl}
+            <a class="social-btn" href={discordUrl} target="_blank" rel="noreferrer" aria-label="Join our Discord">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M20.3 4.4A19.8 19.8 0 0 0 15.4 3c-.2.4-.4.9-.6 1.3a18.3 18.3 0 0 0-5.5 0C9.1 3.9 8.9 3.4 8.7 3a19.7 19.7 0 0 0-4.9 1.5C.6 9.1-.2 13.7.2 18.3A19.9 19.9 0 0 0 6.3 21c.4-.6.8-1.2 1.1-1.9-.6-.2-1.2-.5-1.7-.9l.4-.3a14.2 14.2 0 0 0 12.2 0l.4.3c-.5.4-1.1.7-1.7.9.3.7.7 1.3 1.1 1.9a19.8 19.8 0 0 0 6.1-2.7c.5-5.3-.8-9.8-2.5-13.9zM8.5 15.3c-1.2 0-2.2-1.1-2.2-2.4s1-2.4 2.2-2.4 2.2 1.1 2.2 2.4-1 2.4-2.2 2.4zm7 0c-1.2 0-2.2-1.1-2.2-2.4s1-2.4 2.2-2.4 2.2 1.1 2.2 2.4-1 2.4-2.2 2.4z"/></svg>
+              <span>Discord</span>
+            </a>
+          {/if}
+        </div>
+      {/if}
     </nav>
   </div>
 {/if}
@@ -301,6 +321,10 @@
   .menu-row:hover { background: var(--color-surface-raised); border-color: var(--color-border); }
   .menu-row:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px; }
   .menu-row:active { transform: scale(.985); }
+  /* 4th row — Telegram (left) + Discord (right), evenly spread */
+  .social-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 4px; padding: 4px 2px; }
+  .social-btn { display: inline-flex; align-items: center; gap: 7px; padding: 8px 12px; border: 1px solid var(--color-border); border-radius: var(--radius-md, 10px); color: var(--color-text-muted); font-size: .72rem; font-weight: 600; text-decoration: none; background: var(--color-surface); transition: border-color 160ms ease, color 160ms ease; }
+  .social-btn:hover { color: var(--color-text); border-color: var(--color-border-strong); }
   .menu-icon {
     display: grid; place-items: center;
     width: 34px; height: 34px; flex-shrink: 0;

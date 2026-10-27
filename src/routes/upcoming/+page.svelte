@@ -620,7 +620,7 @@
   <div class="sr-only" aria-live="polite">{liveMessage}</div>
 </div>
 
-<AppFooter />
+<AppFooter telegramUrl={data.appConfig?.telegramUrl ?? null} discordUrl={data.appConfig?.discordUrl ?? null} />
 
 <ScrollToTop />
 
