@@ -325,7 +325,7 @@ function section_registry(): void {
   const unifiedSql = read(`supabase/migrations/${unifiedMigration}`);
   const unifiedSqlNoComments = unifiedSql.replace(/--[^\n]*/g, '');
   ok(
-    added.length === 22
+    added.length === 23
       && added.includes(migrationName)
       && added.includes(phase2Migration)
       && added.includes(phase3Migration)
@@ -347,7 +347,8 @@ function section_registry(): void {
       && added.includes(livetvEpgGuideDataMigration)
       && added.includes(livetvRefreshHistoryMigration)
       && added.includes('20261014000000_add_unlink_action.sql')
-      && added.includes('20261026000000_livetv_nav_visible.sql'),
+      && added.includes('20261026000000_livetv_nav_visible.sql')
+      && added.includes('20261123000000_app_config_social_links.sql'),
     `§A10: exactly the CS-5 + Phase 2 + Phase 3 + FINAL TASK + build-lifecycle + LT-5-analytics + LT-15-fallback-event + VidRift-provider + MAVP-4-icon-badge + MAVP-5-default-slots + MAVP-7-unique-assignment + BlueVelvet-provider + Vixolity/TGVID/ZXCStream-provider + VidStuck-cc-origins + Supabase-remediation + Supabase-final-audit + Livetv-source-registry + Livetv-EPG-guide-data + Livetv-refresh-history migrations were added (${added.join(', ') || 'none'})`,
   );
   // VIDRIFT (sanctioned): insert-only registration — no destructive verbs,

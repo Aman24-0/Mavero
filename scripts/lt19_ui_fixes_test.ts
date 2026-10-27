@@ -224,7 +224,7 @@ function sliceOf(source: string, start: string, end: string): string {
         // The nav model is untouched: six destinations, both compositions.
         assert.ok(appShell.includes("href: '/discover'"), 'Discover link survives');
         assert.ok(appShell.includes("href: '/live-tv'"), 'Live TV link survives');
-        assert.ok(appShell.includes("href: '/search'"), 'Search link survives');
+        assert.ok(appShell.includes('href="/search"'), 'Search link survives (moved to the header)');
         assert.ok(appShell.includes('aria-label="Mobile navigation"'), 'the nav keeps its accessible name');
         ok('3c. pure-CSS fix: no scroll listeners or heuristics added; nav model untouched');
 }
