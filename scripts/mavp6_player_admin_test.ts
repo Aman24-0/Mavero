@@ -550,18 +550,25 @@ function rejectingSupabaseClient(): any {
   }
 
   // --- STRUCTURAL: the restored actions + the category-editor UI wiring.
+  // 2026-10 admin restructure: content-rules was DELETED. The category
+  // editor + its actions moved WITH the Categories tab into
+  // /admin/system/api-sources. The single-row move action was renamed
+  // from `reorderSources` to `moveCategorySource` on api-sources to
+  // avoid colliding with the EXISTING source-list `reorderSources`
+  // action on the same route. The contract (applyCategorySourcePositions)
+  // is unchanged; only the action name changed.
   {
-    const server = codeOnly(read('../src/routes/admin/system/content-rules/+page.server.ts'));
-    for (const action of ['assignSource', 'removeSource', 'reorderSources']) {
-      ok(new RegExp(`\\s{2}${action}: async \\(`).test(server), `I4: the ${action} action is restored`);
+    const server = codeOnly(read('../src/routes/admin/system/api-sources/+page.server.ts'));
+    for (const action of ['assignSource', 'removeSource', 'moveCategorySource']) {
+      ok(new RegExp(`\\s{2}${action}: async \\(`).test(server), `I4: the ${action} action is restored (migrated to api-sources)`);
     }
-    const actionsBody = server.slice(server.indexOf('assignSource:'), server.indexOf('reorderSources:') + 1200);
+    const actionsBody = server.slice(server.indexOf('assignSource:'), server.indexOf('moveCategorySource:') + 1200);
     ok((actionsBody.match(/requireAdmin\(locals/g) ?? []).length >= 3, 'I4: every restored action requires admin authorization');
     ok(server.includes('parseSourceAssignmentForm') && server.includes('parseCategoryReorderForm'), 'I4: every restored action parses + validates its input server-side');
     // MAVP-7 supersession: the reorder action no longer sorts a client-supplied
     // full ordering — it derives the final order SERVER-SIDE from the
     // database's current assignments (numeric position workflow).
-    ok(server.includes('applyCategorySourcePositions(locals.supabase, categoryId, positions)'), 'I4 (superseded MAVP-7): the reorder action derives the order server-side via applyCategorySourcePositions (numeric position workflow)');
+    ok(server.includes('applyCategorySourcePositions(locals.supabase, categoryId, positions)'), 'I4 (superseded MAVP-7): the move action derives the order server-side via applyCategorySourcePositions (numeric position workflow)');
     // 2026-10-16 round RE-PIN (Issue 5, unified bulk reposition): a bulk
     // action (reorderSourcesBulk) now accepts the COMPLETE intended order —
     // the trust concern is closed SERVER-SIDE: the service validates the
@@ -574,15 +581,15 @@ function rejectingSupabaseClient(): any {
     ok(server.includes('reorderCategorySources(locals.supabase, categoryId, orderedSourceIds)'), 'I4 (re-pinned 2026-10-16): the bulk order persists through the ATOMIC service/RPC path');
     ok(server.includes('assignSourceToCategory') && server.includes('deleteSourceCategory'), 'I4: the assign/remove actions reuse the EXISTING service-layer methods (no competing data model)');
 
-    const page = read('../src/routes/admin/system/content-rules/+page.svelte');
+    const page = read('../src/routes/admin/system/api-sources/+page.svelte');
     const pageCode = codeOnly(page);
-    ok(pageCode.includes('action="?/assignSource"'), 'I4: the category editor renders the assign form');
-    ok(pageCode.includes('action="?/removeSource"'), 'I4: the category editor renders the remove form');
+    ok(pageCode.includes('action="?/assignSource"'), 'I4: the category editor renders the assign form (migrated to api-sources)');
+    ok(pageCode.includes('action="?/removeSource"'), 'I4: the category editor renders the remove form (migrated to api-sources)');
     // 2026-10-16 round (Issue 5): the per-row reorder forms were REPLACED by
     // the unified bulk reposition editor (one Reposition action, prefilled
     // saved values, live shared validation, ONE request). The single-row
     // move API remains server-side (no UI caller, tests unchanged).
-    ok(pageCode.includes('action="?/reorderSourcesBulk"'), 'I4 (re-pinned 2026-10-16): the category editor renders the BULK reorder form');
+    ok(pageCode.includes('action="?/reorderSourcesBulk"'), 'I4 (re-pinned 2026-10-16): the category editor renders the BULK reorder form (migrated to api-sources)');
     ok(pageCode.includes('Reposition'), 'I4 (re-pinned 2026-10-16): the editor exposes the one clear Reposition action');
     ok(pageCode.includes('use:enhance'), 'I4 (re-pinned 2026-10-16): mutations are enhanced (no full-page reload)');
     ok(pageCode.includes('Sources in this category'), 'I4: the source-management section has a clear heading');

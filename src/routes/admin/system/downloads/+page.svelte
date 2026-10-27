@@ -28,7 +28,6 @@
 <AdminAppShell active="downloads">
   <AdminPage eyebrow="System" title="Downloads" accent="cyan">
     {#snippet actions()}<AdminAddButton label="Add downloader" onclick={openCreate} />{/snippet}
-    {#snippet description()}<p>Manage embed and JSON download providers. Full CRUD available.</p>{/snippet}
 
     {#if data.notice}<div class="a2-notice" role="status"><Check size={14} /> {data.notice}</div>{/if}
     {#if form?.message}<div class="a2-form-error" role="alert">{form.message}</div>{/if}

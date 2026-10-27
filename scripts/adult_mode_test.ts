@@ -27,7 +27,11 @@ const adultDiscoverEndpoint = await readFile(path.join(repoRoot, 'src/routes/api
 const migration = await readFile(path.join(repoRoot, 'supabase/migrations/20260913000000_adult_mode.sql'), 'utf8');
 const types = await readFile(path.join(repoRoot, 'src/lib/server/content/types.ts'), 'utf8');
 const discoverPage = await readFile(path.join(repoRoot, 'src/lib/components/DiscoverPage.svelte'), 'utf8');
-const adminDefaults = await readFile(path.join(repoRoot, 'src/routes/admin/system/content-rules/+page.svelte'), 'utf8');
+// 2026-10 admin restructure: content-rules was deleted; the Adult Mode
+// admin toggle moved to the independent /admin/system/feature-control
+// route. Tests that previously inspected content-rules/+page.svelte now
+// inspect feature-control/+page.svelte.
+const adminDefaults = await readFile(path.join(repoRoot, 'src/routes/admin/system/feature-control/+page.svelte'), 'utf8');
 // Since Phase C the canonical Adult Mode toggle surface is /account; the
 // legacy /settings page is a redirect-only compatibility route.
 const accountPage = await readFile(path.join(repoRoot, 'src/routes/settings/+page.svelte'), 'utf8');
@@ -338,9 +342,11 @@ const accountPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pag
 // O. Admin UI — toggle controls present.
 // Moved from /admin/defaults to /admin/feature-control (single authoritative
 // UI for global feature switches), then to /admin/system/content-rules?tab=
-// features by the Admin 2.0 migration (the legacy route is a redirect stub).
-// The test reads from the live route each time; the adult-policy machinery
-// itself is unchanged.
+// features by the Admin 2.0 migration (the legacy route is a redirect stub),
+// then to the independent /admin/system/feature-control route by the
+// 2026-10 admin restructure (content-rules was deleted; Feature Control
+// became its own route). The test reads from the live route each time;
+// the adult-policy machinery itself is unchanged.
 // ============================================================================
 {
   assert.match(adminDefaults, /loadAdultPolicy/, 'admin page loads adult policy');

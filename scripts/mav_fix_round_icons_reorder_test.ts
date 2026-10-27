@@ -408,41 +408,45 @@ console.log('\n=== Issue 5 — bulk reposition (shared validation + parsers + se
   ok('category reposition requires the complete set');
 
   // --- Actions + UI wiring ---
-  const contentServer = read('src/routes/admin/system/content-rules/+page.server.ts');
-  assert.ok(contentServer.includes('reorderSourcesBulk'), 'bulk reorder action exists');
-  assert.ok(contentServer.includes('parseBulkOrderedIds'), 'bulk action parses ordered ids');
-  assert.ok(contentServer.includes('reorderCategorySources(locals.supabase'), 'bulk action uses the ATOMIC service/RPC');
-  assert.ok(contentServer.includes('reorderCategories'), 'global category ordering action exists');
-  assert.ok(contentServer.includes('parseCategoryForm(form, { forUpdate: true })'), 'category sheet save no longer clobbers ordering');
-  ok('content-rules server: bulk actions wired to the atomic service');
-
+  // 2026-10 admin restructure: content-rules was DELETED. The category
+  // bulk-reorder actions + UI moved WITH the Categories tab into
+  // /admin/system/api-sources. The contracts below are now asserted
+  // against api-sources (the new home) instead of content-rules.
   const apiServer = read('src/routes/admin/system/api-sources/+page.server.ts');
+  assert.ok(apiServer.includes('reorderSourcesBulk'), 'bulk reorder action exists (migrated to api-sources)');
+  assert.ok(apiServer.includes('parseBulkOrderedIds'), 'bulk action parses ordered ids');
+  assert.ok(apiServer.includes('reorderCategorySources(locals.supabase'), 'bulk action uses the ATOMIC service/RPC');
+  assert.ok(apiServer.includes('reorderCategories'), 'global category ordering action exists (migrated to api-sources)');
+  assert.ok(apiServer.includes('parseCategoryForm(form, { forUpdate: true })'), 'category sheet save no longer clobbers ordering');
   assert.ok(apiServer.includes('reorderSourceOrderings'), 'global source ordering action uses the service');
   assert.ok(apiServer.includes('parseBulkOrderings'), 'global source ordering action parses ordering_<id> sets');
-  ok('api-sources server: global source ordering action wired');
+  ok('api-sources server: bulk + global ordering actions wired (categories migrated from content-rules)');
 
-  const contentPage = read('src/routes/admin/system/content-rules/+page.svelte');
   const apiPage = read('src/routes/admin/system/api-sources/+page.svelte');
   // No full-page refresh: enhanced submissions everywhere on the mutation paths.
-  for (const [name, pageText] of [['content-rules', contentPage], ['api-sources', apiPage]] as const) {
-    assert.ok(pageText.includes('use:enhance'), `${name}: mutations use use:enhance (no document reload)`);
-    assert.ok(!pageText.includes('window.location.reload()'), `${name}: no window.location.reload()`);
-  }
-  assert.ok(contentPage.includes('?/reorderSourcesBulk'), 'content-rules: bulk submit target');
-  assert.ok(contentPage.includes('?/reorderCategories'), 'content-rules: global category reorder target');
-  assert.ok(contentPage.includes('repositionDraftFromEntries'), 'content-rules: prefill from saved values');
-  assert.ok(contentPage.includes('validateRepositionSet'), 'content-rules: live shared validation');
-  ok('content-rules UI: enhanced in-place mutations + prefill + live validation');
+  assert.ok(apiPage.includes('use:enhance'), 'api-sources: mutations use use:enhance (no document reload)');
+  assert.ok(!apiPage.includes('window.location.reload()'), 'api-sources: no window.location.reload()');
+  assert.ok(apiPage.includes('?/reorderSourcesBulk'), 'api-sources: bulk submit target (categories tab)');
+  assert.ok(apiPage.includes('?/reorderCategories'), 'api-sources: global category reorder target (categories tab)');
+  assert.ok(apiPage.includes('repositionDraftFromEntries'), 'api-sources: prefill from saved values (categories tab)');
+  assert.ok(apiPage.includes('validateRepositionSet'), 'api-sources: live shared validation (categories tab)');
+  ok('api-sources UI (categories tab): enhanced in-place mutations + prefill + live validation');
 
   // Redundant per-row controls REMOVED where the bulk flow replaced them.
-  assert.ok(!contentPage.includes('name={`position_${row.sourceId}`}' as string), 'per-row position+Apply forms are gone (category sources)');
-  assert.ok(!/.a2-position-apply\s*\{/.test(contentPage), 'per-row Apply button styles are gone');
+  assert.ok(!apiPage.includes('name={`position_${row.sourceId}`}' as string), 'per-row position+Apply forms are gone (category sources)');
+  assert.ok(!/.a2-position-apply\s*\{/.test(apiPage), 'per-row Apply button styles are gone');
   assert.ok(!apiPage.includes('name="ordering"'), 'the source edit sheet no longer carries a global ordering field');
-  assert.ok(!contentPage.includes('<span>Ordering</span>'), 'the category edit sheet no longer carries a global ordering field');
+  assert.ok(!apiPage.includes('<span>Ordering</span>'), 'the category edit sheet no longer carries a global ordering field');
   ok('redundant per-row/per-sheet ordering controls removed (bulk editor is authoritative)');
 
   // The move-semantics single-row API stays a valid API (tests unchanged).
-  assert.ok(contentServer.includes('applyCategorySourcePositions'), 'single-row move API preserved (contract/tests unchanged)');
+  // 2026-10 restructure: the action was renamed from `reorderSources` to
+  // `moveCategorySource` on api-sources (the original `reorderSources`
+  // name collided with the EXISTING source-list reorder action on the
+  // same route). The contract — applyCategorySourcePositions — is
+  // preserved; only the action name changed (no UI caller either way —
+  // the interactive UI uses reorderSourcesBulk).
+  assert.ok(apiServer.includes('applyCategorySourcePositions'), 'single-row move API preserved (contract/tests unchanged; action renamed to moveCategorySource to avoid collision)');
   ok('legacy single-row move action remains available (no test weakened)');
 }
 

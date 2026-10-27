@@ -76,7 +76,10 @@ const legacyRedirects: Array<[string, string, RegExp]> = [
   ['providers', providersPage, /\/admin\/system\/api-sources\?tab=providers/],
   ['sources', sourcesPage, /\/admin\/system\/api-sources\?tab=sources/],
   ['defaults', defaultsPage, /\/admin\/system\/api-sources/],
-  ['categories', categoriesPage, /\/admin\/system\/content-rules\?tab=categories/],
+  // 2026-10 admin restructure: categories moved into the API & Sources
+  // workspace (content-rules was deleted; Feature Control became its own
+  // independent route). The redirect target follows the move.
+  ['categories', categoriesPage, /\/admin\/system\/api-sources\?tab=categories/],
 ];
 for (const [name, content, destRegex] of legacyRedirects) {
   // Redirect stubs do NOT mount AdminShell or AdminAppShell.

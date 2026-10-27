@@ -40,7 +40,11 @@ const adminConfirmDialog = readFileSync(new URL('../src/lib/components/admin2/Ad
 const appCss = readFileSync(new URL('../src/app.css', import.meta.url), 'utf8');
 
 const apiSourcesPage = readFileSync(new URL('../src/routes/admin/system/api-sources/+page.svelte', import.meta.url), 'utf8');
-const contentRulesPage = readFileSync(new URL('../src/routes/admin/system/content-rules/+page.svelte', import.meta.url), 'utf8');
+// 2026-10 admin restructure: content-rules was deleted; the feature
+// toggle (Adult Mode) now lives on the independent
+// /admin/system/feature-control route. Phase I touch-target contracts
+// apply to that page instead.
+const featureControlPage = readFileSync(new URL('../src/routes/admin/system/feature-control/+page.svelte', import.meta.url), 'utf8');
 const downloadsPage = readFileSync(new URL('../src/routes/admin/system/downloads/+page.svelte', import.meta.url), 'utf8');
 const integrationsPage = readFileSync(new URL('../src/routes/admin/system/integrations/+page.svelte', import.meta.url), 'utf8');
 const analyticsPage = readFileSync(new URL('../src/routes/admin/analytics/+page.svelte', import.meta.url), 'utf8');
@@ -201,11 +205,13 @@ assert.match(apiSourcesPage, /a2-sheet-body[\s\S]*?safe-area-inset-bottom/, 'API
 ok('16a. API & Sources defaults sheet has safe-area (Phase 1 — a2-sheet classes)');
 
 // ============================================================
-// 17. System content-rules toggle touch target
+// 17. System feature-control toggle touch target (2026-10 restructure)
 // ============================================================
-
-assert.match(contentRulesPage, /a2-toggle[\s\S]*?min-width: 44px[\s\S]*?min-height: 44px/, 'content-rules toggle has 44px touch target');
-ok('17a. Content Rules feature toggle has 44px touch target');
+// Adult Mode toggle moved out of content-rules (deleted) into the
+// independent /admin/system/feature-control route. Phase I's 44px touch
+// target contract applies to that page's toggle.
+assert.match(featureControlPage, /a2-toggle[\s\S]*?min-width: 44px[\s\S]*?min-height: 44px/, 'feature-control toggle has 44px touch target');
+ok('17a. Feature Control adult-mode toggle has 44px touch target');
 
 // ============================================================
 // 18. System downloads responsive

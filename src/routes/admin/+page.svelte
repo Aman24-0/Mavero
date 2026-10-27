@@ -31,12 +31,6 @@
 
 <AdminAppShell>
   <AdminPage eyebrow="Mavero / Control" title="Overview" accent="cyan">
-    {#snippet description()}
-      <p>
-        Operational view of Mavero — content inventory, demand tracking,
-        and integration status at a glance.
-      </p>
-    {/snippet}
 
     <!-- ============================================================
          SYSTEM STATUS — quick health overview
@@ -59,7 +53,7 @@
           <div class="a2-metric-label">Sources</div>
           <div class="a2-metric-status">{data.overview.activeSourceCount} enabled</div>
         </a>
-        <a class="a2-metric-card" href="/admin/system/content-rules">
+        <a class="a2-metric-card" href="/admin/system/api-sources?tab=categories">
           <div class="a2-metric-icon"><Layers3 size={18} /></div>
           <div class="a2-metric-value">{data.overview.categoryCount}</div>
           <div class="a2-metric-label">Categories</div>

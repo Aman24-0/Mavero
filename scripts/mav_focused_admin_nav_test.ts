@@ -68,7 +68,10 @@ console.log('\n§2 — Desktop sidebar unchanged (every route still reachable)')
     ok(navSrc.includes("/admin/media/missing"), '2c. Missing Media in navGroups');
     ok(!navSrc.includes("/admin/hosting"), '2d. Hosting Control REMOVED from navGroups');
     ok(navSrc.includes("/admin/system/api-sources"), '2e. API & Sources in navGroups');
-    ok(navSrc.includes("/admin/system/content-rules"), '2f. Content Rules in navGroups');
+    // 2026-10 admin restructure: Content Rules was deleted; its Feature
+    // Control tab became the independent /admin/system/feature-control
+    // route. The nav item now points there.
+    ok(navSrc.includes("/admin/system/feature-control"), '2f. Feature Control in navGroups (replaces Content Rules)');
     ok(navSrc.includes("/admin/system/downloads"), '2g. Downloads in navGroups');
     ok(navSrc.includes("/admin/system/integrations"), '2h. Integrations in navGroups');
     ok(navSrc.includes("/admin/analytics"), '2i. Analytics in navGroups');
@@ -87,11 +90,13 @@ console.log('\n§3 — Overview quick-action cards removed (Phase 7 fix: owner r
   ok(!/href="\/admin\/hosting"/.test(overview), '3d. Hosting Control quick-action card REMOVED');
 }
 
-console.log('\n§4 — System Status metric cards link to API & Sources / Content Rules / Downloads / Integrations');
+console.log('\n§4 — System Status metric cards link to API & Sources / Categories / Downloads / Integrations');
 {
   const overview = readCode('src/routes/admin/+page.svelte');
   ok(/href="\/admin\/system\/api-sources"/.test(overview), '4a. API & Sources metric card');
-  ok(/href="\/admin\/system\/content-rules"/.test(overview), '4b. Content Rules metric card');
+  // 2026-10 restructure: the Categories metric card now links into the
+  // API & Sources workspace (?tab=categories) — content-rules was deleted.
+  ok(/href="\/admin\/system\/api-sources\?tab=categories"/.test(overview), '4b. Categories metric card (now points at api-sources?tab=categories)');
   ok(/href="\/admin\/system\/downloads"/.test(overview), '4c. Downloads metric card');
   ok(/href="\/admin\/system\/integrations"/.test(overview), '4d. Integrations metric card');
 }
@@ -115,7 +120,9 @@ console.log('\n§5 — No route is unreachable on mobile');
   // Overview cards for the remaining routes.
   ok(!overview.includes('href="/admin/media/missing"'), '5e. Missing Media quick-action card REMOVED from Overview (Phase 7 fix)');
   ok(overview.includes('href="/admin/system/api-sources"'), '5f. Overview card for API & Sources (not in bottom-nav)');
-  ok(overview.includes('href="/admin/system/content-rules"'), '5g. Overview card for Content Rules (not in bottom-nav)');
+  // 2026-10 restructure: the Categories card now links into api-sources
+  // (?tab=categories) — content-rules was deleted.
+  ok(overview.includes('href="/admin/system/api-sources?tab=categories"'), '5g. Overview card for Categories (now points at api-sources?tab=categories)');
   ok(overview.includes('href="/admin/system/downloads"'), '5h. Overview card for Downloads (not in bottom-nav)');
   ok(overview.includes('href="/admin/system/integrations"'), '5i. Overview card for Integrations (not in bottom-nav)');
 }

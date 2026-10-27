@@ -243,10 +243,12 @@ ok('DB migration adds CHECK constraints on icon columns');
 // ============================================================
 console.log('\n--- Phase J: Admin UX Bugs ---');
 
-// FINDING-007: dead icon field removed from content rules
-const contentRulesPage = read('src/routes/admin/system/content-rules/+page.svelte');
-assert.doesNotMatch(contentRulesPage, /name="icon".*Icon \(emoji\)/, 'W1. Content rules icon input removed');
-ok('FINDING-007: dead icon field removed from content rules');
+// FINDING-007: dead icon field removed (was on content-rules; the
+// Categories tab moved into api-sources during the 2026-10 admin
+// restructure, so the contract is now asserted against api-sources).
+const apiSourcesPageForCategories = read('src/routes/admin/system/api-sources/+page.svelte');
+assert.doesNotMatch(apiSourcesPageForCategories, /name="icon".*Icon \(emoji\)/, 'W1. Categories icon input removed (migrated to api-sources)');
+ok('FINDING-007: dead icon field removed from categories (now in api-sources)');
 
 // FINDING-008 — MAVP-6 (Issue 4) SUPERSESSION: the three source-assignment
 // actions were originally removed because NO UI invoked them. MAVP-6 restores
@@ -256,10 +258,16 @@ ok('FINDING-007: dead icon field removed from content rules');
 // restored action requires admin authorization, validates its input
 // server-side, and reuses the existing service-layer methods over the
 // authoritative mapping table.
-const contentRulesServer = read('src/routes/admin/system/content-rules/+page.server.ts');
+// 2026-10 admin restructure: the actions moved WITH the Categories tab into
+// /admin/system/api-sources. The single-row move action was renamed from
+// `reorderSources` to `moveCategorySource` to avoid colliding with the
+// EXISTING source-list `reorderSources` action on the same route. The
+// contract (assignSourceToCategory / deleteSourceCategory /
+// applyCategorySourcePositions) is unchanged; only the action name changed.
+const apiSourcesServerForCategories = read('src/routes/admin/system/api-sources/+page.server.ts');
 // MAVP-7 SUPERSESSION (stronger): each action must call its EXACT service-layer
 // method — assignSource→assignSourceToCategory, removeSource→
-// deleteSourceCategory, reorderSources→applyCategorySourcePositions (the
+// deleteSourceCategory, moveCategorySource→applyCategorySourcePositions (the
 // numeric-position service, which itself persists through
 // reorderCategorySources internally — the shared service layer remains the
 // sole authority over the mapping table; the action no longer assembles a
@@ -267,11 +275,11 @@ const contentRulesServer = read('src/routes/admin/system/content-rules/+page.ser
 const ACTION_SERVICE_METHOD = {
   assignSource: /assignSourceToCategory/,
   removeSource: /deleteSourceCategory/,
-  reorderSources: /applyCategorySourcePositions/,
+  moveCategorySource: /applyCategorySourcePositions/,
 } as const;
-for (const action of ['assignSource', 'removeSource', 'reorderSources'] as const) {
-  const body = contentRulesServer.slice(contentRulesServer.indexOf(`${action}: async`), contentRulesServer.indexOf(`${action}: async`) + 1400);
-  assert.match(contentRulesServer, new RegExp(`\\s{2}${action}: async \\(`), `X1. ${action} action restored (MAVP-6: the category editor now invokes it)`);
+for (const action of ['assignSource', 'removeSource', 'moveCategorySource'] as const) {
+  const body = apiSourcesServerForCategories.slice(apiSourcesServerForCategories.indexOf(`${action}: async`), apiSourcesServerForCategories.indexOf(`${action}: async`) + 1400);
+  assert.match(apiSourcesServerForCategories, new RegExp(`\\s{2}${action}: async \\(`), `X1. ${action} action restored (MAVP-6: the category editor now invokes it; migrated to api-sources)`);
   assert.match(body, /requireAdmin\(locals/, `X1. ${action} requires admin authorization`);
   assert.match(body, /parse(SourceAssignment|CategoryReorder)Form|parseCategoryReorderForm/, `X1. ${action} validates its input server-side`);
   assert.match(body, ACTION_SERVICE_METHOD[action], `X1. ${action} reuses its exact existing service-layer method`);
@@ -284,7 +292,9 @@ assert.match(downloadsPage, /onsubmit=\{\(e\) => \{ if \(!confirm/, 'Y2. Downloa
 const apiSourcesPage = read('src/routes/admin/system/api-sources/+page.svelte');
 assert.doesNotMatch(apiSourcesPage, /onsubmit=\{\(\) => confirm\(/, 'Y3. API sources confirm fixed');
 assert.match(apiSourcesPage, /onsubmit=\{\(e\) => \{ if \(!confirm/, 'Y4. API sources uses preventDefault');
-assert.doesNotMatch(contentRulesPage, /onsubmit=\{\(\) => confirm\(/, 'Y5. Content rules confirm fixed');
+// 2026-10 restructure: the categories confirm() patterns moved with the
+// Categories tab into api-sources; assert against the same file.
+assert.doesNotMatch(apiSourcesPage, /onsubmit=\{\(\) => confirm\(/, 'Y5. Categories confirm fixed (migrated to api-sources)');
 const integrationsPage = read('src/routes/admin/system/integrations/+page.svelte');
 assert.doesNotMatch(integrationsPage, /onsubmit=\{\(\) => confirm\(/, 'Y6. Integrations confirm fixed');
 ok('FINDING-009: confirm() pattern fixed across all admin pages');

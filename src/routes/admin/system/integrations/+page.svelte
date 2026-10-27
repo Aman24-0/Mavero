@@ -167,7 +167,7 @@
     ]}
   >
     {#snippet actions()}<AdminAddButton label="Add Integration" onclick={openAddSheet} />{/snippet}
-    {#snippet description()}<p>Manage integrations — Stremio add-ons and CloudStream extensions. Terminology: Add-on = Stremio · Extension = CloudStream.</p>{/snippet}
+    {#snippet description()}<p>Stremio add-ons and CloudStream extensions.</p>{/snippet}
 
     {#if data.notice}<div class="a2-notice" role="status"><Check size={14} /> {data.notice}</div>{/if}
     {#if form?.message}<div class="a2-form-error" role="alert">{form.message}</div>{/if}

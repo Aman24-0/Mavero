@@ -5,7 +5,13 @@ import { readFileSync } from 'node:fs';
  * Admin 2.0 — Phase G contracts.
  *
  * Phase G is the System / Configuration Consolidation: unified workspaces
- * for API & Sources, Content Rules, Downloads, and Integrations.
+ * for API & Sources, Feature Control, Downloads, and Integrations.
+ *
+ * (2026-10 admin restructure: the original Phase G "Content Rules" route
+ * was deleted. Its Categories tab moved into API & Sources as a third
+ * tab, and its Feature Control tab became the independent
+ * /admin/system/feature-control route. This test was updated to read
+ * the new locations; the underlying contracts are unchanged.)
  *
  * This test pins the contracts that Phase H+ will depend on.
  */
@@ -22,8 +28,12 @@ function ok(message: string) {
 
 const apiSourcesPage = readFileSync(new URL('../src/routes/admin/system/api-sources/+page.svelte', import.meta.url), 'utf8');
 const apiSourcesServer = readFileSync(new URL('../src/routes/admin/system/api-sources/+page.server.ts', import.meta.url), 'utf8');
-const contentRulesPage = readFileSync(new URL('../src/routes/admin/system/content-rules/+page.svelte', import.meta.url), 'utf8');
-const contentRulesServer = readFileSync(new URL('../src/routes/admin/system/content-rules/+page.server.ts', import.meta.url), 'utf8');
+// 2026-10 admin restructure: content-rules was deleted. Its Categories
+// tab moved into api-sources, and its Feature Control tab became the
+// independent /admin/system/feature-control route. This test now reads
+// those two files where the content-rules contracts live.
+const featureControlPage = readFileSync(new URL('../src/routes/admin/system/feature-control/+page.svelte', import.meta.url), 'utf8');
+const featureControlServer = readFileSync(new URL('../src/routes/admin/system/feature-control/+page.server.ts', import.meta.url), 'utf8');
 const downloadsPage = readFileSync(new URL('../src/routes/admin/system/downloads/+page.svelte', import.meta.url), 'utf8');
 const downloadsServer = readFileSync(new URL('../src/routes/admin/system/downloads/+page.server.ts', import.meta.url), 'utf8');
 const integrationsPage = readFileSync(new URL('../src/routes/admin/system/integrations/+page.svelte', import.meta.url), 'utf8');
@@ -168,62 +178,67 @@ assert.match(apiSourcesServer, /upsertDefaultSource|clearDefaultSource/, 'defaul
 ok('11a. Defaults changes flow through existing service → invalidates cache → affects resolver');
 
 // ============================================================
-// 12. Content Rules navigation
+// 12. Feature Control navigation (2026-10 admin restructure)
+// ============================================================
+// Content Rules was deleted; its Feature Control tab became the
+// independent /admin/system/feature-control route. Categories moved
+// into /admin/system/api-sources as a third tab.
 // ============================================================
 
-assert.match(adminAppShell, /id: 'content-rules', label: 'Content Rules', href: '\/admin\/system\/content-rules'/, 'nav has Content Rules');
-assert.match(adminAppShell, /matchPrefix: '\/admin\/system\/content-rules'/, 'Content Rules has matchPrefix');
-ok('12a. Content Rules nav item points to /admin/system/content-rules');
+assert.match(adminAppShell, /id: 'feature-control', label: 'Feature Control', href: '\/admin\/system\/feature-control'/, 'nav has Feature Control');
+assert.match(adminAppShell, /matchPrefix: '\/admin\/system\/feature-control'/, 'Feature Control has matchPrefix');
+ok('12a. Feature Control nav item points to /admin/system/feature-control');
 
-assert.match(contentRulesPage, /AdminAppShell/, 'Content Rules page uses AdminAppShell');
-assert.match(contentRulesPage, /AdminPage/, 'Content Rules page uses AdminPage');
-ok('12b. Content Rules page uses Admin 2.0 shell');
+assert.match(featureControlPage, /AdminAppShell/, 'Feature Control page uses AdminAppShell');
+assert.match(featureControlPage, /AdminPage/, 'Feature Control page uses AdminPage');
+ok('12b. Feature Control page uses Admin 2.0 shell');
 
 // ============================================================
-// 13. Categories
+// 13. Categories (now in API & Sources — third tab)
 // ============================================================
 
-assert.match(contentRulesPage, /Categories/, 'Content Rules has Categories tab');
-assert.match(contentRulesServer, /listAdminCategories/, 'Content Rules server loads categories via existing service');
-assert.match(contentRulesServer, /listSourceCategories/, 'Content Rules server loads source-category mappings');
+assert.match(apiSourcesPage, /Categories/, 'API & Sources has Categories tab');
+assert.match(apiSourcesServer, /listAdminCategories/, 'API & Sources server loads categories via existing service');
+assert.match(apiSourcesServer, /listSourceCategories/, 'API & Sources server loads source-category mappings');
 // Phase 1: category rows (was a2-category-table — now a2-category-list of rows)
-assert.match(contentRulesPage, /a2-category-list/, 'Categories tab renders category list');
+assert.match(apiSourcesPage, /a2-category-list/, 'Categories tab renders category list');
 ok('13a. Categories loaded from existing admin-service');
 
 // ============================================================
-// 14. Feature Control
+// 14. Feature Control (now an independent route)
 // ============================================================
 
-assert.match(contentRulesPage, /Feature Control/, 'Content Rules has Feature Control tab');
-assert.match(contentRulesPage, /Adult Mode Policy/, 'Feature Control shows Adult Mode Policy section');
-ok('14a. Feature Control tab exists in Content Rules workspace');
+assert.match(featureControlPage, /Feature Control/, 'Feature Control page title is set');
+assert.match(featureControlPage, /Adult Mode Policy/, 'Feature Control shows Adult Mode Policy section');
+ok('14a. Feature Control section exists in its own workspace');
 
 // ============================================================
 // 15. Feature persistence
 // ============================================================
 
-assert.match(contentRulesPage, /\/api\/admin\/adult-mode/, 'Feature Control uses existing adult-mode API');
-assert.match(contentRulesPage, /togglePolicy/, 'Feature Control has togglePolicy function');
-assert.match(contentRulesPage, /PUT/, 'Feature Control sends PUT to update policy');
+assert.match(featureControlPage, /\/api\/admin\/adult-mode/, 'Feature Control uses existing adult-mode API');
+assert.match(featureControlPage, /togglePolicy/, 'Feature Control has togglePolicy function');
+assert.match(featureControlPage, /PUT/, 'Feature Control sends PUT to update policy');
 ok('15a. Feature persistence uses existing /api/admin/adult-mode endpoint');
 
 // ============================================================
 // 16. Feature runtime integration
 // ============================================================
 
-assert.match(contentRulesPage, /allowLoggedIn/, 'Feature Control toggles allowLoggedIn');
-assert.match(contentRulesPage, /allowGuest/, 'Feature Control toggles allowGuest');
+assert.match(featureControlPage, /allowLoggedIn/, 'Feature Control toggles allowLoggedIn');
+assert.match(featureControlPage, /allowGuest/, 'Feature Control toggles allowGuest');
 ok('16a. Feature toggles map to real runtime policy fields');
 
 // ============================================================
-// 17. Feature Control auth fix (Phase G)
+// 17. Feature Control auth fix (Phase G — preserved through restructure)
 // ============================================================
 
 // Phase G fix: the legacy /admin/feature-control had NO +page.server.ts
-// (no SSR auth gate). The new /admin/system/content-rules HAS a server
-// loader with requireAdmin.
-assert.match(contentRulesServer, /requireAdmin/, 'Content Rules server requires admin (fixes feature-control auth gap)');
-ok('17a. Feature Control now has SSR auth gate via Content Rules page server (Phase G fix)');
+// (no SSR auth gate). The restructure keeps that fix: the new
+// /admin/system/feature-control route HAS a server loader with
+// requireAdmin.
+assert.match(featureControlServer, /requireAdmin/, 'Feature Control server requires admin (preserves Phase G auth fix)');
+ok('17a. Feature Control has SSR auth gate via its own page server (restructure preserves Phase G fix)');
 
 // ============================================================
 // 18. Downloads
@@ -283,7 +298,7 @@ ok('21a. Stremio configuration shows addon identity with full CRUD in-workspace 
 // ============================================================
 
 assert.match(apiSourcesServer, /requireAdmin/, 'API & Sources server requires admin');
-assert.match(contentRulesServer, /requireAdmin/, 'Content Rules server requires admin');
+assert.match(featureControlServer, /requireAdmin/, 'Feature Control server requires admin');
 assert.match(downloadsServer, /requireAdmin/, 'Downloads server requires admin');
 assert.match(integrationsServer, /requireAdmin/, 'Integrations server requires admin');
 ok('22a. All 4 new system workspace servers require admin');
@@ -293,7 +308,7 @@ ok('22a. All 4 new system workspace servers require admin');
 // ============================================================
 
 assert.match(adminAppShell, /matchPrefix: '\/admin\/system\/api-sources'/, 'API & Sources uses matchPrefix');
-assert.match(adminAppShell, /matchPrefix: '\/admin\/system\/content-rules'/, 'Content Rules uses matchPrefix');
+assert.match(adminAppShell, /matchPrefix: '\/admin\/system\/feature-control'/, 'Feature Control uses matchPrefix');
 assert.match(adminAppShell, /matchPrefix: '\/admin\/system\/downloads'/, 'Downloads uses matchPrefix');
 assert.match(adminAppShell, /matchPrefix: '\/admin\/system\/integrations'/, 'Integrations uses matchPrefix');
 ok('23a. All 4 system workspaces have matchPrefix for route-aware active state');
@@ -346,7 +361,7 @@ ok('27a. API & Sources server-side loads (no client loading state needed)');
 
 assert.match(apiSourcesPage, /No providers configured/, 'API & Sources has providers empty state');
 assert.match(apiSourcesPage, /No sources configured/, 'API & Sources has sources empty state');
-assert.match(contentRulesPage, /No categories configured/, 'Content Rules has categories empty state');
+assert.match(apiSourcesPage, /No categories configured/, 'API & Sources has categories empty state (migrated from content-rules)');
 assert.match(downloadsPage, /No downloaders/, 'Downloads has empty state');
 assert.match(integrationsPage, /No integrations/, 'Integrations has empty state');
 ok('28a. All 5 workspaces have distinct empty states');
@@ -355,8 +370,8 @@ ok('28a. All 5 workspaces have distinct empty states');
 // 29. Error states
 // ============================================================
 
-assert.match(contentRulesPage, /a2-features-error/, 'Feature Control has error state');
-assert.match(contentRulesPage, /a2-features-retry/, 'Feature Control has retry button');
+assert.match(featureControlPage, /a2-feature-error/, 'Feature Control has error state');
+assert.match(featureControlPage, /a2-feature-retry/, 'Feature Control has retry button');
 ok('29a. Feature Control has error state + retry');
 
 // ============================================================
@@ -364,7 +379,7 @@ ok('29a. Feature Control has error state + retry');
 // ============================================================
 
 assert.doesNotMatch(apiSourcesPage, /api_key|apiKey|VIDARA_API_KEY|ABYSS_API_KEY|password|jwt/i, 'API & Sources page has no secrets');
-assert.doesNotMatch(contentRulesPage, /api_key|apiKey|password|jwt/i, 'Content Rules page has no secrets');
+assert.doesNotMatch(featureControlPage, /api_key|apiKey|password|jwt/i, 'Feature Control page has no secrets');
 assert.doesNotMatch(downloadsPage, /api_key|apiKey|password|jwt/i, 'Downloads page has no secrets');
 assert.doesNotMatch(integrationsPage, /api_key|apiKey|password|jwt/i, 'Integrations page has no secrets');
 ok('30a. No secret leakage in any new workspace page');
@@ -375,7 +390,9 @@ ok('30a. No secret leakage in any new workspace page');
 
 // All workspaces reuse existing services — no new CRUD logic
 assert.match(apiSourcesServer, /listAdminProviders.*listAdminSources.*listAdminDefaults/s, 'API & Sources reuses 3 existing service functions');
-assert.match(contentRulesServer, /listAdminCategories.*listAdminSources.*listSourceCategories/s, 'Content Rules reuses 3 existing service functions');
+// 2026-10 restructure: categories + source-category mappings moved into
+// api-sources; the load function loads all of them in parallel.
+assert.match(apiSourcesServer, /listAdminCategories.*listSourceCategories/s, 'API & Sources reuses the categories service functions (migrated from content-rules)');
 assert.match(downloadsServer, /listAdminDownloadProviders/, 'Downloads reuses existing downloader service');
 assert.match(integrationsServer, /listAdminAddons/, 'Integrations reuses existing Stremio addon service');
 ok('31a. All workspaces reuse existing services (no duplicate configuration logic)');

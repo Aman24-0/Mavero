@@ -284,8 +284,8 @@ const lettersOf = (db: { mappings: MappingRow[] }) => {
   // per-source labels, an explicit Apply (disabled until the WHOLE set is
   // valid) — and the complete intended order is submitted in ONE request.
   {
-    const page = markupOnly(read('../src/routes/admin/system/content-rules/+page.svelte'));
-    ok(page.includes('sourceDrafts = { ...sourceDrafts, [entry.id]'), 'I2 (re-pinned 2026-10-16): each assigned row edits a numeric draft keyed by the source id');
+    const page = markupOnly(read('../src/routes/admin/system/api-sources/+page.svelte'));
+    ok(page.includes('sourceDrafts = { ...sourceDrafts, [entry.id]'), 'I2 (re-pinned 2026-10-16): each assigned row edits a numeric draft keyed by the source id (migrated to api-sources)');
     ok(page.includes('min="1" max={sourceRepositionEntries.length} step="1"'), 'I2 (re-pinned 2026-10-16): the input bounds mirror the server contract (1..list length)');
     ok(page.includes('aria-label={`Position for ${row?.name'), 'I2 (re-pinned 2026-10-16): the position input is labelled per source');
     ok(page.includes('action="?/reorderSourcesBulk"'), 'I2 (re-pinned 2026-10-16): the bulk form posts the complete intended order to reorderSourcesBulk');
@@ -321,10 +321,10 @@ const lettersOf = (db: { mappings: MappingRow[] }) => {
 
   // UI eligibility: the picker filters from the GLOBAL mapping set.
   {
-    const page = markupOnly(read('../src/routes/admin/system/content-rules/+page.svelte'));
-    ok(page.includes('const assignedAnywhere = new Set((data.sourceCategories as any[]).map((sc) => sc.source_id));'), 'I3: the assign picker derives eligibility from ALL category assignments (global rule)');
+    const page = markupOnly(read('../src/routes/admin/system/api-sources/+page.svelte'));
+    ok(page.includes('const assignedAnywhere = new Set((data.sourceCategories as any[]).map((sc) => sc.source_id));'), 'I3: the assign picker derives eligibility from ALL category assignments (global rule; migrated to api-sources)');
     ok(page.includes('No unassigned sources remain'), 'I3: the picker shows a clear empty state when no unassigned sources remain');
-    const server = codeOnly(read('../src/routes/admin/system/content-rules/+page.server.ts'));
+    const server = codeOnly(read('../src/routes/admin/system/api-sources/+page.server.ts'));
     ok(server.includes('requireAdmin(locals'), 'I3: the mutation actions keep the admin authorization gate');
   }
 

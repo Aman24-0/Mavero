@@ -154,7 +154,11 @@ ok('12. E-1 intact: createSupabaseAdminClient inside try/catch in all 5 admin ro
 const adminPage = read('src/routes/admin/+page.svelte');
 assert.doesNotMatch(adminPage, /SlidersHorizontal/, '4d. admin/+page.svelte: SlidersHorizontal import removed');
 const apiSourcesPage = read('src/routes/admin/system/api-sources/+page.svelte');
-assert.doesNotMatch(apiSourcesPage, /Settings,|AlertCircle,|Plus,/, '4e. api-sources: Settings/AlertCircle/Plus imports removed');
+// 2026-10 admin restructure: AlertCircle + Plus were RE-ADDED to api-sources
+// when the Categories tab (and its bulk-reposition editor + assign-source
+// button) moved in from the deleted content-rules route. Settings remains
+// unused on this page (the eyebrow label is a string, not the icon).
+assert.doesNotMatch(apiSourcesPage, /Settings,/, '4e. api-sources: Settings icon import still unused (AlertCircle + Plus re-added with the Categories tab migration)');
 const integrationsPage = read('src/routes/admin/system/integrations/+page.svelte');
 assert.doesNotMatch(integrationsPage, /AlertCircle,|[^a-zA-Z]X[,}]/, '4f. integrations: AlertCircle/X imports removed');
 ok('13. D-1 intact: unused icon imports remain removed');

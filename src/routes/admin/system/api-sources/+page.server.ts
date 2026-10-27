@@ -1,12 +1,18 @@
 /**
- * Admin 2.0 — Phase 1 — API & Sources workspace page server.
+ * Admin 2.0 — API & Sources workspace page server.
  *
- * Canonical workspace for provider registry + source registry + defaults.
- * Contains ALL CRUD actions from the legacy /admin/providers, /admin/sources,
- * and /admin/defaults pages — no redirects to legacy UI needed.
+ * Canonical workspace for provider registry + source registry + category
+ * registry + defaults. Contains ALL CRUD actions from the legacy
+ * /admin/providers, /admin/sources, /admin/defaults, and
+ * /admin/categories pages — no redirects to legacy UI needed.
  *
- * Tab routing: ?tab=providers|sources (defaults to providers).
+ * Tab routing: ?tab=providers|sources|categories (defaults to providers).
  * Defaults are opened as a contextual sheet (not a tab).
+ *
+ * Categories were migrated here from /admin/system/content-rules in the
+ * 2026-10 admin restructure round (the Feature Control tab moved to its
+ * own independent route /admin/system/feature-control, leaving
+ * content-rules empty — that route was deleted).
  */
 
 import { fail, redirect, error } from '@sveltejs/kit';
@@ -20,27 +26,43 @@ import {
   createProvider, updateProvider, deleteProvider,
   createSource, updateSource, deleteSource,
   reorderSourceOrderings,
+  listAdminCategories, listSourceCategories,
+  createCategory, updateCategory, deleteCategory,
+  assignSourceToCategory, deleteSourceCategory, applyCategorySourcePositions,
+  reorderCategorySources, reorderCategoryOrderings,
 } from '$lib/server/streaming/admin-service';
 import { classifyAdminMutationError } from '$lib/server/streaming/mutation-result';
 import { lookupProviderCapabilities } from '$lib/shared/player-capabilities';
-import { parseProviderForm, parseSourceForm, parseId, parseBulkOrderings } from '$lib/server/streaming/validation';
+import {
+  parseProviderForm, parseSourceForm, parseId, parseBulkOrderings,
+  parseCategoryForm, parseSourceAssignmentForm, parseCategoryReorderForm,
+  parseBulkOrderedIds, StreamingValidationError,
+} from '$lib/server/streaming/validation';
 
-const VALID_TABS = new Set(['providers', 'sources']);
+const VALID_TABS = new Set(['providers', 'sources', 'categories']);
+
+function messageFrom(error: unknown, fallback: string): string {
+  if (error instanceof StreamingValidationError) return error.message;
+  if (error instanceof Error) return error.message;
+  return fallback;
+}
 
 export const load: PageServerLoad = async ({ locals, url }) => {
   await requireAdmin(locals, { redirectTo: '/admin/system/api-sources' });
 
   const tab = url.searchParams.get('tab') ?? 'providers';
   if (!VALID_TABS.has(tab)) {
-    throw error(400, 'Invalid tab. Use ?tab=providers|sources.');
+    throw error(400, 'Invalid tab. Use ?tab=providers|sources|categories.');
   }
 
-  const [providers, health, sources, defaults, defaultSlots] = await Promise.all([
+  const [providers, health, sources, defaults, defaultSlots, categories, sourceCategories] = await Promise.all([
     listAdminProviders(locals.supabase),
     listProviderHealthSummaries(locals.supabase),
     listAdminSources(locals.supabase),
     listAdminDefaults(locals.supabase),
     listAdminDefaultSlots(locals.supabase),
+    listAdminCategories(locals.supabase),
+    listSourceCategories(locals.supabase),
   ]);
 
   const capabilityMap: Record<string, { supported: string[]; unsupported: string[]; unknown: boolean } | null> = {};
@@ -65,6 +87,8 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     sources,
     defaults,
     defaultSlots,
+    categories,
+    sourceCategories,
     notice: url.searchParams.get('notice'),
   };
 };
@@ -305,6 +329,140 @@ export const actions: Actions = {
       if (isRedirect(error)) throw error;
       const result = classifyAdminMutationError(error, 'Unable to clear default source.');
       return fail(result.status === 'unknown' ? 503 : 400, { message: result.message, mutationStatus: result.status });
+    }
+  },
+
+  // --- Category CRUD + source-assignment management (migrated from
+  // /admin/system/content-rules during the 2026-10 admin restructure).
+  // The contracts are UNCHANGED — same service-layer methods, same
+  // validation parsers, same atomic RPC persistence. Only the URL the
+  // forms POST to changed (?/createCategory etc. now lives on this
+  // route). `requireAdmin` gates every mutation; all IDs are strictly
+  // parsed/validated server-side.
+  createCategory: async ({ request, locals }) => {
+    await requireAdmin(locals, { redirectTo: '/admin/system/api-sources' });
+    try {
+      const category = await createCategory(locals.supabase, parseCategoryForm(await request.formData()));
+      throw redirect(303, `/admin/system/api-sources?tab=categories&notice=${encodeURIComponent(`Created ${category.name}.`)}`);
+    } catch (error) {
+      if (isRedirect(error)) throw error;
+      return fail(400, { message: messageFrom(error, 'Unable to create category.') });
+    }
+  },
+  updateCategory: async ({ request, locals }) => {
+    await requireAdmin(locals, { redirectTo: '/admin/system/api-sources' });
+    try {
+      const form = await request.formData();
+      const id = parseId(form, 'Category');
+      // forUpdate semantics — the edit sheet no longer submits a global
+      // ordering field (the authoritative workflow is the bulk reposition
+      // editor on the category list). An absent ordering key on update is
+      // OMITTED from the payload, so saving the category's name/description
+      // can never clobber the saved ordering.
+      await updateCategory(locals.supabase, id, parseCategoryForm(form, { forUpdate: true }));
+      throw redirect(303, `/admin/system/api-sources?tab=categories&notice=Category%20updated.`);
+    } catch (error) {
+      if (isRedirect(error)) throw error;
+      return fail(400, { message: messageFrom(error, 'Unable to update category.') });
+    }
+  },
+  toggleCategory: async ({ request, locals }) => {
+    await requireAdmin(locals, { redirectTo: '/admin/system/api-sources' });
+    try {
+      const form = await request.formData();
+      const id = parseId(form, 'Category');
+      await updateCategory(locals.supabase, id, { enabled: String(form.get('enabled')) === 'true' });
+      throw redirect(303, `/admin/system/api-sources?tab=categories&notice=Category%20state%20updated.`);
+    } catch (error) {
+      if (isRedirect(error)) throw error;
+      return fail(400, { message: messageFrom(error, 'Unable to update category.') });
+    }
+  },
+  deleteCategory: async ({ request, locals }) => {
+    await requireAdmin(locals, { redirectTo: '/admin/system/api-sources' });
+    try {
+      const form = await request.formData();
+      const id = parseId(form, 'Category');
+      await deleteCategory(locals.supabase, id);
+      throw redirect(303, `/admin/system/api-sources?tab=categories&notice=Category%20deleted.`);
+    } catch (error) {
+      if (isRedirect(error)) throw error;
+      return fail(400, { message: messageFrom(error, 'Unable to delete category.') });
+    }
+  },
+  assignSource: async ({ request, locals }) => {
+    await requireAdmin(locals, { redirectTo: '/admin/system/api-sources' });
+    try {
+      const { source_id, category_id } = parseSourceAssignmentForm(await request.formData());
+      await assignSourceToCategory(locals.supabase, source_id, category_id);
+      throw redirect(303, `/admin/system/api-sources?tab=categories&notice=Source%20assigned.`);
+    } catch (error) {
+      if (isRedirect(error)) throw error;
+      return fail(400, { message: messageFrom(error, 'Unable to assign source.') });
+    }
+  },
+  removeSource: async ({ request, locals }) => {
+    await requireAdmin(locals, { redirectTo: '/admin/system/api-sources' });
+    try {
+      const { source_id, category_id } = parseSourceAssignmentForm(await request.formData());
+      await deleteSourceCategory(locals.supabase, source_id, category_id);
+      throw redirect(303, `/admin/system/api-sources?tab=categories&notice=Source%20removed.`);
+    } catch (error) {
+      if (isRedirect(error)) throw error;
+      return fail(400, { message: messageFrom(error, 'Unable to remove source.') });
+    }
+  },
+  moveCategorySource: async ({ request, locals }) => {
+    await requireAdmin(locals, { redirectTo: '/admin/system/api-sources' });
+    try {
+      const { categoryId, positions } = parseCategoryReorderForm(await request.formData());
+      // Numeric-position contract. The submitted fields are PER-SOURCE
+      // TARGETS (`position_<source_id>`). The final order is derived
+      // SERVER-SIDE from the database's current assignments (move-to-
+      // position-N, shift the rest, dense 1..N) — the client can never
+      // inject an arbitrary ordering. (The interactive UI uses
+      // reorderSourcesBulk; this single-row move action remains a valid
+      // API.)
+      await applyCategorySourcePositions(locals.supabase, categoryId, positions);
+      throw redirect(303, `/admin/system/api-sources?tab=categories&notice=Sources%20reordered.`);
+    } catch (error) {
+      if (isRedirect(error)) throw error;
+      return fail(400, { message: messageFrom(error, 'Unable to reorder sources.') });
+    }
+  },
+  // UNIFIED BULK REPOSITION — the category's complete intended source
+  // order in ONE request. The client submits `ordered_source_ids`
+  // (repeated field, first = position 1); the service re-validates the
+  // set against the category's REAL assignments (every assigned source
+  // exactly once, no unknown ids) and persists through the ATOMIC
+  // reorder_category_sources RPC.
+  reorderSourcesBulk: async ({ request, locals }) => {
+    await requireAdmin(locals, { redirectTo: '/admin/system/api-sources' });
+    try {
+      const form = await request.formData();
+      const categoryId = parseId(form, 'Category');
+      const orderedSourceIds = parseBulkOrderedIds(form, 'ordered_source_ids', 'Source order');
+      if (!orderedSourceIds.length) return fail(400, { message: 'The reorder payload is empty.' });
+      await reorderCategorySources(locals.supabase, categoryId, orderedSourceIds);
+      throw redirect(303, `/admin/system/api-sources?tab=categories&notice=Sources%20reordered.`);
+    } catch (error) {
+      if (isRedirect(error)) throw error;
+      return fail(400, { message: messageFrom(error, 'Unable to reorder sources.') });
+    }
+  },
+  // UNIFIED BULK REPOSITION for the GLOBAL category list ordering. The
+  // client submits `ordering_<category_id>` for EVERY category (prefilled
+  // from the saved values); the service re-validates completeness,
+  // integer bounds and uniqueness server-side before any write.
+  reorderCategories: async ({ request, locals }) => {
+    await requireAdmin(locals, { redirectTo: '/admin/system/api-sources' });
+    try {
+      const positions = parseBulkOrderings(await request.formData(), 'ordering_', 'Category');
+      await reorderCategoryOrderings(locals.supabase, positions.map(({ id, ordering }) => ({ categoryId: id, ordering })));
+      throw redirect(303, `/admin/system/api-sources?tab=categories&notice=Category%20order%20saved.`);
+    } catch (error) {
+      if (isRedirect(error)) throw error;
+      return fail(400, { message: messageFrom(error, 'Unable to reorder categories.') });
     }
   },
 };

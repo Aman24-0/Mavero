@@ -40,7 +40,12 @@ function walkSourceFiles(dir: string, files: string[] = []): string[] {
 
 const apiSourcesPage = read('src/routes/admin/system/api-sources/+page.svelte');
 const apiSourcesServer = read('src/routes/admin/system/api-sources/+page.server.ts');
-const contentRulesPage = read('src/routes/admin/system/content-rules/+page.svelte');
+// 2026-10 admin restructure: content-rules was deleted; its Categories
+// tab + editingCategoryId/derived editingCategory state moved into
+// api-sources, and its Feature Control tab became the independent
+// /admin/system/feature-control route. Phase 2's reactivity + CSS
+// cleanup contracts are now asserted against those two files.
+const featureControlPage = read('src/routes/admin/system/feature-control/+page.svelte');
 const downloadsPage = read('src/routes/admin/system/downloads/+page.svelte');
 const integrationsPage = read('src/routes/admin/system/integrations/+page.svelte');
 const adminAppShell = read('src/lib/components/admin2/AdminAppShell.svelte');
@@ -77,22 +82,31 @@ const legacyAddonsServer = read('src/routes/admin/addons/+page.server.ts');
 // 5 non-reactive state warnings: editingProvider, editingSource, editingCategory, editing, detailAddon
 assert.match(apiSourcesPage, /let editingProvider: any = \$state\(null\)/, 'api-sources: editingProvider is $state-reactive');
 assert.match(apiSourcesPage, /let editingSource: any = \$state\(null\)/, 'api-sources: editingSource is $state-reactive');
-// MAVP-6 (Issue 4) supersession: the content-rules sheet selection became
+// MAVP-6 (Issue 4) supersession: the categories sheet selection became
 // `editingCategoryId` ($state) + a `$derived` live `editingCategory` from the
 // load payload, so the sheet's source-management section reflects assign/
 // remove/reorder results without going stale — the reactivity contract is
 // preserved and STRONGER (previously the snapshot object went stale).
-assert.match(contentRulesPage, /let editingCategoryId: string \| null = \$state\(null\)/, 'content-rules: editingCategoryId is $state-reactive');
-assert.match(contentRulesPage, /const editingCategory = \$derived\(/, 'content-rules: editingCategory is $derived from the live load payload');
+// 2026-10 restructure: the categories sheet moved into api-sources.
+assert.match(apiSourcesPage, /let editingCategoryId: string \| null = \$state\(null\)/, 'api-sources: editingCategoryId is $state-reactive (migrated from content-rules)');
+assert.match(apiSourcesPage, /const editingCategory = \$derived\(/, 'api-sources: editingCategory is $derived from the live load payload (migrated from content-rules)');
 assert.match(downloadsPage, /let editing: any = \$state\(null\)/, 'downloads: editing is $state-reactive');
 assert.match(integrationsPage, /let detailAddon: any = \$state\(null\)/, 'integrations: detailAddon is $state-reactive');
 ok('A1. All 5 Phase 1 non-reactive state warnings fixed (variables now use $state)');
 
 // 3 unused CSS selector warnings: .a2-field textarea, .a2-field select, .a2-field select:focus
 assert.doesNotMatch(apiSourcesPage, /\.a2-field input, \.a2-field select, \.a2-field textarea/, 'api-sources: unused .a2-field textarea selector removed');
-assert.doesNotMatch(contentRulesPage, /\.a2-field input, \.a2-field select \{/, 'content-rules: unused .a2-field select selector removed');
-assert.doesNotMatch(contentRulesPage, /\.a2-field input:focus, \.a2-field select:focus/, 'content-rules: unused .a2-field select:focus selector removed');
-ok('A2. All 3 Phase 1 unused CSS selector warnings fixed');
+// 2026-10 restructure: content-rules was deleted; its unused .a2-field
+// select / select:focus selectors (which existed only because the
+// categories sheet had no <select>) moved WITH the categories tab into
+// api-sources. api-sources DOES use <select> (provider/source edit
+// sheets have integration_type, status, icon_key selects), so those
+// selectors are NOT unused there — the original "unused selector"
+// contract was specific to content-rules and is moot with that route
+// deleted. (The textarea assertion above still pins the api-sources
+// contract: the page has no <textarea> for .a2-field, so the combined
+// selector was unused and was removed.)
+ok('A2. All 3 Phase 1 unused CSS selector warnings fixed (content-rules selectors retired with the route; api-sources textarea selector removed)');
 
 // 1 a11y click event warning: overlay div now has keyboard handler
 assert.match(apiSourcesPage, /class="a2-overlay"[\s\S]*?onclick=[\s\S]*?onkeydown=/, 'api-sources: defaults overlay has both onclick + onkeydown (a11y)');
@@ -106,7 +120,7 @@ const legacyStubs: Array<[string, string, RegExp]> = [
   ['providers', legacyProvidersServer, /\/admin\/system\/api-sources\?tab=providers/],
   ['sources', legacySourcesServer, /\/admin\/system\/api-sources\?tab=sources/],
   ['defaults', legacyDefaultsServer, /\/admin\/system\/api-sources/],
-  ['categories', legacyCategoriesServer, /\/admin\/system\/content-rules\?tab=categories/],
+  ['categories', legacyCategoriesServer, /\/admin\/system\/api-sources\?tab=categories/],
   ['downloaders', legacyDownloadersServer, /\/admin\/system\/downloads/],
   ['addons', legacyAddonsServer, /\/admin\/system\/integrations/],
 ];
@@ -305,7 +319,9 @@ ok('G3. media/missing: legacy 8-col table migrated to AdminPage + responsive car
 // 4 migrated system pages: a2-btn-primary + a2-btn-secondary ≥ 44px
 assert.match(apiSourcesPage, /\.a2-btn-primary \{[^}]*min-height: 44px/, 'api-sources: a2-btn-primary ≥ 44px');
 assert.match(apiSourcesPage, /\.a2-btn-secondary \{[^}]*min-height: 44px/, 'api-sources: a2-btn-secondary ≥ 44px');
-assert.match(contentRulesPage, /\.a2-btn-primary \{[^}]*min-height: 44px/, 'content-rules: a2-btn-primary ≥ 44px');
+// 2026-10 restructure: content-rules deleted; the Feature Control page
+// (its successor) carries the same primary/secondary button contract.
+assert.match(featureControlPage, /\.a2-btn-primary \{[^}]*min-height: 44px/, 'feature-control: a2-btn-primary ≥ 44px (migrated from content-rules)');
 assert.match(downloadsPage, /\.a2-btn-primary \{[^}]*min-height: 44px/, 'downloads: a2-btn-primary ≥ 44px');
 assert.match(integrationsPage, /\.a2-btn-primary \{[^}]*min-height: 44px/, 'integrations: a2-btn-primary ≥ 44px');
 // Default save/clear buttons in api-sources defaults sheet

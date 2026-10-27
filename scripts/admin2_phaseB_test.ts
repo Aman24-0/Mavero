@@ -83,12 +83,16 @@ ok('1d. nav has NO Operations item and NO Hosting item (both workspaces reachabl
 // sheet. Phase G will fold them into API & Sources / Content Rules
 // as contextual tabs.
 // Phase G consolidated the System nav to point to the new workspaces:
-// /admin/system/api-sources, /admin/system/content-rules,
+// /admin/system/api-sources, /admin/system/feature-control,
 // /admin/system/downloads, /admin/system/integrations.
-assert.match(adminAppShell, /\{ id: 'api-sources', label: 'API & Sources', href: '\/admin\/system\/api-sources'/, 'nav: System → API & Sources');
-assert.match(adminAppShell, /\{ id: 'content-rules', label: 'Content Rules', href: '\/admin\/system\/content-rules'/, 'nav: System → Content Rules');
-assert.match(adminAppShell, /\{ id: 'downloads', label: 'Downloads', href: '\/admin\/system\/downloads'/, 'nav: System → Downloads');
-assert.match(adminAppShell, /\{ id: 'integrations', label: 'Integrations', href: '\/admin\/system\/integrations'/, 'nav: System → Integrations');
+// 2026-10 admin restructure: Content Rules was deleted; its Categories
+// tab moved into API & Sources, and its Feature Control tab became the
+// independent /admin/system/feature-control route. The "System" group
+// was renamed to "Settings".
+assert.match(adminAppShell, /\{ id: 'api-sources', label: 'API & Sources', href: '\/admin\/system\/api-sources'/, 'nav: Settings → API & Sources');
+assert.match(adminAppShell, /\{ id: 'feature-control', label: 'Feature Control', href: '\/admin\/system\/feature-control'/, 'nav: Settings → Feature Control');
+assert.match(adminAppShell, /\{ id: 'downloads', label: 'Downloads', href: '\/admin\/system\/downloads'/, 'nav: Settings → Downloads');
+assert.match(adminAppShell, /\{ id: 'integrations', label: 'Integrations', href: '\/admin\/system\/integrations'/, 'nav: Settings → Integrations');
 // Phase G: configItems (Defaults + Feature Control) are now consolidated
 // inside the Content Rules and API & Sources workspaces. The topbar
 // Configure dropdown is retired — configItems is now an empty array.

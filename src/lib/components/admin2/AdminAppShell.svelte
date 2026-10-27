@@ -135,11 +135,11 @@
     },
     {
       id: 'system',
-      label: 'System',
+      label: 'Settings',
       items: [
         { id: 'api-sources', label: 'API & Sources', href: '/admin/system/api-sources', icon: Settings, matchPrefix: '/admin/system/api-sources' },
+        { id: 'feature-control', label: 'Feature Control', href: '/admin/system/feature-control', icon: Layers, matchPrefix: '/admin/system/feature-control' },
         { id: 'livetv', label: 'Live TV', href: '/admin/system/livetv', icon: Tv, matchPrefix: '/admin/system/livetv' },
-        { id: 'content-rules', label: 'Content Rules', href: '/admin/system/content-rules', icon: Layers, matchPrefix: '/admin/system/content-rules' },
         { id: 'downloads', label: 'Downloads', href: '/admin/system/downloads', icon: Download, matchPrefix: '/admin/system/downloads' },
         { id: 'integrations', label: 'Integrations', href: '/admin/system/integrations', icon: Puzzle, matchPrefix: '/admin/system/integrations' },
         { id: 'app-config', label: 'App Config', href: '/admin/system/app-config', icon: Settings, matchPrefix: '/admin/system/app-config' },
