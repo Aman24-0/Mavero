@@ -60,13 +60,26 @@ export const actions: Actions = {
     const telegram_url = cleanUrl(form.get('telegram_url'));
     const discord_url = cleanUrl(form.get('discord_url'));
     // A non-empty input that is not a valid http(s) URL is a user error.
+    // Empty input is allowed — it normalizes to NULL (the public UI hides
+    // the chip), so an admin can save Telegram-only or Discord-only.
     if (rawTelegram && !telegram_url) return fail(400, { message: 'Telegram URL must be a valid http(s) link.' });
     if (rawDiscord && !discord_url) return fail(400, { message: 'Discord URL must be a valid http(s) link.' });
 
     const { error } = await locals.supabase
       .from('app_config')
       .upsert({ id: 1, telegram_url, discord_url, updated_at: new Date().toISOString() });
-    if (error) return fail(500, { message: 'Could not save the social links.' });
+    if (error) {
+      // Log the actual Supabase error so the next failure is debuggable
+      // from the server logs — the generic user-facing message hides
+      // the cause (RLS denial, schema mismatch, connectivity, etc.).
+      console.error('[feature-control] saveSocial upsert failed', {
+        code: error.code,
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+      });
+      return fail(500, { message: 'Could not save the social links.' });
+    }
     return { notice: 'Social links saved.' };
   },
 };
