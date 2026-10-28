@@ -346,11 +346,20 @@ export function validateLivetvSourceConfig(sourceType: LivetvSourceType, raw: un
                 }
                 case 'm3u_playlist': {
                         rejectUnknownKeys(config, ['playlistUrl', 'refreshIntervalMinutes'], 'm3u_playlist');
-                        if (config.playlistUrl === undefined) fail('m3u_playlist: "playlistUrl" is required.');
+                        // 2026-10 round 7 — Task 1: playlistUrl is now OPTIONAL.
+                        // An m3u_playlist source may be created via file upload
+                        // (no URL — the channels are ingested directly from the
+                        // uploaded file content). When playlistUrl is absent or
+                        // empty, the config stores an empty string (the source
+                        // works via "Fetch & Save" / upload ingestion; the URL
+                        // is only needed for server-side refresh).
                         const interval = validateRefreshIntervalMinutes(config.refreshIntervalMinutes, 'm3u_playlist.refreshIntervalMinutes');
+                        const playlistUrl = (typeof config.playlistUrl === 'string' && config.playlistUrl.trim())
+                                ? validateServerFetchedHttpsUrl(config.playlistUrl, 'm3u_playlist.playlistUrl')
+                                : '';
                         return interval === undefined
-                                ? { playlistUrl: validateServerFetchedHttpsUrl(config.playlistUrl, 'm3u_playlist.playlistUrl') }
-                                : { playlistUrl: validateServerFetchedHttpsUrl(config.playlistUrl, 'm3u_playlist.playlistUrl'), refreshIntervalMinutes: interval };
+                                ? { playlistUrl }
+                                : { playlistUrl, refreshIntervalMinutes: interval };
                 }
                 case 'api_provider': {
                         rejectUnknownKeys(config, ['baseUrl', 'refreshIntervalMinutes'], 'api_provider');

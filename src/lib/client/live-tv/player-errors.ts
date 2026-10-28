@@ -29,6 +29,7 @@ export type LiveTvPlaybackErrorKind =
         | 'unsupported_browser' // browser runtime cannot support the DASH/ClearKey path
         | 'autoplay_blocked' // play() rejected by the browser autoplay policy
         | 'aborted' // operation cancelled (destroy / supersession / signal) — NOT an error for the UI
+        | 'geo_blocked' // 2026-10 round 7: HTTP 403/451 — the CDN is geo-blocked (India-only)
         | 'playback_failed'; // any other/unknown playback failure
 
 /**
@@ -46,6 +47,7 @@ const SAFE_PLAYBACK_MESSAGES: Record<LiveTvPlaybackErrorKind, string> = {
         unsupported_browser: 'This browser cannot play Live TV streams.',
         autoplay_blocked: 'Playback needs a tap to start.',
         aborted: 'Live TV playback was cancelled.',
+        geo_blocked: 'This channel is geo-restricted to India and cannot be played right now.',
         playback_failed: 'Live TV playback failed. Try switching channels or retrying.'
 };
 
@@ -96,5 +98,8 @@ export function isLiveTvPlaybackError(value: unknown): value is LiveTvPlaybackEr
  */
 export function shouldFallbackToEmbed(err: unknown): boolean {
         if (!isLiveTvPlaybackError(err)) return false;
-        return err.kind !== 'autoplay_blocked' && err.kind !== 'aborted';
+        // 2026-10 round 7: geo_blocked does NOT trigger the embed fallback —
+        // the embed comes from the same CDN (it'll be geo-blocked too). The
+        // honest geo-restriction message is shown instead.
+        return err.kind !== 'autoplay_blocked' && err.kind !== 'aborted' && err.kind !== 'geo_blocked';
 }

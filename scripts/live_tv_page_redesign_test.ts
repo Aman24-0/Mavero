@@ -381,8 +381,11 @@ function sliceOf(source: string, start: string, end: string): string {
         // Closing never touches playback.
         assert.ok(guideSheet.includes('aria-modal="true"'), 'the sheet is a modal dialog');
         assert.ok(guideSheet.includes("event.key === 'Escape'"), 'Escape closes the sheet');
-        // No channel selected -> the Guide button is disabled (no fake data).
-        assert.ok(page.includes('disabled={!selectedChannel}'), 'the Guide button is disabled without a channel');
+        // 2026-10 round 7 — Task 2: the Guide button was moved from the
+        // toolbar to the channel info row. It only renders when a channel
+        // is selected (inside {#if selectedChannel}), so the
+        // disabled={!selectedChannel} attribute is no longer needed.
+        assert.ok(page.includes('info-guide-btn'), 'the Guide button is in the channel info row (2026-10 round 7: moved from toolbar)');
         // The page-level guide flow is unchanged (LT-4 independence).
         assert.ok(page.includes('function retryGuide(): void {'), 'the page retry survives');
         assert.ok(page.includes('void loadGuide(channel);'), 'guide loads with the selection');
@@ -406,21 +409,22 @@ function sliceOf(source: string, start: string, end: string): string {
         assert.ok(!page.includes('ltv-categories'), 'no permanent category row section');
         assert.ok(!page.includes('<LiveTvNowPlaying'), 'no permanent Now Playing section');
         assert.ok(!/<LiveTvGuide[\s>]/.test(page), 'no permanent Guide section (only the Guide sheet)');
-        // The toolbar is one row: search + Filter + Guide.
+        // 2026-10 round 7 — Task 2: the toolbar now has Filter + Source on
+        // the LEFT, Search button (icon) on the RIGHT. The Guide button was
+        // moved to the channel info row. The search is a compact button that
+        // expands into an overlay (role="search" is on the overlay, not the
+        // toolbar itself).
         const toolbar = sliceOf(page, 'class="ltv-toolbar"', '</section>');
-        assert.ok(toolbar.includes('role="search"'), 'the search box is in the toolbar');
         assert.ok(toolbar.includes('aria-label="Filter channels"'), 'the Filter button is in the toolbar');
-        assert.ok(toolbar.includes('aria-label="Channel guide"'), 'the Guide button is in the toolbar');
-        const searchAt = toolbar.indexOf('class="ltv-search"');
-        const filterAt = toolbar.indexOf('aria-label="Filter channels"');
-        const guideAt = toolbar.indexOf('aria-label="Channel guide"');
-        assert.ok(searchAt !== -1 && filterAt !== -1 && guideAt !== -1, 'toolbar members present');
-        assert.ok(searchAt < filterAt && filterAt < guideAt, 'toolbar order: search, Filter, Guide');
-        // The toolbar CSS keeps them on ONE row with the search flexing.
+        assert.ok(toolbar.includes('aria-label="Search channels"'), 'the Search button is in the toolbar');
+        // The search overlay has role="search" (it renders below the toolbar).
+        assert.ok(page.includes('role="search"'), 'the search overlay has role="search"');
+        // The Guide button is in the channel info row, not the toolbar.
+        assert.ok(!toolbar.includes('aria-label="Channel guide"'), 'the Guide button is NOT in the toolbar (moved to channel info row)');
+        assert.ok(page.includes('info-guide-btn'), 'the Guide button is in the channel info row');
+        // The toolbar CSS keeps them on ONE row (flex).
         const toolbarCss = sliceOf(page, '.ltv-toolbar {', '\n  }');
         assert.ok(toolbarCss.includes('display: flex'), 'the toolbar is a flex row');
-        const searchCss = sliceOf(page, '.ltv-search {', '\n  }');
-        assert.ok(searchCss.includes('flex: 1 1 auto') && searchCss.includes('min-width: 0'), 'the search takes the majority width and can shrink');
         // The sheets render AFTER the page body (overlays, not sections).
         const filterSheetAt = page.indexOf('<LiveTvFilterSheet');
         const guideSheetAt = page.indexOf('<LiveTvGuideSheet');

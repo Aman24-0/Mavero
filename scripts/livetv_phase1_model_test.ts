@@ -79,7 +79,10 @@ ok(validateLivetvSourceConfig('m3u_playlist', { playlistUrl: 'https://iptv-org.g
 ok(validateLivetvSourceConfig('api_provider', { baseUrl: 'https://api.example.com' }).baseUrl === 'https://api.example.com', '§1.4 api_provider accepts a valid https baseUrl');
 ok(Array.isArray(validateLivetvSourceConfig('embed_provider', { allowedOrigins: ['https://player.example.com'] }).allowedOrigins), '§1.5 embed_provider accepts an https origin allowlist');
 
-fails(() => validateLivetvSourceConfig('m3u_playlist', {}), '§1.6 m3u_playlist without playlistUrl fails');
+// 2026-10 round 7 — Task 1: playlistUrl is now OPTIONAL (file-upload
+// sources don't have a URL). An empty config {} is accepted and yields
+// { playlistUrl: '' }. The test verifies the new behavior.
+ok(validateLivetvSourceConfig('m3u_playlist', {}).playlistUrl === '', '§1.6 m3u_playlist without playlistUrl is accepted (2026-10 round 7: optional for file upload)');
 fails(() => validateLivetvSourceConfig('api_provider', {}), '§1.7 api_provider without baseUrl fails');
 fails(() => validateLivetvSourceConfig('m3u_playlist', { playlistUrl: 'https://ok.example/x.m3u', secret: 'hunter2' }), '§1.8 unknown config keys are rejected (no secret can hide in config)', 'unknown config key');
 fails(() => validateLivetvSourceConfig('builtin_livegt_v1', { token: 'x' }), '§1.9 builtin_livegt_v1 rejects any config key');

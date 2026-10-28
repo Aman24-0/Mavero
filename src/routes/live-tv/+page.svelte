@@ -231,6 +231,10 @@
   let query = $state('');
   let category = $state(''); // '' = All
   let searchInputEl: HTMLInputElement | undefined = $state();
+  // 2026-10 round 7 — Task 2: the search bar is now a compact icon button
+  // that expands into an input overlay when tapped. The toolbar row has
+  // Filter + Source on the left, Search on the right.
+  let searchExpanded = $state(false);
 
   // LT-18 sheet open state (page-owned; overlays, never page sections).
   let filterSheetOpen = $state(false);
@@ -352,6 +356,17 @@
     query = '';
     resetVisibleLimit();
     searchInputEl?.focus();
+  }
+
+  // 2026-10 round 7 — Task 2: toggle the search overlay.
+  function toggleSearch(): void {
+    searchExpanded = !searchExpanded;
+    if (searchExpanded) {
+      // Focus the input on the next tick (it needs to be mounted first).
+      setTimeout(() => searchInputEl?.focus(), 50);
+    } else if (!query) {
+      // Collapsing with no query — just hide.
+    }
   }
 
   $effect(() => {
@@ -1121,6 +1136,20 @@
           {#if sourceSwitchMessage}
             <span class="source-switch-message" role="status">{sourceSwitchMessage}</span>
           {/if}
+          <!-- 2026-10 round 7 — Task 2: Guide button moved here from the
+               toolbar. Icon-only button on the right side of the channel
+               info row. Opens the Guide sheet (now/next + full schedule). -->
+          <button
+            class="info-guide-btn"
+            type="button"
+            onclick={() => (guideSheetOpen = true)}
+            aria-label="Channel guide"
+            aria-haspopup="dialog"
+            aria-expanded={guideSheetOpen}
+            title="Now playing and full guide"
+          >
+            <BookOpen size={16} />
+          </button>
         </div>
       {/if}
     </section>
@@ -1174,11 +1203,68 @@
       </section>
     {/if}
 
-    <!-- LT-18 — the ONE compact toolbar row directly below the player:
-         search (majority width) + Filter (active-state aware) + Guide
-         (needs a selected channel). No category chips on the page. -->
+    <!-- 2026-10 round 7 — Task 2: the toolbar has Filter + Source on the
+         LEFT, and a compact Search BUTTON (icon) on the RIGHT. The Guide
+         button was moved to the channel info row (below the player). -->
     <section class="ltv-toolbar" aria-label="Channel tools">
-      <div class="ltv-search" role="search">
+      <!-- LEFT side: Filter + Source -->
+      <div class="ltv-toolbar-left">
+        <button
+          class="tool-btn"
+          class:active={filtersActive}
+          type="button"
+          onclick={() => (filterSheetOpen = true)}
+          aria-label="Filter channels"
+          aria-haspopup="dialog"
+          aria-expanded={filterSheetOpen}
+        >
+          <SlidersHorizontal size={15} />
+          <span>Filter</span>
+          {#if activeFilterCount > 0}
+            <span class="tool-count" aria-label="{activeFilterCount} filters active">{activeFilterCount}</span>
+          {/if}
+        </button>
+
+        {#if sourcesAvailable && selectorSources.length > 1}
+          <button
+            class="tool-btn"
+            class:active={selectedSourceFilter !== null}
+            type="button"
+            onclick={toggleSourceSheet}
+            aria-label="Select source. Current: {sourceSelectorLabel}"
+            aria-haspopup="dialog"
+            aria-expanded={sourceSheetOpen}
+            title="Source: {sourceSelectorLabel}"
+          >
+            <Tv size={15} />
+            <span>Source</span>
+            {#if selectedSourceFilter !== null}
+              <span class="tool-count" aria-label="Source filter active">1</span>
+            {/if}
+          </button>
+        {/if}
+      </div>
+
+      <!-- RIGHT side: Search button (icon) — expands into an input overlay -->
+      <button
+        class="tool-btn ltv-search-btn"
+        class:active={searchExpanded || Boolean(query)}
+        type="button"
+        onclick={toggleSearch}
+        aria-label="Search channels"
+        aria-expanded={searchExpanded}
+      >
+        <Search size={15} />
+        {#if query}
+          <span class="tool-count" aria-label="Search active">!</span>
+        {/if}
+      </button>
+    </section>
+
+    <!-- 2026-10 round 7 — Task 2: the search input overlay (expands below
+         the toolbar when the search button is tapped). -->
+    {#if searchExpanded}
+      <div class="ltv-search-overlay" role="search">
         <span class="search-leading" aria-hidden="true"><Search size={17} /></span>
         <label class="sr-only" for="live-tv-channel-search">Search channels</label>
         <input
@@ -1196,61 +1282,11 @@
             <X size={16} />
           </button>
         {/if}
-      </div>
-
-      <button
-        class="tool-btn"
-        class:active={filtersActive}
-        type="button"
-        onclick={() => (filterSheetOpen = true)}
-        aria-label="Filter channels"
-        aria-haspopup="dialog"
-        aria-expanded={filterSheetOpen}
-      >
-        <SlidersHorizontal size={15} />
-        <span>Filter</span>
-        {#if activeFilterCount > 0}
-          <span class="tool-count" aria-label="{activeFilterCount} filters active">{activeFilterCount}</span>
-        {/if}
-      </button>
-
-      <button
-        class="tool-btn"
-        type="button"
-        onclick={() => (guideSheetOpen = true)}
-        disabled={!selectedChannel}
-        aria-label="Channel guide"
-        aria-haspopup="dialog"
-        aria-expanded={guideSheetOpen}
-        title={selectedChannel ? 'Now playing and full guide' : 'Select a channel first'}
-      >
-        <BookOpen size={15} />
-        <span>Guide</span>
-      </button>
-
-      <!-- 2026-10 round 6 — Task 4: the Source selector button is the LAST
-           item in the toolbar row (after Search + Filter + Guide). Shown only
-           when multiple sources are available. Uses the same .tool-btn style
-           as Filter/Guide for visual consistency. -->
-      {#if sourcesAvailable && selectorSources.length > 1}
-        <button
-          class="tool-btn"
-          class:active={selectedSourceFilter !== null}
-          type="button"
-          onclick={toggleSourceSheet}
-          aria-label="Select source. Current: {sourceSelectorLabel}"
-          aria-haspopup="dialog"
-          aria-expanded={sourceSheetOpen}
-          title="Source: {sourceSelectorLabel}"
-        >
-          <Tv size={15} />
-          <span>Source</span>
-          {#if selectedSourceFilter !== null}
-            <span class="tool-count" aria-label="Source filter active">1</span>
-          {/if}
+        <button class="tool-btn ltv-search-close" type="button" onclick={toggleSearch} aria-label="Close search">
+          <X size={15} />
         </button>
-      {/if}
-    </section>
+      </div>
+    {/if}
 
     <!-- Channel catalogue (respects search + category filters) -->
     <section class="ltv-channels" aria-label="Channels">
@@ -1733,18 +1769,32 @@
   }
   .recent-remove:hover { color: #ff8fa3; border-color: #ff8fa355; }
 
-  /* ---- LT-18 toolbar: one row, search-first ---- */
+  /* ---- 2026-10 round 7 — Task 2: toolbar layout ----
+     Filter + Source on the LEFT (ltv-toolbar-left), Search button on
+     the RIGHT (margin-left: auto). Guide moved to the channel info row. */
   .ltv-toolbar {
     display: flex;
     align-items: center;
     gap: 10px;
     min-width: 0;
   }
-  .ltv-search {
+  .ltv-toolbar-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+  .ltv-search-btn {
+    margin-left: auto;
+  }
+  .ltv-search-close {
+    flex: 0 0 auto;
+  }
+  /* The search input overlay (expands below the toolbar) */
+  .ltv-search-overlay {
     display: flex;
     align-items: center;
     gap: 12px;
-    flex: 1 1 auto;
     min-width: 0;
     height: 48px;
     padding: 0 10px 0 16px;
@@ -1753,13 +1803,12 @@
     background: var(--color-surface);
     transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), box-shadow var(--motion-fast) var(--ease-out);
   }
-  .ltv-search:focus-within {
+  .ltv-search-overlay:focus-within {
     border-color: var(--color-primary);
     background: var(--color-surface-elevated);
     box-shadow: var(--glow-primary);
   }
-  .search-leading { display: grid; place-items: center; width: 26px; height: 26px; color: var(--color-text-muted); flex: 0 0 auto; }
-  .ltv-search input {
+  .ltv-search-overlay input {
     flex: 1;
     min-width: 0;
     border: 0;
@@ -1770,7 +1819,28 @@
     font-size: .92rem;
     font-weight: 500;
   }
-  .ltv-search input::placeholder { color: var(--color-text-deep); font-weight: 400; }
+  .ltv-search-overlay input::placeholder { color: var(--color-text-deep); font-weight: 400; }
+  /* The Guide icon button in the channel info row */
+  .info-guide-btn {
+    display: grid;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    flex: 0 0 auto;
+    margin-left: auto;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface);
+    color: var(--color-text-muted);
+    cursor: pointer;
+    transition: color var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out);
+  }
+  .info-guide-btn:hover { color: var(--color-text); border-color: var(--color-border-strong); }
+  .info-guide-btn:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+  /* 2026-10 round 7 — the old .ltv-search wide search bar CSS was removed
+     (the search is now a compact icon button + overlay). The .search-leading
+     + .clear-btn styles are reused by the .ltv-search-overlay. */
+  .search-leading { display: grid; place-items: center; width: 26px; height: 26px; color: var(--color-text-muted); flex: 0 0 auto; }
   .clear-btn {
     display: grid;
     place-items: center;
@@ -1779,7 +1849,7 @@
     border: 0;
     border-radius: 50%;
     color: var(--color-text-muted);
-    background: rgba(242, 255, 248, .04);
+    background: rgba(255, 255, 255, .04);
     cursor: pointer;
     flex: 0 0 auto;
     transition: background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
@@ -1942,7 +2012,7 @@
     .ltv-body { width: min(100% - 28px, 1040px); gap: 18px; padding-top: 14px; }
     .channel-grid { grid-template-columns: 1fr; }
     .ltv-toolbar { gap: 8px; }
-    .ltv-search { height: 44px; gap: 8px; padding-left: 12px; }
+    .ltv-search-overlay { height: 44px; gap: 8px; padding-left: 12px; }
     .tool-btn { min-height: 44px; padding: 0 12px; font-size: .76rem; }
     .tool-btn span { display: none; }
     .tool-btn .tool-count { display: grid; }

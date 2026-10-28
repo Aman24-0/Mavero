@@ -171,15 +171,18 @@
       uploadProgress = { done: 0, total: chunks.length, phase: 'Creating source…' };
 
       // Create the source via a direct POST to the form action.
+      // 2026-10 round 7 — Task 1: playlistUrl is now optional. We send
+      // an empty string (the registry validator accepts it for file-upload
+      // sources). The channels are ingested directly from the file content.
       const formData = new FormData();
       formData.append('name', uploadFile.name.replace(/\.m3u8?$/i, ''));
       formData.append('slug', '');
       formData.append('sourceType', 'm3u_playlist');
-      formData.append('playlistUrl', 'https://localhost/uploaded-playlist.m3u8');
+      formData.append('playlistUrl', '');
       formData.append('status', 'experimental');
       formData.append('visibility', 'public');
       formData.append('priority', '100');
-      formData.append('enabled', 'true');
+      formData.append('enabled', 'on');
       formData.append('description', `Uploaded from ${uploadFile.name}`);
 
       const createResponse = await fetch('?/createSource', {
@@ -616,10 +619,12 @@
               </div>
             {/if}
             {#if playlistInputMode === 'url' || editingSource}
-              <label class="a2-field a2-field-wide"><span>Playlist URL (https) *</span>
-                <input class="a2-input" type="url" name="playlistUrl" required value={String((editingSource?.config as Record<string, unknown> | null)?.playlistUrl ?? '')} maxlength="2048" placeholder="https://example.com/playlist.m3u8" />
+              <label class="a2-field a2-field-wide"><span>Playlist URL (https){editingSource ? '' : ' *'}</span>
+                <input class="a2-input" type="url" name="playlistUrl" required={editingSource !== null} value={String((editingSource?.config as Record<string, unknown> | null)?.playlistUrl ?? '')} maxlength="2048" placeholder="https://example.com/playlist.m3u8" />
               </label>
             {:else if playlistInputMode === 'upload'}
+              <!-- Hidden empty playlistUrl so the form action receives the field -->
+              <input type="hidden" name="playlistUrl" value="" />
               <!-- Upload File tab: file picker + progress bar + upload button -->
               <div class="upload-zone">
                 <label class="a2-field a2-field-wide">
