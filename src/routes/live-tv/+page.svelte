@@ -1203,12 +1203,16 @@
       </section>
     {/if}
 
-    <!-- 2026-10 round 7 — Task 2: the toolbar has Filter + Source on the
-         LEFT, and a compact Search BUTTON (icon) on the RIGHT. The Guide
-         button was moved to the channel info row (below the player). -->
+    <!-- 2026-10 round 8 — Task 3: Inline search bar animation.
+         The toolbar has Filter + Source on the LEFT, and a Search/X button
+         on the RIGHT. When Search is clicked, a search input slides in
+         from the right (CSS transition on width), covering Filter + Source.
+         When X is clicked, the input slides back out and Filter + Source
+         reappear. The search input + X button are always in the DOM (the
+         transition animates the width from 0 to full). -->
     <section class="ltv-toolbar" aria-label="Channel tools">
-      <!-- LEFT side: Filter + Source -->
-      <div class="ltv-toolbar-left">
+      <!-- LEFT side: Filter + Source (hidden when search is expanded) -->
+      <div class="ltv-toolbar-left" class:hidden={searchExpanded}>
         <button
           class="tool-btn"
           class:active={filtersActive}
@@ -1245,26 +1249,8 @@
         {/if}
       </div>
 
-      <!-- RIGHT side: Search button (icon) — expands into an input overlay -->
-      <button
-        class="tool-btn ltv-search-btn"
-        class:active={searchExpanded || Boolean(query)}
-        type="button"
-        onclick={toggleSearch}
-        aria-label="Search channels"
-        aria-expanded={searchExpanded}
-      >
-        <Search size={15} />
-        {#if query}
-          <span class="tool-count" aria-label="Search active">!</span>
-        {/if}
-      </button>
-    </section>
-
-    <!-- 2026-10 round 7 — Task 2: the search input overlay (expands below
-         the toolbar when the search button is tapped). -->
-    {#if searchExpanded}
-      <div class="ltv-search-overlay" role="search">
+      <!-- RIGHT side: the inline search input that slides in from the right -->
+      <div class="ltv-search-inline" class:expanded={searchExpanded} role="search">
         <span class="search-leading" aria-hidden="true"><Search size={17} /></span>
         <label class="sr-only" for="live-tv-channel-search">Search channels</label>
         <input
@@ -1282,11 +1268,23 @@
             <X size={16} />
           </button>
         {/if}
-        <button class="tool-btn ltv-search-close" type="button" onclick={toggleSearch} aria-label="Close search">
-          <X size={15} />
-        </button>
       </div>
-    {/if}
+
+      <!-- The Search/X toggle button (always visible on the right) -->
+      <button
+        class="tool-btn ltv-search-toggle"
+        type="button"
+        onclick={toggleSearch}
+        aria-label={searchExpanded ? 'Close search' : 'Search channels'}
+        aria-expanded={searchExpanded}
+      >
+        {#if searchExpanded}
+          <X size={15} />
+        {:else}
+          <Search size={15} />
+        {/if}
+      </button>
+    </section>
 
     <!-- Channel catalogue (respects search + category filters) -->
     <section class="ltv-channels" aria-label="Channels">
@@ -1784,14 +1782,23 @@
     gap: 10px;
     min-width: 0;
   }
-  .ltv-search-btn {
-    margin-left: auto;
+  /* 2026-10 round 8 — Task 3: Inline search bar animation.
+     The search input container starts at width 0 (collapsed) and
+     transitions to flex: 1 (full width) when .expanded is added.
+     The transition on flex-basis + max-width creates the slide-in
+     animation. The Filter + Source buttons are hidden (visibility:
+     hidden) when the search is expanded so the search takes the
+     full row. */
+  .ltv-toolbar-left.hidden {
+    visibility: hidden;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.2s ease;
   }
-  .ltv-search-close {
-    flex: 0 0 auto;
+  .ltv-toolbar-left {
+    transition: opacity 0.2s ease;
   }
-  /* The search input overlay (expands below the toolbar) */
-  .ltv-search-overlay {
+  .ltv-search-inline {
     display: flex;
     align-items: center;
     gap: 12px;
@@ -1801,14 +1808,30 @@
     border: 1px solid var(--color-border-strong);
     border-radius: var(--radius-md);
     background: var(--color-surface);
-    transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), box-shadow var(--motion-fast) var(--ease-out);
+    overflow: hidden;
+    /* Collapsed state: zero width, no flex */
+    flex: 0 0 0;
+    max-width: 0;
+    padding: 0;
+    border-width: 0;
+    transition: flex-basis 0.3s ease, max-width 0.3s ease, padding 0.3s ease, border-width 0.3s ease, opacity 0.2s ease;
+    opacity: 0;
   }
-  .ltv-search-overlay:focus-within {
+  .ltv-search-inline.expanded {
+    /* Expanded state: takes up all available space */
+    flex: 1 1 auto;
+    max-width: 100%;
+    padding: 0 10px 0 16px;
+    border-width: 1px;
+    opacity: 1;
+    margin-left: auto;
+  }
+  .ltv-search-inline:focus-within {
     border-color: var(--color-primary);
     background: var(--color-surface-elevated);
     box-shadow: var(--glow-primary);
   }
-  .ltv-search-overlay input {
+  .ltv-search-inline input {
     flex: 1;
     min-width: 0;
     border: 0;
@@ -1819,7 +1842,14 @@
     font-size: .92rem;
     font-weight: 500;
   }
-  .ltv-search-overlay input::placeholder { color: var(--color-text-deep); font-weight: 400; }
+  .ltv-search-inline input::placeholder { color: var(--color-text-deep); font-weight: 400; }
+  .ltv-search-toggle {
+    flex: 0 0 auto;
+    margin-left: auto;
+  }
+  .ltv-search-inline.expanded ~ .ltv-search-toggle {
+    margin-left: 8px;
+  }
   /* The Guide icon button in the channel info row */
   .info-guide-btn {
     display: grid;
@@ -2012,7 +2042,8 @@
     .ltv-body { width: min(100% - 28px, 1040px); gap: 18px; padding-top: 14px; }
     .channel-grid { grid-template-columns: 1fr; }
     .ltv-toolbar { gap: 8px; }
-    .ltv-search-overlay { height: 44px; gap: 8px; padding-left: 12px; }
+    .ltv-search-inline { height: 44px; gap: 8px; padding-left: 12px; }
+    .ltv-search-inline.expanded { padding-left: 12px; }
     .tool-btn { min-height: 44px; padding: 0 12px; font-size: .76rem; }
     .tool-btn span { display: none; }
     .tool-btn .tool-count { display: grid; }

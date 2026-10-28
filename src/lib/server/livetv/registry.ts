@@ -346,17 +346,21 @@ export function validateLivetvSourceConfig(sourceType: LivetvSourceType, raw: un
                 }
                 case 'm3u_playlist': {
                         rejectUnknownKeys(config, ['playlistUrl', 'refreshIntervalMinutes'], 'm3u_playlist');
-                        // 2026-10 round 7 — Task 1: playlistUrl is now OPTIONAL.
-                        // An m3u_playlist source may be created via file upload
-                        // (no URL — the channels are ingested directly from the
-                        // uploaded file content). When playlistUrl is absent or
-                        // empty, the config stores an empty string (the source
-                        // works via "Fetch & Save" / upload ingestion; the URL
-                        // is only needed for server-side refresh).
+                        // 2026-10 round 8 — Task 1: playlistUrl is OPTIONAL.
+                        // A source may be created via file upload (no URL — the
+                        // channels are ingested directly from the file content).
+                        // Accepted values: a valid https URL, empty string, or
+                        // the sentinel 'uploaded_file' (marks the source as
+                        // file-uploaded — the Edit sheet hides the URL input and
+                        // shows only the "Replace File" UI).
                         const interval = validateRefreshIntervalMinutes(config.refreshIntervalMinutes, 'm3u_playlist.refreshIntervalMinutes');
-                        const playlistUrl = (typeof config.playlistUrl === 'string' && config.playlistUrl.trim())
-                                ? validateServerFetchedHttpsUrl(config.playlistUrl, 'm3u_playlist.playlistUrl')
-                                : '';
+                        const rawUrl = typeof config.playlistUrl === 'string' ? config.playlistUrl.trim() : '';
+                        let playlistUrl: string;
+                        if (!rawUrl || rawUrl === 'uploaded_file') {
+                                playlistUrl = rawUrl || '';
+                        } else {
+                                playlistUrl = validateServerFetchedHttpsUrl(rawUrl, 'm3u_playlist.playlistUrl');
+                        }
                         return interval === undefined
                                 ? { playlistUrl }
                                 : { playlistUrl, refreshIntervalMinutes: interval };

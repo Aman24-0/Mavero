@@ -85,7 +85,24 @@
     return chunks;
   }
 
+  // 2026-10 round 8 — Task 1: detect uploaded-file sources (no URL).
+  // A source whose playlistUrl is empty or 'uploaded_file' was created
+  // via file upload — it has no URL to fetch. The Fetch & Save button
+  // is hidden for these sources; the Edit sheet shows only the Upload
+  // tab (no URL input).
+  function isUploadedSource(source: LivetvAdminSourceRow): boolean {
+    const url = typeof source.config?.playlistUrl === 'string' ? source.config.playlistUrl : '';
+    return !url || url === 'uploaded_file';
+  }
+
   async function fetchAndSaveChunked(source: LivetvAdminSourceRow) {
+    // 2026-10 round 8 — Task 1: uploaded sources have no URL — skip
+    // Fetch & Save entirely (the button is hidden, but this guard is
+    // defense in depth).
+    if (isUploadedSource(source)) {
+      chunkNotice = { kind: 'error', message: 'This source was uploaded from a file. Use "Replace File" in the Edit sheet to update channels.' };
+      return;
+    }
     const playlistUrl = typeof source.config?.playlistUrl === 'string' ? source.config.playlistUrl : '';
     if (!playlistUrl) {
       chunkNotice = { kind: 'error', message: 'This source has no playlist URL.' };
@@ -124,10 +141,11 @@
     }
   }
 
-  // 2026-10 round 6 — Task 3: Upload M3U file → create source + ingest.
-  // Reads the file in the browser, creates the source via ?/createSource
-  // (using a temporary placeholder URL), then ingests the channels via
-  // the existing chunked-ingestion endpoint (reusing splitM3uIntoChunks).
+  // 2026-10 round 8 — Task 1: Upload M3U file → create source + ingest.
+  // FIXED: the upload flow now creates the source via a DEDICATED API
+  // endpoint (not the form action), gets the sourceId from the response,
+  // then ingests the chunks with that EXACT sourceId. No ghost sources,
+  // no name-matching, no invalidateAll race conditions.
   async function uploadAndCreateSource() {
     if (!uploadFile) {
       sheetFormError = 'Please select an .m3u or .m3u8 file.';
@@ -143,87 +161,63 @@
       const chunks = splitM3uIntoChunks(text, 50);
       if (chunks.length === 0) throw new Error('The playlist had no channels.');
 
-      // Step 1: create the source with a placeholder URL (the upload flow
-      // doesn't have a URL — the channels are ingested directly from the
-      // file content). The placeholder is a data: URL so it passes the
-      // server's https validation... actually, the server validates the
-      // URL format. Let me use a real-looking placeholder that the server
-      // accepts. The existing createSource action validates playlistUrl as
-      // a URL — we need to submit the form with a placeholder and then
-      // immediately ingest the chunks.
-      //
-      // Actually, the cleanest approach: submit the createSource form
-      // programmatically with a placeholder URL, then after the source is
-      // created (the form redirect returns the new source list), find the
-      // new source ID and ingest the chunks.
-      //
-      // But that's complex with SvelteKit's enhance. A simpler approach:
-      // use the EXISTING ?/createSource form submission (the admin fills
-      // in the name + selects m3u_playlist + the upload tab sets a
-      // special hidden field), then after creation, the page detects the
-      // new source and ingests. But we don't know the new source ID until
-      // after creation.
-      //
-      // SIMPLEST approach: create the source via fetch to the form action
-      // (NOT the enhance flow), get the new source ID from the redirect,
-      // then ingest the chunks. This bypasses the SvelteKit form enhance
-      // but is the most reliable for the upload flow.
+      // Step 1: create the source via a DEDICATED upload endpoint.
+      // 2026-10 round 8: the endpoint creates the source row with
+      // playlistUrl='uploaded_file' (a sentinel — NOT a URL) and returns
+      // the sourceId. No SvelteKit form action, no name matching, no
+      // invalidateAll race.
       uploadProgress = { done: 0, total: chunks.length, phase: 'Creating source…' };
-
-      // Create the source via a direct POST to the form action.
-      // 2026-10 round 7 — Task 1: playlistUrl is now optional. We send
-      // an empty string (the registry validator accepts it for file-upload
-      // sources). The channels are ingested directly from the file content.
-      const formData = new FormData();
-      formData.append('name', uploadFile.name.replace(/\.m3u8?$/i, ''));
-      formData.append('slug', '');
-      formData.append('sourceType', 'm3u_playlist');
-      formData.append('playlistUrl', '');
-      formData.append('status', 'experimental');
-      formData.append('visibility', 'public');
-      formData.append('priority', '100');
-      formData.append('enabled', 'on');
-      formData.append('description', `Uploaded from ${uploadFile.name}`);
-
-      const createResponse = await fetch('?/createSource', {
+      const sourceName = uploadFile.name.replace(/\.m3u8?$/i, '');
+      const createResponse = await fetch('/api/admin/livetv/sources/upload-playlist', {
         method: 'POST',
-        body: formData,
-        headers: { 'x-sveltekit-action': 'true' }
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: sourceName, fileName: uploadFile.name })
       });
-      const createResult = await createResponse.json().catch(() => null);
-      if (!createResponse.ok || !createResult?.data) {
-        throw new Error(createResult?.data?.message ?? 'Failed to create the source.');
+      const createResult = (await createResponse.json().catch(() => null)) as { ok?: boolean; sourceId?: string; error?: { message?: string } } | null;
+      if (!createResponse.ok || !createResult?.ok || !createResult.sourceId) {
+        throw new Error(createResult?.error?.message ?? 'Failed to create the source.');
       }
+      const sourceId = createResult.sourceId;
 
-      // The action returns a redirect to /admin/system/livetv?notice=...
-      // We need to get the new source ID. The easiest way: invalidateAll
-      // to reload the source list, then find the source by name.
-      await invalidateAll();
-      const newSource = data.sources.find((s) => s.name === uploadFile!.name.replace(/\.m3u8?$/i, ''));
-      if (!newSource) {
-        throw new Error('The source was created but could not be found for ingestion. Try "Fetch & Save" on the source card.');
-      }
-
-      // Step 2: ingest the chunks (same as fetchAndSaveChunked).
+      // Step 2: ingest the chunks with the EXACT sourceId.
+      // 2026-10 round 8 — Task 2: add a 500ms delay between chunks to
+      // avoid timeout/network drops. Each chunk has its own try/catch so
+      // one failure doesn't crash the whole process.
       uploadProgress = { done: 0, total: chunks.length, phase: 'Ingesting channels…' };
       let parsed = 0;
       let entryWrites = 0;
       let endpointWrites = 0;
+      let failedChunks = 0;
       for (let i = 0; i < chunks.length; i += 1) {
-        const response = await fetch('/api/admin/livetv/sources/ingest-chunk', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ sourceId: newSource.id, text: chunks[i] })
-        });
-        const result = (await response.json().catch(() => null)) as { ok?: boolean; parsed?: number; entryWrites?: number; endpointWrites?: number; error?: { message?: string } } | null;
-        if (!response.ok || !result?.ok) throw new Error(result?.error?.message ?? `Chunk ${i + 1} failed.`);
-        parsed += result.parsed ?? 0;
-        entryWrites += result.entryWrites ?? 0;
-        endpointWrites += result.endpointWrites ?? 0;
+        try {
+          const response = await fetch('/api/admin/livetv/sources/ingest-chunk', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ sourceId, text: chunks[i] })
+          });
+          const result = (await response.json().catch(() => null)) as { ok?: boolean; parsed?: number; entryWrites?: number; endpointWrites?: number; error?: { message?: string } } | null;
+          if (!response.ok || !result?.ok) {
+            console.error(`[upload] Chunk ${i + 1}/${chunks.length} failed:`, result?.error?.message ?? 'unknown');
+            failedChunks++;
+          } else {
+            parsed += result.parsed ?? 0;
+            entryWrites += result.entryWrites ?? 0;
+            endpointWrites += result.endpointWrites ?? 0;
+          }
+        } catch (chunkError) {
+          console.error(`[upload] Chunk ${i + 1}/${chunks.length} threw:`, chunkError);
+          failedChunks++;
+        }
         uploadProgress = { done: i + 1, total: chunks.length, phase: 'Ingesting channels…' };
+        // 2026-10 round 8 — Task 2: 500ms delay between chunks to avoid
+        // overwhelming the server / hitting timeouts.
+        if (i < chunks.length - 1) {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        }
       }
 
-      chunkNotice = { kind: 'ok', message: `Uploaded and saved ${parsed} channels (${entryWrites} writes, ${endpointWrites} endpoints).` };
+      const failMsg = failedChunks > 0 ? ` (${failedChunks} chunk(s) failed — check console)` : '';
+      chunkNotice = { kind: failedChunks > 0 ? 'error' : 'ok', message: `Uploaded and saved ${parsed} channels (${entryWrites} writes, ${endpointWrites} endpoints).${failMsg}` };
       uploadFile = null;
       uploadProgress = null;
       closeSheets();
@@ -237,6 +231,67 @@
   function handleFileSelect(event: Event) {
     const input = event.currentTarget as HTMLInputElement;
     uploadFile = input.files?.[0] ?? null;
+  }
+
+  // 2026-10 round 8 — Task 1: Replace playlist for an EXISTING uploaded
+  // source. Reads the new file, then ingests the chunks into the EXISTING
+  // sourceId (no new source is created). Used from the Edit sheet's
+  // "Replace File" button.
+  async function uploadAndReplacePlaylist(sourceId: string) {
+    if (!uploadFile) {
+      sheetFormError = 'Please select an .m3u or .m3u8 file.';
+      return;
+    }
+    sheetFormError = null;
+    uploadProgress = { done: 0, total: 0, phase: 'Reading file…' };
+    try {
+      const text = await uploadFile.text();
+      if (!text.includes('#EXTM3U') && !text.includes('#EXTINF')) {
+        throw new Error('The file does not appear to be a valid M3U playlist.');
+      }
+      const chunks = splitM3uIntoChunks(text, 50);
+      if (chunks.length === 0) throw new Error('The playlist had no channels.');
+
+      uploadProgress = { done: 0, total: chunks.length, phase: 'Replacing channels…' };
+      let parsed = 0;
+      let entryWrites = 0;
+      let endpointWrites = 0;
+      let failedChunks = 0;
+      for (let i = 0; i < chunks.length; i += 1) {
+        try {
+          const response = await fetch('/api/admin/livetv/sources/ingest-chunk', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ sourceId, text: chunks[i] })
+          });
+          const result = (await response.json().catch(() => null)) as { ok?: boolean; parsed?: number; entryWrites?: number; endpointWrites?: number; error?: { message?: string } } | null;
+          if (!response.ok || !result?.ok) {
+            console.error(`[replace] Chunk ${i + 1}/${chunks.length} failed:`, result?.error?.message ?? 'unknown');
+            failedChunks++;
+          } else {
+            parsed += result.parsed ?? 0;
+            entryWrites += result.entryWrites ?? 0;
+            endpointWrites += result.endpointWrites ?? 0;
+          }
+        } catch (chunkError) {
+          console.error(`[replace] Chunk ${i + 1}/${chunks.length} threw:`, chunkError);
+          failedChunks++;
+        }
+        uploadProgress = { done: i + 1, total: chunks.length, phase: 'Replacing channels…' };
+        if (i < chunks.length - 1) {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+      }
+
+      const failMsg = failedChunks > 0 ? ` (${failedChunks} chunk(s) failed — check console)` : '';
+      chunkNotice = { kind: failedChunks > 0 ? 'error' : 'ok', message: `Replaced with ${parsed} channels (${entryWrites} writes, ${endpointWrites} endpoints).${failMsg}` };
+      uploadFile = null;
+      uploadProgress = null;
+      await invalidateAll();
+    } catch (error) {
+      sheetFormError = error instanceof Error ? error.message : 'Replace failed.';
+      uploadProgress = null;
+    }
   }
 
   const refreshEnhance: SubmitFunction = () => {
@@ -568,7 +623,7 @@
                 </button>
               </form>
               <button type="button" class="a2-btn" onclick={() => openEditSource(source)}><Pencil size={14} /> Edit</button>
-              {#if source.source_type === 'm3u_playlist'}
+              {#if source.source_type === 'm3u_playlist' && !isUploadedSource(source)}
                 <button
                   type="button"
                   class="a2-btn"
@@ -618,7 +673,34 @@
                 <button type="button" role="tab" class:active={playlistInputMode === 'upload'} onclick={() => (playlistInputMode = 'upload')} aria-selected={playlistInputMode === 'upload'}>Upload File</button>
               </div>
             {/if}
-            {#if playlistInputMode === 'url' || editingSource}
+            {#if editingSource && isUploadedSource(editingSource)}
+              <!-- 2026-10 round 8 — Task 1: uploaded sources have no URL.
+                   The Edit sheet shows ONLY the "Replace File" upload UI
+                   (no URL input, no tab toggle). The hidden playlistUrl
+                   field preserves the 'uploaded_file' sentinel. -->
+              <input type="hidden" name="playlistUrl" value="uploaded_file" />
+              <div class="upload-zone">
+                <p class="a2-muted">This source was uploaded from a file. Select a new file to replace the channels.</p>
+                <label class="a2-field a2-field-wide">
+                  <span>Select .m3u or .m3u8 file</span>
+                  <input type="file" accept=".m3u,.m3u8" onchange={handleFileSelect} class="a2-input" />
+                </label>
+                {#if uploadFile}
+                  <p class="upload-file-name">Selected: {uploadFile.name} ({Math.round(uploadFile.size / 1024)} KB)</p>
+                {/if}
+                {#if uploadProgress}
+                  <div class="upload-progress" role="status" aria-live="polite">
+                    <div class="upload-progress-bar">
+                      <div class="upload-progress-fill" style="width: {uploadProgress.total > 0 ? Math.round((uploadProgress.done / uploadProgress.total) * 100) : 0}%"></div>
+                    </div>
+                    <p class="upload-progress-text">{uploadProgress.phase} {uploadProgress.total > 0 ? `(${uploadProgress.done}/${uploadProgress.total})` : ''}</p>
+                  </div>
+                {/if}
+                <button type="button" class="a2-btn a2-btn-primary" onclick={() => editingSource && void uploadAndReplacePlaylist(editingSource.id)} disabled={!uploadFile || uploadProgress !== null || !editingSource}>
+                  {uploadProgress ? 'Replacing…' : 'Replace File'}
+                </button>
+              </div>
+            {:else if playlistInputMode === 'url' || editingSource}
               <label class="a2-field a2-field-wide"><span>Playlist URL (https){editingSource ? '' : ' *'}</span>
                 <input class="a2-input" type="url" name="playlistUrl" required={editingSource !== null} value={String((editingSource?.config as Record<string, unknown> | null)?.playlistUrl ?? '')} maxlength="2048" placeholder="https://example.com/playlist.m3u8" />
               </label>
