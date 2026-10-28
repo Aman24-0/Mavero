@@ -41,18 +41,24 @@ console.log('§1 — Source selector UI: compact icon button, no separate row (I
 // ============================================================
 {
   // 1.1 — the selector is a compact ICON button (not a large labeled button).
-  ok(liveTvPage.includes('ltv-source-icon-btn'), '§1.1 the selector is a compact icon button (ltv-source-icon-btn)');
+  // 1.1 — 2026-10 round 6: the selector is now a .tool-btn in the toolbar
+  // (the old ltv-source-icon-btn class was removed). The Source button uses
+  // the same .tool-btn style as Filter/Guide.
+  ok(liveTvPage.includes('Source</span>'), '§1.1 the selector is a tool-btn in the toolbar (2026-10 round 6: moved from floating icon to toolbar)');
   // 1.2 — the OLD large button classes are GONE.
   ok(!liveTvPage.includes('ltv-source-button') && !liveTvPage.includes('ltv-source-picker'), '§1.2 the old large button + picker classes are GONE');
   ok(!liveTvPage.includes('ltv-source-label') && !liveTvPage.includes('ltv-source-value'), '§1.3 the old "Source" label + value spans are GONE (no large "Source: All Sources" control)');
-  // 1.4 — 2026-10 round 1: the hero heading was REMOVED. The source icon
-  // button now floats at the top-right of the player column (ltv-source-float).
-  // The ltv-hero-inner class is gone; the flex-wrap:nowrap assertion is moot.
-  ok(liveTvPage.includes('ltv-source-float'), '§1.4 the source icon button floats at the top-right of the player column (2026-10 round 1 — heading removed, button floats)');
-  // 1.5 — the icon button is a fixed 40px square (compact, never wraps).
-  ok(/\.ltv-source-icon-btn\s*\{[\s\S]{0,400}width:\s*40px[\s\S]{0,100}height:\s*40px[\s\S]{0,100}flex:\s*0 0 40px/.test(liveTvPage), '§1.5 the icon button is a fixed 40px square (flex:0 0 40px — never wraps)');
-  // 1.6 — the button has a selected-state indicator (the dot).
-  ok(liveTvPage.includes('ltv-source-icon-dot'), '§1.6 the button has a selected-state dot indicator');
+  // 1.4 — 2026-10 round 6: the Source selector is now a .tool-btn in the
+  // toolbar row (the floating ltv-source-float was removed in round 6).
+  ok(liveTvPage.includes('Source</span>'), '§1.4 the source selector is in the toolbar row (2026-10 round 6: moved from floating to toolbar)');
+  // 1.5 — 2026-10 round 6: the .ltv-source-icon-btn CSS was REMOVED. The
+  // Source selector is now a .tool-btn in the toolbar (same style as
+  // Filter/Guide). The 40px-square assertion is moot.
+  ok(liveTvPage.includes('class="tool-btn"') && liveTvPage.includes('Source</span>'), '§1.5 the source selector is a .tool-btn in the toolbar row (2026-10 round 6: moved from floating icon to toolbar)');
+  // 1.6 — 2026-10 round 6: the selected-state dot (ltv-source-icon-dot) was
+  // removed. The Source button now uses the .tool-btn.active style + a
+  // .tool-count badge (same as Filter).
+  ok(liveTvPage.includes('tool-count'), '§1.6 the source button has a selected-state badge (tool-count — 2026-10 round 6: replaced the dot)');
   // 1.7 — the dialog is a bottom sheet on mobile (position:fixed; bottom:0).
   ok(/\.ltv-source-dialog\s*\{[\s\S]{0,400}position:\s*fixed[\s\S]{0,200}bottom:\s*0/.test(liveTvPage), '§1.7 the dialog docks to the bottom on mobile (position:fixed; bottom:0)');
   // 1.8 — the dialog respects safe-area insets.
@@ -70,7 +76,7 @@ console.log('§1 — Source selector UI: compact icon button, no separate row (I
   // 1.14 — options have min-height 44px (touch target).
   ok(/\.ltv-source-option\s*\{[\s\S]{0,400}min-height:\s*44px/.test(liveTvPage), '§1.14 the options have min-height:44px (touch target)');
   // 1.15 — the Filter icon is imported.
-  ok(liveTvPage.includes('<Tv size={16}'), '§1.15 R-6: the Tv (broadcast/source) icon is rendered (replaced Filter)');
+  ok(liveTvPage.includes('<Tv size={15}'), '§1.15 R-6: the Tv (broadcast/source) icon is rendered in the toolbar (2026-10 round 6: size 15 matches other tool-btn icons)');
   // 1.16 — the button has a title attribute (tooltip).
   ok(liveTvPage.includes('title="Source: {sourceSelectorLabel}"'), '§1.16 the button has a title attribute (tooltip with the current selection)');
 }

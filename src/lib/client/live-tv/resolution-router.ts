@@ -178,8 +178,8 @@ type Timers = {
 // with no network request. Node does not brand-check, so the tsx suite passed.
 // The arrow wrappers call the globals with the global (lexical) context.
 const defaultTimers: Timers = {
-	setTimeout: (fn: () => void, ms: number) => setTimeout(fn, ms),
-	clearTimeout: (handle: ReturnType<typeof setTimeout>) => clearTimeout(handle)
+        setTimeout: (fn: () => void, ms: number) => setTimeout(fn, ms),
+        clearTimeout: (handle: ReturnType<typeof setTimeout>) => clearTimeout(handle)
 };
 
 // ---------------------------------------------------------------------------
@@ -663,18 +663,14 @@ export class LiveTvPlaybackRouter {
                                 this.settleCurrent('failed');
                                 return;
                         }
-                        // HLS proxy routing / DASH fallback (see $lib/shared/livetv-proxy).
+                        // 2026-10 round 6 — Task 2: DASH is now SUPPORTED. Shaka Player
+                        // handles DASH manifests natively. DASH from a CORS-blocked CDN
+                        // is routed through the Cloudflare Worker proxy (the Worker
+                        // rewrites the MPD's BaseURL + segment URLs). HLS proxy routing
+                        // is unchanged.
                         let mediaUrl = candidate.url;
-                        if (candidate.streamFormat === 'dash') {
-                                // DASH is NOT supported in the browser (dropped). Skip it
-                                // honestly and remember why so the terminal message is clear.
-                                this.trailPush({ attemptId, candidateId: candidate.candidateId, outcome: 'skipped', detail: 'dash_unsupported' });
-                                this.sawDashBlocked = true;
-                                this.settleCurrent('failed');
-                                return;
-                        }
-                        if (candidate.streamFormat === 'hls' && isLivetvProxyUrl(mediaUrl)) {
-                                // HLS from a CORS-blocked CDN → route via the server proxy.
+                        if (isLivetvProxyUrl(mediaUrl)) {
+                                // HLS or DASH from a CORS-blocked CDN → route via the proxy.
                                 const origin = typeof location !== 'undefined' ? location.origin : '';
                                 if (origin) mediaUrl = new URL(livetvStreamProxyUrl(mediaUrl, this.streamProxyBase), origin).toString();
                         }

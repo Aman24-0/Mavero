@@ -1004,28 +1004,10 @@
 </svelte:head>
 
 <div class="live-tv-page">
-  <!-- 2026-10 round 1 — Task 1: the "MAVERO / Live TV" heading is REMOVED.
-       The player window now sits at the very top of the page. The Source
-       selector icon button is preserved (it was the only useful control in
-       the hero row); it floats to the top-right of the player column as a
-       compact overlay so it stays accessible without a heading row. -->
-  {#if sourcesAvailable && selectorSources.length > 1}
-    <button
-      type="button"
-      class="ltv-source-icon-btn ltv-source-float"
-      class:active={selectedSourceFilter !== null}
-      onclick={toggleSourceSheet}
-      aria-haspopup="dialog"
-      aria-expanded={sourceSheetOpen}
-      aria-label="Select source. Current: {sourceSelectorLabel}"
-      title="Source: {sourceSelectorLabel}"
-    >
-      <Tv size={16} aria-hidden="true" />
-      {#if selectedSourceFilter !== null}
-        <span class="ltv-source-icon-dot" aria-hidden="true"></span>
-      {/if}
-    </button>
-  {/if}
+  <!-- 2026-10 round 6 — Task 4: the Source selector button is NO LONGER
+       floating. It moved into the toolbar row (the last item after
+       Search + Filter + Guide) for a cleaner layout. See the toolbar
+       section below. -->
 
   <!-- R-4 — the Source selector bottom sheet (mobile) / popover (desktop).
        A single accessible dialog with a backdrop. On mobile it docks to
@@ -1245,6 +1227,29 @@
         <BookOpen size={15} />
         <span>Guide</span>
       </button>
+
+      <!-- 2026-10 round 6 — Task 4: the Source selector button is the LAST
+           item in the toolbar row (after Search + Filter + Guide). Shown only
+           when multiple sources are available. Uses the same .tool-btn style
+           as Filter/Guide for visual consistency. -->
+      {#if sourcesAvailable && selectorSources.length > 1}
+        <button
+          class="tool-btn"
+          class:active={selectedSourceFilter !== null}
+          type="button"
+          onclick={toggleSourceSheet}
+          aria-label="Select source. Current: {sourceSelectorLabel}"
+          aria-haspopup="dialog"
+          aria-expanded={sourceSheetOpen}
+          title="Source: {sourceSelectorLabel}"
+        >
+          <Tv size={15} />
+          <span>Source</span>
+          {#if selectedSourceFilter !== null}
+            <span class="tool-count" aria-label="Source filter active">1</span>
+          {/if}
+        </button>
+      {/if}
     </section>
 
     <!-- Channel catalogue (respects search + category filters) -->
@@ -1353,17 +1358,10 @@
     padding-bottom: 110px;
   }
 
-  /* 2026-10 round 1 — Task 1: the heading hero is GONE. The source
-     selector icon button now floats at the top-right of the player
-     column as a compact overlay (it was the only useful control in the
-     old hero row). z-index: 60 keeps it above the player surface but
-     below the source sheet dialog (90+). */
-  .ltv-source-float {
-    position: absolute;
-    top: 10px;
-    right: 10px;
-    z-index: 60;
-  }
+  /* 2026-10 round 6 — Task 4: the .ltv-source-float + .ltv-source-icon-btn
+     classes are GONE. The Source selector is now a .tool-btn in the toolbar
+     row (same style as Filter/Guide). The icon-button CSS below is kept
+     for reference but unused. */
 
   /* 2026-10 round 2 — Task 2: Sticky player window. When a channel is
      active (selectedChannel !== null), the player column becomes sticky
@@ -1390,40 +1388,9 @@
      kept here for reference but unused — the unused-selector warnings
      are silenced by the :global() wrapper below. */
 
-  /* R-4 — the compact Source selector ICON button (far right of the player
-     column as a floating overlay). A 40px square touch target with a filter
-     icon + a selected-state dot. */
-  .ltv-source-icon-btn {
-    position: relative;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 40px;
-    height: 40px;
-    flex: 0 0 40px;
-    background: var(--color-surface-2, var(--color-bg));
-    border: 1px solid var(--color-border-strong, var(--color-border));
-    border-radius: 10px;
-    color: var(--color-text-muted, var(--color-text));
-    cursor: pointer;
-    transition: background .15s ease, border-color .15s ease, color .15s ease;
-  }
-  .ltv-source-icon-btn:hover { background: var(--color-surface-3, var(--color-surface-2)); color: var(--color-text); }
-  .ltv-source-icon-btn:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
-  .ltv-source-icon-btn.active { color: var(--color-primary); border-color: var(--color-primary); background: var(--color-primary-soft); }
-  .ltv-source-icon-dot {
-    position: absolute;
-    top: 8px;
-    right: 8px;
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--color-primary);
-    border: 1.5px solid var(--color-bg);
-  }
-
-  /* R-4 — the source selector backdrop + dialog. Mobile: bottom sheet
-     (safe-area aware, internal scroll). Desktop ≥641px: top-right popover. */
+  /* 2026-10 round 6 — Task 4: the .ltv-source-icon-btn + .ltv-source-icon-dot
+     CSS was REMOVED (the Source selector is now a .tool-btn in the toolbar).
+     The source selector backdrop + dialog CSS below is still used. */
   .ltv-source-backdrop {
     position: fixed;
     inset: 0;
