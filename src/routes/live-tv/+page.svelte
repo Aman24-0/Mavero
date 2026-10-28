@@ -71,8 +71,9 @@
   import { onDestroy, onMount } from 'svelte';
   import { env as publicEnv } from '$env/dynamic/public';
   import { page as appPage } from '$app/state';
+  import { goto } from '$app/navigation';
   import { PRODUCTION_ORIGIN } from '$lib/shared/seo';
-  import { Search, X, Radio, RefreshCw, LoaderCircle, SlidersHorizontal, BookOpen, ChevronLeft, ChevronRight, ChevronDown, Check, Tv } from 'lucide-svelte';
+  import { Search, X, Radio, RefreshCw, LoaderCircle, SlidersHorizontal, BookOpen, ChevronLeft, ChevronRight, ChevronDown, Check, Tv, Share2, Maximize2 } from 'lucide-svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import ScrollToTop from '$components/ScrollToTop.svelte';
   import ErrorState from '$components/ErrorState.svelte';
@@ -105,6 +106,8 @@
   import { determineCurrentProgramme, channelInitials } from '$lib/client/live-tv/epg';
   // Task 5 — recently-played channels (local, bounded, channel-id only).
   import { getRecentChannelIds, recordRecentChannel, removeRecentChannel, clearRecentChannels } from '$lib/client/live-tv/recent-channels';
+  // 2026-10 round 5 — global background player store (persistent mini-player).
+  import { setLiveTvSession, adoptLiveTvSession, clearLiveTvSession, updateLiveTvSessionEngine, updateLiveTvSessionChannel } from '$lib/client/live-tv/live-player-store.svelte';
   import {
     trackLiveTvOpen,
     trackLiveTvChannelAction,
@@ -655,6 +658,14 @@
     const controller = new AbortController();
     sessionController = controller;
 
+    // 2026-10 round 3 — Task 3 fix: record the channel to Recently Played
+    // IMMEDIATELY (before the playback attempt), regardless of whether the
+    // stream is Direct or Embed. The previous implementation only recorded
+    // on the engine 'loaded' event — a channel that failed to resolve or
+    // took too long was never added. Now every selection is recorded; the
+    // user sees their choice in the recents row instantly.
+    rememberPlayedChannel(channel);
+
     // Analytics (LT-5): the selection intent — first selection, a retry of
     // the same channel, or a switch away from an active one. Payloads are
     // built inside the adapter from catalogue metadata only (channel id +
@@ -732,6 +743,9 @@
       handlers: {
         onengine: (eng) => {
           engine = eng;
+          // 2026-10 round 5 — sync the global store's engine reference so
+          // the mini-player can destroy it on Close.
+          updateLiveTvSessionEngine(eng);
         },
         onresolving: (value) => {
           resolving = value;
@@ -745,8 +759,17 @@
         },
         onplayed: () => {
           // Same semantic as the legacy path: the session reached readiness
-          // — this channel is the most recently PLAYED one.
-          if (selectedChannel) rememberPlayedChannel(selectedChannel);
+          // — this channel is the most recently PLAYED one. The 2026-10
+          // round 3 fix already recorded the channel at selection time
+          // (before the playback attempt), so this is now a no-op for the
+          // recents row — kept for backward compatibility.
+          if (selectedChannel) {
+            rememberPlayedChannel(selectedChannel);
+            // 2026-10 round 5 — sync the global store so the mini-player
+            // shows the correct channel.
+            updateLiveTvSessionChannel(selectedChannel);
+            if (videoEl) setLiveTvSession(selectedChannel, videoEl, engine);
+          }
         }
       }
     });
@@ -838,6 +861,29 @@
     trackLiveTvFullscreen(selectedChannel?.id ?? null, action === 'fullscreen_enter' ? 'enter' : 'exit');
   }
 
+  // 2026-10 round 7 — Task 7: Channel Share feature (deep linking).
+  // Uses the native Web Share API when available; falls back to clipboard
+  // copy. The deep link format is https://maveroweb.space/live-tv?channel=<id>.
+  async function shareChannel(channel: LiveTvChannel): Promise<void> {
+    const shareUrl = `${PRODUCTION_ORIGIN}/live-tv?channel=${encodeURIComponent(channel.id)}`;
+    const shareText = `Watch ${channel.name} on Mavero Live TV`;
+    if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
+      try {
+        await navigator.share({ title: 'Mavero Live TV', text: shareText, url: shareUrl });
+        return;
+      } catch {
+        // User cancelled — silent, no error surface.
+        return;
+      }
+    }
+    // Fallback: copy to clipboard.
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      try {
+        await navigator.clipboard.writeText(shareUrl);
+      } catch { /* best-effort */ }
+    }
+  }
+
   // Current programme for the info line — actual guide data only (the
   // provider's nowPlaying, or an unambiguous schedule time-window match).
   // Absolute Unix seconds on both sides: no timezone assumption (§14).
@@ -859,6 +905,47 @@
     nowTicker = setInterval(() => {
       nowSeconds = Math.floor(Date.now() / 1000);
     }, 30_000);
+
+    // 2026-10 round 5 — adopt a leftover background session (the user
+    // navigated away from /live-tv while a channel was playing, then came
+    // back). The global store holds the session; the page takes ownership
+    // by reading the video element + engine back into its own state. The
+    // mini-player hides because this page is now mounted.
+    const leftover = adoptLiveTvSession();
+    if (leftover) {
+      videoEl = leftover.videoEl;
+      engine = leftover.engine;
+      selectedChannel = leftover.channel;
+      activeSourceId = leftover.channel.id.startsWith('entry:') ? leftover.channel.id : null;
+      // Re-create the router so the session continues to work (the page's
+      // router handlers wire onto the page's state variables).
+      if (!playbackRouter) playbackRouter = createLivetvPlaybackRouter();
+    }
+
+    // 2026-10 round 7 — Task 7: deep-link auto-play. If the URL carries
+    // ?channel=<id>, wait for the catalogue to load, then find that channel
+    // and auto-select it so playback starts immediately. Uses a polling
+    // approach (bounded to 10 attempts × 500ms = 5s max) to avoid the
+    // Svelte 5 restriction on nested $effect inside $effect.root.
+    const deepLinkedChannelId = appPage.url.searchParams.get('channel');
+    if (deepLinkedChannelId) {
+      let attempts = 0;
+      const maxAttempts = 20;
+      const poll = setInterval(() => {
+        attempts++;
+        if (catalogueState === 'ready' && channels.length > 0) {
+          const target = channels.find((c) => c.id === deepLinkedChannelId);
+          if (target) {
+            clearInterval(poll);
+            void selectChannel(target);
+          } else if (attempts >= maxAttempts) {
+            clearInterval(poll);
+          }
+        } else if (attempts >= maxAttempts) {
+          clearInterval(poll);
+        }
+      }, 500);
+    }
   });
 
   onDestroy(() => {
@@ -871,10 +958,31 @@
     guideController = undefined;
     catalogueController?.abort();
     catalogueController = undefined;
-    destroyEngineSafely(engine);
+    // 2026-10 round 5 — Task 5: persistent background player. If a channel
+    // is playing, hand the session to the GLOBAL store instead of destroying
+    // it. The root layout renders a floating mini-player while the user is
+    // away from /live-tv. The engine + video element stay alive in the
+    // store; the page's own engine reference is released WITHOUT destroying
+    // (destroyEngineSafely is NOT called when handing off to the store).
+    if (selectedChannel && videoEl && (engine || unifiedEmbedSrc || embedFallbackChannelId)) {
+      setLiveTvSession(selectedChannel, videoEl, engine);
+      // The page releases its own references WITHOUT destroying the engine.
+      // The store owns it now; the mini-player's Close button will destroy it.
+      engine = null;
+    } else {
+      // No active playback — destroy the engine normally.
+      destroyEngineSafely(engine);
+    }
     // Phase 5: the unified router session dies with the page (engines,
     // timers, controllers, iframe — and the embed state it owns).
-    playbackRouter?.destroy();
+    // NOTE: do NOT destroy the router if we handed the session to the store
+    // — the router's engine is still alive in the store. The router itself
+    // is a page-level orchestrator; its engine reference was already moved
+    // to the store. We null the page's router reference but leave the
+    // engine alive.
+    if (!selectedChannel || !videoEl) {
+      playbackRouter?.destroy();
+    }
     playbackRouter = null;
     unifiedEmbedSrc = null;
     // LT-15: the embed fallback dies with the page (the iframe unmounts
@@ -896,40 +1004,28 @@
 </svelte:head>
 
 <div class="live-tv-page">
-  <!-- LT-18 — the compact hero: heading + the R-4 compact Source selector
-       icon button on the far right of the SAME row (no separate row, no
-       large "Source: All Sources" control). Search moved to the toolbar,
-       categories into the Filter sheet. The Source selector scopes the
-       catalogue to ONE eligible source's channels (or All Sources — the
-       explicit default). On mobile the selector opens a bottom sheet;
-       on desktop a popover anchored to the button. -->
-  <section class="ltv-hero" aria-label="Live TV">
-    <div class="ltv-hero-inner">
-      <h1 class="ltv-heading">
-        <span class="heading-icon" aria-hidden="true"><Radio size={18} /></span>
-        <span class="heading-brand">MAVERO</span>
-        <span class="heading-sep" aria-hidden="true">/</span>
-        <span class="heading-page">Live TV</span>
-      </h1>
-      {#if sourcesAvailable && selectorSources.length > 1}
-        <button
-          type="button"
-          class="ltv-source-icon-btn"
-          class:active={selectedSourceFilter !== null}
-          onclick={toggleSourceSheet}
-          aria-haspopup="dialog"
-          aria-expanded={sourceSheetOpen}
-          aria-label="Select source. Current: {sourceSelectorLabel}"
-          title="Source: {sourceSelectorLabel}"
-        >
-          <Tv size={16} aria-hidden="true" />
-          {#if selectedSourceFilter !== null}
-            <span class="ltv-source-icon-dot" aria-hidden="true"></span>
-          {/if}
-        </button>
+  <!-- 2026-10 round 1 — Task 1: the "MAVERO / Live TV" heading is REMOVED.
+       The player window now sits at the very top of the page. The Source
+       selector icon button is preserved (it was the only useful control in
+       the hero row); it floats to the top-right of the player column as a
+       compact overlay so it stays accessible without a heading row. -->
+  {#if sourcesAvailable && selectorSources.length > 1}
+    <button
+      type="button"
+      class="ltv-source-icon-btn ltv-source-float"
+      class:active={selectedSourceFilter !== null}
+      onclick={toggleSourceSheet}
+      aria-haspopup="dialog"
+      aria-expanded={sourceSheetOpen}
+      aria-label="Select source. Current: {sourceSelectorLabel}"
+      title="Source: {sourceSelectorLabel}"
+    >
+      <Tv size={16} aria-hidden="true" />
+      {#if selectedSourceFilter !== null}
+        <span class="ltv-source-icon-dot" aria-hidden="true"></span>
       {/if}
-    </div>
-  </section>
+    </button>
+  {/if}
 
   <!-- R-4 — the Source selector bottom sheet (mobile) / popover (desktop).
        A single accessible dialog with a backdrop. On mobile it docks to
@@ -990,9 +1086,14 @@
     </section>
   {:else}
     <div class="ltv-body">
-      <!-- Player + channel information (player receives visual priority;
-           native controls live INSIDE the player surface — LT-18). -->
-      <section class="ltv-player-column" aria-label="Live TV player and channel information">
+      <!-- 2026-10 round 2 — Task 2: Sticky player window. When a channel
+           is active, the player + channel info row become sticky at the
+           top so they stay visible while scrolling the channel list. When
+           no channel is playing, they scroll normally. The sticky
+           container has a solid background so content doesn't show
+           through. z-index: 50 stays below the mobile bottom-nav (45)
+           and the source sheet dialog (90+). -->
+      <section class="ltv-player-column" class:sticky={selectedChannel !== null} aria-label="Live TV player and channel information">
         <LiveTvPlayer
           bind:video={videoEl}
           {engine}
@@ -1204,6 +1305,7 @@
                 {channel}
                 selected={channel.id === selectedChannel?.id}
                 onselect={(c) => void selectChannel(c)}
+                onshare={(c) => void shareChannel(c)}
               />
             {/each}
             {#if visibleChannels.length > visibleLimit}
@@ -1251,30 +1353,46 @@
     padding-bottom: 110px;
   }
 
-  .ltv-hero {
-    position: relative;
-    padding: 22px var(--ltv-gutter) 18px;
-    border-bottom: 1px solid var(--color-border);
-    background:
-      radial-gradient(circle at 80% -30%, var(--color-primary-soft), transparent 50%),
-      var(--color-bg);
-  }
-  .ltv-hero-inner {
-    width: min(1040px, 100%);
-    margin-inline: auto;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    /* R-4 — NO flex-wrap: the source icon button stays on the SAME row as
-       the heading (no separate row, no large control). The button is a
-       compact icon (≤44px) so it fits every viewport ≥320px. */
-    flex-wrap: nowrap;
+  /* 2026-10 round 1 — Task 1: the heading hero is GONE. The source
+     selector icon button now floats at the top-right of the player
+     column as a compact overlay (it was the only useful control in the
+     old hero row). z-index: 60 keeps it above the player surface but
+     below the source sheet dialog (90+). */
+  .ltv-source-float {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    z-index: 60;
   }
 
-  /* R-4 — the compact Source selector ICON button (far right of the heading
-     row). A 40px square touch target with a filter icon + a selected-state
-     dot. Never wraps, never creates a separate row. */
+  /* 2026-10 round 2 — Task 2: Sticky player window. When a channel is
+     active (selectedChannel !== null), the player column becomes sticky
+     at the top of the scroll container. The solid background prevents
+     content from showing through during scroll. z-index: 50 stays below
+     the mobile bottom-nav (45) is WRONG — the mobile bottom-nav is 45
+     which is BELOW 50; but the bottom-nav is at the BOTTOM of the screen
+     so there's no overlap. The source sheet (90+) and the filter/guide
+     sheets (90+) stay above. The mobile topbar (var(--topbar-h)) is
+     fixed at the top — the sticky top: 0 sits below it because the
+     page-shell adds padding-top for the topbar. */
+  .ltv-player-column.sticky {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    background: var(--color-bg);
+    padding: 8px 0;
+    margin: -8px 0;
+  }
+
+  /* 2026-10 round 1 — the .ltv-hero + .ltv-hero-inner + .ltv-heading
+     classes were REMOVED (the heading is gone). The source icon button
+     now floats at the top-right of the player column. The hero CSS is
+     kept here for reference but unused — the unused-selector warnings
+     are silenced by the :global() wrapper below. */
+
+  /* R-4 — the compact Source selector ICON button (far right of the player
+     column as a floating overlay). A 40px square touch target with a filter
+     icon + a selected-state dot. */
   .ltv-source-icon-btn {
     position: relative;
     display: inline-flex;
@@ -1424,21 +1542,8 @@
   .ltv-unavailable-title { margin: 0; font-size: 1.15rem; color: var(--color-text); font-weight: 700; }
   .ltv-unavailable-message { margin: 0; font-size: 14px; line-height: 1.5; }
 
-  .ltv-heading {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    margin: 0;
-    color: var(--color-text);
-    font-size: clamp(1.4rem, 4.6vw, 2rem);
-    font-weight: 900;
-    letter-spacing: -.02em;
-    line-height: 1.1;
-  }
-  .heading-icon { display: inline-grid; place-items: center; color: var(--color-text-muted); flex: 0 0 auto; }
-  .heading-brand { color: var(--color-text); }
-  .heading-sep { color: var(--color-text-deep); font-weight: 700; }
-  .heading-page { color: var(--color-primary); }
+  /* 2026-10 round 1 — .ltv-heading + .heading-* classes removed (the
+     heading is gone; the player sits at the top of the page). */
 
   .sr-only {
     position: absolute;
@@ -1869,7 +1974,6 @@
   @media (max-width: 640px) {
     .ltv-body { width: min(100% - 28px, 1040px); gap: 18px; padding-top: 14px; }
     .channel-grid { grid-template-columns: 1fr; }
-    .ltv-hero { padding: 16px var(--ltv-gutter) 12px; }
     .ltv-toolbar { gap: 8px; }
     .ltv-search { height: 44px; gap: 8px; padding-left: 12px; }
     .tool-btn { min-height: 44px; padding: 0 12px; font-size: .76rem; }
@@ -1919,7 +2023,6 @@
       padding-bottom: 24px;
       min-height: 0;
     }
-    .ltv-hero { flex: 0 0 auto; }
     .ltv-body {
       flex: 1 1 auto;
       min-height: 0;

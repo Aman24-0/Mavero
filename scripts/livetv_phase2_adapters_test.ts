@@ -452,7 +452,7 @@ console.log('§7 LiveGT V1 adapter');
   ok(capturedUrl.endsWith('/api/public/channels') && capturedUrl.startsWith('https://'), '§7.6 the fixed documented V1 catalogue endpoint is used (base from the existing client)');
   ok(run.channels.length === 3, '§7.7 all valid catalogue entries normalized');
   const ch143 = run.channels.find((c) => c.sourceChannelId === '143')!;
-  ok(ch143.endpoints.length === 1 && ch143.endpoints[0]!.endpointKind === 'embed_page' && ch143.endpoints[0]!.url.endsWith('/embed/143'), '§7.8 the documented embed page is materialized as a typed embed_page endpoint');
+  ok(ch143.endpoints.length === 1 && ch143.endpoints[0]!.endpointKind === 'embed_page' && ch143.endpoints[0]!.url.includes('/embed/143'), '§7.8 the documented embed page is materialized as a typed embed_page endpoint (2026-10: URL now includes ?colour= param)');
   const serialized143 = JSON.stringify(ch143);
   ok(!serialized143.includes('evil.example'), '§7.9 the wire embed/watch fields are NEVER read or persisted (client parity)');
   ok(ch143.endpoints.every((e) => e.endpointKind !== 'direct_stream'), '§7.10 NO direct endpoint is persisted (fresh-signed contract — resolution stays with the existing client)');

@@ -483,7 +483,13 @@ export async function getLiveTvGuide(channelId: string, options: LiveTvGuideOpti
 export function buildLiveTvEmbedUrl(channelId: string | null | undefined): string | null {
         if (typeof channelId !== 'string') return null;
         if (!/^\d{1,8}$/.test(channelId)) return null;
-        return `${LIVEGT_V1_BASE_URL}/embed/${channelId}`;
+        // 2026-10 round 6 — Task 6: append ?colour=%23FFFFFF (white) so the
+        // TGFlix embed player's accent (controls, LIVE badge, loading spinner,
+        // quality/server menus AND watermark) follows the Mavero white theme.
+        // The %23 is URL-encoded '#' (the API accepts hex with or without #).
+        // This doesn't HIDE the watermark but makes it blend with the white
+        // theme. The CSS crop trick in LiveTvPlayer.svelte handles the rest.
+        return `${LIVEGT_V1_BASE_URL}/embed/${channelId}?colour=%23FFFFFF`;
 }
 
 // ---------------------------------------------------------------------------

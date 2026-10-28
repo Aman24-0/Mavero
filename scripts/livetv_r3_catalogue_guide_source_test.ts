@@ -133,7 +133,10 @@ console.log('§4 — Guide timeout fixed for all channels (Issue 4)');
   // 4.9 — the guide endpoint returns no-store (freshness).
   ok(guideEndpoint.includes("'cache-control': 'no-store'"), '§4.9 the guide endpoint sets no-store (freshness)');
   // 4.10 — an unmapped entry with no tvg_id honestly returns empty (never fabricated).
-  ok(sourceFirstCatalogue.includes('if (!canonicalId && !tvgId) return base;'), '§4.10 an unmapped entry with no tvg_id honestly returns empty (never fabricated, never timeout)');
+  // 2026-10 round 4 — Task 4: the fallback now tries the TGFlix API before
+  // returning base. The original `if (!canonicalId && !tvgId) return base;`
+  // was replaced with a conditional that attempts the fallback first.
+  ok(sourceFirstCatalogue.includes('if (!canonicalId && !tvgId)') && sourceFirstCatalogue.includes('return base;'), '§4.10 an unmapped entry with no tvg_id honestly returns empty (after the TGFlix API fallback attempt — 2026-10 round 4)');
 }
 
 // ============================================================

@@ -68,12 +68,14 @@ function sliceOf(source: string, startMarker: string, endMarker: string): string
 // §A1 — The embed URL builder (behavioral; cases 9 + 10 + 11)
 // ============================================================
 {
-  // Case 9: the URL is EXACTLY the documented pattern — trusted constant
-  // base + validated numeric id, nothing else.
-  assert.equal(buildLiveTvEmbedUrl('154'), 'https://livetgtv.lovable.app/embed/154');
-  assert.equal(buildLiveTvEmbedUrl('143'), 'https://livetgtv.lovable.app/embed/143');
-  assert.equal(buildLiveTvEmbedUrl('0'), 'https://livetgtv.lovable.app/embed/0');
-  assert.equal(buildLiveTvEmbedUrl('12345678'), 'https://livetgtv.lovable.app/embed/12345678');
+  // Case 9: the URL is the documented pattern + the 2026-10 round 6
+  // ?colour=%23FFFFFF parameter (Task 6 — white accent for the embed
+  // player's controls/watermark). The base + validated numeric id are
+  // unchanged; only the query parameter was added.
+  assert.equal(buildLiveTvEmbedUrl('154'), 'https://livetgtv.lovable.app/embed/154?colour=%23FFFFFF');
+  assert.equal(buildLiveTvEmbedUrl('143'), 'https://livetgtv.lovable.app/embed/143?colour=%23FFFFFF');
+  assert.equal(buildLiveTvEmbedUrl('0'), 'https://livetgtv.lovable.app/embed/0?colour=%23FFFFFF');
+  assert.equal(buildLiveTvEmbedUrl('12345678'), 'https://livetgtv.lovable.app/embed/12345678?colour=%23FFFFFF');
 
   // Case 10: no arbitrary URL can ever be injected — everything that is
   // not 1-8 plain decimal digits returns null (no iframe is mounted).

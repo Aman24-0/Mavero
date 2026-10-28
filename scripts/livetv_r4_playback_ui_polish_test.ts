@@ -45,8 +45,10 @@ console.log('§1 — Source selector UI: compact icon button, no separate row (I
   // 1.2 — the OLD large button classes are GONE.
   ok(!liveTvPage.includes('ltv-source-button') && !liveTvPage.includes('ltv-source-picker'), '§1.2 the old large button + picker classes are GONE');
   ok(!liveTvPage.includes('ltv-source-label') && !liveTvPage.includes('ltv-source-value'), '§1.3 the old "Source" label + value spans are GONE (no large "Source: All Sources" control)');
-  // 1.4 — the hero inner row does NOT wrap (the button stays on the heading row).
-  ok(/\.ltv-hero-inner\s*\{[\s\S]{0,400}flex-wrap:\s*nowrap/.test(liveTvPage), '§1.4 the hero inner row uses flex-wrap:nowrap (the button stays on the SAME row — no separate row)');
+  // 1.4 — 2026-10 round 1: the hero heading was REMOVED. The source icon
+  // button now floats at the top-right of the player column (ltv-source-float).
+  // The ltv-hero-inner class is gone; the flex-wrap:nowrap assertion is moot.
+  ok(liveTvPage.includes('ltv-source-float'), '§1.4 the source icon button floats at the top-right of the player column (2026-10 round 1 — heading removed, button floats)');
   // 1.5 — the icon button is a fixed 40px square (compact, never wraps).
   ok(/\.ltv-source-icon-btn\s*\{[\s\S]{0,400}width:\s*40px[\s\S]{0,100}height:\s*40px[\s\S]{0,100}flex:\s*0 0 40px/.test(liveTvPage), '§1.5 the icon button is a fixed 40px square (flex:0 0 40px — never wraps)');
   // 1.6 — the button has a selected-state indicator (the dot).

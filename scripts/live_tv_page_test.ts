@@ -93,13 +93,15 @@ const NOW = 1_700_000_000; // fixed absolute instant for determinism
 // §1 Route & page contract
 // ============================================================
 {
-        assert.match(page, /<h1 class="ltv-heading">/, 'page renders a primary heading');
+        // 2026-10 round 1 — Task 1: the <h1> heading was REMOVED. The
+        // player now sits at the very top of the page. The page title +
+        // player mount + video bind contracts are still asserted.
+        assert.doesNotMatch(page, /<h1 class="ltv-heading">/, 'page no longer renders the primary heading (2026-10 round 1 — removed)');
         assert.match(page, /Live TV — Mavero<\/title>/, 'page title');
-        assert.match(page, /aria-label="Live TV"/, 'hero section label');
         assert.match(page, /<LiveTvPlayer\s/, 'page mounts the player component');
         assert.match(page, /bind:video=\{videoEl\}/, 'page binds the player-owned video element');
         assert.doesNotMatch(stripComments(page), /<video[\s>]/, 'page never renders its own <video> element (comments excluded)');
-        ok('route/page contract: heading, title, player mount, no stray <video>');
+        ok('route/page contract: heading REMOVED, title, player mount, no stray <video>');
 }
 
 // ============================================================

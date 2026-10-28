@@ -390,15 +390,15 @@ function sliceOf(source: string, start: string, end: string): string {
 }
 
 // ============================================================
-// §E — Page ordering: title → player → toolbar → channels; sheets overlay
+// §E — Page ordering: player → toolbar → channels; sheets overlay
+// 2026-10 round 1 — the title <h1> was REMOVED; the player sits at the
+// top of the page. The ordering assertion now starts at the player.
 // ============================================================
 {
-        const titleAt = page.indexOf('<h1 class="ltv-heading">');
         const playerAt = page.indexOf('<LiveTvPlayer');
         const toolbarAt = page.indexOf('class="ltv-toolbar"');
         const channelsAt = page.indexOf('class="ltv-channels"');
-        for (const at of [titleAt, playerAt, toolbarAt, channelsAt]) assert.ok(at !== -1, 'page section present');
-        assert.ok(titleAt < playerAt, 'the title precedes the player');
+        for (const at of [playerAt, toolbarAt, channelsAt]) assert.ok(at !== -1, 'page section present');
         assert.ok(playerAt < toolbarAt, 'the player precedes the toolbar');
         assert.ok(toolbarAt < channelsAt, 'the toolbar precedes the channels');
         // The permanent category chip row is GONE from the page.

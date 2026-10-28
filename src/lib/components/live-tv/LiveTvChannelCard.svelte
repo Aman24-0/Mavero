@@ -8,6 +8,12 @@
   // broken image never appears. The card is a semantic <button> (keyboard
   // selectable, aria-pressed for the selected channel); the logo <img> is
   // lazy + async-decoded like MediaCard's posters.
+  //
+  // 2026-10 round 7 — Task 7: an optional Share button on the right side.
+  // The share button is a SEPARATE <button> (NOT inside the main card
+  // button — nested buttons are invalid HTML). The card is now a <div>
+  // with a clickable inner button + a share button sibling.
+  import { Share2 } from 'lucide-svelte';
   import { channelInitials } from '$lib/client/live-tv/epg';
   import type { LiveTvChannel } from '$lib/client/live-tv/types';
 
@@ -15,12 +21,14 @@
     channel,
     selected = false,
     disabled = false,
-    onselect
+    onselect,
+    onshare
   }: {
     channel: LiveTvChannel;
     selected?: boolean;
     disabled?: boolean;
     onselect: (channel: LiveTvChannel) => void;
+    onshare?: (channel: LiveTvChannel) => void;
   } = $props();
 
   // Logo fallback: true when there is no usable logo OR the logo fails to
@@ -36,51 +44,66 @@
   const initials = $derived(channelInitials(channel.name));
 </script>
 
-<button
-  type="button"
+<div
   class="ltv-channel-card"
   class:selected
   class:disabled
-  aria-pressed={selected}
-  aria-label={`Watch ${channel.name}${channel.category ? ` (${channel.category})` : ''}`}
-  disabled={disabled}
-  onclick={() => onselect(channel)}
+  role="group"
+  aria-label={`${channel.name}${channel.category ? ` (${channel.category})` : ''}`}
 >
-  <span class="card-logo" class:placeholder={!hasLogo} aria-hidden="true">
-    {#if hasLogo}
-      <img
-        src={channel.logo}
-        alt=""
-        loading="lazy"
-        decoding="async"
-        referrerpolicy="no-referrer"
-        onerror={() => { logoFailed = true; }}
-      />
-    {:else}
-      <span class="initials">{initials}</span>
-    {/if}
-  </span>
-  <span class="card-copy">
-    <span class="card-name">{channel.name}</span>
-    {#if channel.category}
-      <span class="card-category">{channel.category}</span>
-    {/if}
-  </span>
-</button>
+  <button
+    type="button"
+    class="card-main-btn"
+    aria-pressed={selected}
+    aria-label={`Watch ${channel.name}${channel.category ? ` (${channel.category})` : ''}`}
+    disabled={disabled}
+    onclick={() => onselect(channel)}
+  >
+    <span class="card-logo" class:placeholder={!hasLogo} aria-hidden="true">
+      {#if hasLogo}
+        <img
+          src={channel.logo}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          referrerpolicy="no-referrer"
+          onerror={() => { logoFailed = true; }}
+        />
+      {:else}
+        <span class="initials">{initials}</span>
+      {/if}
+    </span>
+    <span class="card-copy">
+      <span class="card-name">{channel.name}</span>
+      {#if channel.category}
+        <span class="card-category">{channel.category}</span>
+      {/if}
+    </span>
+  </button>
+  {#if onshare}
+    <button
+      type="button"
+      class="card-share-btn"
+      aria-label={`Share ${channel.name}`}
+      title={`Share ${channel.name}`}
+      onclick={(e) => { e.stopPropagation(); onshare(channel); }}
+    >
+      <Share2 size={15} />
+    </button>
+  {/if}
+</div>
 
 <style>
   .ltv-channel-card {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 0;
     min-width: 0;
     min-height: 64px;
-    padding: 10px 14px 10px 10px;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
     background: var(--color-surface);
-    text-align: left;
-    cursor: pointer;
+    overflow: hidden;
     transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out), box-shadow var(--motion-fast) var(--ease-out);
   }
   .ltv-channel-card:hover {
@@ -88,7 +111,6 @@
     background: var(--color-surface-elevated);
     transform: translateY(-1px);
   }
-  .ltv-channel-card:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 
   .ltv-channel-card.selected {
     border-color: var(--color-primary-border);
@@ -97,8 +119,46 @@
   }
   .ltv-channel-card.selected .card-name { color: var(--color-primary); }
 
-  .ltv-channel-card.disabled { opacity: .55; cursor: default; }
+  .ltv-channel-card.disabled { opacity: .55; }
   .ltv-channel-card.disabled:hover { transform: none; background: var(--color-surface); border-color: var(--color-border); }
+
+  /* The main clickable area (logo + name/category) fills the card. */
+  .card-main-btn {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 10px 12px 10px 10px;
+    border: 0;
+    background: transparent;
+    text-align: left;
+    cursor: pointer;
+    transition: background var(--motion-fast) var(--ease-out);
+  }
+  .card-main-btn:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; border-radius: var(--radius-md); }
+  .card-main-btn:disabled { cursor: default; }
+
+  /* 2026-10 round 7 — Task 7: the Share button. Compact icon button on
+     the right edge of the card. Separate from the main button (nested
+     buttons are invalid HTML). stopPropagation on click so the card's
+     main click handler never fires. */
+  .card-share-btn {
+    display: grid;
+    place-items: center;
+    flex: 0 0 auto;
+    width: 40px;
+    height: 100%;
+    min-height: 64px;
+    border: 0;
+    border-left: 1px solid var(--color-border);
+    background: transparent;
+    color: var(--color-text-muted);
+    cursor: pointer;
+    transition: background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
+  }
+  .card-share-btn:hover { background: var(--color-surface-raised); color: var(--color-text); }
+  .card-share-btn:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
 
   .card-logo {
     display: grid;

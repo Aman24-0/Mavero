@@ -38,6 +38,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '$lib/server/supabase/database.types';
 import { LIVETV_PLAYBACK_ELIGIBLE_STATUSES, type LivetvSourceStatus } from './registry';
 import { getCurrentEpgProgramme, getUpcomingEpgProgrammes } from './epg/queries';
+import { LIVEGT_V1_BASE_URL } from '../../client/live-tv/api';
 import {
         MAX_CATALOGUE_GROUP_SOURCES,
         buildLivetvCatalogueGroups,
@@ -209,6 +210,10 @@ export async function getSourceFirstLivetvGuide(client: SupabaseClient<Database>
         //   (b) a canonical channel id — the mapped identity; used directly.
         let canonicalId: string | null = null;
         let tvgId: string | null = null;
+        // 2026-10 round 4 — Task 4: preserve the entry's source_channel_id
+        // (the original TGFlix numeric channel id) for the API fallback.
+        let entrySourceChannelId: string | null = null;
+        let entrySourceId: string | null = null;
 
         if (channelId.startsWith('entry:')) {
                 const entryRowId = channelId.slice('entry:'.length);
@@ -216,7 +221,7 @@ export async function getSourceFirstLivetvGuide(client: SupabaseClient<Database>
                 if (ENTRY_ROW_ID_PATTERN.test(entryRowId)) {
                         const { data: entryRow, error: entryError } = await client
                                 .from('livetv_source_channels')
-                                .select('id,canonical_channel_id,tvg_id,enabled,source_id')
+                                .select('id,canonical_channel_id,tvg_id,enabled,source_id,source_channel_id')
                                 .eq('id', entryRowId)
                                 .limit(1)
                                 .maybeSingle();
@@ -229,6 +234,12 @@ export async function getSourceFirstLivetvGuide(client: SupabaseClient<Database>
                         if (typeof entryRow.tvg_id === 'string' && entryRow.tvg_id.length > 0) {
                                 tvgId = entryRow.tvg_id;
                         }
+                        if (typeof entryRow.source_channel_id === 'string' && entryRow.source_channel_id.length > 0) {
+                                entrySourceChannelId = entryRow.source_channel_id;
+                        }
+                        if (typeof entryRow.source_id === 'string' && entryRow.source_id.length > 0) {
+                                entrySourceId = entryRow.source_id;
+                        }
                 }
         } else {
                 // Assume canonical channel id — verify the row exists.
@@ -237,7 +248,15 @@ export async function getSourceFirstLivetvGuide(client: SupabaseClient<Database>
 
         // If the entry is unmapped (no canonical id) and has no tvg_id,
         // honestly return an empty guide — never fabricate, never timeout.
-        if (!canonicalId && !tvgId) return base;
+        // BUT: if we have a source_channel_id, try the TGFlix API fallback
+        // (Task 4) before giving up.
+        if (!canonicalId && !tvgId) {
+                if (entrySourceChannelId) {
+                        const fallback = await fetchLivegtGuideFallback(entrySourceChannelId, channelId, now);
+                        if (fallback) return fallback;
+                }
+                return base;
+        }
 
         try {
                 // The Phase 3 queries accept a canonical channel id. For an
@@ -253,6 +272,18 @@ export async function getSourceFirstLivetvGuide(client: SupabaseClient<Database>
                         getCurrentEpgProgramme(client, lookupId, now),
                         getUpcomingEpgProgrammes(client, lookupId, now, { limit: MAX_GUIDE_UPCOMING })
                 ]);
+
+                // 2026-10 round 4 — Task 4: if the local EPG tables returned
+                // EMPTY (no current, no upcoming), fall back to the TGFlix
+                // (LiveGT V1) API directly. The local EPG tables may not have
+                // been ingested for this channel; the TGFlix API always has
+                // the live guide. The fallback uses the entry's
+                // source_channel_id (the original TGFlix numeric channel id).
+                if (!current && upcoming.length === 0 && entrySourceChannelId) {
+                        const fallback = await fetchLivegtGuideFallback(entrySourceChannelId, channelId, now);
+                        if (fallback) return fallback;
+                }
+
                 return {
                         unifiedEnabled: true,
                         channelId,
@@ -263,8 +294,113 @@ export async function getSourceFirstLivetvGuide(client: SupabaseClient<Database>
         } catch {
                 // Fail-closed: any read failure is an empty guide (never a
                 // timeout surface — the page renders the honest empty state).
+                // 2026-10 round 4 — Task 4: try the TGFlix API fallback before
+                // returning the empty base.
+                if (entrySourceChannelId) {
+                        const fallback = await fetchLivegtGuideFallback(entrySourceChannelId, channelId, now);
+                        if (fallback) return fallback;
+                }
                 return base;
         }
+}
+
+// ---------------------------------------------------------------------------
+// 2026-10 round 4 — Task 4: TGFlix (LiveGT V1) API guide fallback.
+//
+// When the local EPG tables return empty for a channel (no ingested
+// programme data), this helper fetches the guide DIRECTLY from the
+// LiveGT V1 API (the base URL is imported from the LT-2 client — the
+// single hostname constant). The API returns nowPlaying, upNext,
+// upcoming, and guide fields with Unix-second timestamps — the SAME
+// shape the legacy LT-2 client normalizes.
+//
+// The fallback is BEST-EFFORT: any network failure, timeout, or malformed
+// response returns null (the caller falls through to the honest empty
+// guide). The fetch is bounded (8s timeout) and the response is size-
+// capped (256 KiB) for safety. Only the source_channel_id (the original
+// TGFlix numeric channel id) is used — never user-controlled input.
+// ---------------------------------------------------------------------------
+
+const LIVEGT_GUIDE_TIMEOUT_MS = 8_000;
+const LIVEGT_GUIDE_MAX_BYTES = 256 * 1024;
+
+async function fetchLivegtGuideFallback(
+        sourceChannelId: string,
+        channelId: string,
+        now: Date
+): Promise<LivetvGuideWire | null> {
+        // Validate the source channel id — TGFlix channel ids are decimal
+        // digit strings (1-8 digits). This is the SAME validation the LT-2
+        // client's buildLiveTvEmbedUrl uses.
+        if (!/^\d{1,8}$/.test(sourceChannelId)) return null;
+
+        const url = `${LIVEGT_V1_BASE_URL}/api/public/guide/${encodeURIComponent(sourceChannelId)}`;
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), LIVEGT_GUIDE_TIMEOUT_MS);
+
+        try {
+                const response = await fetch(url, {
+                        signal: controller.signal,
+                        headers: { 'accept': 'application/json' }
+                });
+                if (!response.ok) return null;
+
+                // Size cap: read at most LIVEGT_GUIDE_MAX_BYTES.
+                const text = await response.text();
+                if (text.length > LIVEGT_GUIDE_MAX_BYTES) return null;
+
+                const body: unknown = JSON.parse(text);
+                if (!body || typeof body !== 'object') return null;
+
+                const guide = body as Record<string, unknown>;
+                const nowMs = now.getTime();
+                const nowProgramme = normalizeLivegtGuideProgramme(guide.nowPlaying, nowMs);
+                const upcomingProgrammes: LivetvGuideProgrammeWire[] = [];
+                if (Array.isArray(guide.upcoming)) {
+                        for (const entry of guide.upcoming) {
+                                const programme = normalizeLivegtGuideProgramme(entry, nowMs);
+                                if (programme) upcomingProgrammes.push(programme);
+                        }
+                }
+                // If we got NOTHING from the API, treat it as no fallback.
+                if (!nowProgramme && upcomingProgrammes.length === 0) return null;
+
+                return {
+                        unifiedEnabled: true,
+                        channelId,
+                        serverNowMs: nowMs,
+                        now: nowProgramme,
+                        upcoming: upcomingProgrammes.slice(0, MAX_GUIDE_UPCOMING)
+                };
+        } catch {
+                return null;
+        } finally {
+                clearTimeout(timeout);
+        }
+}
+
+/** Normalize a TGFlix API programme object into the wire DTO. */
+function normalizeLivegtGuideProgramme(raw: unknown, _nowMs: number): LivetvGuideProgrammeWire | null {
+        if (!raw || typeof raw !== 'object') return null;
+        const obj = raw as Record<string, unknown>;
+        const title = typeof obj.title === 'string' ? obj.title.trim() : '';
+        if (!title) return null;
+
+        // TGFlix returns `start` and `stop` as Unix-SECOND timestamps.
+        // The server-side wire DTO uses `startMs`/`endMs` (epoch MILLISECONDS).
+        const startSec = typeof obj.start === 'number' ? obj.start : (typeof obj.start === 'string' ? Number(obj.start) : NaN);
+        const stopSec = typeof obj.stop === 'number' ? obj.stop : (typeof obj.stop === 'string' ? Number(obj.stop) : NaN);
+        if (!Number.isFinite(startSec) || !Number.isFinite(stopSec) || stopSec <= startSec) return null;
+
+        const wire: LivetvGuideProgrammeWire = {
+                title,
+                description: typeof obj.desc === 'string' ? obj.desc.trim() || null : null,
+                category: typeof obj.category === 'string' ? obj.category.trim() || null : null,
+                iconUrl: typeof obj.image === 'string' ? obj.image.trim() || null : null,
+                startMs: startSec * 1000,
+                endMs: stopSec * 1000,
+        };
+        return wire;
 }
 
 // ---------------------------------------------------------------------------

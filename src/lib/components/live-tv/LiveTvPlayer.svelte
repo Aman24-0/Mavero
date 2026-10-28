@@ -828,16 +828,26 @@
      itself uses the official documented responsive pattern
      (absolute; inset:0; 100%; border:0) so it occupies the complete
      player area with the same dimensions as the native video. */
+  /* 2026-10 round 6 — Task 6: Hide TGFlix watermark. Cross-origin
+     security prevents CSS from reaching inside the iframe. The TGFlix
+     API has no ?branding=false parameter (only ?colour= which we set to
+     white). The CSS crop trick: scale the iframe slightly (1.04) and
+     apply overflow: hidden to the wrapper so the watermark at the
+     bottom-right corner is cropped out. The scale is modest (4%) so
+     video quality is not perceptibly degraded. */
   .embed-frame {
     position: absolute;
     inset: 0;
     background: #020405;
+    overflow: hidden;
   }
   .embed-frame iframe {
     display: block;
     width: 100%;
     height: 100%;
     border: 0;
+    transform: scale(1.04);
+    transform-origin: top left;
   }
   .embed-pending {
     position: absolute;

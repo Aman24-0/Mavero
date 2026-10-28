@@ -7,6 +7,7 @@
   import PwaExperience from '$components/PwaExperience.svelte';
   import PwaBootOverlay from '$components/PwaBootOverlay.svelte';
   import Toast from '$components/Toast.svelte';
+  import LiveTvMiniPlayer from '$components/live-tv/LiveTvMiniPlayer.svelte';
   import type { Snippet } from 'svelte';
   import type { LayoutData } from './$types';
   import { syncAuthenticatedState } from '$lib/client/progress/cloud';
@@ -312,6 +313,9 @@
 
 <PwaExperience />
 <Toast />
+<!-- 2026-10 round 5 — Task 5: persistent Live TV mini-player. Renders
+     when a Live TV session is active AND the user is NOT on /live-tv. -->
+<LiveTvMiniPlayer />
 
 <style>
   /* ============================================================

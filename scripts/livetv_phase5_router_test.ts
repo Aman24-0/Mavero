@@ -320,7 +320,7 @@ const CONFIG_FALSE: FetchRoute = { match: (url) => url.includes('/api/livetv/pla
   const session2 = router2.start(CHANNEL, VIDEO);
   await new Promise((resolve) => setTimeout(resolve, 10)); // the embed mounts
   ok(recorder2.engines.length === 0, 'R1.9 an embed candidate NEVER creates an engine');
-  ok(recorder2.embeds.length === 1 && recorder2.embeds[0] === 'https://livetgtv.lovable.app/embed/143', 'R1.10 the builtin embed src is the documented contract URL');
+  ok(recorder2.embeds.length === 1 && recorder2.embeds[0] === 'https://livetgtv.lovable.app/embed/143?colour=%23FFFFFF', 'R1.10 the builtin embed src is the documented contract URL');
   router2.noteEmbedLoaded(); // the forwarded iframe load completes the session
   const outcome2 = await session2;
   ok(outcome2 === 'handled', 'R1.8 an embed-only list is handled');
@@ -379,7 +379,7 @@ const CONFIG_FALSE: FetchRoute = { match: (url) => url.includes('/api/livetv/pla
   });
   const session = router.start(CHANNEL, VIDEO);
   await new Promise((resolve) => setTimeout(resolve, 10)); // direct fails → embed mounts
-  ok(recorder.embeds.length === 1 && recorder.embeds[0] === 'https://livetgtv.lovable.app/embed/143', 'R4.3 the LiveGT iframe fallback mounted (documented embed URL, builder-built)');
+  ok(recorder.embeds.length === 1 && recorder.embeds[0] === 'https://livetgtv.lovable.app/embed/143?colour=%23FFFFFF', 'R4.3 the LiveGT iframe fallback mounted (documented embed URL, builder-built)');
   router.noteEmbedLoaded(); // the forwarded iframe load completes the pending embed attempt
   const outcome = await session;
   ok(outcome === 'handled', 'R4.1 the session completes through the fallback');
