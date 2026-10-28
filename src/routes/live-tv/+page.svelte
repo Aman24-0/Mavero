@@ -358,15 +358,48 @@
     searchInputEl?.focus();
   }
 
-  // 2026-10 round 7 — Task 2: toggle the search overlay.
+  // 2026-10 round 9 — Task 1: toggle the search inline.
+  // Auto-collapse: if the search is expanded and the user hasn't typed
+  // or interacted for 3 seconds, collapse it back to the icon.
+  let searchCollapseTimer: ReturnType<typeof setTimeout> | undefined;
+
   function toggleSearch(): void {
     searchExpanded = !searchExpanded;
     if (searchExpanded) {
-      // Focus the input on the next tick (it needs to be mounted first).
       setTimeout(() => searchInputEl?.focus(), 50);
-    } else if (!query) {
-      // Collapsing with no query — just hide.
+      scheduleSearchCollapse();
+    } else {
+      clearSearchCollapse();
     }
+  }
+
+  function scheduleSearchCollapse(): void {
+    clearSearchCollapse();
+    searchCollapseTimer = setTimeout(() => {
+      if (searchExpanded && !query) {
+        searchExpanded = false;
+      }
+    }, 3000);
+  }
+
+  function clearSearchCollapse(): void {
+    if (searchCollapseTimer) {
+      clearTimeout(searchCollapseTimer);
+      searchCollapseTimer = undefined;
+    }
+  }
+
+  function onSearchInput(): void {
+    resetVisibleLimit();
+    scheduleSearchCollapse();
+  }
+
+  function onSearchFocus(): void {
+    clearSearchCollapse();
+  }
+
+  function onSearchBlur(): void {
+    scheduleSearchCollapse();
   }
 
   $effect(() => {
@@ -399,16 +432,26 @@
   let recentChannelIds = $state<string[]>([]);
   let recentClearArmed = $state(false);
 
-  // Recent channels that still exist in the loaded catalogue, in recency
-  // order. Derived — never stored — so a catalogue refresh (removed
-  // channel, category change) is honored on the next render.
-  const recentChannels = $derived.by(() => {
-    if (channels.length === 0 || recentChannelIds.length === 0) return [];
+  // Recent channels — resolved against the loaded catalogue when possible.
+  // 2026-10 round 9 — Task 6: recents are NOT limited by the source filter.
+  // When a specific source is selected, channels from OTHER sources may
+  // not be in the current `channels` array. We show a FALLBACK (initials
+  // card) for recents whose channel object isn't in the current catalogue,
+  // so the recents row always shows ALL played channels regardless of the
+  // active source filter.
+  const recentChannels = $derived.by<LiveTvChannel[]>(() => {
+    if (recentChannelIds.length === 0) return [];
     const byId = new Map(channels.map((channel) => [channel.id, channel]));
     const resolved: LiveTvChannel[] = [];
     for (const id of recentChannelIds) {
       const channel = byId.get(id);
-      if (channel) resolved.push(channel);
+      if (channel) {
+        resolved.push(channel);
+      } else {
+        // Fallback: the channel isn't in the current catalogue (different
+        // source filter). Show a minimal card with the ID-derived name.
+        resolved.push({ id, name: id.startsWith('entry:') ? 'Channel' : id } as LiveTvChannel);
+      }
     }
     return resolved;
   });
@@ -1257,7 +1300,9 @@
           id="live-tv-channel-search"
           bind:this={searchInputEl}
           bind:value={query}
-          oninput={resetVisibleLimit}
+          oninput={onSearchInput}
+          onfocus={onSearchFocus}
+          onblur={onSearchBlur}
           aria-label="Search channels"
           placeholder="Search channels"
           autocomplete="off"
@@ -1782,13 +1827,13 @@
     gap: 10px;
     min-width: 0;
   }
-  /* 2026-10 round 8 — Task 3: Inline search bar animation.
-     The search input container starts at width 0 (collapsed) and
-     transitions to flex: 1 (full width) when .expanded is added.
-     The transition on flex-basis + max-width creates the slide-in
-     animation. The Filter + Source buttons are hidden (visibility:
-     hidden) when the search is expanded so the search takes the
-     full row. */
+  /* 2026-10 round 9 — Task 1: Inline search bar animation.
+     When expanded, the search uses position: absolute to overlay the
+     FULL toolbar width (no blank space on the left). The toggle button
+     stays visible on the right. */
+  .ltv-toolbar {
+    position: relative;
+  }
   .ltv-toolbar-left.hidden {
     visibility: hidden;
     pointer-events: none;
@@ -1809,7 +1854,7 @@
     border-radius: var(--radius-md);
     background: var(--color-surface);
     overflow: hidden;
-    /* Collapsed state: zero width, no flex */
+    /* Collapsed state: zero width */
     flex: 0 0 0;
     max-width: 0;
     padding: 0;
@@ -1818,13 +1863,18 @@
     opacity: 0;
   }
   .ltv-search-inline.expanded {
-    /* Expanded state: takes up all available space */
-    flex: 1 1 auto;
-    max-width: 100%;
+    /* Expanded state: position: absolute to take the FULL toolbar width.
+       No margin-left:auto (that left blank space on the left side). */
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 48px; /* leave room for the toggle button on the right */
+    flex: none;
+    max-width: none;
     padding: 0 10px 0 16px;
     border-width: 1px;
     opacity: 1;
-    margin-left: auto;
+    z-index: 2;
   }
   .ltv-search-inline:focus-within {
     border-color: var(--color-primary);
@@ -1846,9 +1896,8 @@
   .ltv-search-toggle {
     flex: 0 0 auto;
     margin-left: auto;
-  }
-  .ltv-search-inline.expanded ~ .ltv-search-toggle {
-    margin-left: 8px;
+    position: relative;
+    z-index: 3; /* above the expanded search overlay */
   }
   /* The Guide icon button in the channel info row */
   .info-guide-btn {

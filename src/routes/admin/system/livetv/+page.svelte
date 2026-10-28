@@ -161,13 +161,14 @@
       const chunks = splitM3uIntoChunks(text, 50);
       if (chunks.length === 0) throw new Error('The playlist had no channels.');
 
-      // Step 1: create the source via a DEDICATED upload endpoint.
-      // 2026-10 round 8: the endpoint creates the source row with
-      // playlistUrl='uploaded_file' (a sentinel — NOT a URL) and returns
-      // the sourceId. No SvelteKit form action, no name matching, no
-      // invalidateAll race.
+      // Step 1: create the source via the dedicated upload endpoint.
+      // 2026-10 round 9 — Task 2: use the DISPLAY NAME from the form
+      // input (the "name" field the admin typed). Fall back to the file
+      // name only if the display name is empty.
       uploadProgress = { done: 0, total: chunks.length, phase: 'Creating source…' };
-      const sourceName = uploadFile.name.replace(/\.m3u8?$/i, '');
+      const nameInput = document.querySelector('input[name="name"]') as HTMLInputElement | null;
+      const displayName = nameInput?.value?.trim() ?? '';
+      const sourceName = displayName || uploadFile.name.replace(/\.m3u8?$/i, '');
       const createResponse = await fetch('/api/admin/livetv/sources/upload-playlist', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -179,25 +180,28 @@
       }
       const sourceId = createResult.sourceId;
 
-      // Step 2: ingest the chunks with the EXACT sourceId.
-      // 2026-10 round 8 — Task 2: add a 500ms delay between chunks to
-      // avoid timeout/network drops. Each chunk has its own try/catch so
-      // one failure doesn't crash the whole process.
+      // Step 2: ingest the chunks concurrently (3 at a time).
+      // 2026-10 round 9 — Task 4: removed the 500ms delay. Instead,
+      // send up to 3 chunks concurrently using a simple pool. Per-chunk
+      // try/catch: one failure logs and continues, no crash.
       uploadProgress = { done: 0, total: chunks.length, phase: 'Ingesting channels…' };
       let parsed = 0;
       let entryWrites = 0;
       let endpointWrites = 0;
       let failedChunks = 0;
-      for (let i = 0; i < chunks.length; i += 1) {
+      let completed = 0;
+      const CONCURRENCY = 3;
+
+      async function ingestChunk(index: number): Promise<void> {
         try {
           const response = await fetch('/api/admin/livetv/sources/ingest-chunk', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ sourceId, text: chunks[i] })
+            body: JSON.stringify({ sourceId, text: chunks[index] })
           });
           const result = (await response.json().catch(() => null)) as { ok?: boolean; parsed?: number; entryWrites?: number; endpointWrites?: number; error?: { message?: string } } | null;
           if (!response.ok || !result?.ok) {
-            console.error(`[upload] Chunk ${i + 1}/${chunks.length} failed:`, result?.error?.message ?? 'unknown');
+            console.error(`[upload] Chunk ${index + 1}/${chunks.length} failed:`, result?.error?.message ?? 'unknown');
             failedChunks++;
           } else {
             parsed += result.parsed ?? 0;
@@ -205,15 +209,17 @@
             endpointWrites += result.endpointWrites ?? 0;
           }
         } catch (chunkError) {
-          console.error(`[upload] Chunk ${i + 1}/${chunks.length} threw:`, chunkError);
+          console.error(`[upload] Chunk ${index + 1}/${chunks.length} threw:`, chunkError);
           failedChunks++;
         }
-        uploadProgress = { done: i + 1, total: chunks.length, phase: 'Ingesting channels…' };
-        // 2026-10 round 8 — Task 2: 500ms delay between chunks to avoid
-        // overwhelming the server / hitting timeouts.
-        if (i < chunks.length - 1) {
-          await new Promise((resolve) => setTimeout(resolve, 500));
-        }
+        completed++;
+        uploadProgress = { done: completed, total: chunks.length, phase: 'Ingesting channels…' };
+      }
+
+      // Simple concurrency pool: process chunks in batches of CONCURRENCY.
+      for (let i = 0; i < chunks.length; i += CONCURRENCY) {
+        const batch = chunks.slice(i, i + CONCURRENCY).map((_, j) => ingestChunk(i + j));
+        await Promise.all(batch);
       }
 
       const failMsg = failedChunks > 0 ? ` (${failedChunks} chunk(s) failed — check console)` : '';
@@ -252,21 +258,25 @@
       const chunks = splitM3uIntoChunks(text, 50);
       if (chunks.length === 0) throw new Error('The playlist had no channels.');
 
+      // 2026-10 round 9 — Task 4: concurrent chunks (3 at a time), no delay.
       uploadProgress = { done: 0, total: chunks.length, phase: 'Replacing channels…' };
       let parsed = 0;
       let entryWrites = 0;
       let endpointWrites = 0;
       let failedChunks = 0;
-      for (let i = 0; i < chunks.length; i += 1) {
+      let completed = 0;
+      const CONCURRENCY = 3;
+
+      async function replaceChunk(index: number): Promise<void> {
         try {
           const response = await fetch('/api/admin/livetv/sources/ingest-chunk', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ sourceId, text: chunks[i] })
+            body: JSON.stringify({ sourceId, text: chunks[index] })
           });
           const result = (await response.json().catch(() => null)) as { ok?: boolean; parsed?: number; entryWrites?: number; endpointWrites?: number; error?: { message?: string } } | null;
           if (!response.ok || !result?.ok) {
-            console.error(`[replace] Chunk ${i + 1}/${chunks.length} failed:`, result?.error?.message ?? 'unknown');
+            console.error(`[replace] Chunk ${index + 1}/${chunks.length} failed:`, result?.error?.message ?? 'unknown');
             failedChunks++;
           } else {
             parsed += result.parsed ?? 0;
@@ -274,13 +284,16 @@
             endpointWrites += result.endpointWrites ?? 0;
           }
         } catch (chunkError) {
-          console.error(`[replace] Chunk ${i + 1}/${chunks.length} threw:`, chunkError);
+          console.error(`[replace] Chunk ${index + 1}/${chunks.length} threw:`, chunkError);
           failedChunks++;
         }
-        uploadProgress = { done: i + 1, total: chunks.length, phase: 'Replacing channels…' };
-        if (i < chunks.length - 1) {
-          await new Promise((resolve) => setTimeout(resolve, 500));
-        }
+        completed++;
+        uploadProgress = { done: completed, total: chunks.length, phase: 'Replacing channels…' };
+      }
+
+      for (let i = 0; i < chunks.length; i += CONCURRENCY) {
+        const batch = chunks.slice(i, i + CONCURRENCY).map((_, j) => replaceChunk(i + j));
+        await Promise.all(batch);
       }
 
       const failMsg = failedChunks > 0 ? ` (${failedChunks} chunk(s) failed — check console)` : '';
@@ -399,16 +412,24 @@
   const toggleEnhanceFor = (source: LivetvAdminSourceRow): SubmitFunction =>
     ({ formData, cancel }) => {
       if (isToggling(source)) {
-        cancel(); // rapid repeat guard — one in-flight request per source
+        cancel();
         return async () => {};
       }
       const target = formData.get('enabled') === 'true';
+      // 2026-10 round 9 — Task 5: Optimistic UI — the override is set
+      // BEFORE the request. The switch flips instantly. No invalidateAll.
       sourceToggleOverrides = { ...sourceToggleOverrides, [source.id]: target };
-      return async ({ update }) => {
+      return async ({ update, result }) => {
         const overrides = { ...sourceToggleOverrides };
         delete overrides[source.id];
-        sourceToggleOverrides = overrides; // persisted value is the render truth again
-        await update({ reset: false });
+        sourceToggleOverrides = overrides;
+        // 2026-10 round 9 — Task 5: do NOT call update() on success —
+        // it triggers a full invalidateAll that refetches all channel
+        // data. The optimistic override already shows the correct state.
+        // Only update on failure (to revert the switch).
+        if (result.type === 'failure') {
+          await update({ reset: false });
+        }
       };
     };
 
@@ -772,10 +793,15 @@
         {#if sheetFormError}
           <div class="notice notice-error" role="alert">{sheetFormError}</div>
         {/if}
-        <div class="a2-toolbar">
-          <button type="submit" class="a2-btn a2-btn-primary">{editingSource ? 'Save source' : 'Create source'}</button>
-          <button type="button" class="a2-btn" onclick={closeSheets}>Cancel</button>
-        </div>
+        <!-- 2026-10 round 9 — Task 2: hide the form submit buttons when in
+             upload mode (the "Upload & Create Source" button handles both
+             creating the source AND starting the chunking process). -->
+        {#if !(!editingSource && effectiveSourceType() === 'm3u_playlist' && playlistInputMode === 'upload')}
+          <div class="a2-toolbar">
+            <button type="submit" class="a2-btn a2-btn-primary">{editingSource ? 'Save source' : 'Create source'}</button>
+            <button type="button" class="a2-btn" onclick={closeSheets}>Cancel</button>
+          </div>
+        {/if}
       </form>
 
       {#if editingSource}

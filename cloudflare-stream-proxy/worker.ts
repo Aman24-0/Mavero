@@ -19,12 +19,13 @@
  *   * DASH (.mpd) manifests are rewritten (BaseURL + segment URLs proxied).
  */
 
-const ALLOWED_HOST_SUFFIXES = ['hotstar.com', 'slivcdn.com', 'jio.com', 'premiumplugx.com'];
+const ALLOWED_HOST_SUFFIXES = ['hotstar.com', 'slivcdn.com', 'jio.com', 'jiocinema.com', 'premiumplugx.com'];
 
 const REFERER_BY_HOST: ReadonlyArray<{ suffix: string; referer: string }> = [
         { suffix: 'slivcdn.com', referer: 'https://www.sonyliv.com/' },
         { suffix: 'hotstar.com', referer: 'https://www.hotstar.com/' },
         { suffix: 'jio.com', referer: 'https://www.jio.com/' },
+        { suffix: 'jiocinema.com', referer: 'https://www.jiocinema.com/' },
         { suffix: 'premiumplugx.com', referer: 'https://premiumplugx.com/' }
 ];
 
