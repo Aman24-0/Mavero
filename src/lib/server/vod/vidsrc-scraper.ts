@@ -68,10 +68,12 @@ export const DEFAULT_SCRAPER_CONFIG: ScraperConfig = {
 
 /** One resolved stream source (a proxied m3u8 URL + its quality label). */
 export type ScraperSource = {
-        /** The raw m3u8 URL extracted from vidsrc (pre-proxy). */
+        /** The raw m3u8 URL extracted from vidsrc (pre-proxy), OR an embed iframe URL from 2embed. */
         url: string;
         /** A quality label (always "Auto" — vidsrc does not expose quality names). */
         quality: string;
+        /** 'direct' for an m3u8 URL (HLS via the Worker proxy), 'embed' for an iframe URL (2embed fallback). */
+        kind: 'direct' | 'embed';
 };
 
 /** The scraper's success result. */
@@ -91,7 +93,8 @@ export type ScraperErrorCode =
         | 'CLOUDFLARE_BLOCKED'
         | 'REGEX_PARSE_FAILED'
         | 'SCRAPE_FAILED'
-        | 'NO_SOURCES';
+        | 'NO_SOURCES'
+        | 'FALLBACK_FAILED';
 
 export class ScraperError extends Error {
         readonly code: ScraperErrorCode;
@@ -191,7 +194,7 @@ export function normalizeCdnDomains(raw: string[]): string[] {
 // The 3-hop extraction
 // ---------------------------------------------------------------------------
 
-const FETCH_TIMEOUT_MS = 8_000;
+const FETCH_TIMEOUT_MS = 6_000;
 const BROWSER_UA =
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
@@ -223,83 +226,88 @@ function buildWorkerProxyUrl(upstreamUrl: string, referer: string): string | nul
  * Fetches a URL with a FULL set of browser headers (Cloudflare blocks
  * server-side requests that lack Sec-Fetch-* headers). Throws a typed
  * `ScraperError` on failure:
- *   * `UPSTREAM_TIMEOUT` — the fetch timed out.
+ *   * `UPSTREAM_TIMEOUT` — the fetch timed out (6s strict).
  *   * `CLOUDFLARE_BLOCKED` — HTTP 403/503 (Cloudflare challenge/block).
  *   * `SCRAPE_FAILED` — network error or other non-OK HTTP status.
  *
- * 2026-10 round 14: `redirect: 'follow'` (Cloudflare often issues 302
- * redirects to the real origin; `redirect: 'error'` broke on these). The
- * full Sec-Fetch-* header set is required — Cloudflare's bot detection
- * 403s requests missing `sec-fetch-site`/`sec-fetch-mode`/`sec-fetch-dest`.
+ * 2026-10 round 16 — STRICT 6s TIMEOUT via AbortController. The previous
+ * `AbortSignal.timeout` was unreliable on some runtimes; AbortController
+ * is the standard, well-supported way to enforce a hard deadline. If VidSrc
+ * takes longer than 6s, the fetch is aborted immediately and the scraper
+ * fails fast (no Netlify function hang).
  *
  * 2026-10 round 15 — WORKER FALLBACK: if `PUBLIC_STREAM_PROXY_URL` is set,
- * route the fetch through the Cloudflare Worker. The Worker fetches the
- * upstream from Cloudflare's edge IPs (NOT Netlify's AWS egress IPs), which
- * bypasses Cloudflare's IP-based 403 block. The Worker also sends the
- * correct browser headers + Referer server-side. When routing through the
- * Worker, we fetch the Worker URL directly (no custom headers needed — the
- * Worker sets them upstream). If the Worker returns a non-OK status, we
- * fall back to a direct fetch as a last resort.
+ * route the fetch through the Cloudflare Worker (edge IPs bypass Cloudflare's
+ * IP-based 403). If the Worker returns a non-OK status, fall back to a direct
+ * fetch as a last resort.
  */
 async function fetchText(url: string, referer: string, label: string): Promise<string> {
         // --- Try the Worker proxy first (if configured) ---
         const workerUrl = buildWorkerProxyUrl(url, referer);
         if (workerUrl) {
                 try {
-                        const response = await fetch(workerUrl, {
-                                signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-                                redirect: 'follow'
-                        });
-                        if (response.ok) {
-                                return response.text();
+                        const controller = new AbortController();
+                        const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+                        try {
+                                const response = await fetch(workerUrl, {
+                                        signal: controller.signal,
+                                        redirect: 'follow'
+                                });
+                                if (response.ok) {
+                                        return response.text();
+                                }
+                                console.log(`[vidsrc-scraper] ${label} Worker proxy returned HTTP ${response.status}, falling back to direct fetch`);
+                        } finally {
+                                clearTimeout(timer);
                         }
-                        // Worker returned a non-OK status — log and fall through
-                        // to the direct fetch. The Worker returns JSON errors for
-                        // 403/404/410/502; a 403 from the Worker means the Worker
-                        // itself was blocked (unlikely but possible).
-                        console.log(`[vidsrc-scraper] ${label} Worker proxy returned HTTP ${response.status}, falling back to direct fetch`);
                 } catch (error) {
                         console.log(`[vidsrc-scraper] ${label} Worker proxy failed (${error instanceof Error ? error.message : 'unknown'}), falling back to direct fetch`);
                 }
         }
 
-        // --- Direct fetch (with full browser headers) ---
+        // --- Direct fetch (with full browser headers + 6s AbortController) ---
         let response: Response;
         try {
-                response = await fetch(url, {
-                        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-                        headers: {
-                                'user-agent': BROWSER_UA,
-                                accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-                                'accept-language': 'en-US,en;q=0.9',
-                                'accept-encoding': 'gzip, deflate, br',
-                                'cache-control': 'no-cache',
-                                'pragma': 'no-cache',
-                                'sec-ch-ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
-                                'sec-ch-ua-mobile': '?0',
-                                'sec-ch-ua-platform': '"Windows"',
-                                'sec-fetch-dest': 'document',
-                                'sec-fetch-mode': 'navigate',
-                                'sec-fetch-site': 'same-origin',
-                                'sec-fetch-user': '?1',
-                                'upgrade-insecure-requests': '1',
-                                referer
-                        },
-                        redirect: 'follow'
-                });
+                const controller = new AbortController();
+                const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+                try {
+                        response = await fetch(url, {
+                                signal: controller.signal,
+                                headers: {
+                                        'user-agent': BROWSER_UA,
+                                        accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+                                        'accept-language': 'en-US,en;q=0.9',
+                                        'accept-encoding': 'gzip, deflate, br',
+                                        'cache-control': 'no-cache',
+                                        'pragma': 'no-cache',
+                                        'sec-ch-ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+                                        'sec-ch-ua-mobile': '?0',
+                                        'sec-ch-ua-platform': '"Windows"',
+                                        'sec-fetch-dest': 'document',
+                                        'sec-fetch-mode': 'navigate',
+                                        'sec-fetch-site': 'same-origin',
+                                        'sec-fetch-user': '?1',
+                                        'upgrade-insecure-requests': '1',
+                                        referer
+                                },
+                                redirect: 'follow'
+                        });
+                } finally {
+                        clearTimeout(timer);
+                }
         } catch (error) {
-                if (error instanceof Error && error.name === 'TimeoutError') {
-                        console.error(`[vidsrc-scraper] ${label} timed out (${url})`);
+                if (error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')) {
+                        console.error(`[vidsrc-scraper] ${label} timed out after ${FETCH_TIMEOUT_MS}ms (${url})`);
                         throw new ScraperError('UPSTREAM_TIMEOUT', `${label} timed out after ${FETCH_TIMEOUT_MS}ms.`);
                 }
                 console.error(`[vidsrc-scraper] ${label} network error`, error instanceof Error ? error.message : error);
                 throw new ScraperError('SCRAPE_FAILED', `${label} failed (network error: ${error instanceof Error ? error.message : 'unknown'}).`);
         }
         if (response.status === 403 || response.status === 503) {
-                // Cloudflare challenge / bot block. The headers above usually
-                // bypass this, but if the IP is flagged (e.g. Netlify's AWS
-                // egress), Cloudflare 403s regardless of headers.
-                console.error(`[vidsrc-scraper] ${label} Cloudflare blocked (HTTP ${response.status})`);
+                // Cloudflare challenge / bot block. Log the first 500 chars of
+                // the body so we can see if it's a Cloudflare challenge page.
+                const bodyText = await response.text().catch(() => '');
+                console.error(`[vidsrc-scraper] ${label} Cloudflare blocked (HTTP ${response.status}). First 500 chars of response:`, bodyText.slice(0, 500));
                 throw new ScraperError('CLOUDFLARE_BLOCKED', `${label} was blocked by Cloudflare (HTTP ${response.status}). The scraper's IP may be flagged.`);
         }
         if (!response.ok) {
@@ -398,6 +406,12 @@ export function extractFileField(prorcpBody: string): string | null {
 /**
  * The full 3-hop scrape. Returns the resolved sources + the CDN referer.
  *
+ * 2026-10 round 16 — 2EMBED FALLBACK: if vidsrc fails (any ScraperError),
+ * the scraper catches the error and tries 2embed.cc as a fallback. 2embed
+ * returns an embed iframe URL (not a direct m3u8), so the fallback result
+ * has `kind: 'embed'` sources. The resolver adapter returns the embed URL
+ * as an `embed` source (the player renders it in an iframe).
+ *
  * @param tmdbId  The TMDB id (positive integer string).
  * @param type    'movie' | 'tv'.
  * @param season  Required for TV.
@@ -428,6 +442,52 @@ export async function scrapeVidsrc(
         const cached = getCached(key);
         if (cached) return cached;
 
+        // --- Try vidsrc first ---
+        let vidsrcError: ScraperError | null = null;
+        try {
+                const result = await scrapeVidsrcPrimary(safeTmdbId, type, season, episode, embedDomain, cdnDomains);
+                setCached(key, result);
+                return result;
+        } catch (error) {
+                if (error instanceof ScraperError) {
+                        vidsrcError = error;
+                        console.warn(`[vidsrc-scraper] vidsrc failed (${error.code}), trying 2embed fallback...`);
+                } else {
+                        console.warn('[vidsrc-scraper] vidsrc failed (unknown error), trying 2embed fallback...');
+                        vidsrcError = new ScraperError('SCRAPE_FAILED', error instanceof Error ? error.message : 'unknown');
+                }
+        }
+
+        // --- 2embed fallback ---
+        try {
+                const fallbackResult = await scrape2embed(safeTmdbId, type, season, episode);
+                setCached(key, fallbackResult);
+                return fallbackResult;
+        } catch (fallbackErr) {
+                if (fallbackErr instanceof ScraperError) {
+                        console.error(`[vidsrc-scraper] 2embed fallback also failed (${fallbackErr.code}): ${fallbackErr.message}`);
+                } else {
+                        console.error('[vidsrc-scraper] 2embed fallback failed (unknown error)', fallbackErr);
+                }
+                // Both providers failed — throw the ORIGINAL vidsrc error (it's
+                // the primary provider; its error is the most actionable).
+                throw vidsrcError;
+        }
+}
+
+/**
+ * The primary vidsrc 3-hop scrape (embed → rcp → prorcp). Throws ScraperError
+ * on any failure. Extracted from scrapeVidsrc so the fallback wrapper above
+ * can catch its errors cleanly.
+ */
+async function scrapeVidsrcPrimary(
+        safeTmdbId: string,
+        type: 'movie' | 'tv',
+        season: number | undefined,
+        episode: number | undefined,
+        embedDomain: string,
+        cdnDomains: string[]
+): Promise<ScraperResult> {
         console.log(`[vidsrc-scraper] starting scrape: tmdb=${safeTmdbId} type=${type}${type === 'tv' ? ` s${season}e${episode}` : ''} embed=${embedDomain}`);
 
         // --- Hop 1: embed page → find the iframe src (RCP URL) ---
@@ -435,7 +495,7 @@ export async function scrapeVidsrc(
         const embedBody = await fetchText(embedUrl, embedDomain + '/', 'embed page');
         const rcpUrl = extractIframeSrc(embedBody);
         if (!rcpUrl) {
-                console.error('[vidsrc-scraper] REGEX_PARSE_FAILED: no iframe in embed page (body length:', embedBody.length, ')');
+                console.error('[vidsrc-scraper] REGEX_PARSE_FAILED: no iframe in embed page. First 500 chars:', embedBody.slice(0, 500));
                 throw new ScraperError('REGEX_PARSE_FAILED', 'The embed page did not contain an iframe (vidsrc markup may have changed).');
         }
 
@@ -453,7 +513,7 @@ export async function scrapeVidsrc(
         const rcpBody = await fetchText(rcpUrl, embedUrl, 'rcp page');
         const prorcpHash = extractProrcpHash(rcpBody);
         if (!prorcpHash) {
-                console.error('[vidsrc-scraper] REGEX_PARSE_FAILED: no prorcp hash in RCP page (body length:', rcpBody.length, ')');
+                console.error('[vidsrc-scraper] REGEX_PARSE_FAILED: no prorcp hash in RCP page. First 500 chars:', rcpBody.slice(0, 500));
                 throw new ScraperError('REGEX_PARSE_FAILED', 'The RCP page did not contain a prorcp hash (vidsrc markup may have changed).');
         }
         const prorcpUrl = `${rcpOrigin}/prorcp/${prorcpHash}`;
@@ -463,7 +523,7 @@ export async function scrapeVidsrc(
         const prorcpBody = await fetchText(prorcpUrl, rcpUrl, 'prorcp page');
         const fileValue = extractFileField(prorcpBody);
         if (!fileValue) {
-                console.error('[vidsrc-scraper] REGEX_PARSE_FAILED: no file: field in prorcp page (body length:', prorcpBody.length, ')');
+                console.error('[vidsrc-scraper] NO_SOURCES: no file: field in prorcp page. First 500 chars:', prorcpBody.slice(0, 500));
                 throw new ScraperError('NO_SOURCES', 'The prorcp page did not contain a file: field (no stream available).');
         }
 
@@ -479,13 +539,94 @@ export async function scrapeVidsrc(
         // @definisi/vidsrc-scraper + CinePro reference implementations.
         const referer = rcpOrigin + '/';
 
-        const result: ScraperResult = {
-                sources: m3u8Urls.map((url) => ({ url, quality: 'Auto' })),
+        return {
+                sources: m3u8Urls.map((url) => ({ url, quality: 'Auto', kind: 'direct' as const })),
                 subtitles: [],
                 referer,
                 provider: 'vidsrc'
         };
+}
 
-        setCached(key, result);
-        return result;
+// ---------------------------------------------------------------------------
+// 2embed.cc fallback (2026-10 round 16)
+// ---------------------------------------------------------------------------
+
+/** The 2embed.cc base origin. */
+const TWOEMBED_ORIGIN = 'https://www.2embed.cc';
+
+/**
+ * Builds the 2embed URL for the given content identifiers.
+ *   Movie:  `https://www.2embed.cc/embed/{tmdbId}`
+ *   TV:     `https://www.2embed.cc/embedtv/{tmdbId}&s={season}&e={episode}`
+ */
+export function build2embedUrl(tmdbId: string, type: 'movie' | 'tv', season?: number, episode?: number): string {
+        if (type === 'movie') {
+                return `${TWOEMBED_ORIGIN}/embed/${tmdbId}`;
+        }
+        return `${TWOEMBED_ORIGIN}/embedtv/${tmdbId}&s=${season}&e=${episode}`;
+}
+
+/**
+ * The 2embed fallback scrape. 2embed returns an HTML page with an iframe
+ * pointing at a player (e.g. 2embed's own player, or a third-party embed).
+ * We extract the iframe src and return it as an `embed` source — the player
+ * renders it in an iframe (no HLS extraction, no Worker proxy needed).
+ *
+ * If no iframe is found, throws REGEX_PARSE_FAILED. If the fetch fails,
+ * throws the same ScraperError codes as the primary scraper (CLOUDFLARE_BLOCKED,
+ * UPSTREAM_TIMEOUT, SCRAPE_FAILED).
+ */
+async function scrape2embed(
+        tmdbId: string,
+        type: 'movie' | 'tv',
+        season: number | undefined,
+        episode: number | undefined
+): Promise<ScraperResult> {
+        const url = build2embedUrl(tmdbId, type, season, episode);
+        console.log(`[vidsrc-scraper] 2embed fallback: fetching ${url}`);
+        const body = await fetchText(url, TWOEMBED_ORIGIN + '/', '2embed page');
+
+        // 2embed's page contains one or more iframes pointing at players.
+        // Extract ALL iframe srcs and return the first valid https one.
+        const iframeSrcs = extractAllIframeSrcs(body);
+        if (iframeSrcs.length === 0) {
+                console.error('[vidsrc-scraper] 2embed REGEX_PARSE_FAILED: no iframe in 2embed page. First 500 chars:', body.slice(0, 500));
+                throw new ScraperError('REGEX_PARSE_FAILED', 'The 2embed page did not contain an iframe.');
+        }
+
+        // Find the first https iframe URL (2embed sometimes uses relative URLs
+        // or protocol-relative URLs — resolve them against the 2embed origin).
+        for (const src of iframeSrcs) {
+                try {
+                        const resolved = new URL(src, TWOEMBED_ORIGIN);
+                        if (resolved.protocol === 'https:' && !resolved.username && !resolved.password) {
+                                console.log(`[vidsrc-scraper] 2embed fallback ok: iframe URL = ${resolved.toString().slice(0, 80)}...`);
+                                return {
+                                        sources: [{ url: resolved.toString(), quality: 'Auto', kind: 'embed' as const }],
+                                        subtitles: [],
+                                        referer: TWOEMBED_ORIGIN + '/',
+                                        provider: '2embed'
+                                };
+                        }
+                } catch {
+                        // skip malformed
+                }
+        }
+
+        console.error('[vidsrc-scraper] 2embed NO_SOURCES: no valid https iframe URL found. Iframes:', iframeSrcs.slice(0, 3));
+        throw new ScraperError('NO_SOURCES', 'No valid embed iframe URL found in the 2embed page.');
+}
+
+/**
+ * Extracts ALL iframe src attributes from an HTML body. Returns an array of
+ * raw src values (may be relative or absolute). Used by the 2embed fallback.
+ */
+export function extractAllIframeSrcs(html: string): string[] {
+        const srcs: string[] = [];
+        const pattern = /<iframe[^>]+src=["']([^"']+)["']/gi;
+        let match: RegExpExecArray | null;
+        while ((match = pattern.exec(html)) !== null) {
+                if (match[1]) srcs.push(match[1]);
+        }
+        return srcs;
 }

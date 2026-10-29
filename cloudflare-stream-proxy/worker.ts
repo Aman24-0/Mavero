@@ -32,7 +32,7 @@
 // Cloudflare's 403 on Netlify's AWS egress IPs. The Worker's edge IPs are
 // not on Cloudflare's blocklist. vidsrc.sh uses no special Referer (the
 // scraper sets the embed origin as the Referer per hop).
-const ALLOWED_HOST_SUFFIXES = ['hotstar.com', 'slivcdn.com', 'jio.com', 'jiocinema.com', 'premiumplugx.com', 'catbox.moe', 'cloudnestra.com', 'stellarconductornexus.com', 'vidsrc.sh', 'vidsrc.to', 'vidsrc.net', 'vidsrc.xyz', 'vidsrc.in', 'vsembed.ru'];
+const ALLOWED_HOST_SUFFIXES = ['hotstar.com', 'slivcdn.com', 'jio.com', 'jiocinema.com', 'premiumplugx.com', 'catbox.moe', 'cloudnestra.com', 'stellarconductornexus.com', 'vidsrc.sh', 'vidsrc.to', 'vidsrc.net', 'vidsrc.xyz', 'vidsrc.in', 'vsembed.ru', '2embed.cc'];
 
 const REFERER_BY_HOST: ReadonlyArray<{ suffix: string; referer: string }> = [
         { suffix: 'slivcdn.com', referer: 'https://www.sonyliv.com/' },
@@ -263,10 +263,24 @@ export default {
                 const range = request.headers.get('range');
                 if (range) headers.range = range;
 
+                // 2026-10 round 16 — 10s hard timeout on the upstream fetch.
+                // If VidSrc/2embed takes longer than 10s, abort and return a
+                // 504 Gateway Timeout so the scraper can fall back fast
+                // (instead of hanging until the Worker's own runtime limit).
+                const UPSTREAM_TIMEOUT_MS = 10_000;
                 let upstream: Response;
                 try {
-                        upstream = await fetch(target.toString(), { headers, redirect: 'follow' });
-                } catch {
+                        const controller = new AbortController();
+                        const timer = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
+                        try {
+                                upstream = await fetch(target.toString(), { headers, redirect: 'follow', signal: controller.signal });
+                        } finally {
+                                clearTimeout(timer);
+                        }
+                } catch (error) {
+                        if (error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')) {
+                                return jsonError(504, 'GATEWAY_TIMEOUT', `The upstream took longer than ${UPSTREAM_TIMEOUT_MS}ms to respond.`);
+                        }
                         return jsonError(502, 'UPSTREAM_UNREACHABLE', 'The media host could not be reached.');
                 }
 

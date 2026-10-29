@@ -26,7 +26,7 @@
 export const LIVETV_STREAM_PROXY_PATH = '/api/livetv/stream-proxy';
 
 /** CDN host suffixes whose HLS/DASH playback must go through the proxy. */
-export const LIVETV_PROXY_HOST_SUFFIXES: readonly string[] = ['hotstar.com', 'slivcdn.com', 'jio.com', 'jiocinema.com', 'premiumplugx.com', 'cloudnestra.com', 'stellarconductornexus.com', 'vidsrc.sh', 'vidsrc.to', 'vidsrc.net', 'vidsrc.xyz', 'vidsrc.in', 'vsembed.ru'];
+export const LIVETV_PROXY_HOST_SUFFIXES: readonly string[] = ['hotstar.com', 'slivcdn.com', 'jio.com', 'jiocinema.com', 'premiumplugx.com', 'cloudnestra.com', 'stellarconductornexus.com', 'vidsrc.sh', 'vidsrc.to', 'vidsrc.net', 'vidsrc.xyz', 'vidsrc.in', 'vsembed.ru', '2embed.cc'];
 
 /** True when `hostname` is (or is a subdomain of) an allowlisted proxy CDN. */
 export function isLivetvProxyHost(hostname: string): boolean {

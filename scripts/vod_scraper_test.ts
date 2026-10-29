@@ -43,7 +43,9 @@ import {
   extractIframeSrc,
   extractProrcpHash,
   extractFileField,
+  extractAllIframeSrcs,
   buildEmbedUrl,
+  build2embedUrl,
   normalizeEmbedDomain,
   normalizeCdnDomains,
   scrapeVidsrc,
@@ -209,6 +211,30 @@ console.log('§1 pure unit tests — extraction logic');
   ok(DEFAULT_SCRAPER_CONFIG.cdnDomains.includes('cloudnestra.com'), '§1.34 default CDN domains include cloudnestra.com');
 }
 
+// --- 2embed fallback (2026-10 round 16) ---
+{
+  const url = build2embedUrl('278', 'movie');
+  ok(url === 'https://www.2embed.cc/embed/278', '§1.35 2embed movie URL built');
+}
+{
+  const url = build2embedUrl('1396', 'tv', 1, 1);
+  ok(url === 'https://www.2embed.cc/embedtv/1396&s=1&e=1', '§1.36 2embed TV URL built with season/episode');
+}
+{
+  const html = '<html><iframe src="https://player.example.com/embed/abc"></iframe><iframe src="https://player2.example.com/embed/def"></iframe></html>';
+  const srcs = extractAllIframeSrcs(html);
+  ok(srcs.length === 2 && srcs[0] === 'https://player.example.com/embed/abc', '§1.37 extractAllIframeSrcs extracts ALL iframes');
+}
+{
+  const html = '<iframe src="/relative/path"></iframe><iframe src="https://absolute.example.com/embed"></iframe>';
+  const srcs = extractAllIframeSrcs(html);
+  ok(srcs.length === 2 && srcs[0] === '/relative/path' && srcs[1] === 'https://absolute.example.com/embed', '§1.38 extractAllIframeSrcs handles relative + absolute URLs');
+}
+{
+  const html = '<html><body><p>no iframes</p></body></html>';
+  ok(extractAllIframeSrcs(html).length === 0, '§1.39 extractAllIframeSrcs returns empty when no iframes');
+}
+
 // ============================================================
 console.log('§2 live smoke test — real scrape against vidsrc.to');
 // ============================================================
@@ -225,10 +251,13 @@ console.log('§2 live smoke test — real scrape against vidsrc.to');
   try {
     const result = await scrapeVidsrc('278', 'movie', undefined, undefined, config);
     ok(result.sources.length > 0, '§2.1 live scrape returned at least one source');
-    ok(result.sources[0]!.url.startsWith('https://'), '§2.2 the scraped m3u8 URL is https');
+    ok(result.sources[0]!.url.startsWith('https://'), '§2.2 the scraped source URL is https');
     ok(result.referer.startsWith('https://'), '§2.3 the referer is an https URL');
-    ok(result.provider === 'vidsrc', '§2.4 the provider is vidsrc');
-    console.log(`  [live] scraped m3u8: ${result.sources[0]!.url.slice(0, 80)}...`);
+    // 2026-10 round 16: the provider is 'vidsrc' (primary) OR '2embed' (fallback).
+    // Both are valid — the fallback is a legitimate success path.
+    ok(result.provider === 'vidsrc' || result.provider === '2embed', `§2.4 the provider is vidsrc or 2embed (got: ${result.provider})`);
+    console.log(`  [live] provider: ${result.provider}`);
+    console.log(`  [live] source URL: ${result.sources[0]!.url.slice(0, 80)}...`);
     console.log(`  [live] referer: ${result.referer}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

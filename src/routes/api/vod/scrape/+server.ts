@@ -112,10 +112,13 @@ export const GET: RequestHandler = async ({ request, url, locals }) => {
         // --- Scrape ---
         try {
                 const result = await scrapeVidsrc(tmdbId, type, season, episode, config);
-                // Map the raw m3u8 URLs to Worker-proxied URLs (with Referer).
+                // 2026-10 round 16 — sources now carry a `kind` ('direct' for
+                // m3u8 URLs that need the Worker proxy, 'embed' for 2embed
+                // iframe URLs that play directly in the browser).
                 const proxiedSources: ScraperSource[] = result.sources.map((source) => ({
-                        url: buildProxiedUrl(source.url, result.referer),
-                        quality: source.quality
+                        url: source.kind === 'direct' ? buildProxiedUrl(source.url, result.referer) : source.url,
+                        quality: source.quality,
+                        kind: source.kind
                 }));
                 return json({
                         ok: true,
@@ -130,13 +133,14 @@ export const GET: RequestHandler = async ({ request, url, locals }) => {
                 }, { headers: NO_STORE });
         } catch (error) {
                 if (error instanceof ScraperError) {
-                        // 2026-10 round 14: return the EXACT error message so the
+                        // 2026-10 round 16: return the EXACT error message + code so the
                         // UI can debug it. Map each code to an appropriate HTTP status.
                         const status = error.code === 'INVALID_PARAMS' ? 400
                                 : error.code === 'UPSTREAM_TIMEOUT' ? 504
                                 : error.code === 'NO_SOURCES' ? 404
                                 : error.code === 'CLOUDFLARE_BLOCKED' ? 502
                                 : error.code === 'REGEX_PARSE_FAILED' ? 502
+                                : error.code === 'FALLBACK_FAILED' ? 502
                                 : 502;
                         console.error(`[vod/scrape] ${error.code}: ${error.message}`);
                         return fail(status, error.code, error.message);
