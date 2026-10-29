@@ -34,7 +34,6 @@ const MAX_TEXT_LENGTH = 4_000_000;
 // The default Netlify function timeout is 10s (free) / 26s (pro). A chunk of
 // 20 channels with the row-by-row fallback can take longer if the DB is under
 // load. Setting maxDuration to 60s gives the fallback ample time to complete.
-export const maxDuration = 60;
 
 function fail(status: number, code: string, message: string): Response {
         return json({ ok: false, error: { code, message } }, { status, headers: NO_STORE });
