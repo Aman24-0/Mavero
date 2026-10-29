@@ -38,7 +38,6 @@ const TMDB_ID_PATTERN = /^[1-9][0-9]{0,15}$/;
 // 2026-10 round 13 — generous timeout for the scraper (3 HTTP hops, each with
 // an 8s budget). Netlify pro tier supports up to 26s; the free tier is 10s.
 // The scrape itself typically completes in <2s.
-export const maxDuration = 30;
 
 function fail(status: number, code: string, message: string): Response {
         return json({ ok: false, error: { code, message } }, { status, headers: NO_STORE });
