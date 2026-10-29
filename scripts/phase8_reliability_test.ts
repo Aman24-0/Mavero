@@ -76,7 +76,7 @@ assert.match(shell, /episodeIdentity[\s\S]{0,1400}clearEmbedLoadTimeout\(\)/, 't
 assert.match(shell, /return \(\) => \{[\s\S]{0,760}clearEmbedLoadTimeout\(\)/, 'timeout cleared on component destroy');
 
 // 1j. Timeout is cleared on retry.
-assert.match(shell, /function retry\(\)[\s\S]{0,100}clearEmbedLoadTimeout\(\)/, 'timeout cleared on retry');
+assert.match(shell, /function retry\(\)[\s\S]{0,200}clearEmbedLoadTimeout\(\)/, 'timeout cleared on retry');
 
 // 1k. Stale-source guard: timeout checks sourceIdentity before acting.
 // Phase 8 bug fix: the guard must validate against a captured immutable

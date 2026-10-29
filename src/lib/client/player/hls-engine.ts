@@ -883,8 +883,17 @@ export class HlsPlaybackEngine {
    */
   private handleHlsError(data: HlsEventData | undefined, callbacks: HlsEngineCallbacks): void {
     if (!data?.fatal) return; // non-fatal — the engine recovers internally
+    // 2026-10 round 20 — detailed HLS error logging so the admin can see
+    // exactly WHY the stream failed (token expiry, CDN block, etc.).
+    console.error('[HLS] fatal error:', {
+      type: data.type,
+      details: data.details,
+      responseCode: (data as { response?: { code?: number } }).response?.code,
+      url: (data as { url?: string }).url,
+    });
     if (data.type === 'networkError' && this.networkRecoveries < HLS_RECOVERY_LIMITS.network) {
       this.networkRecoveries += 1;
+      console.warn(`[HLS] network error recovery attempt ${this.networkRecoveries}/${HLS_RECOVERY_LIMITS.network}`);
       try {
         this.instance?.startLoad();
         return;
@@ -893,6 +902,7 @@ export class HlsPlaybackEngine {
       }
     } else if (data.type === 'mediaError' && this.mediaRecoveries < HLS_RECOVERY_LIMITS.media) {
       this.mediaRecoveries += 1;
+      console.warn(`[HLS] media error recovery attempt ${this.mediaRecoveries}/${HLS_RECOVERY_LIMITS.media}`);
       try {
         this.instance?.recoverMediaError();
         return;
@@ -900,6 +910,7 @@ export class HlsPlaybackEngine {
         // fall through to failure below
       }
     }
+    console.error('[HLS] unrecoverable — surfacing fatal error to the player');
     this.fail(callbacks, HLS_UNRECOVERABLE_MESSAGE);
   }
 

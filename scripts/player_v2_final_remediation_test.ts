@@ -120,8 +120,9 @@ console.log('\nISSUE 2 — landscape grouping + Back placement');
   ok(/\.back-fab \{ width: 40px; height: 40px; top: max\(6px, env\(safe-area-inset-top\)\); left: max\(6px, env\(safe-area-inset-left\)\); \}/.test(shell), '2c. landscape-phone Back FAB sits at a 6px corner floor (was 8px)');
   ok(/\.back-fab \{ position: absolute; z-index: 12; top: max\(12px, env\(safe-area-inset-top\)\); left: max\(12px, env\(safe-area-inset-left\)\);/.test(shell), '2d. portrait Back FAB default placement is untouched (12px safe-area floor)');
   ok(/class:custom-position=\{Boolean\(backControlStyle\)\}/.test(shell) && shell.indexOf('landscapeControlInlineStyle') > 0, '2e. per-source Admin placement overrides still resolve and apply');
-  // Landscape center cluster + bottom zone separation preserved.
-  ok(/@media \(orientation: landscape\) and \(max-height: 500px\) \{\s*\.center-cluster \{ transform: translate\(-50%, calc\(-50% - 16px\)\); \}/.test(controls), '2f. the center cluster keeps its landscape lift above the bottom zone');
+  // 2026-10 round 20 — the center cluster is removed; the landscape lift
+  // rule no longer exists. The bottom zone compact rule remains.
+  ok(/@media \(orientation: landscape\) and \(max-height: 500px\) \{[\s\S]*?\.bottom-zone \{ padding: 6px 12px/.test(controls), '2f. the bottom zone keeps its landscape compact padding (center cluster removed 2026-10 round 20)');
 }
 
 // ===========================================================================
@@ -272,7 +273,7 @@ console.log('\nISSUE 6 — HLS quality selector');
 // ===========================================================================
 console.log('\nISSUE 7 — regression safety');
 {
-  ok(/class="utility-zone"/.test(controls) && /class="center-cluster"/.test(controls) && /class="bottom-zone"/.test(controls), '7a. the approved three-zone layout is intact (top-right utilities, center cluster, bottom zone)');
+  ok(/class="utility-zone"/.test(controls) && /class="bottom-zone"/.test(controls), '7a. the approved layout is intact (top-right utilities + bottom zone; center cluster removed 2026-10 round 20)');
   ok(/aria-label="Seek backward 10 seconds"/.test(controls) && /RotateCcwSquare/.test(controls) && /RotateCwSquare/.test(controls), '7b. the corrected seek icons + 10s indication remain');
   ok(/onDoubleClick|createPlayerTapGestureController/.test(shell) && /handleHoldEnd/.test(shell), '7c. the double-tap seek + hold-2× gesture wiring remains');
   ok(/display-fill|display-stretch/.test(viewport) && /aria-label="Display mode"/.test(controls), '7d. Fit/Fill/Stretch display modes remain');

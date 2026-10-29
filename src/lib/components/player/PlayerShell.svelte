@@ -1654,7 +1654,7 @@
   }
 
   function handleWaiting() { state = 'buffering'; }
-  function handlePlaying() { state = 'playing'; errorMessage = ''; }
+  function handlePlaying() { state = 'playing'; errorMessage = ''; hlsAutoRetryCount = 0; }
   function handleSeeking() { state = 'seeking'; }
   function handleSeeked() { state = playing ? 'playing' : 'paused'; }
   function handleEnded() {
@@ -1667,12 +1667,35 @@
     syncMediaSessionPlaybackState('paused');
   }
 
+  // 2026-10 round 20 — auto-retry on HLS fatal error (token expiry).
+  // vidsrc.party tokens expire after ~30s; when the HLS engine tries to
+  // reload the variant playlist (live playlist refresh), it gets 503 and
+  // fires a fatal networkError. Instead of showing the error immediately,
+  // re-resolve the source (get a fresh token) and restart playback from
+  // the current position. Bounded to 1 auto-retry to avoid infinite loops.
+  let hlsAutoRetryCount = 0;
+  const HLS_AUTO_RETRY_MAX = 1;
+
   function handleMediaError() {
+    // 2026-10 round 20 — if this is a direct HLS source and we haven't
+    // exhausted the auto-retry budget, re-resolve the source automatically
+    // (the token likely expired). Save the current position so playback
+    // resumes seamlessly after the re-resolve.
+    if (source?.type === 'direct' && source.sourceId && hlsAutoRetryCount < HLS_AUTO_RETRY_MAX) {
+      hlsAutoRetryCount += 1;
+      console.warn(`[PlayerShell] HLS fatal error — auto-retry ${hlsAutoRetryCount}/${HLS_AUTO_RETRY_MAX} (re-resolving source for a fresh token)`);
+      state = 'switching-source';
+      errorMessage = '';
+      onSourceChange(source.sourceId);
+      return;
+    }
+    // Exhausted auto-retries (or not a direct HLS source) — show the error.
+    console.error('[PlayerShell] HLS fatal error — no more auto-retries, showing error');
+    hlsAutoRetryCount = 0; // reset for the next manual retry
     playing = false;
     state = 'error';
     errorMessage = 'Playback could not be started. Try again or choose another source.';
     revealControls();
-    // Phase 6: release wake lock on error.
     releaseWakeLock();
     syncMediaSessionPlaybackState('paused');
   }
@@ -2135,6 +2158,7 @@
 
   function retry() {
     errorMessage = '';
+    hlsAutoRetryCount = 0; // reset auto-retry budget for the manual retry
     // Phase 8: clear any pending embed load timeout before retrying.
     clearEmbedLoadTimeout();
     // MAVP-4 Issue 1: a retry restarts the presentation gate — the provider

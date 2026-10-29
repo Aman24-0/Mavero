@@ -217,16 +217,10 @@
     <button class="control-button lock-button" type="button" aria-label={locked ? 'Unlock player controls' : 'Lock player controls'} aria-pressed={locked} onclick={onToggleLock}>{#if locked}<LockOpen size={17} />{:else}<Lock size={17} />{/if}</button>
   </div>
 
-  <!-- CENTER playback cluster — centered on the VIDEO VIEWPORT (absolute
-       center of the player shell), Play/Pause visually dominant.
-       2026-10 round 19 — the ±10 s seek buttons were MOVED from here to the
-       bottom secondary row (they overlapped with error messages + the play
-       button overlay on mobile). The center cluster is now Play/Pause only. -->
-  <div class="center-cluster">
-    <button class="cluster-button play" type="button" aria-label={playing ? 'Pause' : 'Play'} onclick={onTogglePlay}>
-      {#if playing}<Pause size={30} fill="currentColor" aria-hidden="true" />{:else}<Play size={30} fill="currentColor" aria-hidden="true" />{/if}
-    </button>
-  </div>
+  <!-- 2026-10 round 20 — the center cluster overlay is REMOVED. Play/Pause
+       moved to the bottom secondary row (before the ±10 s seek buttons).
+       The center overlay was overlapping with error messages + loading cards
+       on mobile. The bottom bar now owns all playback controls. -->
 
   <!-- BOTTOM zone: time + timeline, then the secondary control row. -->
   <div class="bottom-zone">
@@ -249,9 +243,11 @@
          portrait and stops flexing in landscape. -->
     <div class="secondary-row">
       {#if !castActive}
-        <!-- 2026-10 round 19 — ±10 s seek buttons MOVED from the center cluster
-             to here (inline after Play/Pause, before Volume). Prevents overlap
-             with error messages + the play button overlay on mobile. -->
+        <!-- 2026-10 round 20 — Play/Pause moved here from the center cluster. -->
+        <button class="control-button play-inline" type="button" aria-label={playing ? 'Pause' : 'Play'} onclick={onTogglePlay}>
+          {#if playing}<Pause size={17} aria-hidden="true" />{:else}<Play size={17} fill="currentColor" aria-hidden="true" />{/if}
+        </button>
+        <!-- 2026-10 round 19 — ±10 s seek buttons (inline after Play/Pause, before Volume). -->
         <button class="control-button seek-inline" type="button" aria-label="Seek backward 10 seconds" onclick={() => onStep(-10)}>
           <RotateCcwSquare size={17} aria-hidden="true" />
         </button>
@@ -382,16 +378,9 @@
   /* ---- Top-right utility zone ---- */
   .utility-zone { position: absolute; z-index: 2; top: max(12px, env(safe-area-inset-top)); right: max(12px, env(safe-area-inset-right)); display: flex; align-items: center; gap: 8px; pointer-events: auto; }
 
-  /* ---- Center cluster ---- */
-  .center-cluster { position: absolute; z-index: 1; top: 50%; left: 50%; transform: translate(-50%, -50%); display: flex; align-items: center; gap: 26px; pointer-events: auto; }
-  .cluster-button { position: relative; display: grid; place-items: center; border: 1px solid rgba(255,255,255,.14); border-radius: 50%; color: #fff; background: rgba(0,0,0,.55); cursor: pointer; backdrop-filter: blur(12px); box-shadow: 0 6px 22px rgba(0,0,0,.35); transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
-  .cluster-button:hover, .cluster-button:focus-visible { border-color: var(--accent); background: rgba(0,0,0,.72); }
-  .cluster-button:active { transform: scale(.96); }
-  /* Play/Pause is the central, visually dominant control (68px vs 54px). */
-  .cluster-button.play { width: 68px; height: 68px; color: #000; background: var(--accent-strong); border-color: transparent; box-shadow: 0 8px 30px rgba(0,0,0,.45); }
-  .cluster-button.play:hover, .cluster-button.play:focus-visible { background: var(--accent-strong); filter: brightness(1.06); }
-  /* 2026-10 round 19 — .cluster-button.seek + .seek-count removed (the ±10 s
-     seek buttons moved to the bottom secondary row as .control-button.seek-inline). */
+  /* 2026-10 round 20 — the center cluster + cluster-button CSS is REMOVED.
+     Play/Pause moved to the bottom secondary row as .control-button.play-inline.
+     The center overlay is gone — the bottom bar owns all playback controls. */
 
   /* ---- Bottom zone ---- */
   .bottom-zone { position: absolute; z-index: 2; bottom: 0; left: 0; right: 0; display: grid; gap: 4px; padding: 10px 14px calc(12px + env(safe-area-inset-bottom)); pointer-events: auto; background: linear-gradient(0deg, rgba(0,0,0,.62), rgba(0,0,0,.28) 62%, transparent); }
@@ -420,6 +409,8 @@
   .control-button:active { transform: scale(.97); }
   /* 2026-10 round 19 — inline ±10 s seek buttons in the secondary row. */
   .control-button.seek-inline { color: var(--ink-soft); }
+  /* 2026-10 round 20 — inline Play/Pause button in the secondary row. */
+  .control-button.play-inline { color: var(--ink-soft); }
   .volume-control { display: flex; align-items: center; gap: 4px; }
   .volume-input { width: 78px; accent-color: var(--accent); }
   /* Issue 3: the former native select popups are now BUTTONS that open
@@ -469,8 +460,8 @@
        so Fit/Fill/Stretch keeps its readable labels and the row stays ONE
        line down to 360px (deliberate compact fallback budget). */
     .select-control.display-mode :global(svg) { display: none; }
-    .center-cluster { gap: 20px; }
-    .cluster-button.play { width: 62px; height: 62px; }
+    /* 2026-10 round 20 — .center-cluster + .cluster-button.play removed
+       (Play/Pause moved to the bottom secondary row). */
   }
   /* Landscape phone (Player V2 remaining fixes, 2026-10): the secondary row
      is ONE RIGHT-aligned compact group — the user's approved landscape
@@ -486,10 +477,9 @@
     .secondary-row { flex-wrap: nowrap; gap: 5px; justify-content: flex-end; }
     .select-control.subtitles { flex: 0 1 auto; }
   }
-  /* Landscape phone: keep the cluster clear of the bottom zone. */
+  /* Landscape phone: compact the bottom zone. */
   @media (orientation: landscape) and (max-height: 500px) {
-    .center-cluster { transform: translate(-50%, calc(-50% - 16px)); }
     .bottom-zone { padding: 6px 12px calc(8px + env(safe-area-inset-bottom)); }
   }
-  @media (prefers-reduced-motion: reduce) { .control-button, .cluster-button { transition: none; } }
+  @media (prefers-reduced-motion: reduce) { .control-button { transition: none; } }
 </style>

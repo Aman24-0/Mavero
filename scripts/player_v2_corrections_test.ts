@@ -53,7 +53,7 @@ ok(/class="seek-feedback"/.test(shell) && /seekFeedback === 'backward' \? '−10
 ok(/class="gesture-indicator hold-indicator"/.test(shell) && /holdSpeedActive/.test(shell), '1. the press-and-hold 2× indicator exists');
 ok(/\{displayMode\}/.test(shell) && /onDisplayMode=\{setDisplayMode\}/.test(shell), '1. the shell threads displayMode into the viewport and the controls');
 ok(/subtitleNotice=\{externalSubtitleNotice\}/.test(shell), '1. the shell threads the honest subtitle notice into the controls');
-ok(/class="utility-zone"/.test(controls) && /class="center-cluster"/.test(controls) && /class="bottom-zone"/.test(controls), '1. PlayerControls carries the three approved zones');
+ok(/class="utility-zone"/.test(controls) && /class="bottom-zone"/.test(controls), '1. PlayerControls carries the utility + bottom zones (2026-10 round 20: center cluster removed — Play/Pause moved to bottom bar)');
 
 // ============================================================
 // §2 — Playback lifecycle: Back / PiP / teardown stop the media session

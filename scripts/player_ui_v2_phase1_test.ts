@@ -47,23 +47,19 @@ function ok(condition: boolean, label: string) {
 // §1 — APPROVED three-zone layout (Player V2 corrections)
 // ============================================================
 
-// 1a. The center cluster is its own overlay zone, centered on the viewport.
-ok(/class="center-cluster"/.test(controls), '1a. a dedicated center playback cluster exists (video-viewport overlay, not a bottom-row group)');
-ok(/\.center-cluster \{ position: absolute; z-index: 1; top: 50%; left: 50%; transform: translate\(-50%, -50%\)/.test(controls), '1a. the cluster is centered on the actual video/player viewport (absolute 50%/50%)');
-// 2026-10 round 19 — the ±10 s seek buttons were MOVED from the center cluster
-// to the bottom secondary row (inline after Play/Pause, before Volume). The
-// center cluster is now Play/Pause only. The seek buttons are in the
-// secondary row as .control-button.seek-inline.
-const centerCluster = controls.slice(controls.indexOf('class="center-cluster"'), controls.indexOf('class="bottom-zone"'));
-ok(centerCluster.indexOf("aria-label={playing ? 'Pause' : 'Play'}") !== -1, '1a. the center cluster contains Play/Pause');
-ok(!centerCluster.includes('Seek backward 10 seconds'), '1a. the center cluster no longer contains the −10s button (moved to secondary row, 2026-10 round 19)');
-ok(!centerCluster.includes('Seek forward 10 seconds'), '1a. the center cluster no longer contains the +10s button (moved to secondary row, 2026-10 round 19)');
-// The ±10s buttons are now in the secondary row (after the {#if !castActive} block).
+// 1a. 2026-10 round 20 — the center cluster overlay is REMOVED entirely.
+// Play/Pause + ±10s seek buttons are ALL in the bottom secondary row now.
+// The center overlay was overlapping with error messages + loading cards on mobile.
+ok(!/class="center-cluster"/.test(controls), '1a. the center cluster overlay is removed (2026-10 round 20)');
+ok(!/\.center-cluster \{/.test(controls), '1a. the center cluster CSS is removed (2026-10 round 20)');
+// Play/Pause + ±10s buttons are all in the secondary row.
 const secondaryRow = controls.slice(controls.indexOf('class="secondary-row"'), controls.indexOf('</div>') !== -1 ? controls.indexOf('class="sheet-overlay"') : controls.length);
-ok(secondaryRow.includes('Seek backward 10 seconds') && secondaryRow.includes('Seek forward 10 seconds'), '1a. the ±10 s seek buttons are in the secondary row (2026-10 round 19)');
+ok(secondaryRow.includes('Seek backward 10 seconds') && secondaryRow.includes('Seek forward 10 seconds'), '1a. the ±10 s seek buttons are in the secondary row');
 ok(secondaryRow.indexOf('Seek backward 10 seconds') < secondaryRow.indexOf('Seek forward 10 seconds'), '1a. −10s comes before +10s in the secondary row');
-// 1b. Play/Pause is the visually DOMINANT control (68px — the center cluster is now Play/Pause only).
-ok(/\.cluster-button\.play \{ width: 68px; height: 68px;/.test(controls), '1b. Play/Pause is the dominant central control (68px)');
+ok(secondaryRow.includes("aria-label={playing ? 'Pause' : 'Play'}"), '1a. Play/Pause is in the secondary row (2026-10 round 20)');
+ok(secondaryRow.indexOf("aria-label={playing ? 'Pause' : 'Play'}") < secondaryRow.indexOf('Seek backward 10 seconds'), '1a. Play/Pause comes before the ±10s buttons in the secondary row');
+// 1b. Play/Pause is an inline control button (no longer a large center cluster button).
+ok(/class="control-button play-inline"/.test(controls), '1b. Play/Pause is an inline control button in the secondary row (2026-10 round 20)');
 // 1c. The ±10s controls are NOT hidden on mobile (they are part of the contract).
 ok(!/\.skip \{ display: none !important; \}/.test(controls), '1c. skip controls are not display:none on compact viewports');
 // 1d. Single speed display — the duplicated `{playbackRate}×` label span is gone;
