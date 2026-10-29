@@ -281,7 +281,8 @@ export default {
                 }
 
                 const contentType = (upstream.headers.get('content-type') ?? '').toLowerCase();
-                const pathLower = target.pathname.toLowerCase();
+                // pathLower is already declared above (round 15 document-header
+                // block) — reuse it here for manifest detection.
                 const isHlsManifest = contentType.includes('mpegurl') || pathLower.endsWith('.m3u8');
                 const isDashManifest = contentType.includes('dash') || pathLower.endsWith('.mpd') || (contentType.includes('xml') && upstream.ok && (await upstream.clone().text().catch(() => '')).includes('<MPD'));
 
