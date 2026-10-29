@@ -56,11 +56,12 @@
 
   // Chunked "Fetch & Save" — large playlists (e.g. akindi ~648 channels) that
   // exceed the server fetch timeout. The BROWSER downloads the playlist, splits
-  // it into ~50-channel chunks, and POSTs each to the ingest-chunk endpoint.
+  // it into ~20-channel chunks, and POSTs each to the ingest-chunk endpoint.
+  // 2026-10 round 12: chunk size reduced from 50 to 20 to prevent DB timeouts.
   let chunkNotice = $state<{ kind: 'ok' | 'error'; message: string } | null>(null);
   let chunkSaving = $state<{ id: string; done: number; total: number } | null>(null);
 
-  function splitM3uIntoChunks(text: string, perChunk = 50): string[] {
+  function splitM3uIntoChunks(text: string, perChunk = 20): string[] {
     const lines = text.split(/\r?\n/);
     const firstExtinf = lines.findIndex((line) => line.startsWith('#EXTINF'));
     const headerLines = (firstExtinf > 0 ? lines.slice(0, firstExtinf) : lines).filter((line) => line.startsWith('#'));
@@ -113,26 +114,40 @@
     try {
       const playlistResponse = await fetch(playlistUrl, { headers: { accept: 'text/plain,*/*' } });
       if (!playlistResponse.ok) throw new Error(`Playlist fetch failed (${playlistResponse.status}).`);
-      const chunks = splitM3uIntoChunks(await playlistResponse.text(), 50);
+      const chunks = splitM3uIntoChunks(await playlistResponse.text(), 20);
       if (chunks.length === 0) throw new Error('The playlist had no channels.');
       chunkSaving = { id: source.id, done: 0, total: chunks.length };
       let parsed = 0;
       let entryWrites = 0;
       let endpointWrites = 0;
+      let failedChunks = 0;
+      // 2026-10 round 12 — continue on chunk failure (bulletproof): one bad
+      // chunk must NOT abort the entire save. Failed chunks are counted and
+      // surfaced in the notice so the admin knows to retry.
       for (let i = 0; i < chunks.length; i += 1) {
-        const response = await fetch('/api/admin/livetv/sources/ingest-chunk', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ sourceId: source.id, text: chunks[i] })
-        });
-        const result = (await response.json().catch(() => null)) as { ok?: boolean; parsed?: number; entryWrites?: number; endpointWrites?: number; error?: { message?: string } } | null;
-        if (!response.ok || !result?.ok) throw new Error(result?.error?.message ?? `Chunk ${i + 1} failed.`);
-        parsed += result.parsed ?? 0;
-        entryWrites += result.entryWrites ?? 0;
-        endpointWrites += result.endpointWrites ?? 0;
+        try {
+          const response = await fetch('/api/admin/livetv/sources/ingest-chunk', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ sourceId: source.id, text: chunks[i] })
+          });
+          const result = (await response.json().catch(() => null)) as { ok?: boolean; parsed?: number; entryWrites?: number; endpointWrites?: number; error?: { message?: string } } | null;
+          if (!response.ok || !result?.ok) {
+            console.error(`[fetch-save] Chunk ${i + 1}/${chunks.length} failed:`, result?.error?.message ?? 'unknown');
+            failedChunks++;
+          } else {
+            parsed += result.parsed ?? 0;
+            entryWrites += result.entryWrites ?? 0;
+            endpointWrites += result.endpointWrites ?? 0;
+          }
+        } catch (chunkError) {
+          console.error(`[fetch-save] Chunk ${i + 1}/${chunks.length} threw:`, chunkError);
+          failedChunks++;
+        }
         chunkSaving = { id: source.id, done: i + 1, total: chunks.length };
       }
-      chunkNotice = { kind: 'ok', message: `Saved ${parsed} channels (${entryWrites} writes, ${endpointWrites} endpoints).` };
+      const failMsg = failedChunks > 0 ? ` — Failed to save ${failedChunks} chunk(s). Some channels may be missing. Please try again or check if the playlist has invalid characters.` : '';
+      chunkNotice = { kind: failedChunks > 0 ? 'error' : 'ok', message: `Saved ${parsed} channels (${entryWrites} writes, ${endpointWrites} endpoints).${failMsg}` };
       await invalidateAll();
     } catch (error) {
       chunkNotice = { kind: 'error', message: error instanceof Error ? error.message : 'Fetch & Save failed.' };
@@ -158,7 +173,7 @@
       if (!text.includes('#EXTM3U') && !text.includes('#EXTINF')) {
         throw new Error('The file does not appear to be a valid M3U playlist.');
       }
-      const chunks = splitM3uIntoChunks(text, 50);
+      const chunks = splitM3uIntoChunks(text, 20);
       if (chunks.length === 0) throw new Error('The playlist had no channels.');
 
       // Step 1: create the source via the dedicated upload endpoint.
@@ -222,7 +237,7 @@
         await Promise.all(batch);
       }
 
-      const failMsg = failedChunks > 0 ? ` (${failedChunks} chunk(s) failed — check console)` : '';
+      const failMsg = failedChunks > 0 ? ` — Failed to save ${failedChunks} chunk(s). Some channels may be missing. Please try uploading again or check if the playlist has invalid characters.` : '';
       chunkNotice = { kind: failedChunks > 0 ? 'error' : 'ok', message: `Uploaded and saved ${parsed} channels (${entryWrites} writes, ${endpointWrites} endpoints).${failMsg}` };
       uploadFile = null;
       uploadProgress = null;
@@ -255,7 +270,7 @@
       if (!text.includes('#EXTM3U') && !text.includes('#EXTINF')) {
         throw new Error('The file does not appear to be a valid M3U playlist.');
       }
-      const chunks = splitM3uIntoChunks(text, 50);
+      const chunks = splitM3uIntoChunks(text, 20);
       if (chunks.length === 0) throw new Error('The playlist had no channels.');
 
       // 2026-10 round 9 — Task 4: concurrent chunks (3 at a time), no delay.
@@ -296,7 +311,7 @@
         await Promise.all(batch);
       }
 
-      const failMsg = failedChunks > 0 ? ` (${failedChunks} chunk(s) failed — check console)` : '';
+      const failMsg = failedChunks > 0 ? ` — Failed to save ${failedChunks} chunk(s). Some channels may be missing. Please try uploading again or check if the playlist has invalid characters.` : '';
       chunkNotice = { kind: failedChunks > 0 ? 'error' : 'ok', message: `Replaced with ${parsed} channels (${entryWrites} writes, ${endpointWrites} endpoints).${failMsg}` };
       uploadFile = null;
       uploadProgress = null;

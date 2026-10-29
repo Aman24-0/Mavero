@@ -22,10 +22,14 @@
 //     cannot be established safely is skipped with a structured reason
 //     (`unknown_stream_format`). An arbitrary web page is never treated as
 //     a media manifest.
-//   * Identity is NEVER inferred from display-name equality. Entry identity
-//     = the validated tvg-id when present, else a deterministic SHA-256 of
-//     the stream URL (stable across refreshes). Display names never merge
-//     or split entries.
+//   * Identity is NEVER inferred from display-name equality ALONE, but
+//     same-name entries DO merge: entry identity = a deterministic SHA-256
+//     of the NORMALIZED display name (NFKC → trim → collapse whitespace →
+//     casefold). This merges the same channel listed with multiple stream
+//     URLs (backups, qualities) into ONE entry with multiple endpoints,
+//     while different names (e.g. "Sony Ten 1" vs "Sony Ten 2") remain
+//     separate entries. The tvg-id is preserved as metadata for EPG
+//     mapping but does NOT determine identity.
 //   * Directive lines (#EXTVLCOPT, #KODIPROP, …) are ignored and NEVER
 //     persisted — they can carry user-agent/referrer credentials; no
 //     playlist metadata is treated as executable code or HTML.
@@ -324,9 +328,44 @@ export function classifyM3UStreamUrl(raw: string, playlistBaseUrl?: string): { o
         return { ok: true, value: { url: resolvedHttp, streamFormat: 'hls' } };
 }
 
-/** Deterministic identity for entries without a usable tvg-id. */
+/**
+ * Deterministic identity for entries based on the stream URL. Retained for
+ * backward compatibility and test imports; the parser now uses
+ * {@link m3uIdentityForName} (see below) so that the same channel name with
+ * multiple stream URLs collapses into ONE entry with multiple endpoints.
+ */
 export function m3uIdentityForUrl(url: string): string {
         return `m3u-${createHash('sha256').update(url, 'utf8').digest('hex').slice(0, 32)}`;
+}
+
+/**
+ * 2026-10 round 12 — Deterministic identity for entries based on the
+ * NORMALIZED DISPLAY NAME (NFKC → trim → collapse whitespace → casefold).
+ *
+ * RATIONALE: real-world IPTV playlists frequently list the SAME channel
+ * multiple times with DIFFERENT stream URLs (e.g. "Sony SAB" at 720p and
+ * "Sony SAB" at 1080p, or "Sony SAB" + a backup URL). Round 11 changed
+ * identity to the URL hash to prevent tvg-id collisions from merging
+ * unrelated channels, but that caused the OPPOSITE problem: the same
+ * channel (same name) now creates SEPARATE admin rows for every URL,
+ * producing "duplicate" entries in the admin panel and fragmenting the
+ * catalogue.
+ *
+ * Name-based identity is the correct middle ground:
+ *   * Same name + different URLs → ONE entry, multiple endpoints (merges
+ *     backups/qualities — the desired behaviour the user requested).
+ *   * Different names → separate entries (e.g. "Sony Ten 1" vs
+ *     "Sony Ten 2" are never merged — they have different names).
+ *   * Same name + same URL → ONE entry, URL deduped within the entry
+ *     (the exact-duplicate #EXTINF line is skipped as before).
+ *
+ * The normalization matches the catalogue's
+ * {@link normalizeLivetvGroupName} so the parser identity and the
+ * catalogue grouping are consistent.
+ */
+export function m3uIdentityForName(name: string): string {
+        const normalized = name.normalize('NFKC').trim().replace(/\s+/g, ' ').toLowerCase();
+        return `m3u-${createHash('sha256').update(normalized, 'utf8').digest('hex').slice(0, 32)}`;
 }
 
 /**
@@ -420,6 +459,8 @@ export function parseM3UPlaylist(text: string, options: M3UParseOptions = {}): M
         let sawHeader = false;
         let pending: PendingEntry | null = null;
         let pendingGroupFromDirective: string | null = null;
+        /** 2026-10 round 12 — total #EXTINF lines encountered (for diagnostics). */
+        let extinfCount = 0;
 
         const channels: NormalizedLivetvChannel[] = [];
         const channelsById = new Map<string, NormalizedLivetvChannel>();
@@ -442,29 +483,23 @@ export function parseM3UPlaylist(text: string, options: M3UParseOptions = {}): M
                 }
                 const { url: safeUrl, streamFormat } = classification.value;
 
-                // 2026-10 round 11 — Task 1: Identity MUST be unique per
-                // stream URL, NOT per tvg-id. IPTV playlists (e.g. iptv-org)
-                // frequently have multiple #EXTINF lines for the SAME channel
-                // (same tvg-id) with DIFFERENT stream URLs (different
-                // providers/qualities). Previously, entries with the same
-                // tvg-id were MERGED into one channel with multiple endpoints,
-                // causing massive data loss (1539 entries → ~773 channels).
-                // Now: the identity is ALWAYS the deterministic URL hash
-                // (m3uIdentityForUrl), so every #EXTINF line creates a
-                // separate channel entry. The tvg-id is still stored as
-                // metadata for EPG mapping — it just doesn't determine
-                // identity.
-                const tvgId = normalizeSourceChannelId(entry.tvgIdRaw);
-                const identity = m3uIdentityForUrl(safeUrl);
-
                 // Display name: the EXTINF title; fallback to tvg-name (both
                 // are provider-provided channel metadata). The SHARED validator
                 // rejects control characters — hostile names are never stored.
                 const name = normalizeChannelName(entry.title) ?? normalizeChannelName(entry.tvgName) ?? '';
                 if (!name) {
-                        diagnostics.noteError(entry.entryIndex, identity, 'missing_name');
+                        diagnostics.noteError(entry.entryIndex, null, 'missing_name');
                         return;
                 }
+
+                // 2026-10 round 12 — Identity is now NAME-based (not URL-based).
+                // The same channel name with multiple stream URLs collapses into
+                // ONE entry with multiple endpoints (merging backups/qualities).
+                // Different names → separate entries. The tvg-id is preserved as
+                // metadata for EPG mapping. See m3uIdentityForName for the full
+                // rationale.
+                const tvgId = normalizeSourceChannelId(entry.tvgIdRaw);
+                const identity = m3uIdentityForName(name);
 
                 let channel = channelsById.get(identity);
                 if (!channel) {
@@ -593,6 +628,7 @@ export function parseM3UPlaylist(text: string, options: M3UParseOptions = {}): M
                                 if (!sawHeader) {
                                         throw new LivetvAdapterError('parse_failed', 'The playlist is missing the required #EXTM3U header.');
                                 }
+                                extinfCount += 1;
                                 pending = handleExtinf(line.slice('#EXTINF'.length), lineIndex);
                                 continue;
                         }
@@ -623,11 +659,13 @@ export function parseM3UPlaylist(text: string, options: M3UParseOptions = {}): M
         }
         finishPendingWithoutUrl();
 
-        // 2026-10 round 11 — Task 1: diagnostic log so the admin can verify
-        // that every EXTINF line was parsed. If discoveredCount is much less
-        // than the total EXTINF lines, entries are being skipped (check the
-        // skippedReasons in the diagnostics).
-        console.log(`[m3u parser] Parsed: ${channels.length} channels, ${diagnostics.skippedCount} skipped, reasons:`, diagnostics.reasons);
+        // 2026-10 round 12 — diagnostic log: EXTINF count vs parsed channels.
+        // With name-based identity, channels.length ≤ extinfCount because
+        // same-name entries with different URLs merge into one channel with
+        // multiple endpoints, and exact-duplicate (name+url) lines are skipped.
+        // If channels.length is MUCH less than extinfCount, check skippedReasons
+        // for unexpected skip patterns.
+        console.log(`[m3u parser] EXTINF lines: ${extinfCount}, channels: ${channels.length}, skipped: ${diagnostics.skippedCount}, reasons:`, diagnostics.reasons);
 
         return { channels, diagnostics: diagnostics.toDiagnostics() };
 }

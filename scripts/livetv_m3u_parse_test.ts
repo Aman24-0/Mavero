@@ -13,9 +13,10 @@
  *   §5  URL validation/classification — https-only, no credentials,
  *       extension-only format establishment, NO invented formats, no web
  *       pages treated as manifests.
- *   §6  identity + dedup — tvg-id identity, deterministic URL-hash identity,
- *       duplicate URLs deduped, same-tvg-id multi-endpoint accumulation,
- *       display names NEVER used for identity.
+ *   §6  identity + dedup — name-hash identity (2026-10 round 12), same-name
+ *       entries merge into one channel with multiple endpoints, different
+ *       names stay separate, exact duplicates (same name + same URL) skipped,
+ *       name normalization (case + whitespace).
  *   §7  hostile input safety — control characters, BOM, CRLF, huge playlists
  *       (cap enforcement), never treated as executable code/HTML.
  *
@@ -37,6 +38,7 @@ import {
   parseM3UAttributes,
   splitExtinfLine,
   m3uIdentityForUrl,
+  m3uIdentityForName,
   normalizeM3ULogoUrl,
   m3uPlaylistAdapter,
   M3U_MAX_ENTRIES
@@ -57,10 +59,11 @@ console.log('§1 valid parsing');
   const result = parseM3UPlaylist(playlist);
   ok(result.channels.length === 2, '§1.1 both entries normalized');
   const news = result.channels[0]!;
-  // 2026-10 round 11 — Task 1: sourceChannelId is now the URL hash (NOT
-  // the tvg-id) so every stream URL gets a unique identity. The tvg-id
-  // is still stored as metadata (news.tvgId) for EPG mapping.
-  ok(news.sourceChannelId === m3uIdentityForUrl('https://cdn.example/live/news.m3u8') && news.tvgId === 'news.one', '§1.2 sourceChannelId is the URL hash (unique per stream); tvg-id preserved as metadata (2026-10 round 11)');
+  // 2026-10 round 12 — sourceChannelId is now the NAME hash (not the URL
+  // hash) so that the same channel name with multiple stream URLs merges
+  // into ONE entry with multiple endpoints. The tvg-id is still stored as
+  // metadata (news.tvgId) for EPG mapping.
+  ok(news.sourceChannelId === m3uIdentityForName('News One') && news.tvgId === 'news.one', '§1.2 sourceChannelId is the NAME hash (merges same-name entries); tvg-id preserved as metadata (2026-10 round 12)');
   ok(news.name === 'News One', '§1.3 display name is the EXTINF title (not tvg-name)');
   ok(news.logoUrl === 'https://cdn.example/news.png', '§1.4 tvg-logo preserved');
   ok(news.category === 'News', '§1.5 group-title preserved as category');
@@ -103,8 +106,7 @@ console.log('§2 attribute robustness');
     'https://cdn.example/o.m3u8'
   ].join('\n');
   const result = parseM3UPlaylist(playlist);
-  // 2026-10 round 11: sourceChannelId is now the URL hash (not tvg-id).
-  // Find by tvgId instead.
+  // 2026-10 round 12: sourceChannelId is now the NAME hash. Find by tvgId.
   const grouped = result.channels.find((c) => c.tvgId === 'g.one')!;
   ok(grouped.category === 'fallback group', '§2.9 #EXTGRP provides the category when no group-title exists');
   const explicit = result.channels.find((c) => c.name === 'Explicit')!;
@@ -114,7 +116,7 @@ console.log('§2 attribute robustness');
   // CRLF + BOM + leading blank lines + trailing whitespace lines.
   const playlist = '\uFEFF#EXTM3U\r\n\r\n#EXTINF:-1 tvg-id="crlf.one",CRLF Chan\r\nhttps://cdn.example/crlf.m3u8\r\n\r\n   \r\n';
   const result = parseM3UPlaylist(playlist);
-  // 2026-10 round 11: sourceChannelId is now the URL hash. Check tvgId instead.
+  // 2026-10 round 12: sourceChannelId is now the NAME hash. Check tvgId instead.
   ok(result.channels.length === 1 && result.channels[0]!.tvgId === 'crlf.one', '§2.11 BOM + CRLF + blank lines tolerated');
 }
 
@@ -246,46 +248,77 @@ console.log('§5 URL validation + conservative classification');
 console.log('§6 identity + dedup semantics');
 // ============================================================
 {
-  // 2026-10 round 11 — Task 1: Same tvg-id, two URLs → TWO entries
-  // (NOT one entry with two endpoints). Every stream URL gets a unique
-  // identity (the URL hash) so no channels are lost. The exact
-  // duplicate URL (dual-a appearing twice) is still deduped.
+  // 2026-10 round 12 — Same NAME, different URLs → ONE entry with TWO
+  // endpoints (merging by name). This is the desired behaviour: the same
+  // channel listed multiple times with different stream URLs (backups,
+  // qualities) collapses into a single admin row with multiple endpoints.
   const playlist = [
     '#EXTM3U',
     '#EXTINF:-1 tvg-id="dual.one" tvg-logo="https://cdn.example/one.png",Dual One',
     'https://cdn.example/dual-a.m3u8',
-    '#EXTINF:-1 tvg-id="dual.one",Dual One (backup)',
-    'https://cdn.example/dual-b.m3u8',
-    '#EXTINF:-1 tvg-id="dual.one",Dual One (backup again)',
+    '#EXTINF:-1 tvg-id="dual.one",Dual One',
+    'https://cdn.example/dual-b.m3u8'
+  ].join('\n');
+  const result = parseM3UPlaylist(playlist);
+  // Same name → ONE entry (merged), with TWO endpoints (one per URL).
+  ok(result.channels.length === 1, '§6.1 same name with different URLs creates ONE entry (2026-10 round 12: merged by name)');
+  const merged = result.channels[0]!;
+  ok(merged.endpoints.length === 2, '§6.2 the merged entry has TWO endpoints (one per stream URL)');
+  ok(merged.name === 'Dual One', '§6.3 the merged entry keeps the display name');
+  ok(merged.sourceChannelId === m3uIdentityForName('Dual One'), '§6.4 sourceChannelId is the NAME hash');
+}
+{
+  // Same name + SAME URL → ONE entry, ONE endpoint (exact duplicate skipped).
+  const playlist = [
+    '#EXTM3U',
+    '#EXTINF:-1 tvg-id="dual.one",Dual One',
+    'https://cdn.example/dual-a.m3u8',
+    '#EXTINF:-1 tvg-id="dual.one",Dual One',
     'https://cdn.example/dual-a.m3u8'
   ].join('\n');
   const result = parseM3UPlaylist(playlist);
-  // Two unique URLs → two entries (the third is an exact duplicate of the first).
-  ok(result.channels.length === 2, '§6.1 same tvg-id with different URLs creates TWO entries (2026-10 round 11: unique per URL)');
-  const dualA = result.channels[0]!;
-  const dualB = result.channels[1]!;
-  ok(dualA.endpoints.length === 1 && dualB.endpoints.length === 1, '§6.2 each entry has exactly one endpoint (no merging)');
-  ok(dualA.name === 'Dual One' && dualB.name === 'Dual One (backup)', '§6.3 each entry keeps its own display name');
-  ok(result.diagnostics.skippedCount === 1 && result.diagnostics.skippedReasons['duplicate_channel_id'] === 1, '§6.4 exact duplicate URL (same hash) still skipped');
+  ok(result.channels.length === 1, '§6.5 same name + same URL → ONE entry (exact duplicate deduped)');
+  ok(result.channels[0]!.endpoints.length === 1, '§6.6 the entry has ONE endpoint (duplicate URL skipped)');
+  ok(result.diagnostics.skippedCount === 1 && result.diagnostics.skippedReasons['duplicate_channel_id'] === 1, '§6.7 exact duplicate (same name + same URL) counted as duplicate_channel_id');
 }
 {
-  // Identical display names, different tvg-ids → separate entries (name NEVER identity).
+  // Different names → SEPARATE entries (never merged).
   const playlist = [
     '#EXTM3U',
     '#EXTINF:-1 tvg-id="src.a",Example News',
     'https://cdn.example/a.m3u8',
-    '#EXTINF:-1 tvg-id="src.b",Example News',
+    '#EXTINF:-1 tvg-id="src.b",Example Sports',
     'https://cdn.example/b.m3u8'
   ].join('\n');
   const result = parseM3UPlaylist(playlist);
-  ok(result.channels.length === 2, '§6.8 identical display names NEVER merge (no name-only dedup)');
+  ok(result.channels.length === 2, '§6.8 different names → separate entries (never merged)');
 }
 {
-  // No tvg-id → deterministic URL-hash identity, stable across runs.
+  // Name identity is deterministic and stable across runs.
   const playlist = '#EXTM3U\n#EXTINF:-1,No Id\nhttps://cdn.example/noid.m3u8';
   const first = parseM3UPlaylist(playlist).channels[0]!;
   const second = parseM3UPlaylist(playlist).channels[0]!;
-  ok(first.sourceChannelId === second.sourceChannelId && first.sourceChannelId.startsWith('m3u-'), '§6.9 URL-hash identity stable across refreshes');
+  ok(first.sourceChannelId === second.sourceChannelId && first.sourceChannelId === m3uIdentityForName('No Id'), '§6.9 name-hash identity stable across refreshes');
+}
+{
+  // Name normalization: case + whitespace differences → same identity.
+  const playlist = [
+    '#EXTM3U',
+    '#EXTINF:-1,Sony  SAB',
+    'https://cdn.example/a.m3u8',
+    '#EXTINF:-1,sony sab',
+    'https://cdn.example/b.m3u8'
+  ].join('\n');
+  const result = parseM3UPlaylist(playlist);
+  // "Sony  SAB" (double space) and "sony sab" normalize to the same identity.
+  ok(result.channels.length === 1, '§6.10 case + whitespace differences merge into ONE entry (normalized name identity)');
+  ok(result.channels[0]!.endpoints.length === 2, '§6.11 the merged entry has TWO endpoints (one per URL)');
+}
+{
+  // m3uIdentityForName is deterministic and distinct for different names.
+  ok(m3uIdentityForName('Sony Ten 1') === m3uIdentityForName('Sony Ten 1'), '§6.12 name identity deterministic');
+  ok(m3uIdentityForName('Sony Ten 1') !== m3uIdentityForName('Sony Ten 2'), '§6.13 distinct names → distinct identities');
+  ok(m3uIdentityForName('Sony SAB') === m3uIdentityForName('sony  sab'), '§6.14 case + whitespace normalized to same identity');
 }
 
 // ============================================================
@@ -302,12 +335,12 @@ console.log('§7 hostile-input safety');
   ok(!serialized.includes('\x01') && !serialized.includes('\x07') && !serialized.includes('\x1b'), '§7.3 control characters never persisted anywhere in the result');
 }
 {
-  // A hostile tvg-id alone (valid title) degrades to URL identity; the
-  // attribute is dropped but the channel survives.
+  // A hostile tvg-id alone (valid title) degrades to name-based identity;
+  // the attribute is dropped but the channel survives.
   const playlist = '#EXTM3U\n#EXTINF:-1 tvg-id="bad\x01id",Valid Title\nhttps://cdn.example/bad.m3u8';
   const result = parseM3UPlaylist(playlist);
   const bad = result.channels[0]!;
-  ok(bad.sourceChannelId.startsWith('m3u-') && bad.tvgId === null, '§7.4 hostile tvg-id degrades to URL-hash identity; attribute never stored');
+  ok(bad.sourceChannelId === m3uIdentityForName('Valid Title') && bad.tvgId === null, '§7.4 hostile tvg-id degrades to name-hash identity; attribute never stored');
 }
 {
   // Directive lines with credential-looking payloads are ignored, never stored.
@@ -319,10 +352,10 @@ console.log('§7 hostile-input safety');
   ok(!serialized.includes('SECRET-AGENT') && !serialized.includes('SECRET'), '§7.6 directive payloads (potential credentials) never persisted');
 }
 {
-  // Over-long tvg-id degrades to URL identity; the attribute is dropped.
+  // Over-long tvg-id degrades to name-based identity; the attribute is dropped.
   const playlist = `#EXTM3U\n#EXTINF:-1 tvg-id="${'t'.repeat(250)}",Too Long Id\nhttps://cdn.example/tl.m3u8`;
   const result = parseM3UPlaylist(playlist);
-  ok(result.channels.length === 1 && result.channels[0]!.sourceChannelId.startsWith('m3u-') && result.channels[0]!.tvgId === null, '§7.7 over-long tvg-id degrades safely');
+  ok(result.channels.length === 1 && result.channels[0]!.sourceChannelId === m3uIdentityForName('Too Long Id') && result.channels[0]!.tvgId === null, '§7.7 over-long tvg-id degrades safely');
 }
 {
   // Orphan URL lines are counted, never ingested.
@@ -353,7 +386,7 @@ console.log('§8 R-0 — adapter run: the playlist URL is body-validated, not ex
     fetcher: async () => new Response('#EXTM3U\n#EXTINF:-1 tvg-id="a.one" tvg-name="Alpha" tvg-logo="https://cdn.example/a.png" group-title="News",Alpha One\nhttps://cdn.example/live/a.m3u8?token=x', { status: 200, headers: { 'content-type': 'application/vnd.apple.mpegurl' } }),
     dnsResolver: PUBLIC_DNS
   });
-  // 2026-10 round 11: sourceChannelId is now the URL hash. Check tvgId instead.
+  // 2026-10 round 12: sourceChannelId is now the NAME hash. Check tvgId instead.
   ok(phpOk.channels.length === 1 && phpOk.channels[0]!.tvgId === 'a.one', '§8.1 a query-string (PHP) playlist URL fetches and parses end-to-end via the adapter');
   ok(phpOk.channels[0]!.name === 'Alpha One' && phpOk.channels[0]!.category === 'News' && phpOk.channels[0]!.logoUrl === 'https://cdn.example/a.png', '§8.2 EXTINF metadata (name/group-title/tvg-logo) is preserved through the run');
   ok(phpOk.channels[0]!.endpoints[0]!.streamFormat === 'hls' && phpOk.channels[0]!.endpoints[0]!.url === 'https://cdn.example/live/a.m3u8?token=x', '§8.3 the entry\u2019s own stream URL is independently classified (query string kept, format from the path)');
@@ -397,7 +430,7 @@ console.log('§8 R-0 — adapter run: the playlist URL is body-validated, not ex
     ].join('\n'), { status: 200, headers: { 'content-type': 'application/vnd.apple.mpegurl' } }),
     dnsResolver: PUBLIC_DNS
   });
-  // 2026-10 round 11: sourceChannelId is now the URL hash. Check tvgId instead.
+  // 2026-10 round 12: sourceChannelId is now the NAME hash. Check tvgId instead.
   ok(mixed.channels.length === 2 && mixed.channels[0]!.tvgId === 'good.one' && mixed.channels[1]!.tvgId === 'good.two', '§8.6 malformed entries never crash an otherwise valid playlist (per-entry isolation)');
   ok(mixed.diagnostics.skippedCount === 2 && JSON.stringify(mixed.diagnostics.skippedReasons) === JSON.stringify({ unknown_stream_format: 1, missing_stream_url: 1 }), '§8.7 skipped entries carry bounded, static reasons (no URLs in diagnostics)');
   ok(mixed.diagnostics.entryErrors.every((entryError) => !entryError.reason.includes('http')), '§8.8 per-entry diagnostics carry static reasons only (never signed material or URLs)');
@@ -464,7 +497,7 @@ console.log('§9 R-2 — relative stream URLs are resolved against the playlist 
   ].join('\n');
   const result = parseM3UPlaylist(playlistBody, { playlistBaseUrl: 'https://provider.example/htt/hot.php?playlist=1' });
   ok(result.channels.length === 3, '§9.11 a PHP-style playlist of relative URLs ingests 3/4 entries (the .html one is rejected)');
-  // 2026-10 round 11: sourceChannelId is now the URL hash. Check tvgId instead.
+  // 2026-10 round 12: sourceChannelId is now the NAME hash. Check tvgId instead.
   ok(result.channels[0]!.tvgId === 'rel.1' && result.channels[0]!.endpoints[0]!.url === 'https://provider.example/htt/stream/one.m3u8?token=abc', '§9.12 first entry resolved against the base path');
   ok(result.channels[1]!.tvgId === 'rel.2' && result.channels[1]!.endpoints[0]!.url === 'https://provider.example/live/two.m3u8', '§9.13 root-relative entry resolved against the base origin');
   ok(result.channels[2]!.tvgId === 'rel.3' && result.channels[2]!.endpoints[0]!.streamFormat === 'dash', '§9.14 ./-relative .mpd resolved and classified dash');
@@ -504,7 +537,7 @@ console.log('§10 R-2 — adapter run: relative stream URLs resolve via the fetc
     dnsResolver: PUBLIC_DNS
   });
   ok(run.channels.length === 2, '§10.1 a PHP-endpoint playlist of relative URLs ingests both entries through the adapter run');
-  // 2026-10 round 11: sourceChannelId is now the URL hash. Check tvgId instead.
+  // 2026-10 round 12: sourceChannelId is now the NAME hash. Check tvgId instead.
   ok(run.channels[0]!.tvgId === 'hot.1' && run.channels[0]!.endpoints[0]!.url === 'https://provider.example/htt/stream/hot.m3u8?sig=abc', '§10.2 the first relative URL resolved against the fetched playlist URL');
   ok(run.channels[1]!.tvgId === 'hot.2' && run.channels[1]!.endpoints[0]!.url === 'https://provider.example/live/hot2.m3u8', '§10.3 a root-relative URL resolved against the origin');
   ok(run.channels[0]!.endpoints[0]!.streamFormat === 'hls', '§10.4 the resolved URL is classified hls by its path extension');

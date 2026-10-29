@@ -19,10 +19,10 @@ import { requireAdmin } from '$lib/server/streaming/admin-auth';
 import { createSupabaseAdminClient } from '$lib/server/supabase/admin';
 import { readJsonBody } from '$lib/server/http/body';
 import {
-	checkRateLimit,
-	clientIdentity,
-	RATE_LIMITED_ERROR_CODE,
-	RATE_LIMITED_MESSAGE
+        checkRateLimit,
+        clientIdentity,
+        RATE_LIMITED_ERROR_CODE,
+        RATE_LIMITED_MESSAGE
 } from '$lib/server/http/rate-limit';
 import { ingestLivetvChunk } from '$lib/server/livetv/chunked-ingestion';
 
@@ -30,40 +30,51 @@ const NO_STORE = { 'cache-control': 'no-store' } as const;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_TEXT_LENGTH = 4_000_000;
 
+// 2026-10 round 12 — increase the Netlify function timeout for this endpoint.
+// The default Netlify function timeout is 10s (free) / 26s (pro). A chunk of
+// 20 channels with the row-by-row fallback can take longer if the DB is under
+// load. Setting maxDuration to 60s gives the fallback ample time to complete.
+export const maxDuration = 60;
+
 function fail(status: number, code: string, message: string): Response {
-	return json({ ok: false, error: { code, message } }, { status, headers: NO_STORE });
+        return json({ ok: false, error: { code, message } }, { status, headers: NO_STORE });
 }
 
 export const POST: RequestHandler = async ({ request, locals }) => {
-	const verdict = checkRateLimit('livetvIngestChunk', clientIdentity(request.headers, locals.user?.id));
-	if (!verdict.allowed) {
-		return json(
-			{ ok: false, error: { code: RATE_LIMITED_ERROR_CODE, message: RATE_LIMITED_MESSAGE } },
-			{ status: 429, headers: { ...NO_STORE, 'retry-after': String(verdict.retryAfterSeconds) } }
-		);
-	}
+        const verdict = checkRateLimit('livetvIngestChunk', clientIdentity(request.headers, locals.user?.id));
+        if (!verdict.allowed) {
+                return json(
+                        { ok: false, error: { code: RATE_LIMITED_ERROR_CODE, message: RATE_LIMITED_MESSAGE } },
+                        { status: 429, headers: { ...NO_STORE, 'retry-after': String(verdict.retryAfterSeconds) } }
+                );
+        }
 
-	try {
-		await requireAdmin(locals, { redirectTo: '/admin/system/livetv' });
-	} catch {
-		return fail(403, 'FORBIDDEN', 'Admin access is required.');
-	}
+        try {
+                await requireAdmin(locals, { redirectTo: '/admin/system/livetv' });
+        } catch {
+                return fail(403, 'FORBIDDEN', 'Admin access is required.');
+        }
 
-	const parsed = await readJsonBody<{ sourceId?: unknown; text?: unknown }>(request);
-	if (!parsed.ok) return fail(parsed.status, 'INVALID_REQUEST', parsed.message);
-	const { sourceId, text } = parsed.value ?? {};
-	if (typeof sourceId !== 'string' || !UUID_RE.test(sourceId)) {
-		return fail(400, 'INVALID_REQUEST', 'A valid sourceId is required.');
-	}
-	if (typeof text !== 'string' || text.length === 0 || text.length > MAX_TEXT_LENGTH) {
-		return fail(400, 'INVALID_REQUEST', 'A non-empty playlist chunk is required.');
-	}
+        const parsed = await readJsonBody<{ sourceId?: unknown; text?: unknown }>(request);
+        if (!parsed.ok) return fail(parsed.status, 'INVALID_REQUEST', parsed.message);
+        const { sourceId, text } = parsed.value ?? {};
+        if (typeof sourceId !== 'string' || !UUID_RE.test(sourceId)) {
+                return fail(400, 'INVALID_REQUEST', 'A valid sourceId is required.');
+        }
+        if (typeof text !== 'string' || text.length === 0 || text.length > MAX_TEXT_LENGTH) {
+                return fail(400, 'INVALID_REQUEST', 'A non-empty playlist chunk is required.');
+        }
 
-	try {
-		const client = createSupabaseAdminClient();
-		const result = await ingestLivetvChunk(client, { sourceId, text });
-		return json({ ok: true, ...result }, { headers: NO_STORE });
-	} catch {
-		return fail(500, 'INGEST_FAILED', 'Could not save this chunk.');
-	}
+        try {
+                const client = createSupabaseAdminClient();
+                const result = await ingestLivetvChunk(client, { sourceId, text });
+                return json({ ok: true, ...result }, { headers: NO_STORE });
+        } catch (error) {
+                // ingestLivetvChunk never throws (it catches internally), so
+                // reaching here means createSupabaseAdminClient failed. Return
+                // a descriptive error so the admin UI can surface it.
+                const message = error instanceof Error ? error.message : 'Could not save this chunk.';
+                console.error('[ingest-chunk endpoint] unexpected error:', message);
+                return fail(500, 'INGEST_FAILED', message);
+        }
 };

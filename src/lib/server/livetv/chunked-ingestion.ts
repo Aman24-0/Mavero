@@ -18,7 +18,7 @@ import {
  * NON-PRUNING: `planSourceIngestion` is report-only for omitted entries and
  * `applySourceIngestion` only inserts/updates — never deletes.
  *
- * RESILIENT + SCOPED:
+ * RESILIENT + SCOPED + BULLETPROOF:
  *  - Existing state is read ONLY for the chunk's own channels (not the whole
  *    endpoints table). Reading the full table every chunk got heavier as the
  *    table grew — that is what made later chunks (e.g. #18) time out.
@@ -26,6 +26,12 @@ import {
  *    entries; a DB error on one row is collected and the rest still save; and
  *    the entire ingest is wrapped so it returns a result instead of throwing
  *    (so one bad chunk never aborts the browser's save loop).
+ *  - 2026-10 round 12: if the NORMAL flow (loadExisting → plan → apply)
+ *    fails entirely (e.g. DB timeout on the .in() query), the chunk is
+ *    RETRIED with an insert-only plan (empty existing). Per-row error
+ *    isolation in applySourceIngestion catches duplicate-key conflicts so
+ *    no channels are lost. Only if the fallback ALSO fails is the chunk
+ *    abandoned (reported as errors but never thrown).
  */
 
 const MAX_CHUNK_ENTRIES = 5_000;
@@ -112,6 +118,7 @@ export async function ingestLivetvChunk(
                 return { parsed: 0, entryWrites: 0, endpointWrites: 0, errors: 0 };
         }
 
+        // --- Normal flow: load existing → plan → apply (with per-row isolation) ---
         try {
                 const { entries, endpoints } = await loadExistingForChannels(
                         client,
@@ -138,9 +145,44 @@ export async function ingestLivetvChunk(
                         errors: result.errors.length
                 };
         } catch (error) {
-                // Never fail the browser's save loop: report the chunk as processed with
-                // zero writes so it advances to the next chunk.
-                console.error('[livetv ingest-chunk] chunk failed', error instanceof Error ? error.message : error);
-                return { parsed: channels.length, entryWrites: 0, endpointWrites: 0, errors: channels.length };
+                // 2026-10 round 12 — BULLETPROOF FALLBACK: if the normal flow
+                // fails (e.g. loadExistingForChannels timed out on a large
+                // .in() query, or the DB was momentarily unavailable), retry
+                // with an INSERT-ONLY plan (empty existing entries/endpoints).
+                // This means: treat every channel as NEW and let the DB's
+                // uniqueness constraint catch true duplicates (per-row error
+                // isolation in applySourceIngestion skips the duplicate and
+                // continues with the rest). This prevents a single DB hiccup
+                // from losing an ENTIRE chunk of channels.
+                const reason = error instanceof Error ? error.message : String(error);
+                console.warn(`[livetv ingest-chunk] normal flow failed (${reason}); retrying with insert-only fallback for ${channels.length} channels`);
+
+                try {
+                        const fallbackPlan = planSourceIngestion({
+                                sourceId: params.sourceId,
+                                adapterChannels: channels,
+                                existingEntries: [],
+                                existingEndpoints: []
+                        });
+                        const fallbackResult = await applySourceIngestion(client, fallbackPlan);
+                        if (fallbackResult.errors.length > 0) {
+                                console.error(`[livetv ingest-chunk] fallback: ${fallbackResult.errors.length} entry errors:`, fallbackResult.errors.slice(0, 5));
+                        }
+                        console.log(`[livetv ingest-chunk] fallback complete: ${fallbackResult.appliedEntryWrites} entries, ${fallbackResult.appliedEndpointWrites} endpoints written`);
+                        return {
+                                parsed: channels.length,
+                                entryWrites: fallbackResult.appliedEntryWrites,
+                                endpointWrites: fallbackResult.appliedEndpointWrites,
+                                errors: fallbackResult.errors.length
+                        };
+                } catch (fallbackError) {
+                        // Both the normal flow AND the fallback failed — this is
+                        // a catastrophic DB failure. Report the chunk as failed
+                        // but never throw (the browser's save loop must continue
+                        // with the next chunk).
+                        const fallbackReason = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+                        console.error(`[livetv ingest-chunk] fallback ALSO failed (${fallbackReason}); chunk abandoned`);
+                        return { parsed: channels.length, entryWrites: 0, endpointWrites: 0, errors: channels.length };
+                }
         }
 }
