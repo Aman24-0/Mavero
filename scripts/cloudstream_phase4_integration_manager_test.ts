@@ -1232,7 +1232,7 @@ function pristineFile(relative: string): string | null {
   // touched — behaviorally proven by
   // scripts/livetv_phase7_migration_test.ts (35 PGlite checks).
   ok(
-    addedMigrations.length === 22
+    addedMigrations.length === 23
       && addedMigrations.includes('20261004000000_unified_downloader_global_order.sql')
       && addedMigrations.includes('20261102000000_adapter_build_lifecycle.sql')
       && addedMigrations.includes('20261103000000_live_tv_analytics_events.sql')
@@ -1270,8 +1270,13 @@ function pristineFile(relative: string): string | null {
       // 2026-10 round 13: DirectStream VOD scraper migration (app_config
       // scraper columns + streaming_providers/sources rows). Additive —
       // no cloudstream/downloader/registry surface touched.
-      && addedMigrations.includes('20261029000000_direct_stream_scraper.sql'),
-    `F3: the ONLY added migrations are the FINAL TASK unified-order + build-lifecycle + LT-5-analytics + LT-15-fallback-event + VidRift-provider + MAVP-4-icon-badge + MAVP-5-default-slots + MAVP-7-unique-assignment + BlueVelvet-provider + Vixolity/TGVID/ZXCStream-provider + VidStuck-cc-origins + Supabase-remediation + Supabase-final-audit + Livetv-source-registry + Livetv-EPG-guide-data + Livetv-refresh-history + App-config-social-links + App-config-admin-write-rls + DirectStream-scraper migrations (${addedMigrations.join(', ') || 'none'})`,
+      && addedMigrations.includes('20261029000000_direct_stream_scraper.sql')
+      // 2026-10 round 17: DirectStream domain fix (force-update
+      // app_config.scraper_vidsrc_embed_domain + allow_dynamic_embed_origins
+      // on the DirectStream provider/source). UPDATE-only — no
+      // cloudstream/downloader/registry surface touched.
+      && addedMigrations.includes('20261030000000_direct_stream_domain_fix.sql'),
+    `F3: the ONLY added migrations are the FINAL TASK unified-order + build-lifecycle + LT-5-analytics + LT-15-fallback-event + VidRift-provider + MAVP-4-icon-badge + MAVP-5-default-slots + MAVP-7-unique-assignment + BlueVelvet-provider + Vixolity/TGVID/ZXCStream-provider + VidStuck-cc-origins + Supabase-remediation + Supabase-final-audit + Livetv-source-registry + Livetv-EPG-guide-data + Livetv-refresh-history + App-config-social-links + App-config-admin-write-rls + DirectStream-scraper + DirectStream-domain-fix migrations (${addedMigrations.join(', ') || 'none'})`,
   );
   ok(removedMigrations.length === 0, 'F3: no migration was removed');
 

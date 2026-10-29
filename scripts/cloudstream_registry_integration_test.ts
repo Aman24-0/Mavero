@@ -325,7 +325,7 @@ function section_registry(): void {
   const unifiedSql = read(`supabase/migrations/${unifiedMigration}`);
   const unifiedSqlNoComments = unifiedSql.replace(/--[^\n]*/g, '');
   ok(
-    added.length === 25
+    added.length === 26
       && added.includes(migrationName)
       && added.includes(phase2Migration)
       && added.includes(phase3Migration)
@@ -357,8 +357,13 @@ function section_registry(): void {
       // 2026-10 round 13: DirectStream VOD scraper migration (app_config
       // scraper columns + streaming_providers/sources rows for the
       // vidsrc-scrape adapter).
-      && added.includes('20261029000000_direct_stream_scraper.sql'),
-    `§A10: exactly the CS-5 + Phase 2 + Phase 3 + FINAL TASK + build-lifecycle + LT-5-analytics + LT-15-fallback-event + VidRift-provider + MAVP-4-icon-badge + MAVP-5-default-slots + MAVP-7-unique-assignment + BlueVelvet-provider + Vixolity/TGVID/ZXCStream-provider + VidStuck-cc-origins + Supabase-remediation + Supabase-final-audit + Livetv-source-registry + Livetv-EPG-guide-data + Livetv-refresh-history + App-config-social-links + App-config-admin-write-rls + DirectStream-scraper migrations were added (${added.join(', ') || 'none'})`,
+      && added.includes('20261029000000_direct_stream_scraper.sql')
+      // 2026-10 round 17: DirectStream domain fix (force-update
+      // app_config.scraper_vidsrc_embed_domain to vidsrc.sh + add
+      // allow_dynamic_embed_origins + 2embed origins to the DirectStream
+      // provider/source capabilities).
+      && added.includes('20261030000000_direct_stream_domain_fix.sql'),
+    `§A10: exactly the CS-5 + Phase 2 + Phase 3 + FINAL TASK + build-lifecycle + LT-5-analytics + LT-15-fallback-event + VidRift-provider + MAVP-4-icon-badge + MAVP-5-default-slots + MAVP-7-unique-assignment + BlueVelvet-provider + Vixolity/TGVID/ZXCStream-provider + VidStuck-cc-origins + Supabase-remediation + Supabase-final-audit + Livetv-source-registry + Livetv-EPG-guide-data + Livetv-refresh-history + App-config-social-links + App-config-admin-write-rls + DirectStream-scraper + DirectStream-domain-fix migrations were added (${added.join(', ') || 'none'})`,
   );
   // VIDRIFT (sanctioned): insert-only registration — no destructive verbs,
   // no download_providers / registry-table references.
