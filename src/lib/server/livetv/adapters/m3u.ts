@@ -302,10 +302,23 @@ export function classifyM3UStreamUrl(raw: string, playlistBaseUrl?: string): { o
         // browser-managed, not URL-embedded).
         if (pathname.endsWith('.mpd')) return { ok: true, value: { url: resolvedHttp, streamFormat: 'dash' } };
         if (pathname.endsWith('.m3u8') || pathname.endsWith('.m3u')) return { ok: true, value: { url: resolvedHttp, streamFormat: 'hls' } };
-        // Unknown (includes .html/.php player pages, bare hosts, extensionless
-        // streams, query-param format hints) — format cannot be established
-        // safely, so the entry is skipped rather than guessed.
-        return { ok: false, reason: 'unknown_stream_format' };
+        // 2026-10 round 10 — Task 1: MANY real-world IPTV playlists (e.g.
+        // iptv-org) use stream URLs without a file extension — the path
+        // is just a host + path with query params (e.g.
+        // https://example.com/stream/123?token=abc). Previously these
+        // were rejected as 'unknown_stream_format', silently dropping
+        // hundreds of channels. Now: if the URL is a valid https URL
+        // with no recognizable extension, classify it as HLS (the most
+        // common format for IPTV streams). The player's Shaka engine
+        // sniffs the actual format from the response Content-Type header
+        // at load time, so a wrong guess here is self-correcting.
+        // The only URLs still rejected are .html/.php pages (obvious
+        // web pages, not streams).
+        if (pathname.endsWith('.html') || pathname.endsWith('.php') || pathname.endsWith('/')) {
+                return { ok: false, reason: 'unknown_stream_format' };
+        }
+        // No recognizable extension — assume HLS (self-correcting at load).
+        return { ok: true, value: { url: resolvedHttp, streamFormat: 'hls' } };
 }
 
 /** Deterministic identity for entries without a usable tvg-id. */

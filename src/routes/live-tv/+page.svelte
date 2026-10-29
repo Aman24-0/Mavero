@@ -171,6 +171,9 @@
   let channels = $state<LiveTvChannel[]>([]);
   let catalogueMessage = $state<string | null>(null);
   let catalogueController: AbortController | undefined;
+  // 2026-10 round 10 — Task 2: toast notification for catalogue fetch
+  // failures (instead of a full-page "Signal Dropped" error).
+  let catalogueToast = $state<string | null>(null);
 
   async function loadCatalogue(): Promise<void> {
     // R-3 — the SOURCE-FIRST catalogue. The page now uses the unified
@@ -208,8 +211,21 @@
       // this reads the catalogue that was just loaded.
     } catch (err) {
       if (controller.signal.aborted || isSilentAbort(err)) return;
-      catalogueMessage = playbackSafeMessage(err);
-      catalogueState = 'error';
+      // 2026-10 round 10 — Task 2: do NOT show a full-page "Signal Dropped"
+      // error. Keep the current channel list on screen and show a small
+      // toast notification. The user can retry or switch sources.
+      const sourceName = selectedSourceName ?? 'this source';
+      catalogueToast = `Failed to load channels for ${sourceName}. Try again or switch sources.`;
+      // Keep the existing channels (if any) visible. Only set error state
+      // if there are NO channels to show (first load failure).
+      if (channels.length === 0) {
+        catalogueMessage = playbackSafeMessage(err);
+        catalogueState = 'error';
+      } else {
+        catalogueState = 'ready';
+      }
+      // Auto-clear the toast after 5 seconds.
+      setTimeout(() => { catalogueToast = null; }, 5000);
     }
   }
 
@@ -432,26 +448,24 @@
   let recentChannelIds = $state<string[]>([]);
   let recentClearArmed = $state(false);
 
-  // Recent channels — resolved against the loaded catalogue when possible.
-  // 2026-10 round 9 — Task 6: recents are NOT limited by the source filter.
-  // When a specific source is selected, channels from OTHER sources may
-  // not be in the current `channels` array. We show a FALLBACK (initials
-  // card) for recents whose channel object isn't in the current catalogue,
-  // so the recents row always shows ALL played channels regardless of the
-  // active source filter.
+  // Recent channels — resolved against the loaded catalogue.
+  // 2026-10 round 10 — Task 1: when a specific source is selected, only
+  // show recents that exist in the CURRENT (source-scoped) catalogue.
+  // Recents from other sources are HIDDEN (no fallback card). When "All
+  // Sources" is selected, show all recents that resolve against the
+  // full catalogue (no fallback either — only channels that exist in
+  // the current catalogue are shown).
   const recentChannels = $derived.by<LiveTvChannel[]>(() => {
-    if (recentChannelIds.length === 0) return [];
+    if (channels.length === 0 || recentChannelIds.length === 0) return [];
     const byId = new Map(channels.map((channel) => [channel.id, channel]));
     const resolved: LiveTvChannel[] = [];
     for (const id of recentChannelIds) {
       const channel = byId.get(id);
-      if (channel) {
-        resolved.push(channel);
-      } else {
-        // Fallback: the channel isn't in the current catalogue (different
-        // source filter). Show a minimal card with the ID-derived name.
-        resolved.push({ id, name: id.startsWith('entry:') ? 'Channel' : id } as LiveTvChannel);
-      }
+      if (channel) resolved.push(channel);
+      // If the channel isn't in the current catalogue, skip it entirely
+      // (no fallback card). This means: when a specific source is selected,
+      // only recents from THAT source appear. When "All Sources" is
+      // selected, all recents that exist in the merged catalogue appear.
     }
     return resolved;
   });
@@ -1062,6 +1076,14 @@
 </svelte:head>
 
 <div class="live-tv-page">
+  <!-- 2026-10 round 10 — Task 2: toast notification for catalogue fetch
+       failures (non-blocking; auto-clears after 5s). -->
+  {#if catalogueToast}
+    <div class="ltv-toast" role="status" aria-live="polite">
+      {catalogueToast}
+    </div>
+  {/if}
+
   <!-- 2026-10 round 6 — Task 4: the Source selector button is NO LONGER
        floating. It moved into the toolbar row (the last item after
        Search + Filter + Guide) for a cleaner layout. See the toolbar
@@ -1390,6 +1412,7 @@
                 selected={channel.id === selectedChannel?.id}
                 onselect={(c) => void selectChannel(c)}
                 onshare={(c) => void shareChannel(c)}
+                showSourceName={selectedSourceFilter === null}
               />
             {/each}
             {#if visibleChannels.length > visibleLimit}
@@ -1435,6 +1458,30 @@
     --ltv-gutter: clamp(16px, 5vw, 48px);
     min-height: calc(100dvh - 76px);
     padding-bottom: 110px;
+  }
+
+  /* 2026-10 round 10 — Task 2: toast notification for catalogue failures */
+  .ltv-toast {
+    position: fixed;
+    bottom: 90px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 80;
+    padding: 12px 20px;
+    background: var(--color-surface-elevated, #0b1012);
+    border: 1px solid var(--color-border-strong, rgba(255,255,255,.14));
+    border-radius: var(--radius-md, 12px);
+    color: var(--color-text, #f5f5f5);
+    font-size: .82rem;
+    font-weight: 600;
+    box-shadow: 0 8px 24px rgba(0,0,0,.5);
+    max-width: 90vw;
+    text-align: center;
+    animation: ltv-toast-slide 0.3s ease;
+  }
+  @keyframes ltv-toast-slide {
+    from { opacity: 0; transform: translateX(-50%) translateY(10px); }
+    to { opacity: 1; transform: translateX(-50%) translateY(0); }
   }
 
   /* 2026-10 round 6 — Task 4: the .ltv-source-float + .ltv-source-icon-btn

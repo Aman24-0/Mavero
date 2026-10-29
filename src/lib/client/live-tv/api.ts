@@ -503,12 +503,16 @@ export function buildLiveTvEmbedUrl(channelId: string | null | undefined): strin
  * catalogue; the UI may re-sort alphabetically if it prefers).
  */
 export function extractLiveTvCategories(channels: readonly LiveTvChannel[]): string[] {
+        // 2026-10 round 10 — Task 1: case-insensitive deduplication so
+        // "Movies" from IPTV and "movies" from Tgflix don't appear twice.
         const seen = new Set<string>();
         const categories: string[] = [];
         for (const channel of channels) {
                 const category = channel.category?.trim();
-                if (!category || seen.has(category)) continue;
-                seen.add(category);
+                if (!category) continue;
+                const key = category.toLowerCase();
+                if (seen.has(key)) continue;
+                seen.add(key);
                 categories.push(category);
         }
         return categories;

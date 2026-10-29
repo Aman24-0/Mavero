@@ -243,17 +243,14 @@ export function normalizeShakaError(raw: unknown, phase: 'load' | 'playback'): L
                 return new LiveTvPlaybackError('aborted', Number.isFinite(code) ? code : undefined);
         }
         if (category === SHAKA_ERROR_CATEGORY.NETWORK) {
-                // 2026-10 round 7 — Task 3: detect geo-blocked streams (HTTP 403/451).
-                // Shaka carries the upstream HTTP status code in `statusCode`
-                // (a direct numeric property on the error object — NOT from
-                // `data`, which may embed URIs/tokens and is never read).
-                // A 403 (Forbidden) or 451 (Unavailable For Legal Reasons)
-                // from a CDN like Jio/Sony means the stream is geo-restricted
-                // to India — no amount of header tweaking will bypass a Geo-IP
-                // block.
+                // 2026-10 round 7: detect geo-blocked streams (HTTP 403/451).
+                // 2026-10 round 10: detect offline streams (HTTP 404/410).
                 const httpStatus = typeof error.statusCode === 'number' ? error.statusCode : NaN;
                 if (httpStatus === 403 || httpStatus === 451) {
                         return new LiveTvPlaybackError('geo_blocked', Number.isFinite(code) ? code : undefined);
+                }
+                if (httpStatus === 404 || httpStatus === 410) {
+                        return new LiveTvPlaybackError('stream_offline', Number.isFinite(code) ? code : undefined);
                 }
                 return new LiveTvPlaybackError(
                         phase === 'load' ? 'manifest_load_failed' : 'network_failed',

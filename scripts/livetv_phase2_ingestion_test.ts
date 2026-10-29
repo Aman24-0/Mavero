@@ -420,12 +420,15 @@ console.log('§4 refresh service');
   ok(invalid.ok === false && invalid.failure?.kind === 'unsupported_media_type', '§4.13 an HTML error page is a typed invalid-document failure (distinct from per-entry errors)');
 
   // Per-entry failures do NOT fail the source.
+  // 2026-10 round 10 — Task 1: the "bad" URL `https://cdn.example/bad`
+  // (no extension) is now ACCEPTED as HLS (self-correcting at load).
+  // To test per-entry skip, we use a .html URL (still rejected).
   db = createMockDb();
   db.state.livetv_sources.push({ id: 'src-7', slug: 'mixed-playlist', source_type: 'm3u_playlist', enabled: true, status: 'active', config: { playlistUrl: 'https://cdn.example/list.m3u8' } });
-  const mixedFetcher = (async () => new Response(['#EXTM3U', '#EXTINF:-1 tvg-id="ok.one",Ok', 'https://cdn.example/ok.m3u8', '#EXTINF:-1 tvg-id="bad.one",Bad', 'https://cdn.example/bad'].join('\n'), { headers: { 'content-type': 'audio/x-mpegurl' } })) as unknown as typeof fetch;
+  const mixedFetcher = (async () => new Response(['#EXTM3U', '#EXTINF:-1 tvg-id="ok.one",Ok', 'https://cdn.example/ok.m3u8', '#EXTINF:-1 tvg-id="bad.one",Bad', 'https://cdn.example/bad.html'].join('\n'), { headers: { 'content-type': 'audio/x-mpegurl' } })) as unknown as typeof fetch;
   const mixed = await refreshLivetvSource(db.client as never, { id: 'src-7' }, { fetcher: mixedFetcher, dnsResolver: resolver });
   ok(mixed.ok === true, '§4.14 per-entry failures do NOT fail the refresh');
-  ok(mixed.counts?.discovered === 1 && mixed.counts?.skipped === 1 && (mixed.skippedReasons?.['unknown_stream_format'] ?? 0) === 1, '§4.15 the invalid entry is counted as skipped with its typed reason');
+  ok(mixed.counts?.discovered === 1 && mixed.counts?.skipped === 1 && (mixed.skippedReasons?.['unknown_stream_format'] ?? 0) === 1, '§4.15 the invalid entry (.html) is counted as skipped with its typed reason');
   ok((mixed.entryErrors?.length ?? 0) === 1 && mixed.entryErrors?.[0]?.reason === 'unknown_stream_format', '§4.16 the per-entry diagnostic is structured');
 
   // Duplicate refresh prevention (in-flight).

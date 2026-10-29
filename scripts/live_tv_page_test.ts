@@ -152,7 +152,11 @@ const NOW = 1_700_000_000; // fixed absolute instant for determinism
                 { id: '5', name: 'E', category: '' }
         ];
         const derived = extractLiveTvCategories(catalogue);
-        assert.deepEqual(derived, ['Sports', 'sports', 'News'], 'categories derived from data (case preserved, stable order, no hardcoding)');
+        // 2026-10 round 10 — Task 1: categories are now case-INSENSITIVELY
+        // deduplicated. "Sports" and "sports" collapse to "Sports" (first
+        // appearance wins). The test expects ['Sports', 'News'] (not
+        // ['Sports', 'sports', 'News'] — the old case-sensitive behavior).
+        assert.deepEqual(derived, ['Sports', 'News'], 'categories derived from data (case-insensitive dedup, stable order — 2026-10 round 10)');
         assert.equal(filterLiveTvChannelsByCategory(catalogue, 'SPORTS').length, 2, 'local category filter is case-insensitive');
         assert.equal(filterLiveTvChannelsByCategory(catalogue, '').length, 5, 'empty category ("") returns everything — the All semantics');
         ok('category derivation + local case-insensitive filtering (LT-2 utilities)');

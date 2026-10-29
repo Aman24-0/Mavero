@@ -30,6 +30,7 @@ export type LiveTvPlaybackErrorKind =
         | 'autoplay_blocked' // play() rejected by the browser autoplay policy
         | 'aborted' // operation cancelled (destroy / supersession / signal) — NOT an error for the UI
         | 'geo_blocked' // 2026-10 round 7: HTTP 403/451 — the CDN is geo-blocked (India-only)
+        | 'stream_offline' // 2026-10 round 10: HTTP 404/410 — the stream is offline or expired
         | 'playback_failed'; // any other/unknown playback failure
 
 /**
@@ -48,6 +49,7 @@ const SAFE_PLAYBACK_MESSAGES: Record<LiveTvPlaybackErrorKind, string> = {
         autoplay_blocked: 'Playback needs a tap to start.',
         aborted: 'Live TV playback was cancelled.',
         geo_blocked: 'This channel is geo-restricted to India and cannot be played right now.',
+        stream_offline: 'This stream is currently offline or the link has expired.',
         playback_failed: 'Live TV playback failed. Try switching channels or retrying.'
 };
 
@@ -101,5 +103,7 @@ export function shouldFallbackToEmbed(err: unknown): boolean {
         // 2026-10 round 7: geo_blocked does NOT trigger the embed fallback —
         // the embed comes from the same CDN (it'll be geo-blocked too). The
         // honest geo-restriction message is shown instead.
-        return err.kind !== 'autoplay_blocked' && err.kind !== 'aborted' && err.kind !== 'geo_blocked';
+        // 2026-10 round 10: stream_offline also does NOT trigger the fallback
+        // — the embed page would also get a 404. Show the honest message.
+        return err.kind !== 'autoplay_blocked' && err.kind !== 'aborted' && err.kind !== 'geo_blocked' && err.kind !== 'stream_offline';
 }

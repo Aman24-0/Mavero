@@ -19,7 +19,7 @@
  *   * DASH (.mpd) manifests are rewritten (BaseURL + segment URLs proxied).
  */
 
-const ALLOWED_HOST_SUFFIXES = ['hotstar.com', 'slivcdn.com', 'jio.com', 'jiocinema.com', 'premiumplugx.com'];
+const ALLOWED_HOST_SUFFIXES = ['hotstar.com', 'slivcdn.com', 'jio.com', 'jiocinema.com', 'premiumplugx.com', 'catbox.moe'];
 
 const REFERER_BY_HOST: ReadonlyArray<{ suffix: string; referer: string }> = [
         { suffix: 'slivcdn.com', referer: 'https://www.sonyliv.com/' },
@@ -75,6 +75,8 @@ function guessContentType(pathname: string): string {
         if (path.endsWith('.ts')) return 'video/mp2t';
         if (path.endsWith('.m4s') || path.endsWith('.mp4') || path.endsWith('.m4a')) return 'video/mp4';
         if (path.endsWith('.aac')) return 'audio/aac';
+        // 2026-10 round 10 — Task 3: handle redirected .mp4 URLs that may
+        // not have an extension (e.g. catbox.moe /<id>.mp4).
         return 'application/octet-stream';
 }
 
@@ -227,6 +229,16 @@ export default {
                         upstream = await fetch(target.toString(), { headers, redirect: 'follow' });
                 } catch {
                         return jsonError(502, 'UPSTREAM_UNREACHABLE', 'The media host could not be reached.');
+                }
+
+                // 2026-10 round 10 — Task 3: handle 404 (stream offline / expired link).
+                // Return a clear JSON error so the player can show a helpful message.
+                if (upstream.status === 404) {
+                        return jsonError(404, 'STREAM_NOT_FOUND', 'This stream is currently offline or the link has expired.');
+                }
+                // 2026-10 round 10 — Task 3: handle 410 Gone (expired).
+                if (upstream.status === 410) {
+                        return jsonError(410, 'STREAM_EXPIRED', 'This stream link has expired.');
                 }
 
                 const contentType = (upstream.headers.get('content-type') ?? '').toLowerCase();

@@ -22,13 +22,17 @@
     selected = false,
     disabled = false,
     onselect,
-    onshare
+    onshare,
+    showSourceName = false
   }: {
     channel: LiveTvChannel;
     selected?: boolean;
     disabled?: boolean;
     onselect: (channel: LiveTvChannel) => void;
     onshare?: (channel: LiveTvChannel) => void;
+    /** 2026-10 round 10 — Task 1: when true (All Sources mode), show the
+     *  source name below the category. */
+    showSourceName?: boolean;
   } = $props();
 
   // Logo fallback: true when there is no usable logo OR the logo fails to
@@ -77,6 +81,9 @@
       <span class="card-name">{channel.name}</span>
       {#if channel.category}
         <span class="card-category">{channel.category}</span>
+      {/if}
+      {#if showSourceName && channel.sources && channel.sources.length > 0}
+        <span class="card-source">{channel.sources[0].label}</span>
       {/if}
     </span>
   </button>
@@ -204,5 +211,15 @@
     font-weight: 600;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  /* 2026-10 round 10 — Task 1: source name (shown only in All Sources mode) */
+  .card-source {
+    overflow: hidden;
+    color: var(--color-text-dim, var(--color-text-deep));
+    font-size: .62rem;
+    font-weight: 500;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    opacity: 0.7;
   }
 </style>

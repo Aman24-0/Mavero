@@ -114,9 +114,14 @@ export type LivetvCatalogueWire = {
 };
 
 /** Hard response bound (bounded payload regardless of registry size). */
-export const MAX_CATALOGUE_CHANNELS = 2000;
+/* 2026-10 round 10 — Task 1: raised from 2000 to 10000 to handle large
+ * IPTV playlists (e.g. iptv-org India with 1539+ channels across
+ * multiple sources). The previous 2000 limit could truncate the
+ * catalogue when multiple large sources are active. */
+export const MAX_CATALOGUE_CHANNELS = 10000;
 /** Bounded mapped-entry load (the exposure candidate pool). */
-export const MAX_MAPPED_ENTRIES_LOAD = 5000;
+/* 2026-10 round 10 — raised from 5000 to 20000 for the same reason. */
+export const MAX_MAPPED_ENTRIES_LOAD = 20000;
 /** Bounded source load (the exposure source pool). */
 export const MAX_SOURCES_LOAD = 500;
 /** Re-exported bound (the switcher payload size lives with the grouping model). */

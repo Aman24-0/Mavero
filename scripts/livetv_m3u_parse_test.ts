@@ -211,18 +211,23 @@ console.log('§5 URL validation + conservative classification');
   ok(classifyM3UStreamUrl('https://cdn.example/live/stream.m3u8?token=abc').ok === true, '§5.1 .m3u8 with query classified hls (query ignored)');
   ok(classifyM3UStreamUrl('https://cdn.example/live/stream.M3U8').ok === true, '§5.2 uppercase extension classified (path lowercased)');
   ok(classifyM3UStreamUrl('https://cdn.example/live/stream.MPD').ok === true, '§5.3 uppercase .mpd classified dash');
+  // 2026-10 round 10 — Task 1: extensionless URLs are now ACCEPTED as HLS
+  // (self-correcting at load time via Shaka's Content-Type sniffing).
+  // Only .html/.php/trailing-slash URLs are still rejected.
   const page = classifyM3UStreamUrl('https://cdn.example/embed/143');
-  ok(page.ok === false && page.reason === 'unknown_stream_format', '§5.4 an embed/player page is NEVER treated as a manifest');
+  ok(page.ok === true, '§5.4 extensionless URL accepted as HLS (2026-10 round 10: self-correcting at load)');
   const html = classifyM3UStreamUrl('https://cdn.example/watch.html');
   ok(html.ok === false && html.reason === 'unknown_stream_format', '§5.5 .html never a manifest');
   const http = classifyM3UStreamUrl('http://cdn.example/live.m3u8');
   ok(http.ok === false && http.reason === 'non_https_stream_url', '§5.6 http:// rejected (https-only policy)');
   const creds = classifyM3UStreamUrl('https://user:pass@cdn.example/live.m3u8');
   ok(creds.ok === false && creds.reason === 'url_credentials_rejected', '§5.7 credentials in URL rejected');
+  // 2026-10 round 10 — query-param URLs without a path extension are now
+  // accepted as HLS (previously rejected as 'unknown_stream_format').
   const queryHint = classifyM3UStreamUrl('https://cdn.example/play?id=1&type=m3u8');
-  ok(queryHint.ok === false && queryHint.reason === 'unknown_stream_format', '§5.8 query-param format hints NOT trusted (no invented formats)');
+  ok(queryHint.ok === true, '§5.8 query-param URL accepted as HLS (2026-10 round 10)');
   const extless = classifyM3UStreamUrl('https://cdn.example/stream');
-  ok(extless.ok === false && extless.reason === 'unknown_stream_format', '§5.9 extensionless URLs skipped, not guessed');
+  ok(extless.ok === true, '§5.9 extensionless URL accepted as HLS (2026-10 round 10: self-correcting at load)');
   const long = classifyM3UStreamUrl(`https://cdn.example/${'a'.repeat(3000)}.m3u8`);
   ok(long.ok === false && long.reason === 'url_too_long', '§5.10 over-long URL rejected');
   const ftp = classifyM3UStreamUrl('ftp://cdn.example/live.m3u8');
