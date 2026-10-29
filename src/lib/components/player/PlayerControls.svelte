@@ -218,19 +218,13 @@
   </div>
 
   <!-- CENTER playback cluster — centered on the VIDEO VIEWPORT (absolute
-       center of the player shell), Play/Pause visually dominant, ±10 s
-       immediately beside it with separate hit areas. -->
+       center of the player shell), Play/Pause visually dominant.
+       2026-10 round 19 — the ±10 s seek buttons were MOVED from here to the
+       bottom secondary row (they overlapped with error messages + the play
+       button overlay on mobile). The center cluster is now Play/Pause only. -->
   <div class="center-cluster">
-    <button class="cluster-button seek" type="button" aria-label="Seek backward 10 seconds" onclick={() => onStep(-10)}>
-      <RotateCcwSquare size={30} aria-hidden="true" />
-      <span class="seek-count" aria-hidden="true">10</span>
-    </button>
     <button class="cluster-button play" type="button" aria-label={playing ? 'Pause' : 'Play'} onclick={onTogglePlay}>
       {#if playing}<Pause size={30} fill="currentColor" aria-hidden="true" />{:else}<Play size={30} fill="currentColor" aria-hidden="true" />{/if}
-    </button>
-    <button class="cluster-button seek" type="button" aria-label="Seek forward 10 seconds" onclick={() => onStep(10)}>
-      <RotateCwSquare size={30} aria-hidden="true" />
-      <span class="seek-count" aria-hidden="true">10</span>
     </button>
   </div>
 
@@ -255,6 +249,15 @@
          portrait and stops flexing in landscape. -->
     <div class="secondary-row">
       {#if !castActive}
+        <!-- 2026-10 round 19 — ±10 s seek buttons MOVED from the center cluster
+             to here (inline after Play/Pause, before Volume). Prevents overlap
+             with error messages + the play button overlay on mobile. -->
+        <button class="control-button seek-inline" type="button" aria-label="Seek backward 10 seconds" onclick={() => onStep(-10)}>
+          <RotateCcwSquare size={17} aria-hidden="true" />
+        </button>
+        <button class="control-button seek-inline" type="button" aria-label="Seek forward 10 seconds" onclick={() => onStep(10)}>
+          <RotateCwSquare size={17} aria-hidden="true" />
+        </button>
         <div class="volume-control">
           <button class="control-button" type="button" aria-label={muted ? 'Unmute' : 'Mute'} onclick={onToggleMute}>
             {#if volumeIcon === 'muted'}<VolumeX size={17} />{:else if volumeIcon === 'low'}<Volume1 size={17} />{:else}<Volume2 size={17} />{/if}
@@ -387,8 +390,8 @@
   /* Play/Pause is the central, visually dominant control (68px vs 54px). */
   .cluster-button.play { width: 68px; height: 68px; color: #000; background: var(--accent-strong); border-color: transparent; box-shadow: 0 8px 30px rgba(0,0,0,.45); }
   .cluster-button.play:hover, .cluster-button.play:focus-visible { background: var(--accent-strong); filter: brightness(1.06); }
-  .cluster-button.seek { width: 54px; height: 54px; }
-  .seek-count { position: absolute; inset: 0; display: grid; place-items: center; padding-top: 5px; font-size: .56rem; font-weight: 800; letter-spacing: .02em; pointer-events: none; }
+  /* 2026-10 round 19 — .cluster-button.seek + .seek-count removed (the ±10 s
+     seek buttons moved to the bottom secondary row as .control-button.seek-inline). */
 
   /* ---- Bottom zone ---- */
   .bottom-zone { position: absolute; z-index: 2; bottom: 0; left: 0; right: 0; display: grid; gap: 4px; padding: 10px 14px calc(12px + env(safe-area-inset-bottom)); pointer-events: auto; background: linear-gradient(0deg, rgba(0,0,0,.62), rgba(0,0,0,.28) 62%, transparent); }
@@ -415,6 +418,8 @@
   .control-button { display: inline-grid; place-items: center; min-width: 40px; min-height: 40px; border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--ink-soft); background: rgba(0,0,0,.5); cursor: pointer; transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
   .control-button:hover, .control-button:focus-visible { border-color: var(--line-strong); background: var(--accent-soft); }
   .control-button:active { transform: scale(.97); }
+  /* 2026-10 round 19 — inline ±10 s seek buttons in the secondary row. */
+  .control-button.seek-inline { color: var(--ink-soft); }
   .volume-control { display: flex; align-items: center; gap: 4px; }
   .volume-input { width: 78px; accent-color: var(--accent); }
   /* Issue 3: the former native select popups are now BUTTONS that open
@@ -466,7 +471,6 @@
     .select-control.display-mode :global(svg) { display: none; }
     .center-cluster { gap: 20px; }
     .cluster-button.play { width: 62px; height: 62px; }
-    .cluster-button.seek { width: 50px; height: 50px; }
   }
   /* Landscape phone (Player V2 remaining fixes, 2026-10): the secondary row
      is ONE RIGHT-aligned compact group — the user's approved landscape

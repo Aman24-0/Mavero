@@ -40,22 +40,21 @@ function fail(status: number, code: string, message: string): Response {
 }
 
 /**
- * Builds the Worker-proxied URL for a raw m3u8 URL. The Worker adds the
- * required Referer server-side (the browser cannot set Referer).
+ * Builds the playback URL for the API response.
  *
- *   `${workerBase}/?u=${encodeURIComponent(m3u8)}&r=${encodeURIComponent(referer)}`
- *
- * When `PUBLIC_STREAM_PROXY_URL` is unset, falls back to the in-app proxy
- * (`/api/livetv/stream-proxy`) — but note the in-app proxy also needs the
- * `cloudnestra.com` host in its allowlist (already added in round 13).
+ * 2026-10 round 19 — when the Worker is configured, wrap the manifest URL
+ * server-side (the Worker adds CORS + Referer). When it's NOT configured,
+ * return the raw vidsrc.party URL — the client-side player routes it through
+ * the in-app proxy via the isLivetvProxyUrl() check (same as Live TV).
  */
-function buildProxiedUrl(rawM3u8: string, referer: string): string {
+function buildPlaybackUrl(rawManifestUrl: string, referer: string): string {
         const workerBase = (publicEnv.PUBLIC_STREAM_PROXY_URL ?? '').replace(/\/+$/, '');
         if (workerBase) {
-                return `${workerBase}/?u=${encodeURIComponent(rawM3u8)}&r=${encodeURIComponent(referer)}`;
+                return `${workerBase}/?u=${encodeURIComponent(rawManifestUrl)}&r=${encodeURIComponent(referer)}`;
         }
-        // Fallback: the in-app SvelteKit proxy. Same ?u=&r= contract.
-        return `/api/livetv/stream-proxy?u=${encodeURIComponent(rawM3u8)}&r=${encodeURIComponent(referer)}`;
+        // No Worker — return the raw URL. The client-side player will route
+        // it through the in-app proxy via isLivetvProxyUrl().
+        return rawManifestUrl;
 }
 
 export const GET: RequestHandler = async ({ request, url, locals }) => {
@@ -112,12 +111,11 @@ export const GET: RequestHandler = async ({ request, url, locals }) => {
         // --- Scrape ---
         try {
                 const result = await scrapeVidsrc(tmdbId, type, season, episode, config);
-                // 2026-10 round 18 — vidsrc.party returns a direct HLS manifest
-                // URL (the /v/{token}/stream endpoint). Wrap it in a Worker-
-                // proxied URL (with the required Referer) so the browser can
-                // load it cross-origin.
+                // 2026-10 round 19 — build the playback URL. When the Worker
+                // is configured, wrap server-side. When not, return the raw
+                // URL (the client-side player routes it through the in-app proxy).
                 const proxiedSources: ScraperSource[] = result.sources.map((source) => ({
-                        url: buildProxiedUrl(source.url, result.referer),
+                        url: buildPlaybackUrl(source.url, result.referer),
                         quality: source.quality,
                         kind: source.kind
                 }));

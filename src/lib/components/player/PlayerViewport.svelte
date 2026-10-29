@@ -6,6 +6,13 @@
   import { urlPathIsM3u8 } from '$lib/shared/hls-detect';
   import { HlsPlaybackEngine, resolveDirectPlaybackMode, type HlsAudioTrackLike } from '$lib/client/player/hls-engine';
   import { markPlayerMilestone } from '$lib/client/player/player-timing';
+  // 2026-10 round 19 — DirectStream VOD proxy routing: when the resolver
+  // returns a raw vidsrc.party URL (no Worker configured), the client-side
+  // HLS engine can't fetch it directly (CORS — vidsrc.party sends no
+  // Access-Control-Allow-Origin header). Route it through the in-app proxy
+  // (same as Live TV does). The Worker case is already wrapped server-side.
+  import { isLivetvProxyUrl, livetvStreamProxyUrl } from '$lib/shared/livetv-proxy';
+  import { env as publicEnv } from '$env/dynamic/public';
   // Focused player fixes (Issues 1+2): custom subtitle rendering — the
   // overlay renders the SELECTED track's cues (browser keeps parsing the
   // VTT through the hidden <track>) with the user's sync/appearance prefs.
@@ -92,6 +99,27 @@
   $: effectiveSandbox = sandboxPolicy ?? (sandboxEnabled ? 'required' : 'unrestricted');
   $: sandboxAttribute = iframeSandboxAttribute(effectiveSandbox);
   $: iframeKey = `${source?.sourceId ?? 'empty'}:${source?.url ?? ''}:${effectiveSandbox}`;
+
+  // 2026-10 round 19 — DirectStream VOD proxy routing. When the resolver
+  // returns a raw vidsrc.party URL (no Worker configured), the browser
+  // can't fetch it directly (CORS — vidsrc.party sends no ACAO header).
+  // Route it through the in-app proxy (same as Live TV). Worker URLs are
+  // already wrapped server-side and pass through unchanged. This derived
+  // value is used for BOTH the <video src> binding (native HLS path) AND
+  // the wireHlsEngine() call (hls.js path).
+  $: effectiveMediaUrl = (() => {
+    if (!mediaUrl) return mediaUrl;
+    const workerBase = (publicEnv.PUBLIC_STREAM_PROXY_URL ?? '').replace(/\/+$/, '');
+    if (!workerBase && isLivetvProxyUrl(mediaUrl)) {
+      const origin = typeof location !== 'undefined' ? location.origin : '';
+      if (origin) {
+        try {
+          return new URL(livetvStreamProxyUrl(mediaUrl), origin).toString();
+        } catch { return mediaUrl; }
+      }
+    }
+    return mediaUrl;
+  })();
 
   const dispatch = createEventDispatcher<{
     loadedmetadata: void;
@@ -216,6 +244,10 @@
       teardownHlsEngine();
       return;
     }
+
+    // 2026-10 round 19 — the `url` passed in is already the effectiveMediaUrl
+    // (proxy-routed by the reactive block above). No additional routing here.
+
     let mode: 'native' | 'hls-js';
     try {
       // Phase 6: classify the SELECTED url. The source's metadata.protocol
@@ -283,7 +315,7 @@
     }
   }
 
-  $: void wireHlsEngine(mediaUrl, source, videoElement);
+  $: void wireHlsEngine(effectiveMediaUrl, source, videoElement);
 
   // Player startup instrumentation: embed iframe enters the DOM. Svelte 5
   // supports onload/on:load equivalently; the milestone fires per mount
@@ -349,7 +381,7 @@
       bind:this={videoElement}
       class:display-fill={displayMode === 'fill'}
       class:display-stretch={displayMode === 'stretch'}
-      src={hlsEngineActive ? undefined : mediaUrl}
+      src={hlsEngineActive ? undefined : effectiveMediaUrl}
       poster={poster || undefined}
       preload="metadata"
       playsinline

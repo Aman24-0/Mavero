@@ -50,13 +50,20 @@ function ok(condition: boolean, label: string) {
 // 1a. The center cluster is its own overlay zone, centered on the viewport.
 ok(/class="center-cluster"/.test(controls), '1a. a dedicated center playback cluster exists (video-viewport overlay, not a bottom-row group)');
 ok(/\.center-cluster \{ position: absolute; z-index: 1; top: 50%; left: 50%; transform: translate\(-50%, -50%\)/.test(controls), '1a. the cluster is centered on the actual video/player viewport (absolute 50%/50%)');
-// Center cluster order: skip-back BEFORE play BEFORE skip-fwd.
+// 2026-10 round 19 — the ±10 s seek buttons were MOVED from the center cluster
+// to the bottom secondary row (inline after Play/Pause, before Volume). The
+// center cluster is now Play/Pause only. The seek buttons are in the
+// secondary row as .control-button.seek-inline.
 const centerCluster = controls.slice(controls.indexOf('class="center-cluster"'), controls.indexOf('class="bottom-zone"'));
-ok(centerCluster.indexOf('Seek backward 10 seconds') < centerCluster.indexOf("aria-label={playing ? 'Pause' : 'Play'}"), '1a. −10s sits immediately LEFT of play/pause');
-ok(centerCluster.indexOf("aria-label={playing ? 'Pause' : 'Play'}") < centerCluster.indexOf('Seek forward 10 seconds'), '1a. +10s sits immediately RIGHT of play/pause');
-// 1b. Play/Pause is the visually DOMINANT control (68px vs 54px seek buttons).
+ok(centerCluster.indexOf("aria-label={playing ? 'Pause' : 'Play'}") !== -1, '1a. the center cluster contains Play/Pause');
+ok(!centerCluster.includes('Seek backward 10 seconds'), '1a. the center cluster no longer contains the −10s button (moved to secondary row, 2026-10 round 19)');
+ok(!centerCluster.includes('Seek forward 10 seconds'), '1a. the center cluster no longer contains the +10s button (moved to secondary row, 2026-10 round 19)');
+// The ±10s buttons are now in the secondary row (after the {#if !castActive} block).
+const secondaryRow = controls.slice(controls.indexOf('class="secondary-row"'), controls.indexOf('</div>') !== -1 ? controls.indexOf('class="sheet-overlay"') : controls.length);
+ok(secondaryRow.includes('Seek backward 10 seconds') && secondaryRow.includes('Seek forward 10 seconds'), '1a. the ±10 s seek buttons are in the secondary row (2026-10 round 19)');
+ok(secondaryRow.indexOf('Seek backward 10 seconds') < secondaryRow.indexOf('Seek forward 10 seconds'), '1a. −10s comes before +10s in the secondary row');
+// 1b. Play/Pause is the visually DOMINANT control (68px — the center cluster is now Play/Pause only).
 ok(/\.cluster-button\.play \{ width: 68px; height: 68px;/.test(controls), '1b. Play/Pause is the dominant central control (68px)');
-ok(/\.cluster-button\.seek \{ width: 54px; height: 54px;/.test(controls), '1b. the ±10 s controls are subordinate to Play/Pause (54px)');
 // 1c. The ±10s controls are NOT hidden on mobile (they are part of the contract).
 ok(!/\.skip \{ display: none !important; \}/.test(controls), '1c. skip controls are not display:none on compact viewports');
 // 1d. Single speed display — the duplicated `{playbackRate}×` label span is gone;
@@ -101,9 +108,10 @@ ok(!/\.quality \{ display: none/.test(controls), '1j. the quality control is not
 ok(!/max-width: 840px[^}]*\.quality/.test(controls), '1j. no compact-viewport rule hides the quality control');
 // 1k. APPROVED LAYOUT: seek icons are the recognizable rotate-square pair
 //     with the 10-second count (replaces the ambiguous chevrons).
-ok(/RotateCcwSquare size=\{30\}/.test(controls) && /RotateCwSquare size=\{30\}/.test(controls), '1k. backward/forward use RotateCcwSquare/RotateCwSquare (correctly oriented seek icons)');
+ok(/RotateCcwSquare/.test(controls) && /RotateCwSquare/.test(controls), '1k. backward/forward use RotateCcwSquare/RotateCwSquare (correctly oriented seek icons)');
 ok(!/ChevronLeft|ChevronRight/.test(controls), '1k. the ambiguous chevron seek icons are gone');
-ok(/class="seek-count" aria-hidden="true">10<\/span>/.test(controls), '1k. the 10-second indication is overlaid on the seek icons');
+// 2026-10 round 19 — the seek-count span was removed when the buttons moved
+// to the secondary row (the inline buttons use icon-only display, no overlay count).
 
 // ============================================================
 // §2 — Approved Back / Fullscreen placement (Player V2 corrections)

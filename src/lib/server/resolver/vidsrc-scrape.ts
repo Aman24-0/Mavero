@@ -74,10 +74,8 @@ function requirePositiveInt(raw: number | undefined): number {
  * resolver's bounded fallback walk, negative cache and provider cooldown
  * behave exactly as for every other provider.
  *
- * 2026-10 round 18 — the user-facing message includes the EXACT error code
- * (e.g. "DirectStream unavailable (CLOUDFLARE_BLOCKED)") so the admin can
- * see WHY the scraper failed without checking server logs. The code + status
- * are preserved for the fallback walk / cooldown.
+ * 2026-10 round 19 — each error code now has a SPECIFIC user-facing message
+ * so the user knows exactly WHY the stream failed (not just the code).
  */
 function mapScraperError(error: ScraperError): ResolverError {
   switch (error.code) {
@@ -85,18 +83,20 @@ function mapScraperError(error: ScraperError): ResolverError {
       return new ResolverError('MISSING_IDENTIFIER');
     case 'UPSTREAM_TIMEOUT':
       console.error('[vidsrc-scrape] scraper timed out.', error.message);
-      return new ResolverError('RESOLUTION_TIMEOUT');
+      return overrideMessage(new ResolverError('RESOLUTION_TIMEOUT'), 'DirectStream timed out. The video provider took too long to respond. Please try again or select another source.');
     case 'CLOUDFLARE_BLOCKED':
       console.error('[vidsrc-scrape] Cloudflare blocked the scraper. The scraper IP may be flagged.', error.message);
-      return overrideMessage(new ResolverError('RESOLUTION_UNAVAILABLE'), `DirectStream unavailable (${error.code}). Please try another source.`);
+      return overrideMessage(new ResolverError('RESOLUTION_UNAVAILABLE'), 'CDN blocked: the video provider is blocking requests. Please try another source.');
     case 'REGEX_PARSE_FAILED':
       console.error('[vidsrc-scrape] API response parsing failed (vidsrc.party contract may have changed).', error.message);
-      return overrideMessage(new ResolverError('RESOLUTION_UNAVAILABLE'), `DirectStream unavailable (${error.code}). Please try another source.`);
+      return overrideMessage(new ResolverError('RESOLUTION_UNAVAILABLE'), 'DirectStream unavailable: the video provider changed its API. Please try another source.');
     case 'NO_SOURCES':
+      console.error('[vidsrc-scrape] no sources found.', error.message);
+      return overrideMessage(new ResolverError('RESOLUTION_UNAVAILABLE'), 'Stream expired or unavailable. Please try again or select another source.');
     case 'SCRAPE_FAILED':
     default:
       console.error('[vidsrc-scrape] scrape failed.', error.code, error.message);
-      return overrideMessage(new ResolverError('RESOLUTION_UNAVAILABLE'), `DirectStream unavailable (${error.code}). Please try another source.`);
+      return overrideMessage(new ResolverError('RESOLUTION_UNAVAILABLE'), 'DirectStream unavailable. Please try another source.');
   }
 }
 
@@ -112,16 +112,37 @@ function overrideMessage(error: ResolverError, message: string): ResolverError {
 }
 
 /**
- * Builds the Worker-proxied URL for a raw m3u8 URL. The Worker adds the
- * required Referer server-side (the browser cannot set Referer).
+ * Builds the playback URL for the resolver result.
+ *
+ * 2026-10 round 19 — the resolver returns the RAW vidsrc.party manifest URL
+ * (https://vidsrc.party/v/{token}/stream) and lets the CLIENT-SIDE player
+ * route it through the proxy. This mirrors how Live TV works: the resolver
+ * returns the raw CDN URL, and the client's `wireHlsEngine` checks
+ * `isLivetvProxyUrl()` and wraps it in the proxy URL (Worker or in-app).
+ *
+ * WHY NOT wrap it server-side? The resolver core's `validatePlaybackUrl`
+ * rejects relative URLs (like `/api/livetv/stream-proxy?u=...`) for `direct`
+ * type sources — it only accepts absolute https URLs. Wrapping it server-side
+ * with the Worker URL works, but only when `PUBLIC_STREAM_PROXY_URL` is set.
+ * When it's NOT set, the in-app proxy fallback is a relative URL that the
+ * resolver core rejects with INVALID_SOURCE_URL. Returning the raw URL +
+ * routing client-side works in ALL cases.
+ *
+ * The Worker URL is still used when `PUBLIC_STREAM_PROXY_URL` is set (the
+ * resolver wraps it server-side so the client doesn't need to know about
+ * the proxy). When it's NOT set, the raw URL is returned and the client's
+ * `wireHlsEngine` routes it through the in-app proxy.
  */
-function buildProxiedUrl(rawM3u8: string, referer: string): string {
+function buildPlaybackUrl(rawManifestUrl: string, _referer: string): string {
   const workerBase = (publicEnv.PUBLIC_STREAM_PROXY_URL ?? '').replace(/\/+$/, '');
   if (workerBase) {
-    return `${workerBase}/?u=${encodeURIComponent(rawM3u8)}&r=${encodeURIComponent(referer)}`;
+    // Worker configured — wrap server-side (the Worker adds CORS + Referer).
+    return `${workerBase}/?u=${encodeURIComponent(rawManifestUrl)}&r=${encodeURIComponent(_referer)}`;
   }
-  // Fallback: the in-app SvelteKit proxy. Same ?u=&r= contract.
-  return `/api/livetv/stream-proxy?u=${encodeURIComponent(rawM3u8)}&r=${encodeURIComponent(referer)}`;
+  // No Worker — return the raw URL. The client-side wireHlsEngine will route
+  // it through the in-app proxy (/api/livetv/stream-proxy) via the
+  // isLivetvProxyUrl() check (same as Live TV does).
+  return rawManifestUrl;
 }
 
 export const vidsrcScrapeProviderAdapter: ProviderAdapter = {
@@ -186,28 +207,17 @@ export const vidsrcScrapeProviderAdapter: ProviderAdapter = {
 
     const firstSource = result.sources[0]!;
 
-    // 2026-10 round 18 — vidsrc.party returns a direct HLS manifest URL
-    // (the /v/{token}/stream endpoint). Wrap it in a Worker-proxied URL
-    // (with the required Referer) so the browser can load it cross-origin.
-    // The Worker rewrites the segment URIs (/p/{token}/{base64}) back
-    // through itself, carrying the Referer.
-    const proxiedUrl = buildProxiedUrl(firstSource.url, result.referer);
+    // 2026-10 round 19 — build the playback URL. When the Worker is
+    // configured, wrap the manifest URL server-side (the Worker adds CORS
+    // + Referer). When it's NOT configured, return the raw vidsrc.party URL
+    // — the client-side wireHlsEngine will route it through the in-app proxy
+    // via the isLivetvProxyUrl() check (same as Live TV).
+    const playbackUrl = buildPlaybackUrl(firstSource.url, result.referer);
 
-    // Validate the proxied URL. The Worker URL is https and not a private
-    // host, so this passes. For the in-app fallback (`/api/livetv/stream-proxy`),
-    // validatePlaybackUrl accepts same-origin relative URLs for embed type —
-    // but for 'direct' type it requires https. The in-app proxy fallback is
-    // a relative URL, which validatePlaybackUrl('direct') would reject. We
-    // therefore only validate when the URL is absolute (the Worker case).
-    let safeUrl: string;
-    if (proxiedUrl.startsWith('https://')) {
-      safeUrl = validatePlaybackUrl(proxiedUrl, 'direct');
-    } else {
-      // Same-origin relative URL (the in-app proxy fallback). Accept it —
-      // the browser treats it as same-origin, and the proxy endpoint has
-      // its own SSRF guard + allowlist.
-      safeUrl = proxiedUrl;
-    }
+    // Validate the playback URL. The Worker URL is https and not a private
+    // host, so this passes. The raw vidsrc.party URL is also https and passes.
+    // Both are absolute https URLs — validatePlaybackUrl('direct') accepts them.
+    const safeUrl = validatePlaybackUrl(playbackUrl, 'direct');
 
     // Direct HLS result — the existing HLS engine owns playback, quality
     // levels and audio-track discovery from the manifest. protocol: 'hls'

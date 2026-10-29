@@ -15,6 +15,7 @@ export default defineConfig({
     alias: {
       $lib: resolve(root, 'src/lib'),
       '$app/environment': resolve(dirname(fileURLToPath(import.meta.url)), 'harness/app-environment-stub.js'),
+      '$env/dynamic/public': resolve(dirname(fileURLToPath(import.meta.url)), 'harness/env-dynamic-public-stub.js'),
     },
   },
   build: {
