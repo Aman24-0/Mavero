@@ -170,6 +170,11 @@ export const RATE_LIMIT_RULES = {
   // absorbs retry bursts while keeping a leaked secret's blast radius
   // bounded. Manual admin refresh keeps its own separate rule.
   livetvSchedulerTick: { limit: 4, windowMs: 60_000 },
+  // DirectStream VOD scraper (2026-10 round 13) — public scrape endpoint.
+  // One call per source selection; each call is 3 upstream HTTP hops with
+  // a 15-min in-memory cache. 20/min per identity covers rapid source
+  // switching while bounding the upstream load (the cache absorbs repeats).
+  vodScrape: { limit: 20, windowMs: 60_000 },
 } as const satisfies Record<string, RateLimitRule>;
 
 export type RateLimitBucketName = keyof typeof RATE_LIMIT_RULES;

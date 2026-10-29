@@ -19,14 +19,20 @@
  *   * DASH (.mpd) manifests are rewritten (BaseURL + segment URLs proxied).
  */
 
-const ALLOWED_HOST_SUFFIXES = ['hotstar.com', 'slivcdn.com', 'jio.com', 'jiocinema.com', 'premiumplugx.com', 'catbox.moe'];
+// 2026-10 round 13 — DirectStream VOD scraper: added cloudnestra.com (the
+// vidsrc stream CDN) with Referer: https://cloudnestra.com/ (verified by
+// @definisi/vidsrc-scraper + CinePro reference implementations). The
+// existing manifest rewriter + &r= passthrough handles the rest — no new
+// Worker logic, just config entries.
+const ALLOWED_HOST_SUFFIXES = ['hotstar.com', 'slivcdn.com', 'jio.com', 'jiocinema.com', 'premiumplugx.com', 'catbox.moe', 'cloudnestra.com'];
 
 const REFERER_BY_HOST: ReadonlyArray<{ suffix: string; referer: string }> = [
         { suffix: 'slivcdn.com', referer: 'https://www.sonyliv.com/' },
         { suffix: 'hotstar.com', referer: 'https://www.hotstar.com/' },
         { suffix: 'jio.com', referer: 'https://www.jio.com/' },
         { suffix: 'jiocinema.com', referer: 'https://www.jiocinema.com/' },
-        { suffix: 'premiumplugx.com', referer: 'https://premiumplugx.com/' }
+        { suffix: 'premiumplugx.com', referer: 'https://premiumplugx.com/' },
+        { suffix: 'cloudnestra.com', referer: 'https://cloudnestra.com/' }
 ];
 
 const BROWSER_UA =

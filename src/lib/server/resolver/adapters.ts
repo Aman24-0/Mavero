@@ -8,6 +8,7 @@ import { vidlinkProviderAdapter } from './vidlink';
 import { createMaveroHostedAdapter, MAVERO_HOSTED_ADAPTER_ID_VIDARA, MAVERO_HOSTED_ADAPTER_ID_ABYSS } from './mavero-hosted';
 import { blueVelvetProviderAdapter, BLUEVELVET_ADAPTER_ID } from './bluevelvet';
 import { vixolityProviderAdapter, VIXOLITY_ADAPTER_ID } from './vixolity';
+import { vidsrcScrapeProviderAdapter, VIDSRC_SCRAPE_ADAPTER_ID } from './vidsrc-scrape';
 import type { Json } from '$lib/server/supabase/database.types';
 
 function resultTypeFromCapabilities(context: ResolverContext): 'direct' | 'embed' {
@@ -124,6 +125,15 @@ export function createDefaultAdapterIds(): Record<string, ProviderAdapter> {
     // dispatches here. The source is seeded DISABLED until end-to-end
     // browser playback is verified (see vixolity.ts module doc).
     [VIXOLITY_ADAPTER_ID]: vixolityProviderAdapter,
+    // DirectStream (2026-10 round 13): vidsrc scraper — extracts the real
+    // .m3u8 from vidsrc's 3-hop embed chain and returns it as a direct HLS
+    // source proxied through the Cloudflare Worker (the Worker adds the
+    // required Referer server-side — the browser cannot set Referer). The
+    // embed + CDN domains are config-driven (app_config) and editable at
+    // /admin/system/direct-stream. Seeded DISABLED + experimental — the
+    // admin enables it from the DirectStream page after verifying the
+    // scraper domains.
+    [VIDSRC_SCRAPE_ADAPTER_ID]: vidsrcScrapeProviderAdapter,
   };
 }
 

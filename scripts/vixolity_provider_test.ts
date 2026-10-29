@@ -293,7 +293,9 @@ ok(adapterIds['blue-velvet'] !== undefined, '§6 blue-velvet registration intact
 ok(adapterIds['vidsrc-embed'] !== undefined, '§6 vidsrc registration intact');
 ok(adapterIds['vidlink-embed'] !== undefined, '§6 vidlink registration intact');
 ok(adapterIds['vidara'] !== undefined && adapterIds['abyss'] !== undefined, '§6 mavero-hosted registrations intact');
-ok(Object.keys(adapterIds).length === 6, '§6 exactly the six expected adapter ids (five prior + vixolity)');
+// 2026-10 round 13: vidsrc-scrape adapter added (DirectStream scraper).
+ok(adapterIds['vidsrc-scrape'] !== undefined, '§6 vidsrc-scrape registration intact (2026-10 round 13)');
+ok(Object.keys(adapterIds).length === 7, '§6 exactly the seven expected adapter ids (five prior + vixolity + vidsrc-scrape)');
 
 const genericAdapters = createDefaultAdapters();
 ok(genericAdapters.template && genericAdapters.api && genericAdapters.direct && genericAdapters.embed && genericAdapters.custom, '§6 default integration-type adapters unchanged');

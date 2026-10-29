@@ -2053,18 +2053,27 @@ export type Database = {
           telegram_url: string | null
           discord_url: string | null
           updated_at: string
+          scraper_vidsrc_embed_domain: string | null
+          scraper_vidsrc_cdn_domains: string | null
+          scraper_enabled: boolean
         }
         Insert: {
           id?: number
           telegram_url?: string | null
           discord_url?: string | null
           updated_at?: string
+          scraper_vidsrc_embed_domain?: string | null
+          scraper_vidsrc_cdn_domains?: string | null
+          scraper_enabled?: boolean
         }
         Update: {
           id?: number
           telegram_url?: string | null
           discord_url?: string | null
           updated_at?: string
+          scraper_vidsrc_embed_domain?: string | null
+          scraper_vidsrc_cdn_domains?: string | null
+          scraper_enabled?: boolean
         }
         Relationships: []
       }
