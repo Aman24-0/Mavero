@@ -1,5 +1,5 @@
 /**
- * DirectStream — vidsrc.to scraper module (server-only, 2026-10 round 13).
+ * DirectStream — vidsrc.sh scraper module (server-only, 2026-10 round 13).
  *
  * A lightweight pure-HTTP scraper that extracts the real `.m3u8` HLS URL from
  * vidsrc's multi-hop embed chain:
@@ -40,12 +40,16 @@
  *   * Subtitles from vidsrc are UNRELIABLE — the `subtitles` array is often
  *     empty. Plan for a separate subtitle source (OpenSubtitles / VDRK).
  *   * vidsrc blocks VPN/proxy IPs — Netlify Functions run on AWS and may be
- *     blocked. Mitigation: the resolver falls back to the next source.
+ *     blocked. Mitigation: the resolver falls back to the next source, OR
+ *     the scraper routes its fetches through the Cloudflare Worker (edge IPs
+ *     that bypass Cloudflare's IP block — see fetchText below).
  */
+
+import { env as publicEnv } from '$env/dynamic/public';
 
 /** The scraper's config — sourced from `app_config` (admin-editable). */
 export type ScraperConfig = {
-        /** The vidsrc embed front domain, e.g. `https://vidsrc.to`. No trailing slash. */
+        /** The vidsrc embed front domain, e.g. `https://vidsrc.sh`. No trailing slash. */
         embedDomain: string;
         /**
          * Comma-separated CDN domains used to resolve the `{v1}`–`{v5}` placeholders
@@ -58,7 +62,7 @@ export type ScraperConfig = {
 /** Default config — used when `app_config` has no values. The admin can
  *  override these at runtime via the DirectStream admin page. */
 export const DEFAULT_SCRAPER_CONFIG: ScraperConfig = {
-        embedDomain: 'https://vidsrc.to',
+        embedDomain: 'https://vidsrc.sh',
         cdnDomains: ['cloudnestra.com']
 };
 
@@ -201,6 +205,21 @@ const PRORCP_HASH_PATTERN = /\/prorcp\/([a-zA-Z0-9=+/]+)/;
 const FILE_FIELD_PATTERN = /file:\s*["']([^"']+)["']/;
 
 /**
+ * Builds the Worker proxy URL for a given upstream URL + referer. The Worker
+ * fetches the upstream from Cloudflare's edge IPs (bypassing Cloudflare's 403
+ * on Netlify's AWS egress IPs) and sends the correct browser headers +
+ * Referer server-side.
+ *
+ * Returns null when `PUBLIC_STREAM_PROXY_URL` is unset (the caller falls back
+ * to a direct fetch).
+ */
+function buildWorkerProxyUrl(upstreamUrl: string, referer: string): string | null {
+        const workerBase = (publicEnv.PUBLIC_STREAM_PROXY_URL ?? '').replace(/\/+$/, '');
+        if (!workerBase) return null;
+        return `${workerBase}/?u=${encodeURIComponent(upstreamUrl)}&r=${encodeURIComponent(referer)}`;
+}
+
+/**
  * Fetches a URL with a FULL set of browser headers (Cloudflare blocks
  * server-side requests that lack Sec-Fetch-* headers). Throws a typed
  * `ScraperError` on failure:
@@ -212,8 +231,39 @@ const FILE_FIELD_PATTERN = /file:\s*["']([^"']+)["']/;
  * redirects to the real origin; `redirect: 'error'` broke on these). The
  * full Sec-Fetch-* header set is required — Cloudflare's bot detection
  * 403s requests missing `sec-fetch-site`/`sec-fetch-mode`/`sec-fetch-dest`.
+ *
+ * 2026-10 round 15 — WORKER FALLBACK: if `PUBLIC_STREAM_PROXY_URL` is set,
+ * route the fetch through the Cloudflare Worker. The Worker fetches the
+ * upstream from Cloudflare's edge IPs (NOT Netlify's AWS egress IPs), which
+ * bypasses Cloudflare's IP-based 403 block. The Worker also sends the
+ * correct browser headers + Referer server-side. When routing through the
+ * Worker, we fetch the Worker URL directly (no custom headers needed — the
+ * Worker sets them upstream). If the Worker returns a non-OK status, we
+ * fall back to a direct fetch as a last resort.
  */
 async function fetchText(url: string, referer: string, label: string): Promise<string> {
+        // --- Try the Worker proxy first (if configured) ---
+        const workerUrl = buildWorkerProxyUrl(url, referer);
+        if (workerUrl) {
+                try {
+                        const response = await fetch(workerUrl, {
+                                signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+                                redirect: 'follow'
+                        });
+                        if (response.ok) {
+                                return response.text();
+                        }
+                        // Worker returned a non-OK status — log and fall through
+                        // to the direct fetch. The Worker returns JSON errors for
+                        // 403/404/410/502; a 403 from the Worker means the Worker
+                        // itself was blocked (unlikely but possible).
+                        console.log(`[vidsrc-scraper] ${label} Worker proxy returned HTTP ${response.status}, falling back to direct fetch`);
+                } catch (error) {
+                        console.log(`[vidsrc-scraper] ${label} Worker proxy failed (${error instanceof Error ? error.message : 'unknown'}), falling back to direct fetch`);
+                }
+        }
+
+        // --- Direct fetch (with full browser headers) ---
         let response: Response;
         try {
                 response = await fetch(url, {

@@ -204,7 +204,7 @@ console.log('§1 pure unit tests — extraction logic');
 
 // --- DEFAULT_SCRAPER_CONFIG ---
 {
-  ok(DEFAULT_SCRAPER_CONFIG.embedDomain === 'https://vidsrc.to', '§1.32 default embed domain is vidsrc.to');
+  ok(DEFAULT_SCRAPER_CONFIG.embedDomain === 'https://vidsrc.sh', '§1.32 default embed domain is vidsrc.sh (2026-10 round 15)');
   ok(Array.isArray(DEFAULT_SCRAPER_CONFIG.cdnDomains) && DEFAULT_SCRAPER_CONFIG.cdnDomains.length > 0, '§1.33 default CDN domains array is non-empty');
   ok(DEFAULT_SCRAPER_CONFIG.cdnDomains.includes('cloudnestra.com'), '§1.34 default CDN domains include cloudnestra.com');
 }

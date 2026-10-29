@@ -58,21 +58,23 @@
     scraperEnabled = !previous;
     toggleSaving = true;
     try {
-      const formData = new FormData();
-      formData.set('enabled', String(!previous));
-      const response = await fetch('?/toggleEnabled', { method: 'POST', body: formData });
-      const result = await response.json();
-      if (!result?.notice) {
+      // 2026-10 round 15: use the dedicated JSON API (NOT the form action).
+      // The form action returned a SvelteKit envelope that the client
+      // misparsed as a failure, causing the optimistic toggle to revert
+      // even though the DB write succeeded.
+      const response = await fetch('/api/admin/direct-stream/toggle', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ enabled: !previous })
+      });
+      const result = (await response.json().catch(() => null)) as { ok?: boolean; enabled?: boolean; error?: { message?: string } } | null;
+      if (!response.ok || !result?.ok) {
         // Revert on failure.
         scraperEnabled = previous;
-        if (result?.message) {
-          alert(result.message);
-        } else {
-          alert('Could not toggle the scraper.');
-        }
+        alert(result?.error?.message ?? 'Could not toggle the scraper.');
       }
       // On success, the optimistic value is now the truth — no revert.
-      // The $effect will sync lastServerEnabled when invalidateAll fires.
+      // The $effect will sync from server data when invalidateAll fires.
     } catch {
       // Revert on network error.
       scraperEnabled = previous;

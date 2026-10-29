@@ -26,9 +26,11 @@ alter table public.app_config
 
 -- Seed the default scraper config (disabled by default — the admin enables it
 -- from the DirectStream page after verifying the domains).
+-- 2026-10 round 15: default embed domain is vidsrc.sh (vidsrc.to is
+-- blocked/deprecated; vidsrc.sh confirmed working in the browser).
 update public.app_config
   set
-    scraper_vidsrc_embed_domain = coalesce(scraper_vidsrc_embed_domain, 'https://vidsrc.to'),
+    scraper_vidsrc_embed_domain = coalesce(scraper_vidsrc_embed_domain, 'https://vidsrc.sh'),
     scraper_vidsrc_cdn_domains = coalesce(scraper_vidsrc_cdn_domains, 'cloudnestra.com'),
     scraper_enabled = coalesce(scraper_enabled, false)
   where id = 1;

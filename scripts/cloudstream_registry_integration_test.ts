@@ -325,7 +325,7 @@ function section_registry(): void {
   const unifiedSql = read(`supabase/migrations/${unifiedMigration}`);
   const unifiedSqlNoComments = unifiedSql.replace(/--[^\n]*/g, '');
   ok(
-    added.length === 24
+    added.length === 25
       && added.includes(migrationName)
       && added.includes(phase2Migration)
       && added.includes(phase3Migration)
@@ -353,8 +353,12 @@ function section_registry(): void {
       // RLS policies on app_config (the original migration only had a
       // SELECT policy, so admin writes from the user-bound SSR client
       // were silently rejected by RLS).
-      && added.includes('20261124000000_app_config_admin_write_rls.sql'),
-    `§A10: exactly the CS-5 + Phase 2 + Phase 3 + FINAL TASK + build-lifecycle + LT-5-analytics + LT-15-fallback-event + VidRift-provider + MAVP-4-icon-badge + MAVP-5-default-slots + MAVP-7-unique-assignment + BlueVelvet-provider + Vixolity/TGVID/ZXCStream-provider + VidStuck-cc-origins + Supabase-remediation + Supabase-final-audit + Livetv-source-registry + Livetv-EPG-guide-data + Livetv-refresh-history + App-config-social-links + App-config-admin-write-rls migrations were added (${added.join(', ') || 'none'})`,
+      && added.includes('20261124000000_app_config_admin_write_rls.sql')
+      // 2026-10 round 13: DirectStream VOD scraper migration (app_config
+      // scraper columns + streaming_providers/sources rows for the
+      // vidsrc-scrape adapter).
+      && added.includes('20261029000000_direct_stream_scraper.sql'),
+    `§A10: exactly the CS-5 + Phase 2 + Phase 3 + FINAL TASK + build-lifecycle + LT-5-analytics + LT-15-fallback-event + VidRift-provider + MAVP-4-icon-badge + MAVP-5-default-slots + MAVP-7-unique-assignment + BlueVelvet-provider + Vixolity/TGVID/ZXCStream-provider + VidStuck-cc-origins + Supabase-remediation + Supabase-final-audit + Livetv-source-registry + Livetv-EPG-guide-data + Livetv-refresh-history + App-config-social-links + App-config-admin-write-rls + DirectStream-scraper migrations were added (${added.join(', ') || 'none'})`,
   );
   // VIDRIFT (sanctioned): insert-only registration — no destructive verbs,
   // no download_providers / registry-table references.

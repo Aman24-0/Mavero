@@ -27,7 +27,12 @@
 // 2026-10 round 14 — added stellarconductornexus.com (another vidsrc stream
 // CDN observed in production). Same Referer as cloudnestra (the prorcp
 // page's origin is cloudnestra.com; the CDN domains rotate).
-const ALLOWED_HOST_SUFFIXES = ['hotstar.com', 'slivcdn.com', 'jio.com', 'jiocinema.com', 'premiumplugx.com', 'catbox.moe', 'cloudnestra.com', 'stellarconductornexus.com'];
+// 2026-10 round 15 — added vidsrc.sh (the embed front domain). The scraper
+// routes its embed/rcp/prorcp fetches through the Worker to bypass
+// Cloudflare's 403 on Netlify's AWS egress IPs. The Worker's edge IPs are
+// not on Cloudflare's blocklist. vidsrc.sh uses no special Referer (the
+// scraper sets the embed origin as the Referer per hop).
+const ALLOWED_HOST_SUFFIXES = ['hotstar.com', 'slivcdn.com', 'jio.com', 'jiocinema.com', 'premiumplugx.com', 'catbox.moe', 'cloudnestra.com', 'stellarconductornexus.com', 'vidsrc.sh', 'vidsrc.to', 'vidsrc.net', 'vidsrc.xyz', 'vidsrc.in', 'vsembed.ru'];
 
 const REFERER_BY_HOST: ReadonlyArray<{ suffix: string; referer: string }> = [
         { suffix: 'slivcdn.com', referer: 'https://www.sonyliv.com/' },
@@ -203,16 +208,40 @@ export default {
                 const referer = requiredReferer ?? `${target.origin}/`;
                 const origin = requiredReferer ? requiredReferer.replace(/\/$/, '') : target.origin;
 
-                const headers: Record<string, string> = {
-                        referer,
-                        origin,
-                        'user-agent': BROWSER_UA,
-                        accept: '*/*',
-                        'accept-language': 'en-US,en;q=0.9',
-                        'sec-fetch-dest': 'video',
-                        'sec-fetch-mode': 'cors',
-                        'sec-fetch-site': 'cross-site'
-                };
+                // 2026-10 round 15 — DirectStream scraper fallback: the scraper
+                // routes its embed/rcp/prorcp HTML page fetches through this
+                // Worker to bypass Cloudflare's 403 on Netlify's AWS egress IPs.
+                // For HTML pages, send document-navigation headers (sec-fetch-dest:
+                // document, sec-fetch-mode: navigate) — Cloudflare's bot detection
+                // 403s requests with sec-fetch-dest: video to an HTML page.
+                const pathLower = target.pathname.toLowerCase();
+                const isMediaPath = pathLower.endsWith('.m3u8') || pathLower.endsWith('.m3u') || pathLower.endsWith('.mpd')
+                        || pathLower.endsWith('.ts') || pathLower.endsWith('.m4s') || pathLower.endsWith('.mp4')
+                        || pathLower.endsWith('.m4a') || pathLower.endsWith('.aac');
+                const headers: Record<string, string> = isMediaPath
+                        ? {
+                                referer,
+                                origin,
+                                'user-agent': BROWSER_UA,
+                                accept: '*/*',
+                                'accept-language': 'en-US,en;q=0.9',
+                                'sec-fetch-dest': 'video',
+                                'sec-fetch-mode': 'cors',
+                                'sec-fetch-site': 'cross-site'
+                        }
+                        : {
+                                referer,
+                                origin,
+                                'user-agent': BROWSER_UA,
+                                accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+                                'accept-language': 'en-US,en;q=0.9',
+                                'accept-encoding': 'gzip, deflate, br',
+                                'sec-fetch-dest': 'document',
+                                'sec-fetch-mode': 'navigate',
+                                'sec-fetch-site': 'same-origin',
+                                'sec-fetch-user': '?1',
+                                'upgrade-insecure-requests': '1'
+                        };
 
                 // HEAD probe — players check Content-Type before fetching. Always answer
                 // 200 with the upstream (or a best-guess) type and an empty body.

@@ -87,25 +87,4 @@ export const actions: Actions = {
     }
     return { notice: 'Scraper config saved.' };
   },
-
-  toggleEnabled: async ({ request, locals }) => {
-    await requireAdmin(locals, { redirectTo: '/admin/system/direct-stream' });
-    const form = await request.formData();
-    const enabled = form.get('enabled') === 'true';
-    const { error } = await locals.supabase
-      .from('app_config')
-      .upsert({
-        id: 1,
-        scraper_enabled: enabled,
-        updated_at: new Date().toISOString(),
-      });
-    if (error) {
-      console.error('[direct-stream] toggleEnabled upsert failed', {
-        code: error.code,
-        message: error.message,
-      });
-      return fail(500, { message: 'Could not toggle the scraper.' });
-    }
-    return { notice: enabled ? 'DirectStream scraper enabled.' : 'DirectStream scraper disabled.' };
-  },
 };
