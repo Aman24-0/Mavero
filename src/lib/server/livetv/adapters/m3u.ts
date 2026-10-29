@@ -104,12 +104,15 @@ export type M3UParseResult = {
 class M3UDiagnostics {
         discoveredCount = 0;
         skippedCount = 0;
-        private readonly reasons = new Map<string, number>();
+        private readonly _reasons = new Map<string, number>();
         readonly entryErrors: LivetvEntryError[] = [];
+
+        /** Public read-only access to the skip reasons map (for logging). */
+        get reasons(): ReadonlyMap<string, number> { return this._reasons; }
 
         noteSkip(reason: LivetvEntryErrorReason): void {
                 this.skippedCount += 1;
-                this.reasons.set(reason, (this.reasons.get(reason) ?? 0) + 1);
+                this._reasons.set(reason, (this._reasons.get(reason) ?? 0) + 1);
         }
 
         noteError(entryIndex: number, sourceChannelId: string | null, reason: LivetvEntryErrorReason): void {
@@ -439,18 +442,20 @@ export function parseM3UPlaylist(text: string, options: M3UParseOptions = {}): M
                 }
                 const { url: safeUrl, streamFormat } = classification.value;
 
-                // Identity: validated tvg-id, else the deterministic URL hash.
-                // Display names NEVER determine identity. The id validator
-                // (not a truncating text normalizer) guards identity — an
-                // over-long/hostile tvg-id degrades to the URL hash instead of
-                // being silently truncated into a DIFFERENT stable id.
+                // 2026-10 round 11 — Task 1: Identity MUST be unique per
+                // stream URL, NOT per tvg-id. IPTV playlists (e.g. iptv-org)
+                // frequently have multiple #EXTINF lines for the SAME channel
+                // (same tvg-id) with DIFFERENT stream URLs (different
+                // providers/qualities). Previously, entries with the same
+                // tvg-id were MERGED into one channel with multiple endpoints,
+                // causing massive data loss (1539 entries → ~773 channels).
+                // Now: the identity is ALWAYS the deterministic URL hash
+                // (m3uIdentityForUrl), so every #EXTINF line creates a
+                // separate channel entry. The tvg-id is still stored as
+                // metadata for EPG mapping — it just doesn't determine
+                // identity.
                 const tvgId = normalizeSourceChannelId(entry.tvgIdRaw);
-                let identity = tvgId ?? m3uIdentityForUrl(safeUrl);
-                if (!normalizeSourceChannelId(identity)) {
-                        // Defensive: an exotic tvg-id that slips the first gate
-                        // still cannot become the identity.
-                        identity = m3uIdentityForUrl(safeUrl);
-                }
+                const identity = m3uIdentityForUrl(safeUrl);
 
                 // Display name: the EXTINF title; fallback to tvg-name (both
                 // are provider-provided channel metadata). The SHARED validator
@@ -617,6 +622,12 @@ export function parseM3UPlaylist(text: string, options: M3UParseOptions = {}): M
                 }
         }
         finishPendingWithoutUrl();
+
+        // 2026-10 round 11 — Task 1: diagnostic log so the admin can verify
+        // that every EXTINF line was parsed. If discoveredCount is much less
+        // than the total EXTINF lines, entries are being skipped (check the
+        // skippedReasons in the diagnostics).
+        console.log(`[m3u parser] Parsed: ${channels.length} channels, ${diagnostics.skippedCount} skipped, reasons:`, diagnostics.reasons);
 
         return { channels, diagnostics: diagnostics.toDiagnostics() };
 }

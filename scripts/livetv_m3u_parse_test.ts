@@ -57,7 +57,10 @@ console.log('§1 valid parsing');
   const result = parseM3UPlaylist(playlist);
   ok(result.channels.length === 2, '§1.1 both entries normalized');
   const news = result.channels[0]!;
-  ok(news.sourceChannelId === 'news.one' && news.tvgId === 'news.one', '§1.2 tvg-id preserved as identity');
+  // 2026-10 round 11 — Task 1: sourceChannelId is now the URL hash (NOT
+  // the tvg-id) so every stream URL gets a unique identity. The tvg-id
+  // is still stored as metadata (news.tvgId) for EPG mapping.
+  ok(news.sourceChannelId === m3uIdentityForUrl('https://cdn.example/live/news.m3u8') && news.tvgId === 'news.one', '§1.2 sourceChannelId is the URL hash (unique per stream); tvg-id preserved as metadata (2026-10 round 11)');
   ok(news.name === 'News One', '§1.3 display name is the EXTINF title (not tvg-name)');
   ok(news.logoUrl === 'https://cdn.example/news.png', '§1.4 tvg-logo preserved');
   ok(news.category === 'News', '§1.5 group-title preserved as category');
@@ -100,7 +103,9 @@ console.log('§2 attribute robustness');
     'https://cdn.example/o.m3u8'
   ].join('\n');
   const result = parseM3UPlaylist(playlist);
-  const grouped = result.channels.find((c) => c.sourceChannelId === 'g.one')!;
+  // 2026-10 round 11: sourceChannelId is now the URL hash (not tvg-id).
+  // Find by tvgId instead.
+  const grouped = result.channels.find((c) => c.tvgId === 'g.one')!;
   ok(grouped.category === 'fallback group', '§2.9 #EXTGRP provides the category when no group-title exists');
   const explicit = result.channels.find((c) => c.name === 'Explicit')!;
   ok(explicit.category === 'Override', '§2.10 explicit group-title wins over #EXTGRP for the next entry');
@@ -109,7 +114,8 @@ console.log('§2 attribute robustness');
   // CRLF + BOM + leading blank lines + trailing whitespace lines.
   const playlist = '\uFEFF#EXTM3U\r\n\r\n#EXTINF:-1 tvg-id="crlf.one",CRLF Chan\r\nhttps://cdn.example/crlf.m3u8\r\n\r\n   \r\n';
   const result = parseM3UPlaylist(playlist);
-  ok(result.channels.length === 1 && result.channels[0]!.sourceChannelId === 'crlf.one', '§2.11 BOM + CRLF + blank lines tolerated');
+  // 2026-10 round 11: sourceChannelId is now the URL hash. Check tvgId instead.
+  ok(result.channels.length === 1 && result.channels[0]!.tvgId === 'crlf.one', '§2.11 BOM + CRLF + blank lines tolerated');
 }
 
 // ============================================================
@@ -240,7 +246,10 @@ console.log('§5 URL validation + conservative classification');
 console.log('§6 identity + dedup semantics');
 // ============================================================
 {
-  // Same tvg-id, two URLs → ONE entry with TWO endpoints (ordered).
+  // 2026-10 round 11 — Task 1: Same tvg-id, two URLs → TWO entries
+  // (NOT one entry with two endpoints). Every stream URL gets a unique
+  // identity (the URL hash) so no channels are lost. The exact
+  // duplicate URL (dual-a appearing twice) is still deduped.
   const playlist = [
     '#EXTM3U',
     '#EXTINF:-1 tvg-id="dual.one" tvg-logo="https://cdn.example/one.png",Dual One',
@@ -251,14 +260,13 @@ console.log('§6 identity + dedup semantics');
     'https://cdn.example/dual-a.m3u8'
   ].join('\n');
   const result = parseM3UPlaylist(playlist);
-  ok(result.channels.length === 1, '§6.1 same tvg-id stays ONE source entry');
-  const dual = result.channels[0]!;
-  ok(dual.endpoints.length === 2, '§6.2 distinct URLs become additional typed endpoints');
-  ok(dual.endpoints[0]!.url === 'https://cdn.example/dual-a.m3u8' && dual.endpoints[1]!.url === 'https://cdn.example/dual-b.m3u8', '§6.3 endpoint order deterministic (appearance order)');
-  ok(dual.endpoints[1]!.ordering === 1, '§6.4 endpoint ordering index assigned');
-  ok(dual.name === 'Dual One', '§6.5 first name wins (no rename churn)');
-  ok(result.diagnostics.skippedCount === 1 && result.diagnostics.skippedReasons['duplicate_channel_id'] === 1, '§6.6 exact duplicate URL skipped with a reason');
-  ok(dual.logoUrl === 'https://cdn.example/one.png', '§6.7 provenance from the first occurrence preserved');
+  // Two unique URLs → two entries (the third is an exact duplicate of the first).
+  ok(result.channels.length === 2, '§6.1 same tvg-id with different URLs creates TWO entries (2026-10 round 11: unique per URL)');
+  const dualA = result.channels[0]!;
+  const dualB = result.channels[1]!;
+  ok(dualA.endpoints.length === 1 && dualB.endpoints.length === 1, '§6.2 each entry has exactly one endpoint (no merging)');
+  ok(dualA.name === 'Dual One' && dualB.name === 'Dual One (backup)', '§6.3 each entry keeps its own display name');
+  ok(result.diagnostics.skippedCount === 1 && result.diagnostics.skippedReasons['duplicate_channel_id'] === 1, '§6.4 exact duplicate URL (same hash) still skipped');
 }
 {
   // Identical display names, different tvg-ids → separate entries (name NEVER identity).
@@ -345,7 +353,8 @@ console.log('§8 R-0 — adapter run: the playlist URL is body-validated, not ex
     fetcher: async () => new Response('#EXTM3U\n#EXTINF:-1 tvg-id="a.one" tvg-name="Alpha" tvg-logo="https://cdn.example/a.png" group-title="News",Alpha One\nhttps://cdn.example/live/a.m3u8?token=x', { status: 200, headers: { 'content-type': 'application/vnd.apple.mpegurl' } }),
     dnsResolver: PUBLIC_DNS
   });
-  ok(phpOk.channels.length === 1 && phpOk.channels[0]!.sourceChannelId === 'a.one', '§8.1 a query-string (PHP) playlist URL fetches and parses end-to-end via the adapter');
+  // 2026-10 round 11: sourceChannelId is now the URL hash. Check tvgId instead.
+  ok(phpOk.channels.length === 1 && phpOk.channels[0]!.tvgId === 'a.one', '§8.1 a query-string (PHP) playlist URL fetches and parses end-to-end via the adapter');
   ok(phpOk.channels[0]!.name === 'Alpha One' && phpOk.channels[0]!.category === 'News' && phpOk.channels[0]!.logoUrl === 'https://cdn.example/a.png', '§8.2 EXTINF metadata (name/group-title/tvg-logo) is preserved through the run');
   ok(phpOk.channels[0]!.endpoints[0]!.streamFormat === 'hls' && phpOk.channels[0]!.endpoints[0]!.url === 'https://cdn.example/live/a.m3u8?token=x', '§8.3 the entry\u2019s own stream URL is independently classified (query string kept, format from the path)');
 
@@ -388,7 +397,8 @@ console.log('§8 R-0 — adapter run: the playlist URL is body-validated, not ex
     ].join('\n'), { status: 200, headers: { 'content-type': 'application/vnd.apple.mpegurl' } }),
     dnsResolver: PUBLIC_DNS
   });
-  ok(mixed.channels.length === 2 && mixed.channels[0]!.sourceChannelId === 'good.one' && mixed.channels[1]!.sourceChannelId === 'good.two', '§8.6 malformed entries never crash an otherwise valid playlist (per-entry isolation)');
+  // 2026-10 round 11: sourceChannelId is now the URL hash. Check tvgId instead.
+  ok(mixed.channels.length === 2 && mixed.channels[0]!.tvgId === 'good.one' && mixed.channels[1]!.tvgId === 'good.two', '§8.6 malformed entries never crash an otherwise valid playlist (per-entry isolation)');
   ok(mixed.diagnostics.skippedCount === 2 && JSON.stringify(mixed.diagnostics.skippedReasons) === JSON.stringify({ unknown_stream_format: 1, missing_stream_url: 1 }), '§8.7 skipped entries carry bounded, static reasons (no URLs in diagnostics)');
   ok(mixed.diagnostics.entryErrors.every((entryError) => !entryError.reason.includes('http')), '§8.8 per-entry diagnostics carry static reasons only (never signed material or URLs)');
 }
@@ -454,9 +464,10 @@ console.log('§9 R-2 — relative stream URLs are resolved against the playlist 
   ].join('\n');
   const result = parseM3UPlaylist(playlistBody, { playlistBaseUrl: 'https://provider.example/htt/hot.php?playlist=1' });
   ok(result.channels.length === 3, '§9.11 a PHP-style playlist of relative URLs ingests 3/4 entries (the .html one is rejected)');
-  ok(result.channels[0]!.sourceChannelId === 'rel.1' && result.channels[0]!.endpoints[0]!.url === 'https://provider.example/htt/stream/one.m3u8?token=abc', '§9.12 first entry resolved against the base path');
-  ok(result.channels[1]!.sourceChannelId === 'rel.2' && result.channels[1]!.endpoints[0]!.url === 'https://provider.example/live/two.m3u8', '§9.13 root-relative entry resolved against the base origin');
-  ok(result.channels[2]!.sourceChannelId === 'rel.3' && result.channels[2]!.endpoints[0]!.streamFormat === 'dash', '§9.14 ./-relative .mpd resolved and classified dash');
+  // 2026-10 round 11: sourceChannelId is now the URL hash. Check tvgId instead.
+  ok(result.channels[0]!.tvgId === 'rel.1' && result.channels[0]!.endpoints[0]!.url === 'https://provider.example/htt/stream/one.m3u8?token=abc', '§9.12 first entry resolved against the base path');
+  ok(result.channels[1]!.tvgId === 'rel.2' && result.channels[1]!.endpoints[0]!.url === 'https://provider.example/live/two.m3u8', '§9.13 root-relative entry resolved against the base origin');
+  ok(result.channels[2]!.tvgId === 'rel.3' && result.channels[2]!.endpoints[0]!.streamFormat === 'dash', '§9.14 ./-relative .mpd resolved and classified dash');
   ok(result.diagnostics.skippedCount === 1 && result.diagnostics.skippedReasons['unknown_stream_format'] === 1, '§9.15 the .html entry skipped with the static unknown_stream_format reason');
 
   // 9.11 — same playlist with NO base: 0 entries (the pre-R-2 regression).
@@ -493,8 +504,9 @@ console.log('§10 R-2 — adapter run: relative stream URLs resolve via the fetc
     dnsResolver: PUBLIC_DNS
   });
   ok(run.channels.length === 2, '§10.1 a PHP-endpoint playlist of relative URLs ingests both entries through the adapter run');
-  ok(run.channels[0]!.sourceChannelId === 'hot.1' && run.channels[0]!.endpoints[0]!.url === 'https://provider.example/htt/stream/hot.m3u8?sig=abc', '§10.2 the first relative URL resolved against the fetched playlist URL');
-  ok(run.channels[1]!.sourceChannelId === 'hot.2' && run.channels[1]!.endpoints[0]!.url === 'https://provider.example/live/hot2.m3u8', '§10.3 a root-relative URL resolved against the origin');
+  // 2026-10 round 11: sourceChannelId is now the URL hash. Check tvgId instead.
+  ok(run.channels[0]!.tvgId === 'hot.1' && run.channels[0]!.endpoints[0]!.url === 'https://provider.example/htt/stream/hot.m3u8?sig=abc', '§10.2 the first relative URL resolved against the fetched playlist URL');
+  ok(run.channels[1]!.tvgId === 'hot.2' && run.channels[1]!.endpoints[0]!.url === 'https://provider.example/live/hot2.m3u8', '§10.3 a root-relative URL resolved against the origin');
   ok(run.channels[0]!.endpoints[0]!.streamFormat === 'hls', '§10.4 the resolved URL is classified hls by its path extension');
 
   // 10.2 — diagnostics remain safe (no resolved URL or query string surfaces).

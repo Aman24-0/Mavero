@@ -211,6 +211,13 @@ export function buildLivetvCatalogueGroups(input: LivetvCatalogueGroupsInput): L
                 }
 
                 // Identity 2 — unmapped: exact normalized display-name equality.
+                // 2026-10 round 11: the parser now creates unique sourceChannelId
+                // per stream URL (instead of per tvg-id), so entries with the same
+                // name but different URLs are SEPARATE entries in the DB. The
+                // catalogue grouping still groups by display name ACROSS sources
+                // (for the source-switching UX), but within a single source each
+                // entry has a unique source_channel_id so no merging happens
+                // at the parser level.
                 const normalizedName = normalizeLivetvGroupName(entry.name);
                 if (normalizedName === null) continue; // unusable display metadata — dropped, never coerced
                 const member: Member = { ...entry, sourcePriority: source.priority, sourceSlug: source.slug, sourceName: source.name };
