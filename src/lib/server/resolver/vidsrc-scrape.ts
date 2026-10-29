@@ -74,10 +74,10 @@ function requirePositiveInt(raw: number | undefined): number {
  * resolver's bounded fallback walk, negative cache and provider cooldown
  * behave exactly as for every other provider.
  *
- * 2026-10 round 16 — the user-facing message now includes the EXACT error
- * code (e.g. "DirectStream unavailable (CLOUDFLARE_BLOCKED)") so the admin
- * can see WHY the scraper failed without checking server logs. The code +
- * status are preserved for the fallback walk / cooldown.
+ * 2026-10 round 18 — the user-facing message includes the EXACT error code
+ * (e.g. "DirectStream unavailable (CLOUDFLARE_BLOCKED)") so the admin can
+ * see WHY the scraper failed without checking server logs. The code + status
+ * are preserved for the fallback walk / cooldown.
  */
 function mapScraperError(error: ScraperError): ResolverError {
   switch (error.code) {
@@ -90,10 +90,7 @@ function mapScraperError(error: ScraperError): ResolverError {
       console.error('[vidsrc-scrape] Cloudflare blocked the scraper. The scraper IP may be flagged.', error.message);
       return overrideMessage(new ResolverError('RESOLUTION_UNAVAILABLE'), `DirectStream unavailable (${error.code}). Please try another source.`);
     case 'REGEX_PARSE_FAILED':
-      console.error('[vidsrc-scrape] Regex parsing failed (vidsrc markup may have changed).', error.message);
-      return overrideMessage(new ResolverError('RESOLUTION_UNAVAILABLE'), `DirectStream unavailable (${error.code}). Please try another source.`);
-    case 'FALLBACK_FAILED':
-      console.error('[vidsrc-scrape] Both vidsrc and 2embed fallback failed.', error.message);
+      console.error('[vidsrc-scrape] API response parsing failed (vidsrc.party contract may have changed).', error.message);
       return overrideMessage(new ResolverError('RESOLUTION_UNAVAILABLE'), `DirectStream unavailable (${error.code}). Please try another source.`);
     case 'NO_SOURCES':
     case 'SCRAPE_FAILED':
@@ -189,35 +186,11 @@ export const vidsrcScrapeProviderAdapter: ProviderAdapter = {
 
     const firstSource = result.sources[0]!;
 
-    // 2026-10 round 16 — 2embed fallback returns an `embed` iframe URL (not
-    // a direct m3u8). When the source kind is 'embed', return an embed
-    // result — the player renders it in an iframe (no HLS engine, no Worker
-    // proxy needed). When the kind is 'direct' (vidsrc primary), wrap the
-    // m3u8 in a Worker-proxied URL and return a direct HLS result.
-    if (firstSource.kind === 'embed') {
-      // Validate the embed URL. The 2embed iframe URL is https and on an
-      // allowlisted origin — validatePlaybackUrl('embed') checks the origin
-      // allowlist. Since the scraper resolved it from 2embed's page, we
-      // trust the origin here (the resolver core re-validates with the
-      // provider's allowed_embed_origins).
-      let safeEmbedUrl: string;
-      if (firstSource.url.startsWith('https://')) {
-        safeEmbedUrl = validatePlaybackUrl(firstSource.url, 'embed', [], true);
-      } else {
-        safeEmbedUrl = firstSource.url;
-      }
-      return {
-        type: 'embed',
-        url: safeEmbedUrl,
-        metadata: {
-          providerName: context.config.provider.name,
-          sourceName: context.config.source.name,
-        },
-      };
-    }
-
-    // --- Direct HLS (vidsrc primary) ---
-    // Wrap the raw m3u8 in a Worker-proxied URL (with the required Referer).
+    // 2026-10 round 18 — vidsrc.party returns a direct HLS manifest URL
+    // (the /v/{token}/stream endpoint). Wrap it in a Worker-proxied URL
+    // (with the required Referer) so the browser can load it cross-origin.
+    // The Worker rewrites the segment URIs (/p/{token}/{base64}) back
+    // through itself, carrying the Referer.
     const proxiedUrl = buildProxiedUrl(firstSource.url, result.referer);
 
     // Validate the proxied URL. The Worker URL is https and not a private

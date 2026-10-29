@@ -1,60 +1,78 @@
 /**
- * DirectStream — vidsrc.sh scraper module (server-only, 2026-10 round 13).
+ * DirectStream — vidsrc.party scraper module (server-only, 2026-10 round 18).
  *
- * A lightweight pure-HTTP scraper that extracts the real `.m3u8` HLS URL from
- * vidsrc's multi-hop embed chain:
+ * A lightweight pure-HTTP scraper that calls the vidsrc.party JSON API and
+ * extracts the HLS manifest URL. NO headless browser, NO iframe scraping,
+ * NO 2embed fallback — just one API call + JSON parsing.
  *
- *   1. Embed page   →  `https://{embedDomain}/embed/{movie|tv}/{tmdbId}[/s/e]`
- *      contains an `<iframe src="https://{cdnDomain}/rcp/{id}">`.
- *   2. RCP page     →  `https://{cdnDomain}/rcp/{id}`
- *      contains inline JS pointing to `/prorcp/{hash}` (a base64-ish hash).
- *   3. prorcp page  →  `https://{cdnDomain}/prorcp/{hash}`
- *      contains a `file: "…"` JS field whose value is the m3u8 URL, possibly
- *      with `{v1}`–`{v5}` placeholders that must be resolved to the real CDN
- *      domains, and possibly multiple `or`-separated fallback URLs.
+ * THE FLOW (reverse-engineered 2026-10-29):
  *
- * CONFIG-DRIVEN: the embed domain and CDN domain(s) are read from the supplied
- * `ScraperConfig` (sourced from `app_config` by the API endpoint / resolver
- * adapter), so a domain rotation does NOT require a code change or redeploy —
- * the admin updates the values in the DirectStream admin page.
+ *   1. Movie:  GET https://vidsrc.party/api/play/movie/{tmdbId}?async=1&wait=1
+ *      TV:     GET https://vidsrc.party/api/play/tv/{tmdbId}/{season}/{episode}?async=1&wait=1
+ *
+ *   2. The API returns JSON:
+ *      {
+ *        "jobId": "...",
+ *        "status": "ready",
+ *        "result": {
+ *          "token": "vHXeflQOcytlEqRd",
+ *          "file": {
+ *            "stream": "/v/{token}/stream",          ← the HLS manifest path
+ *            "playback": "hls",
+ *            "mime": "application/vnd.apple.mpegurl"
+ *          }
+ *        }
+ *      }
+ *
+ *   3. The full manifest URL is `https://vidsrc.party/v/{token}/stream`.
+ *      This IS a valid HLS media playlist (content-type: application/vnd.apple.mpegurl).
+ *      Each segment URI inside the manifest is `/p/{token}/{base64}` where the
+ *      base64 decodes to the real CDN URL (e.g. https://cno.to/hls/.../seg-00001.m4s).
+ *      vidsrc.party proxies all segments through `/p/{token}/{base64}` — the
+ *      browser's HLS engine loads the manifest + segments from vidsrc.party
+ *      directly (vidsrc.party handles the CDN Referer server-side).
+ *
+ *   4. The scraper returns `https://vidsrc.party/v/{token}/stream` as the
+ *      direct HLS URL. The Cloudflare Worker proxy wraps it (with the required
+ *      Referer) so the browser can load it cross-origin.
+ *
+ * CONFIG-DRIVEN: the API domain is read from `ScraperConfig.embedDomain`
+ * (default `https://vidsrc.party`). The admin can update it at runtime via
+ * the DirectStream admin page — no code change or redeploy needed when
+ * vidsrc.party rotates its domain.
  *
  * CACHE: a bounded in-memory `Map` keyed by `tmdbId:type:season:episode` with
- * a 15-minute TTL. The scrape result (m3u8 + referer) is stable for minutes,
- * so repeat requests for the same title are instant and the upstream is not
- * hammered (rate-limit protection).
+ * a 15-minute TTL. The scrape result (manifest URL) is stable for minutes,
+ * so repeat requests for the same title are instant.
  *
  * SECURITY:
- *   * `fetch` with `redirect: 'error'` (no redirect following — the embed
- *     domain is admin-configured and must be the real origin).
- *   * All fetched URLs are HTTPS-validated via `new URL()`.
- *   * The CDN Referer is set on the upstream fetch (server-side — the browser
- *     cannot set Referer, which is why playback goes through the Cloudflare
- *     Worker proxy).
- *   * No `eval`, no `vm`, no headless browser — pure regex over the HTML/JS.
+ *   * `fetch` with a 6s AbortController timeout (no Netlify function hang).
+ *   * The API URL is HTTPS-validated.
+ *   * Full browser headers (Sec-Fetch-*) — Cloudflare's bot detection 403s
+ *     requests missing them.
+ *   * No `eval`, no `vm`, no headless browser — pure fetch + JSON.parse.
  *   * The scraper NEVER logs playback URLs or tokens.
  *
  * LIMITATIONS (honest):
- *   * Scraper reliability is LOW/MEDIUM — vidsrc rotates domains frequently.
- *     When the embed/CDN domain changes, the admin updates the config and the
- *     next scrape works. The scraper will break periodically; budget for it.
- *   * Subtitles from vidsrc are UNRELIABLE — the `subtitles` array is often
- *     empty. Plan for a separate subtitle source (OpenSubtitles / VDRK).
- *   * vidsrc blocks VPN/proxy IPs — Netlify Functions run on AWS and may be
- *     blocked. Mitigation: the resolver falls back to the next source, OR
- *     the scraper routes its fetches through the Cloudflare Worker (edge IPs
- *     that bypass Cloudflare's IP block — see fetchText below).
+ *   * Scraper reliability depends on vidsrc.party's API staying stable. If
+ *     the API contract changes (field names, URL shape), the scraper breaks —
+ *     the admin updates the domain in the config and the next scrape works.
+ *   * vidsrc.party uses Cloudflare; if the scraper IP is flagged, the API
+ *     returns 403. The scraper routes through the Cloudflare Worker when
+ *     PUBLIC_STREAM_PROXY_URL is set (edge IPs bypass the block).
  */
 
 import { env as publicEnv } from '$env/dynamic/public';
 
 /** The scraper's config — sourced from `app_config` (admin-editable). */
 export type ScraperConfig = {
-        /** The vidsrc embed front domain, e.g. `https://vidsrc.sh`. No trailing slash. */
+        /** The vidsrc.party API domain, e.g. `https://vidsrc.party`. No trailing slash. */
         embedDomain: string;
         /**
-         * Comma-separated CDN domains used to resolve the `{v1}`–`{v5}` placeholders
-         * in the prorcp `file:` field. The FIRST domain is `{v1}`, the second is
-         * `{v2}`, etc. e.g. `cloudnestra.com,neonhorizonworkshops.com`.
+         * CDN domains for the Worker allowlist (the segments inside the manifest
+         * point at rotating CDNs like cno.to, cookiebakers23blog.xyz, etc.).
+         * Kept for config compatibility — the manifest itself is served from
+         * vidsrc.party, so this is informational only.
          */
         cdnDomains: string[];
 };
@@ -62,18 +80,18 @@ export type ScraperConfig = {
 /** Default config — used when `app_config` has no values. The admin can
  *  override these at runtime via the DirectStream admin page. */
 export const DEFAULT_SCRAPER_CONFIG: ScraperConfig = {
-        embedDomain: 'https://vidsrc.sh',
-        cdnDomains: ['cloudnestra.com']
+        embedDomain: 'https://vidsrc.party',
+        cdnDomains: ['cno.to']
 };
 
-/** One resolved stream source (a proxied m3u8 URL + its quality label). */
+/** One resolved stream source (the HLS manifest URL + its quality label). */
 export type ScraperSource = {
-        /** The raw m3u8 URL extracted from vidsrc (pre-proxy), OR an embed iframe URL from 2embed. */
+        /** The HLS manifest URL (the /v/{token}/stream endpoint on vidsrc.party). */
         url: string;
-        /** A quality label (always "Auto" — vidsrc does not expose quality names). */
+        /** A quality label (always "Auto" — the manifest is a media playlist). */
         quality: string;
-        /** 'direct' for an m3u8 URL (HLS via the Worker proxy), 'embed' for an iframe URL (2embed fallback). */
-        kind: 'direct' | 'embed';
+        /** Always 'direct' — vidsrc.party returns a direct HLS manifest, never an iframe. */
+        kind: 'direct';
 };
 
 /** The scraper's success result. */
@@ -82,7 +100,7 @@ export type ScraperResult = {
         subtitles: string[];
         /** The Referer the CDN requires — passed to the Worker as `&r=`. */
         referer: string;
-        /** The CDN domain the m3u8 was resolved to (for diagnostics). */
+        /** The provider that produced the result (always 'vidsrc.party'). */
         provider: string;
 };
 
@@ -93,8 +111,7 @@ export type ScraperErrorCode =
         | 'CLOUDFLARE_BLOCKED'
         | 'REGEX_PARSE_FAILED'
         | 'SCRAPE_FAILED'
-        | 'NO_SOURCES'
-        | 'FALLBACK_FAILED';
+        | 'NO_SOURCES';
 
 export class ScraperError extends Error {
         readonly code: ScraperErrorCode;
@@ -130,7 +147,6 @@ function getCached(key: string): ScraperResult | null {
 }
 
 function setCached(key: string, result: ScraperResult): void {
-        // Bounded eviction: if the cache is full, drop the oldest entry.
         if (cache.size >= CACHE_MAX_ENTRIES) {
                 const firstKey = cache.keys().next().value;
                 if (firstKey) cache.delete(firstKey);
@@ -163,49 +179,38 @@ function requirePositiveInt(raw: number | undefined, label: string): number {
 }
 
 /**
- * Normalizes the embed domain from config: trims, strips trailing slash,
+ * Normalizes the API domain from config: trims, strips trailing slash,
  * validates it's an https URL. Throws on invalid config.
  */
 export function normalizeEmbedDomain(raw: string): string {
         const trimmed = raw.trim().replace(/\/+$/, '');
-        if (!trimmed) throw new ScraperError('INVALID_PARAMS', 'The embed domain is not configured.');
+        if (!trimmed) throw new ScraperError('INVALID_PARAMS', 'The API domain is not configured.');
         try {
                 const url = new URL(trimmed);
-                if (url.protocol !== 'https:') throw new ScraperError('INVALID_PARAMS', 'The embed domain must be https.');
+                if (url.protocol !== 'https:') throw new ScraperError('INVALID_PARAMS', 'The API domain must be https.');
                 return url.origin;
         } catch {
-                throw new ScraperError('INVALID_PARAMS', 'The embed domain is not a valid URL.');
+                throw new ScraperError('INVALID_PARAMS', 'The API domain is not a valid URL.');
         }
 }
 
 /**
- * Normalizes the CDN domains from config: trims, lowercases, strips protocol
- * and path (host-only), drops empties. Returns at least one or throws.
+ * Normalizes the CDN domains from config (kept for config compatibility).
  */
 export function normalizeCdnDomains(raw: string[]): string[] {
         const cleaned = raw
                 .map((d) => d.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, ''))
                 .filter((d) => d.length > 0);
-        // Deduplicate while preserving order.
         return [...new Set(cleaned)];
 }
 
 // ---------------------------------------------------------------------------
-// The 3-hop extraction
+// The API call + JSON parsing
 // ---------------------------------------------------------------------------
 
 const FETCH_TIMEOUT_MS = 6_000;
 const BROWSER_UA =
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
-
-/** Regex to find the iframe src in the embed page HTML. */
-const IFRAME_SRC_PATTERN = /<iframe[^>]+src=["']([^"']+)["']/i;
-
-/** Regex to find the prorcp hash in the RCP page. */
-const PRORCP_HASH_PATTERN = /\/prorcp\/([a-zA-Z0-9=+/]+)/;
-
-/** Regex to find the `file: "..."` field in the prorcp page. */
-const FILE_FIELD_PATTERN = /file:\s*["']([^"']+)["']/;
 
 /**
  * Builds the Worker proxy URL for a given upstream URL + referer. The Worker
@@ -223,25 +228,13 @@ function buildWorkerProxyUrl(upstreamUrl: string, referer: string): string | nul
 }
 
 /**
- * Fetches a URL with a FULL set of browser headers (Cloudflare blocks
- * server-side requests that lack Sec-Fetch-* headers). Throws a typed
- * `ScraperError` on failure:
- *   * `UPSTREAM_TIMEOUT` — the fetch timed out (6s strict).
- *   * `CLOUDFLARE_BLOCKED` — HTTP 403/503 (Cloudflare challenge/block).
- *   * `SCRAPE_FAILED` — network error or other non-OK HTTP status.
+ * Fetches a URL with a FULL set of browser headers + a strict 6s AbortController
+ * timeout. Throws a typed `ScraperError` on failure.
  *
- * 2026-10 round 16 — STRICT 6s TIMEOUT via AbortController. The previous
- * `AbortSignal.timeout` was unreliable on some runtimes; AbortController
- * is the standard, well-supported way to enforce a hard deadline. If VidSrc
- * takes longer than 6s, the fetch is aborted immediately and the scraper
- * fails fast (no Netlify function hang).
- *
- * 2026-10 round 15 — WORKER FALLBACK: if `PUBLIC_STREAM_PROXY_URL` is set,
- * route the fetch through the Cloudflare Worker (edge IPs bypass Cloudflare's
- * IP-based 403). If the Worker returns a non-OK status, fall back to a direct
- * fetch as a last resort.
+ * 2026-10 round 18: the Worker fallback is tried first (edge IPs bypass
+ * Cloudflare's IP-based 403). If the Worker fails, a direct fetch is attempted.
  */
-async function fetchText(url: string, referer: string, label: string): Promise<string> {
+async function fetchJson(url: string, referer: string, label: string): Promise<string> {
         // --- Try the Worker proxy first (if configured) ---
         const workerUrl = buildWorkerProxyUrl(url, referer);
         if (workerUrl) {
@@ -275,7 +268,7 @@ async function fetchText(url: string, referer: string, label: string): Promise<s
                                 signal: controller.signal,
                                 headers: {
                                         'user-agent': BROWSER_UA,
-                                        accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+                                        accept: 'application/json, text/plain, */*',
                                         'accept-language': 'en-US,en;q=0.9',
                                         'accept-encoding': 'gzip, deflate, br',
                                         'cache-control': 'no-cache',
@@ -283,11 +276,9 @@ async function fetchText(url: string, referer: string, label: string): Promise<s
                                         'sec-ch-ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
                                         'sec-ch-ua-mobile': '?0',
                                         'sec-ch-ua-platform': '"Windows"',
-                                        'sec-fetch-dest': 'document',
-                                        'sec-fetch-mode': 'navigate',
-                                        'sec-fetch-site': 'same-origin',
-                                        'sec-fetch-user': '?1',
-                                        'upgrade-insecure-requests': '1',
+                                        'sec-fetch-dest': 'empty',
+                                        'sec-fetch-mode': 'cors',
+                                        'sec-fetch-site': 'same-site',
                                         referer
                                 },
                                 redirect: 'follow'
@@ -304,10 +295,8 @@ async function fetchText(url: string, referer: string, label: string): Promise<s
                 throw new ScraperError('SCRAPE_FAILED', `${label} failed (network error: ${error instanceof Error ? error.message : 'unknown'}).`);
         }
         if (response.status === 403 || response.status === 503) {
-                // Cloudflare challenge / bot block. Log the first 500 chars of
-                // the body so we can see if it's a Cloudflare challenge page.
                 const bodyText = await response.text().catch(() => '');
-                console.error(`[vidsrc-scraper] ${label} Cloudflare blocked (HTTP ${response.status}). First 500 chars of response:`, bodyText.slice(0, 500));
+                console.error(`[vidsrc-scraper] ${label} Cloudflare blocked (HTTP ${response.status}). First 500 chars:`, bodyText.slice(0, 500));
                 throw new ScraperError('CLOUDFLARE_BLOCKED', `${label} was blocked by Cloudflare (HTTP ${response.status}). The scraper's IP may be flagged.`);
         }
         if (!response.ok) {
@@ -318,105 +307,41 @@ async function fetchText(url: string, referer: string, label: string): Promise<s
 }
 
 /**
- * Builds the embed URL for the given content identifiers.
- *   Movie:  `{embedDomain}/embed/movie/{tmdbId}`
- *   TV:     `{embedDomain}/embed/tv/{tmdbId}/{season}/{episode}`
+ * Builds the vidsrc.party API URL for the given content identifiers.
+ *   Movie:  `{apiDomain}/api/play/movie/{tmdbId}?async=1&wait=1`
+ *   TV:     `{apiDomain}/api/play/tv/{tmdbId}/{season}/{episode}?async=1&wait=1`
  */
-export function buildEmbedUrl(embedDomain: string, tmdbId: string, type: 'movie' | 'tv', season?: number, episode?: number): string {
+export function buildApiUrl(apiDomain: string, tmdbId: string, type: 'movie' | 'tv', season?: number, episode?: number): string {
         if (type === 'movie') {
-                return `${embedDomain}/embed/movie/${tmdbId}`;
+                return `${apiDomain}/api/play/movie/${tmdbId}?async=1&wait=1`;
         }
-        return `${embedDomain}/embed/tv/${tmdbId}/${season}/${episode}`;
+        return `${apiDomain}/api/play/tv/${tmdbId}/${season}/${episode}?async=1&wait=1`;
 }
 
 /**
- * Resolves the `{v1}`–`{v5}` placeholders in a raw m3u8 URL template using
- * the supplied CDN domains. `{v1}` → first domain, `{v2}` → second, etc.
- * Returns the resolved URL, or null if a placeholder has no matching domain.
+ * Decodes a base64 string to UTF-8 (used for diagnostics — the segment URLs
+ * inside the manifest are base64-encoded CDN URLs). Exported for tests.
  */
-export function resolveM3u8Placeholders(rawTemplate: string, cdnDomains: string[]): string | null {
-        let resolved = rawTemplate;
-        for (let i = 0; i < cdnDomains.length; i += 1) {
-                const placeholder = `{v${i + 1}}`;
-                resolved = resolved.split(placeholder).join(cdnDomains[i]!);
-        }
-        // If any placeholder remains unresolved, the URL is unusable.
-        if (/\{v\d+\}/.test(resolved)) return null;
-        // Prepend https:// if the template was host-relative (no scheme).
-        if (!/^https?:\/\//i.test(resolved)) {
-                resolved = `https://${resolved}`;
-        }
-        // Validate the final URL is https.
+export function decodeBase64Url(b64: string): string {
         try {
-                const url = new URL(resolved);
-                if (url.protocol !== 'https:') return null;
-                return url.toString();
+                return Buffer.from(b64, 'base64').toString('utf-8');
         } catch {
-                return null;
+                return '';
         }
 }
 
-/**
- * Parses the prorcp page's `file:` field. The field may contain multiple
- * `or`-separated URL templates (fallbacks). Each is resolved against the
- * CDN domain map. Returns the list of resolved m3u8 URLs (deduped).
- */
-export function parseProrcpFileField(rawFileValue: string, cdnDomains: string[]): string[] {
-        const templates = rawFileValue.split(/\s+or\s+/i);
-        const urls: string[] = [];
-        const seen = new Set<string>();
-        for (const template of templates) {
-                const trimmed = template.trim();
-                if (!trimmed) continue;
-                const resolved = resolveM3u8Placeholders(trimmed, cdnDomains);
-                if (!resolved) continue;
-                if (seen.has(resolved)) continue;
-                seen.add(resolved);
-                urls.push(resolved);
-        }
-        return urls;
-}
+// ---------------------------------------------------------------------------
+// The scraper
+// ---------------------------------------------------------------------------
 
 /**
- * Extracts the prorcp hash from the RCP page body. Returns null if not found.
- */
-export function extractProrcpHash(rcpBody: string): string | null {
-        const match = rcpBody.match(PRORCP_HASH_PATTERN);
-        return match ? match[1]! : null;
-}
-
-/**
- * Extracts the iframe src (the RCP URL) from the embed page HTML. Returns
- * null if no iframe is found.
- */
-export function extractIframeSrc(embedBody: string): string | null {
-        const match = embedBody.match(IFRAME_SRC_PATTERN);
-        return match ? match[1]! : null;
-}
-
-/**
- * Extracts the `file:` field value from the prorcp page body. Returns null
- * if not found.
- */
-export function extractFileField(prorcpBody: string): string | null {
-        const match = prorcpBody.match(FILE_FIELD_PATTERN);
-        return match ? match[1]! : null;
-}
-
-/**
- * The full 3-hop scrape. Returns the resolved sources + the CDN referer.
- *
- * 2026-10 round 16 — 2EMBED FALLBACK: if vidsrc fails (any ScraperError),
- * the scraper catches the error and tries 2embed.cc as a fallback. 2embed
- * returns an embed iframe URL (not a direct m3u8), so the fallback result
- * has `kind: 'embed'` sources. The resolver adapter returns the embed URL
- * as an `embed` source (the player renders it in an iframe).
+ * The vidsrc.party API scrape. Returns the HLS manifest URL.
  *
  * @param tmdbId  The TMDB id (positive integer string).
  * @param type    'movie' | 'tv'.
  * @param season  Required for TV.
  * @param episode Required for TV.
- * @param config  The scraper config (embed domain + CDN domains).
+ * @param config  The scraper config (API domain).
  */
 export async function scrapeVidsrc(
         tmdbId: string,
@@ -431,202 +356,74 @@ export async function scrapeVidsrc(
                 requirePositiveInt(episode, 'episode');
         }
 
-        const embedDomain = normalizeEmbedDomain(config.embedDomain);
-        const cdnDomains = normalizeCdnDomains(config.cdnDomains);
-        if (cdnDomains.length === 0) {
-                throw new ScraperError('INVALID_PARAMS', 'At least one CDN domain must be configured.');
-        }
+        const apiDomain = normalizeEmbedDomain(config.embedDomain);
 
         // Check the cache first.
         const key = cacheKey(safeTmdbId, type, season, episode);
         const cached = getCached(key);
         if (cached) return cached;
 
-        // --- Try vidsrc first ---
-        let vidsrcError: ScraperError | null = null;
+        console.log(`[vidsrc-scraper] starting scrape: tmdb=${safeTmdbId} type=${type}${type === 'tv' ? ` s${season}e${episode}` : ''} api=${apiDomain}`);
+
+        // --- Call the API ---
+        const apiUrl = buildApiUrl(apiDomain, safeTmdbId, type, season, episode);
+        const rawBody = await fetchJson(apiUrl, apiDomain + '/', 'vidsrc.party API');
+
+        // --- Parse the JSON response ---
+        let payload: VidsrcPartyApiResponse;
         try {
-                const result = await scrapeVidsrcPrimary(safeTmdbId, type, season, episode, embedDomain, cdnDomains);
-                setCached(key, result);
-                return result;
-        } catch (error) {
-                if (error instanceof ScraperError) {
-                        vidsrcError = error;
-                        console.warn(`[vidsrc-scraper] vidsrc failed (${error.code}), trying 2embed fallback...`);
-                } else {
-                        console.warn('[vidsrc-scraper] vidsrc failed (unknown error), trying 2embed fallback...');
-                        vidsrcError = new ScraperError('SCRAPE_FAILED', error instanceof Error ? error.message : 'unknown');
-                }
-        }
-
-        // --- 2embed fallback ---
-        try {
-                const fallbackResult = await scrape2embed(safeTmdbId, type, season, episode);
-                setCached(key, fallbackResult);
-                return fallbackResult;
-        } catch (fallbackErr) {
-                if (fallbackErr instanceof ScraperError) {
-                        console.error(`[vidsrc-scraper] 2embed fallback also failed (${fallbackErr.code}): ${fallbackErr.message}`);
-                } else {
-                        console.error('[vidsrc-scraper] 2embed fallback failed (unknown error)', fallbackErr);
-                }
-                // Both providers failed — throw the ORIGINAL vidsrc error (it's
-                // the primary provider; its error is the most actionable).
-                throw vidsrcError;
-        }
-}
-
-/**
- * The primary vidsrc 3-hop scrape (embed → rcp → prorcp). Throws ScraperError
- * on any failure. Extracted from scrapeVidsrc so the fallback wrapper above
- * can catch its errors cleanly.
- */
-async function scrapeVidsrcPrimary(
-        safeTmdbId: string,
-        type: 'movie' | 'tv',
-        season: number | undefined,
-        episode: number | undefined,
-        embedDomain: string,
-        cdnDomains: string[]
-): Promise<ScraperResult> {
-        console.log(`[vidsrc-scraper] starting scrape: tmdb=${safeTmdbId} type=${type}${type === 'tv' ? ` s${season}e${episode}` : ''} embed=${embedDomain}`);
-
-        // --- Hop 1: embed page → find the iframe src (RCP URL) ---
-        const embedUrl = buildEmbedUrl(embedDomain, safeTmdbId, type, season, episode);
-        const embedBody = await fetchText(embedUrl, embedDomain + '/', 'embed page');
-        const rcpUrl = extractIframeSrc(embedBody);
-        if (!rcpUrl) {
-                console.error('[vidsrc-scraper] REGEX_PARSE_FAILED: no iframe in embed page. First 500 chars:', embedBody.slice(0, 500));
-                throw new ScraperError('REGEX_PARSE_FAILED', 'The embed page did not contain an iframe (vidsrc markup may have changed).');
-        }
-
-        // The RCP URL's origin is the CDN domain for the Referer on hop 3.
-        let rcpOrigin: string;
-        try {
-                rcpOrigin = new URL(rcpUrl).origin;
+                payload = JSON.parse(rawBody) as VidsrcPartyApiResponse;
         } catch {
-                console.error('[vidsrc-scraper] REGEX_PARSE_FAILED: malformed iframe URL:', rcpUrl);
-                throw new ScraperError('REGEX_PARSE_FAILED', 'The embed page returned a malformed iframe URL.');
-        }
-        console.log(`[vidsrc-scraper] hop 1 ok: rcp origin = ${rcpOrigin}`);
-
-        // --- Hop 2: RCP page → find the prorcp hash ---
-        const rcpBody = await fetchText(rcpUrl, embedUrl, 'rcp page');
-        const prorcpHash = extractProrcpHash(rcpBody);
-        if (!prorcpHash) {
-                console.error('[vidsrc-scraper] REGEX_PARSE_FAILED: no prorcp hash in RCP page. First 500 chars:', rcpBody.slice(0, 500));
-                throw new ScraperError('REGEX_PARSE_FAILED', 'The RCP page did not contain a prorcp hash (vidsrc markup may have changed).');
-        }
-        const prorcpUrl = `${rcpOrigin}/prorcp/${prorcpHash}`;
-        console.log(`[vidsrc-scraper] hop 2 ok: prorcp hash = ${prorcpHash.slice(0, 16)}...`);
-
-        // --- Hop 3: prorcp page → find the file: field → resolve placeholders ---
-        const prorcpBody = await fetchText(prorcpUrl, rcpUrl, 'prorcp page');
-        const fileValue = extractFileField(prorcpBody);
-        if (!fileValue) {
-                console.error('[vidsrc-scraper] NO_SOURCES: no file: field in prorcp page. First 500 chars:', prorcpBody.slice(0, 500));
-                throw new ScraperError('NO_SOURCES', 'The prorcp page did not contain a file: field (no stream available).');
+                console.error('[vidsrc-scraper] REGEX_PARSE_FAILED: API returned non-JSON. First 500 chars:', rawBody.slice(0, 500));
+                throw new ScraperError('REGEX_PARSE_FAILED', 'The vidsrc.party API returned a non-JSON response.');
         }
 
-        const m3u8Urls = parseProrcpFileField(fileValue, cdnDomains);
-        if (m3u8Urls.length === 0) {
-                console.error('[vidsrc-scraper] NO_SOURCES: could not resolve m3u8 from file: field. file value:', fileValue.slice(0, 200), 'cdn domains:', cdnDomains);
-                throw new ScraperError('NO_SOURCES', 'No m3u8 URL could be resolved from the prorcp page (CDN domain mismatch).');
+        if (payload.status !== 'ready') {
+                console.error('[vidsrc-scraper] NO_SOURCES: API status is not "ready":', payload.status, payload.message);
+                throw new ScraperError('NO_SOURCES', `The vidsrc.party API status is "${payload.status}" (not ready).`);
         }
-        console.log(`[vidsrc-scraper] hop 3 ok: ${m3u8Urls.length} m3u8 URL(s) resolved. First: ${m3u8Urls[0]!.slice(0, 80)}...`);
 
-        // The referer the CDN requires for playback. This is the rcpOrigin
-        // (the CDN domain that served the prorcp page) — confirmed by
-        // @definisi/vidsrc-scraper + CinePro reference implementations.
-        const referer = rcpOrigin + '/';
+        const file = payload.result?.file;
+        const token = payload.result?.token;
+        if (!file || !token || !file.stream) {
+                console.error('[vidsrc-scraper] REGEX_PARSE_FAILED: missing file.stream or token in API response. Keys:', Object.keys(payload.result ?? {}));
+                throw new ScraperError('REGEX_PARSE_FAILED', 'The vidsrc.party API response is missing the file.stream or token field.');
+        }
 
-        return {
-                sources: m3u8Urls.map((url) => ({ url, quality: 'Auto', kind: 'direct' as const })),
+        // The manifest URL is the full URL: {apiDomain}{file.stream}.
+        // file.stream is a relative path like "/v/{token}/stream".
+        const manifestUrl = new URL(file.stream, apiDomain).toString();
+        console.log(`[vidsrc-scraper] ok: manifest URL = ${manifestUrl.slice(0, 80)}...`);
+
+        const result: ScraperResult = {
+                sources: [{ url: manifestUrl, quality: 'Auto', kind: 'direct' }],
                 subtitles: [],
-                referer,
-                provider: 'vidsrc'
+                referer: apiDomain + '/',
+                provider: 'vidsrc.party'
         };
+
+        setCached(key, result);
+        return result;
 }
 
 // ---------------------------------------------------------------------------
-// 2embed.cc fallback (2026-10 round 16)
+// Type definitions for the vidsrc.party API response
 // ---------------------------------------------------------------------------
 
-/** The 2embed.cc base origin. */
-const TWOEMBED_ORIGIN = 'https://www.2embed.cc';
-
-/**
- * Builds the 2embed URL for the given content identifiers.
- *   Movie:  `https://www.2embed.cc/embed/{tmdbId}`
- *   TV:     `https://www.2embed.cc/embedtv/{tmdbId}&s={season}&e={episode}`
- */
-export function build2embedUrl(tmdbId: string, type: 'movie' | 'tv', season?: number, episode?: number): string {
-        if (type === 'movie') {
-                return `${TWOEMBED_ORIGIN}/embed/${tmdbId}`;
-        }
-        return `${TWOEMBED_ORIGIN}/embedtv/${tmdbId}&s=${season}&e=${episode}`;
-}
-
-/**
- * The 2embed fallback scrape. 2embed returns an HTML page with an iframe
- * pointing at a player (e.g. 2embed's own player, or a third-party embed).
- * We extract the iframe src and return it as an `embed` source — the player
- * renders it in an iframe (no HLS extraction, no Worker proxy needed).
- *
- * If no iframe is found, throws REGEX_PARSE_FAILED. If the fetch fails,
- * throws the same ScraperError codes as the primary scraper (CLOUDFLARE_BLOCKED,
- * UPSTREAM_TIMEOUT, SCRAPE_FAILED).
- */
-async function scrape2embed(
-        tmdbId: string,
-        type: 'movie' | 'tv',
-        season: number | undefined,
-        episode: number | undefined
-): Promise<ScraperResult> {
-        const url = build2embedUrl(tmdbId, type, season, episode);
-        console.log(`[vidsrc-scraper] 2embed fallback: fetching ${url}`);
-        const body = await fetchText(url, TWOEMBED_ORIGIN + '/', '2embed page');
-
-        // 2embed's page contains one or more iframes pointing at players.
-        // Extract ALL iframe srcs and return the first valid https one.
-        const iframeSrcs = extractAllIframeSrcs(body);
-        if (iframeSrcs.length === 0) {
-                console.error('[vidsrc-scraper] 2embed REGEX_PARSE_FAILED: no iframe in 2embed page. First 500 chars:', body.slice(0, 500));
-                throw new ScraperError('REGEX_PARSE_FAILED', 'The 2embed page did not contain an iframe.');
-        }
-
-        // Find the first https iframe URL (2embed sometimes uses relative URLs
-        // or protocol-relative URLs — resolve them against the 2embed origin).
-        for (const src of iframeSrcs) {
-                try {
-                        const resolved = new URL(src, TWOEMBED_ORIGIN);
-                        if (resolved.protocol === 'https:' && !resolved.username && !resolved.password) {
-                                console.log(`[vidsrc-scraper] 2embed fallback ok: iframe URL = ${resolved.toString().slice(0, 80)}...`);
-                                return {
-                                        sources: [{ url: resolved.toString(), quality: 'Auto', kind: 'embed' as const }],
-                                        subtitles: [],
-                                        referer: TWOEMBED_ORIGIN + '/',
-                                        provider: '2embed'
-                                };
-                        }
-                } catch {
-                        // skip malformed
-                }
-        }
-
-        console.error('[vidsrc-scraper] 2embed NO_SOURCES: no valid https iframe URL found. Iframes:', iframeSrcs.slice(0, 3));
-        throw new ScraperError('NO_SOURCES', 'No valid embed iframe URL found in the 2embed page.');
-}
-
-/**
- * Extracts ALL iframe src attributes from an HTML body. Returns an array of
- * raw src values (may be relative or absolute). Used by the 2embed fallback.
- */
-export function extractAllIframeSrcs(html: string): string[] {
-        const srcs: string[] = [];
-        const pattern = /<iframe[^>]+src=["']([^"']+)["']/gi;
-        let match: RegExpExecArray | null;
-        while ((match = pattern.exec(html)) !== null) {
-                if (match[1]) srcs.push(match[1]);
-        }
-        return srcs;
-}
+type VidsrcPartyApiResponse = {
+        jobId?: string;
+        status?: string;
+        message?: string;
+        result?: {
+                token?: string;
+                file?: {
+                        stream?: string;
+                        hlsStart?: string;
+                        stats?: string;
+                        subtitles?: string;
+                        playback?: string;
+                        playlist?: string;
+                        mime?: string;
+                };
+        };
+};

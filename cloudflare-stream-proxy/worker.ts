@@ -32,7 +32,14 @@
 // Cloudflare's 403 on Netlify's AWS egress IPs. The Worker's edge IPs are
 // not on Cloudflare's blocklist. vidsrc.sh uses no special Referer (the
 // scraper sets the embed origin as the Referer per hop).
-const ALLOWED_HOST_SUFFIXES = ['hotstar.com', 'slivcdn.com', 'jio.com', 'jiocinema.com', 'premiumplugx.com', 'catbox.moe', 'cloudnestra.com', 'stellarconductornexus.com', 'vidsrc.sh', 'vidsrc.to', 'vidsrc.net', 'vidsrc.xyz', 'vidsrc.in', 'vsembed.ru', '2embed.cc'];
+// 2026-10 round 18 — PURGED vidsrc.sh/to/net/xyz/in + vsembed.ru + 2embed.cc
+// (the old 3-hop scraper is gone). Added vidsrc.party (the new API domain —
+// the manifest is served from here) + cookiebakers23blog.xyz + cno.to (CDN
+// domains that appear in the base64-encoded segment URLs inside the
+// manifest). The Referer for vidsrc.party is itself; for the CDNs it's
+// vidsrc.party (the segment proxy runs on vidsrc.party, but if the Worker
+// ever fetches a raw CDN URL, it sends vidsrc.party as the Referer).
+const ALLOWED_HOST_SUFFIXES = ['hotstar.com', 'slivcdn.com', 'jio.com', 'jiocinema.com', 'premiumplugx.com', 'catbox.moe', 'cloudnestra.com', 'stellarconductornexus.com', 'vidsrc.party', 'cookiebakers23blog.xyz', 'cno.to'];
 
 const REFERER_BY_HOST: ReadonlyArray<{ suffix: string; referer: string }> = [
         { suffix: 'slivcdn.com', referer: 'https://www.sonyliv.com/' },
@@ -41,7 +48,10 @@ const REFERER_BY_HOST: ReadonlyArray<{ suffix: string; referer: string }> = [
         { suffix: 'jiocinema.com', referer: 'https://www.jiocinema.com/' },
         { suffix: 'premiumplugx.com', referer: 'https://premiumplugx.com/' },
         { suffix: 'cloudnestra.com', referer: 'https://cloudnestra.com/' },
-        { suffix: 'stellarconductornexus.com', referer: 'https://cloudnestra.com/' }
+        { suffix: 'stellarconductornexus.com', referer: 'https://cloudnestra.com/' },
+        { suffix: 'vidsrc.party', referer: 'https://vidsrc.party/' },
+        { suffix: 'cookiebakers23blog.xyz', referer: 'https://vidsrc.party/' },
+        { suffix: 'cno.to', referer: 'https://vidsrc.party/' }
 ];
 
 const BROWSER_UA =

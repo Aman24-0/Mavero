@@ -1,14 +1,14 @@
 <script lang="ts">
   /**
-   * Admin 2.0 — DirectStream scraper workspace (2026-10 round 13).
+   * Admin 2.0 — DirectStream scraper workspace (2026-10 round 18).
    *
    * The admin page for the DirectStream VOD scraper. Owns the scraper CONFIG
    * (stored on app_config):
-   *   * Embed domain — the vidsrc embed front domain (e.g. `https://vidsrc.to`).
-   *     UPDATE THIS when vidsrc rotates its embed domain — no code change or
+   *   * API domain — the vidsrc.party API domain (e.g. `https://vidsrc.party`).
+   *     UPDATE THIS when vidsrc.party rotates its domain — no code change or
    *     redeploy needed.
-   *   * CDN domains — the comma-separated CDN domains used to resolve the
-   *     `{v1}`–`{v5}` placeholders (e.g. `cloudnestra.com`).
+   *   * CDN domains — informational only (the segment CDN domains that appear
+   *     in the base64-encoded segment URLs inside the manifest).
    *   * Enable/Disable toggle — the global on/off switch. When disabled, the
    *     resolver adapter throws SOURCE_DISABLED and falls back to the next
    *     source.
@@ -121,17 +121,17 @@
     </section>
 
     <!-- ============================================================
-         Scraper config (embed domain + CDN domains)
+         Scraper config (API domain + CDN domains)
          ============================================================ -->
     <section class="a2-feature-section">
       <h3 class="a2-feature-section-title"><Globe size={14} /> Scraper Domains</h3>
-      <p class="a2-feature-hint">vidsrc rotates its domains frequently. When the scraper breaks, update these fields with the current domains and click Save — no code change or redeploy needed. The defaults are {data.defaultEmbedDomain} and {data.defaultCdnDomains}.</p>
+      <p class="a2-feature-hint">vidsrc.party rotates its domain frequently. When the scraper breaks, update this field with the current domain and click Save — no code change or redeploy needed. The default is {data.defaultEmbedDomain}.</p>
 
       <form class="a2-links-form" method="POST" action="?/saveConfig" use:enhance={() => {
         return async ({ update }) => { await update({ reset: false }); };
       }}>
         <label class="a2-link-field">
-          <span class="a2-link-label"><Globe size={13} /> Embed Domain</span>
+          <span class="a2-link-label"><Globe size={13} /> API Domain</span>
           <input
             type="url"
             name="embed_domain"
@@ -141,7 +141,7 @@
             autocomplete="off"
             spellcheck="false"
           />
-          <span class="a2-link-hint">The vidsrc embed front domain (https only). Example: https://vidsrc.to</span>
+          <span class="a2-link-hint">The vidsrc.party API domain (https only). Example: https://vidsrc.party</span>
         </label>
 
         <label class="a2-link-field">
@@ -170,12 +170,13 @@
       <h3 class="a2-feature-section-title"><Radar size={14} /> How It Works</h3>
       <ol class="a2-info-list">
         <li>The user selects the <strong>DirectStream</strong> source on a watch page.</li>
-        <li>The resolver adapter calls the scraper module, which fetches the vidsrc embed page and follows the 3-hop chain: embed → RCP → prorcp.</li>
-        <li>The scraper extracts the real <code>.m3u8</code> URL from the prorcp page's <code>file:</code> field and resolves the <code>{`{v1}`}</code>–<code>{`{v5}`}</code> placeholders to the configured CDN domains.</li>
-        <li>The adapter wraps the m3u8 in a Cloudflare Worker proxy URL (with the required Referer baked in as <code>&amp;r=</code>). The browser cannot set Referer (it's a forbidden header), so the Worker adds it server-side.</li>
-        <li>The existing HLS engine (hls.js) loads the proxied manifest and plays the stream. Quality levels and audio tracks are discovered dynamically from the manifest.</li>
+        <li>The resolver adapter calls the scraper module, which fetches the vidsrc.party JSON API: <code>GET /api/play/{`{movie|tv}`}/{`{tmdbId}`}[/{`{season}`}/{`{episode}`}]?async=1&wait=1</code></li>
+        <li>The API returns a JSON response with <code>result.token</code> and <code>result.file.stream</code> (the HLS manifest path <code>/v/{`{token}`}/stream</code>).</li>
+        <li>The scraper returns the full manifest URL (<code>https://vidsrc.party/v/{`{token}`}/stream</code>) as a direct HLS source. The manifest's segment URIs are base64-encoded CDN URLs proxied through <code>/p/{`{token}`}/{`{base64}`}</code>.</li>
+        <li>The adapter wraps the manifest URL in a Cloudflare Worker proxy URL (with the required Referer baked in as <code>&amp;r=</code>). The browser cannot set Referer (it's a forbidden header), so the Worker adds it server-side.</li>
+        <li>The existing HLS engine (hls.js) loads the proxied manifest and plays the stream. The Worker rewrites each segment URI back through itself, carrying the Referer.</li>
       </ol>
-      <p class="a2-feature-hint"><strong>Limitations:</strong> scraper reliability is low/medium — vidssrc rotates domains frequently. Subtitles from vidsrc are unreliable (often empty). The scraper runs server-side (no CORS issues); playback goes through the Worker (permissive CORS). vidsrc blocks VPN/proxy IPs — Netlify Functions run on AWS and may be blocked.</p>
+      <p class="a2-feature-hint"><strong>Limitations:</strong> scraper reliability depends on vidsrc.party's API staying stable. The scraper runs server-side (no CORS issues); playback goes through the Worker (permissive CORS). vidsrc.party uses Cloudflare — if the scraper IP is flagged, the API returns 403 (the scraper routes through the Worker to bypass this).</p>
     </section>
   </AdminPage>
 </AdminAppShell>
