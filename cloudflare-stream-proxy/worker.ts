@@ -24,7 +24,10 @@
 // @definisi/vidsrc-scraper + CinePro reference implementations). The
 // existing manifest rewriter + &r= passthrough handles the rest — no new
 // Worker logic, just config entries.
-const ALLOWED_HOST_SUFFIXES = ['hotstar.com', 'slivcdn.com', 'jio.com', 'jiocinema.com', 'premiumplugx.com', 'catbox.moe', 'cloudnestra.com'];
+// 2026-10 round 14 — added stellarconductornexus.com (another vidsrc stream
+// CDN observed in production). Same Referer as cloudnestra (the prorcp
+// page's origin is cloudnestra.com; the CDN domains rotate).
+const ALLOWED_HOST_SUFFIXES = ['hotstar.com', 'slivcdn.com', 'jio.com', 'jiocinema.com', 'premiumplugx.com', 'catbox.moe', 'cloudnestra.com', 'stellarconductornexus.com'];
 
 const REFERER_BY_HOST: ReadonlyArray<{ suffix: string; referer: string }> = [
         { suffix: 'slivcdn.com', referer: 'https://www.sonyliv.com/' },
@@ -32,7 +35,8 @@ const REFERER_BY_HOST: ReadonlyArray<{ suffix: string; referer: string }> = [
         { suffix: 'jio.com', referer: 'https://www.jio.com/' },
         { suffix: 'jiocinema.com', referer: 'https://www.jiocinema.com/' },
         { suffix: 'premiumplugx.com', referer: 'https://premiumplugx.com/' },
-        { suffix: 'cloudnestra.com', referer: 'https://cloudnestra.com/' }
+        { suffix: 'cloudnestra.com', referer: 'https://cloudnestra.com/' },
+        { suffix: 'stellarconductornexus.com', referer: 'https://cloudnestra.com/' }
 ];
 
 const BROWSER_UA =

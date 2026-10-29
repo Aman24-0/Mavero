@@ -73,18 +73,44 @@ function requirePositiveInt(raw: number | undefined): number {
  * Maps a `ScraperError` to the resolver's typed error vocabulary. The
  * resolver's bounded fallback walk, negative cache and provider cooldown
  * behave exactly as for every other provider.
+ *
+ * 2026-10 round 14: all scraper failures map to RESOLUTION_UNAVAILABLE
+ * (retryable — the bounded fallback walk continues to the next source)
+ * with a DirectStream-specific user-facing message. The detailed scraper
+ * error (Cloudflare block, regex failure, etc.) is logged server-side for
+ * debugging.
  */
 function mapScraperError(error: ScraperError): ResolverError {
+  const USER_MESSAGE = 'DirectStream is currently unavailable. Please try another source.';
   switch (error.code) {
     case 'INVALID_PARAMS':
       return new ResolverError('MISSING_IDENTIFIER');
     case 'UPSTREAM_TIMEOUT':
+      console.error('[vidsrc-scrape] scraper timed out.', error.message);
       return new ResolverError('RESOLUTION_TIMEOUT');
+    case 'CLOUDFLARE_BLOCKED':
+      console.error('[vidsrc-scrape] Cloudflare blocked the scraper. The scraper IP may be flagged.', error.message);
+      return overrideMessage(new ResolverError('RESOLUTION_UNAVAILABLE'), USER_MESSAGE);
+    case 'REGEX_PARSE_FAILED':
+      console.error('[vidsrc-scrape] Regex parsing failed (vidsrc markup may have changed).', error.message);
+      return overrideMessage(new ResolverError('RESOLUTION_UNAVAILABLE'), USER_MESSAGE);
     case 'NO_SOURCES':
     case 'SCRAPE_FAILED':
     default:
-      return new ResolverError('RESOLUTION_UNAVAILABLE');
+      console.error('[vidsrc-scrape] scrape failed.', error.code, error.message);
+      return overrideMessage(new ResolverError('RESOLUTION_UNAVAILABLE'), USER_MESSAGE);
   }
+}
+
+/**
+ * Overrides the `message` on a `ResolverError` so the player UI shows a
+ * DirectStream-specific message instead of the generic shared one. The
+ * `code` and `status` are preserved (so the bounded fallback walk, negative
+ * cache and provider cooldown behave correctly).
+ */
+function overrideMessage(error: ResolverError, message: string): ResolverError {
+  Object.defineProperty(error, 'message', { value: message, configurable: true, writable: true });
+  return error;
 }
 
 /**

@@ -35,10 +35,6 @@ import {
 const NO_STORE = { 'cache-control': 'no-store' } as const;
 const TMDB_ID_PATTERN = /^[1-9][0-9]{0,15}$/;
 
-// 2026-10 round 13 — generous timeout for the scraper (3 HTTP hops, each with
-// an 8s budget). Netlify pro tier supports up to 26s; the free tier is 10s.
-// The scrape itself typically completes in <2s.
-
 function fail(status: number, code: string, message: string): Response {
         return json({ ok: false, error: { code, message } }, { status, headers: NO_STORE });
 }
@@ -134,10 +130,15 @@ export const GET: RequestHandler = async ({ request, url, locals }) => {
                 }, { headers: NO_STORE });
         } catch (error) {
                 if (error instanceof ScraperError) {
+                        // 2026-10 round 14: return the EXACT error message so the
+                        // UI can debug it. Map each code to an appropriate HTTP status.
                         const status = error.code === 'INVALID_PARAMS' ? 400
                                 : error.code === 'UPSTREAM_TIMEOUT' ? 504
                                 : error.code === 'NO_SOURCES' ? 404
+                                : error.code === 'CLOUDFLARE_BLOCKED' ? 502
+                                : error.code === 'REGEX_PARSE_FAILED' ? 502
                                 : 502;
+                        console.error(`[vod/scrape] ${error.code}: ${error.message}`);
                         return fail(status, error.code, error.message);
                 }
                 console.error('[vod/scrape] unexpected error', error instanceof Error ? error.message : error);

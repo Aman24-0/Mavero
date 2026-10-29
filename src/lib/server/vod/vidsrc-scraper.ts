@@ -84,6 +84,8 @@ export type ScraperResult = {
 export type ScraperErrorCode =
         | 'INVALID_PARAMS'
         | 'UPSTREAM_TIMEOUT'
+        | 'CLOUDFLARE_BLOCKED'
+        | 'REGEX_PARSE_FAILED'
         | 'SCRAPE_FAILED'
         | 'NO_SOURCES';
 
@@ -199,9 +201,17 @@ const PRORCP_HASH_PATTERN = /\/prorcp\/([a-zA-Z0-9=+/]+)/;
 const FILE_FIELD_PATTERN = /file:\s*["']([^"']+)["']/;
 
 /**
- * Fetches a URL with the desktop Chrome UA + the given Referer. Throws a
- * `ScraperError('UPSTREAM_TIMEOUT')` on timeout or `ScraperError('SCRAPE_FAILED')`
- * on network error. Returns the response text.
+ * Fetches a URL with a FULL set of browser headers (Cloudflare blocks
+ * server-side requests that lack Sec-Fetch-* headers). Throws a typed
+ * `ScraperError` on failure:
+ *   * `UPSTREAM_TIMEOUT` — the fetch timed out.
+ *   * `CLOUDFLARE_BLOCKED` — HTTP 403/503 (Cloudflare challenge/block).
+ *   * `SCRAPE_FAILED` — network error or other non-OK HTTP status.
+ *
+ * 2026-10 round 14: `redirect: 'follow'` (Cloudflare often issues 302
+ * redirects to the real origin; `redirect: 'error'` broke on these). The
+ * full Sec-Fetch-* header set is required — Cloudflare's bot detection
+ * 403s requests missing `sec-fetch-site`/`sec-fetch-mode`/`sec-fetch-dest`.
  */
 async function fetchText(url: string, referer: string, label: string): Promise<string> {
         let response: Response;
@@ -210,19 +220,40 @@ async function fetchText(url: string, referer: string, label: string): Promise<s
                         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
                         headers: {
                                 'user-agent': BROWSER_UA,
-                                accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                                accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
                                 'accept-language': 'en-US,en;q=0.9',
+                                'accept-encoding': 'gzip, deflate, br',
+                                'cache-control': 'no-cache',
+                                'pragma': 'no-cache',
+                                'sec-ch-ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+                                'sec-ch-ua-mobile': '?0',
+                                'sec-ch-ua-platform': '"Windows"',
+                                'sec-fetch-dest': 'document',
+                                'sec-fetch-mode': 'navigate',
+                                'sec-fetch-site': 'same-origin',
+                                'sec-fetch-user': '?1',
+                                'upgrade-insecure-requests': '1',
                                 referer
                         },
-                        redirect: 'error'
+                        redirect: 'follow'
                 });
         } catch (error) {
                 if (error instanceof Error && error.name === 'TimeoutError') {
-                        throw new ScraperError('UPSTREAM_TIMEOUT', `${label} timed out.`);
+                        console.error(`[vidsrc-scraper] ${label} timed out (${url})`);
+                        throw new ScraperError('UPSTREAM_TIMEOUT', `${label} timed out after ${FETCH_TIMEOUT_MS}ms.`);
                 }
-                throw new ScraperError('SCRAPE_FAILED', `${label} failed (network error).`);
+                console.error(`[vidsrc-scraper] ${label} network error`, error instanceof Error ? error.message : error);
+                throw new ScraperError('SCRAPE_FAILED', `${label} failed (network error: ${error instanceof Error ? error.message : 'unknown'}).`);
+        }
+        if (response.status === 403 || response.status === 503) {
+                // Cloudflare challenge / bot block. The headers above usually
+                // bypass this, but if the IP is flagged (e.g. Netlify's AWS
+                // egress), Cloudflare 403s regardless of headers.
+                console.error(`[vidsrc-scraper] ${label} Cloudflare blocked (HTTP ${response.status})`);
+                throw new ScraperError('CLOUDFLARE_BLOCKED', `${label} was blocked by Cloudflare (HTTP ${response.status}). The scraper's IP may be flagged.`);
         }
         if (!response.ok) {
+                console.error(`[vidsrc-scraper] ${label} HTTP ${response.status}`);
                 throw new ScraperError('SCRAPE_FAILED', `${label} returned HTTP ${response.status}.`);
         }
         return response.text();
@@ -347,12 +378,15 @@ export async function scrapeVidsrc(
         const cached = getCached(key);
         if (cached) return cached;
 
+        console.log(`[vidsrc-scraper] starting scrape: tmdb=${safeTmdbId} type=${type}${type === 'tv' ? ` s${season}e${episode}` : ''} embed=${embedDomain}`);
+
         // --- Hop 1: embed page → find the iframe src (RCP URL) ---
         const embedUrl = buildEmbedUrl(embedDomain, safeTmdbId, type, season, episode);
         const embedBody = await fetchText(embedUrl, embedDomain + '/', 'embed page');
         const rcpUrl = extractIframeSrc(embedBody);
         if (!rcpUrl) {
-                throw new ScraperError('SCRAPE_FAILED', 'The embed page did not contain an iframe (vidsrc markup may have changed).');
+                console.error('[vidsrc-scraper] REGEX_PARSE_FAILED: no iframe in embed page (body length:', embedBody.length, ')');
+                throw new ScraperError('REGEX_PARSE_FAILED', 'The embed page did not contain an iframe (vidsrc markup may have changed).');
         }
 
         // The RCP URL's origin is the CDN domain for the Referer on hop 3.
@@ -360,28 +394,35 @@ export async function scrapeVidsrc(
         try {
                 rcpOrigin = new URL(rcpUrl).origin;
         } catch {
-                throw new ScraperError('SCRAPE_FAILED', 'The embed page returned a malformed iframe URL.');
+                console.error('[vidsrc-scraper] REGEX_PARSE_FAILED: malformed iframe URL:', rcpUrl);
+                throw new ScraperError('REGEX_PARSE_FAILED', 'The embed page returned a malformed iframe URL.');
         }
+        console.log(`[vidsrc-scraper] hop 1 ok: rcp origin = ${rcpOrigin}`);
 
         // --- Hop 2: RCP page → find the prorcp hash ---
         const rcpBody = await fetchText(rcpUrl, embedUrl, 'rcp page');
         const prorcpHash = extractProrcpHash(rcpBody);
         if (!prorcpHash) {
-                throw new ScraperError('SCRAPE_FAILED', 'The RCP page did not contain a prorcp hash (vidsrc markup may have changed).');
+                console.error('[vidsrc-scraper] REGEX_PARSE_FAILED: no prorcp hash in RCP page (body length:', rcpBody.length, ')');
+                throw new ScraperError('REGEX_PARSE_FAILED', 'The RCP page did not contain a prorcp hash (vidsrc markup may have changed).');
         }
         const prorcpUrl = `${rcpOrigin}/prorcp/${prorcpHash}`;
+        console.log(`[vidsrc-scraper] hop 2 ok: prorcp hash = ${prorcpHash.slice(0, 16)}...`);
 
         // --- Hop 3: prorcp page → find the file: field → resolve placeholders ---
         const prorcpBody = await fetchText(prorcpUrl, rcpUrl, 'prorcp page');
         const fileValue = extractFileField(prorcpBody);
         if (!fileValue) {
+                console.error('[vidsrc-scraper] REGEX_PARSE_FAILED: no file: field in prorcp page (body length:', prorcpBody.length, ')');
                 throw new ScraperError('NO_SOURCES', 'The prorcp page did not contain a file: field (no stream available).');
         }
 
         const m3u8Urls = parseProrcpFileField(fileValue, cdnDomains);
         if (m3u8Urls.length === 0) {
-                throw new ScraperError('NO_SOURCES', 'No m3u8 URL could be resolved from the prorcp page.');
+                console.error('[vidsrc-scraper] NO_SOURCES: could not resolve m3u8 from file: field. file value:', fileValue.slice(0, 200), 'cdn domains:', cdnDomains);
+                throw new ScraperError('NO_SOURCES', 'No m3u8 URL could be resolved from the prorcp page (CDN domain mismatch).');
         }
+        console.log(`[vidsrc-scraper] hop 3 ok: ${m3u8Urls.length} m3u8 URL(s) resolved. First: ${m3u8Urls[0]!.slice(0, 80)}...`);
 
         // The referer the CDN requires for playback. This is the rcpOrigin
         // (the CDN domain that served the prorcp page) — confirmed by

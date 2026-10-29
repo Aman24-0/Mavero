@@ -25,7 +25,7 @@
   import { enhance } from '$app/forms';
   import AdminAppShell from '$lib/components/admin2/AdminAppShell.svelte';
   import AdminPage from '$lib/components/admin2/AdminPage.svelte';
-  import { Check, AlertCircle, Radar, ToggleLeft, ToggleRight, Globe, Server, Loader2 } from 'lucide-svelte';
+  import { Check, AlertCircle, Radar, ToggleLeft, ToggleRight, Globe, Server } from 'lucide-svelte';
   import type { PageData, ActionData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -39,26 +39,43 @@
   let toggleSaving = $state(false);
 
   // Re-prefill when the load invalidates (e.g. after a successful save
-  // triggers an invalidateAll).
+  // triggers an invalidateAll). Does NOT clobber an in-flight optimistic
+  // toggle — the toggle handler sets toggleSaving=true, and we only sync
+  // from server data when no toggle is pending.
   $effect(() => {
     embedDomain = data.embedDomain ?? '';
     cdnDomains = data.cdnDomains ?? '';
-    scraperEnabled = data.scraperEnabled ?? false;
+    if (!toggleSaving) {
+      scraperEnabled = data.scraperEnabled ?? false;
+    }
   });
 
   async function handleToggle() {
+    if (toggleSaving) return;
+    const previous = scraperEnabled;
+    // OPTIMISTIC: flip the toggle immediately so the UI feels instant.
+    // The server request runs in the background; on failure we revert.
+    scraperEnabled = !previous;
     toggleSaving = true;
     try {
       const formData = new FormData();
-      formData.set('enabled', String(!scraperEnabled));
+      formData.set('enabled', String(!previous));
       const response = await fetch('?/toggleEnabled', { method: 'POST', body: formData });
       const result = await response.json();
-      if (result?.notice) {
-        scraperEnabled = !scraperEnabled;
-      } else if (result?.message) {
-        alert(result.message);
+      if (!result?.notice) {
+        // Revert on failure.
+        scraperEnabled = previous;
+        if (result?.message) {
+          alert(result.message);
+        } else {
+          alert('Could not toggle the scraper.');
+        }
       }
+      // On success, the optimistic value is now the truth — no revert.
+      // The $effect will sync lastServerEnabled when invalidateAll fires.
     } catch {
+      // Revert on network error.
+      scraperEnabled = previous;
       alert('Network error while toggling the scraper.');
     }
     toggleSaving = false;
@@ -95,8 +112,8 @@
           <span class="a2-feature-row-label">DirectStream Scraper</span>
           <span class="a2-feature-row-desc">{scraperEnabled ? 'Enabled — the scraper is active and the DirectStream source is eligible for playback.' : 'Disabled — the resolver skips this source and falls back to the next provider.'}</span>
         </div>
-        <button type="button" class="a2-toggle" class:is-on={scraperEnabled} onclick={handleToggle} disabled={toggleSaving} aria-pressed={scraperEnabled} aria-label="Toggle DirectStream scraper">
-          {#if toggleSaving}<Loader2 size={20} style="animation: a2-spin 1s linear infinite;" />{:else if scraperEnabled}<ToggleRight size={24} />{:else}<ToggleLeft size={24} />{/if}
+        <button type="button" class="a2-toggle" class:is-on={scraperEnabled} onclick={handleToggle} aria-pressed={scraperEnabled} aria-label="Toggle DirectStream scraper" aria-busy={toggleSaving}>
+          {#if scraperEnabled}<ToggleRight size={24} />{:else}<ToggleLeft size={24} />{/if}
         </button>
       </div>
     </section>
