@@ -1536,6 +1536,12 @@
   });
 
   async function togglePlay() {
+    // 2026-10 round 21 — if the player is in an error state, clicking Play
+    // triggers a retry (re-resolve the source) instead of trying to play.
+    if (state === 'error' || state === 'provider-error' || state === 'unavailable' || state === 'source-unavailable') {
+      retry();
+      return;
+    }
     if (!sourceReady || source?.type !== 'direct' || !videoElement) {
       errorMessage = source?.type === 'embed' ? 'This source uses its own provider controls.' : 'Choose an available source to begin playback.';
       state = source?.type === 'embed' ? 'embed-loading' : 'source-unavailable';
@@ -1553,6 +1559,10 @@
     } catch {
       playing = false;
       state = 'paused';
+      // 2026-10 round 21 — the error states (error, source-unavailable) are
+      // already handled by the early return at the top of togglePlay, so
+      // this catch only fires for non-error play() rejections. The "Playback
+      // is ready" message is safe here.
       errorMessage = 'Playback is ready. Tap Play to start it.';
     }
   }
@@ -1667,26 +1677,33 @@
     syncMediaSessionPlaybackState('paused');
   }
 
-  // 2026-10 round 20 — auto-retry on HLS fatal error (token expiry).
-  // vidsrc.party tokens expire after ~30s; when the HLS engine tries to
-  // reload the variant playlist (live playlist refresh), it gets 503 and
-  // fires a fatal networkError. Instead of showing the error immediately,
-  // re-resolve the source (get a fresh token) and restart playback from
-  // the current position. Bounded to 1 auto-retry to avoid infinite loops.
+  // 2026-10 round 21 — auto-retry on HLS fatal error (token expiry / CDN death).
+  // vidsrc.party tokens expire after ~30s and CDNs sometimes 404. When the
+  // HLS engine fires a fatal error, re-resolve the source (get a fresh token
+  // + potentially a different CDN) and restart playback from the current
+  // position. Bounded to 2 auto-retries with a 1s delay between them.
   let hlsAutoRetryCount = 0;
-  const HLS_AUTO_RETRY_MAX = 1;
+  const HLS_AUTO_RETRY_MAX = 2;
+  const HLS_AUTO_RETRY_DELAY_MS = 1000;
 
   function handleMediaError() {
-    // 2026-10 round 20 — if this is a direct HLS source and we haven't
+    // 2026-10 round 21 — if this is a direct HLS source and we haven't
     // exhausted the auto-retry budget, re-resolve the source automatically
-    // (the token likely expired). Save the current position so playback
-    // resumes seamlessly after the re-resolve.
+    // (the token likely expired or the CDN died). A 1s delay gives the
+    // upstream a moment to recover and avoids hammering the API.
     if (source?.type === 'direct' && source.sourceId && hlsAutoRetryCount < HLS_AUTO_RETRY_MAX) {
       hlsAutoRetryCount += 1;
-      console.warn(`[PlayerShell] HLS fatal error — auto-retry ${hlsAutoRetryCount}/${HLS_AUTO_RETRY_MAX} (re-resolving source for a fresh token)`);
+      console.warn(`[PlayerShell] HLS fatal error — auto-retry ${hlsAutoRetryCount}/${HLS_AUTO_RETRY_MAX} in ${HLS_AUTO_RETRY_DELAY_MS}ms (re-resolving source for a fresh token + CDN)`);
       state = 'switching-source';
       errorMessage = '';
-      onSourceChange(source.sourceId);
+      // Delay the re-resolve to give the upstream a moment to recover.
+      setTimeout(() => {
+        // Re-check the source is still the same (the user may have switched
+        // sources during the delay — don't re-resolve a stale source).
+        if (source?.sourceId) {
+          onSourceChange(source.sourceId);
+        }
+      }, HLS_AUTO_RETRY_DELAY_MS);
       return;
     }
     // Exhausted auto-retries (or not a direct HLS source) — show the error.

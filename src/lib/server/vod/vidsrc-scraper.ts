@@ -337,12 +337,24 @@ export function decodeBase64Url(b64: string): string {
 /**
  * The vidsrc.party API scrape. Returns the HLS manifest URL.
  *
+ * 2026-10 round 21 — CDN VERIFICATION + RETRY: vidsrc.party assigns a
+ * random CDN per token (cookiebakers23blog.xyz, tiktokcdn.com, etc.).
+ * Some CDNs are dead (404 on the variant playlist). The scraper now:
+ *   1. Calls the API to get a token.
+ *   2. Fetches the manifest (/v/{token}/stream).
+ *   3. Extracts the first variant playlist URL (/p/{token}/{base64}).
+ *   4. Verifies the variant playlist returns 200.
+ *   5. If the variant 404s, re-calls the API (up to 2 retries) to get a
+ *      new token with a different CDN.
+ *
  * @param tmdbId  The TMDB id (positive integer string).
  * @param type    'movie' | 'tv'.
  * @param season  Required for TV.
  * @param episode Required for TV.
  * @param config  The scraper config (API domain).
  */
+const MAX_CDN_RETRIES = 2;
+
 export async function scrapeVidsrc(
         tmdbId: string,
         type: 'movie' | 'tv',
@@ -365,6 +377,47 @@ export async function scrapeVidsrc(
 
         console.log(`[vidsrc-scraper] starting scrape: tmdb=${safeTmdbId} type=${type}${type === 'tv' ? ` s${season}e${episode}` : ''} api=${apiDomain}`);
 
+        // --- Try up to 3 times (1 initial + 2 retries) to get a working CDN ---
+        let lastError: ScraperError | null = null;
+        for (let attempt = 0; attempt <= MAX_CDN_RETRIES; attempt += 1) {
+                try {
+                        const result = await scrapeVidsrcAttempt(safeTmdbId, type, season, episode, apiDomain);
+                        setCached(key, result);
+                        return result;
+                } catch (error) {
+                        if (error instanceof ScraperError) {
+                                lastError = error;
+                                console.warn(`[vidsrc-scraper] attempt ${attempt + 1}/${MAX_CDN_RETRIES + 1} failed (${error.code}): ${error.message}`);
+                                // Only retry on CDN-related errors (the API call itself succeeded
+                                // but the variant playlist 404'd). Don't retry on INVALID_PARAMS
+                                // or CLOUDFLARE_BLOCKED (those won't change with a retry).
+                                if (error.code === 'NO_SOURCES' && attempt < MAX_CDN_RETRIES) {
+                                        console.log(`[vidsrc-scraper] retrying to get a new CDN assignment...`);
+                                        continue;
+                                }
+                        } else {
+                                console.warn(`[vidsrc-scraper] attempt ${attempt + 1} failed (unknown error)`, error);
+                        }
+                        throw error;
+                }
+        }
+
+        // All retries exhausted — throw the last error.
+        throw lastError ?? new ScraperError('SCRAPE_FAILED', 'All CDN retries exhausted.');
+}
+
+/**
+ * A single scrape attempt: call the API, parse the JSON, verify the CDN
+ * by fetching the manifest + first variant playlist. Throws NO_SOURCES
+ * if the variant playlist 404s (the caller retries with a new token).
+ */
+async function scrapeVidsrcAttempt(
+        safeTmdbId: string,
+        type: 'movie' | 'tv',
+        season: number | undefined,
+        episode: number | undefined,
+        apiDomain: string
+): Promise<ScraperResult> {
         // --- Call the API ---
         const apiUrl = buildApiUrl(apiDomain, safeTmdbId, type, season, episode);
         const rawBody = await fetchJson(apiUrl, apiDomain + '/', 'vidsrc.party API');
@@ -386,14 +439,38 @@ export async function scrapeVidsrc(
         const file = payload.result?.file;
         const token = payload.result?.token;
         if (!file || !token || !file.stream) {
-                console.error('[vidsrc-scraper] REGEX_PARSE_FAILED: missing file.stream or token in API response. Keys:', Object.keys(payload.result ?? {}));
+                console.error('[vidsrc-scraper] REGEX_PARSE_FAILED: missing file.stream or token in API response. Full result:', JSON.stringify(payload.result ?? {}).slice(0, 500));
                 throw new ScraperError('REGEX_PARSE_FAILED', 'The vidsrc.party API response is missing the file.stream or token field.');
         }
 
         // The manifest URL is the full URL: {apiDomain}{file.stream}.
-        // file.stream is a relative path like "/v/{token}/stream".
         const manifestUrl = new URL(file.stream, apiDomain).toString();
-        console.log(`[vidsrc-scraper] ok: manifest URL = ${manifestUrl.slice(0, 80)}...`);
+        console.log(`[vidsrc-scraper] got token: ${token}, manifest: ${manifestUrl.slice(0, 80)}...`);
+
+        // --- CDN VERIFICATION (2026-10 round 21) ---
+        // Fetch the manifest and check that the first variant playlist loads.
+        // vidsrc.party assigns random CDNs; some are dead (404). If the variant
+        // 404s, throw NO_SOURCES so the caller retries with a new token.
+        const manifestBody = await fetchJson(manifestUrl, apiDomain + '/', 'manifest');
+        const variantLine = manifestBody.split('\n').find((line) => line.trim().startsWith('/p/'));
+        if (variantLine) {
+                const variantUrl = new URL(variantLine.trim(), apiDomain).toString();
+                console.log(`[vidsrc-scraper] verifying variant playlist: ${variantUrl.slice(0, 80)}...`);
+                try {
+                        const variantBody = await fetchJson(variantUrl, apiDomain + '/', 'variant playlist');
+                        // Check it's a valid HLS playlist (starts with #EXTM3U).
+                        if (!variantBody.startsWith('#EXTM3U')) {
+                                console.error('[vidsrc-scraper] variant playlist is not a valid HLS playlist. First 200 chars:', variantBody.slice(0, 200));
+                                throw new ScraperError('NO_SOURCES', 'The variant playlist is not a valid HLS playlist (CDN may be dead).');
+                        }
+                        console.log('[vidsrc-scraper] variant playlist verified OK — CDN is working');
+                } catch (error) {
+                        if (error instanceof ScraperError) throw error;
+                        // The variant fetch failed (404, timeout, etc.) — the CDN is dead.
+                        console.error('[vidsrc-scraper] variant playlist fetch failed — CDN is dead:', error instanceof Error ? error.message : error);
+                        throw new ScraperError('NO_SOURCES', 'The CDN assigned by vidsrc.party is dead (variant playlist fetch failed).');
+                }
+        }
 
         const result: ScraperResult = {
                 sources: [{ url: manifestUrl, quality: 'Auto', kind: 'direct' }],
@@ -402,7 +479,6 @@ export async function scrapeVidsrc(
                 provider: 'vidsrc.party'
         };
 
-        setCached(key, result);
         return result;
 }
 
