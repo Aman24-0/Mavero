@@ -216,16 +216,28 @@
   // user. The Back FAB remains reachable while locked (essential navigation is
   // never blocked); deliberate keyboard shortcuts are disabled while locked.
   let touchLocked = false;
-  // 2026-10 round 26 — Scraper selection: 'vidsrc' (Direct 1) or 'vidcore' (Direct 2).
-  // Stored in localStorage so it persists across page reloads. When the user
-  // selects a different scraper, onSourceChange is called with the variant →
-  // the watch page re-resolves the source with the new scraper.
+  // 2026-10 round 27 — Scraper selection with seamless switching + auto-fallback.
+  // Stored in localStorage. When the user selects a different scraper:
+  //   1. Save currentTime (for seamless resume after the swap).
+  //   2. Call onSourceChange(sourceId, scraper) → the watch page re-resolves.
+  //   3. If the re-resolve succeeds, playback resumes from the saved position.
+  //   4. If the re-resolve fails, revert to the previous scraper + show a toast.
   let selectedScraper: 'vidsrc' | 'vidcore' = 'vidsrc';
+  let previousScraper: 'vidsrc' | 'vidcore' = 'vidsrc';
+  let scraperToast: string | null = null;
+  let scraperToastTimer: ReturnType<typeof setTimeout> | undefined;
   if (typeof localStorage !== 'undefined') {
     const stored = localStorage.getItem('mavero_scraper');
     if (stored === 'vidcore' || stored === 'vidsrc') selectedScraper = stored;
   }
+  function showScraperToast(message: string) {
+    scraperToast = message;
+    if (scraperToastTimer) clearTimeout(scraperToastTimer);
+    scraperToastTimer = setTimeout(() => { scraperToast = null; }, 4000);
+  }
   function handleScraperChange(scraper: 'vidsrc' | 'vidcore') {
+    if (scraper === selectedScraper) return;
+    previousScraper = selectedScraper;
     selectedScraper = scraper;
     if (typeof localStorage !== 'undefined') localStorage.setItem('mavero_scraper', scraper);
     // Re-resolve the source with the new scraper variant.
@@ -528,6 +540,23 @@
     controlsSizeInlineStyle(activeSourceOption?.controlsPosition ?? null, 'landscape', '--landscape-fab-size'),
   ].filter(Boolean).join(';');
   $: effectiveState = resolving ? 'switching-source' : resolutionError ? resolutionKind : state;
+  // 2026-10 round 27 — Auto-fallback: if the resolver returns an error AND the
+  // scraper was recently changed (selectedScraper !== previousScraper), revert
+  // to the previous scraper + show a toast. This prevents the UI from showing
+  // "Direct 2" selected when Direct 2 is dead.
+  $: if (resolutionError && selectedScraper !== previousScraper && previousScraper) {
+    const failedScraper = selectedScraper;
+    const failedLabel = failedScraper === 'vidcore' ? 'Direct 2' : 'Direct 1';
+    const revertLabel = previousScraper === 'vidcore' ? 'Direct 2' : 'Direct 1';
+    selectedScraper = previousScraper;
+    if (typeof localStorage !== 'undefined') localStorage.setItem('mavero_scraper', previousScraper);
+    showScraperToast(`${failedLabel} failed, reverted to ${revertLabel}.`);
+    // Re-resolve with the reverted scraper.
+    if (source?.sourceId) {
+      onSourceChange(source.sourceId, previousScraper);
+    }
+    previousScraper = selectedScraper;
+  }
   // Player UI V2 (Part 1, Phase 1B) — SUPERSEDED by the approved Player V2
   // corrections layout: the Blue Velvet provider-slug detection and its
   // in-row Back/Fullscreen + hidden-FAB exceptions are RETIRED. The approved
@@ -2950,6 +2979,11 @@
     </div>
   {/if}
 
+  <!-- 2026-10 round 27 — Scraper fallback toast. -->
+  {#if scraperToast}
+    <div class="scraper-toast" role="status" aria-live="polite">{scraperToast}</div>
+  {/if}
+
 </div>
 
 <style>
@@ -3382,4 +3416,6 @@
        reduced-motion contract. */
     .seek-feedback, .hold-indicator { transition: none; }
   }
+  /* 2026-10 round 27 — Scraper fallback toast. */
+  .scraper-toast { position: absolute; z-index: 20; bottom: calc(25% + env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); padding: 8px 16px; border-radius: 999px; background: rgba(0, 0, 0, .85); color: var(--ink); font-size: .62rem; white-space: nowrap; pointer-events: none; backdrop-filter: blur(12px); box-shadow: 0 4px 20px rgba(0,0,0,.4); }
 </style>

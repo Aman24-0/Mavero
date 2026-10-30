@@ -1,35 +1,14 @@
 /**
- * DirectStream — vidcore.org scraper module (server-only, 2026-10 round 26).
+ * DirectStream — vidcore.org scraper module (server-only, 2026-10 round 27).
  *
  * "Direct 2" — the multi-audio scraper. VidCore returns HLS master playlists
  * with multiple audio tracks (English, Hindi, etc.) that hls.js automatically
  * detects and exposes via the Audio menu.
  *
- * THE FLOW (reverse-engineered 2026-10-30):
- *
- *   1. Generate a token: Base64-encoded JSON + ".own" suffix.
- *      payload = { tmdbId: 278, type: 'movie', exp: 9999999999, own: 1 }
- *      token = Buffer.from(JSON.stringify(payload)).toString('base64') + '.own'
- *      (For TV: add season + episode to the payload, use type: 'tv')
- *
- *   2. Call the API:
- *      Movie:  GET https://vidcore.org/api/source/movie/{tmdbId}?token={token}&provider=mb-andromeda&parent=
- *      TV:     GET https://vidcore.org/api/source/tv/{tmdbId}?token={token}&provider=mb-andromeda&parent=
- *
- *   3. The API returns JSON:
- *      {
- *        "status": "ok",
- *        "streams": [{ "url": "https://.../master.m3u8", "title": "...", ... }],
- *        "subtitles": [{ "url": "https://.../en.vtt", "lang": "English", "code": "eng" }, ...]
- *      }
- *
- *   4. Return streams[0].url as a direct HLS source, with subtitles attached.
- *
- * SECURITY:
- *   * fetch with a 5s AbortController timeout (via the shared fetchJson).
- *   * The Worker proxy is used when PUBLIC_STREAM_PROXY_URL is set (bypasses
- *     Cloudflare IP blocks on Netlify's AWS egress).
- *   * No eval, no vm, no headless browser.
+ * 2026-10 round 27 — MULTI-PROVIDER SUPPORT: VidCore has multiple sub-servers
+ * (Earth, Mars, Jupiter, etc.). We try each one until we get a working stream.
+ * The provider list is tried in order; the first one that returns a valid
+ * stream URL wins.
  */
 
 import { env as publicEnv } from '$env/dynamic/public';
@@ -42,8 +21,20 @@ const BROWSER_UA =
 const VIDCORE_ORIGIN = 'https://vidcore.org';
 
 /**
+ * The list of VidCore sub-servers to try. The first one that returns a valid
+ * stream URL wins. New providers can be added here.
+ */
+const VIDCORE_PROVIDERS = [
+        'mb-earth',
+        'mb-mars',
+        'mb-jupiter',
+        'mb-saturn',
+        'mb-andromeda',
+        'mb-nebula',
+] as const;
+
+/**
  * Generates the VidCore token: Base64-encoded JSON + ".own" suffix.
- * The token is a self-signed JSON blob with a far-future expiry.
  */
 export function generateVidCoreToken(tmdbId: string, type: 'movie' | 'tv', season?: number, episode?: number): string {
         const payload: Record<string, unknown> = {
@@ -60,16 +51,16 @@ export function generateVidCoreToken(tmdbId: string, type: 'movie' | 'tv', seaso
 }
 
 /**
- * Builds the VidCore API URL.
+ * Builds the VidCore API URL for a specific provider.
  */
-export function buildVidCoreApiUrl(tmdbId: string, type: 'movie' | 'tv', season?: number, episode?: number): string {
+export function buildVidCoreApiUrl(tmdbId: string, type: 'movie' | 'tv', provider: string, season?: number, episode?: number): string {
         const token = generateVidCoreToken(tmdbId, type, season, episode);
         const path = type === 'movie'
                 ? `/api/source/movie/${tmdbId}`
                 : `/api/source/tv/${tmdbId}`;
         const params = new URLSearchParams({
                 token,
-                provider: 'mb-andromeda',
+                provider,
                 parent: '',
         });
         return `${VIDCORE_ORIGIN}${path}?${params.toString()}`;
@@ -84,7 +75,6 @@ async function fetchJson(url: string, referer: string, label: string): Promise<s
 
         if (workerBase) {
                 const workerUrl = `${workerBase}/?u=${encodeURIComponent(url)}&r=${encodeURIComponent(referer)}`;
-                console.log(`[vidcore-scraper] ${label}: fetching via Worker proxy`);
                 let response: Response;
                 try {
                         const controller = new AbortController();
@@ -103,16 +93,12 @@ async function fetchJson(url: string, referer: string, label: string): Promise<s
                 if (!response.ok) {
                         const bodyText = await response.text().catch(() => '');
                         console.error(`[vidcore-scraper] ${label} Worker HTTP ${response.status}. Body:`, bodyText.slice(0, 200));
-                        if (response.status === 403 || response.status === 503) {
-                                throw new ScraperError('CLOUDFLARE_BLOCKED', `${label} Cloudflare blocked (HTTP ${response.status}).`);
-                        }
-                        throw new ScraperError('SCRAPE_FAILED', `${label} HTTP ${response.status}. Body: ${bodyText.slice(0, 100)}`);
+                        throw new ScraperError('SCRAPE_FAILED', `${label} HTTP ${response.status}.`);
                 }
                 return response.text();
         }
 
         // Direct fetch (no Worker — local dev / test harness)
-        console.log(`[vidcore-scraper] ${label}: fetching directly`);
         let response: Response;
         try {
                 const controller = new AbortController();
@@ -143,19 +129,70 @@ async function fetchJson(url: string, referer: string, label: string): Promise<s
         if (!response.ok) {
                 const bodyText = await response.text().catch(() => '');
                 console.error(`[vidcore-scraper] ${label} HTTP ${response.status}. Body:`, bodyText.slice(0, 200));
-                throw new ScraperError('SCRAPE_FAILED', `${label} HTTP ${response.status}. Body: ${bodyText.slice(0, 100)}`);
+                throw new ScraperError('SCRAPE_FAILED', `${label} HTTP ${response.status}.`);
         }
         return response.text();
 }
 
+type VidCoreStream = { url?: string; title?: string };
 type VidCoreApiResponse = {
         status?: string;
-        streams?: Array<{ url?: string; title?: string }>;
+        streams?: VidCoreStream[];
         subtitles?: Array<{ url?: string; lang?: string; code?: string }>;
 };
 
 /**
- * The VidCore scrape. Returns the HLS stream URL + subtitles.
+ * Tries a single VidCore provider. Returns the parsed response if it has
+ * valid streams, or null if the provider is dead/empty.
+ */
+async function tryVidCoreProvider(
+        tmdbId: string,
+        type: 'movie' | 'tv',
+        provider: string,
+        season: number | undefined,
+        episode: number | undefined,
+): Promise<{ streamUrl: string; subtitles: string[]; provider: string } | null> {
+        const apiUrl = buildVidCoreApiUrl(tmdbId, type, provider, season, episode);
+        console.log(`[vidcore-scraper] trying provider: ${provider}`);
+
+        let rawBody: string;
+        try {
+                rawBody = await fetchJson(apiUrl, VIDCORE_ORIGIN + '/', `vidcore API (${provider})`);
+        } catch (error) {
+                console.warn(`[vidcore-scraper] provider ${provider} fetch failed:`, error instanceof Error ? error.message : error);
+                return null;
+        }
+
+        let payload: VidCoreApiResponse;
+        try {
+                payload = JSON.parse(rawBody) as VidCoreApiResponse;
+        } catch {
+                console.warn(`[vidcore-scraper] provider ${provider} returned non-JSON. First 200 chars:`, rawBody.slice(0, 200));
+                return null;
+        }
+
+        const streams = payload.streams;
+        if (!streams || streams.length === 0) {
+                console.warn(`[vidcore-scraper] provider ${provider} returned no streams.`);
+                return null;
+        }
+
+        // Find the first stream with a valid URL.
+        const stream = streams.find((s) => s.url && s.url.length > 0);
+        if (!stream?.url) {
+                console.warn(`[vidcore-scraper] provider ${provider} streams have no valid URL.`);
+                return null;
+        }
+
+        const subtitles = (payload.subtitles ?? []).map((s) => s.url ?? '').filter((u) => u.length > 0);
+        console.log(`[vidcore-scraper] provider ${provider} OK: stream=${stream.url.slice(0, 80)}..., ${subtitles.length} subtitles`);
+
+        return { streamUrl: stream.url, subtitles, provider };
+}
+
+/**
+ * The VidCore scrape. Tries each provider in order until one returns a valid
+ * stream. Returns the HLS stream URL + subtitles.
  */
 export async function scrapeVidCore(
         tmdbId: string,
@@ -165,34 +202,21 @@ export async function scrapeVidCore(
 ): Promise<ScraperResult> {
         console.log(`[vidcore-scraper] starting: tmdb=${tmdbId} type=${type}${type === 'tv' ? ` s${season}e${episode}` : ''}`);
 
-        const apiUrl = buildVidCoreApiUrl(tmdbId, type, season, episode);
-        const rawBody = await fetchJson(apiUrl, VIDCORE_ORIGIN + '/', 'vidcore API');
-
-        let payload: VidCoreApiResponse;
-        try {
-                payload = JSON.parse(rawBody) as VidCoreApiResponse;
-        } catch {
-                console.error('[vidcore-scraper] non-JSON response. First 500 chars:', rawBody.slice(0, 500));
-                throw new ScraperError('REGEX_PARSE_FAILED', 'VidCore API returned non-JSON.');
+        // Try each provider until one works.
+        for (const provider of VIDCORE_PROVIDERS) {
+                const result = await tryVidCoreProvider(tmdbId, type, provider, season, episode);
+                if (result) {
+                        const sources: ScraperSource[] = [{ url: result.streamUrl, quality: 'Auto', kind: 'direct' }];
+                        return {
+                                sources,
+                                subtitles: result.subtitles,
+                                referer: VIDCORE_ORIGIN + '/',
+                                provider: 'vidcore',
+                        };
+                }
         }
 
-        const streams = payload.streams;
-        if (!streams || streams.length === 0 || !streams[0]?.url) {
-                console.error('[vidcore-scraper] NO_SOURCES: no streams in response. Full:', JSON.stringify(payload).slice(0, 500));
-                throw new ScraperError('NO_SOURCES', 'VidCore API returned no streams.');
-        }
-
-        const streamUrl = streams[0].url;
-        const subtitles = (payload.subtitles ?? []).map((s) => s.url ?? '').filter((u) => u.length > 0);
-
-        console.log(`[vidcore-scraper] ok: stream=${streamUrl.slice(0, 80)}..., ${subtitles.length} subtitles`);
-
-        const sources: ScraperSource[] = [{ url: streamUrl, quality: 'Auto', kind: 'direct' }];
-
-        return {
-                sources,
-                subtitles,
-                referer: VIDCORE_ORIGIN + '/',
-                provider: 'vidcore',
-        };
+        // All providers failed.
+        console.error(`[vidcore-scraper] ALL ${VIDCORE_PROVIDERS.length} providers failed.`);
+        throw new ScraperError('NO_SOURCES', `All VidCore providers failed (${VIDCORE_PROVIDERS.join(', ')}).`);
 }

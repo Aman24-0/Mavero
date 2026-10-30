@@ -356,28 +356,25 @@
     </PlayerOptionSheet>
   {/if}
   {#if openSheet === 'scraper'}
-    <!-- 2026-10 round 26 — Dedicated Scraper Source Sheet.
-         Lists our native scrapers. Direct 1 (vidsrc.party, ORG Audio)
-         and Direct 2 (vidcore.org, Multi-Audio). Selecting a different
-         scraper re-resolves the source. -->
+    <!-- 2026-10 round 27 — Scraper Source Sheet (compact, inline badges, no footer).
+         Direct 1 (vidsrc.party, ORG Audio) + Direct 2 (vidcore.org, Multi-Audio). -->
     <PlayerOptionSheet title="Scraper Source" onClose={closeMenu}>
-      <div class="option-list" role="group" aria-label="Scraper source">
-        <button class="option-row" class:selected={selectedScraper === 'vidsrc'} type="button" onclick={() => { if (selectedScraper !== 'vidsrc') { onScraperChange('vidsrc'); } closeMenu(); }}>
+      <div class="option-list scraper-list" role="group" aria-label="Scraper source">
+        <button class="option-row scraper-row" class:selected={selectedScraper === 'vidsrc'} type="button" onclick={() => { if (selectedScraper !== 'vidsrc') { onScraperChange('vidsrc'); } closeMenu(); }}>
           <span class="row-mark">{#if selectedScraper === 'vidsrc'}<Check size={15} strokeWidth={1.5} />{/if}</span>
-          <span class="row-copy">
+          <span class="scraper-row-content">
             <strong>Direct 1</strong>
             <span class="scraper-badge scraper-badge-green">ORG Audio</span>
           </span>
         </button>
-        <button class="option-row" class:selected={selectedScraper === 'vidcore'} type="button" onclick={() => { if (selectedScraper !== 'vidcore') { onScraperChange('vidcore'); } closeMenu(); }}>
+        <button class="option-row scraper-row" class:selected={selectedScraper === 'vidcore'} type="button" onclick={() => { if (selectedScraper !== 'vidcore') { onScraperChange('vidcore'); } closeMenu(); }}>
           <span class="row-mark">{#if selectedScraper === 'vidcore'}<Check size={15} strokeWidth={1.5} />{/if}</span>
-          <span class="row-copy">
+          <span class="scraper-row-content">
             <strong>Direct 2</strong>
             <span class="scraper-badge scraper-badge-blue">Multi-Audio</span>
           </span>
         </button>
       </div>
-      <p class="scraper-hint">More scraper sources coming soon.</p>
     </PlayerOptionSheet>
   {/if}
 </div>
@@ -456,11 +453,14 @@
   /* Player V2 corrections: connected Cast state tinted with the accent. */
   .cast-button.casting { color: var(--accent); border-color: var(--line-strong); }
 
-  /* 2026-10 round 26 — Scraper sheet badges: green (ORG Audio) + blue (Multi-Audio). */
-  .scraper-badge { display: inline-flex; align-items: center; margin-left: 8px; padding: 2px 7px; border-radius: 999px; font-size: .5rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+  /* 2026-10 round 27 — Scraper sheet badges + compact rows. */
+  .scraper-badge { display: inline-flex; align-items: center; padding: 2px 7px; border-radius: 999px; font-size: .5rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
   .scraper-badge-green { background: rgba(46, 204, 113, .15); color: #2ecb71; }
   .scraper-badge-blue { background: rgba(84, 160, 255, .15); color: #54a0ff; }
-  .scraper-hint { margin: 12px 0 0; padding: 0 4px; color: var(--muted); font-size: .55rem; text-align: center; }
+  .scraper-list { gap: 2px; }
+  .scraper-row { min-height: 40px; padding: 6px 10px; }
+  .scraper-row-content { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+  .scraper-row-content strong { font-size: .68rem; }
 
   /* Compact viewports: the volume slider folds away (the mute button and the
      right-zone volume swipe remain); every OTHER control — subtitles,
