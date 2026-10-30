@@ -540,22 +540,37 @@
     controlsSizeInlineStyle(activeSourceOption?.controlsPosition ?? null, 'landscape', '--landscape-fab-size'),
   ].filter(Boolean).join(';');
   $: effectiveState = resolving ? 'switching-source' : resolutionError ? resolutionKind : state;
-  // 2026-10 round 27 — Auto-fallback: if the resolver returns an error AND the
-  // scraper was recently changed (selectedScraper !== previousScraper), revert
-  // to the previous scraper + show a toast. This prevents the UI from showing
-  // "Direct 2" selected when Direct 2 is dead.
-  $: if (resolutionError && selectedScraper !== previousScraper && previousScraper) {
+  // 2026-10 round 28 — Auto-fallback: if the resolver returns an error AND the
+  // scraper was recently changed, revert to the previous scraper + re-resolve.
+  // Uses a flag (not a reactive block) to avoid infinite loops. The fallback
+  // saves currentTime so Direct 1 resumes from the exact second Direct 2 failed.
+  let scraperFallbackPending = false;
+  $: if (resolutionError && !resolving && selectedScraper !== previousScraper && previousScraper && !scraperFallbackPending) {
+    scraperFallbackPending = true;
     const failedScraper = selectedScraper;
+    const revertTo = previousScraper;
     const failedLabel = failedScraper === 'vidcore' ? 'Direct 2' : 'Direct 1';
-    const revertLabel = previousScraper === 'vidcore' ? 'Direct 2' : 'Direct 1';
-    selectedScraper = previousScraper;
-    if (typeof localStorage !== 'undefined') localStorage.setItem('mavero_scraper', previousScraper);
+    const revertLabel = revertTo === 'vidcore' ? 'Direct 2' : 'Direct 1';
+    // Revert the scraper state IMMEDIATELY (fixes the desync — the checkmark
+    // in the Scraper Source sheet shows Direct 1 again).
+    selectedScraper = revertTo;
+    // Sync previousScraper to selectedScraper so the reactive block doesn't
+    // fire again on the next error from Direct 1.
+    previousScraper = revertTo;
+    if (typeof localStorage !== 'undefined') localStorage.setItem('mavero_scraper', revertTo);
     showScraperToast(`${failedLabel} failed, reverted to ${revertLabel}.`);
-    // Re-resolve with the reverted scraper.
+    // Clear the error state so the player exits the error modal and enters
+    // the switching-source state (showing the loading card).
+    errorMessage = '';
+    // Trigger the full re-resolve with the reverted scraper. The watch page's
+    // handleSourceChange → prepareSource → manager.loadSource will re-resolve
+    // and the PlaybackManager will resume from the saved progress position.
     if (source?.sourceId) {
-      onSourceChange(source.sourceId, previousScraper);
+      onSourceChange(source.sourceId, revertTo);
     }
-    previousScraper = selectedScraper;
+    // Reset the flag after a short delay so a NEW scraper switch can trigger
+    // a new fallback cycle.
+    setTimeout(() => { scraperFallbackPending = false; }, 3000);
   }
   // Player UI V2 (Part 1, Phase 1B) — SUPERSEDED by the approved Player V2
   // corrections layout: the Blue Velvet provider-slug detection and its
@@ -1712,7 +1727,7 @@
   }
 
   function handleWaiting() { state = 'buffering'; }
-  function handlePlaying() { state = 'playing'; errorMessage = ''; hlsAutoRetryCount = 0; }
+  function handlePlaying() { state = 'playing'; errorMessage = ''; hlsAutoRetryCount = 0; previousScraper = selectedScraper; }
   function handleSeeking() { state = 'seeking'; }
   function handleSeeked() { state = playing ? 'playing' : 'paused'; }
   function handleEnded() {
