@@ -1677,13 +1677,13 @@
     syncMediaSessionPlaybackState('paused');
   }
 
-  // 2026-10 round 21 — auto-retry on HLS fatal error (token expiry / CDN death).
+  // 2026-10 round 22 — auto-retry on HLS fatal error (token expiry / CDN death).
   // vidsrc.party tokens expire after ~30s and CDNs sometimes 404. When the
   // HLS engine fires a fatal error, re-resolve the source (get a fresh token
   // + potentially a different CDN) and restart playback from the current
-  // position. Bounded to 2 auto-retries with a 1s delay between them.
+  // position. Bounded to 3 auto-retries with a 1s delay between them.
   let hlsAutoRetryCount = 0;
-  const HLS_AUTO_RETRY_MAX = 2;
+  const HLS_AUTO_RETRY_MAX = 3;
   const HLS_AUTO_RETRY_DELAY_MS = 1000;
 
   function handleMediaError() {

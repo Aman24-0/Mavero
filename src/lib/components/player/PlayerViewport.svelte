@@ -248,19 +248,31 @@
     // 2026-10 round 19 — the `url` passed in is already the effectiveMediaUrl
     // (proxy-routed by the reactive block above). No additional routing here.
 
+    // 2026-10 round 22 — FORCE hls.js for HLS sources (bypass native HLS).
+    // On Android/Chrome, video.canPlayType('application/vnd.apple.mpegurl')
+    // returns 'maybe', causing the player to use the native HLS player. The
+    // native player does NOT expose quality levels (hls.levels). Forcing
+    // hls.js ensures the Quality menu works (1080p/720p/480p) AND gives us
+    // proper error handling (fatal errors → auto-retry).
+    //
+    // Only force hls.js when the source's metadata.protocol is 'hls' (the
+    // DirectStream adapter sets this). Non-HLS direct sources (MP4/WebM)
+    // still use the native path.
     let mode: 'native' | 'hls-js';
-    try {
-      // Phase 6: classify the SELECTED url. The source's metadata.protocol
-      // is the protocol of the currently selected stream — single-protocol
-      // direct sources pass through unchanged.
-      mode = resolveDirectPlaybackMode(currentSource, url, video);
-    } catch {
-      teardownHlsEngine();
-      return;
+    if (currentSource?.metadata?.protocol === 'hls') {
+      // Force hls.js for HLS sources — the quality selector + error handling
+      // depend on it. Native HLS (Safari/iOS) can't expose hls.levels.
+      mode = 'hls-js';
+    } else {
+      try {
+        mode = resolveDirectPlaybackMode(currentSource, url, video);
+      } catch {
+        teardownHlsEngine();
+        return;
+      }
     }
     if (mode !== 'hls-js') {
-      // Native path (MP4 or native-HLS browser) — the existing src binding
-      // keeps working exactly as before.
+      // Native path (MP4/WebM) — the existing src binding keeps working.
       teardownHlsEngine();
       return;
     }
