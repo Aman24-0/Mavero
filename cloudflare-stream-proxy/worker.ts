@@ -228,6 +228,11 @@ export default {
                 const isMediaPath = pathLower.endsWith('.m3u8') || pathLower.endsWith('.m3u') || pathLower.endsWith('.mpd')
                         || pathLower.endsWith('.ts') || pathLower.endsWith('.m4s') || pathLower.endsWith('.mp4')
                         || pathLower.endsWith('.m4a') || pathLower.endsWith('.aac');
+                // 2026-10 round 23 — detect API paths (e.g. vidsrc.party/api/play/...)
+                // and send AJAX headers (Accept: application/json, sec-fetch-dest: empty)
+                // instead of document-navigation headers. Cloudflare's bot detection
+                // treats API calls differently from page navigations.
+                const isApiPath = pathLower.includes('/api/');
                 const headers: Record<string, string> = isMediaPath
                         ? {
                                 referer,
@@ -238,6 +243,18 @@ export default {
                                 'sec-fetch-dest': 'video',
                                 'sec-fetch-mode': 'cors',
                                 'sec-fetch-site': 'cross-site'
+                        }
+                        : isApiPath
+                        ? {
+                                referer,
+                                origin,
+                                'user-agent': BROWSER_UA,
+                                accept: 'application/json, text/plain, */*',
+                                'accept-language': 'en-US,en;q=0.9',
+                                'accept-encoding': 'gzip, deflate, br',
+                                'sec-fetch-dest': 'empty',
+                                'sec-fetch-mode': 'cors',
+                                'sec-fetch-site': 'same-site'
                         }
                         : {
                                 referer,

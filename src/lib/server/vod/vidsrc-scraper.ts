@@ -213,52 +213,64 @@ const BROWSER_UA =
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
 /**
- * Builds the Worker proxy URL for a given upstream URL + referer. The Worker
- * fetches the upstream from Cloudflare's edge IPs (bypassing Cloudflare's 403
- * on Netlify's AWS egress IPs) and sends the correct browser headers +
- * Referer server-side.
- *
- * Returns null when `PUBLIC_STREAM_PROXY_URL` is unset (the caller falls back
- * to a direct fetch).
- */
-function buildWorkerProxyUrl(upstreamUrl: string, referer: string): string | null {
-        const workerBase = (publicEnv.PUBLIC_STREAM_PROXY_URL ?? '').replace(/\/+$/, '');
-        if (!workerBase) return null;
-        return `${workerBase}/?u=${encodeURIComponent(upstreamUrl)}&r=${encodeURIComponent(referer)}`;
-}
-
-/**
- * Fetches a URL with a FULL set of browser headers + a strict 6s AbortController
+ * Fetches a URL with a FULL set of browser headers + a strict 5s AbortController
  * timeout. Throws a typed `ScraperError` on failure.
  *
- * 2026-10 round 18: the Worker fallback is tried first (edge IPs bypass
- * Cloudflare's IP-based 403). If the Worker fails, a direct fetch is attempted.
+ * 2026-10 round 23 — when PUBLIC_STREAM_PROXY_URL is set, the Worker is the
+ * ONLY fetch path (no direct fallback). vidsrc.party blocks Netlify's AWS
+ * egress IPs (Cloudflare 403); the Worker's Cloudflare edge IPs bypass this.
+ * Falling back to a direct fetch after a Worker failure is counterproductive —
+ * the direct fetch will also be 403'd. When the Worker is NOT configured, a
+ * direct fetch with full browser headers is used (for local dev + the test
+ * harness).
+ *
+ * Detailed logging: on any non-OK response, the HTTP status + first 200 chars
+ * of the body are logged so the admin can see exactly why the fetch failed
+ * (Cloudflare challenge page, rate-limit message, etc.).
  */
 async function fetchJson(url: string, referer: string, label: string): Promise<string> {
-        // --- Try the Worker proxy first (if configured) ---
-        const workerUrl = buildWorkerProxyUrl(url, referer);
-        if (workerUrl) {
+        const workerBase = (publicEnv.PUBLIC_STREAM_PROXY_URL ?? '').replace(/\/+$/, '');
+
+        // --- Worker proxy path (preferred — Cloudflare edge IPs bypass IP blocks) ---
+        if (workerBase) {
+                const workerUrl = `${workerBase}/?u=${encodeURIComponent(url)}&r=${encodeURIComponent(referer)}`;
+                console.log(`[vidsrc-scraper] ${label}: fetching via Worker proxy`);
+                let response: Response;
                 try {
                         const controller = new AbortController();
                         const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
                         try {
-                                const response = await fetch(workerUrl, {
+                                response = await fetch(workerUrl, {
                                         signal: controller.signal,
                                         redirect: 'follow'
                                 });
-                                if (response.ok) {
-                                        return response.text();
-                                }
-                                console.log(`[vidsrc-scraper] ${label} Worker proxy returned HTTP ${response.status}, falling back to direct fetch`);
                         } finally {
                                 clearTimeout(timer);
                         }
                 } catch (error) {
-                        console.log(`[vidsrc-scraper] ${label} Worker proxy failed (${error instanceof Error ? error.message : 'unknown'}), falling back to direct fetch`);
+                        if (error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')) {
+                                console.error(`[vidsrc-scraper] ${label} Worker timed out after ${FETCH_TIMEOUT_MS}ms`);
+                                throw new ScraperError('UPSTREAM_TIMEOUT', `${label} timed out after ${FETCH_TIMEOUT_MS}ms (Worker proxy).`);
+                        }
+                        console.error(`[vidsrc-scraper] ${label} Worker network error:`, error instanceof Error ? error.message : error);
+                        throw new ScraperError('SCRAPE_FAILED', `${label} failed (Worker proxy network error: ${error instanceof Error ? error.message : 'unknown'}).`);
                 }
+                if (!response.ok) {
+                        const bodyText = await response.text().catch(() => '');
+                        console.error(`[vidsrc-scraper] ${label} Worker returned HTTP ${response.status}. Body (first 200 chars):`, bodyText.slice(0, 200));
+                        if (response.status === 403 || response.status === 503) {
+                                throw new ScraperError('CLOUDFLARE_BLOCKED', `${label} was blocked by Cloudflare (HTTP ${response.status}, via Worker). Body: ${bodyText.slice(0, 100)}`);
+                        }
+                        if (response.status === 504) {
+                                throw new ScraperError('UPSTREAM_TIMEOUT', `${label} timed out (Worker 504 Gateway Timeout).`);
+                        }
+                        throw new ScraperError('SCRAPE_FAILED', `${label} returned HTTP ${response.status} (via Worker). Body: ${bodyText.slice(0, 100)}`);
+                }
+                return response.text();
         }
 
-        // --- Direct fetch (with full browser headers + 6s AbortController) ---
+        // --- Direct fetch path (no Worker configured — local dev / test harness) ---
+        console.log(`[vidsrc-scraper] ${label}: fetching directly (no Worker configured)`);
         let response: Response;
         try {
                 const controller = new AbortController();
@@ -296,12 +308,13 @@ async function fetchJson(url: string, referer: string, label: string): Promise<s
         }
         if (response.status === 403 || response.status === 503) {
                 const bodyText = await response.text().catch(() => '');
-                console.error(`[vidsrc-scraper] ${label} Cloudflare blocked (HTTP ${response.status}). First 500 chars:`, bodyText.slice(0, 500));
-                throw new ScraperError('CLOUDFLARE_BLOCKED', `${label} was blocked by Cloudflare (HTTP ${response.status}). The scraper's IP may be flagged.`);
+                console.error(`[vidsrc-scraper] ${label} Cloudflare blocked (HTTP ${response.status}). First 200 chars:`, bodyText.slice(0, 200));
+                throw new ScraperError('CLOUDFLARE_BLOCKED', `${label} was blocked by Cloudflare (HTTP ${response.status}). Body: ${bodyText.slice(0, 100)}`);
         }
         if (!response.ok) {
-                console.error(`[vidsrc-scraper] ${label} HTTP ${response.status}`);
-                throw new ScraperError('SCRAPE_FAILED', `${label} returned HTTP ${response.status}.`);
+                const bodyText = await response.text().catch(() => '');
+                console.error(`[vidsrc-scraper] ${label} HTTP ${response.status}. Body (first 200 chars):`, bodyText.slice(0, 200));
+                throw new ScraperError('SCRAPE_FAILED', `${label} returned HTTP ${response.status}. Body: ${bodyText.slice(0, 100)}`);
         }
         return response.text();
 }
