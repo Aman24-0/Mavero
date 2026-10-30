@@ -26,7 +26,7 @@
   // Subtitle Settings sheet (track list + sync offset + appearance —
   // Issues 1+2). Only REAL values are ever offered: the tracks, quality
   // levels and speeds of the ACTIVE source.
-  import { AudioLines, Captions, Cast, Check, Expand, Lock, LockOpen, Maximize2, Minimize2, Pause, PictureInPicture2, Play, RotateCcwSquare, RotateCwSquare, Settings2, Volume1, Volume2, VolumeX } from 'lucide-svelte';
+  import { AudioLines, Captions, Cast, Check, Expand, Lock, LockOpen, Maximize2, Minimize2, Pause, PictureInPicture2, Play, RotateCcwSquare, RotateCwSquare, Settings2, Tv, Volume1, Volume2, VolumeX } from 'lucide-svelte';
   import type { PlayerAudioTrackOption, PlayerInternalQualityOption, PlayerQualityOption, PlayerSubtitleTrack } from '$lib/shared/player';
   import { formatPlayerTime, playbackSpeeds, PLAYER_AUTO_QUALITY_ID } from '$lib/shared/player';
   import PlayerOptionSheet from './PlayerOptionSheet.svelte';
@@ -103,6 +103,8 @@
   export let castAvailable = false;
   export let castActive = false;
   export let onCast: () => void = () => {};
+  // 2026-10 round 24 — Source button in the top-right zone (opens the source sheet).
+  export let onOpenSourceSheet: () => void = () => {};
 
   // ----- Sheet state (Issue 3) -----
   // Exactly ONE sheet open at a time. openMenu/closeMenu are the SINGLE
@@ -205,10 +207,16 @@
 </script>
 
 <div class="controls" class:casting={castActive} aria-label="Playback controls">
-  <!-- TOP-RIGHT utility zone: Lock, PiP, Cast (approved layout). -->
+  <!-- TOP-RIGHT utility zone: Source, Display Mode, Lock, PiP, Cast.
+       2026-10 round 24 — Display Mode moved here from the bottom bar (it
+       was creating a new row in portrait). Source button added for future
+       scraper provider switching. -->
   <div class="utility-zone">
+    <!-- 2026-10 round 24 — Source button (opens the source sheet). -->
+    <button class="control-button" type="button" aria-label="Choose source" onclick={onOpenSourceSheet}><Tv size={17} /></button>
+    <!-- 2026-10 round 24 — Display Mode moved here from the bottom bar. -->
+    <button class="control-button" type="button" aria-label={`Display mode: ${displayMode}`} aria-haspopup="dialog" onclick={() => openMenu('display')}><Expand size={17} /></button>
     {#if castAvailable}
-      <!-- aria-pressed mirrors the session; the label names both actions. -->
       <button class="control-button cast-button" class:casting={castActive} type="button" aria-label={castActive ? 'Disconnect cast session' : 'Cast to a device'} aria-pressed={castActive} onclick={onCast}><Cast size={17} /></button>
     {/if}
     {#if !castActive && pictureInPictureSupported}
@@ -217,12 +225,10 @@
     <button class="control-button lock-button" type="button" aria-label={locked ? 'Unlock player controls' : 'Lock player controls'} aria-pressed={locked} onclick={onToggleLock}>{#if locked}<LockOpen size={17} />{:else}<Lock size={17} />{/if}</button>
   </div>
 
-  <!-- 2026-10 round 20 — the center cluster overlay is REMOVED. Play/Pause
-       moved to the bottom secondary row (before the ±10 s seek buttons).
-       The center overlay was overlapping with error messages + loading cards
-       on mobile. The bottom bar now owns all playback controls. -->
-
-  <!-- BOTTOM zone: time + timeline, then the secondary control row. -->
+  <!-- BOTTOM zone: time + timeline, then the control row.
+       2026-10 round 24 — the control row is split into LEFT (Play/Pause, ±10s)
+       and RIGHT (Volume, Subtitles, Quality, Audio, Speed, Fullscreen) groups
+       using justify-content: space-between. -->
   <div class="bottom-zone">
     <div class="timeline-row">
       <span class="time-label" aria-live="off">{formatPlayerTime(currentTime)}</span>
@@ -236,81 +242,55 @@
       <span class="time-label" aria-live="off">{formatPlayerTime(safeDuration)}</span>
     </div>
 
-    <!-- Secondary row: buttons open Mavero selection sheets (Issue 3 — no
-         browser-default select popups). Same row semantics as the
-         approved layout: portrait left-aligned group, landscape packs
-         right; the subtitle control flexes to absorb leftover width in
-         portrait and stops flexing in landscape. -->
     <div class="secondary-row">
-      {#if !castActive}
-        <!-- 2026-10 round 20 — Play/Pause moved here from the center cluster. -->
+      <!-- LEFT group: Play/Pause + ±10 s seek buttons. -->
+      <div class="left-controls">
         <button class="control-button play-inline" type="button" aria-label={playing ? 'Pause' : 'Play'} onclick={onTogglePlay}>
           {#if playing}<Pause size={17} aria-hidden="true" />{:else}<Play size={17} fill="currentColor" aria-hidden="true" />{/if}
         </button>
-        <!-- 2026-10 round 19 — ±10 s seek buttons (inline after Play/Pause, before Volume). -->
         <button class="control-button seek-inline" type="button" aria-label="Seek backward 10 seconds" onclick={() => onStep(-10)}>
           <RotateCcwSquare size={17} aria-hidden="true" />
         </button>
         <button class="control-button seek-inline" type="button" aria-label="Seek forward 10 seconds" onclick={() => onStep(10)}>
           <RotateCwSquare size={17} aria-hidden="true" />
         </button>
-        <div class="volume-control">
-          <button class="control-button" type="button" aria-label={muted ? 'Unmute' : 'Mute'} onclick={onToggleMute}>
-            {#if volumeIcon === 'muted'}<VolumeX size={17} />{:else if volumeIcon === 'low'}<Volume1 size={17} />{:else}<Volume2 size={17} />{/if}
+      </div>
+      <!-- RIGHT group: Volume, Subtitles, Quality, Audio, Speed, Fullscreen. -->
+      <div class="right-controls">
+        {#if !castActive}
+          <div class="volume-control">
+            <button class="control-button" type="button" aria-label={muted ? 'Unmute' : 'Mute'} onclick={onToggleMute}>
+              {#if volumeIcon === 'muted'}<VolumeX size={17} />{:else if volumeIcon === 'low'}<Volume1 size={17} />{:else}<Volume2 size={17} />{/if}
+            </button>
+            <input class="volume-input" type="range" min="0" max="1" step="0.05" value={muted ? 0 : volume} oninput={handleVolume} aria-label="Volume" />
+          </div>
+          <button class="select-control subtitles sheet-trigger" type="button" aria-label={`Subtitles: ${subtitleButtonLabel}${subtitleNotice ? ` (${subtitleNotice})` : ''}`} aria-haspopup="dialog" title={subtitleNotice || undefined} onclick={() => openMenu('subtitles')}>
+            <Captions size={16} aria-hidden="true" />
+            <span class="control-label">{subtitleButtonLabel}</span>
           </button>
-          <input class="volume-input" type="range" min="0" max="1" step="0.05" value={muted ? 0 : volume} oninput={handleVolume} aria-label="Volume" />
-        </div>
-        <!-- Subtitles: ALWAYS rendered (approved corrections spec — the user
-             must be able to see that no tracks exist; a missing menu must
-             never be mistaken for a working feature). Opens the Subtitle
-             Settings sheet: track list + sync + appearance (Issues 1+2+3). -->
-        <button class="select-control subtitles sheet-trigger" type="button" aria-label={`Subtitles: ${subtitleButtonLabel}${subtitleNotice ? ` (${subtitleNotice})` : ''}`} aria-haspopup="dialog" title={subtitleNotice || undefined} onclick={() => openMenu('subtitles')}>
-          <Captions size={16} aria-hidden="true" />
-          <span class="control-label">{subtitleButtonLabel}</span>
-        </button>
-        {#if qualityMode !== 'none'}
-          <!-- Engine-driven HLS quality: AUTO + the manifest's REAL levels;
-               otherwise the stream's real variant list. -->
-          <button class="select-control quality sheet-trigger" type="button" aria-label={`Playback quality: ${qualityButtonLabel}`} aria-haspopup="dialog" onclick={() => openMenu('quality')}>
-            <Settings2 size={15} aria-hidden="true" />
-            <span class="control-label">{qualityButtonLabel}</span>
-          </button>
-        {:else if singleQualityLabel}
-          <!-- A manifest with exactly ONE level cannot offer a selection —
-               the truthful state is a DISABLED control showing the REAL
-               level label (never a fabricated Auto/quality list). -->
-          <button class="select-control quality sheet-trigger" type="button" disabled aria-disabled="true" title={`Quality ${singleQualityLabel} (no other qualities available)`} aria-label={`Playback quality: ${singleQualityLabel} (single available quality)`}>
-            <Settings2 size={15} aria-hidden="true" />
-            <span class="control-label">{singleQualityLabel}</span>
-          </button>
-        {/if}
-        {#if audioMode === 'menu'}
-          <!-- Engine audio tracks (GOAL 18 completion): renders ONLY when the
-               active HLS manifest REALLY exposes multiple audio tracks
-               (e.g. Turkish + original). Selection routes through the
-               shell → viewport → engine controller — the engine is never
-               recreated and playback position is untouched. -->
-          <button class="select-control audio sheet-trigger" type="button" aria-label={`Audio track: ${audioButtonLabel}`} aria-haspopup="dialog" onclick={() => openMenu('audio')}>
-            <AudioLines size={15} aria-hidden="true" />
-            <span class="control-label">{audioButtonLabel}</span>
+          {#if qualityMode !== 'none'}
+            <button class="select-control quality sheet-trigger" type="button" aria-label={`Playback quality: ${qualityButtonLabel}`} aria-haspopup="dialog" onclick={() => openMenu('quality')}>
+              <Settings2 size={15} aria-hidden="true" />
+              <span class="control-label">{qualityButtonLabel}</span>
+            </button>
+          {:else if singleQualityLabel}
+            <button class="select-control quality sheet-trigger" type="button" disabled aria-disabled="true" title={`Quality ${singleQualityLabel} (no other qualities available)`} aria-label={`Playback quality: ${singleQualityLabel} (single available quality)`}>
+              <Settings2 size={15} aria-hidden="true" />
+              <span class="control-label">{singleQualityLabel}</span>
+            </button>
+          {/if}
+          {#if audioMode === 'menu'}
+            <button class="select-control audio sheet-trigger" type="button" aria-label={`Audio track: ${audioButtonLabel}`} aria-haspopup="dialog" onclick={() => openMenu('audio')}>
+              <AudioLines size={15} aria-hidden="true" />
+              <span class="control-label">{audioButtonLabel}</span>
+            </button>
+          {/if}
+          <button class="select-control speed sheet-trigger" type="button" aria-label={`Playback speed: ${playbackRate}×`} aria-haspopup="dialog" onclick={() => openMenu('speed')}>
+            <span class="control-label">{playbackRate}×</span>
           </button>
         {/if}
-        <!-- Display mode: Fit preserves aspect with letterboxing, Fill
-             preserves aspect and crops, Stretch fills both axes. CSS-only —
-             switching never restarts the stream or moves the playhead. -->
-        <button class="select-control display-mode sheet-trigger" type="button" aria-label={`Display mode: ${displayMode}`} aria-haspopup="dialog" onclick={() => openMenu('display')}>
-          <Expand size={15} aria-hidden="true" />
-          <span class="control-label">{displayMode === 'fit' ? 'Fit' : displayMode === 'fill' ? 'Fill' : 'Stretch'}</span>
-        </button>
-        <!-- Speed: the selected speed renders ONCE (the button itself). -->
-        <button class="select-control speed sheet-trigger" type="button" aria-label={`Playback speed: ${playbackRate}×`} aria-haspopup="dialog" onclick={() => openMenu('speed')}>
-          <span class="control-label">{playbackRate}×</span>
-        </button>
-      {/if}
-      <!-- Fullscreen/landscape: the SAME Mavero fullscreen + orientation
-           controller for every provider (the floating Landscape FAB remains
-           only for embed sources, which have no Mavero control surface). -->
-      <button class="control-button" type="button" aria-label={fullscreenActive ? 'Exit fullscreen' : 'Enter fullscreen'} aria-pressed={fullscreenActive} onclick={onFullscreen}>{#if fullscreenActive}<Minimize2 size={17} />{:else}<Maximize2 size={17} />{/if}</button>
+        <button class="control-button" type="button" aria-label={fullscreenActive ? 'Exit fullscreen' : 'Enter fullscreen'} aria-pressed={fullscreenActive} onclick={onFullscreen}>{#if fullscreenActive}<Minimize2 size={17} />{:else}<Maximize2 size={17} />{/if}</button>
+      </div>
     </div>
   </div>
 
@@ -397,13 +377,13 @@
   .timeline-input::-moz-range-track { height: 4px; background: transparent; }
   .timeline-input::-moz-range-thumb { width: 11px; height: 11px; border: 2px solid var(--ink); border-radius: 50%; background: var(--accent); }
 
-  /* Secondary row: ONE compact left-aligned control group in BOTH
-     orientations (final remediation). flex-wrap remains only as the
-     deliberate narrow-viewport fallback — it can no longer produce the
-     reported "fullscreen on its own row" result, because nothing in the
-     row stretches anymore (the former flex-grow spacer is REMOVED) and the
-     subtitle control shrinks before anything wraps. */
-  .secondary-row { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-start; gap: 6px; }
+  /* Secondary row: LEFT group (Play/Pause, ±10s) + RIGHT group (Volume,
+     Subtitles, Quality, Audio, Speed, Fullscreen) using space-between.
+     2026-10 round 24 — replaced the single left-aligned group with a
+     two-group layout for better visual alignment. */
+  .secondary-row { display: flex; align-items: center; flex-wrap: wrap; justify-content: space-between; gap: 6px; }
+  .left-controls { display: flex; align-items: center; gap: 6px; }
+  .right-controls { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
   .control-button { display: inline-grid; place-items: center; min-width: 40px; min-height: 40px; border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--ink-soft); background: rgba(0,0,0,.5); cursor: pointer; transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
   .control-button:hover, .control-button:focus-visible { border-color: var(--line-strong); background: var(--accent-soft); }
   .control-button:active { transform: scale(.97); }
@@ -423,7 +403,7 @@
   .select-control.subtitles { flex: 1 1 56px; min-width: 56px; max-width: 110px; }
   .select-control.subtitles .control-label { flex: 1 1 auto; text-align: left; }
   .select-control.quality .control-label { max-width: 64px; }
-  .select-control.display-mode .control-label { max-width: 58px; }
+  /* 2026-10 round 24 — .select-control.display-mode removed (moved to top-right). */
   .select-control.speed .control-label { max-width: 44px; }
 
   /* In-player selection sheet option rows (shared shape across quality /
@@ -452,16 +432,12 @@
   @media (max-width: 640px) {
     .bottom-zone { padding: 8px 8px calc(10px + env(safe-area-inset-bottom)); }
     .secondary-row { gap: 3px; }
+    .left-controls { gap: 3px; }
+    .right-controls { gap: 3px; }
     .time-label { font-size: .56rem; }
     .select-control { padding: 0 5px; }
     .select-control.subtitles { min-width: 48px; }
-    .select-control.display-mode { gap: 0; }
-    /* The display-mode icon is decorative — on narrow phones it folds away
-       so Fit/Fill/Stretch keeps its readable labels and the row stays ONE
-       line down to 360px (deliberate compact fallback budget). */
-    .select-control.display-mode :global(svg) { display: none; }
-    /* 2026-10 round 20 — .center-cluster + .cluster-button.play removed
-       (Play/Pause moved to the bottom secondary row). */
+    /* 2026-10 round 24 — display-mode moved to top-right; compact rules removed. */
   }
   /* Landscape phone (Player V2 remaining fixes, 2026-10): the secondary row
      is ONE RIGHT-aligned compact group — the user's approved landscape
@@ -474,7 +450,8 @@
      Portrait keeps the same left-aligned group semantics (the base rule
      above is untouched; this block only tightens landscape). */
   @media (orientation: landscape) and (max-height: 500px) {
-    .secondary-row { flex-wrap: nowrap; gap: 5px; justify-content: flex-end; }
+    .secondary-row { flex-wrap: nowrap; gap: 5px; }
+    .right-controls { flex-wrap: nowrap; }
     .select-control.subtitles { flex: 0 1 auto; }
   }
   /* Landscape phone: compact the bottom zone. */
