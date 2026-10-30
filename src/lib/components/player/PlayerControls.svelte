@@ -26,7 +26,7 @@
   // Subtitle Settings sheet (track list + sync offset + appearance —
   // Issues 1+2). Only REAL values are ever offered: the tracks, quality
   // levels and speeds of the ACTIVE source.
-  import { AudioLines, Captions, Cast, Check, Expand, Lock, LockOpen, Maximize2, Minimize2, Pause, PictureInPicture2, Play, RotateCcwSquare, RotateCwSquare, Settings2, Tv, Volume1, Volume2, VolumeX } from 'lucide-svelte';
+  import { AudioLines, Captions, Cast, Check, Expand, Lock, LockOpen, Maximize2, Minimize2, Pause, PictureInPicture2, Play, RotateCcwSquare, RotateCwSquare, Settings2, Tv, Volume1, Volume2, VolumeX, Gauge, Sparkles } from 'lucide-svelte';
   import type { PlayerAudioTrackOption, PlayerInternalQualityOption, PlayerQualityOption, PlayerSubtitleTrack } from '$lib/shared/player';
   import { formatPlayerTime, playbackSpeeds, PLAYER_AUTO_QUALITY_ID } from '$lib/shared/player';
   import PlayerOptionSheet from './PlayerOptionSheet.svelte';
@@ -103,15 +103,17 @@
   export let castAvailable = false;
   export let castActive = false;
   export let onCast: () => void = () => {};
-  // 2026-10 round 24 — Source button in the top-right zone (opens the source sheet).
-  export let onOpenSourceSheet: () => void = () => {};
+  // 2026-10 round 25 — onOpenSourceSheet is retained for backward compat
+  // but the Tv button now opens the dedicated scraper sheet internally.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  export const onOpenSourceSheet: () => void = () => {};
 
   // ----- Sheet state (Issue 3) -----
   // Exactly ONE sheet open at a time. openMenu/closeMenu are the SINGLE
   // writers of the shell's open flag (deterministic — no mount/destroy
   // ordering dependence).
-  let openSheet: 'subtitles' | 'quality' | 'audio' | 'speed' | 'display' | null = null;
-  function openMenu(kind: 'subtitles' | 'quality' | 'audio' | 'speed' | 'display') {
+  let openSheet: 'subtitles' | 'quality' | 'audio' | 'speed' | 'display' | 'scraper' | null = null;
+  function openMenu(kind: 'subtitles' | 'quality' | 'audio' | 'speed' | 'display' | 'scraper') {
     openSheet = kind;
     onMenuOpenChange(true);
   }
@@ -212,17 +214,17 @@
        was creating a new row in portrait). Source button added for future
        scraper provider switching. -->
   <div class="utility-zone">
-    <!-- 2026-10 round 24 — Source button (opens the source sheet). -->
-    <button class="control-button" type="button" aria-label="Choose source" onclick={onOpenSourceSheet}><Tv size={17} /></button>
+    <!-- 2026-10 round 25 — Scraper Source button (opens the dedicated scraper sheet, NOT the general VOD source sheet). -->
+    <button class="control-button" type="button" aria-label="Scraper source" onclick={() => openMenu('scraper')}><Tv size={17} strokeWidth={1.5} /></button>
     <!-- 2026-10 round 24 — Display Mode moved here from the bottom bar. -->
-    <button class="control-button" type="button" aria-label={`Display mode: ${displayMode}`} aria-haspopup="dialog" onclick={() => openMenu('display')}><Expand size={17} /></button>
+    <button class="control-button" type="button" aria-label={`Display mode: ${displayMode}`} aria-haspopup="dialog" onclick={() => openMenu('display')}><Expand size={17} strokeWidth={1.5} /></button>
     {#if castAvailable}
-      <button class="control-button cast-button" class:casting={castActive} type="button" aria-label={castActive ? 'Disconnect cast session' : 'Cast to a device'} aria-pressed={castActive} onclick={onCast}><Cast size={17} /></button>
+      <button class="control-button cast-button" class:casting={castActive} type="button" aria-label={castActive ? 'Disconnect cast session' : 'Cast to a device'} aria-pressed={castActive} onclick={onCast}><Cast size={17} strokeWidth={1.5} /></button>
     {/if}
     {#if !castActive && pictureInPictureSupported}
-      <button class="control-button" type="button" aria-label={pictureInPicture ? 'Exit Picture-in-Picture' : 'Enter Picture-in-Picture'} aria-pressed={pictureInPicture} onclick={onPictureInPicture}><PictureInPicture2 size={17} /></button>
+      <button class="control-button" type="button" aria-label={pictureInPicture ? 'Exit Picture-in-Picture' : 'Enter Picture-in-Picture'} aria-pressed={pictureInPicture} onclick={onPictureInPicture}><PictureInPicture2 size={17} strokeWidth={1.5} /></button>
     {/if}
-    <button class="control-button lock-button" type="button" aria-label={locked ? 'Unlock player controls' : 'Lock player controls'} aria-pressed={locked} onclick={onToggleLock}>{#if locked}<LockOpen size={17} />{:else}<Lock size={17} />{/if}</button>
+    <button class="control-button lock-button" type="button" aria-label={locked ? 'Unlock player controls' : 'Lock player controls'} aria-pressed={locked} onclick={onToggleLock}>{#if locked}<LockOpen size={17} strokeWidth={1.5} />{:else}<Lock size={17} strokeWidth={1.5} />{/if}</button>
   </div>
 
   <!-- BOTTOM zone: time + timeline, then the control row.
@@ -246,13 +248,13 @@
       <!-- LEFT group: Play/Pause + ±10 s seek buttons. -->
       <div class="left-controls">
         <button class="control-button play-inline" type="button" aria-label={playing ? 'Pause' : 'Play'} onclick={onTogglePlay}>
-          {#if playing}<Pause size={17} aria-hidden="true" />{:else}<Play size={17} fill="currentColor" aria-hidden="true" />{/if}
+          {#if playing}<Pause size={18} strokeWidth={1.5} aria-hidden="true" />{:else}<Play size={18} fill="currentColor" aria-hidden="true" />{/if}
         </button>
         <button class="control-button seek-inline" type="button" aria-label="Seek backward 10 seconds" onclick={() => onStep(-10)}>
-          <RotateCcwSquare size={17} aria-hidden="true" />
+          <RotateCcwSquare size={18} strokeWidth={1.5} aria-hidden="true" />
         </button>
         <button class="control-button seek-inline" type="button" aria-label="Seek forward 10 seconds" onclick={() => onStep(10)}>
-          <RotateCwSquare size={17} aria-hidden="true" />
+          <RotateCwSquare size={18} strokeWidth={1.5} aria-hidden="true" />
         </button>
       </div>
       <!-- RIGHT group: Volume, Subtitles, Quality, Audio, Speed, Fullscreen. -->
@@ -260,36 +262,37 @@
         {#if !castActive}
           <div class="volume-control">
             <button class="control-button" type="button" aria-label={muted ? 'Unmute' : 'Mute'} onclick={onToggleMute}>
-              {#if volumeIcon === 'muted'}<VolumeX size={17} />{:else if volumeIcon === 'low'}<Volume1 size={17} />{:else}<Volume2 size={17} />{/if}
+              {#if volumeIcon === 'muted'}<VolumeX size={18} strokeWidth={1.5} />{:else if volumeIcon === 'low'}<Volume1 size={18} strokeWidth={1.5} />{:else}<Volume2 size={18} strokeWidth={1.5} />{/if}
             </button>
             <input class="volume-input" type="range" min="0" max="1" step="0.05" value={muted ? 0 : volume} oninput={handleVolume} aria-label="Volume" />
           </div>
           <button class="select-control subtitles sheet-trigger" type="button" aria-label={`Subtitles: ${subtitleButtonLabel}${subtitleNotice ? ` (${subtitleNotice})` : ''}`} aria-haspopup="dialog" title={subtitleNotice || undefined} onclick={() => openMenu('subtitles')}>
-            <Captions size={16} aria-hidden="true" />
+            <Captions size={17} strokeWidth={1.5} aria-hidden="true" />
             <span class="control-label">{subtitleButtonLabel}</span>
           </button>
           {#if qualityMode !== 'none'}
             <button class="select-control quality sheet-trigger" type="button" aria-label={`Playback quality: ${qualityButtonLabel}`} aria-haspopup="dialog" onclick={() => openMenu('quality')}>
-              <Settings2 size={15} aria-hidden="true" />
+              <Settings2 size={16} strokeWidth={1.5} aria-hidden="true" />
               <span class="control-label">{qualityButtonLabel}</span>
             </button>
           {:else if singleQualityLabel}
             <button class="select-control quality sheet-trigger" type="button" disabled aria-disabled="true" title={`Quality ${singleQualityLabel} (no other qualities available)`} aria-label={`Playback quality: ${singleQualityLabel} (single available quality)`}>
-              <Settings2 size={15} aria-hidden="true" />
+              <Settings2 size={16} strokeWidth={1.5} aria-hidden="true" />
               <span class="control-label">{singleQualityLabel}</span>
             </button>
           {/if}
           {#if audioMode === 'menu'}
             <button class="select-control audio sheet-trigger" type="button" aria-label={`Audio track: ${audioButtonLabel}`} aria-haspopup="dialog" onclick={() => openMenu('audio')}>
-              <AudioLines size={15} aria-hidden="true" />
+              <AudioLines size={16} strokeWidth={1.5} aria-hidden="true" />
               <span class="control-label">{audioButtonLabel}</span>
             </button>
           {/if}
           <button class="select-control speed sheet-trigger" type="button" aria-label={`Playback speed: ${playbackRate}×`} aria-haspopup="dialog" onclick={() => openMenu('speed')}>
+            <Gauge size={16} strokeWidth={1.5} aria-hidden="true" />
             <span class="control-label">{playbackRate}×</span>
           </button>
         {/if}
-        <button class="control-button" type="button" aria-label={fullscreenActive ? 'Exit fullscreen' : 'Enter fullscreen'} aria-pressed={fullscreenActive} onclick={onFullscreen}>{#if fullscreenActive}<Minimize2 size={17} />{:else}<Maximize2 size={17} />{/if}</button>
+        <button class="control-button" type="button" aria-label={fullscreenActive ? 'Exit fullscreen' : 'Enter fullscreen'} aria-pressed={fullscreenActive} onclick={onFullscreen}>{#if fullscreenActive}<Minimize2 size={18} strokeWidth={1.5} />{:else}<Maximize2 size={18} strokeWidth={1.5} />{/if}</button>
       </div>
     </div>
   </div>
@@ -340,11 +343,29 @@
       <div class="option-list" role="group" aria-label="Playback speed">
         {#each speedOptions as option (option.id)}
           <button class="option-row" class:selected={option.selected} type="button" onclick={() => chooseSpeed(option.id)}>
-            <span class="row-mark">{#if option.selected}<Check size={15} />{/if}</span>
+            <span class="row-mark">{#if option.selected}<Check size={15} strokeWidth={1.5} />{/if}</span>
             <span class="row-copy"><strong>{option.label}</strong></span>
           </button>
         {/each}
       </div>
+    </PlayerOptionSheet>
+  {/if}
+  {#if openSheet === 'scraper'}
+    <!-- 2026-10 round 25 — Dedicated Scraper Source Sheet.
+         Lists ONLY our native scrapers (not the general VOD embed sources).
+         For now: Direct 1 (vidsrc.party) with an ORG Audio badge.
+         More scrapers will be added here in the future. -->
+    <PlayerOptionSheet title="Scraper Source" onClose={closeMenu}>
+      <div class="option-list" role="group" aria-label="Scraper source">
+        <button class="option-row selected" type="button" onclick={closeMenu}>
+          <span class="row-mark"><Check size={15} strokeWidth={1.5} /></span>
+          <span class="row-copy">
+            <strong>Direct 1</strong>
+            <span class="scraper-badge">ORG Audio</span>
+          </span>
+        </button>
+      </div>
+      <p class="scraper-hint">More scraper sources coming soon.</p>
     </PlayerOptionSheet>
   {/if}
 </div>
@@ -379,11 +400,12 @@
 
   /* Secondary row: LEFT group (Play/Pause, ±10s) + RIGHT group (Volume,
      Subtitles, Quality, Audio, Speed, Fullscreen) using space-between.
-     2026-10 round 24 — replaced the single left-aligned group with a
-     two-group layout for better visual alignment. */
-  .secondary-row { display: flex; align-items: center; flex-wrap: wrap; justify-content: space-between; gap: 6px; }
-  .left-controls { display: flex; align-items: center; gap: 6px; }
-  .right-controls { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+     2026-10 round 25 — portrait uses nowrap (single row) with 8px gap.
+     The right group packs tightly with flex-shrink on labels so everything
+     fits on one line. Touch targets remain 36px+ minimum. */
+  .secondary-row { display: flex; align-items: center; flex-wrap: nowrap; justify-content: space-between; gap: 8px; }
+  .left-controls { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+  .right-controls { display: flex; align-items: center; flex-wrap: nowrap; gap: 8px; justify-content: flex-end; min-width: 0; }
   .control-button { display: inline-grid; place-items: center; min-width: 40px; min-height: 40px; border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--ink-soft); background: rgba(0,0,0,.5); cursor: pointer; transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
   .control-button:hover, .control-button:focus-visible { border-color: var(--line-strong); background: var(--accent-soft); }
   .control-button:active { transform: scale(.97); }
@@ -422,6 +444,10 @@
   /* Player V2 corrections: connected Cast state tinted with the accent. */
   .cast-button.casting { color: var(--accent); border-color: var(--line-strong); }
 
+  /* 2026-10 round 25 — Scraper sheet badge + hint. */
+  .scraper-badge { display: inline-flex; align-items: center; margin-left: 8px; padding: 2px 7px; border-radius: 999px; background: rgba(46, 204, 113, .15); color: #2ecb71; font-size: .5rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+  .scraper-hint { margin: 12px 0 0; padding: 0 4px; color: var(--muted); font-size: .55rem; text-align: center; }
+
   /* Compact viewports: the volume slider folds away (the mute button and the
      right-zone volume swipe remain); every OTHER control — subtitles,
      quality, display mode, speed, fullscreen — stays reachable (the reported
@@ -431,13 +457,14 @@
   }
   @media (max-width: 640px) {
     .bottom-zone { padding: 8px 8px calc(10px + env(safe-area-inset-bottom)); }
-    .secondary-row { gap: 3px; }
-    .left-controls { gap: 3px; }
-    .right-controls { gap: 3px; }
+    .secondary-row { gap: 6px; }
+    .left-controls { gap: 6px; }
+    .right-controls { gap: 4px; }
     .time-label { font-size: .56rem; }
-    .select-control { padding: 0 5px; }
-    .select-control.subtitles { min-width: 48px; }
-    /* 2026-10 round 24 — display-mode moved to top-right; compact rules removed. */
+    .select-control { padding: 0 4px; min-height: 36px; }
+    .select-control.subtitles { min-width: 40px; max-width: 80px; }
+    .control-button { min-width: 36px; min-height: 36px; }
+    .control-label { font-size: .55rem; }
   }
   /* Landscape phone (Player V2 remaining fixes, 2026-10): the secondary row
      is ONE RIGHT-aligned compact group — the user's approved landscape
