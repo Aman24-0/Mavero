@@ -97,6 +97,8 @@ export const SHAKA_REQUEST_TYPE = {
 /** Structural subset of `shaka.extern.Request` the filters touch. */
 export type ShakaRequestLike = {
         uris: string[];
+        /** 2026-10 round 29 — headers for the requestFilter (x-livetv-cookie). */
+        headers: Record<string, string>;
 };
 
 /** Structural subset of `shaka.extern.Response` the filters read. */

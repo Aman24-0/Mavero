@@ -98,6 +98,11 @@ export type LivetvPlaybackCandidateWire = {
         sourceChannelId: string | null;
         /** Optional human label from the endpoint row (display-only). */
         label: string | null;
+        /**
+         * 2026-10 round 29 — DRM metadata for ClearKey streams (parsed from
+         * #KODIPROP + #EXTHTTP by the M3U adapter). null when no DRM.
+         */
+        drm: { type: 'clearkey'; keyId: string; key: string; cookie: string | null } | null;
 };
 
 export type LivetvPlaybackResolutionWire = {
@@ -353,9 +358,10 @@ async function resolveLivetvDirectEntry(client: SupabaseClient<Database>, entryR
         const emptyResolved = { unifiedEnabled: true, resolved: true, mode: 'default' as const, candidates: [] };
 
         // 1. The entry row (by its PRIMARY KEY — the catalogue emits exactly this id).
+        //    2026-10 round 29 — also select metadata (for DRM keys + cookie).
         const entryResult = await client
                 .from('livetv_source_channels')
-                .select('id,source_id,source_channel_id,canonical_channel_id,enabled')
+                .select('id,source_id,source_channel_id,canonical_channel_id,enabled,metadata')
                 .eq('id', entryRowId)
                 .limit(1)
                 .maybeSingle();
@@ -410,6 +416,11 @@ async function resolveLivetvDirectEntry(client: SupabaseClient<Database>, entryR
                 : [];
 
         // 5. Wire projection — virtual-aware, bounded, redacted.
+        //    2026-10 round 29 — extract DRM metadata from the entry row.
+        const entryMetadata = (entryRow.metadata ?? {}) as Record<string, unknown>;
+        const drmMeta = entryMetadata.drmType === 'clearkey' && typeof entryMetadata.drmKeyId === 'string' && typeof entryMetadata.drmKey === 'string'
+                ? { type: 'clearkey' as const, keyId: entryMetadata.drmKeyId as string, key: entryMetadata.drmKey as string, cookie: typeof entryMetadata.drmCookie === 'string' ? entryMetadata.drmCookie : null }
+                : null;
         const candidates: LivetvPlaybackCandidateWire[] = [];
         for (const candidate of ordered) {
                 if (candidates.length >= MAX_PLAYBACK_CANDIDATES) break;
@@ -422,7 +433,8 @@ async function resolveLivetvDirectEntry(client: SupabaseClient<Database>, entryR
                                 url: null,
                                 resolver: 'builtin_livegt_v1',
                                 sourceChannelId: entryRow.source_channel_id,
-                                label: null
+                                label: null,
+                                drm: null
                         });
                         continue;
                 }
@@ -434,7 +446,8 @@ async function resolveLivetvDirectEntry(client: SupabaseClient<Database>, entryR
                         url: candidate.endpointUrl,
                         resolver: null,
                         sourceChannelId: null,
-                        label: candidate.endpointLabel
+                        label: candidate.endpointLabel,
+                        drm: drmMeta
                 });
         }
         return { unifiedEnabled: true, resolved: true, mode: 'default', candidates };
@@ -701,7 +714,8 @@ export async function resolveLivetvPlaybackForSelection(
                                 url: null,
                                 resolver: 'builtin_livegt_v1',
                                 sourceChannelId: virtualSourceChannelId,
-                                label: null
+                                label: null,
+                                drm: null
                         });
                         continue;
                 }
@@ -714,7 +728,8 @@ export async function resolveLivetvPlaybackForSelection(
                         url: candidate.endpointUrl,
                         resolver: null,
                         sourceChannelId: null,
-                        label: candidate.endpointLabel
+                        label: candidate.endpointLabel,
+                        drm: null
                 });
         }
 

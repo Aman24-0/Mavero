@@ -97,6 +97,8 @@ export type LivetvRouterCandidate = {
         resolver: 'builtin_livegt_v1' | null;
         sourceChannelId: string | null;
         label: string | null;
+        /** 2026-10 round 29 — DRM metadata (clearkey + cookie) for Jio CDN streams. */
+        drm: { type: 'clearkey'; keyId: string; key: string; cookie: string | null } | null;
 };
 
 export type LivetvRouterResolution = {
@@ -674,7 +676,7 @@ export class LiveTvPlaybackRouter {
                                 const origin = typeof location !== 'undefined' ? location.origin : '';
                                 if (origin) mediaUrl = new URL(livetvStreamProxyUrl(mediaUrl, this.streamProxyBase), origin).toString();
                         }
-                        resolution = { channel: { id: channel.id, name: channel.name }, sources: [{ url: mediaUrl }], drm: null };
+                        resolution = { channel: { id: channel.id, name: channel.name }, sources: [{ url: mediaUrl }], drm: candidate.drm ?? null };
                 }
                 if (token !== this.sessionToken || signal.aborted) {
                         this.trailPush({ attemptId, candidateId: candidate.candidateId, outcome: 'aborted', detail: 'session_superseded' });
@@ -973,6 +975,11 @@ function normalizeRouterCandidate(raw: unknown): LivetvRouterCandidate | null {
         if (raw.resolver !== null && raw.resolver !== 'builtin_livegt_v1') return null;
         if (raw.sourceChannelId !== null && typeof raw.sourceChannelId !== 'string') return null;
         if (raw.label !== null && typeof raw.label !== 'string') return null;
+        // 2026-10 round 29 — extract DRM metadata (clearkey + cookie).
+        let drm: LivetvRouterCandidate['drm'] = null;
+        if (isRecord(raw.drm) && raw.drm.type === 'clearkey' && typeof raw.drm.keyId === 'string' && typeof raw.drm.key === 'string') {
+                drm = { type: 'clearkey', keyId: raw.drm.keyId, key: raw.drm.key, cookie: typeof raw.drm.cookie === 'string' ? raw.drm.cookie : null };
+        }
         const candidate: LivetvRouterCandidate = {
                 candidateId: raw.candidateId,
                 engine: raw.engine,
@@ -981,7 +988,8 @@ function normalizeRouterCandidate(raw: unknown): LivetvRouterCandidate | null {
                 url: raw.url,
                 resolver: raw.resolver,
                 sourceChannelId: raw.sourceChannelId,
-                label: raw.label
+                label: raw.label,
+                drm
         };
         // Cross-field discipline (defense in depth — the server enforces the
         // same shape): a direct candidate carries EITHER the builtin resolver

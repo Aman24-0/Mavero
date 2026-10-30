@@ -923,6 +923,23 @@ export class LiveTvPlaybackEngine {
 
                         // 8. Load the selected source exactly as documented
                         //    (bare load — no startTime, no MIME).
+                        //    2026-10 round 29 — if the DRM has a cookie (Jio CDN),
+                        //    register a requestFilter that adds x-livetv-cookie to
+                        //    every manifest/segment request through the Worker proxy.
+                        //    Browsers can't set the Cookie header directly; the Worker
+                        //    translates x-livetv-cookie → Cookie upstream.
+                        if (drm !== null) {
+                                const drmCookie = (drm as { cookie?: string | null }).cookie;
+                                if (drmCookie) {
+                                        try {
+                                                player.getNetworkingEngine()?.registerRequestFilter((type, request) => {
+                                                        request.headers['x-livetv-cookie'] = drmCookie;
+                                                });
+                                        } catch {
+                                                // Non-fatal — the stream may still work without the cookie.
+                                        }
+                                }
+                        }
                         try {
                                 await player.load(sourceUrl);
                         } catch (err) {

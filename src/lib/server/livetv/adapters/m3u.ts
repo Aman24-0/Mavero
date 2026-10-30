@@ -440,6 +440,51 @@ type PendingEntry = {
 };
 
 /**
+ * 2026-10 round 29 — DRM metadata parsed from #KODIPROP + #EXTHTTP.
+ * Attached to the channel's endpoint metadata so the player can configure
+ * Shaka's clearKey DRM + the Worker can forward the cookie.
+ */
+type PendingDrm = {
+        /** 'clearkey' when #KODIPROP:inputstream.adaptive.license_type=clearkey */
+        type: 'clearkey';
+        /** The key_id (hex) from license_key=key_id:key */
+        keyId: string;
+        /** The key (hex) from license_key=key_id:key */
+        key: string;
+        /** The cookie from #EXTHTTP (e.g. __hdnea__=...) */
+        cookie: string | null;
+};
+
+/**
+ * Parses a #KODIPROP line. Returns the property name + value, or null.
+ * Format: #KODIPROP:inputstream.adaptive.license_type=clearkey
+ *         #KODIPROP:inputstream.adaptive.license_key=key_id:key
+ */
+function parseKodiProp(line: string): { name: string; value: string } | null {
+        const body = line.replace(/^#KODIPROP:/i, '');
+        const eqIndex = body.indexOf('=');
+        if (eqIndex < 0) return null;
+        return { name: body.slice(0, eqIndex).trim(), value: body.slice(eqIndex + 1).trim() };
+}
+
+/**
+ * Parses a #EXTHTTP line. Returns the cookie value, or null.
+ * Format: #EXTHTTP:{"cookie":"__hdnea__=st=...~exp=...~acl=...~hmac=..."}
+ */
+function parseExtHttp(line: string): string | null {
+        const body = line.replace(/^#EXTHTTP:/i, '');
+        try {
+                const parsed = JSON.parse(body) as { cookie?: unknown };
+                if (typeof parsed.cookie === 'string' && parsed.cookie.trim()) {
+                        return parsed.cookie.trim();
+                }
+        } catch {
+                // Not JSON — ignore.
+        }
+        return null;
+}
+
+/**
  * Parses an M3U/M3U8 playlist body into normalized channels.
  * Per-entry failures are isolated; policy caps fail the whole parse with a
  * typed `LivetvAdapterError`.
@@ -461,6 +506,10 @@ export function parseM3UPlaylist(text: string, options: M3UParseOptions = {}): M
         let pendingGroupFromDirective: string | null = null;
         /** 2026-10 round 12 — total #EXTINF lines encountered (for diagnostics). */
         let extinfCount = 0;
+        /** 2026-10 round 29 — DRM metadata accumulated from #KODIPROP + #EXTHTTP. */
+        let pendingDrmLicenseType: string | null = null;
+        let pendingDrmLicenseKeys: Array<{ keyId: string; key: string }> = [];
+        let pendingDrmCookie: string | null = null;
 
         const channels: NormalizedLivetvChannel[] = [];
         const channelsById = new Map<string, NormalizedLivetvChannel>();
@@ -472,6 +521,10 @@ export function parseM3UPlaylist(text: string, options: M3UParseOptions = {}): M
                         diagnostics.noteError(pending.entryIndex, null, 'missing_stream_url');
                         pending = null;
                         pendingGroupFromDirective = null;
+                        // Reset DRM state for the next entry.
+                        pendingDrmLicenseType = null;
+                        pendingDrmLicenseKeys = [];
+                        pendingDrmCookie = null;
                 }
         };
 
@@ -492,12 +545,26 @@ export function parseM3UPlaylist(text: string, options: M3UParseOptions = {}): M
                         return;
                 }
 
+                // 2026-10 round 29 — Build the DRM metadata from the accumulated
+                // #KODIPROP + #EXTHTTP lines. Only clearkey is supported; other
+                // DRM types are ignored (the stream will fail at playback, which
+                // is the honest behavior for unsupported DRM).
+                let drm: PendingDrm | null = null;
+                if (pendingDrmLicenseType === 'clearkey' && pendingDrmLicenseKeys.length > 0) {
+                        // Use the first key pair (Jio playlists often have multiple
+                        // keys for different representations — Shaka's clearKeys
+                        // config supports multiple, but the first is sufficient
+                        // for initial playback).
+                        const firstKey = pendingDrmLicenseKeys[0]!;
+                        drm = {
+                                type: 'clearkey',
+                                keyId: firstKey.keyId,
+                                key: firstKey.key,
+                                cookie: pendingDrmCookie,
+                        };
+                }
+
                 // 2026-10 round 12 — Identity is now NAME-based (not URL-based).
-                // The same channel name with multiple stream URLs collapses into
-                // ONE entry with multiple endpoints (merging backups/qualities).
-                // Different names → separate entries. The tvg-id is preserved as
-                // metadata for EPG mapping. See m3uIdentityForName for the full
-                // rationale.
                 const tvgId = normalizeSourceChannelId(entry.tvgIdRaw);
                 const identity = m3uIdentityForName(name);
 
@@ -511,6 +578,7 @@ export function parseM3UPlaylist(text: string, options: M3UParseOptions = {}): M
                                 tvgName: entry.tvgName,
                                 groupTitle: entry.groupTitle ?? pendingGroupFromDirective,
                                 attributeCount: entry.attrCount,
+                                ...(drm ? { drmType: drm.type, drmKeyId: drm.keyId, drmKey: drm.key, drmCookie: drm.cookie } : {}),
                                 ...(Object.keys(entry.extraAttributes).length ? { extraAttributes: JSON.stringify(entry.extraAttributes) } : {})
                         });
                         const endpoint = buildNormalizedEndpoint({
@@ -533,6 +601,10 @@ export function parseM3UPlaylist(text: string, options: M3UParseOptions = {}): M
                         channelsById.set(identity, channel);
                         endpointUrlsById.set(identity, new Set([safeUrl]));
                         diagnostics.discoveredCount += 1;
+                        // Reset DRM state for the next entry.
+                        pendingDrmLicenseType = null;
+                        pendingDrmLicenseKeys = [];
+                        pendingDrmCookie = null;
                         return;
                 }
 
@@ -541,11 +613,17 @@ export function parseM3UPlaylist(text: string, options: M3UParseOptions = {}): M
                 const seenUrls = endpointUrlsById.get(identity) ?? new Set<string>();
                 if (seenUrls.has(safeUrl)) {
                         diagnostics.noteSkip('duplicate_channel_id');
+                        // Reset DRM state.
+                        pendingDrmLicenseType = null;
+                        pendingDrmLicenseKeys = [];
+                        pendingDrmCookie = null;
                         return;
                 }
                 if (channel.endpoints.length >= 8) {
-                        // Bound endpoints per entry (hostile playlists).
                         diagnostics.noteSkip('duplicate_channel_id');
+                        pendingDrmLicenseType = null;
+                        pendingDrmLicenseKeys = [];
+                        pendingDrmCookie = null;
                         return;
                 }
                 const endpoint = buildNormalizedEndpoint({
@@ -558,6 +636,10 @@ export function parseM3UPlaylist(text: string, options: M3UParseOptions = {}): M
                 channel.endpoints.push(endpoint);
                 seenUrls.add(safeUrl);
                 endpointUrlsById.set(identity, seenUrls);
+                // Reset DRM state.
+                pendingDrmLicenseType = null;
+                pendingDrmLicenseKeys = [];
+                pendingDrmCookie = null;
         };
 
         const handleExtinf = (lineBody: string, entryIndex: number): PendingEntry | null => {
@@ -639,7 +721,33 @@ export function parseM3UPlaylist(text: string, options: M3UParseOptions = {}): M
                                 if (group) pendingGroupFromDirective = group;
                                 continue;
                         }
-                        // Every other directive (#EXTVLCOPT, #KODIPROP, …) is
+                        // 2026-10 round 29 — Parse #KODIPROP and #EXTHTTP for DRM + cookie.
+                        if (upper.startsWith('#KODIPROP')) {
+                                const prop = parseKodiProp(line);
+                                if (prop) {
+                                        if (prop.name === 'inputstream.adaptive.license_type' && prop.value === 'clearkey') {
+                                                pendingDrmLicenseType = 'clearkey';
+                                        } else if (prop.name === 'inputstream.adaptive.license_key') {
+                                                // Format: key_id:key (may have multiple comma-separated pairs)
+                                                const pairs = prop.value.split(',');
+                                                for (const pair of pairs) {
+                                                        const colonIndex = pair.indexOf(':');
+                                                        if (colonIndex > 0) {
+                                                                const keyId = pair.slice(0, colonIndex).trim();
+                                                                const key = pair.slice(colonIndex + 1).trim();
+                                                                if (keyId && key) pendingDrmLicenseKeys.push({ keyId, key });
+                                                        }
+                                                }
+                                        }
+                                }
+                                continue;
+                        }
+                        if (upper.startsWith('#EXTHTTP')) {
+                                const cookie = parseExtHttp(line);
+                                if (cookie) pendingDrmCookie = cookie;
+                                continue;
+                        }
+                        // Every other directive (#EXTVLCOPT, …) is
                         // deliberately ignored and never persisted — they can
                         // carry user-agent/referrer credentials.
                         continue;

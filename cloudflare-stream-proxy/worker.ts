@@ -65,7 +65,6 @@ const CORS_HEADERS: Record<string, string> = {
         'access-control-expose-headers': 'content-range, content-length, accept-ranges',
         'cache-control': 'no-store'
 };
-
 const MAX_URL_LENGTH = 2048;
 
 function isAllowedHost(hostname: string): boolean {
@@ -290,6 +289,14 @@ export default {
 
                 const range = request.headers.get('range');
                 if (range) headers.range = range;
+
+                // 2026-10 round 29 — forward the x-livetv-cookie header as the
+                // Cookie header to the upstream CDN. Browsers can't set the
+                // Cookie header directly, so the client passes it as
+                // x-livetv-cookie and the Worker translates it. Used by Jio CDN
+                // streams that require the __hdnea__ session cookie.
+                const livetvCookie = request.headers.get('x-livetv-cookie');
+                if (livetvCookie) headers.cookie = livetvCookie;
 
                 // 2026-10 round 16 — 10s hard timeout on the upstream fetch.
                 // If VidSrc/2embed takes longer than 10s, abort and return a
