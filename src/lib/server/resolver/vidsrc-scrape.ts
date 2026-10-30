@@ -188,9 +188,14 @@ export const vidsrcScrapeProviderAdapter: ProviderAdapter = {
     }
 
     // Scrape.
-    // 2026-10 round 26 — route to VidCore (Direct 2, multi-audio) when the
-    // variant is 'vidcore'. Otherwise use the default vidsrc.party scraper.
-    const useVidCore = context.request.variant === 'vidcore';
+    // 2026-10 round 30 — route by SOURCE SLUG (not variant). The source slug
+    // is on the config.source (the streaming_sources row). Two sources share
+    // the same adapter:
+    //   'direct-stream-vidsrc' → scrapeVidsrc() (DirectStream / vidsrc.party)
+    //   'multi-stream-vidcore' → scrapeVidCore() (Multi Stream / vidcore.org)
+    // Also check the variant for backward compat (old scraper sheet used variant).
+    const sourceSlug = context.config.source.slug ?? '';
+    const useVidCore = sourceSlug === 'multi-stream-vidcore' || context.request.variant === 'vidcore';
     let result;
     try {
       result = useVidCore

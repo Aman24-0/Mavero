@@ -160,7 +160,7 @@ export type SourceResult = {
 
 export type TrustedResolutionConfig = {
   provider: Pick<StreamingProviderRow, 'id' | 'name' | 'status' | 'enabled' | 'integration_type' | 'adapter_id' | 'capabilities'>;
-  source: Pick<StreamingSourceRow, 'id' | 'provider_id' | 'name' | 'status' | 'enabled' | 'visibility' | 'integration_type' | 'capabilities' | 'movie_template' | 'series_template' | 'anime_template' | 'identifier_mode' | 'audio_languages' | 'subtitle_capability' | 'quality_capability'>;
+  source: Pick<StreamingSourceRow, 'id' | 'provider_id' | 'name' | 'slug' | 'status' | 'enabled' | 'visibility' | 'integration_type' | 'capabilities' | 'movie_template' | 'series_template' | 'anime_template' | 'identifier_mode' | 'audio_languages' | 'subtitle_capability' | 'quality_capability'>;
 };
 
 export type ResolverContext = {

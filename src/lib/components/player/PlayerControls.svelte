@@ -26,7 +26,7 @@
   // Subtitle Settings sheet (track list + sync offset + appearance —
   // Issues 1+2). Only REAL values are ever offered: the tracks, quality
   // levels and speeds of the ACTIVE source.
-  import { AudioLines, Captions, Cast, Check, Expand, Lock, LockOpen, Maximize2, Minimize2, Pause, PictureInPicture2, Play, RotateCcwSquare, RotateCwSquare, Settings2, Tv, Volume1, Volume2, VolumeX, Gauge, Sparkles } from 'lucide-svelte';
+  import { AudioLines, Captions, Cast, Check, Expand, Lock, LockOpen, Maximize2, Minimize2, Pause, PictureInPicture2, Play, RotateCcwSquare, RotateCwSquare, Settings2, Volume1, Volume2, VolumeX, Gauge } from 'lucide-svelte';
   import type { PlayerAudioTrackOption, PlayerInternalQualityOption, PlayerQualityOption, PlayerSubtitleTrack } from '$lib/shared/player';
   import { formatPlayerTime, playbackSpeeds, PLAYER_AUTO_QUALITY_ID } from '$lib/shared/player';
   import PlayerOptionSheet from './PlayerOptionSheet.svelte';
@@ -103,22 +103,13 @@
   export let castAvailable = false;
   export let castActive = false;
   export let onCast: () => void = () => {};
-  // 2026-10 round 25 — onOpenSourceSheet is retained for backward compat
-  // but the Tv button now opens the dedicated scraper sheet internally.
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  export const onOpenSourceSheet: () => void = () => {};
-  // 2026-10 round 26 — Scraper selection: 'vidsrc' (Direct 1) or 'vidcore' (Direct 2).
-  // When the user selects a different scraper, onScraperChange is called →
-  // PlayerShell re-resolves the source with the new scraper.
-  export let selectedScraper: 'vidsrc' | 'vidcore' = 'vidsrc';
-  export let onScraperChange: (scraper: 'vidsrc' | 'vidcore') => void = () => {};
 
   // ----- Sheet state (Issue 3) -----
   // Exactly ONE sheet open at a time. openMenu/closeMenu are the SINGLE
   // writers of the shell's open flag (deterministic — no mount/destroy
   // ordering dependence).
-  let openSheet: 'subtitles' | 'quality' | 'audio' | 'speed' | 'display' | 'scraper' | null = null;
-  function openMenu(kind: 'subtitles' | 'quality' | 'audio' | 'speed' | 'display' | 'scraper') {
+  let openSheet: 'subtitles' | 'quality' | 'audio' | 'speed' | 'display' | null = null;
+  function openMenu(kind: 'subtitles' | 'quality' | 'audio' | 'speed' | 'display') {
     openSheet = kind;
     onMenuOpenChange(true);
   }
@@ -219,8 +210,6 @@
        was creating a new row in portrait). Source button added for future
        scraper provider switching. -->
   <div class="utility-zone">
-    <!-- 2026-10 round 25 — Scraper Source button (opens the dedicated scraper sheet, NOT the general VOD source sheet). -->
-    <button class="control-button" type="button" aria-label="Scraper source" onclick={() => openMenu('scraper')}><Tv size={17} strokeWidth={1.5} /></button>
     <!-- 2026-10 round 24 — Display Mode moved here from the bottom bar. -->
     <button class="control-button" type="button" aria-label={`Display mode: ${displayMode}`} aria-haspopup="dialog" onclick={() => openMenu('display')}><Expand size={17} strokeWidth={1.5} /></button>
     {#if castAvailable}
@@ -355,28 +344,6 @@
       </div>
     </PlayerOptionSheet>
   {/if}
-  {#if openSheet === 'scraper'}
-    <!-- 2026-10 round 27 — Scraper Source Sheet (compact, inline badges, no footer).
-         Direct 1 (vidsrc.party, ORG Audio) + Direct 2 (vidcore.org, Multi-Audio). -->
-    <PlayerOptionSheet title="Scraper Source" onClose={closeMenu}>
-      <div class="option-list scraper-list" role="group" aria-label="Scraper source">
-        <button class="option-row scraper-row" class:selected={selectedScraper === 'vidsrc'} type="button" onclick={() => { if (selectedScraper !== 'vidsrc') { onScraperChange('vidsrc'); } closeMenu(); }}>
-          <span class="row-mark">{#if selectedScraper === 'vidsrc'}<Check size={15} strokeWidth={1.5} />{/if}</span>
-          <span class="scraper-row-content">
-            <strong>Direct 1</strong>
-            <span class="scraper-badge scraper-badge-green">ORG Audio</span>
-          </span>
-        </button>
-        <button class="option-row scraper-row" class:selected={selectedScraper === 'vidcore'} type="button" onclick={() => { if (selectedScraper !== 'vidcore') { onScraperChange('vidcore'); } closeMenu(); }}>
-          <span class="row-mark">{#if selectedScraper === 'vidcore'}<Check size={15} strokeWidth={1.5} />{/if}</span>
-          <span class="scraper-row-content">
-            <strong>Direct 2</strong>
-            <span class="scraper-badge scraper-badge-blue">Multi-Audio</span>
-          </span>
-        </button>
-      </div>
-    </PlayerOptionSheet>
-  {/if}
 </div>
 
 <style>
@@ -452,15 +419,6 @@
 
   /* Player V2 corrections: connected Cast state tinted with the accent. */
   .cast-button.casting { color: var(--accent); border-color: var(--line-strong); }
-
-  /* 2026-10 round 27 — Scraper sheet badges + compact rows. */
-  .scraper-badge { display: inline-flex; align-items: center; padding: 2px 7px; border-radius: 999px; font-size: .5rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
-  .scraper-badge-green { background: rgba(46, 204, 113, .15); color: #2ecb71; }
-  .scraper-badge-blue { background: rgba(84, 160, 255, .15); color: #54a0ff; }
-  .scraper-list { gap: 2px; }
-  .scraper-row { min-height: 40px; padding: 6px 10px; }
-  .scraper-row-content { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
-  .scraper-row-content strong { font-size: .68rem; }
 
   /* Compact viewports: the volume slider folds away (the mute button and the
      right-zone volume swipe remain); every OTHER control — subtitles,

@@ -216,37 +216,6 @@
   // user. The Back FAB remains reachable while locked (essential navigation is
   // never blocked); deliberate keyboard shortcuts are disabled while locked.
   let touchLocked = false;
-  // 2026-10 round 27 — Scraper selection with seamless switching + auto-fallback.
-  // Stored in localStorage. When the user selects a different scraper:
-  //   1. Save currentTime (for seamless resume after the swap).
-  //   2. Call onSourceChange(sourceId, scraper) → the watch page re-resolves.
-  //   3. If the re-resolve succeeds, playback resumes from the saved position.
-  //   4. If the re-resolve fails, revert to the previous scraper + show a toast.
-  let selectedScraper: 'vidsrc' | 'vidcore' = 'vidsrc';
-  let previousScraper: 'vidsrc' | 'vidcore' = 'vidsrc';
-  let scraperToast: string | null = null;
-  let scraperToastTimer: ReturnType<typeof setTimeout> | undefined;
-  if (typeof localStorage !== 'undefined') {
-    const stored = localStorage.getItem('mavero_scraper');
-    if (stored === 'vidcore' || stored === 'vidsrc') selectedScraper = stored;
-  }
-  function showScraperToast(message: string) {
-    scraperToast = message;
-    if (scraperToastTimer) clearTimeout(scraperToastTimer);
-    scraperToastTimer = setTimeout(() => { scraperToast = null; }, 4000);
-  }
-  function handleScraperChange(scraper: 'vidsrc' | 'vidcore') {
-    if (scraper === selectedScraper) return;
-    previousScraper = selectedScraper;
-    selectedScraper = scraper;
-    if (typeof localStorage !== 'undefined') localStorage.setItem('mavero_scraper', scraper);
-    // Re-resolve the source with the new scraper variant.
-    if (source?.sourceId) {
-      state = 'switching-source';
-      errorMessage = '';
-      onSourceChange(source.sourceId, scraper);
-    }
-  }
   // Player UI V2 (Part 1, Phase 2A): simulated player-video brightness
   // (Mavero-rendered black overlay — never a system/display brightness API).
   let brightness = 1;
@@ -540,38 +509,6 @@
     controlsSizeInlineStyle(activeSourceOption?.controlsPosition ?? null, 'landscape', '--landscape-fab-size'),
   ].filter(Boolean).join(';');
   $: effectiveState = resolving ? 'switching-source' : resolutionError ? resolutionKind : state;
-  // 2026-10 round 28 — Auto-fallback: if the resolver returns an error AND the
-  // scraper was recently changed, revert to the previous scraper + re-resolve.
-  // Uses a flag (not a reactive block) to avoid infinite loops. The fallback
-  // saves currentTime so Direct 1 resumes from the exact second Direct 2 failed.
-  let scraperFallbackPending = false;
-  $: if (resolutionError && !resolving && selectedScraper !== previousScraper && previousScraper && !scraperFallbackPending) {
-    scraperFallbackPending = true;
-    const failedScraper = selectedScraper;
-    const revertTo = previousScraper;
-    const failedLabel = failedScraper === 'vidcore' ? 'Direct 2' : 'Direct 1';
-    const revertLabel = revertTo === 'vidcore' ? 'Direct 2' : 'Direct 1';
-    // Revert the scraper state IMMEDIATELY (fixes the desync — the checkmark
-    // in the Scraper Source sheet shows Direct 1 again).
-    selectedScraper = revertTo;
-    // Sync previousScraper to selectedScraper so the reactive block doesn't
-    // fire again on the next error from Direct 1.
-    previousScraper = revertTo;
-    if (typeof localStorage !== 'undefined') localStorage.setItem('mavero_scraper', revertTo);
-    showScraperToast(`${failedLabel} failed, reverted to ${revertLabel}.`);
-    // Clear the error state so the player exits the error modal and enters
-    // the switching-source state (showing the loading card).
-    errorMessage = '';
-    // Trigger the full re-resolve with the reverted scraper. The watch page's
-    // handleSourceChange → prepareSource → manager.loadSource will re-resolve
-    // and the PlaybackManager will resume from the saved progress position.
-    if (source?.sourceId) {
-      onSourceChange(source.sourceId, revertTo);
-    }
-    // Reset the flag after a short delay so a NEW scraper switch can trigger
-    // a new fallback cycle.
-    setTimeout(() => { scraperFallbackPending = false; }, 3000);
-  }
   // Player UI V2 (Part 1, Phase 1B) — SUPERSEDED by the approved Player V2
   // corrections layout: the Blue Velvet provider-slug detection and its
   // in-row Back/Fullscreen + hidden-FAB exceptions are RETIRED. The approved
@@ -1727,7 +1664,7 @@
   }
 
   function handleWaiting() { state = 'buffering'; }
-  function handlePlaying() { state = 'playing'; errorMessage = ''; hlsAutoRetryCount = 0; previousScraper = selectedScraper; }
+  function handlePlaying() { state = 'playing'; errorMessage = ''; hlsAutoRetryCount = 0; }
   function handleSeeking() { state = 'seeking'; }
   function handleSeeked() { state = playing ? 'playing' : 'paused'; }
   function handleEnded() {
@@ -2853,7 +2790,7 @@
        Subtitle menu receives native + external tracks. -->
   {#if source?.type === 'direct'}
     <div class="direct-controls-overlay" class:visible={controlsVisible}>
-      <PlayerControls playing={playing} {muted} {volume} {currentTime} {duration} {buffered} {playbackRate} {pictureInPictureSupported} {pictureInPicture} fullscreenActive={fullscreen} onFullscreen={() => { void toggleFullscreen(); }} locked={touchLocked} onToggleLock={toggleTouchLock} subtitles={mergedSubtitles} selectedSubtitle={selectedSubtitle} subtitleNotice={externalSubtitleNotice} subtitlePrefs={subtitlePrefs} onSubtitlePreferences={setSubtitlePreferences} onMenuOpenChange={(open) => { controlsSheetsOpen = open; }} qualities={qualities} selectedQuality={selectedQuality} internalQualities={engineQuality?.options ?? []} selectedInternalQuality={engineQuality?.selected ?? PLAYER_AUTO_QUALITY_ID} audioTracks={engineQuality?.audioTracks ?? []} selectedAudioTrack={engineQuality?.selectedAudioTrack ?? null} onAudioTrack={setAudioTrack} {displayMode} onDisplayMode={setDisplayMode} castAvailable={castReady && Boolean(castEligibility?.eligible)} castActive={castConnected} onCast={() => { void handleCastAction(); }} onTogglePlay={togglePlay} onSeek={seek} onVolume={setVolume} onToggleMute={toggleMute} onPlaybackRate={setPlaybackRate} onSubtitle={setSubtitle} onQuality={setQuality} onInternalQuality={setInternalQuality} onPictureInPicture={togglePictureInPicture} onStep={seekBy} onOpenSourceSheet={() => { openSourceSheet(playerRoot ?? (document.activeElement instanceof HTMLElement ? document.activeElement : document.body)); }} {selectedScraper} onScraperChange={handleScraperChange} />
+      <PlayerControls playing={playing} {muted} {volume} {currentTime} {duration} {buffered} {playbackRate} {pictureInPictureSupported} {pictureInPicture} fullscreenActive={fullscreen} onFullscreen={() => { void toggleFullscreen(); }} locked={touchLocked} onToggleLock={toggleTouchLock} subtitles={mergedSubtitles} selectedSubtitle={selectedSubtitle} subtitleNotice={externalSubtitleNotice} subtitlePrefs={subtitlePrefs} onSubtitlePreferences={setSubtitlePreferences} onMenuOpenChange={(open) => { controlsSheetsOpen = open; }} qualities={qualities} selectedQuality={selectedQuality} internalQualities={engineQuality?.options ?? []} selectedInternalQuality={engineQuality?.selected ?? PLAYER_AUTO_QUALITY_ID} audioTracks={engineQuality?.audioTracks ?? []} selectedAudioTrack={engineQuality?.selectedAudioTrack ?? null} onAudioTrack={setAudioTrack} {displayMode} onDisplayMode={setDisplayMode} castAvailable={castReady && Boolean(castEligibility?.eligible)} castActive={castConnected} onCast={() => { void handleCastAction(); }} onTogglePlay={togglePlay} onSeek={seek} onVolume={setVolume} onToggleMute={toggleMute} onPlaybackRate={setPlaybackRate} onSubtitle={setSubtitle} onQuality={setQuality} onInternalQuality={setInternalQuality} onPictureInPicture={togglePictureInPicture} onStep={seekBy} />
     </div>
   {/if}
 
@@ -2992,11 +2929,6 @@
         {/if}
       </div>
     </div>
-  {/if}
-
-  <!-- 2026-10 round 27 — Scraper fallback toast. -->
-  {#if scraperToast}
-    <div class="scraper-toast" role="status" aria-live="polite">{scraperToast}</div>
   {/if}
 
 </div>
@@ -3431,6 +3363,4 @@
        reduced-motion contract. */
     .seek-feedback, .hold-indicator { transition: none; }
   }
-  /* 2026-10 round 27 — Scraper fallback toast. */
-  .scraper-toast { position: absolute; z-index: 20; bottom: calc(25% + env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); padding: 8px 16px; border-radius: 999px; background: rgba(0, 0, 0, .85); color: var(--ink); font-size: .62rem; white-space: nowrap; pointer-events: none; backdrop-filter: blur(12px); box-shadow: 0 4px 20px rgba(0,0,0,.4); }
 </style>

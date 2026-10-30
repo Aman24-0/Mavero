@@ -756,12 +756,6 @@
       // POST body is built field-by-field and does not include it. Adapters
       // without a parent-driven Up Next contract ignore it.
       request.nextEpisode = nextEpisodeForCurrent;
-      // 2026-10 round 26 — forward the scraper variant (vidsrc / vidcore) so
-      // the resolver adapter routes to the correct scraper.
-      if (pendingScraperVariant) {
-        request.variant = pendingScraperVariant;
-        pendingScraperVariant = undefined;
-      }
       // P9: For SERIES/ANIME, ALWAYS forward the content-type default
       // source (e.g. VidZee) — the series default must always win.
       // For MOVIES, preserve the saved-source resume protection from BUG #3.
@@ -873,10 +867,7 @@
   // Phase 9 fix: generation token — the latest source switch wins.
   let sourceSwitchGeneration = 0;
 
-  // 2026-10 round 26 — store the scraper variant for the next prepareSource call.
-  let pendingScraperVariant: string | undefined;
-
-  function handleSourceChange(sourceId: string, variant?: string) {
+  function handleSourceChange(sourceId: string) {
     // Phase 9 fix: removed the separate void writer?.flush() call.
     // replaceProgressSource() inside prepareSource() already does the flush.
     // This was causing a double-flush race.
@@ -907,7 +898,6 @@
       });
     }
     const generation = ++sourceSwitchGeneration;
-    pendingScraperVariant = variant;
     sourceSwitchChain = sourceSwitchChain.then(() => {
       // If a newer source switch was initiated while we were waiting, abort.
       if (generation !== sourceSwitchGeneration) return;
