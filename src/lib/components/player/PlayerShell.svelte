@@ -1683,8 +1683,8 @@
   // + potentially a different CDN) and restart playback from the current
   // position. Bounded to 3 auto-retries with a 1s delay between them.
   let hlsAutoRetryCount = 0;
-  const HLS_AUTO_RETRY_MAX = 3;
-  const HLS_AUTO_RETRY_DELAY_MS = 1000;
+  const HLS_AUTO_RETRY_MAX = 5;
+  const HLS_AUTO_RETRY_DELAY_MS = 1500;
 
   function handleMediaError() {
     // 2026-10 round 21 — if this is a direct HLS source and we haven't

@@ -177,17 +177,28 @@ async function tryVidCoreProvider(
                 return null;
         }
 
-        // Find the first stream with a valid URL.
-        const stream = streams.find((s) => s.url && s.url.length > 0);
-        if (!stream?.url) {
+        // 2026-10 round 31 — Multi-audio extraction: prefer master playlists
+        // (URLs containing "master" or "index" + .m3u8 extension). These
+        // typically contain #EXT-X-MEDIA audio tags (English, Hindi, Telugu,
+        // etc.) that hls.js detects and exposes via the Audio menu.
+        // Fallback: first stream with a valid URL.
+        const validStreams = streams.filter((s) => s.url && s.url.length > 0);
+        if (validStreams.length === 0) {
                 console.warn(`[vidcore-scraper] provider ${provider} streams have no valid URL.`);
                 return null;
         }
 
-        const subtitles = (payload.subtitles ?? []).map((s) => s.url ?? '').filter((u) => u.length > 0);
-        console.log(`[vidcore-scraper] provider ${provider} OK: stream=${stream.url.slice(0, 80)}..., ${subtitles.length} subtitles`);
+        // Prefer master playlist (contains "master" or "index" in the URL path).
+        const masterStream = validStreams.find((s) => {
+                const urlLower = s.url!.toLowerCase();
+                return urlLower.includes('master') || urlLower.includes('index');
+        });
+        const stream = masterStream ?? validStreams[0]!;
 
-        return { streamUrl: stream.url, subtitles, provider };
+        const subtitles = (payload.subtitles ?? []).map((s) => s.url ?? '').filter((u) => u.length > 0);
+        console.log(`[vidcore-scraper] provider ${provider} OK: stream=${stream.url!.slice(0, 80)}..., ${validStreams.length} streams, ${subtitles.length} subtitles${masterStream ? ' (master playlist preferred)' : ''}`);
+
+        return { streamUrl: stream.url!, subtitles, provider };
 }
 
 /**
