@@ -26,7 +26,7 @@
 export const LIVETV_STREAM_PROXY_PATH = '/api/livetv/stream-proxy';
 
 /** CDN host suffixes whose HLS/DASH playback must go through the proxy. */
-export const LIVETV_PROXY_HOST_SUFFIXES: readonly string[] = ['hotstar.com', 'slivcdn.com', 'jio.com', 'jiocinema.com', 'premiumplugx.com', 'cloudnestra.com', 'stellarconductornexus.com', 'vidsrc.party', 'cookiebakers23blog.xyz', 'cno.to'];
+export const LIVETV_PROXY_HOST_SUFFIXES: readonly string[] = ['hotstar.com', 'slivcdn.com', 'jio.com', 'jiocinema.com', 'premiumplugx.com', 'cloudnestra.com', 'stellarconductornexus.com', 'vidsrc.party', 'cookiebakers23blog.xyz', 'cno.to', 'vidcore.org'];
 
 /** True when `hostname` is (or is a subdomain of) an allowlisted proxy CDN. */
 export function isLivetvProxyHost(hostname: string): boolean {
@@ -65,7 +65,8 @@ export const LIVETV_PROXY_REFERER_BY_HOST: ReadonlyArray<{ suffix: string; refer
         { suffix: 'stellarconductornexus.com', referer: 'https://cloudnestra.com/' },
         { suffix: 'vidsrc.party', referer: 'https://vidsrc.party/' },
         { suffix: 'cookiebakers23blog.xyz', referer: 'https://vidsrc.party/' },
-        { suffix: 'cno.to', referer: 'https://vidsrc.party/' }
+        { suffix: 'cno.to', referer: 'https://vidsrc.party/' },
+        { suffix: 'vidcore.org', referer: 'https://vidcore.org/' }
 ];
 
 /** The required Referer for a host (provider origin), or null. */

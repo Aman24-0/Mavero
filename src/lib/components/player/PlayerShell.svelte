@@ -216,6 +216,25 @@
   // user. The Back FAB remains reachable while locked (essential navigation is
   // never blocked); deliberate keyboard shortcuts are disabled while locked.
   let touchLocked = false;
+  // 2026-10 round 26 — Scraper selection: 'vidsrc' (Direct 1) or 'vidcore' (Direct 2).
+  // Stored in localStorage so it persists across page reloads. When the user
+  // selects a different scraper, onSourceChange is called with the variant →
+  // the watch page re-resolves the source with the new scraper.
+  let selectedScraper: 'vidsrc' | 'vidcore' = 'vidsrc';
+  if (typeof localStorage !== 'undefined') {
+    const stored = localStorage.getItem('mavero_scraper');
+    if (stored === 'vidcore' || stored === 'vidsrc') selectedScraper = stored;
+  }
+  function handleScraperChange(scraper: 'vidsrc' | 'vidcore') {
+    selectedScraper = scraper;
+    if (typeof localStorage !== 'undefined') localStorage.setItem('mavero_scraper', scraper);
+    // Re-resolve the source with the new scraper variant.
+    if (source?.sourceId) {
+      state = 'switching-source';
+      errorMessage = '';
+      onSourceChange(source.sourceId, scraper);
+    }
+  }
   // Player UI V2 (Part 1, Phase 2A): simulated player-video brightness
   // (Mavero-rendered black overlay — never a system/display brightness API).
   let brightness = 1;
@@ -2790,7 +2809,7 @@
        Subtitle menu receives native + external tracks. -->
   {#if source?.type === 'direct'}
     <div class="direct-controls-overlay" class:visible={controlsVisible}>
-      <PlayerControls playing={playing} {muted} {volume} {currentTime} {duration} {buffered} {playbackRate} {pictureInPictureSupported} {pictureInPicture} fullscreenActive={fullscreen} onFullscreen={() => { void toggleFullscreen(); }} locked={touchLocked} onToggleLock={toggleTouchLock} subtitles={mergedSubtitles} selectedSubtitle={selectedSubtitle} subtitleNotice={externalSubtitleNotice} subtitlePrefs={subtitlePrefs} onSubtitlePreferences={setSubtitlePreferences} onMenuOpenChange={(open) => { controlsSheetsOpen = open; }} qualities={qualities} selectedQuality={selectedQuality} internalQualities={engineQuality?.options ?? []} selectedInternalQuality={engineQuality?.selected ?? PLAYER_AUTO_QUALITY_ID} audioTracks={engineQuality?.audioTracks ?? []} selectedAudioTrack={engineQuality?.selectedAudioTrack ?? null} onAudioTrack={setAudioTrack} {displayMode} onDisplayMode={setDisplayMode} castAvailable={castReady && Boolean(castEligibility?.eligible)} castActive={castConnected} onCast={() => { void handleCastAction(); }} onTogglePlay={togglePlay} onSeek={seek} onVolume={setVolume} onToggleMute={toggleMute} onPlaybackRate={setPlaybackRate} onSubtitle={setSubtitle} onQuality={setQuality} onInternalQuality={setInternalQuality} onPictureInPicture={togglePictureInPicture} onStep={seekBy} onOpenSourceSheet={() => { openSourceSheet(playerRoot ?? (document.activeElement instanceof HTMLElement ? document.activeElement : document.body)); }} />
+      <PlayerControls playing={playing} {muted} {volume} {currentTime} {duration} {buffered} {playbackRate} {pictureInPictureSupported} {pictureInPicture} fullscreenActive={fullscreen} onFullscreen={() => { void toggleFullscreen(); }} locked={touchLocked} onToggleLock={toggleTouchLock} subtitles={mergedSubtitles} selectedSubtitle={selectedSubtitle} subtitleNotice={externalSubtitleNotice} subtitlePrefs={subtitlePrefs} onSubtitlePreferences={setSubtitlePreferences} onMenuOpenChange={(open) => { controlsSheetsOpen = open; }} qualities={qualities} selectedQuality={selectedQuality} internalQualities={engineQuality?.options ?? []} selectedInternalQuality={engineQuality?.selected ?? PLAYER_AUTO_QUALITY_ID} audioTracks={engineQuality?.audioTracks ?? []} selectedAudioTrack={engineQuality?.selectedAudioTrack ?? null} onAudioTrack={setAudioTrack} {displayMode} onDisplayMode={setDisplayMode} castAvailable={castReady && Boolean(castEligibility?.eligible)} castActive={castConnected} onCast={() => { void handleCastAction(); }} onTogglePlay={togglePlay} onSeek={seek} onVolume={setVolume} onToggleMute={toggleMute} onPlaybackRate={setPlaybackRate} onSubtitle={setSubtitle} onQuality={setQuality} onInternalQuality={setInternalQuality} onPictureInPicture={togglePictureInPicture} onStep={seekBy} onOpenSourceSheet={() => { openSourceSheet(playerRoot ?? (document.activeElement instanceof HTMLElement ? document.activeElement : document.body)); }} {selectedScraper} onScraperChange={handleScraperChange} />
     </div>
   {/if}
 

@@ -50,6 +50,7 @@ import { env as publicEnv } from '$env/dynamic/public';
 import { createSupabaseAdminClient } from '$lib/server/supabase/admin';
 import { getScraperConfig } from '$lib/server/app-config';
 import { scrapeVidsrc, ScraperError, DEFAULT_SCRAPER_CONFIG } from '$lib/server/vod/vidsrc-scraper';
+import { scrapeVidCore } from '$lib/server/vod/vidcore-scraper';
 
 export const VIDSRC_SCRAPE_ADAPTER_ID = 'vidsrc-scrape' as const;
 
@@ -187,15 +188,25 @@ export const vidsrcScrapeProviderAdapter: ProviderAdapter = {
     }
 
     // Scrape.
+    // 2026-10 round 26 — route to VidCore (Direct 2, multi-audio) when the
+    // variant is 'vidcore'. Otherwise use the default vidsrc.party scraper.
+    const useVidCore = context.request.variant === 'vidcore';
     let result;
     try {
-      result = await scrapeVidsrc(
-        tmdbId,
-        context.request.mediaType === 'movie' ? 'movie' : 'tv',
-        season,
-        episode,
-        config
-      );
+      result = useVidCore
+        ? await scrapeVidCore(
+            tmdbId,
+            context.request.mediaType === 'movie' ? 'movie' : 'tv',
+            season,
+            episode
+          )
+        : await scrapeVidsrc(
+            tmdbId,
+            context.request.mediaType === 'movie' ? 'movie' : 'tv',
+            season,
+            episode,
+            config
+          );
     } catch (error) {
       if (error instanceof ScraperError) throw mapScraperError(error);
       throw new ResolverError('RESOLUTION_UNAVAILABLE', error);

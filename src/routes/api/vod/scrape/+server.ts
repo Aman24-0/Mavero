@@ -25,6 +25,7 @@ import { env as publicEnv } from '$env/dynamic/public';
 import { createSupabaseAdminClient } from '$lib/server/supabase/admin';
 import { getScraperConfig } from '$lib/server/app-config';
 import { scrapeVidsrc, ScraperError, DEFAULT_SCRAPER_CONFIG, type ScraperSource } from '$lib/server/vod/vidsrc-scraper';
+import { scrapeVidCore } from '$lib/server/vod/vidcore-scraper';
 import {
         checkRateLimit,
         clientIdentity,
@@ -108,16 +109,24 @@ export const GET: RequestHandler = async ({ request, url, locals }) => {
                 return fail(503, 'SCRAPER_DISABLED', 'The DirectStream scraper is disabled. Enable it in /admin/system/direct-stream.');
         }
 
+        // --- Parse the source parameter (vidsrc = Direct 1, vidcore = Direct 2) ---
+        const source = url.searchParams.get('source') ?? 'vidsrc';
+
         // --- Scrape ---
         try {
-                const result = await scrapeVidsrc(tmdbId, type, season, episode, config);
-                // 2026-10 round 19 — build the playback URL. When the Worker
-                // is configured, wrap server-side. When not, return the raw
-                // URL (the client-side player routes it through the in-app proxy).
-                const proxiedSources: ScraperSource[] = result.sources.map((source) => ({
-                        url: buildPlaybackUrl(source.url, result.referer),
-                        quality: source.quality,
-                        kind: source.kind
+                // 2026-10 round 26 — route to the correct scraper based on ?source=.
+                // vidsrc (default) = Direct 1 (vidsrc.party), vidcore = Direct 2 (vidcore.org).
+                const result = source === 'vidcore'
+                        ? await scrapeVidCore(tmdbId, type, season, episode)
+                        : await scrapeVidsrc(tmdbId, type, season, episode, config);
+
+                // Build the playback URL. When the Worker is configured, wrap
+                // server-side. When not, return the raw URL (the client-side
+                // player routes it through the in-app proxy).
+                const proxiedSources: ScraperSource[] = result.sources.map((s) => ({
+                        url: buildPlaybackUrl(s.url, result.referer),
+                        quality: s.quality,
+                        kind: s.kind
                 }));
                 return json({
                         ok: true,

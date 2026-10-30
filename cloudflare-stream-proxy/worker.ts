@@ -39,7 +39,7 @@
 // manifest). The Referer for vidsrc.party is itself; for the CDNs it's
 // vidsrc.party (the segment proxy runs on vidsrc.party, but if the Worker
 // ever fetches a raw CDN URL, it sends vidsrc.party as the Referer).
-const ALLOWED_HOST_SUFFIXES = ['hotstar.com', 'slivcdn.com', 'jio.com', 'jiocinema.com', 'premiumplugx.com', 'catbox.moe', 'cloudnestra.com', 'stellarconductornexus.com', 'vidsrc.party', 'cookiebakers23blog.xyz', 'cno.to'];
+const ALLOWED_HOST_SUFFIXES = ['hotstar.com', 'slivcdn.com', 'jio.com', 'jiocinema.com', 'premiumplugx.com', 'catbox.moe', 'cloudnestra.com', 'stellarconductornexus.com', 'vidsrc.party', 'cookiebakers23blog.xyz', 'cno.to', 'vidcore.org'];
 
 const REFERER_BY_HOST: ReadonlyArray<{ suffix: string; referer: string }> = [
         { suffix: 'slivcdn.com', referer: 'https://www.sonyliv.com/' },
@@ -51,7 +51,8 @@ const REFERER_BY_HOST: ReadonlyArray<{ suffix: string; referer: string }> = [
         { suffix: 'stellarconductornexus.com', referer: 'https://cloudnestra.com/' },
         { suffix: 'vidsrc.party', referer: 'https://vidsrc.party/' },
         { suffix: 'cookiebakers23blog.xyz', referer: 'https://vidsrc.party/' },
-        { suffix: 'cno.to', referer: 'https://vidsrc.party/' }
+        { suffix: 'cno.to', referer: 'https://vidsrc.party/' },
+        { suffix: 'vidcore.org', referer: 'https://vidcore.org/' }
 ];
 
 const BROWSER_UA =
