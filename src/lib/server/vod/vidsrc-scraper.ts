@@ -92,6 +92,14 @@ export type ScraperSource = {
         quality: string;
         /** Always 'direct' — vidsrc.party returns a direct HLS manifest, never an iframe. */
         kind: 'direct';
+        /**
+         * 2026-10 round 32 — the SERVER display name this stream belongs to
+         * (e.g. "Andromeda", "Supreme", "Prime"). Only multi-server scrapers
+         * (vidcore) populate it; vidsrc.party results leave it undefined.
+         * The resolver forwards the names into `metadata.servers` so the
+         * player can render the Server menu + fallback order.
+         */
+        server?: string;
 };
 
 /** The scraper's success result. */

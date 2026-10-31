@@ -85,6 +85,17 @@ export type PlayerAudioTrackOption = {
 };
 
 /**
+ * 2026-10 round 32 (VidCore Multi Stream): one playback server exposed by
+ * the resolver (`metadata.servers`). `url` is the fully proxied https HLS
+ * manifest; `label` is the server's display name ("Supreme", "Prime",
+ * "Andromeda", …) rendered verbatim in the player's Server menu.
+ */
+export type PlayerServerOption = {
+  url: string;
+  label: string;
+};
+
+/**
  * Phase 6: generic quality-controller contract (spec §31). The active
  * playback engine exposes its internal quality selection through THIS
  * shape — currently implemented by PlayerViewport on top of the Phase 5
@@ -148,6 +159,15 @@ export type PlayerSource = {
     streamCodec?: string;
     filename?: string;
     videoSize?: number;
+    /**
+     * 2026-10 round 32 (VidCore Multi Stream): the ORDERED playback servers
+     * the resolver exposed for this source — proxied https HLS URLs plus a
+     * display label ("Supreme", "Prime", "Andromeda", …). `servers[0]` (when
+     * present) is the same stream as `url`. The player renders the Server
+     * menu from this list, switches between servers without re-resolving,
+     * and auto-falls-back to the next entry when the active server dies.
+     */
+    servers?: Array<{ url: string; label: string }>;
   };
   error?: {
     code: string;

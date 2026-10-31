@@ -123,10 +123,14 @@ export const GET: RequestHandler = async ({ request, url, locals }) => {
                 // Build the playback URL. When the Worker is configured, wrap
                 // server-side. When not, return the raw URL (the client-side
                 // player routes it through the in-app proxy).
+                // 2026-10 round 32 — the `server` display name rides along so
+                // scraper consumers (admin source test, future UIs) can show
+                // WHICH VidCore server each URL belongs to.
                 const proxiedSources: ScraperSource[] = result.sources.map((s) => ({
                         url: buildPlaybackUrl(s.url, result.referer),
                         quality: s.quality,
-                        kind: s.kind
+                        kind: s.kind,
+                        ...(typeof s.server === 'string' && s.server ? { server: s.server } : {})
                 }));
                 return json({
                         ok: true,

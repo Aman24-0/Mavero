@@ -519,8 +519,12 @@ async function resolve(client: MockClient, selectionId: string = SELECTION_ID) {
       })
     )
   );
-  const allowedKeys = new Set(['candidateId', 'engine', 'endpointKind', 'streamFormat', 'url', 'resolver', 'sourceChannelId', 'label']);
-  ok(redaction.candidates.every((candidate) => Object.keys(candidate).every((key) => allowedKeys.has(key))), 'S7.1 every candidate carries ONLY the 8 bounded wire fields');
+  // 2026-10 round 29 — the wire carries a 9th bounded field: `drm` (the
+  // ClearKey metadata parsed from #KODIPROP + #EXTHTTP, or null). The field
+  // is bounded display-safe material (keyId/key/cookie for THIS channel's
+  // endpoint), so the redaction contract grows to exactly 9 keys.
+  const allowedKeys = new Set(['candidateId', 'engine', 'endpointKind', 'streamFormat', 'url', 'resolver', 'sourceChannelId', 'label', 'drm']);
+  ok(redaction.candidates.every((candidate) => Object.keys(candidate).every((key) => allowedKeys.has(key))), 'S7.1 every candidate carries ONLY the 9 bounded wire fields');
   const serialized = JSON.stringify(redaction);
   ok(!serialized.includes('SECRET'), 'S7.2 no source config material in the payload');
   ok(!serialized.includes('playlist-a') && !serialized.includes('LiveGT V1'), 'S7.3 no slugs or source names in the payload');

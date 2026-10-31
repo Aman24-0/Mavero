@@ -30,10 +30,11 @@ const NO_STORE = { 'cache-control': 'no-store' } as const;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_TEXT_LENGTH = 4_000_000;
 
-// 2026-10 round 12 — increase the Netlify function timeout for this endpoint.
-// The default Netlify function timeout is 10s (free) / 26s (pro). A chunk of
-// 20 channels with the row-by-row fallback can take longer if the DB is under
-// load. Setting maxDuration to 60s gives the fallback ample time to complete.
+// Netlify function timing note: SvelteKit functions inherit the platform's
+// timeout — `export const maxDuration` is a Next.js feature and has no effect
+// here. Long ingestion work stays inside the chunked client-side uploader
+// (small chunks + row-by-row fallback) so a single request stays well under
+// the platform limit.
 
 function fail(status: number, code: string, message: string): Response {
         return json({ ok: false, error: { code, message } }, { status, headers: NO_STORE });

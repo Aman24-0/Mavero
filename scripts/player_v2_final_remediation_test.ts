@@ -74,17 +74,28 @@ console.log('\nISSUE 1 — portrait secondary row');
   // same intent (labels truncate; nothing sizes to its longest option).
   ok(/\.select-control\.subtitles \.control-label \{ flex: 1 1 auto; text-align: left; \}/.test(controls), '1c. the subtitle control’s label fills the flexible control (button contract)');
   ok(/\.select-control \.control-label \{ min-width: 0;[\s\S]*?text-overflow: ellipsis; white-space: nowrap; \}/.test(controls), '1d. every sheet-trigger label carries min-width:0 + ellipsis (long track names can never expand the row)');
-  ok(/\.select-control\.quality \.control-label \{ max-width: 64px; \}/.test(controls) && /\.select-control\.display-mode \.control-label \{ max-width: 58px; \}/.test(controls) && /\.select-control\.speed \.control-label \{ max-width: 44px; \}/.test(controls), '1e. explicit compact label widths for the fixed controls (speed/display/quality)');
-  // Deliberate narrow-phone fallback: tighter paddings, subtitle floor lowered.
-  ok(/@media \(max-width: 640px\) \{[\s\S]*?\.select-control\.subtitles \{ min-width: 48px; \}/.test(controls), '1f. ≤640px fallback lowers the subtitle floor (deliberate compact treatment)');
-  ok(/@media \(max-width: 640px\) \{[\s\S]*?\.select-control \{ padding: 0 5px; \}/.test(controls), '1g. ≤640px fallback tightens the control paddings (compact treatment; label widths are fluid since the sheet contract)');
-  ok(/@media \(max-width: 640px\) \{[\s\S]*?\.select-control\.display-mode :global\(svg\) \{ display: none; \}/.test(controls), '1g2. ≤640px folds the decorative display-mode icon so the labels + row fit (deliberate budget)');
-  // Target order: Volume · Subtitles · Quality · Display · Speed · Fullscreen.
-  // (Issue 3 contract: the markers moved to the sheet-trigger buttons.)
+  // CONTRACT CHANGE (2026-10 round 24): the display-mode SELECT moved to the
+  // top-right utility zone — .select-control.display-mode no longer exists.
+  // Round 32 added the Server control with the same compact width contract.
+  ok(/\.select-control\.quality \.control-label \{ max-width: 64px; \}/.test(controls) && /\.select-control\.server \.control-label \{ max-width: 64px; \}/.test(controls) && /\.select-control\.speed \.control-label \{ max-width: 44px; \}/.test(controls) && !/\.select-control\.display-mode\s*[.{]/.test(controls), '1e. explicit compact label widths for the fixed controls (quality/server/speed); the display-mode select RULES are GONE (round 24 utility-zone move)');
+  // Deliberate narrow-phone fallback (round 25 values): tighter paddings +
+  // 36px targets, subtitle floor lowered with an explicit 80px cap.
+  ok(/@media \(max-width: 640px\) \{[\s\S]*?\.select-control\.subtitles \{ min-width: 40px; max-width: 80px; \}/.test(controls), '1f. ≤640px fallback lowers the subtitle floor (deliberate compact treatment)');
+  ok(/@media \(max-width: 640px\) \{[\s\S]*?\.select-control \{ padding: 0 4px; min-height: 36px; \}/.test(controls), '1g. ≤640px fallback tightens the control paddings (compact treatment; label widths are fluid since the sheet contract)');
+  // Round 24: the display-mode select is gone from the bottom row entirely
+  // (moved to the top-right utility zone) — there is no in-row icon to fold.
+  ok(!/\.select-control\.display-mode\s*[.{]/.test(controls) && /aria-label=\{`Display mode: \$\{displayMode\}`\}/.test(controls), '1g2. the display-mode control lives in the utility zone (round 24) — no in-row display select rules remain');
+  // Round 24/25/32 order: Volume · Subtitles · Quality · (Audio) · (Server) ·
+  // Speed · Fullscreen — the display mode moved to the utility zone and the
+  // audio/server controls render conditionally. The utility zone MUST carry
+  // the display-mode button.
+  const utilityStart = controls.indexOf('class="utility-zone"');
+  const utility = controls.slice(utilityStart, controls.indexOf('class="bottom-zone"', utilityStart));
+  ok(utility.includes('aria-label={`Display mode: ${displayMode}`}'), '1h-pre. the display-mode control is in the top-right utility zone (round 24)');
   const secondaryStart = controls.indexOf('class="secondary-row"');
   const secondaryEnd = controls.indexOf('<!-- In-player selection sheets', secondaryStart);
   const secondary = controls.slice(secondaryStart, secondaryEnd > secondaryStart ? secondaryEnd : undefined);
-  const order = ['volume-control', 'aria-label={`Subtitles:', 'select-control quality', 'aria-label={`Display mode', 'aria-label={`Playback speed', "'Enter fullscreen'"];
+  const order = ['volume-control', 'aria-label={`Subtitles:', 'select-control quality', 'aria-label={`Playback speed', "'Enter fullscreen'"];
   let cursor = 0;
   let orderOk = true;
   for (const marker of order) {
@@ -92,7 +103,7 @@ console.log('\nISSUE 1 — portrait secondary row');
     if (at < 0) { orderOk = false; break; }
     cursor = at;
   }
-  ok(orderOk, '1h. target order Volume · Subtitles · Quality · Display · Speed · Fullscreen (fullscreen INSIDE the group)');
+  ok(orderOk, '1h. target order Volume · Subtitles · Quality · Speed · Fullscreen (display mode lives in the utility zone; fullscreen INSIDE the group)');
   ok((secondary.match(/'Exit fullscreen' : 'Enter fullscreen'/g) ?? []).length === 1, '1i. exactly one fullscreen button in the secondary row');
   // "Off" must stay the FIRST entry of the subtitle sheet's track list; the
   // honest notice renders as a separate non-selectable status row only when
@@ -115,8 +126,14 @@ console.log('\nISSUE 1 — portrait secondary row');
 // ===========================================================================
 console.log('\nISSUE 2 — landscape grouping + Back placement');
 {
-  ok(/\.secondary-row \{ display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-start; gap: 6px; \}/.test(controls), '2a. the secondary row base rule stays LEFT-aligned (portrait semantics preserved)');
-  ok(/@media \(orientation: landscape\) and \(max-height: 500px\) \{\s*\.secondary-row \{ flex-wrap: nowrap; gap: 5px; justify-content: flex-end; \}\s*\.select-control\.subtitles \{ flex: 0 1 auto; \}/.test(controls), '2b. landscape phone: the secondary row is ONE non-wrapping RIGHT-aligned group (superseded contract: was left-aligned)');
+  // SUPERSESSION 2 (round 25): the portrait base row is a single NOWRAP
+  // space-between row — LEFT (play/seek) vs RIGHT (secondary controls)
+  // groups; nothing overlaps because labels shrink within the fixed groups.
+  ok(/\.secondary-row \{ display: flex; align-items: center; flex-wrap: nowrap; justify-content: space-between; gap: 8px; \}/.test(controls), '2a. the secondary row base rule is ONE space-between nowrap row (round 25 portrait semantics)');
+  // SUPERSESSION 2 (round 25): landscape keeps the row non-wrapping; the
+  // right group packs to the right edge (.right-controls) and the subtitle
+  // select stops flexing so the leftover width is not absorbed.
+  ok(/@media \(orientation: landscape\) and \(max-height: 500px\) \{\s*\.secondary-row \{ flex-wrap: nowrap; gap: 5px; \}\s*\.right-controls \{ flex-wrap: nowrap; \}\s*\.select-control\.subtitles \{ flex: 0 1 auto; \}/.test(controls), '2b. landscape phone: the secondary row is ONE non-wrapping right-packed group (round 25 contract)');
   ok(/\.back-fab \{ width: 40px; height: 40px; top: max\(6px, env\(safe-area-inset-top\)\); left: max\(6px, env\(safe-area-inset-left\)\); \}/.test(shell), '2c. landscape-phone Back FAB sits at a 6px corner floor (was 8px)');
   ok(/\.back-fab \{ position: absolute; z-index: 12; top: max\(12px, env\(safe-area-inset-top\)\); left: max\(12px, env\(safe-area-inset-left\)\);/.test(shell), '2d. portrait Back FAB default placement is untouched (12px safe-area floor)');
   ok(/class:custom-position=\{Boolean\(backControlStyle\)\}/.test(shell) && shell.indexOf('landscapeControlInlineStyle') > 0, '2e. per-source Admin placement overrides still resolve and apply');

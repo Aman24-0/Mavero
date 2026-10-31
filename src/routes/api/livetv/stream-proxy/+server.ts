@@ -15,6 +15,19 @@
 //     that look scripted; these match a cross-origin media fetch from a page.
 //   * Cookie passthrough: cookies the CDN sets on the manifest are replayed on
 //     segment requests (best-effort, per instance — see the jar below).
+//   * 2026-10 round 32 — DRM cookie passthrough: the client's DRM
+//     requestFilter adds `x-livetv-cookie` to every manifest/segment request.
+//     This proxy forwards it upstream as the `Cookie` header (the browser
+//     cannot set Cookie itself) — the SAME translation the Cloudflare Worker
+//     does. It takes PRIORITY over the best-effort jar: a DRM session cookie
+//     the playlist explicitly provided must never be shadowed by a stale jar
+//     entry.
+//
+// DEBUGGING (2026-10 round 32): every non-OK upstream response is logged
+// (`console.error`) with the upstream STATUS + host + path (never the query
+// string — signed URLs must not reach the logs) so expired Jio tokens / wrong
+// DRM keys are diagnosable from the function logs (403 = cookie/origin
+// rejected, 401 = token expired, 404 = stream gone).
 //
 // SECURITY (this is a proxy — treat it like one):
 //   * https + absolute only; no credentials; length-bounded.
@@ -161,7 +174,14 @@ export const GET: RequestHandler = async ({ request, url, locals }) => {
 	};
 	const range = request.headers.get('range');
 	if (range) upstreamHeaders.range = range;
-	const cookie = cookieHeaderFor(first.hostname);
+	// 2026-10 round 32 — DRM cookie passthrough (x-livetv-cookie → Cookie).
+	// Priority over the jar: the playlist-provided __hdnea__ session cookie
+	// is authoritative for this stream's DRM gate.
+	const livetvCookie = request.headers.get('x-livetv-cookie');
+	const jarCookie = cookieHeaderFor(first.hostname);
+	const cookie = livetvCookie && livetvCookie.trim()
+			? (jarCookie && jarCookie !== livetvCookie.trim() ? `${jarCookie}; ${livetvCookie.trim()}` : livetvCookie.trim())
+			: jarCookie;
 	if (cookie) upstreamHeaders.cookie = cookie;
 
 	const controller = new AbortController();
@@ -209,6 +229,17 @@ export const GET: RequestHandler = async ({ request, url, locals }) => {
 		return jsonError(502, 'UPSTREAM_UNREACHABLE', 'The media host could not be reached.');
 	}
 	clearTimeout(timer);
+
+	// 2026-10 round 32 — upstream error diagnostics: log the exact status
+	// the CDN returned so Jio/Hotstar playback failures are diagnosable
+	// from the function logs. Host + path only — the query string (signed
+	// tokens, cookies) is NEVER logged.
+	if (!response.ok) {
+		console.error(
+			`[livetv stream-proxy] upstream HTTP ${response.status} for ${finalUrl.host}${finalUrl.pathname}` +
+			(livetvCookie ? ' (drm cookie attached)' : ' (no drm cookie)')
+		);
+	}
 
 	const contentType = (response.headers.get('content-type') ?? '').toLowerCase();
 	const isManifest = contentType.includes('mpegurl') || finalUrl.pathname.toLowerCase().endsWith('.m3u8');

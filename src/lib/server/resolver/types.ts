@@ -104,6 +104,15 @@ export type SafeSourceMetadata = {
    * (e.g. 'sub' or 'dub'). Forwarded into PlayerSource.metadata.selectedVariant.
    */
   selectedVariant?: string;
+  /**
+   * 2026-10 round 32 (VidCore Multi Stream): the ORDERED list of playback
+   * servers this resolution exposed — each entry is a fully proxied,
+   * https-validated HLS URL plus a display label (e.g. "Supreme", "Prime").
+   * `servers[0]` (when present) is the same stream as `url`. The player
+   * renders the Server menu from this list and auto-falls-back to the next
+   * entry when the active server dies. Absent for single-stream adapters.
+   */
+  servers?: Array<{ url: string; label: string }>;
 };
 
 export type ResolverErrorCode =

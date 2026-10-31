@@ -90,7 +90,10 @@ ok(utilityZone.indexOf('Cast to a device') > -1 && utilityZone.indexOf('Enter Pi
 ok(/aria-pressed=\{castActive\}/.test(utilityZone) && utilityZone.indexOf('Disconnect cast session') > -1, '1g. the Cast control mirrors the session state (aria-pressed + distinct labels)');
 // 1h. APPROVED LAYOUT: bottom zone = time + timeline + secondary row.
 ok(/class="bottom-zone"/.test(controls) && /class="timeline-row"/.test(controls) && /class="secondary-row"/.test(controls), '1h. the bottom zone carries the timeline row and the secondary control row');
-ok(/\.secondary-row \{ display: flex; align-items: center; flex-wrap: wrap;/.test(controls), '1h. the secondary row wraps to a compact second row instead of overlapping on narrow portrait');
+// CONTRACT CHANGE (2026-10 round 25): portrait uses a single NOWRAP row — the
+// right group packs tightly (flex-shrink labels, 36px+ targets) instead of
+// wrapping; the space-between layout keeps the two groups from overlapping.
+ok(/\.secondary-row \{ display: flex; align-items: center; flex-wrap: nowrap; justify-content: space-between;/.test(controls), '1h. the secondary row is a single space-between row (nowrap, no overlap on narrow portrait)');
 // 1i. APPROVED LAYOUT: display mode (Fit/Fill/Stretch).
 // CONTRACT CHANGE (focused fixes, Issue 3): the select became a button that
 // opens the Mavero display-mode sheet — the same three typed modes flow

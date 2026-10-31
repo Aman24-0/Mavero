@@ -174,7 +174,10 @@ assert.match(shell, /wasPlayingBeforeHidden && \(playing \|\| embedPlaying\)/, '
 // Release wired to pause / end / error / source switch / episode switch / destroy.
 assert.match(shell, /function handlePause\(\)[\s\S]{0,500}releaseWakeLock\(\)/, 'wake lock released on pause');
 assert.match(shell, /function handleEnded\(\)[\s\S]{0,500}releaseWakeLock\(\)/, 'wake lock released on end');
-assert.match(shell, /function handleMediaError\(\)[\s\S]{0,2000}releaseWakeLock\(\)/, 'wake lock released on error (window widened for the 2026-10 round 30 auto-retry logic — behavior unchanged)');
+// Round 32 added the server-fallback walk (VidCore Multi Stream) at the top
+// of handleMediaError — the function grew, but the terminal error path still
+// releases the wake lock (behavior unchanged; window widened again).
+assert.match(shell, /function handleMediaError\(\)[\s\S]{0,3500}releaseWakeLock\(\)/, 'wake lock released on error (window widened for the round 30 auto-retry + round 32 server-fallback logic — behavior unchanged)');
 assert.match(shell, /source\?\.sourceId && source\.sourceId !== sourceIdentity[\s\S]*?releaseWakeLock/, 'wake lock released on source switch');
 assert.match(shell, /episodeIdentity[\s\S]*?releaseWakeLock/, 'wake lock released on episode switch');
 assert.match(shell, /wakeLockDestroyed = true[\s\S]{0,80}releaseWakeLock/, 'destroyed flag set BEFORE releaseWakeLock on destroy');

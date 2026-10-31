@@ -26,8 +26,8 @@
   // Subtitle Settings sheet (track list + sync offset + appearance —
   // Issues 1+2). Only REAL values are ever offered: the tracks, quality
   // levels and speeds of the ACTIVE source.
-  import { AudioLines, Captions, Cast, Check, Expand, Lock, LockOpen, Maximize2, Minimize2, Pause, PictureInPicture2, Play, RotateCcwSquare, RotateCwSquare, Settings2, Volume1, Volume2, VolumeX, Gauge } from 'lucide-svelte';
-  import type { PlayerAudioTrackOption, PlayerInternalQualityOption, PlayerQualityOption, PlayerSubtitleTrack } from '$lib/shared/player';
+  import { AudioLines, Captions, Cast, Check, Expand, Lock, LockOpen, Maximize2, Minimize2, Pause, PictureInPicture2, Play, RotateCcwSquare, RotateCwSquare, Server, Settings2, Volume1, Volume2, VolumeX, Gauge } from 'lucide-svelte';
+  import type { PlayerAudioTrackOption, PlayerInternalQualityOption, PlayerQualityOption, PlayerServerOption, PlayerSubtitleTrack } from '$lib/shared/player';
   import { formatPlayerTime, playbackSpeeds, PLAYER_AUTO_QUALITY_ID } from '$lib/shared/player';
   import PlayerOptionSheet from './PlayerOptionSheet.svelte';
   import PlayerSubtitleSheet from './PlayerSubtitleSheet.svelte';
@@ -71,6 +71,14 @@
   export let audioTracks: PlayerAudioTrackOption[] = [];
   export let selectedAudioTrack: number | null = null;
   export let onAudioTrack: (index: number) => void = () => {};
+  // 2026-10 round 32 (VidCore Multi Stream): the ORDERED playback servers the
+  // resolver exposed (Supreme / Prime / Horizon / …). Same honest-empty
+  // pattern as the audio menu: the control renders ONLY when there is a REAL
+  // choice (>1 server). Selection is a URL; switching re-prepares the stream
+  // (position is captured by the shell) — no re-resolve needed.
+  export let servers: PlayerServerOption[] = [];
+  export let selectedServer = '';
+  export let onServer: (url: string) => void = () => {};
   // Display mode (Fit/Fill/Stretch) — CSS object-fit on the video element.
   export let displayMode: 'fit' | 'fill' | 'stretch' = 'fit';
   // Focused fixes (Issues 1+2): subtitle preference state + writer (the
@@ -108,8 +116,8 @@
   // Exactly ONE sheet open at a time. openMenu/closeMenu are the SINGLE
   // writers of the shell's open flag (deterministic — no mount/destroy
   // ordering dependence).
-  let openSheet: 'subtitles' | 'quality' | 'audio' | 'speed' | 'display' | null = null;
-  function openMenu(kind: 'subtitles' | 'quality' | 'audio' | 'speed' | 'display') {
+  let openSheet: 'subtitles' | 'quality' | 'audio' | 'servers' | 'speed' | 'display' | null = null;
+  function openMenu(kind: 'subtitles' | 'quality' | 'audio' | 'servers' | 'speed' | 'display') {
     openSheet = kind;
     onMenuOpenChange(true);
   }
@@ -162,6 +170,16 @@
   // more than one audio track. Labels are the manifest-provided name/lang
   // verbatim (never invented); with no selection reported yet, the engine
   // default stays active and the menu simply does not mark any row.
+  // Server selector (round 32): REAL resolver-exposed servers only — the
+  // control renders ONLY when the active source carries more than one
+  // server. Labels are the resolver-provided names verbatim.
+  $: serverMode = servers.length > 1 ? 'menu' : 'none';
+  $: serverButtonLabel = (selectedServer && servers.find((server) => server.url === selectedServer)?.label) || 'Server';
+  function chooseServer(url: string) {
+    if (url !== selectedServer) onServer(url);
+    closeMenu();
+  }
+
   $: audioMode = audioTracks.length > 1 ? 'menu' : 'none';
   function audioTrackLabel(track: PlayerAudioTrackOption): string {
     const name = typeof track.name === 'string' ? track.name.trim() : '';
@@ -281,6 +299,12 @@
               <span class="control-label">{audioButtonLabel}</span>
             </button>
           {/if}
+          {#if serverMode === 'menu'}
+            <button class="select-control server sheet-trigger" type="button" aria-label={`Server: ${serverButtonLabel}`} aria-haspopup="dialog" onclick={() => openMenu('servers')}>
+              <Server size={16} strokeWidth={1.5} aria-hidden="true" />
+              <span class="control-label">{serverButtonLabel}</span>
+            </button>
+          {/if}
           <button class="select-control speed sheet-trigger" type="button" aria-label={`Playback speed: ${playbackRate}×`} aria-haspopup="dialog" onclick={() => openMenu('speed')}>
             <Gauge size={16} strokeWidth={1.5} aria-hidden="true" />
             <span class="control-label">{playbackRate}×</span>
@@ -315,6 +339,18 @@
           <button class="option-row" class:selected={track.id === selectedAudioTrack} type="button" onclick={() => chooseAudioTrack(track.id)}>
             <span class="row-mark">{#if track.id === selectedAudioTrack}<Check size={15} />{/if}</span>
             <span class="row-copy"><strong>{audioTrackLabel(track)}</strong>{#if track.default}<small>Default</small>{/if}</span>
+          </button>
+        {/each}
+      </div>
+    </PlayerOptionSheet>
+  {/if}
+  {#if openSheet === 'servers'}
+    <PlayerOptionSheet title="Server" onClose={closeMenu}>
+      <div class="option-list" role="group" aria-label="Playback server">
+        {#each servers as server (server.url)}
+          <button class="option-row" class:selected={server.url === selectedServer} type="button" onclick={() => chooseServer(server.url)}>
+            <span class="row-mark">{#if server.url === selectedServer}<Check size={15} />{/if}</span>
+            <span class="row-copy"><strong>{server.label}</strong></span>
           </button>
         {/each}
       </div>
@@ -401,6 +437,9 @@
   .select-control.subtitles { flex: 1 1 56px; min-width: 56px; max-width: 110px; }
   .select-control.subtitles .control-label { flex: 1 1 auto; text-align: left; }
   .select-control.quality .control-label { max-width: 64px; }
+  /* 2026-10 round 32 — the Server label truncates like the quality label so
+     long server names ("Andromeda 1080p HD") can never expand the row. */
+  .select-control.server .control-label { max-width: 64px; }
   /* 2026-10 round 24 — .select-control.display-mode removed (moved to top-right). */
   .select-control.speed .control-label { max-width: 44px; }
 

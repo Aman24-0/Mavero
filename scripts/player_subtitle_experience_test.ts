@@ -285,9 +285,12 @@ console.log('\n§5 — regression safety');
   ok(/\$: if \(initialProgress > 0\) applyDelayedResume\(initialProgress\);/.test(shell), '5d. the delayed-resume gate is intact');
   ok(/onSubtitle=\{setSubtitle\}/.test(shell), '5e. the subtitle selection contract still routes through the shell');
   ok(!/downloader/i.test(controls), '5f. NO downloader surface in the player');
-  ok(/@media \(orientation: landscape\) and \(max-height: 500px\) \{\s*\.secondary-row \{ flex-wrap: nowrap; gap: 5px; justify-content: flex-end; \}\s*\.select-control\.subtitles \{ flex: 0 1 auto; \}/.test(controls), '5g. the approved LANDSCAPE right-alignment is byte-preserved');
-  ok(/\.secondary-row \{ display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-start; gap: 6px; \}/.test(controls), '5h. the approved PORTRAIT left-aligned row is byte-preserved');
-  ok(/@media \(max-width: 640px\) \{[\s\S]*?\.select-control\.display-mode :global\(svg\) \{ display: none; \}/.test(controls), '5i. the compact display-mode icon fold is preserved');
+  // SUPERSESSION (round 25): landscape right-packing lives on .right-controls;
+  // the portrait base row is a single space-between nowrap row; the
+  // display-mode select is gone from the row entirely (round 24 utility zone).
+  ok(/@media \(orientation: landscape\) and \(max-height: 500px\) \{\s*\.secondary-row \{ flex-wrap: nowrap; gap: 5px; \}\s*\.right-controls \{ flex-wrap: nowrap; \}\s*\.select-control\.subtitles \{ flex: 0 1 auto; \}/.test(controls), '5g. the approved LANDSCAPE right-packing (round 25: .right-controls nowrap group)');
+  ok(/\.secondary-row \{ display: flex; align-items: center; flex-wrap: nowrap; justify-content: space-between; gap: 8px; \}/.test(controls), '5h. the approved PORTRAIT space-between nowrap row (round 25)');
+  ok(!/\.select-control\.display-mode\s*[.{]/.test(controls) && /aria-label=\{`Display mode: \$\{displayMode\}`\}/.test(controls), '5i. the display-mode control lives in the utility zone (round 24) — no in-row fold remains');
   ok(/connect-src 'self' https:\/\/\*\.supabase\.co[\s\S]*?sub\.vdrk\.site[\s\S]*?api\.theintrodb\.org/.test(read('netlify.toml').slice(read('netlify.toml').indexOf('Content-Security-Policy = "'))), '5j. the CSP pins for the optional lookups remain');
   ok(/track\.mode = 'hidden'|'showing'/.test(viewport) === false || true, '5k. (info) mode literals live in the viewport sync');
   ok(/<track kind="captions"/.test(viewport), '5l. external VTT still rides the native <track> mechanism (browser parses, overlay paints)');

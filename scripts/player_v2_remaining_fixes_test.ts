@@ -230,12 +230,18 @@ console.log('\n§3 — Blue Velvet master variant discovery');
 // ===========================================================================
 console.log('\n§4 — landscape control alignment');
 {
-  ok(/@media \(orientation: landscape\) and \(max-height: 500px\) \{\s*\.secondary-row \{ flex-wrap: nowrap; gap: 5px; justify-content: flex-end; \}\s*\.select-control\.subtitles \{ flex: 0 1 auto; \}/.test(controls), '4a. landscape: ONE non-wrapping RIGHT-aligned group (subtitle select stops flexing so the group packs right)');
-  ok(/\.secondary-row \{ display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-start; gap: 6px; \}/.test(controls), '4b. portrait/base rule UNCHANGED (flex-start — the approved portrait layout is preserved)');
+  // SUPERSESSION (round 25): landscape keeps the row non-wrapping; the
+  // right-packing lives on .right-controls (the LEFT group owns play/seek).
+  ok(/@media \(orientation: landscape\) and \(max-height: 500px\) \{\s*\.secondary-row \{ flex-wrap: nowrap; gap: 5px; \}\s*\.right-controls \{ flex-wrap: nowrap; \}\s*\.select-control\.subtitles \{ flex: 0 1 auto; \}/.test(controls), '4a. landscape: ONE non-wrapping right-packed group via .right-controls (subtitle select stops flexing)');
+  // SUPERSESSION (round 25): the portrait base row is a single NOWRAP
+  // space-between row (LEFT play/seek group vs RIGHT controls group).
+  ok(/\.secondary-row \{ display: flex; align-items: center; flex-wrap: nowrap; justify-content: space-between; gap: 8px; \}/.test(controls), '4b. portrait/base rule = ONE space-between nowrap row (round 25 approved layout)');
   ok((controls.match(/justify-content: flex-end/g) ?? []).length === 1, '4c. exactly ONE flex-end rule (landscape only — no leakage)');
   // Back FAB + center cluster untouched (top-left + centered).
   ok(/\.back-fab \{ position: absolute; z-index: 12; top: max\(12px, env\(safe-area-inset-top\)\); left: max\(12px, env\(safe-area-inset-left\)\);/.test(shell), '4d. Back FAB stays top-left with the safe-area floor');
-  ok(/\.center-cluster \{[\s\S]*?left: 50%;/.test(controls), '4e. the center cluster stays centered on the viewport');
+  // SUPERSESSION (round 20): the center cluster is REMOVED — Play/Pause and
+  // the ±10s seek buttons live in the bottom secondary row (left group).
+  ok(!/\.center-cluster \{/.test(controls) && /class="control-button play-inline"/.test(controls) && /onStep\(-10\)/.test(controls), '4e. the center cluster is gone (round 20) — play/seek live in the bottom row\'s left group');
 }
 
 // ===========================================================================
@@ -250,7 +256,9 @@ console.log('\n§5 — regression safety');
   ok(/\$: if \(initialProgress > 0\) applyDelayedResume\(initialProgress\);/.test(shell), '5a. delayed-resume gate intact');
   ok(/preResumeZeroEvent/.test(shell) || /preResumeZero/.test(watchRoute), '5b. the zero-event writer guard remains wired');
   ok(/capturePendingSeek\(pendingSeekState, currentTime, Date\.now\(\)\);[\s\S]{0,220}selectedQuality = url;/.test(shell), '5c. quality switching preserves the position through the pending-seek capture');
-  ok(/\$: mediaUrl = selectedQualityOption\?\.url \?\? source\?\.url \?\? null;/.test(shell), '5d. the source-qualities selector swaps the media URL (the BV variant playback path)');
+  // Round 32 (VidCore Multi Stream): a selected SERVER URL wins first, then
+  // the source-qualities selector, then the base source URL.
+  ok(/\$: mediaUrl = selectedServer \|\| selectedQualityOption\?\.url \|\| source\?\.url \|\| null;/.test(shell), '5d. the server/qualities selector chain swaps the media URL (server menu + BV variant playback path)');
   ok(!/download/i.test(controls) || !/downloader/i.test(shell), '5e. NO downloader surface in the player');
   ok(/connect-src 'self' https:\/\/\*\.supabase\.co[\s\S]*?sub\.vdrk\.site[\s\S]*?api\.theintrodb\.org/.test(cspLine), '5f. the CSP pins for the optional lookups remain');
   ok(/\$: if \(browser && duration > 0 && mediaLookupKey !== introKey\) \{/.test(shell), '5g. the intro lookup still waits for a trustworthy ACTUAL duration');

@@ -196,6 +196,13 @@
   let state: PlayerPlaybackState = 'preparing';
   let errorMessage = '';
   let selectedQuality = '';
+  // 2026-10 round 32 (VidCore Multi Stream): the selected SERVER URL (from
+  // source.metadata.servers). '' = the resolver's primary stream (source.url)
+  // — every legacy source keeps playing exactly as before. serverFallbackTried
+  // records the servers a fatal error already fell back through (reset on
+  // 'playing' and on source change) so the fallback walk is finite.
+  let selectedServer = '';
+  let serverFallbackTried: string[] = [];
   let selectedSubtitle = '';
   // Focused fixes (Issues 1+2): subtitle appearance + sync preferences.
   // Loaded once on mount from the versioned local store; every change is
@@ -409,12 +416,16 @@
   type MediaSessionNavigator = Navigator & { mediaSession?: { playbackState?: string; metadata?: MediaMetadata | null; setActionHandler?: (action: string, handler: (() => void) | null) => void; setPositionState?: (state: { duration?: number; playbackRate?: number; position?: number }) => void } };
 
   $: qualities = source?.qualities ?? [];
+  // Round 32: servers live on the source metadata (direct sources only).
+  $: servers = source?.type === 'direct' ? source?.metadata?.servers ?? [] : [];
   $: subtitles = source?.subtitles ?? [];
   $: selectedQualityOption = qualities.find((quality) => quality.url === selectedQuality) as PlayerQualityOption | undefined;
   // Phase 10: compat override — when a compatibility session succeeds, the
   // player plays the WORKER-PROVIDED streaming url instead of the addon’s direct URL
   // (which the browser cannot decode). Cleared on any source/stream switch.
-  $: mediaUrl = selectedQualityOption?.url ?? source?.url ?? null;
+  // Round 32: an explicitly selected SERVER wins over the default chain —
+  // switching servers re-prepares the stream without a re-resolve.
+  $: mediaUrl = selectedServer || selectedQualityOption?.url || source?.url || null;
   // statusNote (Phase 10 GOAL 14) removed with the duplicate viewport status
   // label — see PlayerViewport. The shell surfaces loading/errors via its
   // single loading/error card.
@@ -425,6 +436,13 @@
     
     
     selectedQuality = '';
+  }
+  // Round 32 stale-guard: a selected server that is no longer on the source
+  // (episode switch, re-resolve returned different servers) is cleared so a
+  // dead URL can never ride into a new session.
+  $: if (source && source.sourceId === sourceIdentity && selectedServer && !source.metadata?.servers?.some((server) => server.url === selectedServer)) {
+    selectedServer = '';
+    serverFallbackTried = [];
   }
   // Category grouping: sources that have a categoryName are grouped under
   // a category header in the source selector. Sources without a category
@@ -565,6 +583,10 @@
   }
   $: if (source?.sourceId && source.sourceId !== sourceIdentity) {
     sourceIdentity = source.sourceId;
+    // Round 32: a new source session starts unselected-server + clean
+    // fallback ledger — servers from the OLD session can never leak in.
+    selectedServer = '';
+    serverFallbackTried = [];
     // MAVP-5 (Issue 5): stamp the source-switch window — a fullscreen loss
     // within LANDSCAPE_RESTORE_WINDOW_MS of this stamp while the landscape
     // intent is active is the switch-triggered loss (see handleFullscreen).
@@ -1664,7 +1686,7 @@
   }
 
   function handleWaiting() { state = 'buffering'; }
-  function handlePlaying() { state = 'playing'; errorMessage = ''; hlsAutoRetryCount = 0; }
+  function handlePlaying() { state = 'playing'; errorMessage = ''; hlsAutoRetryCount = 0; serverFallbackTried = []; }
   function handleSeeking() { state = 'seeking'; }
   function handleSeeked() { state = playing ? 'playing' : 'paused'; }
   function handleEnded() {
@@ -1687,6 +1709,28 @@
   const HLS_AUTO_RETRY_DELAY_MS = 1500;
 
   function handleMediaError() {
+    // Round 32 (VidCore Multi Stream) — SERVER fallback FIRST: when the
+    // resolver exposed more than one server, a dead server must never cost
+    // a full re-resolve while alternates remain. Walk the remaining servers
+    // in order (bounded by the ledger — a server is tried at most once per
+    // failure streak); the URL swap re-wires the HLS engine with the
+    // captured position, exactly like a manual server switch.
+    if (source?.type === 'direct' && servers.length > 1) {
+      const failedUrl = selectedServer || source.url || '';
+      if (!serverFallbackTried.includes(failedUrl)) serverFallbackTried.push(failedUrl);
+      const nextServer = servers.find((server) => server.url && !serverFallbackTried.includes(server.url));
+      if (nextServer) {
+        console.warn(`[PlayerShell] HLS fatal error — falling back to server "${nextServer.label}" (${serverFallbackTried.length}/${servers.length} tried)`);
+        state = 'switching-source';
+        errorMessage = '';
+        capturePendingSeek(pendingSeekState, currentTime, Date.now());
+        selectedServer = nextServer.url;
+        return;
+      }
+      // Every exposed server failed — reset the ledger and fall through to
+      // the existing re-resolve path (a fresh token may revive them).
+      serverFallbackTried = [];
+    }
     // 2026-10 round 21 — if this is a direct HLS source and we haven't
     // exhausted the auto-retry budget, re-resolve the source automatically
     // (the token likely expired or the CDN died). A 1s delay gives the
@@ -1915,6 +1959,25 @@
     // token invalidates any earlier pending capture.
     capturePendingSeek(pendingSeekState, currentTime, Date.now());
     selectedQuality = url;
+    state = 'preparing';
+    playing = false;
+  }
+
+  /**
+   * Round 32 (VidCore Multi Stream): switch to another exposed SERVER.
+   * Same contract as the quality switch — capture the position, swap the
+   * effective URL (mediaUrl derives from selectedServer), re-prepare. NO
+   * re-resolve: the servers list came with the current resolution.
+   * The manual pick also resets the auto-fallback ledger (the user made an
+   * explicit choice; the next fatal error walks the remaining servers).
+   */
+  function setServer(url: string) {
+    if (!url || url === selectedServer) return;
+    if (source?.type !== 'direct') return;
+    if (!source.metadata?.servers?.some((server) => server.url === url)) return;
+    capturePendingSeek(pendingSeekState, currentTime, Date.now());
+    selectedServer = url;
+    serverFallbackTried = [];
     state = 'preparing';
     playing = false;
   }
@@ -2790,7 +2853,7 @@
        Subtitle menu receives native + external tracks. -->
   {#if source?.type === 'direct'}
     <div class="direct-controls-overlay" class:visible={controlsVisible}>
-      <PlayerControls playing={playing} {muted} {volume} {currentTime} {duration} {buffered} {playbackRate} {pictureInPictureSupported} {pictureInPicture} fullscreenActive={fullscreen} onFullscreen={() => { void toggleFullscreen(); }} locked={touchLocked} onToggleLock={toggleTouchLock} subtitles={mergedSubtitles} selectedSubtitle={selectedSubtitle} subtitleNotice={externalSubtitleNotice} subtitlePrefs={subtitlePrefs} onSubtitlePreferences={setSubtitlePreferences} onMenuOpenChange={(open) => { controlsSheetsOpen = open; }} qualities={qualities} selectedQuality={selectedQuality} internalQualities={engineQuality?.options ?? []} selectedInternalQuality={engineQuality?.selected ?? PLAYER_AUTO_QUALITY_ID} audioTracks={engineQuality?.audioTracks ?? []} selectedAudioTrack={engineQuality?.selectedAudioTrack ?? null} onAudioTrack={setAudioTrack} {displayMode} onDisplayMode={setDisplayMode} castAvailable={castReady && Boolean(castEligibility?.eligible)} castActive={castConnected} onCast={() => { void handleCastAction(); }} onTogglePlay={togglePlay} onSeek={seek} onVolume={setVolume} onToggleMute={toggleMute} onPlaybackRate={setPlaybackRate} onSubtitle={setSubtitle} onQuality={setQuality} onInternalQuality={setInternalQuality} onPictureInPicture={togglePictureInPicture} onStep={seekBy} />
+      <PlayerControls playing={playing} {muted} {volume} {currentTime} {duration} {buffered} {playbackRate} {pictureInPictureSupported} {pictureInPicture} fullscreenActive={fullscreen} onFullscreen={() => { void toggleFullscreen(); }} locked={touchLocked} onToggleLock={toggleTouchLock} subtitles={mergedSubtitles} selectedSubtitle={selectedSubtitle} subtitleNotice={externalSubtitleNotice} subtitlePrefs={subtitlePrefs} onSubtitlePreferences={setSubtitlePreferences} onMenuOpenChange={(open) => { controlsSheetsOpen = open; }} qualities={qualities} selectedQuality={selectedQuality} internalQualities={engineQuality?.options ?? []} selectedInternalQuality={engineQuality?.selected ?? PLAYER_AUTO_QUALITY_ID} audioTracks={engineQuality?.audioTracks ?? []} selectedAudioTrack={engineQuality?.selectedAudioTrack ?? null} onAudioTrack={setAudioTrack} {servers} {selectedServer} onServer={setServer} {displayMode} onDisplayMode={setDisplayMode} castAvailable={castReady && Boolean(castEligibility?.eligible)} castActive={castConnected} onCast={() => { void handleCastAction(); }} onTogglePlay={togglePlay} onSeek={seek} onVolume={setVolume} onToggleMute={toggleMute} onPlaybackRate={setPlaybackRate} onSubtitle={setSubtitle} onQuality={setQuality} onInternalQuality={setInternalQuality} onPictureInPicture={togglePictureInPicture} onStep={seekBy} />
     </div>
   {/if}
 

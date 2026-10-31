@@ -270,6 +270,16 @@ export default {
                                 'upgrade-insecure-requests': '1'
                         };
 
+                // 2026-10 round 29 — forward the x-livetv-cookie header as the
+                // Cookie header to the upstream CDN. Browsers can't set the
+                // Cookie header directly, so the client passes it as
+                // x-livetv-cookie and the Worker translates it. Used by Jio CDN
+                // streams that require the __hdnea__ session cookie. Set BEFORE
+                // the HEAD probe so availability probes see the same DRM
+                // identity as the real GET.
+                const livetvCookie = request.headers.get('x-livetv-cookie');
+                if (livetvCookie) headers.cookie = livetvCookie;
+
                 // HEAD probe — players check Content-Type before fetching. Always answer
                 // 200 with the upstream (or a best-guess) type and an empty body.
                 if (isHead) {
@@ -289,14 +299,6 @@ export default {
 
                 const range = request.headers.get('range');
                 if (range) headers.range = range;
-
-                // 2026-10 round 29 — forward the x-livetv-cookie header as the
-                // Cookie header to the upstream CDN. Browsers can't set the
-                // Cookie header directly, so the client passes it as
-                // x-livetv-cookie and the Worker translates it. Used by Jio CDN
-                // streams that require the __hdnea__ session cookie.
-                const livetvCookie = request.headers.get('x-livetv-cookie');
-                if (livetvCookie) headers.cookie = livetvCookie;
 
                 // 2026-10 round 16 — 10s hard timeout on the upstream fetch.
                 // If VidSrc/2embed takes longer than 10s, abort and return a
@@ -321,6 +323,13 @@ export default {
 
                 // 2026-10 round 10 — Task 3: handle 404 (stream offline / expired link).
                 // Return a clear JSON error so the player can show a helpful message.
+                // 2026-10 round 32 — DEBUGGING: log the exact upstream status so Jio
+                // DRM failures are diagnosable via `wrangler tail` (403 = cookie/
+                // Origin rejected, 401 = token expired, 404 = stream gone). Host +
+                // path only — the query string (signed token) is NEVER logged.
+                if (!upstream.ok) {
+                        console.error(`[stream-proxy] upstream HTTP ${upstream.status} for ${target.host}${target.pathname}${livetvCookie ? ' (drm cookie attached)' : ' (no drm cookie)'}`);
+                }
                 if (upstream.status === 404) {
                         return jsonError(404, 'STREAM_NOT_FOUND', 'This stream is currently offline or the link has expired.');
                 }

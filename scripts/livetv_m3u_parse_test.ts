@@ -658,4 +658,100 @@ console.log('§12 R-8 — Pipe-delimited stream URLs (JioHotstar/Akindi format)'
   ok(parseResult.channels[0]!.logoUrl === 'https://i.ibb.co/abc.jpg', '§12.15 the tvg-logo is preserved');
 }
 
+// ============================================================
+console.log('§13 — round 29/32 DRM: #KODIPROP (ClearKey) + #EXTHTTP (cookie) → channel metadata');
+// ============================================================
+{
+  // 13.1 — the full Jio plugxvipplaylist shape: license_type + license_key
+  // + #EXTHTTP cookie, directives BETWEEN #EXTINF and the URL (the common
+  // ordering). All four DRM fields must land on the CHANNEL metadata so the
+  // playback resolver can put them on the wire and the player can configure
+  // Shaka's clearKeys + the cookie requestFilter.
+  const keyId = 'eb6d76fc7e0f4f1c8a1e4f04b6a9e123';
+  const key = '9f86d081884c7d659a2feaa0c55ad015';
+  const cookie = '__hdnea__=st=1700000000~exp=1900000000~acl=/*~hmac=abcdef0123456789';
+  const playlist = [
+    '#EXTM3U',
+    '#EXTINF:-1 tvg-id="jio.hd" tvg-name="Jio HD" group-title="Entertainment",Jio Premium HD',
+    `#KODIPROP:inputstream.adaptive.license_type=clearkey`,
+    `#KODIPROP:inputstream.adaptive.license_key=${keyId}:${key}`,
+    `#EXTHTTP:{"cookie":"${cookie}"}`,
+    'https://cdn.jio.com/streams/hd/master.m3u8'
+  ].join('\n');
+  const result = parseM3UPlaylist(playlist);
+  ok(result.channels.length === 1, '§13.1 a Jio clearkey playlist parses to one channel');
+  const meta = result.channels[0]!.metadata as Record<string, unknown>;
+  ok(meta.drmType === 'clearkey', '§13.2 drmType=clearkey is attached to the channel metadata');
+  ok(meta.drmKeyId === keyId && meta.drmKey === key, '§13.3 the key id + key from license_key=key_id:key are attached');
+  ok(meta.drmCookie === cookie, '§13.4 the #EXTHTTP cookie is attached verbatim');
+}
+{
+  // 13.2 — directives BEFORE #EXTINF also accumulate (Kodi-export ordering).
+  const playlist = [
+    '#EXTM3U',
+    '#KODIPROP:inputstream.adaptive.license_type=clearkey',
+    '#KODIPROP:inputstream.adaptive.license_key=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    '#EXTINF:-1 tvg-id="jio.sd",Jio SD',
+    'https://cdn.jio.com/streams/sd/index.m3u8'
+  ].join('\n');
+  const result = parseM3UPlaylist(playlist);
+  const meta = result.channels[0]!.metadata as Record<string, unknown>;
+  ok(result.channels.length === 1 && meta.drmType === 'clearkey' && meta.drmKeyId === 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '§13.5 KODIPROP directives before #EXTINF still attach (directive ordering tolerance)');
+  ok(meta.drmCookie === undefined || meta.drmCookie === null, '§13.6 no #EXTHTTP → no cookie field (never invented)');
+}
+{
+  // 13.3 — multiple comma-separated key pairs: the FIRST pair is stored
+  // (Shaka clearKeys accepts multiple; the resolver wire carries one).
+  const playlist = [
+    '#EXTM3U',
+    '#EXTINF:-1 tvg-id="jio.multi",Jio Multi',
+    '#KODIPROP:inputstream.adaptive.license_type=clearkey',
+    '#KODIPROP:inputstream.adaptive.license_key=k1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:v1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,k2cccccccccccccccccccccccccccccc:v2dddddddddddddddddddddddddddddd',
+    'https://cdn.jio.com/streams/multi.m3u8'
+  ].join('\n');
+  const result = parseM3UPlaylist(playlist);
+  const meta = result.channels[0]!.metadata as Record<string, unknown>;
+  ok(meta.drmKeyId === 'k1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' && meta.drmKey === 'v1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', '§13.7 the FIRST key pair of a comma-separated license_key is stored');
+}
+{
+  // 13.4 — non-clearkey DRM types are ignored (honest unsupported-DRM skip:
+  // the stream stays, but no drm material is ever stored).
+  const playlist = [
+    '#EXTM3U',
+    '#EXTINF:-1 tvg-id="jio.wv",Jio Widevine',
+    '#KODIPROP:inputstream.adaptive.license_type=widevine',
+    '#KODIPROP:inputstream.adaptive.license_key=https://license.example.com/get',
+    'https://cdn.jio.com/streams/wv.m3u8'
+  ].join('\n');
+  const result = parseM3UPlaylist(playlist);
+  const meta = result.channels[0]!.metadata as Record<string, unknown>;
+  ok(result.channels.length === 1 && meta.drmType === undefined && meta.drmKeyId === undefined, '§13.8 non-clearkey license types never store drm material');
+}
+{
+  // 13.5 — a channel WITHOUT any KODIPROP/EXTHTTP carries no drm fields at
+  // all (the plain playlist shape is untouched by the DRM round).
+  const result = parseM3UPlaylist('#EXTM3U\n#EXTINF:-1 tvg-id="plain.one",Plain\nhttps://cdn.example/plain.m3u8');
+  const meta = result.channels[0]!.metadata as Record<string, unknown>;
+  ok(meta.drmType === undefined && meta.drmKeyId === undefined && meta.drmCookie === undefined, '§13.9 a plain channel carries no drm metadata');
+}
+{
+  // 13.6 — DRM state does NOT leak between consecutive entries: a clearkey
+  // entry followed by a plain entry leaves the second entry drm-free.
+  const playlist = [
+    '#EXTM3U',
+    '#EXTINF:-1 tvg-id="drm.one",Drm One',
+    '#KODIPROP:inputstream.adaptive.license_type=clearkey',
+    '#KODIPROP:inputstream.adaptive.license_key=kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk:vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv',
+    'https://cdn.example/drm-one.m3u8',
+    '#EXTINF:-1 tvg-id="plain.two",Plain Two',
+    'https://cdn.example/plain-two.m3u8'
+  ].join('\n');
+  const result = parseM3UPlaylist(playlist);
+  ok(result.channels.length === 2, '§13.10 both entries parsed');
+  const drmMeta = result.channels.find((c) => c.name === 'Drm One')!.metadata as Record<string, unknown>;
+  const plainMeta = result.channels.find((c) => c.name === 'Plain Two')!.metadata as Record<string, unknown>;
+  ok(drmMeta.drmType === 'clearkey', '§13.11 the first entry keeps its drm metadata');
+  ok(plainMeta.drmType === undefined && plainMeta.drmKeyId === undefined, '§13.12 the drm state never leaks into the NEXT entry');
+}
+
 console.log(`\n=== livetv Phase 2 M3U parse verification: ${passed} checks PASSED ===`);
