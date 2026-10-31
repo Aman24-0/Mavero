@@ -1,28 +1,38 @@
 /**
- * DirectStream — vidcore.org scraper module (server-only, 2026-10 round 32).
+ * DirectStream — vidcore.org scraper module (server-only, 2026-10 round 33).
  *
  * "Direct 2" — the multi-audio, MULTI-SERVER scraper. VidCore returns HLS
- * master playlists with multiple audio tracks (English, Hindi, etc.) that
- * hls.js automatically detects and exposes via the Audio menu.
+ * master playlists that hls.js automatically detects and exposes via the
+ * Audio menu.
  *
- * 2026-10 round 32 — MULTI-SERVER EXTRACTION: the CoorenLabs contract gives
- * VidCore's payload TWO stream arrays, and BOTH may be present:
+ * 2026-10 round 32 — MULTI-SERVER EXTRACTION: VidCore's payload carries TWO
+ * stream arrays, and BOTH may be present:
  *
  *   {
- *     "sources": [ { "url": "…master.m3u8", "server": "Supreme", "type": "hls" }, … ],
+ *     "sources": [ { "url": "…master.m3u8", "server": "Tethys", "type": "hls" }, … ],
  *     "streams": [ { "url": "…/720/index.m3u8", "name": "720p", "type": "hls" }, … ],
  *     "subtitles": [ … ]
  *   }
  *
- * `sources` entries are SERVER-addressed (one entry per upstream server —
- * Supreme, Prime, Horizon, …; the `server` field names it). `streams` entries
- * are the legacy shape (one entry per rendition of THAT provider's stream).
- * The scraper no longer picks the first working URL: it queries EVERY
+ * `sources` entries are SERVER-addressed (one entry per upstream server; the
+ * `server` field names it). `streams` entries are the legacy shape (one entry
+ * per rendition of THAT provider's stream). The scraper queries EVERY
  * configured provider IN PARALLEL, merges both arrays, and returns ONE
  * `ScraperSource` per valid HLS URL tagged with its server display name.
  * The resolver forwards the full list to the client (`metadata.servers`) so
  * the player can render the Server menu and fall back to the next server
  * when one dies.
+ *
+ * 2026-10 round 33 — THE CELESTIAL ROSTER (verified against the live
+ * vidcore.org embed player): VidCore's servers are NOT named after branding
+ * words — they are named after PLANETS AND MOONS, and the AUDIO LANGUAGE is
+ * bound to the server ("Enceladus" and "Hyperion" serve Hindi, "Callisto"
+ * serves Telugu, the rest serve English). The provider roster below is the
+ * FULL verified list (28 sub-servers, slug form `mb-<name>`) — querying all
+ * of them in parallel is how every language and every server reaches the
+ * player's Server menu. Each returned source also carries a `language`
+ * (parsed from the API when attached, the verified roster otherwise) so the
+ * Server menu can render "Tethys (English)" / "Enceladus (Hindi)".
  */
 
 import { env as publicEnv } from '$env/dynamic/public';
@@ -34,22 +44,106 @@ const BROWSER_UA =
 
 const VIDCORE_ORIGIN = 'https://vidcore.org';
 
-/** Hard bound on returned servers — mirrors the resolver's wire bounds. */
-const MAX_SERVERS = 12;
+/**
+ * Hard bound on returned servers — mirrors the resolver's wire bounds. The
+ * verified celestial roster has 28 members; the bound covers ALL of them
+ * ("extract ALL servers") while still bounding a hostile payload.
+ */
+const MAX_SERVERS = 28;
 
 /**
- * The list of VidCore sub-servers to query. ALL of them are queried (in
- * parallel) — the array order is the presentation/fallback priority for the
- * aggregated sources. New providers can be added here.
+ * The FULL verified VidCore server roster (2026-10 round 33, extracted from
+ * the live vidcore.org embed player's server selector). Every entry is one
+ * upstream sub-server queried in parallel; the array order is the player's
+ * presentation/fallback priority (planets first, then moons). The audio
+ * language is bound to the server — `VIDCORE_SERVER_LANGUAGES` below is the
+ * verified language for every roster entry.
  */
 const VIDCORE_PROVIDERS = [
         'mb-earth',
         'mb-mars',
         'mb-jupiter',
+        'mb-neptune',
         'mb-saturn',
-        'mb-andromeda',
-        'mb-nebula',
+        'mb-venus',
+        'mb-mercury',
+        'mb-uranus',
+        'mb-titan',
+        'mb-europa',
+        'mb-ganymede',
+        'mb-io',
+        'mb-triton',
+        'mb-charon',
+        'mb-phobos',
+        'mb-deimos',
+        'mb-oberon',
+        'mb-titania',
+        'mb-umbriel',
+        'mb-ariel',
+        'mb-rhea',
+        'mb-iapetus',
+        'mb-dione',
+        'mb-tethys',
+        'mb-enceladus',
+        'mb-callisto',
+        'mb-hyperion',
+        'mb-mimas',
 ] as const;
+
+/** The canonical display name of one roster entry ('mb-enceladus' → 'Enceladus'). */
+function rosterNameFor(provider: string): string {
+        return provider
+                .replace(/^mb-/i, '')
+                .split('-')
+                .map((word) => (word ? word.charAt(0).toUpperCase() + word.slice(1) : word))
+                .join(' ');
+}
+
+/**
+ * The VERIFIED audio language of every roster server (round 33). The embed
+ * player's server selector labels them directly: Enceladus and Hyperion
+ * serve Hindi, Callisto serves Telugu, every other roster member serves
+ * English. Used when the API response does not attach the language itself —
+ * the Server menu can then still render "Enceladus (Hindi)".
+ */
+const VIDCORE_SERVER_LANGUAGES: Readonly<Record<string, string>> = Object.freeze({
+        'Enceladus': 'Hindi',
+        'Hyperion': 'Hindi',
+        'Callisto': 'Telugu',
+        'Earth': 'English',
+        'Mars': 'English',
+        'Jupiter': 'English',
+        'Neptune': 'English',
+        'Saturn': 'English',
+        'Venus': 'English',
+        'Mercury': 'English',
+        'Uranus': 'English',
+        'Titan': 'English',
+        'Europa': 'English',
+        'Ganymede': 'English',
+        'Io': 'English',
+        'Triton': 'English',
+        'Charon': 'English',
+        'Phobos': 'English',
+        'Deimos': 'English',
+        'Oberon': 'English',
+        'Titania': 'English',
+        'Umbriel': 'English',
+        'Ariel': 'English',
+        'Rhea': 'English',
+        'Iapetus': 'English',
+        'Dione': 'English',
+        'Tethys': 'English',
+        'Mimas': 'English'
+});
+
+/**
+ * The verified audio language of a roster provider ('mb-enceladus' →
+ * 'Hindi'), or '' when the provider is not part of the verified roster.
+ */
+function rosterLanguageFor(provider: string): string {
+        return VIDCORE_SERVER_LANGUAGES[rosterNameFor(provider)] ?? '';
+}
 
 /**
  * Generates the VidCore token: Base64-encoded JSON + ".own" suffix.
@@ -164,8 +258,12 @@ type VidCoreStream = {
         title?: string;
         label?: string;
         quality?: string;
-        /** Server-addressed `sources` display name ("Supreme", "Prime"). */
+        /** Server-addressed `sources` display name ("Tethys", "Enceladus (Hindi)"). */
         server?: string;
+        /** Audio language, when the API attaches it separately ("Hindi"). */
+        language?: string;
+        /** Alternative language field some VidCore shapes use. */
+        lang?: string;
         /** Container/protocol hint ("hls", "mp4", "dash"). */
         type?: string;
 };
@@ -176,28 +274,84 @@ type VidCoreApiResponse = {
         subtitles?: Array<{ url?: string; lang?: string; code?: string }>;
 };
 
-/** One valid HLS URL + its resolved server display name + quality label. */
+/** One valid HLS URL + its resolved server display name + language + quality label. */
 export type VidCoreServerSource = {
         url: string;
         server: string;
+        /** Audio language served by this server ('' = unknown — never invented). */
+        language: string;
         quality: string;
 };
 
 /**
- * Derives the server DISPLAY name for a stream. Priority: the entry's own
- * `server` field (the `sources` shape) → the provider's display name
- * ('mb-andromeda' → 'Andromeda'). Never invented beyond title-casing the
- * provider slug the API itself addressed.
+ * Round 33 — splits a "Enceladus (Hindi)" server string into its bare NAME
+ * and its attached LANGUAGE. The parenthetical is accepted as a language
+ * only when it reads like one (letters/spaces, ≤ 24 chars) — a quality or
+ * note parenthetical never becomes a language. Returns null when the entry
+ * carries no parenthetical.
+ */
+function splitAttachedLanguage(rawServer: string): { name: string; language: string } | null {
+        const match = /^(.*?)\s*\(([^()]{1,24})\)\s*$/.exec(rawServer);
+        if (!match) return null;
+        const name = match[1]!.trim();
+        const language = match[2]!.trim();
+        if (!name || !/^[A-Za-z][A-Za-z /+-]*$/.test(language)) return null;
+        return { name, language: titleCaseLanguage(language) };
+}
+
+/** Canonical language casing ('english' → 'English', 'portuguese (br)' stays parenthesized). */
+function titleCaseLanguage(language: string): string {
+        return language
+                .split(/\s+/)
+                .map((word) => (word ? word.charAt(0).toUpperCase() + word.slice(1) : word))
+                .join(' ');
+}
+
+/**
+ * Derives the server DISPLAY NAME for a stream. Priority: the entry's own
+ * `server` field minus any "(language)" parenthetical (the `sources` shape)
+ * → the provider's roster display name ('mb-enceladus' → 'Enceladus').
+ * Never invented beyond the roster casing of the provider slug the API
+ * itself addressed.
  */
 function serverNameFor(entry: VidCoreStream, provider: string): string {
         const own = typeof entry.server === 'string' ? entry.server.trim() : '';
-        if (own) return own;
-        const slug = provider.replace(/^mb-/i, '').replace(/[-_]+/g, ' ').trim();
-        if (!slug) return 'Default';
-        return slug
-                .split(' ')
-                .map((word) => (word ? word.charAt(0).toUpperCase() + word.slice(1) : word))
-                .join(' ');
+        if (own) return splitAttachedLanguage(own)?.name ?? own;
+        const rosterName = rosterNameFor(provider);
+        return rosterName || 'Default';
+}
+
+/**
+ * Round 33 — resolves a stream's AUDIO LANGUAGE. Priority: a "(Hindi)"
+ * parenthetical on the `server` field → an explicit `language`/`lang`
+ * field on the entry → the VERIFIED roster language for the server name →
+ * (no server field at all) the verified roster language for the provider
+ * slug. When the API names a server that is NOT on the roster, the language
+ * stays '' — unknown is honest, an invented language is not.
+ */
+function languageFor(entry: VidCoreStream, provider: string): string {
+        const own = typeof entry.server === 'string' ? entry.server.trim() : '';
+        if (own) {
+            const attached = splitAttachedLanguage(own);
+            if (attached) return attached.language;
+        }
+        for (const field of [entry.language, entry.lang]) {
+            const value = typeof field === 'string' ? field.trim() : '';
+            if (value) return titleCaseLanguage(value);
+        }
+        if (own) {
+            // The API named THIS server — its own name decides. The lookup
+            // tolerates a trailing parenthetical annotation ("Mars (4K HDR)"
+            // → base name "Mars"); an unknown (non-roster) name stays
+            // language-less.
+            const baseName = own.replace(/\s*\([^()]{1,24}\)\s*$/, '').trim();
+            return VIDCORE_SERVER_LANGUAGES[own]
+                ?? VIDCORE_SERVER_LANGUAGES[titleCaseLanguage(own.toLowerCase())]
+                ?? (baseName ? VIDCORE_SERVER_LANGUAGES[baseName] ?? VIDCORE_SERVER_LANGUAGES[titleCaseLanguage(baseName.toLowerCase())] ?? '' : '');
+        }
+        // No server field at all — the entry IS the provider's stream, and
+        // the provider's verified roster language applies.
+        return rosterLanguageFor(provider);
 }
 
 function qualityLabelFor(entry: VidCoreStream): string {
@@ -290,6 +444,7 @@ async function fetchVidCoreProviderSources(
                 sources.push({
                         url: entry.url,
                         server: serverNameFor(entry, provider),
+                        language: languageFor(entry, provider),
                         quality: qualityLabelFor(entry),
                 });
         }
@@ -303,19 +458,21 @@ async function fetchVidCoreProviderSources(
         if (sources.length === 0) {
                 console.warn(`[vidcore-scraper] provider ${provider} returned no valid HLS streams.`);
         } else {
-                console.log(`[vidcore-scraper] provider ${provider} OK: ${sources.length} stream(s) [${sources.map((s) => s.server).join(', ')}], ${subtitles.length} subtitles`);
+                console.log(`[vidcore-scraper] provider ${provider} OK: ${sources.length} stream(s) [${sources.map((s) => (s.language ? `${s.server} (${s.language})` : s.server)).join(', ')}], ${subtitles.length} subtitles`);
         }
         return { sources, subtitles };
 }
 
 /**
- * The VidCore scrape (round 32). Queries EVERY provider IN PARALLEL, merges
- * the per-provider results in VIDCORE_PROVIDERS priority order (each
- * provider's master manifests first), and returns ONE source per valid HLS
- * URL with its server display name. sources[0] is the primary playback URL —
- * the same stream the old first-provider logic would have picked, so the
- * default path is unchanged — while the FULL list rides along for the
- * player's Server menu + per-server fallback.
+ * The VidCore scrape (round 33). Queries EVERY roster provider IN PARALLEL
+ * (the FULL 28-member celestial roster — planets + moons, every audio
+ * language), merges the per-provider results in VIDCORE_PROVIDERS priority
+ * order (each provider's master manifests first), and returns ONE source
+ * per valid HLS URL with its server display name + audio language.
+ * sources[0] is the primary playback URL — the same stream the old
+ * first-provider logic would have picked, so the default path is unchanged
+ * — while the FULL list rides along for the player's Server menu +
+ * per-server fallback.
  */
 export async function scrapeVidCore(
         tmdbId: string,
@@ -360,9 +517,10 @@ export async function scrapeVidCore(
                 quality: entry.quality,
                 kind: 'direct',
                 server: entry.server,
+                language: entry.language,
         }));
 
-        console.log(`[vidcore-scraper] aggregated ${sources.length} server(s): ${collected.map((s) => s.server).join(', ')}`);
+        console.log(`[vidcore-scraper] aggregated ${sources.length} server(s): ${collected.map((s) => (s.language ? `${s.server} (${s.language})` : s.server)).join(', ')}`);
         return {
                 sources,
                 subtitles,

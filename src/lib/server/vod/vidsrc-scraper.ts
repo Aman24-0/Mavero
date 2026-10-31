@@ -94,12 +94,20 @@ export type ScraperSource = {
         kind: 'direct';
         /**
          * 2026-10 round 32 — the SERVER display name this stream belongs to
-         * (e.g. "Andromeda", "Supreme", "Prime"). Only multi-server scrapers
-         * (vidcore) populate it; vidsrc.party results leave it undefined.
-         * The resolver forwards the names into `metadata.servers` so the
-         * player can render the Server menu + fallback order.
+         * (e.g. "Tethys", "Enceladus"). Only multi-server scrapers (vidcore)
+         * populate it; vidsrc.party results leave it undefined. The resolver
+         * forwards the names into `metadata.servers` so the player can render
+         * the Server menu + fallback order.
          */
         server?: string;
+        /**
+         * 2026-10 round 33 — the AUDIO LANGUAGE this server serves (e.g.
+         * "English", "Hindi"), when known: parsed from the API when attached,
+         * the verified celestial roster otherwise ('' / undefined = unknown —
+         * never invented). The resolver composes the "Enceladus (Hindi)"
+         * Server-menu label from it.
+         */
+        language?: string;
 };
 
 /** The scraper's success result. */

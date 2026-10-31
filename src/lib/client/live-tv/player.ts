@@ -90,6 +90,7 @@
 import type { LiveTvPlaybackResolution, LiveTvPlaybackSource } from './types';
 import { LiveTvPlaybackError } from './player-errors';
 import { installMediaAuthFilters, type ShakaNetworkingEngineLike } from './media-auth';
+import { livetvProxyRefererFor } from '$lib/shared/livetv-proxy';
 import {
         deriveLiveTvQualityOptions,
         activeLiveTvTrackId,
@@ -923,17 +924,49 @@ export class LiveTvPlaybackEngine {
 
                         // 8. Load the selected source exactly as documented
                         //    (bare load — no startTime, no MIME).
-                        //    2026-10 round 29 — if the DRM has a cookie (Jio CDN),
-                        //    register a requestFilter that adds x-livetv-cookie to
-                        //    every manifest/segment request through the Worker proxy.
-                        //    Browsers can't set the Cookie header directly; the Worker
-                        //    translates x-livetv-cookie → Cookie upstream.
+                        //    2026-10 round 33 — the Worker proxy is BYPASSED for Live
+                        //    TV (Jio's CDN geo-blocks the Worker's egress IP with
+                        //    451), so the browser fetches the manifest + segments
+                        //    DIRECTLY from the CDN. The requestFilter carries the
+                        //    ClearKey session's credentials on every request:
+                        //      * `Cookie`  ← drm.cookie (the playlist session jar)
+                        //      * `Origin` / `Referer` ← the CDN's required provider
+                        //        origin (livetvProxyRefererFor — e.g. jio.com →
+                        //        https://www.jio.com/). Several IPTV CDNs 403 both
+                        //        the browser and a same-origin Referer — they want
+                        //        the PROVIDER site's origin.
+                        //    Standard browsers treat Cookie/Origin/Referer as
+                        //    forbidden header names and silently drop them from
+                        //    XHR/fetch; embedded runtimes (Tizen/webOS/TVA webviews)
+                        //    and Shaka's fetch scheme DO forward them. Setting them
+                        //    is therefore the best-effort direct path — and harmless
+                        //    where they are ignored.
                         if (drm !== null) {
                                 const drmCookie = (drm as { cookie?: string | null }).cookie;
                                 if (drmCookie) {
+                                        let requiredReferer: string | null = null;
+                                        try {
+                                                requiredReferer = livetvProxyRefererFor(new URL(sourceUrl).hostname);
+                                        } catch {
+                                                requiredReferer = null;
+                                        }
                                         try {
                                                 player.getNetworkingEngine()?.registerRequestFilter((type, request) => {
+                                                        // The ClearKey session cookie — delivered BOTH
+                                                        // as the literal Cookie header (direct) and as
+                                                        // the Worker-compatible x-livetv-cookie (any
+                                                        // future proxy re-enable keeps working).
+                                                        request.headers['cookie'] = drmCookie;
                                                         request.headers['x-livetv-cookie'] = drmCookie;
+                                                        // The provider origin the CDN requires.
+                                                        if (requiredReferer) {
+                                                                request.headers['referer'] = requiredReferer;
+                                                                try {
+                                                                        request.headers['origin'] = new URL(requiredReferer).origin;
+                                                                } catch {
+                                                                        // No Origin when the referer is unparseable.
+                                                                }
+                                                        }
                                                 });
                                         } catch {
                                                 // Non-fatal — the stream may still work without the cookie.

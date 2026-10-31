@@ -223,24 +223,30 @@ export const vidsrcScrapeProviderAdapter: ProviderAdapter = {
 
     const firstSource = result.sources[0]!;
 
-    // 2026-10 round 32 — MULTI-SERVER WIRE: every scraped source becomes a
+    // 2026-10 round 32/33 — MULTI-SERVER WIRE: every scraped source becomes a
     // playback candidate. `url` stays the FIRST source (validated below —
     // the primary stream, unchanged from the pre-round behaviour), and the
     // FULL ordered list rides `metadata.servers` so the player can render
     // the Server menu and auto-fall-back when a server dies. Each entry is
     // wrapped through the SAME buildPlaybackUrl path as the primary (Worker
     // proxy + Referer) and https-validated before it is exposed; anything
-    // that fails validation is dropped, never coerced.
+    // that fails validation is dropped, never coerced. The label composes
+    // the server name with its audio language ("Tethys (English)",
+    // "Enceladus (Hindi)") — the celestial roster's per-server language.
     const servers: Array<{ url: string; label: string }> = [];
     for (const scraped of result.sources) {
-      if (servers.length >= 12) break; // bounded wire, mirrors MAX_PLAYBACK_CANDIDATES
+      if (servers.length >= 28) break; // bounded wire — covers the full celestial roster
       const candidateUrl = buildPlaybackUrl(scraped.url, result.referer);
       try {
         validatePlaybackUrl(candidateUrl, 'direct');
       } catch {
         continue;
       }
-      const label = typeof scraped.server === 'string' && scraped.server.trim() ? scraped.server.trim() : scraped.quality || 'Server';
+      const serverName = typeof scraped.server === 'string' && scraped.server.trim() ? scraped.server.trim() : '';
+      const language = typeof scraped.language === 'string' ? scraped.language.trim() : '';
+      const label = serverName
+        ? (language && !serverName.toLowerCase().includes(language.toLowerCase()) ? `${serverName} (${language})` : serverName)
+        : scraped.quality || 'Server';
       servers.push({ url: candidateUrl, label });
     }
 
@@ -268,7 +274,8 @@ export const vidsrcScrapeProviderAdapter: ProviderAdapter = {
         providerName: context.config.provider.name,
         sourceName: context.config.source.name,
         protocol: 'hls',
-        // Round 32 — ALL VidCore servers (Supreme / Prime / Horizon / …).
+        // Round 32/33 — ALL VidCore celestial servers (Earth / Tethys /
+        // Enceladus / … with their per-server audio language on the label).
         // servers[0].url is the same proxied URL as `url` — the player's
         // Server menu uses it as the highlighted default row.
         ...(servers.length > 0 ? { servers } : {}),

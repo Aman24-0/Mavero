@@ -67,6 +67,16 @@
   export let currentEpisode: PlayerEpisodeTarget | null = null;
   export let onProgress: (event: PlayerProgressEvent) => void = () => {};
   export let onSourceChange: (sourceId: string, variant?: string) => void = () => {};
+  // 2026-10 round 33 — the FRESH-FETCH retry contract. When the parent
+  // provides `onRetry` (the watch route re-runs prepareSource for the
+  // CURRENT source — a brand-new POST /api/playback/resolve), the manual
+  // "Try again" button ALWAYS delegates to it. The old internal-only paths
+  // could never recover a RESOLUTION failure: with `source` null (resolve
+  // failed) `videoElement.load()` has nothing to reload and the parent's
+  // resolutionError stays set — the error card never cleared and the button
+  // looked dead. The prop is optional so every other shell consumer keeps
+  // the legacy self-contained behavior.
+  export let onRetry: (() => void) | null = null;
   export let onEpisodeChange: (target: PlayerEpisodeTarget) => void = () => {};
   // Task 6 (2026-10-15) — in-sheet season switching. OPTIONAL props: when
   // `seasons` is empty (movies, anime movies, single-season shows) the
@@ -2241,10 +2251,27 @@
     hlsAutoRetryCount = 0; // reset auto-retry budget for the manual retry
     // Phase 8: clear any pending embed load timeout before retrying.
     clearEmbedLoadTimeout();
-    // MAVP-4 Issue 1: a retry restarts the presentation gate — the provider
-    // surface has to present again (fresh signal / tap / fail-open).
+    // Round 33 — a manual retry is a FRESH FETCH: the failed attempt's whole
+    // state clears (embed gates + the server-fallback ledger + the manual
+    // server selection — a deliberate retry starts over from the resolver's
+    // primary server), then the parent's fresh resolve runs. `onRetry` (the
+    // watch route re-running prepareSource) is the ONLY path that can
+    // recover a resolution failure (source = null: nothing to reload) — the
+    // old internal-only paths left the parent's resolutionError set and the
+    // error card never cleared. Optional prop: other consumers keep the
+    // legacy self-contained behavior below.
     clearEmbedPresentFailOpen();
     embedSurfacePresenting = false;
+    serverFallbackTried = [];
+    selectedServer = '';
+    if (onRetry) {
+      state = 'switching-source';
+      onRetry();
+      return;
+    }
+    // Legacy self-contained fallback (no parent retry hook): re-resolve the
+    // current source through the source-change contract, or reload the
+    // element when not even that is possible.
     if (source?.sourceId) {
       state = 'switching-source';
       onSourceChange(source.sourceId);
