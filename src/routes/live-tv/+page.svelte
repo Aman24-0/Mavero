@@ -69,6 +69,7 @@
   // server paints the hero, player shell and catalogue skeleton; everything
   //   data-related starts in onMount (existing Mavero page pattern).
   import { onDestroy, onMount } from 'svelte';
+  import { env as publicEnv } from '$env/dynamic/public';
   import { page as appPage } from '$app/state';
   import { goto } from '$app/navigation';
   import { PRODUCTION_ORIGIN } from '$lib/shared/seo';
@@ -809,11 +810,12 @@
    */
   function createLivetvPlaybackRouter(): LiveTvPlaybackRouter {
     return new LiveTvPlaybackRouter({
-      // 2026-10 round 33 — the Cloudflare Worker stream proxy is BYPASSED for
-      // Live TV (Jio's CDN geo-blocks the Worker's egress IP with 451). The
-      // raw stream URL goes straight to Shaka Player; the engine's
-      // requestFilter carries the ClearKey session's Cookie/Origin/Referer.
-      // VOD keeps its own proxy routing (PlayerViewport).
+      // 2026-11 round 34 — the Cloudflare Worker stream proxy is BACK on the
+      // Live TV path. The direct-playback experiment 403'd on Jio's CDN (the
+      // browser sent Origin: maveroweb.space; the CDN wants the provider site's
+      // origin, jioplus2plugx.lovable.app — which the Worker now spoofs). The
+      // Worker also carries the ClearKey session's x-livetv-cookie as Cookie.
+      streamProxyBase: publicEnv.PUBLIC_STREAM_PROXY_URL ?? '',
       handlers: {
         onengine: (eng) => {
           engine = eng;

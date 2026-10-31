@@ -38,7 +38,7 @@
 import { env as publicEnv } from '$env/dynamic/public';
 import { ScraperError, type ScraperResult, type ScraperSource } from './vidsrc-scraper';
 
-const FETCH_TIMEOUT_MS = 5_000;
+const FETCH_TIMEOUT_MS = 10_000;
 const BROWSER_UA =
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
@@ -179,7 +179,11 @@ export function buildVidCoreApiUrl(tmdbId: string, type: 'movie' | 'tv', provide
 }
 
 /**
- * Fetches JSON from a URL with a 5s timeout. Uses the Worker proxy when
+ * Fetches JSON from a URL with a 10s timeout (2026-11 round 34 — raised from
+ * 5s: vidcore.org/api/source/... regularly answers in >5s under load, which
+ * made every VidCore source surface as "This source isn't available". When
+ * VidCore fails completely the scraper throws the typed NO_SOURCES error so
+ * the player falls back to the next source). Uses the Worker proxy when
  * PUBLIC_STREAM_PROXY_URL is set (same pattern as the vidsrc scraper).
  */
 async function fetchJson(url: string, referer: string, label: string): Promise<string> {
@@ -482,7 +486,7 @@ export async function scrapeVidCore(
 ): Promise<ScraperResult> {
         console.log(`[vidcore-scraper] starting: tmdb=${tmdbId} type=${type}${type === 'tv' ? ` s${season}e${episode}` : ''} providers=${VIDCORE_PROVIDERS.length} (parallel)`);
 
-        // ALL providers at once — one 5s timeout total instead of one per
+        // ALL providers at once — one 10s timeout total instead of one per
         // provider. A dead provider settles as { sources: [], subtitles: [] }.
         const settled = await Promise.allSettled(
                 VIDCORE_PROVIDERS.map((provider) => fetchVidCoreProviderSources(tmdbId, type, provider, season, episode)),

@@ -924,23 +924,20 @@ export class LiveTvPlaybackEngine {
 
                         // 8. Load the selected source exactly as documented
                         //    (bare load — no startTime, no MIME).
-                        //    2026-10 round 33 — the Worker proxy is BYPASSED for Live
-                        //    TV (Jio's CDN geo-blocks the Worker's egress IP with
-                        //    451), so the browser fetches the manifest + segments
-                        //    DIRECTLY from the CDN. The requestFilter carries the
-                        //    ClearKey session's credentials on every request:
-                        //      * `Cookie`  ← drm.cookie (the playlist session jar)
-                        //      * `Origin` / `Referer` ← the CDN's required provider
-                        //        origin (livetvProxyRefererFor — e.g. jio.com →
-                        //        https://www.jio.com/). Several IPTV CDNs 403 both
-                        //        the browser and a same-origin Referer — they want
-                        //        the PROVIDER site's origin.
-                        //    Standard browsers treat Cookie/Origin/Referer as
-                        //    forbidden header names and silently drop them from
-                        //    XHR/fetch; embedded runtimes (Tizen/webOS/TVA webviews)
-                        //    and Shaka's fetch scheme DO forward them. Setting them
-                        //    is therefore the best-effort direct path — and harmless
-                        //    where they are ignored.
+                        //    2026-11 round 34 — the Worker proxy is BACK on the Live
+                        //    TV path (the direct-playback experiment 403'd: Jio's CDN
+                        //    wants the provider site's Origin/Referer, which only the
+                        //    Worker can send). The requestFilter still carries the
+                        //    ClearKey session's credentials on EVERY request:
+                        //      * `x-livetv-cookie` ← drm.cookie — the Worker
+                        //        translates it into the literal `Cookie` header
+                        //        upstream (browsers forbid setting Cookie directly).
+                        //      * `Cookie` / `Origin` / `Referer` — forbidden header
+                        //        names in standard browsers (silently dropped), but
+                        //        forwarded by embedded runtimes (Tizen/webOS/TVA
+                        //        webviews) and Shaka's fetch plugin. Setting them is
+                        //        best-effort and harmless where they are ignored —
+                        //        the Worker spoofs the provider Origin/Referer itself.
                         if (drm !== null) {
                                 const drmCookie = (drm as { cookie?: string | null }).cookie;
                                 if (drmCookie) {

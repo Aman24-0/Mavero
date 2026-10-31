@@ -12,11 +12,18 @@
  *
  * 2026-10 round 6:
  *   * CORS preflight (OPTIONS) returns 200 with permissive headers.
- *   * Per-CDN Referer/Origin mapping: Jio → jio.com, Hotstar → hotstar.com,
- *     Sony → sonyliv.com (NOT premiumplugx — the CDNs check the provider
- *     site's origin, not the aggregator's).
+ *   * Per-CDN Referer/Origin mapping: Jio → jioplus2plugx.lovable.app (the
+ *     official provider site the stream is embedded on — the CDN checks the
+ *     EMBEDDING page's origin, not the brand domain), Hotstar → hotstar.com,
+ *     Sony → sonyliv.com.
  *   * Range header forwarded for video seeking.
  *   * DASH (.mpd) manifests are rewritten (BaseURL + segment URLs proxied).
+ *
+ * 2026-11 round 34 — JIO ORIGIN/REFERER SPOOF: Jio's CDN 403s requests whose
+ * Origin/Referer is NOT the official provider site. The provider site
+ * (jioplus2plugx.lovable.app) sends `Origin: https://jioplus2plugx.lovable.app`
+ * and `Referer: https://jioplus2plugx.lovable.app/` — the Worker now sends
+ * exactly those on every jio.com request (REFERER_BY_HOST + ORIGIN_BY_HOST).
  */
 
 // 2026-10 round 13 — DirectStream VOD scraper: added cloudnestra.com (the
@@ -44,7 +51,9 @@ const ALLOWED_HOST_SUFFIXES = ['hotstar.com', 'slivcdn.com', 'jio.com', 'jiocine
 const REFERER_BY_HOST: ReadonlyArray<{ suffix: string; referer: string }> = [
         { suffix: 'slivcdn.com', referer: 'https://www.sonyliv.com/' },
         { suffix: 'hotstar.com', referer: 'https://www.hotstar.com/' },
-        { suffix: 'jio.com', referer: 'https://www.jio.com/' },
+        // 2026-11 round 34 — the OFFICIAL provider site's Referer (with the
+        // trailing slash, exactly as the site's own player sends it).
+        { suffix: 'jio.com', referer: 'https://jioplus2plugx.lovable.app/' },
         { suffix: 'jiocinema.com', referer: 'https://www.jiocinema.com/' },
         { suffix: 'premiumplugx.com', referer: 'https://premiumplugx.com/' },
         { suffix: 'cloudnestra.com', referer: 'https://cloudnestra.com/' },
@@ -53,6 +62,17 @@ const REFERER_BY_HOST: ReadonlyArray<{ suffix: string; referer: string }> = [
         { suffix: 'cookiebakers23blog.xyz', referer: 'https://vidsrc.party/' },
         { suffix: 'cno.to', referer: 'https://vidsrc.party/' },
         { suffix: 'vidcore.org', referer: 'https://vidcore.org/' }
+];
+
+/**
+ * 2026-11 round 34 — explicit per-host Origin overrides. Jio's CDN checks the
+ * Origin header against the official provider site's origin (no trailing
+ * slash — exactly as a browser sends it). When a host has an entry here it
+ * WINS over the Referer-derived origin; hosts without an entry keep the old
+ * behaviour (Origin = Referer minus the trailing slash).
+ */
+const ORIGIN_BY_HOST: ReadonlyArray<{ suffix: string; origin: string }> = [
+        { suffix: 'jio.com', origin: 'https://jioplus2plugx.lovable.app' }
 ];
 
 const BROWSER_UA =
@@ -76,6 +96,15 @@ function refererFor(hostname: string): string | null {
         const host = hostname.toLowerCase().replace(/\.$/, '');
         for (const entry of REFERER_BY_HOST) {
                 if (host === entry.suffix || host.endsWith(`.${entry.suffix}`)) return entry.referer;
+        }
+        return null;
+}
+
+/** The explicit Origin override for a host (round 34), or null. */
+function originFor(hostname: string): string | null {
+        const host = hostname.toLowerCase().replace(/\.$/, '');
+        for (const entry of ORIGIN_BY_HOST) {
+                if (host === entry.suffix || host.endsWith(`.${entry.suffix}`)) return entry.origin;
         }
         return null;
 }
@@ -216,7 +245,11 @@ export default {
 
                 const requiredReferer = safeReferer(url.searchParams.get('r')) ?? refererFor(target.hostname);
                 const referer = requiredReferer ?? `${target.origin}/`;
-                const origin = requiredReferer ? requiredReferer.replace(/\/$/, '') : target.origin;
+                // Round 34 — the explicit per-host Origin map wins (Jio's CDN
+                // validates Origin against the provider site's exact origin);
+                // everything else keeps the Referer-derived fallback.
+                const origin = originFor(target.hostname)
+                        ?? (requiredReferer ? requiredReferer.replace(/\/$/, '') : target.origin);
 
                 // 2026-10 round 15 — DirectStream scraper fallback: the scraper
                 // routes its embed/rcp/prorcp HTML page fetches through this

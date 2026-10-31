@@ -79,6 +79,7 @@ import { LiveTvError, isLiveTvError } from './errors';
 import { LiveTvPlaybackError, shouldFallbackToEmbed } from './player-errors';
 import { buildLiveTvEmbedUrl, resolveLiveTvPlayback } from './api';
 import { trackLiveTvError, trackLiveTvFallbackEmbed, trackLiveTvPlay } from './analytics';
+import { isLivetvProxyUrl, livetvStreamProxyUrl } from '$lib/shared/livetv-proxy';
 
 // ---------------------------------------------------------------------------
 // Wire mirrors (structurally identical to the server's playback-resolver
@@ -251,6 +252,8 @@ export type LiveTvRouterOptions = {
         timers?: Timers;
         /** Injectable base origin for the two endpoints (tests). */
         baseUrl?: string;
+        /** Absolute base of an external stream proxy (Cloudflare Worker); omit for same-origin. */
+        streamProxyBase?: string;
 };
 
 /** Router lifecycle states (the Phase 5 brief's deterministic machine). */
@@ -279,6 +282,8 @@ export class LiveTvPlaybackRouter {
         private readonly fetchFn: typeof fetch;
         private readonly timers: Timers;
         private readonly baseUrl: string;
+        /** Absolute base of an external stream proxy (e.g. a Cloudflare Worker); '' = same-origin. */
+        private readonly streamProxyBase: string;
 
         /** Monotonic session token — the stale-guard root. */
         private sessionToken = 0;
@@ -319,6 +324,7 @@ export class LiveTvPlaybackRouter {
                 this.fetchFn = options.fetchFn ?? ((...args: Parameters<typeof fetch>) => fetch(...args));
                 this.timers = options.timers ?? defaultTimers;
                 this.baseUrl = options.baseUrl ?? '';
+                this.streamProxyBase = options.streamProxyBase ?? '';
         }
 
         /** The current lifecycle state (diagnostics/tests). */
@@ -659,18 +665,23 @@ export class LiveTvPlaybackRouter {
                                 this.settleCurrent('failed');
                                 return;
                         }
-                        // 2026-10 round 33 — DIRECT PLAYBACK (proxy BYPASSED for Live
-                        // TV): Jio's CDN returns `451 Unavailable For Legal Reasons`
-                        // to the Cloudflare Worker's egress IP (geo-block), so the
-                        // Worker proxy is OFF the Live TV path entirely. The RAW
-                        // stream URL is handed to Shaka Player and the browser fetches
-                        // the .mpd/.m3u8 + segments DIRECTLY (same-origin media — no
-                        // CORS for <video>, cookies ride the browser jar, and the
-                        // engine's requestFilter injects the ClearKey session's
-                        // Cookie/Origin/Referer headers). This is a LIVE-TV-ONLY
-                        // exception: VOD (VidSrc/VidCore) keeps its Worker/in-app
-                        // proxy routing in PlayerViewport.
-                        const mediaUrl = candidate.url;
+                        // 2026-11 round 34 — WORKER PROXY RESTORED for Live TV. The
+                        // direct (bypass) experiment FAILED in production: the browser
+                        // fetched the CDN with `Origin: https://maveroweb.space` and
+                        // Jio's CDN answered 403 (the official provider page sends
+                        // `Origin: https://jioplus2plugx.lovable.app`). The Worker is
+                        // BACK on the Live TV path — it spoofs the provider's
+                        // Origin/Referer (jioplus2plugx.lovable.app), forwards the
+                        // ClearKey session's x-livetv-cookie as Cookie, rewrites the
+                        // manifest (HLS + DASH) and answers CORS. DASH from a
+                        // CORS-blocked CDN rides the same proxy (the Worker rewrites
+                        // the MPD's BaseURL + segment URLs).
+                        let mediaUrl = candidate.url;
+                        if (isLivetvProxyUrl(mediaUrl)) {
+                                // HLS or DASH from a CORS-blocked CDN → route via the proxy.
+                                const origin = typeof location !== 'undefined' ? location.origin : '';
+                                if (origin) mediaUrl = new URL(livetvStreamProxyUrl(mediaUrl, this.streamProxyBase), origin).toString();
+                        }
                         resolution = { channel: { id: channel.id, name: channel.name }, sources: [{ url: mediaUrl }], drm: candidate.drm ?? null };
                 }
                 if (token !== this.sessionToken || signal.aborted) {

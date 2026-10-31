@@ -58,7 +58,12 @@ export function livetvStreamProxyUrl(absUrl: string, base = ''): string {
 export const LIVETV_PROXY_REFERER_BY_HOST: ReadonlyArray<{ suffix: string; referer: string }> = [
         { suffix: 'slivcdn.com', referer: 'https://www.sonyliv.com/' },
         { suffix: 'hotstar.com', referer: 'https://www.hotstar.com/' },
-        { suffix: 'jio.com', referer: 'https://www.jio.com/' },
+        // 2026-11 round 34 — Jio's CDN 403s any other Origin/Referer: the
+        // official provider site sends Origin https://jioplus2plugx.lovable.app
+        // + Referer https://jioplus2plugx.lovable.app/ — spoof exactly those
+        // (the in-app proxy derives Origin from this value by stripping the
+        // trailing slash; the Cloudflare Worker carries the same entry).
+        { suffix: 'jio.com', referer: 'https://jioplus2plugx.lovable.app/' },
         { suffix: 'jiocinema.com', referer: 'https://www.jiocinema.com/' },
         { suffix: 'premiumplugx.com', referer: 'https://premiumplugx.com/' },
         { suffix: 'cloudnestra.com', referer: 'https://cloudnestra.com/' },
