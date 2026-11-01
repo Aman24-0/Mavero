@@ -50,6 +50,31 @@ export function livetvStreamProxyUrl(absUrl: string, base = ''): string {
 }
 
 /**
+ * 2026-11 round 35 — CDN host suffixes that GEO-BLOCK every non-Indian
+ * egress IP with `451 Unavailable For Legal Reasons` (Jio). A geo-block is
+ * an IP-classification decision — NO Referer/Origin spoofing can fix it; the
+ * stream needs a proxy that egresses from India (`PUBLIC_INDIAN_PROXY_URL`).
+ * The playback router uses this to fail a Jio candidate FAST with an honest
+ * message instead of burning the startup watchdog on a guaranteed 451.
+ */
+export const LIVETV_GEOBLOCKED_HOST_SUFFIXES: readonly string[] = ['jio.com', 'jiocinema.com'];
+
+/** True when `hostname` is (or is a subdomain of) a geo-blocked (India-only) CDN. */
+export function isLivetvGeoblockedHost(hostname: string): boolean {
+        const host = hostname.toLowerCase().replace(/\.$/, '');
+        return LIVETV_GEOBLOCKED_HOST_SUFFIXES.some((suffix) => host === suffix || host.endsWith(`.${suffix}`));
+}
+
+/** True when an absolute URL's host is geo-blocked (India-only). Safe on malformed input. */
+export function isLivetvGeoblockedUrl(rawUrl: string): boolean {
+        try {
+                return isLivetvGeoblockedHost(new URL(rawUrl).hostname);
+        } catch {
+                return false;
+        }
+}
+
+/**
  * Per-CDN Referer/Origin the upstream REQUIRES. Several IPTV CDNs 403 both the
  * browser and a same-origin Referer — they want the PROVIDER site's origin.
  * Keyed by CDN host suffix so a new source only needs an entry here (the

@@ -224,19 +224,17 @@ export function normalizeCdnDomains(raw: string[]): string[] {
 // The API call + JSON parsing
 // ---------------------------------------------------------------------------
 
-const FETCH_TIMEOUT_MS = 10_000;
+const FETCH_TIMEOUT_MS = 15_000;
 const BROWSER_UA =
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
 /**
- * Fetches a URL with a FULL set of browser headers + a strict 10s AbortController
+ * Fetches a URL with a FULL set of browser headers + a strict 15s AbortController
  * timeout. Throws a typed `ScraperError` on failure.
  *
- * 2026-11 round 34 — the timeout was raised 5s → 10s: VidSrc's API
- * (`vidsrc.party/api/play/...`) regularly takes longer than 5s under load,
- * which surfaced as random "DirectStream timed out" failures. The client
- * still auto-retries up to 5 times (PlayerShell HLS_AUTO_RETRY_MAX), but the
- * scraper itself now gives the API a realistic window first.
+ * 2026-11 round 35 — the timeout was raised 10s → 15s: VidSrc's API is
+ * often slow (multi-second answers are normal under load), and even 10s
+ * still surfaced as random "DirectStream timed out" failures.
  *
  * 2026-10 round 23 — when PUBLIC_STREAM_PROXY_URL is set, the Worker is the
  * ONLY fetch path (no direct fallback). vidsrc.party blocks Netlify's AWS
@@ -407,7 +405,7 @@ export async function scrapeVidsrc(
 
         console.log(`[vidsrc-scraper] starting scrape: tmdb=${safeTmdbId} type=${type}${type === 'tv' ? ` s${season}e${episode}` : ''} api=${apiDomain}`);
 
-        // --- Call the API (strict 10s timeout) ---
+        // --- Call the API (strict 15s timeout) ---
         const apiUrl = buildApiUrl(apiDomain, safeTmdbId, type, season, episode);
         const rawBody = await fetchJson(apiUrl, apiDomain + '/', 'vidsrc.party API');
 

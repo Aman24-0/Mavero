@@ -55,6 +55,8 @@ Real values must be provided through Netlify’s encrypted environment-variable 
 | `PRIVATE_ADAPTER_BUILDER_URL` | External Adapter Builder Service base URL (admin Create Adapter flow only; also consumed by the background build executor) | Encrypted server-side secret; never public |
 | `PRIVATE_ADAPTER_BUILDER_SECRET` | Shared secret with the Builder deployment (also authorizes the background executor invoke) | Encrypted server-side secret; never public |
 | `PRIVATE_ADAPTER_BUILDER_TIMEOUT_MS` | Builder call timeout (default 150000, min 5000, max 600000) | Runtime configuration; never a secret |
+| `PUBLIC_STREAM_PROXY_URL` | Cloudflare Worker stream-proxy base (`cloudflare-stream-proxy/`) — routes VOD (VidSrc/VidCore) and Live TV media through the Worker’s edge IPs with per-CDN Referer/Origin spoofing and manifest rewriting | Public runtime configuration |
+| `PUBLIC_INDIAN_PROXY_URL` | Indian-egress stream proxy base for the geo-blocked Live TV CDNs (Jio answers `451 Unavailable For Legal Reasons` to every non-Indian IP). Must be a deployment of the SAME `cloudflare-stream-proxy/worker.ts` contract (`GET ?u=<url>&r=<referer>`, `x-livetv-cookie` → `Cookie`); when set it REPLACES the Worker as the Live TV stream proxy. When unset, Jio channels show “Jio channels require an Indian IP. Please use a VPN or set up an Indian Proxy.” instead of a guaranteed-451 player | Public runtime configuration |
 
 
 The application reads public Supabase values through SvelteKit’s runtime public environment module rather than requiring them as build-time static exports. This allows the Netlify build to compile without baking credentials into the bundle; the variables must still be present at runtime for Supabase Auth and data operations to work.

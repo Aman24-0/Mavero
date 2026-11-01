@@ -35,7 +35,7 @@ function ok(condition: unknown, label: string, hint?: string) {
   console.log(`  ok ${passed} - ${label}`);
 }
 
-import { LiveTvPlaybackRouter, isSafeLivetvEmbedSrc, LIVETV_ROUTER_EXHAUSTED_MESSAGE, LIVETV_ROUTER_NO_STREAM_MESSAGE, resetUnifiedFlagCacheForTests, type LivetvRouterCandidate } from '../src/lib/client/live-tv/resolution-router';
+import { LiveTvPlaybackRouter, isSafeLivetvEmbedSrc, LIVETV_ROUTER_EXHAUSTED_MESSAGE, LIVETV_ROUTER_JIO_GEOBLOCK_MESSAGE, LIVETV_ROUTER_NO_STREAM_MESSAGE, resetUnifiedFlagCacheForTests, type LivetvRouterCandidate } from '../src/lib/client/live-tv/resolution-router';
 import { LiveTvPlaybackError } from '../src/lib/client/live-tv/player-errors';
 import { LiveTvError } from '../src/lib/client/live-tv/errors';
 
@@ -241,6 +241,9 @@ type RouterFactoryOptions = {
   fetchRoutes: FetchRoute[];
   resolveLivegt?: (channelId: string, options: { signal?: AbortSignal }) => Promise<unknown>;
   script?: (engine: FakeEngine, index: number) => void;
+  /** Round 34/35 — the external stream-proxy bases (Worker / Indian egress). */
+  streamProxyBase?: string;
+  indianProxyBase?: string;
 };
 
 function makeRouter(timers: FakeTimers, options: RouterFactoryOptions): { router: LiveTvPlaybackRouter; recorder: Recorder; factoryCalls: number[] } {
@@ -271,7 +274,9 @@ function makeRouter(timers: FakeTimers, options: RouterFactoryOptions): { router
     resolveLivegtPlayback: (options.resolveLivegt ?? (async () => ({ channel: { id: '143', name: 'News One' }, sources: [{ url: 'https://signed.example/live.mpd?__hdnea__=TOKEN' }], drm: null }))) as unknown as typeof import('../src/lib/client/live-tv/api').resolveLiveTvPlayback,
     fetchFn: fakeFetch.fetch,
     timers: timers as unknown as RouterTimers,
-    baseUrl: 'https://app.example'
+    baseUrl: 'https://app.example',
+    streamProxyBase: options.streamProxyBase ?? '',
+    indianProxyBase: options.indianProxyBase ?? ''
   });
   return { router, recorder, factoryCalls };
 }
@@ -685,6 +690,159 @@ const CONFIG_FALSE: FetchRoute = { match: (url) => url.includes('/api/livetv/pla
   external.abort();
   ok(await abortRouter.router.probeSelection('entry:e1', external.signal) === false, 'R12.7 an already-aborted signal probes UNAVAILABLE (fail-closed)');
   ok('R12 probeSelection verified');
+}
+
+// ============================================================
+// R13 — Jio geo-block + Indian proxy routing (2026-11 round 35).
+//       Jio's CDN 451s every non-Indian egress IP; no header spoofing can
+//       fix a geo-block. Without PUBLIC_INDIAN_PROXY_URL the Jio candidate
+//       is SKIPPED and the honest geoblock message surfaces; with it, the
+//       stream rides the Indian proxy (it REPLACES the Worker).
+// ============================================================
+{
+  const JIO_URL = 'https://jiotvpllive.cdn.jio.com/live/akindi/master.m3u8';
+  const HOTSTAR_URL = 'https://live09p.hotstar.com/live/abc/master.m3u8';
+  // The proxy wrap reads location.origin (browser-only) — stub it for the
+  // wrap assertions and restore whatever was there before.
+  const globalScope = globalThis as { location?: unknown };
+  const priorLocation = globalScope.location;
+  const stubLocation = () => {
+    globalScope.location = { origin: 'https://app.example' };
+  };
+  const restoreLocation = () => {
+    globalScope.location = priorLocation;
+  };
+
+  // R13.1 — NO Indian proxy: the Jio registry candidate is SKIPPED before any
+  // playback surface exists, and the session exhausts with the geoblock message.
+  resetUnifiedFlagCacheForTests();
+  const timers = createFakeTimers();
+  const engines: FakeEngine[] = [];
+  const { router, recorder } = makeRouter(timers, {
+    fetchRoutes: [CONFIG_TRUE, resolveRoute([directCandidate({ url: JIO_URL })])],
+    script: (engine) => {
+      engines.push(engine);
+      engine.script = () => engine.succeed();
+    }
+  });
+  ok((await router.start(CHANNEL, VIDEO)) === 'handled', 'R13.1a the geo-blocked session is handled (no crash, no legacy)');
+  ok(engines.length === 0, 'R13.1b the geo-blocked candidate NEVER reached an engine (skipped before playback)');
+  ok(router.getState() === 'exhausted', 'R13.1c the lifecycle settles at exhausted');
+  ok(recorder.sessionErrors.includes(LIVETV_ROUTER_JIO_GEOBLOCK_MESSAGE), 'R13.1d the honest Jio geoblock message surfaced');
+  ok(!recorder.sessionErrors.includes(LIVETV_ROUTER_EXHAUSTED_MESSAGE), 'R13.1e the generic retry message is NOT used when the geo-block explains the failure');
+  ok(router.getTrail().some((entry) => entry.detail === 'jio_geoblocked'), 'R13.1f the diagnostic trail records the skip (kinds/ids only)');
+
+  // R13.2 — WITH an Indian proxy: the SAME candidate loads through it
+  // (the ?u= Worker contract, Indian base).
+  resetUnifiedFlagCacheForTests();
+  const timers2 = createFakeTimers();
+  const engines2: FakeEngine[] = [];
+  const { router: router2 } = makeRouter(timers2, {
+    fetchRoutes: [CONFIG_TRUE, resolveRoute([directCandidate({ url: JIO_URL })])],
+    script: (engine) => {
+      engines2.push(engine);
+      engine.script = () => engine.succeed();
+    },
+    indianProxyBase: 'https://india-proxy.example/'
+  });
+  stubLocation();
+  try {
+    ok((await router2.start(CHANNEL, VIDEO)) === 'handled', 'R13.2a the Indian-proxy session is handled');
+    ok(engines2.length === 1, 'R13.2b the Jio candidate reached the engine through the Indian proxy');
+    const resolution2 = engines2[0]!.loadCalls[0]!.resolution as { sources: { url: string }[] };
+    ok(resolution2.sources[0]!.url === `https://india-proxy.example/?u=${encodeURIComponent(JIO_URL)}`, 'R13.2c the stream URL is wrapped through the Indian proxy (?u= contract)');
+  } finally {
+    restoreLocation();
+  }
+
+  // R13.3 — no Indian proxy: a NON-Jio registry endpoint keeps the round-34
+  // Worker wrap (unchanged behavior for the healthy CDNs).
+  resetUnifiedFlagCacheForTests();
+  const timers3 = createFakeTimers();
+  const engines3: FakeEngine[] = [];
+  const { router: router3 } = makeRouter(timers3, {
+    fetchRoutes: [CONFIG_TRUE, resolveRoute([directCandidate({ url: HOTSTAR_URL })])],
+    script: (engine) => {
+      engines3.push(engine);
+      engine.script = () => engine.succeed();
+    },
+    streamProxyBase: 'https://worker.example'
+  });
+  stubLocation();
+  try {
+    ok((await router3.start(CHANNEL, VIDEO)) === 'handled', 'R13.3a the non-Jio Worker session is handled');
+    const resolution3 = engines3[0]!.loadCalls[0]!.resolution as { sources: { url: string }[] };
+    ok(resolution3.sources[0]!.url === `https://worker.example/?u=${encodeURIComponent(HOTSTAR_URL)}`, 'R13.3b a non-Jio registry endpoint keeps the Worker wrap');
+  } finally {
+    restoreLocation();
+  }
+
+  // R13.4 — with BOTH proxies configured, the Indian proxy REPLACES the
+  // Worker as the Live TV stream proxy (for every allowlisted stream).
+  resetUnifiedFlagCacheForTests();
+  const timers4 = createFakeTimers();
+  const engines4: FakeEngine[] = [];
+  const { router: router4 } = makeRouter(timers4, {
+    fetchRoutes: [CONFIG_TRUE, resolveRoute([directCandidate({ url: HOTSTAR_URL })])],
+    script: (engine) => {
+      engines4.push(engine);
+      engine.script = () => engine.succeed();
+    },
+    streamProxyBase: 'https://worker.example',
+    indianProxyBase: 'https://india-proxy.example'
+  });
+  stubLocation();
+  try {
+    await router4.start(CHANNEL, VIDEO);
+    const resolution4 = engines4[0]!.loadCalls[0]!.resolution as { sources: { url: string }[] };
+    ok(resolution4.sources[0]!.url === `https://india-proxy.example/?u=${encodeURIComponent(HOTSTAR_URL)}`, 'R13.4 the Indian proxy replaces the Worker when both are configured');
+  } finally {
+    restoreLocation();
+  }
+
+  // R13.5 — the BUILTIN (fresh-signed) Jio path is covered too: the mocked
+  // resolver returns a jio.com stream, no Indian proxy → skip + message.
+  resetUnifiedFlagCacheForTests();
+  const timers5 = createFakeTimers();
+  const engines5: FakeEngine[] = [];
+  const { router: router5, recorder: recorder5 } = makeRouter(timers5, {
+    fetchRoutes: [CONFIG_TRUE, resolveRoute([builtinDirectCandidate()])],
+    resolveLivegt: async () => ({ channel: { id: '143', name: 'News One' }, sources: [{ url: JIO_URL }], drm: null }),
+    script: (engine) => engines5.push(engine)
+  });
+  ok((await router5.start(CHANNEL, VIDEO)) === 'handled', 'R13.5a the builtin geo-blocked session is handled');
+  ok(engines5.length === 0, 'R13.5b the builtin (fresh-signed) Jio resolution is also skipped before playback');
+  ok(recorder5.sessionErrors.includes(LIVETV_ROUTER_JIO_GEOBLOCK_MESSAGE), 'R13.5c the builtin path surfaces the same honest geoblock message');
+
+  // R13.6 — builtin + Indian proxy: the stream is wrapped AND the ClearKey
+  // DRM metadata survives (the proxy needs it for the x-livetv-cookie channel).
+  resetUnifiedFlagCacheForTests();
+  const timers6 = createFakeTimers();
+  const engines6: FakeEngine[] = [];
+  const { router: router6 } = makeRouter(timers6, {
+    fetchRoutes: [CONFIG_TRUE, resolveRoute([builtinDirectCandidate()])],
+    resolveLivegt: async () => ({
+      channel: { id: '143', name: 'News One' },
+      sources: [{ url: JIO_URL }],
+      drm: { type: 'clearkey', keyId: 'kid', key: 'keyval', cookie: '__hdnea__=session' }
+    }),
+    script: (engine) => {
+      engines6.push(engine);
+      engine.script = () => engine.succeed();
+    },
+    indianProxyBase: 'https://india-proxy.example'
+  });
+  stubLocation();
+  try {
+    ok((await router6.start(CHANNEL, VIDEO)) === 'handled', 'R13.6a the builtin Indian-proxy session is handled');
+    const resolution6 = engines6[0]!.loadCalls[0]!.resolution as { sources: { url: string }[]; drm: { cookie: string } | null };
+    ok(resolution6.sources[0]!.url === `https://india-proxy.example/?u=${encodeURIComponent(JIO_URL)}`, 'R13.6b the builtin Jio stream is wrapped through the Indian proxy');
+    ok(resolution6.drm?.cookie === '__hdnea__=session', 'R13.6c the ClearKey DRM cookie survives the wrap (x-livetv-cookie channel)');
+  } finally {
+    restoreLocation();
+  }
+
+  ok('R13 Jio geo-block + Indian proxy verified');
 }
 
 console.log(`\nPhase 5 router suite: ${passed} checks PASS`);

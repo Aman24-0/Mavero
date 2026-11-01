@@ -79,7 +79,7 @@ import { LiveTvError, isLiveTvError } from './errors';
 import { LiveTvPlaybackError, shouldFallbackToEmbed } from './player-errors';
 import { buildLiveTvEmbedUrl, resolveLiveTvPlayback } from './api';
 import { trackLiveTvError, trackLiveTvFallbackEmbed, trackLiveTvPlay } from './analytics';
-import { isLivetvProxyUrl, livetvStreamProxyUrl } from '$lib/shared/livetv-proxy';
+import { isLivetvGeoblockedUrl, isLivetvProxyUrl, livetvStreamProxyUrl } from '$lib/shared/livetv-proxy';
 
 // ---------------------------------------------------------------------------
 // Wire mirrors (structurally identical to the server's playback-resolver
@@ -125,6 +125,13 @@ const TRAIL_LIMIT = 64;
 
 /** The fixed generic exhausted-state message (no interpolation, ever). */
 export const LIVETV_ROUTER_EXHAUSTED_MESSAGE = 'This channel could not be played right now. Try again.';
+/**
+ * 2026-11 round 35 — the Jio geo-block message. Surfaced when a session
+ * exhausted while a Jio (India-only) stream was skipped because NO Indian
+ * proxy is configured (PUBLIC_INDIAN_PROXY_URL). A geo-block cannot be fixed
+ * by retrying — the message explains the situation instead.
+ */
+export const LIVETV_ROUTER_JIO_GEOBLOCK_MESSAGE = 'Jio channels require an Indian IP. Please use a VPN or set up an Indian Proxy.';
 /**
  * Distinct message for a managed channel with ZERO eligible candidates at all
  * (e.g. the source has no playback endpoints yet) — clearer than the generic
@@ -254,6 +261,15 @@ export type LiveTvRouterOptions = {
         baseUrl?: string;
         /** Absolute base of an external stream proxy (Cloudflare Worker); omit for same-origin. */
         streamProxyBase?: string;
+        /**
+         * 2026-11 round 35 — absolute base of an INDIAN-EGRESS stream proxy
+         * (PUBLIC_INDIAN_PROXY_URL; a deployment of cloudflare-stream-proxy/
+         * worker.ts on Indian IPs). When set it REPLACES the Cloudflare Worker
+         * as the Live TV stream proxy and un-blocks the geo-blocked (Jio 451)
+         * CDNs. When empty, Jio candidates fail fast with the honest geoblock
+         * message instead of a guaranteed-451 playback attempt.
+         */
+        indianProxyBase?: string;
 };
 
 /** Router lifecycle states (the Phase 5 brief's deterministic machine). */
@@ -284,6 +300,8 @@ export class LiveTvPlaybackRouter {
         private readonly baseUrl: string;
         /** Absolute base of an external stream proxy (e.g. a Cloudflare Worker); '' = same-origin. */
         private readonly streamProxyBase: string;
+        /** Absolute base of an Indian-egress stream proxy; '' = not configured. */
+        private readonly indianProxyBase: string;
 
         /** Monotonic session token — the stale-guard root. */
         private sessionToken = 0;
@@ -303,6 +321,8 @@ export class LiveTvPlaybackRouter {
         private lastFailure: unknown = null;
         /** True once a candidate was skipped as DASH on a CORS-blocked CDN. */
         private sawDashBlocked = false;
+        /** 2026-11 round 35 — true once a candidate was skipped as geo-blocked (Jio 451, no Indian proxy). */
+        private sawJioGeoblock = false;
         private trail: LiveTvRouterTrailEntry[] = [];
 
         /** The in-flight attempt (exactly one at a time). */
@@ -325,6 +345,7 @@ export class LiveTvPlaybackRouter {
                 this.timers = options.timers ?? defaultTimers;
                 this.baseUrl = options.baseUrl ?? '';
                 this.streamProxyBase = options.streamProxyBase ?? '';
+                this.indianProxyBase = (options.indianProxyBase ?? '').replace(/\/+$/, '');
         }
 
         /** The current lifecycle state (diagnostics/tests). */
@@ -426,6 +447,7 @@ export class LiveTvPlaybackRouter {
                 this.embedLoaded = false;
                 this.lastFailure = null;
                 this.sawDashBlocked = false;
+                this.sawJioGeoblock = false;
                 this.currentVideo = video;
                 this.trail = [];
                 this.setState('resolving');
@@ -524,11 +546,20 @@ export class LiveTvPlaybackRouter {
                         if (token !== this.sessionToken || signal.aborted) return;
                         const candidate = this.candidates.find((entry) => !this.attempted.has(entry.candidateId));
                         if (!candidate) {
-                                // Every candidate failed — the generic retryable error.
+                                // Every candidate failed — the MOST HONEST message
+                                // wins: a Jio geo-block (round 35, explains WHY —
+                                // retrying cannot fix it), then the DASH capability
+                                // notice, then the generic retryable error.
                                 this.teardownPlayback('exhausted');
                                 this.handlers.onresolving(false);
                                 this.setState('exhausted');
-                                this.handlers.onsessionerror(this.sawDashBlocked ? LIVETV_ROUTER_DASH_UNSUPPORTED_MESSAGE : LIVETV_ROUTER_EXHAUSTED_MESSAGE);
+                                this.handlers.onsessionerror(
+                                        this.sawJioGeoblock
+                                                ? LIVETV_ROUTER_JIO_GEOBLOCK_MESSAGE
+                                                : this.sawDashBlocked
+                                                        ? LIVETV_ROUTER_DASH_UNSUPPORTED_MESSAGE
+                                                        : LIVETV_ROUTER_EXHAUSTED_MESSAGE
+                                );
                                 return;
                         }
                         this.attempted.add(candidate.candidateId);
@@ -660,34 +691,70 @@ export class LiveTvPlaybackRouter {
                 } else {
                         // A registry endpoint: its CONFIG url (re-validated here —
                         // the server validated too; this is the player surface).
+                        // NOTE (round 35): the proxy wrap moved AFTER resolution —
+                        // beginDirectAttempt applies ONE routing policy to BOTH
+                        // candidate kinds (registry + builtin) right below.
                         if (candidate.url === null || isSafeLivetvEmbedSrc(candidate.url) === null) {
                                 this.trailPush({ attemptId, candidateId: candidate.candidateId, outcome: 'skipped', detail: 'invalid_endpoint_url' });
                                 this.settleCurrent('failed');
                                 return;
                         }
-                        // 2026-11 round 34 — WORKER PROXY RESTORED for Live TV. The
-                        // direct (bypass) experiment FAILED in production: the browser
-                        // fetched the CDN with `Origin: https://maveroweb.space` and
-                        // Jio's CDN answered 403 (the official provider page sends
-                        // `Origin: https://jioplus2plugx.lovable.app`). The Worker is
-                        // BACK on the Live TV path — it spoofs the provider's
-                        // Origin/Referer (jioplus2plugx.lovable.app), forwards the
-                        // ClearKey session's x-livetv-cookie as Cookie, rewrites the
-                        // manifest (HLS + DASH) and answers CORS. DASH from a
-                        // CORS-blocked CDN rides the same proxy (the Worker rewrites
-                        // the MPD's BaseURL + segment URLs).
-                        let mediaUrl = candidate.url;
-                        if (isLivetvProxyUrl(mediaUrl)) {
-                                // HLS or DASH from a CORS-blocked CDN → route via the proxy.
-                                const origin = typeof location !== 'undefined' ? location.origin : '';
-                                if (origin) mediaUrl = new URL(livetvStreamProxyUrl(mediaUrl, this.streamProxyBase), origin).toString();
-                        }
-                        resolution = { channel: { id: channel.id, name: channel.name }, sources: [{ url: mediaUrl }], drm: candidate.drm ?? null };
+                        resolution = { channel: { id: channel.id, name: channel.name }, sources: [{ url: candidate.url }], drm: candidate.drm ?? null };
                 }
                 if (token !== this.sessionToken || signal.aborted) {
                         this.trailPush({ attemptId, candidateId: candidate.candidateId, outcome: 'aborted', detail: 'session_superseded' });
                         this.settleCurrent('failed');
                         return;
+                }
+
+                // ---------------------------------------------------------------
+                // 2026-11 round 35 — JIO GEO-BLOCK + INDIAN PROXY routing.
+                // Applied to the FINAL media URL (both candidate kinds).
+                //
+                // Jio's CDN answers `451 Unavailable For Legal Reasons` to every
+                // non-Indian egress IP — the Cloudflare Worker's AND Netlify's
+                // included. A geo-block is an IP-classification decision; NO
+                // Referer/Origin spoofing can fix it. The policy:
+                //   * PUBLIC_INDIAN_PROXY_URL set  → every allowlisted Live TV
+                //     stream (builtin + registry) rides the custom Indian proxy
+                //     (a deployment of cloudflare-stream-proxy/worker.ts on
+                //     Indian egress). It REPLACES the Cloudflare Worker as the
+                //     Live TV stream proxy.
+                //   * not set + Jio stream         → the candidate is SKIPPED
+                //     before any playback surface exists (the 20s startup
+                //     watchdog would burn on a guaranteed 451); the session
+                //     surfaces the honest geoblock message when it exhausts.
+                //   * not set + non-Jio            → unchanged (registry
+                //     endpoints via the Worker, builtin streams browser-direct).
+                // ---------------------------------------------------------------
+                const firstUrl = resolution.sources[0]?.url ?? '';
+                if (!this.indianProxyBase && isLivetvGeoblockedUrl(firstUrl)) {
+                        this.sawJioGeoblock = true;
+                        this.trailPush({ attemptId, candidateId: candidate.candidateId, outcome: 'skipped', detail: 'jio_geoblocked' });
+                        this.settleCurrent('failed');
+                        return;
+                }
+                // Proxy base: the Indian proxy replaces the Worker when set;
+                // without it, registry endpoints keep the Worker wrap and the
+                // builtin (fresh-signed) streams stay browser-direct.
+                const proxyBase = this.indianProxyBase
+                        || (candidate.resolver === null ? this.streamProxyBase : '');
+                if (proxyBase && isLivetvProxyUrl(firstUrl)) {
+                        const origin = typeof location !== 'undefined' ? location.origin : '';
+                        if (origin) {
+                                const proxify = (raw: string): string => {
+                                        try {
+                                                return new URL(livetvStreamProxyUrl(raw, proxyBase), origin).toString();
+                                        } catch {
+                                                return raw;
+                                        }
+                                };
+                                resolution = {
+                                        channel: resolution.channel,
+                                        sources: resolution.sources.map((source) => ({ ...source, url: proxify(source.url) })),
+                                        drm: resolution.drm
+                                };
+                        }
                 }
 
                 // 2. Tear down the previous surface, then load the EXISTING

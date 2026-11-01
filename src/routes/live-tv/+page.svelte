@@ -816,6 +816,13 @@
       // origin, jioplus2plugx.lovable.app — which the Worker now spoofs). The
       // Worker also carries the ClearKey session's x-livetv-cookie as Cookie.
       streamProxyBase: publicEnv.PUBLIC_STREAM_PROXY_URL ?? '',
+      // 2026-11 round 35 — the INDIAN-EGRESS proxy (PUBLIC_INDIAN_PROXY_URL).
+      // Jio's CDN 451s every non-Indian IP (the Worker's AND Netlify's) — a
+      // geo-block no header spoofing can fix. When set, this deployment of
+      // cloudflare-stream-proxy/worker.ts on Indian IPs REPLACES the Worker
+      // as the Live TV stream proxy; when absent, Jio candidates fail fast
+      // with the honest "Indian IP" message instead of a broken stream.
+      indianProxyBase: publicEnv.PUBLIC_INDIAN_PROXY_URL ?? '',
       handlers: {
         onengine: (eng) => {
           engine = eng;

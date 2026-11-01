@@ -24,6 +24,13 @@
  * (jioplus2plugx.lovable.app) sends `Origin: https://jioplus2plugx.lovable.app`
  * and `Referer: https://jioplus2plugx.lovable.app/` — the Worker now sends
  * exactly those on every jio.com request (REFERER_BY_HOST + ORIGIN_BY_HOST).
+ *
+ * 2026-11 round 35 — VIDSRC/VIDCORE FORCED IDENTITY: VidSrc's CDN started
+ * blocking the Worker (403) and VidCore manifests surfaced "Stream Expired".
+ * Both providers pin the identity their OWN site uses — vidsrc.party for the
+ * whole VidSrc family (the API and every stream CDN it hands out) and
+ * vidcore.org for VidCore — and the identity is now FORCED (it wins over the
+ * `&r=` passthrough, so a stale/foreign referer can never leak upstream).
  */
 
 // 2026-10 round 13 — DirectStream VOD scraper: added cloudnestra.com (the
@@ -56,8 +63,10 @@ const REFERER_BY_HOST: ReadonlyArray<{ suffix: string; referer: string }> = [
         { suffix: 'jio.com', referer: 'https://jioplus2plugx.lovable.app/' },
         { suffix: 'jiocinema.com', referer: 'https://www.jiocinema.com/' },
         { suffix: 'premiumplugx.com', referer: 'https://premiumplugx.com/' },
-        { suffix: 'cloudnestra.com', referer: 'https://cloudnestra.com/' },
-        { suffix: 'stellarconductornexus.com', referer: 'https://cloudnestra.com/' },
+        // 2026-11 round 35 — the VidSrc family is pinned to the vidsrc.party
+        // identity (the API's own origin; the CDN domains rotate under it).
+        { suffix: 'cloudnestra.com', referer: 'https://vidsrc.party/' },
+        { suffix: 'stellarconductornexus.com', referer: 'https://vidsrc.party/' },
         { suffix: 'vidsrc.party', referer: 'https://vidsrc.party/' },
         { suffix: 'cookiebakers23blog.xyz', referer: 'https://vidsrc.party/' },
         { suffix: 'cno.to', referer: 'https://vidsrc.party/' },
@@ -73,6 +82,28 @@ const REFERER_BY_HOST: ReadonlyArray<{ suffix: string; referer: string }> = [
  */
 const ORIGIN_BY_HOST: ReadonlyArray<{ suffix: string; origin: string }> = [
         { suffix: 'jio.com', origin: 'https://jioplus2plugx.lovable.app' }
+];
+
+/**
+ * 2026-11 round 35 — FORCED per-host identity (Referer + Origin together).
+ * For these hosts BOTH headers are pinned REGARDLESS of the `&r=` passthrough:
+ * the request's own `r` param is ignored and the identity below is sent.
+ * VidSrc's CDN and VidCore's API reject anything that does not look like
+ * their own site — a missing, stale or foreign `&r=` (player-proxied segment,
+ * older client) must never reach them with the wrong identity.
+ */
+const FORCED_IDENTITY_BY_HOST: ReadonlyArray<{ suffix: string; referer: string; origin: string }> = [
+        // The whole VidSrc family — the API (vidsrc.party) AND every stream
+        // CDN the API hands out. Round 35 verified the block against the
+        // vidsrc.party identity.
+        { suffix: 'vidsrc.party', referer: 'https://vidsrc.party/', origin: 'https://vidsrc.party' },
+        { suffix: 'cookiebakers23blog.xyz', referer: 'https://vidsrc.party/', origin: 'https://vidsrc.party' },
+        { suffix: 'cno.to', referer: 'https://vidsrc.party/', origin: 'https://vidsrc.party' },
+        { suffix: 'cloudnestra.com', referer: 'https://vidsrc.party/', origin: 'https://vidsrc.party' },
+        { suffix: 'stellarconductornexus.com', referer: 'https://vidsrc.party/', origin: 'https://vidsrc.party' },
+        // VidCore — the API + its manifests must carry the vidcore.org
+        // identity (Referer https://vidcore.org/ + Origin https://vidcore.org).
+        { suffix: 'vidcore.org', referer: 'https://vidcore.org/', origin: 'https://vidcore.org' }
 ];
 
 const BROWSER_UA =
@@ -105,6 +136,15 @@ function originFor(hostname: string): string | null {
         const host = hostname.toLowerCase().replace(/\.$/, '');
         for (const entry of ORIGIN_BY_HOST) {
                 if (host === entry.suffix || host.endsWith(`.${entry.suffix}`)) return entry.origin;
+        }
+        return null;
+}
+
+/** The FORCED identity for a host (round 35) — wins over the `&r=` param. */
+function forcedIdentityFor(hostname: string): { referer: string; origin: string } | null {
+        const host = hostname.toLowerCase().replace(/\.$/, '');
+        for (const entry of FORCED_IDENTITY_BY_HOST) {
+                if (host === entry.suffix || host.endsWith(`.${entry.suffix}`)) return { referer: entry.referer, origin: entry.origin };
         }
         return null;
 }
@@ -243,12 +283,18 @@ export default {
                         return jsonError(403, 'URL_NOT_ALLOWED', 'This media host is not allowed.');
                 }
 
-                const requiredReferer = safeReferer(url.searchParams.get('r')) ?? refererFor(target.hostname);
+                // Round 35 — the FORCED identity wins FIRST (VidSrc/VidCore pin
+                // their own site's identity; a foreign `&r=` must never leak).
+                // Then the explicit per-host Origin map (Jio's CDN validates
+                // Origin against the provider site's exact origin), then the
+                // `&r=` passthrough, then the per-CDN Referer map.
+                const forced = forcedIdentityFor(target.hostname);
+                const requiredReferer = forced?.referer
+                        ?? safeReferer(url.searchParams.get('r'))
+                        ?? refererFor(target.hostname);
                 const referer = requiredReferer ?? `${target.origin}/`;
-                // Round 34 — the explicit per-host Origin map wins (Jio's CDN
-                // validates Origin against the provider site's exact origin);
-                // everything else keeps the Referer-derived fallback.
-                const origin = originFor(target.hostname)
+                const origin = forced?.origin
+                        ?? originFor(target.hostname)
                         ?? (requiredReferer ? requiredReferer.replace(/\/$/, '') : target.origin);
 
                 // 2026-10 round 15 — DirectStream scraper fallback: the scraper
