@@ -139,6 +139,68 @@ Put nginx/Caddy with TLS in front (the app accepts both http and https proxy
 URLs, but https is strongly recommended) and use that URL as the Indian Proxy
 URL.
 
+## Run on Termux (Android phone — the Jio mobile IP is Indian)
+
+The phone itself has an Indian egress IP, so it is the perfect proxy host.
+Expose it with a free Cloudflare quick tunnel (`trycloudflare.com`).
+
+1. **Install requirements** (Termux app, from F-Droid — the Play Store build
+   is outdated):
+
+   ```bash
+   pkg update -y && pkg upgrade -y
+   pkg install -y nodejs-lts git cloudflared
+   node --version        # needs >= 18
+   ```
+
+   Keep the proxy alive in the background **before** starting anything:
+
+   ```bash
+   termux-wake-lock
+   ```
+
+   (Android Settings → Apps → Termux → Battery → **Unrestricted** also helps.)
+
+2. **Run the proxy** — it listens on **port 8080** (`PORT` env to change):
+
+   ```bash
+   git clone https://<YOUR_GITHUB_PAT>@github.com/Aman24-0/Mavero.git
+   cd Mavero/indian-proxy
+   npm install
+   npm start             # = node server.js
+   ```
+
+   Verify in the phone browser: `http://localhost:8080/health` → expect
+   `"ok": true` and ≈1635 channels after the first sync finishes.
+
+3. **Expose via Cloudflare Tunnel** (new Termux session — swipe from the
+   left edge → New Session):
+
+   ```bash
+   cloudflared tunnel --url http://localhost:8080
+   ```
+
+   It prints a free `https://<random-words>.trycloudflare.com` URL. The proxy
+   derives its public base from the tunnel's `x-forwarded-proto`/`host`
+   headers automatically — **no `PUBLIC_BASE_URL` needed** for quick tunnels.
+
+4. **Keep it alive** — `termux-wake-lock` (step 1) plus: keep the Termux
+   notification up, keep the phone plugged in, and don't swipe Termux away.
+   Both processes (node + cloudflared) must keep running.
+
+5. **Configure Mavero** — paste the tunnel URL (no trailing slash) into
+   **Admin → System → Feature Control → Live TV Indian Proxy URL**, save, and
+   reload Live TV.
+
+> Quick-tunnel URLs are RANDOM and change every time `cloudflared` restarts —
+> re-paste the new URL into the admin panel after each restart. For a stable
+> URL, create a (free) named tunnel on a Cloudflare account with
+> `cloudflared tunnel login` → `cloudflared tunnel create mavero` → DNS route,
+> then run `cloudflared tunnel run mavero` — the URL never changes.
+>
+> Data warning: every stream is fetched through the phone's connection —
+> watching Live TV consumes the phone's Jio data plan.
+
 ## Environment variables
 
 | Var | Default | Meaning |
