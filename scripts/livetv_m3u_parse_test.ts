@@ -700,8 +700,11 @@ console.log('§13 — round 29/32 DRM: #KODIPROP (ClearKey) + #EXTHTTP (cookie) 
   ok(meta.drmCookie === undefined || meta.drmCookie === null, '§13.6 no #EXTHTTP → no cookie field (never invented)');
 }
 {
-  // 13.3 — multiple comma-separated key pairs: the FIRST pair is stored
-  // (Shaka clearKeys accepts multiple; the resolver wire carries one).
+  // 13.3 — multiple comma-separated key pairs: round 36 keeps ALL of them
+  // (each Representation — video AND audio — carries its own key; first-only
+  // left multi-representation channels half-encrypted). The compact list is
+  // stored on drmKeys (pair 1 also stays in drmKeyId/drmKey for backward
+  // compatibility with already-ingested rows).
   const playlist = [
     '#EXTM3U',
     '#EXTINF:-1 tvg-id="jio.multi",Jio Multi',
@@ -711,7 +714,26 @@ console.log('§13 — round 29/32 DRM: #KODIPROP (ClearKey) + #EXTHTTP (cookie) 
   ].join('\n');
   const result = parseM3UPlaylist(playlist);
   const meta = result.channels[0]!.metadata as Record<string, unknown>;
-  ok(meta.drmKeyId === 'k1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' && meta.drmKey === 'v1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', '§13.7 the FIRST key pair of a comma-separated license_key is stored');
+  ok(meta.drmKeyId === 'k1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' && meta.drmKey === 'v1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', '§13.7 the FIRST key pair of a comma-separated license_key is stored (drmKeyId/drmKey unchanged)');
+  ok(meta.drmKeys === 'k1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:v1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,k2cccccccccccccccccccccccccccccc:v2dddddddddddddddddddddddddddddd', '§13.7b ALL key pairs are stored compactly on drmKeys (round 36 multi-key)');
+}
+{
+  // 13.3b — the 768-char metadata value budget (round 36): the audit's
+  // largest license_key (10 kid:key pairs ≈ 700 chars) fits in ONE drmKeys
+  // value on pair boundaries.
+  const pairs = Array.from({ length: 10 }, (_, i) => `${String(i).padStart(4, '0')}aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:${String(i).padStart(4, '0')}bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb`);
+  const playlist = [
+    '#EXTM3U',
+    '#EXTINF:-1 tvg-id="jio.many",Jio Many',
+    '#KODIPROP:inputstream.adaptive.license_type=clearkey',
+    `#KODIPROP:inputstream.adaptive.license_key=${pairs.join(',')}`,
+    'https://cdn.jio.com/streams/many.m3u8'
+  ].join('\n');
+  const result = parseM3UPlaylist(playlist);
+  const meta = result.channels[0]!.metadata as Record<string, unknown>;
+  ok(typeof meta.drmKeys === 'string' && meta.drmKeys.length <= 768, '§13.7c the drmKeys value respects the 768-char metadata budget');
+  const decoded = String(meta.drmKeys).split(',').filter(Boolean);
+  ok(decoded.length === 10 && decoded[0] === pairs[0] && decoded[9] === pairs[9], '§13.7e all 10 kid:key pairs survive intact (the audit maximum)');
 }
 {
   // 13.4 — non-clearkey DRM types are ignored (honest unsupported-DRM skip:

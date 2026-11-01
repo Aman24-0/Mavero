@@ -341,12 +341,19 @@ export { LIVETV_ENDPOINT_KINDS, LIVETV_SOURCE_TYPES };
 
 export const ADAPTER_METADATA_MAX_KEYS = 24;
 const METADATA_KEY_MAX = 40;
-const METADATA_VALUE_MAX = 300;
+/**
+ * 2026-11 round 36 — raised 300 → 768: the Jio playlist audit measured
+ * ClearKey `license_key` lists of up to 10 kid:key pairs ≈ 700 chars, and the
+ * M3U adapter stores them compactly on `drmKeys` (first-only storage left
+ * those channels' audio/extra representations undecryptable). Still bounded
+ * (768 × 24 keys ≈ 18 KB per channel worst case).
+ */
+const METADATA_VALUE_MAX = 768;
 
 /**
  * Sanitizes adapter provenance into the bounded shape the DB `metadata`
  * jsonb accepts: flat object, ≤24 keys, string keys ≤40 chars, values
- * restricted to string (≤300) / number (finite) / boolean / null. Anything
+ * restricted to string (≤768) / number (finite) / boolean / null. Anything
  * else (nested objects, arrays, huge strings, non-finite numbers) is dropped.
  */
 export function sanitizeAdapterMetadata(raw: unknown): Record<string, unknown> {

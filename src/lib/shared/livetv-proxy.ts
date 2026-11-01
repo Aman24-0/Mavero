@@ -50,6 +50,44 @@ export function livetvStreamProxyUrl(absUrl: string, base = ''): string {
 }
 
 /**
+ * 2026-11 round 36 — the stream format an absolute URL's PATH extension
+ * establishes (the M3U adapter's own rule: format is NEVER invented). The
+ * Indian-proxy manifest URL adds the matching extension so the player picks
+ * the right parser and the proxy answers with the right Content-Type.
+ */
+export function livetvStreamFormatForUrl(rawUrl: string): 'dash' | 'hls' | null {
+        try {
+                const pathname = new URL(rawUrl).pathname.toLowerCase();
+                if (pathname.endsWith('.mpd')) return 'dash';
+                if (pathname.endsWith('.m3u8') || pathname.endsWith('.m3u')) return 'hls';
+                return null;
+        } catch {
+                return null;
+        }
+}
+
+/**
+ * 2026-11 round 36 — the STANDALONE INDIAN PROXY contract
+ * (indian-proxy/server.js in the repo root — a Node/Express service deployed
+ * on an Indian VPS or Render.com). Jio's CDNs 451 every non-Indian egress IP
+ * (the Cloudflare Worker's included) — a geo-block NO header spoofing can
+ * fix; the stream must LEAVE the internet from an IP Jio accepts.
+ *
+ * Unlike the Worker's generic `?u=` passthrough, the Indian proxy is
+ * PLAYLIST-AWARE: it syncs the Jio M3U every 5 hours (the `__hdnea__`
+ * cookies expire every 6), injects the per-channel Cookie/User-Agent/Referer
+ * server-side and REWRITES DASH/HLS manifests back onto itself
+ * (`/api/ch/:id/dash/…`, `/api/ch/:id/u/<b64>`). The app hands it the
+ * channel's EXACT playlist URL (`?u=`) and the format extension; a URL the
+ * proxy has not synced falls through to its generic rewriting passthrough.
+ */
+export function indianProxyManifestUrl(absUrl: string, base: string, format: 'dash' | 'hls' | null): string {
+        const root = base.replace(/\/+$/, '');
+        const ext = format === 'dash' ? '.mpd' : format === 'hls' ? '.m3u8' : '';
+        return `${root}/api/ch/by-url/manifest${ext}?u=${encodeURIComponent(absUrl)}`;
+}
+
+/**
  * 2026-11 round 35 — CDN host suffixes that GEO-BLOCK every non-Indian
  * egress IP with `451 Unavailable For Legal Reasons` (Jio). A geo-block is
  * an IP-classification decision — NO Referer/Origin spoofing can fix it; the

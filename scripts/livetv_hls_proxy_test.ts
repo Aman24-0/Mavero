@@ -3,8 +3,10 @@
 import assert from 'node:assert/strict';
 import { rewriteHlsManifest } from '../src/lib/server/livetv/hls-manifest';
 import {
+        indianProxyManifestUrl,
         isLivetvProxyHost,
         isLivetvProxyUrl,
+        livetvStreamFormatForUrl,
         livetvStreamProxyUrl,
         LIVETV_STREAM_PROXY_PATH
 } from '../src/lib/shared/livetv-proxy';
@@ -93,3 +95,33 @@ ok(!isLivetvGeoblockedUrl('not a url'), 'geoblock url: malformed input is safe (
 ok(LIVETV_GEOBLOCKED_HOST_SUFFIXES.every((suffix) => isLivetvProxyHost(`cdn.${suffix}`)), 'geoblock: every India-only suffix is ALSO proxy-allowlisted (the Indian proxy can wrap them)');
 
 console.log(`\nHLS stream proxy suite: ${passed} checks PASS`);
+
+// 2026-11 round 36 — the STANDALONE Indian proxy contract (pinned: the app
+// and indian-proxy/server.js must never drift).
+{
+        const raw = 'https://jiotvpllive.cdn.jio.com/bpk-tv/Star_Plus_HD_MOB/WDVLive/index.mpd';
+        ok(
+                indianProxyManifestUrl(raw, 'https://india-proxy.example/', 'dash') ===
+                        `https://india-proxy.example/api/ch/by-url/manifest.mpd?u=${encodeURIComponent(raw)}`,
+                'indian proxy: dash manifest keeps the .mpd extension on the by-url contract'
+        );
+        ok(
+                indianProxyManifestUrl(raw, 'https://india-proxy.example', 'hls') ===
+                        `https://india-proxy.example/api/ch/by-url/manifest.m3u8?u=${encodeURIComponent(raw)}`,
+                'indian proxy: hls manifest keeps the .m3u8 extension (format wins over the URL)'
+        );
+        ok(
+                indianProxyManifestUrl(raw, 'https://india-proxy.example///', null) ===
+                        `https://india-proxy.example/api/ch/by-url/manifest?u=${encodeURIComponent(raw)}`,
+                'indian proxy: unknown format omits the extension (the proxy sniffs the body)'
+        );
+        ok(
+                indianProxyManifestUrl(raw, 'https://india-proxy.example/', null).endsWith(encodeURIComponent(raw)),
+                'indian proxy: the ORIGINAL playlist URL rides verbatim (the by-url lookup key)'
+        );
+        ok(livetvStreamFormatForUrl('https://x.jio.com/a/index.MPD') === 'dash', 'indian proxy: format sniff (case-insensitive .mpd)');
+        ok(livetvStreamFormatForUrl('https://x.jio.com/a/master.m3u8?tok=1') === 'hls', 'indian proxy: format sniff (.m3u8 with query)');
+        ok(livetvStreamFormatForUrl('https://x.jio.com/a/signed') === null, 'indian proxy: extensionless signed URL sniffs to null');
+        ok(livetvStreamFormatForUrl('nonsense') === null, 'indian proxy: malformed input sniffs to null (never throws)');
+        console.log(`\nHLS stream proxy suite (with round-36 Indian proxy pins): ${passed} checks PASS`);
+}

@@ -28,17 +28,32 @@
 import type { PageServerLoad } from './$types';
 import { createSupabaseAdminClient } from '$lib/server/supabase/admin';
 import { getLivetvAvailabilityState } from '$lib/server/livetv/user-catalogue';
+import { getLivetvIndianProxyUrl } from '$lib/server/app-config';
+import { env as publicEnv } from '$env/dynamic/public';
 
 export const load: PageServerLoad = async () => {
         try {
                 const client = createSupabaseAdminClient();
                 const availability = await getLivetvAvailabilityState(client);
-                return { availability };
+                // 2026-11 round 36 — the effective LIVE TV INDIAN PROXY base.
+                // The admin's app_config override (Admin → Feature Control)
+                // wins; the deployment-level PUBLIC_INDIAN_PROXY_URL env var is
+                // the fallback. Fail-safe: any read error degrades to the env
+                // value alone — a config read can never break the page. The
+                // value is public by design (every browser builds proxied
+                // stream URLs from it).
+                const adminOverride = await getLivetvIndianProxyUrl(client);
+                const envIndianProxy = (publicEnv.PUBLIC_INDIAN_PROXY_URL ?? '').trim();
+                const indianProxyUrl = adminOverride ?? (envIndianProxy || null);
+                return { availability, indianProxyUrl };
         } catch {
                 // Fail-closed: an unexpected failure is an unavailable answer
                 // — the page renders the honest unavailable state and never
                 // loads the legacy LiveGT catalogue against an unreadable
-                // registry.
-                return { availability: { available: false, sources: [] } };
+                // registry. The env Indian-proxy value still applies (the
+                // deployment-level escape hatch must survive a registry read
+                // failure).
+                const envIndianProxy = (publicEnv.PUBLIC_INDIAN_PROXY_URL ?? '').trim();
+                return { availability: { available: false, sources: [] }, indianProxyUrl: envIndianProxy || null };
         }
 };

@@ -101,8 +101,12 @@ export type LivetvPlaybackCandidateWire = {
         /**
          * 2026-10 round 29 — DRM metadata for ClearKey streams (parsed from
          * #KODIPROP + #EXTHTTP by the M3U adapter). null when no DRM.
+         * 2026-11 round 36 — `keys` carries ALL kid:key pairs from the
+         * playlist's comma-separated license_key (each Representation has its
+         * own key — first-only left the audio track encrypted). Optional for
+         * backward compatibility with already-ingested rows.
          */
-        drm: { type: 'clearkey'; keyId: string; key: string; cookie: string | null } | null;
+        drm: { type: 'clearkey'; keyId: string; key: string; keys?: Array<{ keyId: string; key: string }>; cookie: string | null } | null;
 };
 
 export type LivetvPlaybackResolutionWire = {
@@ -302,6 +306,33 @@ function buildBuiltinVirtualEndpoints(entry: LivetvSourceChannelRef): VirtualPai
 // Resolution.
 // ---------------------------------------------------------------------------
 
+/**
+ * 2026-11 round 36 — decode the M3U adapter's compact ClearKey list
+ * (`drmKeys` + the `drmKeysMore` overflow, each `kid:key,kid:key,…`, each
+ * value bounded at 300 chars by the metadata sanitizer). Fail-safe per pair:
+ * a malformed pair is dropped, never coerced; the list is bounded at 12
+ * pairs (mirroring the adapter's own cap) and keyIds are deduplicated — the
+ * FIRST occurrence of a kid wins.
+ */
+function parseDrmKeysMetadata(primary: unknown, more: unknown): Array<{ keyId: string; key: string }> {
+        const out: Array<{ keyId: string; key: string }> = [];
+        const seen = new Set<string>();
+        for (const raw of [primary, more]) {
+                if (typeof raw !== 'string' || !raw.trim()) continue;
+                for (const pair of raw.split(',')) {
+                        if (out.length >= 12) return out;
+                        const colon = pair.indexOf(':');
+                        if (colon <= 0) continue;
+                        const keyId = pair.slice(0, colon).trim();
+                        const key = pair.slice(colon + 1).trim();
+                        if (!keyId || !key || seen.has(keyId)) continue;
+                        seen.add(keyId);
+                        out.push({ keyId, key });
+                }
+        }
+        return out;
+}
+
 /** Shape of the never-resolvable response (flag off / nothing configured). */
 function unresolvedWire(unifiedEnabled: boolean): LivetvPlaybackResolutionWire {
         return { unifiedEnabled, resolved: false, mode: null, candidates: [] };
@@ -417,9 +448,20 @@ async function resolveLivetvDirectEntry(client: SupabaseClient<Database>, entryR
 
         // 5. Wire projection — virtual-aware, bounded, redacted.
         //    2026-10 round 29 — extract DRM metadata from the entry row.
+        //    2026-11 round 36 — decode the FULL key list (drmKeys +
+        //    drmKeysMore, the budget-aware compact encoding the M3U adapter
+        //    writes) on top of the first-pair drmKeyId/drmKey fields, which
+        //    stay the source of truth for already-ingested rows.
         const entryMetadata = (entryRow.metadata ?? {}) as Record<string, unknown>;
+        const drmKeys = parseDrmKeysMetadata(entryMetadata.drmKeys, entryMetadata.drmKeysMore);
         const drmMeta = entryMetadata.drmType === 'clearkey' && typeof entryMetadata.drmKeyId === 'string' && typeof entryMetadata.drmKey === 'string'
-                ? { type: 'clearkey' as const, keyId: entryMetadata.drmKeyId as string, key: entryMetadata.drmKey as string, cookie: typeof entryMetadata.drmCookie === 'string' ? entryMetadata.drmCookie : null }
+                ? {
+                          type: 'clearkey' as const,
+                          keyId: entryMetadata.drmKeyId as string,
+                          key: entryMetadata.drmKey as string,
+                          ...(drmKeys.length > 0 ? { keys: drmKeys } : {}),
+                          cookie: typeof entryMetadata.drmCookie === 'string' ? entryMetadata.drmCookie : null
+                  }
                 : null;
         const candidates: LivetvPlaybackCandidateWire[] = [];
         for (const candidate of ordered) {

@@ -839,7 +839,9 @@ const CHAN_1 = { id: 'chan-1', name: 'Zeta One', category: 'News', logo_url: 'ht
 
   // 5c. One flag, one read — the page never fetches the flag; the gate
   //     lives in the router module (Phase 5 single-gate ownership).
-  ok(page.includes("isUnifiedLivetvGateEnabled } from '$lib/client/live-tv/resolution-router'"), '5c.1 the page consumes the gate from the Live TV client family');
+  //     2026-11 round 36 — the import also carries the shared geoblock
+  //     message constant (the page's fail-fast banner reuses it verbatim).
+  ok(page.includes("from '$lib/client/live-tv/resolution-router'") && page.includes('isUnifiedLivetvGateEnabled') && page.includes('LIVETV_ROUTER_JIO_GEOBLOCK_MESSAGE'), '5c.1 the page consumes the gate + geoblock message from the Live TV client family');
   ok(!page.includes('/api/livetv/playback/config'), '5c.2 the page never fetches the flag itself (P2.9 preserved)');
   ok(!page.includes('/api/livetv/catalogue') && !page.includes('/api/livetv/guide'), '5c.3 the page contains no endpoint URLs (they live in the client module)');
   ok(routerModule.split('/api/livetv/playback/config').length === 2, '5c.4 exactly ONE flag URL exists across the client family (single read path)');

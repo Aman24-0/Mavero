@@ -100,6 +100,8 @@ export type LiveTvDrmWire = {
         type?: unknown;
         keyId?: unknown;
         key?: unknown;
+        keys?: unknown;
+        cookie?: unknown;
 };
 
 /**
@@ -119,11 +121,20 @@ export type LiveTvPlaybackSource = {
  * LT-2 only VALIDATES and TRANSPORTS this data. Configuring a player (Shaka
  * ClearKey config) is LT-3. `keyId`/`key` values are secrets-in-transit: they
  * must never be logged, persisted or included in error messages.
+ *
+ * 2026-11 round 36 — `keys` optionally carries ALL kid:key pairs from the
+ * playlist's comma-separated license_key (the deep audit measured 83 channels
+ * with 2-10 pairs: video, audio and quality representations EACH have their
+ * own key — configuring only the first pair left those channels
+ * half-encrypted). The cookie is the Worker-compatible x-livetv-cookie
+ * channel (round 29).
  */
 export type LiveTvDrm = {
         type: 'clearkey';
         keyId: string;
         key: string;
+        keys?: Array<{ keyId: string; key: string }>;
+        cookie?: string | null;
 };
 
 /**

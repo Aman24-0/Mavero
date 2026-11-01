@@ -73,7 +73,7 @@
   import { page as appPage } from '$app/state';
   import { goto } from '$app/navigation';
   import { PRODUCTION_ORIGIN } from '$lib/shared/seo';
-  import { Search, X, Radio, RefreshCw, LoaderCircle, SlidersHorizontal, BookOpen, ChevronLeft, ChevronRight, ChevronDown, Check, Tv, Share2, Maximize2 } from 'lucide-svelte';
+  import { Search, X, Radio, RefreshCw, LoaderCircle, SlidersHorizontal, BookOpen, ChevronLeft, ChevronRight, ChevronDown, Check, Tv, Share2, Maximize2, AlertTriangle } from 'lucide-svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import ScrollToTop from '$components/ScrollToTop.svelte';
   import ErrorState from '$components/ErrorState.svelte';
@@ -98,7 +98,7 @@
   // Phase 6 — the SAME module owns the ONE shared flag read; the catalogue
   // and guide loaders below consume it so there is exactly ONE flag, ONE
   // read path and ONE cache (never a second gate, never a page fetch).
-  import { LiveTvPlaybackRouter, isUnifiedLivetvGateEnabled } from '$lib/client/live-tv/resolution-router';
+  import { LiveTvPlaybackRouter, isUnifiedLivetvGateEnabled, LIVETV_ROUTER_JIO_GEOBLOCK_MESSAGE } from '$lib/client/live-tv/resolution-router';
   // Phase 6 — the flag-ON data surface: the merged canonical catalogue and
   // the Phase 3 mapping-contract guide (both bounded server endpoints; the
   // legacy LT-2 client above stays the flag-OFF surface, byte-identical).
@@ -134,6 +134,12 @@
   let { data } = $props<{ data: PageData }>();
   const availability = $derived(data.availability);
   const sourcesAvailable = $derived(availability?.available === true);
+  // 2026-11 round 36 — the effective Indian-proxy configuration. The server
+  // load already resolved admin override → env fallback; the env var here is
+  // belt-and-braces for a stale page data snapshot.
+  const indianProxyConfigured = $derived(
+    Boolean(data.indianProxyUrl ?? publicEnv.PUBLIC_INDIAN_PROXY_URL)
+  );
   // The bounded list of eligible public sources for the Source selector.
   const selectorSources = $derived(availability?.sources ?? []);
   /** The currently-applied source filter (null = All Sources). */
@@ -816,13 +822,17 @@
       // origin, jioplus2plugx.lovable.app — which the Worker now spoofs). The
       // Worker also carries the ClearKey session's x-livetv-cookie as Cookie.
       streamProxyBase: publicEnv.PUBLIC_STREAM_PROXY_URL ?? '',
-      // 2026-11 round 35 — the INDIAN-EGRESS proxy (PUBLIC_INDIAN_PROXY_URL).
-      // Jio's CDN 451s every non-Indian IP (the Worker's AND Netlify's) — a
-      // geo-block no header spoofing can fix. When set, this deployment of
-      // cloudflare-stream-proxy/worker.ts on Indian IPs REPLACES the Worker
-      // as the Live TV stream proxy; when absent, Jio candidates fail fast
-      // with the honest "Indian IP" message instead of a broken stream.
-      indianProxyBase: publicEnv.PUBLIC_INDIAN_PROXY_URL ?? '',
+      // 2026-11 round 35/36 — the INDIAN-EGRESS proxy (PUBLIC_INDIAN_PROXY_URL
+      // env var, or the Admin → Feature Control app_config override which the
+      // server load already resolved into data.indianProxyUrl). Jio's CDN
+      // 451s every non-Indian IP (the Worker's AND Netlify's) — a geo-block
+      // no header spoofing can fix. When set, the STANDALONE Indian proxy
+      // (indian-proxy/server.js, deployed on an Indian VPS / Render.com)
+      // REPLACES the Worker as the Live TV stream proxy — it syncs the Jio
+      // playlist every 5h, injects the rotating cookies and rewrites the
+      // DASH/HLS manifests; when absent, Jio candidates fail fast with the
+      // honest setup message instead of a broken stream.
+      indianProxyBase: data.indianProxyUrl ?? publicEnv.PUBLIC_INDIAN_PROXY_URL ?? '',
       handlers: {
         onengine: (eng) => {
           engine = eng;
@@ -1159,6 +1169,17 @@
     </section>
   {:else}
     <div class="ltv-body">
+      {#if !indianProxyConfigured}
+        <!-- 2026-11 round 36 — FAIL-FAST SETUP NOTICE. Jio's CDNs 451 every
+             non-Indian egress IP; without the Indian proxy URL every Jio
+             channel would only surface the per-channel geoblock error after
+             a playback attempt. The notice explains the fix up front (the
+             admin sets the URL once; the banner disappears for everyone). -->
+        <div class="ltv-proxy-notice" role="status">
+          <AlertTriangle size={15} aria-hidden="true" />
+          <span>{LIVETV_ROUTER_JIO_GEOBLOCK_MESSAGE}</span>
+        </div>
+      {/if}
       <!-- 2026-10 round 2 — Task 2: Sticky player window. When a channel
            is active, the player + channel info row become sticky at the
            top so they stay visible while scrolling the channel list. When
@@ -1665,6 +1686,23 @@
     gap: 22px;
     padding-top: 18px;
   }
+
+  /* 2026-11 round 36 — the Indian-proxy setup notice (fail-fast, above the
+     player column so it is seen BEFORE any channel attempt burns on a
+     guaranteed 451). Amber = actionable setup info, not an error. */
+  .ltv-proxy-notice {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 12px 14px;
+    border: 1px solid rgba(245, 158, 11, 0.35);
+    border-radius: 12px;
+    background: rgba(245, 158, 11, 0.08);
+    color: #fbbf24;
+    font-size: 0.86rem;
+    line-height: 1.45;
+  }
+  .ltv-proxy-notice :global(svg) { flex-shrink: 0; margin-top: 2px; }
 
   .ltv-player-column { display: grid; gap: 12px; min-width: 0; }
 

@@ -1,0 +1,38 @@
+# Render.com Blueprint — deploy this folder as a single web service.
+#
+#   1. Push this repo (or just the indian-proxy/ folder) to a Git repo.
+#   2. Render → New → Blueprint → point it at the repo (this file is picked
+#      up automatically when it sits at the repo root; if the folder lives
+#      inside the app repo, use "New Web Service" with root directory
+#      `indian-proxy` and the same build/start commands).
+#   3. After the first deploy, check /health — it must report the synced
+#      channel count (≈1635).
+#   4. Copy the service URL (e.g. https://mavero-indian-proxy.onrender.com)
+#      into the app: Admin → System → Feature Control → "Live TV Indian
+#      Proxy" (or the PUBLIC_INDIAN_PROXY_URL env var on the app host).
+#
+# NOTE ON REGIONS: what matters is the EGRESS IP class, not the region name.
+# Jio 451s known cloud ASNs (Cloudflare, AWS…). If `singapore` still 451s,
+# move the service to an actual Indian VPS (README.md has systemd + pm2
+# instructions) — the app contract is identical (it only needs the URL).
+
+services:
+  - type: web
+    name: mavero-indian-proxy
+    runtime: node
+    plan: starter
+    region: singapore
+    buildCommand: npm install
+    startCommand: node server.js
+    healthCheckPath: /health
+    envVars:
+      - key: PLAYLIST_URL
+        value: https://plugxvipplaylist.lovable.app/api/playlist
+      - key: SYNC_INTERVAL_HOURS
+        value: "5"
+      - key: SEGMENT_HOST_ALLOWLIST
+        value: jio.com,jiocinema.com
+      - key: DEFAULT_JIO_REFERER
+        value: https://jioplus2plugx.lovable.app/
+      - key: UPSTREAM_TIMEOUT_MS
+        value: "15000"

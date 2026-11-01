@@ -318,6 +318,11 @@ function section_registry(): void {
   // scripts/livetv_phase7_migration_test.ts (35 PGlite checks).
   const livetvRefreshHistoryMigration = '20261122000000_livetv_refresh_history.sql';
   const added = migrations.filter((name) => !pristineMigrations.includes(name));
+  // 2026-11 round 36 — the LIVE TV INDIAN PROXY app_config column (sanctioned
+  // additive ALTER on the existing single-row app_config table; the admin
+  // Feature Control field + the live-tv page load read it). No new tables,
+  // no destructive verbs.
+  const livetvIndianProxyMigration = '20261125000000_app_config_livetv_indian_proxy.sql';
   const phase2Sql = read(`supabase/migrations/${phase2Migration}`);
   const phase2SqlNoComments = phase2Sql.replace(/--[^\n]*/g, '');
   const phase3Sql = read(`supabase/migrations/${phase3Migration}`);
@@ -325,7 +330,7 @@ function section_registry(): void {
   const unifiedSql = read(`supabase/migrations/${unifiedMigration}`);
   const unifiedSqlNoComments = unifiedSql.replace(/--[^\n]*/g, '');
   ok(
-    added.length === 28
+    added.length === 29
       && added.includes(migrationName)
       && added.includes(phase2Migration)
       && added.includes(phase3Migration)
@@ -346,6 +351,7 @@ function section_registry(): void {
       && added.includes(livetvSourceRegistryMigration)
       && added.includes(livetvEpgGuideDataMigration)
       && added.includes(livetvRefreshHistoryMigration)
+      && added.includes(livetvIndianProxyMigration)
       && added.includes('20261014000000_add_unlink_action.sql')
       && added.includes('20261026000000_livetv_nav_visible.sql')
       && added.includes('20261123000000_app_config_social_links.sql')
@@ -368,7 +374,7 @@ function section_registry(): void {
       // since vidsrc.party returns a direct HLS manifest, never an embed).
       // 2026-10 round 30: Multi Stream (VidCore) source migration.
       && added.includes('20261101000000_multi_stream_vidcore_source.sql'),
-    `§A10: exactly the CS-5 + Phase 2 + Phase 3 + FINAL TASK + build-lifecycle + LT-5-analytics + LT-15-fallback-event + VidRift-provider + MAVP-4-icon-badge + MAVP-5-default-slots + MAVP-7-unique-assignment + BlueVelvet-provider + Vixolity/TGVID/ZXCStream-provider + VidStuck-cc-origins + Supabase-remediation + Supabase-final-audit + Livetv-source-registry + Livetv-EPG-guide-data + Livetv-refresh-history + App-config-social-links + App-config-admin-write-rls + DirectStream-scraper + DirectStream-domain-fix + DirectStream-vidsrc-party + Multi-Stream-vidcore migrations were added (${added.join(', ') || 'none'})`,
+    `§A10: exactly the CS-5 + Phase 2 + Phase 3 + FINAL TASK + build-lifecycle + LT-5-analytics + LT-15-fallback-event + VidRift-provider + MAVP-4-icon-badge + MAVP-5-default-slots + MAVP-7-unique-assignment + BlueVelvet-provider + Vixolity/TGVID/ZXCStream-provider + VidStuck-cc-origins + Supabase-remediation + Supabase-final-audit + Livetv-source-registry + Livetv-EPG-guide-data + Livetv-refresh-history + App-config-social-links + App-config-admin-write-rls + Livetv-indian-proxy + DirectStream-scraper + DirectStream-domain-fix + DirectStream-vidsrc-party + Multi-Stream-vidcore migrations were added (${added.join(', ') || 'none'})`,
   );
   // VIDRIFT (sanctioned): insert-only registration — no destructive verbs,
   // no download_providers / registry-table references.

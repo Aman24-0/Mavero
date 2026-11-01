@@ -26,7 +26,7 @@
   import AdminAppShell from '$lib/components/admin2/AdminAppShell.svelte';
   import AdminPage from '$lib/components/admin2/AdminPage.svelte';
   import AdminFormSection from '$lib/components/admin/AdminFormSection.svelte';
-  import { ShieldCheck, Check, AlertCircle, Loader2, ToggleLeft, ToggleRight, Link2, Send, MessageCircle } from 'lucide-svelte';
+  import { ShieldCheck, Check, AlertCircle, Loader2, ToggleLeft, ToggleRight, Link2, Send, MessageCircle, Tv } from 'lucide-svelte';
   import type { PageData, ActionData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -86,7 +86,18 @@
   $effect(() => {
     telegramUrl = data.telegramInviteUrl ?? '';
     discordUrl = data.discordInviteUrl ?? '';
+    indianProxyUrl = data.indianProxyUrl ?? '';
   });
+
+  // ============================================================
+  // Live TV Indian Proxy (Jio geo-block escape hatch). The saved
+  // app_config.livetv_indian_proxy_url value, prefilled from the server
+  // load; saved through the ?/saveIndianProxy form action. Empty = the
+  // PUBLIC_INDIAN_PROXY_URL env fallback applies; when both are unset Jio
+  // channels fail fast with the honest setup message.
+  // ============================================================
+  // svelte-ignore state_referenced_locally
+  let indianProxyUrl = $state(data.indianProxyUrl ?? '');
 
   onMount(() => { void loadAdultPolicy(); });
 </script>
@@ -177,6 +188,54 @@
 
         <div class="a2-form-actions">
           <button type="submit" class="a2-btn-primary">Save social links</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- ============================================================
+         Live TV — Indian Proxy URL (Jio geo-block)
+         ============================================================ -->
+    <section class="a2-feature-section">
+      <h3 class="a2-feature-section-title"><Tv size={14} /> Live TV — Indian Proxy URL</h3>
+      <p class="a2-feature-hint">
+        Jio's CDNs block every non-Indian server IP (HTTP 451) — the in-app Cloudflare Worker can never fix that.
+        Deploy the repo's standalone `indian-proxy/` service on an Indian VPS or Render.com (see indian-proxy/README.md),
+        then paste its base URL here. Every Jio Live TV stream will route through it, with the playlist's rotating
+        cookies, User-Agents and ClearKey keys applied server-side.
+      </p>
+      {#if data.indianProxyEffective}
+        <div class="a2-feature-row">
+          <div class="a2-feature-row-info">
+            <span class="a2-feature-row-label">Indian proxy active</span>
+            <span class="a2-feature-row-desc">Effective: {data.indianProxyEffective}{data.indianProxyUrl ? '' : ' (from the PUBLIC_INDIAN_PROXY_URL env var — save a value here to override it)'}</span>
+          </div>
+          <Check size={18} aria-hidden="true" />
+        </div>
+      {:else}
+        <div class="a2-feature-error" role="status"><AlertCircle size={14} /> Not configured — Jio channels show the setup message instead of playing.</div>
+      {/if}
+
+      {#if form?.message}
+        <div class="a2-feature-error" role="alert"><AlertCircle size={14} /> {form.message}</div>
+      {/if}
+
+      <form class="a2-links-form" method="POST" action="?/saveIndianProxy" use:enhance={() => {
+        return async ({ update }) => { await update({ reset: false }); };
+      }}>
+        <label class="a2-link-field">
+          <span class="a2-link-label"><Tv size={13} /> Indian Proxy URL (PUBLIC_INDIAN_PROXY_URL)</span>
+          <input
+            type="url"
+            name="livetv_indian_proxy_url"
+            inputmode="url"
+            placeholder="https://mavero-indian-proxy.onrender.com"
+            value={indianProxyUrl}
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </label>
+        <div class="a2-form-actions">
+          <button type="submit" class="a2-btn-primary">Save Indian Proxy URL</button>
         </div>
       </form>
     </section>

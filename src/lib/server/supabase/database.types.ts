@@ -2056,6 +2056,7 @@ export type Database = {
           scraper_vidsrc_embed_domain: string | null
           scraper_vidsrc_cdn_domains: string | null
           scraper_enabled: boolean
+          livetv_indian_proxy_url: string | null
         }
         Insert: {
           id?: number
@@ -2065,6 +2066,7 @@ export type Database = {
           scraper_vidsrc_embed_domain?: string | null
           scraper_vidsrc_cdn_domains?: string | null
           scraper_enabled?: boolean
+          livetv_indian_proxy_url?: string | null
         }
         Update: {
           id?: number
@@ -2074,6 +2076,7 @@ export type Database = {
           scraper_vidsrc_embed_domain?: string | null
           scraper_vidsrc_cdn_domains?: string | null
           scraper_enabled?: boolean
+          livetv_indian_proxy_url?: string | null
         }
         Relationships: []
       }

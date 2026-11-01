@@ -1,0 +1,19 @@
+-- App-wide configuration: the LIVE TV INDIAN PROXY URL.
+--
+-- The Jio IPTV playlist's CDNs answer `451 Unavailable For Legal Reasons` to
+-- every non-Indian egress IP — the Cloudflare Worker's and Netlify's
+-- included. The fix is a dedicated proxy deployed on an Indian egress
+-- (indian-proxy/ in the repo root — a standalone Express service that syncs
+-- the playlist, injects the rotating cookies and rewrites DASH/HLS
+-- manifests). Its public URL is admin-operable configuration:
+--
+--   * app_config.livetv_indian_proxy_url  (THIS column — the Admin Panel
+--     "Feature Control" field; wins when set)
+--   * PUBLIC_INDIAN_PROXY_URL env var     (the deployment-level fallback)
+--
+-- When NEITHER is set the Live TV router fails Jio candidates FAST with the
+-- honest "Jio channels require an Indian Proxy. Please set the Indian Proxy
+-- URL in Admin Settings." message instead of burning the startup watchdog
+-- on a guaranteed 451. Public READ (the browser must build proxied stream
+-- URLs from it); writes stay behind the admin service-role path.
+alter table public.app_config add column if not exists livetv_indian_proxy_url text;

@@ -481,7 +481,10 @@ console.log('§8 shared normalization + metadata bounds');
   ok(normalizeSourceChannelId('143') === '143' && normalizeSourceChannelId('a b') === null && normalizeSourceChannelId('') === null, '§8.1 source-channel id validation (no whitespace/control)');
   ok(normalizeChannelName('  News One ') === 'News One' && normalizeChannelName('bad\x01') === null && normalizeChannelName('') === null, '§8.2 name validation (trims, rejects control chars)');
   ok(normalizeLogoUrl('https://cdn.example/x.png') === 'https://cdn.example/x.png' && normalizeLogoUrl('http://cdn.example/x.png') === null && normalizeLogoUrl('javascript:alert(1)') === null, '§8.3 logo validation (https-only)');
-  const sanitized = sanitizeAdapterMetadata({ ok: 'fine', n: 5, b: true, nil: null, nested: { deep: true }, arr: [1], huge: 'x'.repeat(500), finite: Number.NaN });
+  // 2026-11 round 36 — METADATA_VALUE_MAX raised 300 → 768 (the Jio audit's
+  // 10-pair ClearKey license_key ≈ 700 chars must fit on one drmKeys value);
+  // the "huge" probe moves past the NEW budget (800 chars).
+  const sanitized = sanitizeAdapterMetadata({ ok: 'fine', n: 5, b: true, nil: null, nested: { deep: true }, arr: [1], huge: 'x'.repeat(800), finite: Number.NaN });
   ok(Object.keys(sanitized).length === 5 && sanitized['ok'] === 'fine' && sanitized['n'] === 5 && sanitized['b'] === true && sanitized['nil'] === null && sanitized['finite'] === null, '§8.4 metadata sanitizer keeps bounded scalars (NaN → null), drops nested/arrays/huge');
   ok(Object.keys(sanitizeAdapterMetadata(Object.fromEntries(Array.from({ length: 60 }, (_, i) => [`k${i}`, i])))).length === 24, '§8.5 metadata key count bounded (24)');
 }

@@ -79,7 +79,7 @@ import { LiveTvError, isLiveTvError } from './errors';
 import { LiveTvPlaybackError, shouldFallbackToEmbed } from './player-errors';
 import { buildLiveTvEmbedUrl, resolveLiveTvPlayback } from './api';
 import { trackLiveTvError, trackLiveTvFallbackEmbed, trackLiveTvPlay } from './analytics';
-import { isLivetvGeoblockedUrl, isLivetvProxyUrl, livetvStreamProxyUrl } from '$lib/shared/livetv-proxy';
+import { indianProxyManifestUrl, isLivetvGeoblockedUrl, isLivetvProxyUrl, livetvStreamFormatForUrl, livetvStreamProxyUrl } from '$lib/shared/livetv-proxy';
 
 // ---------------------------------------------------------------------------
 // Wire mirrors (structurally identical to the server's playback-resolver
@@ -98,7 +98,7 @@ export type LivetvRouterCandidate = {
         sourceChannelId: string | null;
         label: string | null;
         /** 2026-10 round 29 — DRM metadata (clearkey + cookie) for Jio CDN streams. */
-        drm: { type: 'clearkey'; keyId: string; key: string; cookie: string | null } | null;
+        drm: { type: 'clearkey'; keyId: string; key: string; keys?: Array<{ keyId: string; key: string }>; cookie: string | null } | null;
 };
 
 export type LivetvRouterResolution = {
@@ -126,12 +126,13 @@ const TRAIL_LIMIT = 64;
 /** The fixed generic exhausted-state message (no interpolation, ever). */
 export const LIVETV_ROUTER_EXHAUSTED_MESSAGE = 'This channel could not be played right now. Try again.';
 /**
- * 2026-11 round 35 — the Jio geo-block message. Surfaced when a session
+ * 2026-11 round 36 — the Jio geo-block message. Surfaced when a session
  * exhausted while a Jio (India-only) stream was skipped because NO Indian
- * proxy is configured (PUBLIC_INDIAN_PROXY_URL). A geo-block cannot be fixed
- * by retrying — the message explains the situation instead.
+ * proxy is configured (the admin's app_config override or the
+ * PUBLIC_INDIAN_PROXY_URL env var). A geo-block cannot be fixed by retrying
+ * — the message points at the honest fix instead.
  */
-export const LIVETV_ROUTER_JIO_GEOBLOCK_MESSAGE = 'Jio channels require an Indian IP. Please use a VPN or set up an Indian Proxy.';
+export const LIVETV_ROUTER_JIO_GEOBLOCK_MESSAGE = 'Jio channels require an Indian Proxy. Please set the Indian Proxy URL in Admin Settings.';
 /**
  * Distinct message for a managed channel with ZERO eligible candidates at all
  * (e.g. the source has no playback endpoints yet) — clearer than the generic
@@ -708,22 +709,28 @@ export class LiveTvPlaybackRouter {
                 }
 
                 // ---------------------------------------------------------------
-                // 2026-11 round 35 — JIO GEO-BLOCK + INDIAN PROXY routing.
+                // 2026-11 round 36 — JIO GEO-BLOCK + STANDALONE INDIAN PROXY.
                 // Applied to the FINAL media URL (both candidate kinds).
                 //
                 // Jio's CDN answers `451 Unavailable For Legal Reasons` to every
                 // non-Indian egress IP — the Cloudflare Worker's AND Netlify's
-                // included. A geo-block is an IP-classification decision; NO
-                // Referer/Origin spoofing can fix it. The policy:
-                //   * PUBLIC_INDIAN_PROXY_URL set  → every allowlisted Live TV
-                //     stream (builtin + registry) rides the custom Indian proxy
-                //     (a deployment of cloudflare-stream-proxy/worker.ts on
-                //     Indian egress). It REPLACES the Cloudflare Worker as the
-                //     Live TV stream proxy.
+                // included (deep playlist audit 2026-11: 1635 channels, 1353
+                // cookie-bound, cookies expiring every 6h). A geo-block is an
+                // IP-classification decision; NO Referer/Origin spoofing can
+                // fix it. The policy:
+                //   * Indian proxy configured (the Admin → Feature Control
+                //     app_config override, or PUBLIC_INDIAN_PROXY_URL) → EVERY
+                //     allowlisted Live TV stream rides the STANDALONE Indian
+                //     proxy (indian-proxy/server.js — deployed on an Indian
+                //     VPS / Render.com). The by-url manifest contract hands the
+                //     proxy the channel's EXACT playlist URL + format; the
+                //     proxy injects its freshly-synced Cookie/UA/Referer and
+                //     rewrites DASH/HLS segments back onto itself. It REPLACES
+                //     the Cloudflare Worker as the Live TV stream proxy.
                 //   * not set + Jio stream         → the candidate is SKIPPED
                 //     before any playback surface exists (the 20s startup
                 //     watchdog would burn on a guaranteed 451); the session
-                //     surfaces the honest geoblock message when it exhausts.
+                //     surfaces the honest setup message when it exhausts.
                 //   * not set + non-Jio            → unchanged (registry
                 //     endpoints via the Worker, builtin streams browser-direct).
                 // ---------------------------------------------------------------
@@ -734,17 +741,24 @@ export class LiveTvPlaybackRouter {
                         this.settleCurrent('failed');
                         return;
                 }
-                // Proxy base: the Indian proxy replaces the Worker when set;
-                // without it, registry endpoints keep the Worker wrap and the
-                // builtin (fresh-signed) streams stay browser-direct.
-                const proxyBase = this.indianProxyBase
-                        || (candidate.resolver === null ? this.streamProxyBase : '');
-                if (proxyBase && isLivetvProxyUrl(firstUrl)) {
+                const wrap = this.indianProxyBase
+                        ? { kind: 'indian' as const, base: this.indianProxyBase }
+                        : candidate.resolver === null && this.streamProxyBase
+                                ? { kind: 'worker' as const, base: this.streamProxyBase }
+                                : null;
+                if (wrap && isLivetvProxyUrl(firstUrl)) {
                         const origin = typeof location !== 'undefined' ? location.origin : '';
                         if (origin) {
                                 const proxify = (raw: string): string => {
                                         try {
-                                                return new URL(livetvStreamProxyUrl(raw, proxyBase), origin).toString();
+                                                if (wrap.kind === 'indian') {
+                                                        // The standalone proxy's by-url manifest contract; the
+                                                        // format extension steers BOTH the player's parser and
+                                                        // the proxy's response Content-Type.
+                                                        const format = candidate.streamFormat ?? livetvStreamFormatForUrl(raw);
+                                                        return new URL(indianProxyManifestUrl(raw, wrap.base, format), origin).toString();
+                                                }
+                                                return new URL(livetvStreamProxyUrl(raw, wrap.base), origin).toString();
                                         } catch {
                                                 return raw;
                                         }
@@ -1049,9 +1063,29 @@ function normalizeRouterCandidate(raw: unknown): LivetvRouterCandidate | null {
         if (raw.sourceChannelId !== null && typeof raw.sourceChannelId !== 'string') return null;
         if (raw.label !== null && typeof raw.label !== 'string') return null;
         // 2026-10 round 29 — extract DRM metadata (clearkey + cookie).
+        // 2026-11 round 36 — the optional `keys` list (ALL kid:key pairs from
+        // the playlist) rides through when well-formed; bounded, deduplicated
+        // client-side as well — the wire is never trusted blindly.
         let drm: LivetvRouterCandidate['drm'] = null;
         if (isRecord(raw.drm) && raw.drm.type === 'clearkey' && typeof raw.drm.keyId === 'string' && typeof raw.drm.key === 'string') {
-                drm = { type: 'clearkey', keyId: raw.drm.keyId, key: raw.drm.key, cookie: typeof raw.drm.cookie === 'string' ? raw.drm.cookie : null };
+                const keys: Array<{ keyId: string; key: string }> = [];
+                if (Array.isArray(raw.drm.keys)) {
+                        const seen = new Set<string>();
+                        for (const pair of raw.drm.keys) {
+                                if (keys.length >= 12) break;
+                                if (!isRecord(pair) || typeof pair.keyId !== 'string' || typeof pair.key !== 'string') continue;
+                                if (!pair.keyId || !pair.key || seen.has(pair.keyId)) continue;
+                                seen.add(pair.keyId);
+                                keys.push({ keyId: pair.keyId, key: pair.key });
+                        }
+                }
+                drm = {
+                        type: 'clearkey',
+                        keyId: raw.drm.keyId,
+                        key: raw.drm.key,
+                        ...(keys.length > 0 ? { keys } : {}),
+                        cookie: typeof raw.drm.cookie === 'string' ? raw.drm.cookie : null
+                };
         }
         const candidate: LivetvRouterCandidate = {
                 candidateId: raw.candidateId,

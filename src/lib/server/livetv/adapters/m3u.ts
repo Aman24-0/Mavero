@@ -447,13 +447,42 @@ type PendingEntry = {
 type PendingDrm = {
         /** 'clearkey' when #KODIPROP:inputstream.adaptive.license_type=clearkey */
         type: 'clearkey';
-        /** The key_id (hex) from license_key=key_id:key */
+        /** The key_id (hex) from license_key=key_id:key — the FIRST pair. */
         keyId: string;
-        /** The key (hex) from license_key=key_id:key */
+        /** The key (hex) from license_key=key_id:key — the FIRST pair. */
         key: string;
+        /**
+         * 2026-11 round 36 — ALL kid:key pairs from the playlist's
+         * comma-separated license_key. The audit (2026-11) measured 83
+         * channels carrying 2-10 pairs: each Representation (video, audio,
+         * extra qualities) has its OWN key — decrypting only the first pair
+         * kills the audio track. Bounded by the metadata value budget
+         * (300 chars per key — the encoder below splits on pair boundaries).
+         */
+        keys: Array<{ keyId: string; key: string }>;
         /** The cookie from #EXTHTTP (e.g. __hdnea__=...) */
         cookie: string | null;
 };
+
+/**
+ * 2026-11 round 36 — compact `kid:key,kid:key,…` encoding for the channel
+ * metadata (`drmKeys`). The metadata value budget is 768 chars (round 36) —
+ * the audit measured at most 10 pairs ≈ 700 chars, so the full list fits in
+ * one value; anything beyond the budget is dropped on a PAIR boundary (never
+ * mid-pair). The playback resolver decodes it into the wire's drm.keys; the
+ * first pair ALSO stays in drmKeyId/drmKey (backward compatible with
+ * already-ingested rows).
+ */
+function encodeDrmKeysCompact(keys: Array<{ keyId: string; key: string }>): string | null {
+        const budget = 768;
+        let out = '';
+        for (const pair of keys.map((k) => `${k.keyId}:${k.key}`)) {
+                const candidate = out ? `${out},${pair}` : pair;
+                if (candidate.length > budget) break;
+                out = candidate;
+        }
+        return out || null;
+}
 
 /**
  * Parses a #KODIPROP line. Returns the property name + value, or null.
@@ -549,17 +578,16 @@ export function parseM3UPlaylist(text: string, options: M3UParseOptions = {}): M
                 // #KODIPROP + #EXTHTTP lines. Only clearkey is supported; other
                 // DRM types are ignored (the stream will fail at playback, which
                 // is the honest behavior for unsupported DRM).
+                // 2026-11 round 36 — ALL license_key pairs are kept (each
+                // Representation has its own key; first-only broke audio).
                 let drm: PendingDrm | null = null;
                 if (pendingDrmLicenseType === 'clearkey' && pendingDrmLicenseKeys.length > 0) {
-                        // Use the first key pair (Jio playlists often have multiple
-                        // keys for different representations — Shaka's clearKeys
-                        // config supports multiple, but the first is sufficient
-                        // for initial playback).
                         const firstKey = pendingDrmLicenseKeys[0]!;
                         drm = {
                                 type: 'clearkey',
                                 keyId: firstKey.keyId,
                                 key: firstKey.key,
+                                keys: pendingDrmLicenseKeys.slice(0, 12),
                                 cookie: pendingDrmCookie,
                         };
                 }
@@ -567,6 +595,8 @@ export function parseM3UPlaylist(text: string, options: M3UParseOptions = {}): M
                 // 2026-10 round 12 — Identity is now NAME-based (not URL-based).
                 const tvgId = normalizeSourceChannelId(entry.tvgIdRaw);
                 const identity = m3uIdentityForName(name);
+                // 2026-11 round 36 — the compact key-list encoding, computed once.
+                const drmKeysCompact = drm ? encodeDrmKeysCompact(drm.keys) : null;
 
                 let channel = channelsById.get(identity);
                 if (!channel) {
@@ -578,7 +608,17 @@ export function parseM3UPlaylist(text: string, options: M3UParseOptions = {}): M
                                 tvgName: entry.tvgName,
                                 groupTitle: entry.groupTitle ?? pendingGroupFromDirective,
                                 attributeCount: entry.attrCount,
-                                ...(drm ? { drmType: drm.type, drmKeyId: drm.keyId, drmKey: drm.key, drmCookie: drm.cookie } : {}),
+                                ...(drm
+                                        ? {
+                                                  drmType: drm.type,
+                                                  drmKeyId: drm.keyId,
+                                                  drmKey: drm.key,
+                                                  drmCookie: drm.cookie,
+                                                  // 2026-11 round 36 — the FULL key list (compact,
+                                                  // budget-aware, backward compatible).
+                                                  ...(drmKeysCompact ? { drmKeys: drmKeysCompact } : {})
+                                          }
+                                        : {}),
                                 ...(Object.keys(entry.extraAttributes).length ? { extraAttributes: JSON.stringify(entry.extraAttributes) } : {})
                         });
                         const endpoint = buildNormalizedEndpoint({

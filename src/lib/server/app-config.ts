@@ -13,6 +13,15 @@ import { DEFAULT_SCRAPER_CONFIG, type ScraperConfig } from '$lib/server/vod/vids
 export type AppConfig = {
         telegramUrl: string | null;
         discordUrl: string | null;
+        /**
+         * 2026-11 round 36 — the LIVE TV INDIAN PROXY override
+         * (app_config.livetv_indian_proxy_url, the Admin → Feature Control
+         * field). When set it wins over the PUBLIC_INDIAN_PROXY_URL env var:
+         * every Jio Live TV stream routes through this Indian-egress proxy
+         * (indian-proxy/ in the repo root) instead of failing with the
+         * geo-block's 451. Empty/invalid → null (the env fallback applies).
+         */
+        livetvIndianProxyUrl: string | null;
 };
 
 function cleanUrl(value: unknown): string | null {
@@ -32,14 +41,29 @@ export async function getAppConfig(client: SupabaseClient<Database>): Promise<Ap
         try {
                 const { data, error } = await client
                         .from('app_config')
-                        .select('telegram_url, discord_url')
+                        .select('telegram_url, discord_url, livetv_indian_proxy_url')
                         .eq('id', 1)
                         .maybeSingle();
-                if (error || !data) return { telegramUrl: null, discordUrl: null };
-                return { telegramUrl: cleanUrl(data.telegram_url), discordUrl: cleanUrl(data.discord_url) };
+                if (error || !data) return { telegramUrl: null, discordUrl: null, livetvIndianProxyUrl: null };
+                return {
+                        telegramUrl: cleanUrl(data.telegram_url),
+                        discordUrl: cleanUrl(data.discord_url),
+                        livetvIndianProxyUrl: cleanUrl(data.livetv_indian_proxy_url)
+                };
         } catch {
-                return { telegramUrl: null, discordUrl: null };
+                return { telegramUrl: null, discordUrl: null, livetvIndianProxyUrl: null };
         }
+}
+
+/**
+ * 2026-11 round 36 — the effective LIVE TV INDIAN PROXY base (admin-set
+ * override from `app_config.livetv_indian_proxy_url`), or null when the
+ * admin has not configured one (the caller then falls back to the
+ * PUBLIC_INDIAN_PROXY_URL env var and, when both are unset, the Live TV
+ * router fails Jio candidates fast with the honest setup message).
+ */
+export async function getLivetvIndianProxyUrl(client: SupabaseClient<Database>): Promise<string | null> {
+        return (await getAppConfig(client)).livetvIndianProxyUrl;
 }
 
 /**

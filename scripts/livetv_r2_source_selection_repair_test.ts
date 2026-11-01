@@ -96,7 +96,10 @@ console.log('§3 — The /live-tv SSR availability guard');
   // 3.2 — the load calls getLivetvAvailabilityState.
   ok(liveTvPageServer.includes('getLivetvAvailabilityState'), '§3.2 the SSR load calls getLivetvAvailabilityState');
   // 3.3 — fail-closed: any error returns available=false.
-  ok(liveTvPageServer.includes("return { availability: { available: false, sources: [] } }"), '§3.3 the SSR load fail-closes to available=false on any error');
+  //       2026-11 round 36 — the catch ALSO resolves the env-level Indian
+  //       proxy fallback (the geo-block escape hatch must survive a registry
+  //       read failure); the availability answer itself is unchanged.
+  ok(liveTvPageServer.includes('availability: { available: false, sources: [] }') && liveTvPageServer.includes('indianProxyUrl: envIndianProxy || null'), '§3.3 the SSR load fail-closes to available=false on any error (round 36: + the env Indian-proxy fallback)');
   // 3.4 — does NOT touch unified_enabled in CODE (comments documenting the contract are fine).
   ok(!/\.update\(\{[\s\S]{0,80}unified_enabled|unified_enabled:\s*(true|false)/.test(liveTvPageServer), '§3.4 the SSR guard does NOT write unified_enabled (the flag stays the owner lever)');
   // 3.5 — does NOT call getLiveTvChannels in CODE (the function is not imported/invoked).

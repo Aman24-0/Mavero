@@ -262,7 +262,27 @@ function normalizeDrm(raw: unknown, channelId: string): LiveTvDrm | null {
         if (raw.type !== 'clearkey' || !isNonEmptyString(raw.keyId) || !isNonEmptyString(raw.key)) {
                 throw new LiveTvError('invalid_response', { endpoint: 'channel', channelId });
         }
-        return { type: 'clearkey', keyId: raw.keyId, key: raw.key };
+        // 2026-11 round 36 — the optional FULL key list (all kid:key pairs
+        // from the playlist) rides through when well-formed; malformed pairs
+        // are dropped, never coerced (bounded at 12, deduplicated by keyId).
+        const keys: Array<{ keyId: string; key: string }> = [];
+        if (Array.isArray(raw.keys)) {
+                const seen = new Set<string>();
+                for (const pair of raw.keys) {
+                        if (keys.length >= 12) break;
+                        if (!isRecord(pair) || !isNonEmptyString(pair.keyId) || !isNonEmptyString(pair.key)) continue;
+                        if (seen.has(pair.keyId)) continue;
+                        seen.add(pair.keyId);
+                        keys.push({ keyId: pair.keyId, key: pair.key });
+                }
+        }
+        return {
+                type: 'clearkey',
+                keyId: raw.keyId,
+                key: raw.key,
+                ...(keys.length > 0 ? { keys } : {}),
+                ...(isNonEmptyString(raw.cookie) ? { cookie: raw.cookie } : {})
+        };
 }
 
 /** Normalize one programme object; null when it fails validation (dropped). */

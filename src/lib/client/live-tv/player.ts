@@ -908,9 +908,19 @@ export class LiveTvPlaybackEngine {
                         if (this.destroyed || generation !== this.generation) throw new LiveTvPlaybackError('aborted');
 
                         if (drm !== null) {
-                                const clearKeys: Record<string, string> = {
-                                        [(drm as { keyId: string }).keyId]: (drm as { key: string }).key
-                                };
+                                // 2026-11 round 36 — configure ALL kid:key pairs the
+                                // playlist carries (each Representation — video AND
+                                // audio — has its own key; first-only left
+                                // multi-representation channels half-encrypted).
+                                // Shaka's clearKeys is a hex keyId → hex key record.
+                                const clearKeys: Record<string, string> = {};
+                                const pairs = drm.keys && drm.keys.length > 0 ? drm.keys : [{ keyId: drm.keyId, key: drm.key }];
+                                for (const pair of pairs) {
+                                        if (typeof pair.keyId !== 'string' || pair.keyId.length === 0) continue;
+                                        if (typeof pair.key !== 'string' || pair.key.length === 0) continue;
+                                        if (pair.keyId in clearKeys) continue;
+                                        clearKeys[pair.keyId] = pair.key;
+                                }
                                 let configured = false;
                                 try {
                                         configured = player.configure({ drm: { clearKeys } });

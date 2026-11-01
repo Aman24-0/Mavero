@@ -733,7 +733,8 @@ const CONFIG_FALSE: FetchRoute = { match: (url) => url.includes('/api/livetv/pla
   ok(router.getTrail().some((entry) => entry.detail === 'jio_geoblocked'), 'R13.1f the diagnostic trail records the skip (kinds/ids only)');
 
   // R13.2 — WITH an Indian proxy: the SAME candidate loads through it
-  // (the ?u= Worker contract, Indian base).
+  // (the standalone by-url manifest contract, Indian base; the .m3u8
+  // extension steers the player's parser + the proxy's Content-Type).
   resetUnifiedFlagCacheForTests();
   const timers2 = createFakeTimers();
   const engines2: FakeEngine[] = [];
@@ -750,7 +751,7 @@ const CONFIG_FALSE: FetchRoute = { match: (url) => url.includes('/api/livetv/pla
     ok((await router2.start(CHANNEL, VIDEO)) === 'handled', 'R13.2a the Indian-proxy session is handled');
     ok(engines2.length === 1, 'R13.2b the Jio candidate reached the engine through the Indian proxy');
     const resolution2 = engines2[0]!.loadCalls[0]!.resolution as { sources: { url: string }[] };
-    ok(resolution2.sources[0]!.url === `https://india-proxy.example/?u=${encodeURIComponent(JIO_URL)}`, 'R13.2c the stream URL is wrapped through the Indian proxy (?u= contract)');
+    ok(resolution2.sources[0]!.url === `https://india-proxy.example/api/ch/by-url/manifest.m3u8?u=${encodeURIComponent(JIO_URL)}`, 'R13.2c the stream URL rides the Indian proxy by-url manifest contract (+format extension)');
   } finally {
     restoreLocation();
   }
@@ -795,7 +796,7 @@ const CONFIG_FALSE: FetchRoute = { match: (url) => url.includes('/api/livetv/pla
   try {
     await router4.start(CHANNEL, VIDEO);
     const resolution4 = engines4[0]!.loadCalls[0]!.resolution as { sources: { url: string }[] };
-    ok(resolution4.sources[0]!.url === `https://india-proxy.example/?u=${encodeURIComponent(HOTSTAR_URL)}`, 'R13.4 the Indian proxy replaces the Worker when both are configured');
+    ok(resolution4.sources[0]!.url === `https://india-proxy.example/api/ch/by-url/manifest.m3u8?u=${encodeURIComponent(HOTSTAR_URL)}`, 'R13.4 the Indian proxy replaces the Worker when both are configured');
   } finally {
     restoreLocation();
   }
@@ -836,7 +837,7 @@ const CONFIG_FALSE: FetchRoute = { match: (url) => url.includes('/api/livetv/pla
   try {
     ok((await router6.start(CHANNEL, VIDEO)) === 'handled', 'R13.6a the builtin Indian-proxy session is handled');
     const resolution6 = engines6[0]!.loadCalls[0]!.resolution as { sources: { url: string }[]; drm: { cookie: string } | null };
-    ok(resolution6.sources[0]!.url === `https://india-proxy.example/?u=${encodeURIComponent(JIO_URL)}`, 'R13.6b the builtin Jio stream is wrapped through the Indian proxy');
+    ok(resolution6.sources[0]!.url === `https://india-proxy.example/api/ch/by-url/manifest.mpd?u=${encodeURIComponent(JIO_URL)}`, 'R13.6b the builtin Jio stream is wrapped through the Indian proxy (candidate streamFormat wins for the extension)');
     ok(resolution6.drm?.cookie === '__hdnea__=session', 'R13.6c the ClearKey DRM cookie survives the wrap (x-livetv-cookie channel)');
   } finally {
     restoreLocation();

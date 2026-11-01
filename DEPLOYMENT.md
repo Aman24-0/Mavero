@@ -56,12 +56,36 @@ Real values must be provided through Netlify’s encrypted environment-variable 
 | `PRIVATE_ADAPTER_BUILDER_SECRET` | Shared secret with the Builder deployment (also authorizes the background executor invoke) | Encrypted server-side secret; never public |
 | `PRIVATE_ADAPTER_BUILDER_TIMEOUT_MS` | Builder call timeout (default 150000, min 5000, max 600000) | Runtime configuration; never a secret |
 | `PUBLIC_STREAM_PROXY_URL` | Cloudflare Worker stream-proxy base (`cloudflare-stream-proxy/`) — routes VOD (VidSrc/VidCore) and Live TV media through the Worker’s edge IPs with per-CDN Referer/Origin spoofing and manifest rewriting | Public runtime configuration |
-| `PUBLIC_INDIAN_PROXY_URL` | Indian-egress stream proxy base for the geo-blocked Live TV CDNs (Jio answers `451 Unavailable For Legal Reasons` to every non-Indian IP). Must be a deployment of the SAME `cloudflare-stream-proxy/worker.ts` contract (`GET ?u=<url>&r=<referer>`, `x-livetv-cookie` → `Cookie`); when set it REPLACES the Worker as the Live TV stream proxy. When unset, Jio channels show “Jio channels require an Indian IP. Please use a VPN or set up an Indian Proxy.” instead of a guaranteed-451 player | Public runtime configuration |
+| `PUBLIC_INDIAN_PROXY_URL` | Indian-egress stream proxy base for the geo-blocked Live TV CDNs (Jio answers `451 Unavailable For Legal Reasons` to every non-Indian IP — the Worker’s and Netlify’s included; a geo-block is an IP/ASN decision no header spoofing can fix). Points at a deployment of the standalone `indian-proxy/` Node service (repo root — syncs the Jio playlist every 5 h, injects the rotating `__hdnea__` cookies + User-Agents server-side, rewrites DASH/HLS manifests back onto itself). The Admin → System → Feature Control “Live TV — Indian Proxy URL” field (`app_config.livetv_indian_proxy_url`) overrides this env var at runtime. When NEITHER is set, Jio channels fail fast with “Jio channels require an Indian Proxy. Please set the Indian Proxy URL in Admin Settings.” instead of a guaranteed-451 player | Public runtime configuration |
 
 
 The application reads public Supabase values through SvelteKit’s runtime public environment module rather than requiring them as build-time static exports. This allows the Netlify build to compile without baking credentials into the bundle; the variables must still be present at runtime for Supabase Auth and data operations to work.
 
 The `PRIVATE_` service-role credential must never be prefixed with `PUBLIC_`, placed in client code, committed to Git, or returned by the resolver API.
+
+### The Live TV Indian proxy (Jio 451 geo-block) — `indian-proxy/`
+
+Jio's CDNs classify every non-Indian egress IP as blocked (`451 Unavailable For
+Legal Reasons`). The deep playlist audit (2026-11) established the constraint
+set that makes the in-app Cloudflare Worker unusable for this: 1635 channels,
+1353 cookie-bound (`__hdnea__` Akamai tokens expiring **every 6 hours**), 1576
+User-Agent-bound, 1181 ClearKey-encrypted. The fix is a dedicated egress:
+
+1. Deploy `indian-proxy/` (standalone Node/Express, one dependency) on an
+   Indian VPS or Render.com — `indian-proxy/render.yaml` + `indian-proxy/README.md`
+   cover both. It syncs the playlist every 5 h, keeps the per-channel
+   Cookie/UA/Referer/ClearKey in memory and serves rewritten DASH/HLS
+   manifests + streamed segments from its own IP.
+2. Point the app at it: Admin → System → Feature Control → “Live TV — Indian
+   Proxy URL” (stored in `app_config.livetv_indian_proxy_url`, wins at
+   runtime), or set `PUBLIC_INDIAN_PROXY_URL` on the app host as the
+   deployment-level fallback.
+3. Verify: `curl https://<proxy>/health` → `"ok": true` with ≈1635 channels;
+   the Live TV page's amber setup banner disappears once the URL is effective.
+
+When neither value is set the app stays honest: Jio candidates are skipped
+before playback and the player explains the missing setup instead of burning
+the startup watchdog on a guaranteed 451.
 
 ### Credential requirement semantics (traced from source, not variable names)
 
