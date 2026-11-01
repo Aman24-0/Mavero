@@ -67,6 +67,7 @@ type IssuedQuery = {
   filters: { col: string; op: string; val: unknown }[];
   orders: { col: string; asc: boolean }[];
   limit: number | null;
+  range: { from: number; to: number } | null;
 };
 
 function createMockClient(tables: Record<string, Row[]>, options: { failTable?: string; failFlag?: boolean } = {}) {
@@ -95,6 +96,8 @@ function createMockClient(tables: Record<string, Row[]>, options: { failTable?: 
       });
     }
     if (spec.limit !== null) rows = rows.slice(0, spec.limit);
+    // round 37 — the catalogue reads page with .range(from, to) (inclusive).
+    if (spec.range) rows = rows.slice(spec.range.from, spec.range.to + 1);
     return { data: rows, error: null };
   }
 
@@ -108,6 +111,7 @@ function createMockClient(tables: Record<string, Row[]>, options: { failTable?: 
       not: () => builder(table, spec),
       order: (col: string, opts?: { ascending?: boolean }) => (spec.orders.push({ col, asc: opts?.ascending !== false }), builder(table, spec)),
       limit: (n: number) => (spec.limit = n, builder(table, spec)),
+      range: (from: number, to: number) => (spec.range = { from, to }, builder(table, spec)),
       maybeSingle: async () => {
         const result = runQuery(spec);
         const rows = Array.isArray(result.data) ? result.data : result.data ? [result.data] : [];
@@ -122,7 +126,7 @@ function createMockClient(tables: Record<string, Row[]>, options: { failTable?: 
   return {
     issued,
     from(table: string) {
-      return builder(table, { table, filters: [], orders: [], limit: null });
+      return builder(table, { table, filters: [], orders: [], limit: null, range: null });
     },
     queriesFor(table: string): IssuedQuery[] {
       return issued.filter((spec) => spec.table === table);

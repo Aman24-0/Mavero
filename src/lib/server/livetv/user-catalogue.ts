@@ -127,6 +127,52 @@ export const MAX_SOURCES_LOAD = 500;
 /** Re-exported bound (the switcher payload size lives with the grouping model). */
 export const MAX_CATALOGUE_SOURCE_ALTERNATIVES = MAX_CATALOGUE_GROUP_SOURCES;
 
+/**
+ * 2026-11 round 37 — Task 1 (the 1000-channel cap, FIXED).
+ *
+ * Supabase's hosted PostgREST answers with AT MOST `db-max-rows` rows per
+ * request (the project default is 1000) — a `.limit(20000)` is silently
+ * clamped to 1000. With the Jio playlist's ~1616 `livetv_source_channels`
+ * rows that truncated the catalogue to exactly 1000 channels and — because
+ * the entries query had no ORDER BY — an ARBITRARY 616 channels (&Pictures,
+ * Zee Cinema, …) silently vanished after every full sync.
+ *
+ * The fix is the documented Supabase pattern: page every large read with
+ * `.range(from, to)` windows of this size (each page stays under the
+ * max-rows clamp) and a deterministic ORDER BY so pages never repeat or
+ * skip rows, until a short page marks the end of the table.
+ */
+export const QUERY_PAGE_SIZE = 1000;
+
+/** A failed page read (paged reads must keep the callers' fail-closed bail). */
+export interface PagedQueryError {
+        message: string;
+}
+
+/**
+ * Load up to `maxRows` rows from a Supabase query by paging `.range()`
+ * windows of `QUERY_PAGE_SIZE` (1000 ≤ the hosted `db-max-rows` clamp).
+ * `exec` builds ONE query per window — the caller supplies the FROM/TO
+ * bounds; ordering MUST be part of the builder so pages are deterministic.
+ * A failed page short-circuits with the error (the caller keeps its exact
+ * fail-closed semantics — empty result, never a partial-but-silent answer).
+ */
+export async function pagedSelect<T>(
+        exec: (range: { from: number; to: number }) => PromiseLike<{ data: T[] | null; error: PagedQueryError | null }>,
+        maxRows: number
+): Promise<{ rows: T[]; error: PagedQueryError | null }> {
+        const rows: T[] = [];
+        for (let from = 0; from < maxRows; from += QUERY_PAGE_SIZE) {
+                const to = Math.min(from + QUERY_PAGE_SIZE, maxRows) - 1;
+                const page = await exec({ from, to });
+                if (page.error) return { rows: [], error: page.error };
+                const data = page.data ?? [];
+                rows.push(...data);
+                if (data.length < to - from + 1) break; // short page — the table is exhausted
+        }
+        return { rows, error: null };
+}
+
 /** Stable selection-id prefix for direct source-entry rows (R-0). */
 export const LIVETV_ENTRY_SELECTION_PREFIX = 'entry:';
 
@@ -326,13 +372,30 @@ export async function getUnifiedLivetvCatalogue(client: SupabaseClient<Database>
         // 2. Enabled entries on those sources — the grouping candidate pool.
         //    Source attribution stays internal (provenance never crosses the
         //    wire — only the bounded DTO + labeled alternatives below cross).
-        const entriesResult = await client
-                .from('livetv_source_channels')
-                .select('id,source_id,source_channel_id,canonical_channel_id,enabled,name,category,logo_url')
-                .in('source_id', sourceRefs.map((source) => source.id))
-                .limit(MAX_MAPPED_ENTRIES_LOAD);
-        if (entriesResult.error) return { unifiedEnabled: true, channels: [], truncated: false };
-        const entryRows = (entriesResult.data ?? []) as { id: string; source_id: string; source_channel_id: string; canonical_channel_id: string | null; enabled: boolean; name: string | null; category: string | null; logo_url: string | null }[];
+        //    2026-11 round 37 — PAGED: the hosted PostgREST `db-max-rows`
+        //    clamp (default 1000) silently truncated this read; pages of
+        //    1000 with a deterministic ORDER BY now load the FULL pool.
+        const entriesPaged = await pagedSelect<{
+                id: string;
+                source_id: string;
+                source_channel_id: string | null;
+                canonical_channel_id: string | null;
+                enabled: boolean;
+                name: string | null;
+                category: string | null;
+                logo_url: string | null;
+        }>(
+                ({ from, to }) =>
+                        client
+                                .from('livetv_source_channels')
+                                .select('id,source_id,source_channel_id,canonical_channel_id,enabled,name,category,logo_url')
+                                .in('source_id', sourceRefs.map((source) => source.id))
+                                .order('id', { ascending: true })
+                                .range(from, to),
+                MAX_MAPPED_ENTRIES_LOAD
+        );
+        if (entriesPaged.error) return { unifiedEnabled: true, channels: [], truncated: false };
+        const entryRows = entriesPaged.rows;
         const entryRefs: CatalogueGroupEntryRef[] = [];
         const mappedCanonicalIds = new Set<string>();
         for (const row of entryRows) {
@@ -353,19 +416,24 @@ export async function getUnifiedLivetvCatalogue(client: SupabaseClient<Database>
         if (entryRefs.length === 0) return { unifiedEnabled: true, channels: [], truncated: false };
 
         // 3. The ENABLED canonical channels hosting mapped entries
-        //    (deterministically ordered, bounded — same read as R-0).
+        //    (deterministically ordered, bounded — same read as R-0; paged
+        //    per the round-37 max-rows fix).
         const canonicalRows: { id: string; name: string; category: string | null; logo_url: string | null; enabled: boolean }[] = [];
         if (mappedCanonicalIds.size > 0) {
-                const channelsResult = await client
-                        .from('livetv_channels')
-                        .select('id,name,category,logo_url,enabled')
-                        .eq('enabled', true)
-                        .in('id', [...mappedCanonicalIds])
-                        .order('name', { ascending: true })
-                        .order('id', { ascending: true })
-                        .limit(MAX_CATALOGUE_CHANNELS);
-                if (channelsResult.error) return { unifiedEnabled: true, channels: [], truncated: false };
-                canonicalRows.push(...((channelsResult.data ?? []) as { id: string; name: string; category: string | null; logo_url: string | null; enabled: boolean }[]));
+                const channelsPaged = await pagedSelect<{ id: string; name: string; category: string | null; logo_url: string | null; enabled: boolean }>(
+                        ({ from, to }) =>
+                                client
+                                        .from('livetv_channels')
+                                        .select('id,name,category,logo_url,enabled')
+                                        .eq('enabled', true)
+                                        .in('id', [...mappedCanonicalIds])
+                                        .order('name', { ascending: true })
+                                        .order('id', { ascending: true })
+                                        .range(from, to),
+                        MAX_CATALOGUE_CHANNELS
+                );
+                if (channelsPaged.error) return { unifiedEnabled: true, channels: [], truncated: false };
+                canonicalRows.push(...channelsPaged.rows);
         }
 
         // 4. The PURE deterministic grouping (identity precedence + preferred

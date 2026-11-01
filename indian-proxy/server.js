@@ -14,7 +14,8 @@
 //   * 1576 channels need a `#EXTVLCOPT` User-Agent
 //   * 1181 channels carry ClearKey DRM (`#KODIPROP` license_key = kid:key)
 //   * The cookies EXPIRE EVERY 6 HOURS → the playlist is re-synced every 5
-//     hours (plus an automatic re-sync the moment Jio answers 401/403/451).
+//     hours (plus a BACKGROUND re-sync — 5s cooldown, never blocking a
+//     request — the moment an upstream answers 401/403/451).
 //
 // This service deploys on an INDIAN VPS (or any host Jio does not block —
 // e.g. Render.com) and becomes the single egress for every Live TV stream:
@@ -55,10 +56,12 @@
 //       when the response IS a manifest — rewrites it with the /api/g scheme.
 //
 // SECURITY
-//   * Every proxied URL must be https AND pass the host allowlist
-//     (SEGMENT_HOST_ALLOWLIST, default jio.com/jiocinema.com) or belong to
-//     the channel's own manifest host. Private/loopback/link-local targets
-//     are always refused — this must never become an open relay.
+//   * Every proxied URL must be http(s) and must NOT point at a private/
+//     loopback/link-local address or a bare IP literal (SSRF guard).
+//   * Host policy is UNIVERSAL by default: SEGMENT_HOST_ALLOWLIST defaults
+//     to `*` — any public DNS host may be proxied (Jio, Sony, Hotstar,
+//     Akindi, …). Set the env var to explicit suffixes to restrict it; the
+//     SSRF guard keeps this from ever becoming an internal-network relay.
 //   * Client-supplied Cookie/X-Livetv-Cookie headers are IGNORED — the proxy
 //     injects its own freshly-synced credentials (the app's DB cookie can be
 //     up to 6h stale; this one never is).
@@ -81,6 +84,7 @@
 const express = require('express');
 const crypto = require('crypto');
 const { Readable } = require('stream');
+const { pipeline } = require('stream/promises');
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -91,19 +95,38 @@ const PLAYLIST_URL = process.env.PLAYLIST_URL || 'https://plugxvipplaylist.lovab
 const SYNC_INTERVAL_HOURS = Number.parseFloat(process.env.SYNC_INTERVAL_HOURS || '5');
 const UPSTREAM_TIMEOUT_MS = Number.parseInt(process.env.UPSTREAM_TIMEOUT_MS || '15000', 10);
 const DEFAULT_JIO_REFERER = process.env.DEFAULT_JIO_REFERER || 'https://jioplus2plugx.lovable.app/';
-const HOST_ALLOWLIST = (process.env.SEGMENT_HOST_ALLOWLIST || 'jio.com,jiocinema.com')
+/**
+ * 2026-11 round 37 — UNIVERSAL by default: `*` lets ANY public DNS host be
+ * proxied (Jio, Sony, Hotstar, Akindi, …), so one deployment serves every
+ * geo-blocked playlist. SSRF protection is UNCHANGED (no private/loopback/
+ * link-local targets, no bare IP literals). Set SEGMENT_HOST_ALLOWLIST to
+ * explicit suffixes (e.g. `jio.com,hotstar.com`) to restrict the proxy.
+ */
+const HOST_ALLOWLIST = (process.env.SEGMENT_HOST_ALLOWLIST || '*')
   .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+const ALLOW_ANY_HOST = HOST_ALLOWLIST.includes('*');
+/** Background re-sync cooldown after an upstream auth failure (round 37). */
+const AUTO_RESYNC_COOLDOWN_MS = 5_000;
+/** Upstream statuses that mean the playlist credentials went stale. */
+const AUTH_FAILURE_STATUSES = new Set([401, 403, 451]);
 
 /** A Jio app User-Agent (the playlist's own EXTVLCOPT value, as fallback). */
 const DEFAULT_UA =
   'Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36';
 
-/** Per-CDN Referer the upstream requires (mirrors the app's live-tv map). */
+/**
+ * Per-CDN Referer the upstream requires (mirrors the app's live-tv map).
+ * Unknown hosts get NO Referer/Origin at all — a wrong Referer breaks more
+ * providers than a missing one (round 37: the old code fell back to the
+ * Jio referer for EVERY host, which hotstar/sonyliv servers reject).
+ */
 const REFERER_BY_HOST = [
   { suffix: 'jio.com', referer: DEFAULT_JIO_REFERER },
   { suffix: 'jiocinema.com', referer: 'https://www.jiocinema.com/' },
   { suffix: 'hotstar.com', referer: 'https://www.hotstar.com/' },
-  { suffix: 'slivcdn.com', referer: 'https://www.sonyliv.com/' }
+  { suffix: 'slivcdn.com', referer: 'https://www.sonyliv.com/' },
+  { suffix: 'premiumplugx.com', referer: 'https://premiumplugx.com/' },
+  { suffix: 'akindi.lovable.app', referer: 'https://akindi.lovable.app/' }
 ];
 
 // ---------------------------------------------------------------------------
@@ -152,6 +175,7 @@ function isPrivateHost(hostname) {
   if (/^127\./.test(h) || /^10\./.test(h) || /^192\.168\./.test(h) || /^169\.254\./.test(h)) return true;
   if (/^172\.(1[6-9]|2\d|3[01])\./.test(h)) return true;
   if (/^\d{1,3}(\.\d{1,3}){3}$/.test(h)) return true; // any bare IPv4 is refused
+  if (h.includes(':')) return true; // any bare IPv6 literal is refused (round 37)
   return false;
 }
 
@@ -166,6 +190,9 @@ function hostAllowed(urlStr, entry) {
   const host = parsed.hostname.toLowerCase();
   if (isPrivateHost(host)) return false;
   if (entry && safeHostOf(entry.url) === host) return true; // the channel's own CDN
+  // Round 37 — universal mode: any public DNS host is proxied (the SSRF
+  // guards above are the control). An explicit suffix list restricts it.
+  if (ALLOW_ANY_HOST) return true;
   return HOST_ALLOWLIST.some((sfx) => host === sfx || host.endsWith('.' + sfx));
 }
 
@@ -348,13 +375,23 @@ async function syncPlaylist() {
   return store.syncing;
 }
 
-/** Throttled auto-resync when Jio answers 401/403/451 (cookie rotation). */
-async function maybeAutoResync() {
+/**
+ * 2026-11 round 37 — FIRE-AND-FORGET background re-sync when an upstream
+ * auth failure (401/403/451) is observed. NEVER awaited by a request
+ * handler: the previous code `await`ed the full playlist re-sync INSIDE the
+ * failing request — blocking the player's manifest/segment fetch for
+ * seconds while the whole M3U was downloaded + parsed, which timed the
+ * player out. Now the request is answered IMMEDIATELY (403 + retryable) and
+ * the client player retries after a short delay — by then the background
+ * re-sync has usually swapped in fresh cookies. The cooldown (5s) stops a
+ * dead channel from spamming the playlist host.
+ */
+function scheduleAuthResync(reason) {
   const now = Date.now();
-  if (now - store.lastAutoResyncAt < 60_000) return;
+  if (now - store.lastAutoResyncAt < AUTO_RESYNC_COOLDOWN_MS) return;
   store.lastAutoResyncAt = now;
-  console.log('[sync] upstream auth failure — auto re-syncing the playlist');
-  await syncPlaylist();
+  console.log(`[sync] upstream auth failure (${reason}) — background re-sync scheduled`);
+  syncPlaylist().catch(() => {});
 }
 
 // ---------------------------------------------------------------------------
@@ -363,14 +400,18 @@ async function maybeAutoResync() {
 
 function upstreamHeaders(entry, extra) {
   const host = safeHostOf(entry ? entry.url : '');
-  const referer = (entry && entry.referer) || refererForHost(host) || DEFAULT_JIO_REFERER;
+  // Round 37 — the referer map decides; an UNKNOWN host gets NO Referer/
+  // Origin at all (spoofing the Jio origin at hotstar/sonyliv breaks them).
+  const referer = (entry && entry.referer) || refererForHost(host);
   const headers = {
     'User-Agent': (entry && entry.ua) || DEFAULT_UA,
-    Referer: referer,
-    Origin: referer.replace(/\/$/, ''),
     Accept: '*/*',
     ...extra
   };
+  if (referer) {
+    headers.Referer = referer;
+    headers.Origin = referer.replace(/\/$/, '');
+  }
   // The proxy ALWAYS uses its own synced cookie — client-supplied cookies
   // (up to 6h stale in the app DB) are never forwarded.
   if (entry && entry.cookie) headers.Cookie = entry.cookie;
@@ -385,22 +426,40 @@ function fetchWithTimeout(url, options = {}) {
 }
 
 /**
- * Fetch an upstream URL for a channel. On 401/403/451 the playlist is
- * re-synced ONCE (throttled) and the fetch retried with fresh credentials —
- * this is what keeps playback alive when the 6-hour cookies rotate.
+ * Fetch an upstream URL with the channel's STORED credentials.
+ *
+ * 2026-11 round 37 — on an auth failure (401/403/451) the request is NOT
+ * retried here and NO synchronous re-sync runs (that blocked the player for
+ * seconds and timed it out). The response is returned AS-IS with the
+ * `authFailure` marker; the caller answers 403 + retryable immediately and
+ * the background re-sync (5s cooldown, fire-and-forget) refreshes the
+ * cookies — the client player's own retry then gets the fresh credentials.
  */
-async function fetchUpstreamResilient(url, entry) {
-  let res = await fetchWithTimeout(url, { headers: upstreamHeaders(entry) });
-  if (res.status === 401 || res.status === 403 || res.status === 451) {
-    await maybeAutoResync();
-    const refreshed = entry ? store.byUrl.get(entry.url) || store.byId.get(entry.id) : null;
-    res = await fetchWithTimeout(url, { headers: upstreamHeaders(refreshed || entry) });
+async function fetchUpstream(url, entry) {
+  const res = await fetchWithTimeout(url, { headers: upstreamHeaders(entry) });
+  if (AUTH_FAILURE_STATUSES.has(res.status)) {
+    scheduleAuthResync(`HTTP ${res.status} from ${safeHostOf(url) || 'unknown'}`);
+    res.authFailure = true;
   }
-  // Redirect safety: a hop off the allowlist is refused.
+  // Redirect safety: a hop off the allowed host set is refused.
   if (res.url && res.url !== url && !hostAllowed(res.url, entry)) {
     throw new Error(`upstream redirected to a non-allowlisted host: ${safeHostOf(res.url)}`);
   }
   return res;
+}
+
+/**
+ * Answer an upstream auth failure FAST: 403 + a retryable hint. The client
+ * player retries after a short delay; the background re-sync (5s cooldown)
+ * has fresh cookies ready by then.
+ */
+function authFailureResponse(res, upstream) {
+  res.status(403).json({
+    error: 'upstream_auth_failure',
+    upstreamStatus: upstream.status,
+    retryable: true,
+    retryAfterMs: AUTO_RESYNC_COOLDOWN_MS
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -559,14 +618,20 @@ async function streamUpstream(req, res, url, entry) {
   }
   let upstream;
   try {
-    upstream = await fetchUpstreamResilient(url, entry);
+    upstream = await fetchUpstream(url, entry);
   } catch (err) {
     console.error(`[segment] fetch failed: ${safeHostOf(url)} — ${String((err && err.message) || err)}`);
     if (!res.headersSent) res.status(502).json({ error: 'upstream_fetch_failed' });
     return;
   }
   if (!upstream.ok && upstream.status !== 206) {
-    if (!res.headersSent) res.status(upstream.status).json({ error: 'upstream_error', status: upstream.status });
+    if (!res.headersSent) {
+      // Round 37 — auth failures answer FAST (403 + retryable, the client
+      // player retries after a short delay; the background re-sync has
+      // fresh cookies ready by then). Never block on a re-sync here.
+      if (upstream.authFailure) authFailureResponse(res, upstream);
+      else res.status(upstream.status).json({ error: 'upstream_error', status: upstream.status });
+    }
     return;
   }
   sendUpstreamResponse(res, upstream);
@@ -587,11 +652,13 @@ function sendUpstreamResponse(res, upstream) {
     res.end();
     return;
   }
-  // STREAM — never buffer a whole segment.
+  // STREAM — never buffer a whole segment. `pipeline` (round 37) tears the
+  // stream down properly on EITHER side's error/premature close, where a
+  // bare .pipe() could leak the upstream socket.
   const reader = Readable.fromWeb(upstream.body);
-  reader.on('error', () => res.destroy());
-  res.on('close', () => reader.destroy());
-  reader.pipe(res);
+  pipeline(reader, res, () => {
+    /* ended, errored, or the client went away — the sockets are cleaned up */
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -702,14 +769,17 @@ async function handleManifest(req, res) {
 
   let upstream;
   try {
-    upstream = await fetchUpstreamResilient(entry.url, mode === 'channel' ? entry : null);
+    upstream = await fetchUpstream(entry.url, mode === 'channel' ? entry : null);
   } catch (err) {
     console.error(`[manifest] fetch failed: ${safeHostOf(entry.url)} — ${String((err && err.message) || err)}`);
     res.status(502).json({ error: 'upstream_fetch_failed' });
     return;
   }
   if (!upstream.ok) {
-    res.status(upstream.status).json({ error: 'upstream_error', status: upstream.status });
+    // Round 37 — fast 403 + retryable on stale credentials (no blocking
+    // re-sync inside the request; see fetchUpstream).
+    if (upstream.authFailure) authFailureResponse(res, upstream);
+    else res.status(upstream.status).json({ error: 'upstream_error', status: upstream.status });
     return;
   }
   const body = await upstream.text();
@@ -834,14 +904,16 @@ app.get('/api/fetch', async (req, res) => {
   }
   let upstream;
   try {
-    upstream = await fetchUpstreamResilient(url, null);
+    upstream = await fetchUpstream(url, null);
   } catch (err) {
     console.error(`[fetch] failed: ${safeHostOf(url)} — ${String((err && err.message) || err)}`);
     res.status(502).json({ error: 'upstream_fetch_failed' });
     return;
   }
   if (!upstream.ok) {
-    res.status(upstream.status).json({ error: 'upstream_error', status: upstream.status });
+    // Round 37 — fast 403 + retryable on stale credentials.
+    if (upstream.authFailure) authFailureResponse(res, upstream);
+    else res.status(upstream.status).json({ error: 'upstream_error', status: upstream.status });
     return;
   }
   const contentType = String(upstream.headers.get('content-type') || '');
@@ -878,7 +950,9 @@ if (require.main === module) {
   app.listen(PORT, () => {
     console.log(`[indian-proxy] listening on :${PORT}`);
     console.log(`[indian-proxy] playlist: ${PLAYLIST_URL} (every ${SYNC_INTERVAL_HOURS}h)`);
-    console.log(`[indian-proxy] host allowlist: ${HOST_ALLOWLIST.join(', ')}`);
+    console.log(
+      `[indian-proxy] hosts: ${ALLOW_ANY_HOST ? '* (any public DNS host — universal proxy)' : HOST_ALLOWLIST.join(', ')}`
+    );
     syncPlaylist().then(() => {
       setInterval(() => {
         syncPlaylist();

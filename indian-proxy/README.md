@@ -29,8 +29,11 @@ from an IP Jio accepts. That is all this service does.
    `SYNC_INTERVAL_HOURS` (default **5**, i.e. inside the 6-hour cookie
    window), parses each channel and keeps an in-memory `Map`:
    `URL → { Cookie, User-Agent, Referer, ClearKey keys (kid:key…), name }`.
-   `POST /sync` forces an immediate refresh. A `401/403/451` from Jio also
-   triggers a throttled automatic re-sync (cookie rotation resilience).
+   `POST /sync` forces an immediate refresh. A `401/403/451` from an
+   upstream triggers a **BACKGROUND** re-sync (5-second cooldown, never
+   blocking the request — the failing request is answered `403 +
+   retryable` immediately and the client player retries after a short
+   delay; by then fresh cookies are usually in).
 2. **Manifest rewriter** — `GET /api/ch/…` fetches the ORIGINAL manifest with
    the STORED credentials and rewrites every segment reference back onto this
    proxy:
@@ -69,10 +72,15 @@ from an IP Jio accepts. That is all this service does.
 | `GET /api/fetch?u=<enc url>` | Generic passthrough — rewrites when the body is a manifest (the app's fresh-signed builtin streams) |
 
 Security: every proxied URL must be http(s), must not point at
-private/loopback/link-local addresses, and its host must be in
-`SEGMENT_HOST_ALLOWLIST` (default `jio.com,jiocinema.com`) or be the
-channel's own manifest host. Client-supplied `Cookie` headers are ignored —
-the proxy injects its own freshly-synced credentials.
+private/loopback/link-local addresses or a bare IP literal (SSRF guard).
+The host policy is **UNIVERSAL by default** (`SEGMENT_HOST_ALLOWLIST=*`):
+any public DNS host may be proxied — Jio, Sony (`slivcdn.com`), Hotstar,
+Akindi, … — so one deployment serves every geo-blocked playlist. Set the
+env var to explicit suffixes to restrict it. Per-CDN Referer/Origin is
+mapped for jio/jiocinema/hotstar/slivcdn/premiumplugx/akindi; UNKNOWN
+hosts get NO Referer/Origin at all (a wrong Referer breaks more providers
+than a missing one). Client-supplied `Cookie` headers are ignored — the
+proxy injects its own freshly-synced credentials.
 
 ## Deploy on Render.com
 
@@ -209,6 +217,6 @@ Expose it with a free Cloudflare quick tunnel (`trycloudflare.com`).
 | `PLAYLIST_URL` | `https://plugxvipplaylist.lovable.app/api/playlist` | The M3U to sync |
 | `SYNC_INTERVAL_HOURS` | `5` | Sync cadence (cookies expire every 6h) |
 | `PUBLIC_BASE_URL` | _(per-request host)_ | Fixed public base for rewritten URLs (set when behind a reverse proxy) |
-| `SEGMENT_HOST_ALLOWLIST` | `jio.com,jiocinema.com` | Host suffixes segments may be fetched from |
-| `DEFAULT_JIO_REFERER` | `https://jioplus2plugx.lovable.app/` | Referer/Origin used when the playlist gives none |
+| `SEGMENT_HOST_ALLOWLIST` | `*` (any public DNS host — universal proxy) | Host suffixes segments may be fetched from; SSRF guard always applies |
+| `DEFAULT_JIO_REFERER` | `https://jioplus2plugx.lovable.app/` | Referer/Origin for `jio.com` hosts when the playlist gives none |
 | `UPSTREAM_TIMEOUT_MS` | `15000` | Upstream fetch timeout |

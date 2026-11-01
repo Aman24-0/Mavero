@@ -55,6 +55,7 @@ import {
         MAX_GUIDE_UPCOMING,
         MAX_MAPPED_ENTRIES_LOAD,
         MAX_SOURCES_LOAD,
+        pagedSelect,
         safeDisplayUrl
 } from './user-catalogue';
 
@@ -104,13 +105,23 @@ export async function getSourceFirstLivetvCatalogue(
         if (sourceRefs.length === 0) return { unifiedEnabled: true, channels: [], truncated: false };
 
         // 2. Enabled entries on those sources — the grouping candidate pool.
-        const entriesResult = await client
-                .from('livetv_source_channels')
-                .select('id,source_id,source_channel_id,canonical_channel_id,enabled,name,category,logo_url')
-                .in('source_id', sourceRefs.map((source) => source.id))
-                .limit(MAX_MAPPED_ENTRIES_LOAD);
-        if (entriesResult.error) return { unifiedEnabled: true, channels: [], truncated: false };
-        const entryRows = (entriesResult.data ?? []) as { id: string; source_id: string; source_channel_id: string; canonical_channel_id: string | null; enabled: boolean; name: string | null; category: string | null; logo_url: string | null }[];
+        //    2026-11 round 37 — PAGED: the hosted PostgREST `db-max-rows`
+        //    clamp (default 1000) silently truncated this read to exactly
+        //    1000 rows — 616+ real channels (&Pictures, Zee Cinema, …)
+        //    vanished from the app after every full sync. Pages of 1000
+        //    with a deterministic ORDER BY load the FULL pool now.
+        const entriesPaged = await pagedSelect<{ id: string; source_id: string; source_channel_id: string | null; canonical_channel_id: string | null; enabled: boolean; name: string | null; category: string | null; logo_url: string | null }>(
+                ({ from, to }) =>
+                        client
+                                .from('livetv_source_channels')
+                                .select('id,source_id,source_channel_id,canonical_channel_id,enabled,name,category,logo_url')
+                                .in('source_id', sourceRefs.map((source) => source.id))
+                                .order('id', { ascending: true })
+                                .range(from, to),
+                MAX_MAPPED_ENTRIES_LOAD
+        );
+        if (entriesPaged.error) return { unifiedEnabled: true, channels: [], truncated: false };
+        const entryRows = entriesPaged.rows;
         const entryRefs: CatalogueGroupEntryRef[] = [];
         const mappedCanonicalIds = new Set<string>();
         for (const row of entryRows) {
@@ -133,16 +144,21 @@ export async function getSourceFirstLivetvCatalogue(
         // 3. The ENABLED canonical channels hosting mapped entries.
         const canonicalRows: { id: string; name: string; category: string | null; logo_url: string | null; enabled: boolean }[] = [];
         if (mappedCanonicalIds.size > 0) {
-                const channelsResult = await client
-                        .from('livetv_channels')
-                        .select('id,name,category,logo_url,enabled')
-                        .eq('enabled', true)
-                        .in('id', [...mappedCanonicalIds])
-                        .order('name', { ascending: true })
-                        .order('id', { ascending: true })
-                        .limit(MAX_CATALOGUE_CHANNELS);
-                if (channelsResult.error) return { unifiedEnabled: true, channels: [], truncated: false };
-                canonicalRows.push(...((channelsResult.data ?? []) as { id: string; name: string; category: string | null; logo_url: string | null; enabled: boolean }[]));
+                // 2026-11 round 37 — paged per the max-rows fix (see step 2).
+                const channelsPaged = await pagedSelect<{ id: string; name: string; category: string | null; logo_url: string | null; enabled: boolean }>(
+                        ({ from, to }) =>
+                                client
+                                        .from('livetv_channels')
+                                        .select('id,name,category,logo_url,enabled')
+                                        .eq('enabled', true)
+                                        .in('id', [...mappedCanonicalIds])
+                                        .order('name', { ascending: true })
+                                        .order('id', { ascending: true })
+                                        .range(from, to),
+                        MAX_CATALOGUE_CHANNELS
+                );
+                if (channelsPaged.error) return { unifiedEnabled: true, channels: [], truncated: false };
+                canonicalRows.push(...channelsPaged.rows);
         }
 
         // 4. The PURE deterministic grouping.

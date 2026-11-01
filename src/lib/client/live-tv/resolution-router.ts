@@ -709,7 +709,7 @@ export class LiveTvPlaybackRouter {
                 }
 
                 // ---------------------------------------------------------------
-                // 2026-11 round 36 — JIO GEO-BLOCK + STANDALONE INDIAN PROXY.
+                // 2026-11 round 36/37 — GEO-BLOCK + STANDALONE INDIAN PROXY.
                 // Applied to the FINAL media URL (both candidate kinds).
                 //
                 // Jio's CDN answers `451 Unavailable For Legal Reasons` to every
@@ -720,13 +720,15 @@ export class LiveTvPlaybackRouter {
                 // fix it. The policy:
                 //   * Indian proxy configured (the Admin → Feature Control
                 //     app_config override, or PUBLIC_INDIAN_PROXY_URL) → EVERY
-                //     allowlisted Live TV stream rides the STANDALONE Indian
-                //     proxy (indian-proxy/server.js — deployed on an Indian
-                //     VPS / Render.com). The by-url manifest contract hands the
-                //     proxy the channel's EXACT playlist URL + format; the
-                //     proxy injects its freshly-synced Cookie/UA/Referer and
-                //     rewrites DASH/HLS segments back onto itself. It REPLACES
-                //     the Cloudflare Worker as the Live TV stream proxy.
+                //     Live TV stream rides the STANDALONE Indian proxy
+                //     (indian-proxy/server.js) — round 37 made this UNIVERSAL:
+                //     the old `isLivetvProxyUrl` host gate is gone, so Sony
+                //     (slivcdn.com), Hotstar, Akindi and ANY other playlist
+                //     source are proxied too, not just Jio hosts. The proxy
+                //     holds the per-channel credentials for synced playlist
+                //     URLs; unknown URLs fall through to its generic
+                //     passthrough. It REPLACES the Cloudflare Worker as the
+                //     Live TV stream proxy.
                 //   * not set + Jio stream         → the candidate is SKIPPED
                 //     before any playback surface exists (the 20s startup
                 //     watchdog would burn on a guaranteed 451); the session
@@ -746,7 +748,10 @@ export class LiveTvPlaybackRouter {
                         : candidate.resolver === null && this.streamProxyBase
                                 ? { kind: 'worker' as const, base: this.streamProxyBase }
                                 : null;
-                if (wrap && isLivetvProxyUrl(firstUrl)) {
+                // Round 37 — the indian proxy is UNIVERSAL (every stream, any
+                // host); the Worker keeps its CDN-suffix gate (VOD hosts etc.).
+                const shouldProxy = wrap !== null && (wrap.kind === 'indian' || isLivetvProxyUrl(firstUrl));
+                if (wrap && shouldProxy) {
                         const origin = typeof location !== 'undefined' ? location.origin : '';
                         if (origin) {
                                 const proxify = (raw: string): string => {
