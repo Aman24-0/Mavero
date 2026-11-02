@@ -95,7 +95,17 @@ console.log('§2 — Proxy auth failures: fast 403 + BACKGROUND re-sync');
   ok(handlersUsingFastPath === 3, '§2.7 segment + manifest + generic handlers all answer auth failures via the fast path', `found ${handlersUsingFastPath}/3`);
 
   // 2.8 — streaming: pipeline tears down on either side's error (never buffered).
-  ok(serverJs.includes("require('stream/promises')") && serverJs.includes('pipeline(reader, res,'), '§2.8 segment streaming uses stream.pipeline (backpressure + cleanup, nothing buffered)');
+  //       Round 38: the old callback-shaped call (`pipeline(reader, res, cb)`)
+  //       fed a FUNCTION to stream/promises' pipeline — it rejected with
+  //       ERR_INVALID_RETURN_VALUE and the unhandled rejection KILLED the
+  //       process on the first segment request. The call must stay awaited,
+  //       over a Node stream, with no function argument.
+  ok(
+    serverJs.includes("require('stream/promises')") &&
+      serverJs.includes('await pipeline(nodeStream, res);') &&
+      !serverJs.includes('pipeline(reader, res,'),
+    '§2.8 segment streaming AWAITS stream.pipeline over a NODE stream (backpressure + cleanup, nothing buffered, no callback misuse)'
+  );
   ok(serverJs.includes('Readable.fromWeb(upstream.body)'), '§2.9 segments stream via Readable.fromWeb (byte-for-byte, Range preserved)');
 }
 

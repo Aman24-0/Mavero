@@ -72,7 +72,7 @@
 //   SYNC_INTERVAL_HOURS     default 5 (cookies expire every 6h)
 //   PUBLIC_BASE_URL         optional — public https base (Render injects the
 //                           real host per request; set only behind a fixed domain)
-//   SEGMENT_HOST_ALLOWLIST  default jio.com,jiocinema.com
+//   SEGMENT_HOST_ALLOWLIST  default * (any public DNS host — universal proxy)
 //   DEFAULT_JIO_REFERER     default https://jioplus2plugx.lovable.app/
 //   UPSTREAM_TIMEOUT_MS     default 15000
 //
@@ -80,6 +80,28 @@
 // ============================================================================
 
 'use strict';
+
+// ---------------------------------------------------------------------------
+// LAST-RESORT CRASH GUARDS (round 38) — the proxy must NEVER die mid-broadcast.
+// An unhandled rejection used to kill the whole process the moment a player
+// requested its first segment (the mis-shaped pipeline call inside
+// sendUpstreamResponse). Expected stream noise — client disconnects, the
+// tunnel's `context canceled`, upstream hiccups — is swallowed by the stream
+// code itself; these handlers are the safety net for anything that slips
+// through: the error is logged WITH its stack (the bug can still be found and
+// fixed) but the process KEEPS SERVING. Registered before any require so even
+// boot-time failures are caught.
+// ---------------------------------------------------------------------------
+
+process.on('uncaughtException', (err) => {
+  console.error('[CRASH PREVENTED] Uncaught Exception:', (err && err.stack) || String(err));
+});
+process.on('unhandledRejection', (reason) => {
+  console.error(
+    '[CRASH PREVENTED] Unhandled Rejection:',
+    reason instanceof Error ? (reason.stack || reason.message) : String(reason)
+  );
+});
 
 const express = require('express');
 const crypto = require('crypto');
@@ -611,6 +633,46 @@ function manifestFormatFor(url, body) {
 // Streaming segment delivery
 // ---------------------------------------------------------------------------
 
+/**
+ * Release an upstream body this request is NOT going to pipe (round 38).
+ * An unread fetch() body pins its socket until GC — on a phone (Termux) with
+ * hours of uptime that quietly exhausts the process. `cancel()` returns the
+ * connection to undici's pool immediately.
+ */
+function drainUpstream(upstream) {
+  try {
+    if (upstream && upstream.body && typeof upstream.body.cancel === 'function') {
+      Promise.resolve(upstream.body.cancel()).catch(() => {});
+    }
+  } catch {
+    /* nothing to release */
+  }
+}
+
+/**
+ * A client disconnect mid-segment is NORMAL live-TV noise (a channel zap, the
+ * Quick Tunnel's `context canceled`, a phone locking its screen). pipeline
+ * surfaces it as one of these errors — they are expected and must NEVER take
+ * the server down.
+ */
+function isBenignStreamError(err) {
+  if (!err) return true;
+  if (err.name === 'AbortError') return true;
+  const code = String(err.code || '');
+  if (
+    code === 'ERR_STREAM_PREMATURE_CLOSE' ||
+    code === 'ERR_STREAM_DESTROYED' ||
+    code === 'ERR_STREAM_WRITE_AFTER_END' ||
+    code === 'ABORT_ERR' ||
+    code === 'ECONNRESET' ||
+    code === 'ECONNABORTED' ||
+    code === 'EPIPE'
+  ) {
+    return true;
+  }
+  return /premature close|aborted|socket hang up/i.test(String(err.message || ''));
+}
+
 async function streamUpstream(req, res, url, entry) {
   if (!hostAllowed(url, entry)) {
     res.status(403).json({ error: 'host_not_allowed' });
@@ -632,13 +694,27 @@ async function streamUpstream(req, res, url, entry) {
       if (upstream.authFailure) authFailureResponse(res, upstream);
       else res.status(upstream.status).json({ error: 'upstream_error', status: upstream.status });
     }
+    drainUpstream(upstream); // round 38 — release the unread body's socket
     return;
   }
-  sendUpstreamResponse(res, upstream);
+  await sendUpstreamResponse(res, upstream);
 }
 
-/** Pipe an ALREADY-FETCHED upstream response to the client (never buffered). */
-function sendUpstreamResponse(res, upstream) {
+/**
+ * Pipe an ALREADY-FETCHED upstream response to the client (never buffered).
+ *
+ * Round 38 — this is now async and AWAITS the pipeline. The previous call
+ * passed a completion callback to `pipeline` from `stream/promises`, which
+ * parses a function argument as a "destination function", calls it and
+ * expects an AsyncIterable/Promise back — `() => {}` returned undefined, so
+ * EVERY segment request rejected with
+ *   `TypeError [ERR_INVALID_RETURN_VALUE]: Expected AsyncIterable or Promise
+ *    to be returned from the "destination" function but got undefined.`
+ * and the unhandled rejection killed the whole process. The Web ReadableStream
+ * from fetch() is also converted to a NODE stream first (`Readable.fromWeb`) —
+ * pipeline only accepts Node streams.
+ */
+async function sendUpstreamResponse(res, upstream) {
   const headers = {};
   for (const h of ['content-type', 'content-length', 'content-range', 'accept-ranges', 'etag', 'last-modified']) {
     const v = upstream.headers.get(h);
@@ -646,19 +722,27 @@ function sendUpstreamResponse(res, upstream) {
   }
   headers['Access-Control-Allow-Origin'] = '*';
   headers['Cache-Control'] = 'public, max-age=5';
-  res.status(upstream.status === 206 ? 206 : 200);
+  // raw `statusCode =` (NOT express's res.status()): this helper only needs
+  // core Node response API, so it also works when driven directly in tests.
+  res.statusCode = upstream.status === 206 ? 206 : 200;
   for (const [k, v] of Object.entries(headers)) res.setHeader(k, v);
   if (!upstream.body) {
     res.end();
     return;
   }
-  // STREAM — never buffer a whole segment. `pipeline` (round 37) tears the
-  // stream down properly on EITHER side's error/premature close, where a
-  // bare .pipe() could leak the upstream socket.
-  const reader = Readable.fromWeb(upstream.body);
-  pipeline(reader, res, () => {
-    /* ended, errored, or the client went away — the sockets are cleaned up */
-  });
+  // STREAM — never buffer a whole segment. `pipeline` tears the stream down
+  // properly on EITHER side's error/premature close, where a bare .pipe()
+  // could leak the upstream socket. The promise form is awaited INSIDE a
+  // try/catch: a client going away mid-segment (AbortError /
+  // ERR_STREAM_PREMATURE_CLOSE / EPIPE / …) is expected and silently ignored.
+  try {
+    const nodeStream = Readable.fromWeb(upstream.body);
+    await pipeline(nodeStream, res);
+  } catch (err) {
+    if (!isBenignStreamError(err)) {
+      console.error(`[segment] pipe failed: ${String((err && err.message) || err)}`);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -780,6 +864,7 @@ async function handleManifest(req, res) {
     // re-sync inside the request; see fetchUpstream).
     if (upstream.authFailure) authFailureResponse(res, upstream);
     else res.status(upstream.status).json({ error: 'upstream_error', status: upstream.status });
+    drainUpstream(upstream); // round 38 — release the unread body's socket
     return;
   }
   const body = await upstream.text();
@@ -914,6 +999,7 @@ app.get('/api/fetch', async (req, res) => {
     // Round 37 — fast 403 + retryable on stale credentials.
     if (upstream.authFailure) authFailureResponse(res, upstream);
     else res.status(upstream.status).json({ error: 'upstream_error', status: upstream.status });
+    drainUpstream(upstream); // round 38 — release the unread body's socket
     return;
   }
   const contentType = String(upstream.headers.get('content-type') || '');
@@ -922,8 +1008,18 @@ app.get('/api/fetch', async (req, res) => {
   // unparseable body still lands here as a generic byte stream.
   const format = manifestFormatFor(url, body);
   if (!format && !/dash\+xml|mpegurl/i.test(contentType)) {
-    // Not a manifest — stream the ALREADY-FETCHED bytes (no second fetch).
-    sendUpstreamResponse(res, upstream);
+    // Not a manifest — the bytes are ALREADY in memory (.text() consumed the
+    // body, so the response object cannot be re-streamed: piping it would
+    // crash the pipeline on a disturbed stream). Send them as-is instead.
+    res.status(upstream.status === 206 ? 206 : 200);
+    if (contentType) res.setHeader('Content-Type', contentType);
+    for (const h of ['content-range', 'accept-ranges', 'etag', 'last-modified']) {
+      const v = upstream.headers.get(h);
+      if (v) res.setHeader(h, v);
+    }
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cache-Control', 'public, max-age=5');
+    res.send(body);
     return;
   }
   if (!format) {
@@ -961,4 +1057,16 @@ if (require.main === module) {
   });
 }
 
-module.exports = { parsePlaylist, rewriteMpd, rewriteHls, manifestFormatFor, normalizePlaylistUrl, b64u, hostAllowed, upstreamHeaders };
+module.exports = {
+  parsePlaylist,
+  rewriteMpd,
+  rewriteHls,
+  manifestFormatFor,
+  normalizePlaylistUrl,
+  b64u,
+  hostAllowed,
+  upstreamHeaders,
+  // round 38 — exported for the stream-crash regression test (livetv_r6_*).
+  sendUpstreamResponse,
+  isBenignStreamError
+};
