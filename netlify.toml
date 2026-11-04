@@ -25,7 +25,9 @@
     #     hash inline scripts, but the dev server + some client hydration
     #     paths use inline scripts. 'unsafe-inline' is required for
     #     SvelteKit compatibility (SvelteKit does not currently emit
-    #     per-request nonces by default).
+    #     per-request nonces by default). https://cloud.umami.is — the
+    #     Umami Cloud tracker script loaded from src/app.html (see the
+    #     Umami note below).
     #   * style-src 'self' 'unsafe-inline' — Tailwind CSS v4 + Svelte
     #     component styles are inlined.
     #   * img-src 'self' data: https://image.tmdb.org — TMDB poster/backdrop
@@ -109,7 +111,24 @@
     # NEW EMBED providers added in the same round (TGVID tgvid.lovable.app,
     # ZXCStream zxcstream.cc) need NO entry: frame-src * deliberately covers
     # admin-configured provider embeds (see the frame-src rationale above).
-    Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://image.tmdb.org; media-src 'self' https://zcdn.bluevelvet.space https://ha.vixolity.com; font-src 'self'; connect-src 'self' https://*.supabase.co https://image.tmdb.org https://zcdn.bluevelvet.space https://ha.vixolity.com https://sub.vdrk.site https://api.theintrodb.org; frame-src *; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'"
+    #
+    # NOTE on Umami Cloud (Phase 1, deploy follow-up 2026-11): the analytics
+    # tracker is an EXTERNAL script from the FIXED origin
+    # https://cloud.umami.is/script.js (src/app.html) and it beacons page
+    # views + custom events to ITS BAKED-IN collect endpoint — verified in
+    # the actually-served cloud.umami.is/script.js: the collect host default
+    # is https://gateway.umami.is (the tracker posts to
+    # gateway.umami.is/api/send), NOT cloud.umami.is. Hence exactly two
+    # entries, both fixed vendor HTTPS origins (never user input):
+    #   * script-src — loading the external tracker would otherwise be
+    #     rejected ("Refused to load … violates … script-src");
+    #   * connect-src — the sendBeacon/fetch event posts would otherwise be
+    #     rejected ("Refused to connect … connect-src") and analytics would
+    #     silently record NOTHING (the failure is invisible server-side).
+    # The website id itself ships via PUBLIC_UMAMI_WEBSITE_ID — see
+    # .env.example. Adding these origins reveals nothing new: both are
+    # already public constants of the deployed analytics vendor.
+    Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-inline' https://cloud.umami.is; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://image.tmdb.org; media-src 'self' https://zcdn.bluevelvet.space https://ha.vixolity.com; font-src 'self'; connect-src 'self' https://*.supabase.co https://image.tmdb.org https://zcdn.bluevelvet.space https://ha.vixolity.com https://sub.vdrk.site https://api.theintrodb.org https://gateway.umami.is; frame-src *; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'"
 
 [[headers]]
   for = "/sw.js"

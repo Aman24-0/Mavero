@@ -44,6 +44,7 @@ Real values must be provided through Netlify’s encrypted environment-variable 
 | `PUBLIC_SUPABASE_URL` | Dedicated MAVERO Supabase project URL | Public runtime configuration |
 | `PUBLIC_SUPABASE_PUBLISHABLE_KEY` | MAVERO Supabase publishable key | Public runtime configuration |
 | `PUBLIC_SUPABASE_AUTH_REDIRECT_URL` | Production HTTPS origin or approved callback URL | Public runtime configuration |
+| `PUBLIC_UMAMI_WEBSITE_ID` | Umami Cloud website id for the analytics script tag in `src/app.html` (unset = analytics records nothing) | Public runtime configuration |
 | `PRIVATE_SUPABASE_SERVICE_ROLE_KEY` | Phase 7B server-only registry lookup credential | Encrypted server-side secret; never public |
 | `TMDB_READ_ACCESS_TOKEN` | Server-only TMDB credential (v4 Read Access Token) | Server-side secret |
 | `TMDB_API_KEY` | Server-only TMDB fallback credential (v3 API key) | Server-side secret |
