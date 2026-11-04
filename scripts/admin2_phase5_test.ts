@@ -121,29 +121,8 @@ ok('D2. content/cache.ts infrastructure unchanged (available for future use)');
 // E. No regressions
 // ============================================================
 
-// E1. Legacy /admin/users/* redirects intact
-const usersServer = read('src/routes/admin/users/+page.server.ts');
-assert.match(usersServer, /throw redirect\(303, `\/admin\/analytics\?/, 'E1a. /admin/users redirect stub intact');
-const overviewRedirect = read('src/routes/admin/users/overview/+page.server.ts');
-assert.match(overviewRedirect, /throw redirect\(303, `\/admin\/analytics\?/, 'E1b. /admin/users/overview redirect stub intact');
-ok('E1. Legacy /admin/users/* redirect stubs intact');
-
-// E2. [userId] page still uses AdminAppShell
-const userIdPage = read('src/routes/admin/users/[userId]/+page.svelte');
-assert.match(userIdPage, /<AdminAppShell active="analytics">/, 'E2a. [userId] page uses AdminAppShell');
-ok('E2. /admin/users/[userId] remains on AdminAppShell');
-
-// E3. Analytics tabs all present
-const analyticsPage = read('src/routes/admin/analytics/+page.svelte');
-assert.match(analyticsPage, /currentTab === 'overview'/, 'E3a. Analytics overview tab present');
-assert.match(analyticsPage, /currentTab === 'users'/, 'E3b. Analytics users tab present');
-assert.match(analyticsPage, /currentTab === 'viewing'/, 'E3c. Analytics viewing tab present');
-assert.match(analyticsPage, /currentTab === 'providers'/, 'E3d. Analytics providers tab present');
-assert.match(analyticsPage, /currentTab === 'retention'/, 'E3e. Analytics retention tab present');
-ok('E3. All 5 Analytics tabs present + functional');
-
-// E4. Fallback empty state still present (Phase 4 fix)
-assert.match(analyticsPage, /Loading analytics data/, 'E4a. Analytics fallback empty state present (Phase 4 fix intact)');
-ok('E4. Analytics fallback empty state intact (Phase 4 fix preserved)');
+// E1-E4 RETIRED (Phase 6): the legacy /admin/users/* redirect stubs, the
+// [userId] page, and the /admin/analytics workspace were DELETED with the
+// Umami Cloud migration — Umami Cloud serves the analytics dashboards.
 
 console.log(`\nAdmin 2.0 Phase 5 tests passed (${passed} check groups).`);

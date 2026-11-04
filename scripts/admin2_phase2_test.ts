@@ -56,7 +56,8 @@ const overviewServer = read('src/routes/admin/+page.server.ts');
 const overviewPage = read('src/routes/admin/+page.svelte');
 const rootLayout = read('src/routes/+layout.svelte');
 const appCss = read('src/app.css');
-const analyticsOverview = read('src/lib/server/analytics/overview.ts');
+// Phase 6 (Umami Cloud migration): src/lib/server/analytics/overview.ts
+// was deleted with the custom dashboard — analyticsOverview reads retired.
 const opsService = read('src/lib/server/hosting/operations/service.ts');
 const hostingControlService = read('src/lib/server/hosting/control/service.ts');
 const libraryService = read('src/lib/server/hosting/library/service.ts');
@@ -210,18 +211,10 @@ ok('D3. Overview page: duplicate "Hosting & Media" quick-grid removed (Overview 
 // E. Performance parallelization
 // ============================================================
 
-// Analytics fetchTrend: parallelized via Promise.all
-assert.match(analyticsOverview, /await Promise\.all\(\s*buckets\.map\(async \(bucket\) =>/, 'analytics fetchTrend: buckets queried in parallel via Promise.all');
-assert.doesNotMatch(analyticsOverview, /for \(const bucket of buckets\) \{[\s\S]*?await query/, 'analytics fetchTrend: no sequential await in for-loop');
-ok('E1. Analytics fetchTrend: 31 sequential bucket queries → 1 parallel Promise.all batch (3-4s → ~500ms)');
-
-// Analytics computeGuestNewReturning: parallelized
-assert.match(analyticsOverview, /const \[priorRes, currentRes\] = await Promise\.all\(/, 'analytics computeGuestNewReturning: prior + current queries parallelized');
-ok('E2. Analytics computeGuestNewReturning: 2 sequential queries → parallel Promise.all');
-
-// Analytics fetchMetrics: returningUsers + guestNewReturn parallelized
-assert.match(analyticsOverview, /const \[returningUsers, guestNewReturn\] = await Promise\.all\(/, 'analytics fetchMetrics: returningUsers + guestNewReturn parallelized');
-ok('E3. Analytics fetchMetrics: returning + guest-new-return queries parallelized');
+// Phase 6 (Umami Cloud migration): the analytics overview service was
+// deleted — the fetchTrend / computeGuestNewReturning / fetchMetrics
+// parallelization pins died with it. Umami Cloud serves the dashboards.
+// The OPERATIONS pins below remain (hosting/operations is live).
 
 // Operations badge counts: 3 counts parallelized
 assert.match(opsService, /const \[activeRes, failedRes, staleRes\] = await Promise\.all\(/, 'Operations getBadgeCounts: 3 counts parallelized');
@@ -282,10 +275,8 @@ assert.match(appCss, /a2-workspace :global\(\[style\*="a2-spin"\]\) \{ animation
 assert.match(appCss, /a2-workspace :global\(\.spin\) \{ animation: none !important; \}/, 'app.css: global reduced-motion override for .spin class');
 ok('F3. Global reduced-motion override added for all inline-styled admin2 spinners');
 
-// Dead Loader2 import removed from analytics page
-const analyticsPage = read('src/routes/admin/analytics/+page.svelte');
-assert.doesNotMatch(analyticsPage, /Loader2/, 'analytics page: dead Loader2 import removed');
-ok('F4. Analytics page: dead Loader2 import removed');
+// F4 RETIRED (Phase 6): the analytics page was deleted with the custom
+// dashboard — the dead-Loader2 import pin died with it.
 
 // ============================================================
 // G. Mobile card-list transformations
@@ -362,12 +353,7 @@ const attentionSummary4Col = (adminOpsAttention.match(/\.a2-attention-summary \{
 assert.equal(attentionSummary4Col, 1, 'AdminOpsAttention: 4-col grid declaration is now effective (was dead code)');
 ok('I2. AdminOpsAttention: triplicated .a2-attention-summary grid rule cleaned up (4-col on desktop, 2-col on mobile)');
 
-// Analytics: stray duplicate .a2-kpi-grid rule removed
-// The original bug was a 1fr 1fr rule OUTSIDE any media query (it
-// overrode the 4-col auto-fill default). After the fix, the only 1fr 1fr
-// rule should be the one inside @media (max-width: 768px) — exactly 1.
-const analyticsKpiMatches = (analyticsPage.match(/\.a2-kpi-grid \{ grid-template-columns: 1fr 1fr; \}/g) || []).length;
-assert.equal(analyticsKpiMatches, 1, 'Analytics: exactly ONE .a2-kpi-grid 1fr 1fr rule (the mobile @media one) — was 2 (one was a stray duplicate outside media query)');
-ok('I3. Analytics: stray duplicate .a2-kpi-grid grid rule removed (4-col auto-fill now effective on desktop)');
+// I3 RETIRED (Phase 6): the analytics page (and its .a2-kpi-grid rules)
+// was deleted with the custom dashboard.
 
 console.log(`\nAdmin 2.0 Phase 2 tests passed (${passed} check groups).`);

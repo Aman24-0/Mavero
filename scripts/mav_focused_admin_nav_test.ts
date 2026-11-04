@@ -89,7 +89,11 @@ console.log('\n§2 — Desktop sidebar unchanged (every route still reachable)')
     ok(navSrc.includes("/admin/system/feature-control"), '2f. Feature Control in navGroups (replaces Content Rules)');
     ok(navSrc.includes("/admin/system/downloads"), '2g. Downloads in navGroups');
     ok(navSrc.includes("/admin/system/integrations"), '2h. Integrations in navGroups');
-    ok(navSrc.includes("/admin/analytics"), '2i. Analytics in navGroups');
+    // Phase 6 (Umami Cloud migration): Analytics is now an EXTERNAL link
+    // to the Umami Cloud dashboard (new tab, noopener) — no internal
+    // /admin/analytics route exists anymore.
+    ok(navSrc.includes('cloud.umami.is/analytics/us/websites/'), '2i. Analytics in navGroups → external Umami Cloud dashboard');
+    ok(!navSrc.includes("'/admin/analytics'"), '2i2. no internal /admin/analytics link remains');
     ok(navSrc.includes("'/admin'"), '2j. Overview (/admin) in navGroups');
   }
 }
@@ -130,7 +134,7 @@ console.log('\n§5 — No route is unreachable on mobile');
   ok(mobileNavRoutes.includes('/admin/media/library'), '5b. bottom-nav includes Media Library');
   ok(!mobileNavRoutes.includes('/admin/hosting'), '5c. Hosting REMOVED from bottom-nav (replaced with Missing Media)');
   ok(mobileNavRoutes.includes('/admin/media/missing'), '5c2. Missing Media ADDED to bottom-nav (replaces Hosting)');
-  ok(mobileNavRoutes.includes('/admin/analytics'), '5d. bottom-nav includes Analytics');
+  ok(mobileNavRoutes.some((r: string) => r.startsWith('https://cloud.umami.is')), '5d. bottom-nav Analytics → external Umami Cloud dashboard');
 
   // Overview cards for the remaining routes.
   ok(!overview.includes('href="/admin/media/missing"'), '5e. Missing Media quick-action card REMOVED from Overview (Phase 7 fix)');

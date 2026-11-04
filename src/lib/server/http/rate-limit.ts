@@ -111,11 +111,9 @@ export const RATE_LIMIT_RULES = {
   pairingCancel: { limit: 20, windowMs: 60_000 },
   pairingCodeLookupUser: { limit: 10, windowMs: 60_000 },
   pairingCodeLookupIp: { limit: 30, windowMs: 60_000 },
-  // Phase 1 Analytics Foundation — client event ingest. Each batch may
-  // contain up to 50 events; 60 batches/min = up to 3000 events/min per
-  // client, generous for any realistic UX. Per-identity (user or IP)
-  // so a single misbehaving client cannot drive unbounded DB writes.
-  eventsIngest: { limit: 60, windowMs: 60_000 },
+  // Phase 6 (Umami Cloud migration): the eventsIngest bucket was removed
+  // together with /api/events (the endpoint it throttled). Umami Cloud
+  // ingest happens on Umami's own infrastructure.
   // Live TV HLS stream proxy — one request per manifest + one per segment/key.
   // A live stream is ~30-60 segment requests/min per viewer, so the ceiling is
   // generous (it is a safety valve, not a per-viewer throttle); the real abuse

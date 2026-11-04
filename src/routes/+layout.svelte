@@ -14,7 +14,6 @@
   import { syncDevtoolProtection } from '$lib/client/devtool-protection';
   import { isLibraryAwareRoute } from '$lib/shared/route-policy';
   import { recordInAppNavigation } from '$lib/shared/navigation';
-  import { analytics } from '$lib/client/analytics/dispatcher';
   import { umamiTrack, consumePendingUmamiAuthEvent } from '$lib/client/analytics/umami';
 
   let { children: pageChildren, data }: { children: Snippet; data: LayoutData } = $props();
@@ -59,16 +58,10 @@
         });
       }
     }
-    // Phase 1 Analytics Foundation — initialize the client dispatcher
-    // with the server-projected anonymous_id. The dispatcher no-ops
-    // track() calls if analyticsEnabled is false (used as a kill switch)
-    // or if anonymous_id is null (SSR safety). The dispatcher itself
-    // emits app_open and session_start on first configure().
-    analytics.configure({
-      anonymousId: data.anonymousId,
-      enabled: data.analyticsEnabled !== false,
-      deviceType: data.deviceType,
-    });
+    // Phase 6 (Umami Cloud migration): the old client dispatcher was
+    // DELETED together with /api/events — Umami Cloud (script in app.html)
+    // owns all client tracking now. The pending-auth-marker effect below
+    // is the only analytics wiring left in this layout.
     if (!data.user) return;
     if (!isLibraryAwareRoute(page.url.pathname)) return;
     void syncAuthenticatedState();

@@ -101,11 +101,14 @@ assert.match(adminAppShell, /\{ id: 'integrations', label: 'Add-ons & Extensions
 assert.doesNotMatch(adminAppShell, /const configItems/, 'Phase 2: configItems declaration removed (dropdown fully retired)');
 ok('1e. nav group SYSTEM has 4 items pointing to /admin/system/* (Phase G consolidation)');
 
-// PEOPLE — single Analytics item pointing to the unified Analytics workspace
-// Phase H: Analytics moved from /admin/users/overview to /admin/analytics
-assert.match(adminAppShell, /\{ id: 'analytics', label: 'Analytics', href: '\/admin\/analytics'/, 'nav: People → Analytics');
-assert.match(adminAppShell, /matchPrefix: '\/admin\/analytics'/, 'nav: People → Analytics uses matchPrefix');
-ok('1f. nav group PEOPLE has Analytics pointing to /admin/analytics (Phase H)');
+// PEOPLE — single Analytics item, now an EXTERNAL link to Umami Cloud
+// Phase 6 (Umami Cloud migration): the custom analytics dashboard was
+// deleted; Analytics links straight to the Umami Cloud dashboard and
+// opens in a NEW TAB (noopener), never participating in active-state.
+assert.match(adminAppShell, /id: 'analytics',\s*label: 'Analytics',[\s\S]*?href: 'https:\/\/cloud\.umami\.is\/analytics\/us\/websites\/[0-9a-f-]+'/, 'nav: People → Analytics (Umami Cloud, external)');
+assert.match(adminAppShell, /external: true/, 'nav: Analytics is marked external (new tab + noopener)');
+assert.doesNotMatch(adminAppShell, /'\/admin\/analytics'/, 'nav: no internal /admin/analytics link remains');
+ok('1f. nav group PEOPLE links Analytics to the Umami Cloud dashboard (external, new tab)');
 
 // ============================================================
 // 2. Configure dropdown — RETIRED in Phase G, fully removed in Phase 2
@@ -273,10 +276,11 @@ ok('9a. Overview page uses AdminPage framework + route-aware active state');
 // Phase A had "Jobs" as the 4th mobile bottom nav item, which
 // pointed to a placeholder. Phase B swaps it for "Analytics"
 // (a working destination) since the More sheet already covers
-// Jobs.
+// Jobs. Phase 6 (Umami Cloud migration): the item now carries the
+// EXTERNAL Umami Cloud dashboard URL (new tab, noopener).
 // ============================================================
-assert.match(adminAppShell, /\{ id: 'analytics', label: 'Analytics', href: '\/admin\/analytics', icon: BarChart3, matchPrefix: '\/admin\/analytics' \}/, 'mobile bottom nav has Analytics (not Jobs)');
-ok('10a. Mobile bottom nav: Home, Media, Upload, Analytics, More');
+assert.match(adminAppShell, /\{ id: 'analytics', label: 'Analytics', href: 'https:\/\/cloud\.umami\.is\/analytics\/us\/websites\/[0-9a-f-]+', icon: BarChart3, external: true \}/, 'mobile bottom nav has Analytics (external Umami Cloud link)');
+ok('10a. Mobile bottom nav: Home, Media, Upload, Analytics (Umami, external), More');
 
 // ============================================================
 // 11. Reduced-motion support

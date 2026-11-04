@@ -40,7 +40,8 @@ import {
   type LiveTvPlaybackErrorKind
 } from '$lib/client/live-tv/player-errors';
 import { LiveTvError } from '$lib/client/live-tv/errors';
-import { analytics } from '$lib/client/analytics/dispatcher';
+// Phase 6 (Umami Cloud migration): the old dispatcher was deleted — the
+// adapter emits through window.umami.track (stubbed below).
 import { ANALYTICS_EVENT_NAMES, MEANINGFUL_ACTIVITY_EVENTS, isAnalyticsEventName } from '$lib/shared/analytics-taxonomy';
 import { trackLiveTvFallbackEmbed } from '$lib/client/live-tv/analytics';
 

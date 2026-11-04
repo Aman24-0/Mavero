@@ -34,16 +34,9 @@ declare global {
       // the full request trace. NEVER used as an auth/authorization
       // boundary — only as a diagnostic correlation label.
       requestId: string;
-      // Phase 1 Analytics Foundation — server-resolved anonymous_id for
-      // this request. Read from the `mavero:anonymous-id` cookie (issued
-      // by the hook if absent/invalid). The cookie is httpOnly so the
-      // client cannot read it directly; the projected value reaches the
-      // client via PageData (see +layout.server.ts). Server-side analytics
-      // code uses this as the source of truth — NEVER a client-supplied
-      // anonymous_id. Format: `guest_<uuid>`. Null only when the cookie
-      // helper failed (extremely rare; analytics events from such a
-      // request are dropped at the ingest endpoint).
-      anonymousId: string;
+      // Phase 6 (Umami Cloud migration): the server-resolved anonymous_id
+      // was REMOVED together with the custom analytics pipeline. Umami
+      // Cloud manages its own visitor identity.
     }
 
     interface PageData {
@@ -66,15 +59,9 @@ declare global {
       // (requireAdmin()/RLS remain the sole security boundaries), and
       // no other profile data is exposed alongside it.
       devtoolExempt: boolean;
-      // Phase 1 Analytics Foundation — server-projected analytics
-      // identity for the client dispatcher. The anonymous_id matches
-      // the httpOnly cookie value (the server remains the source of
-      // truth on ingest — a tampered client value is ignored).
-      // analyticsEnabled is a kill switch for the dispatcher: if false,
-      // the dispatcher no-ops all track() calls (used during SSR and
-      // for admin-only deployments where analytics is not desired).
-      anonymousId: string | null;
-      analyticsEnabled: boolean;
+      // Phase 6 (Umami Cloud migration): the analytics projections
+      // (anonymousId / analyticsEnabled) were REMOVED together with the
+      // custom analytics pipeline. Umami Cloud owns tracking now.
     }
 
   }

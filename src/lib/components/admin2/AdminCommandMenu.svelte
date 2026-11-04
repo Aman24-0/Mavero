@@ -44,6 +44,8 @@
       icon: typeof Search;
       phase?: string;
       placeholder?: boolean;
+      /** Phase 6 (Umami migration): external destinations open in a new tab. */
+      external?: boolean;
     }>;
   };
 
@@ -82,6 +84,7 @@
       group: string;
       description?: string;
       phase?: string;
+      external?: boolean;
     }> = [];
     for (const g of navGroups) {
       for (const item of g.items) {
@@ -91,6 +94,7 @@
           href: item.href,
           group: g.label,
           phase: item.phase,
+          external: item.external,
         });
       }
     }
@@ -153,6 +157,14 @@
     const item = filtered[index];
     if (!item) return;
     close();
+    // Phase 6 (Umami migration): external destinations (the Umami Cloud
+    // dashboard) open in a NEW TAB with noopener — the same contract the
+    // sidebar / bottom-nav anchors use. Internal routes keep client-side
+    // goto navigation.
+    if (item.external) {
+      window.open(item.href, '_blank', 'noopener,noreferrer');
+      return;
+    }
     void goto(item.href);
   }
 

@@ -27,7 +27,8 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-import { analytics } from '$lib/client/analytics/dispatcher';
+// Phase 6 (Umami Cloud migration): the old dispatcher was deleted — the
+// adapter emits through window.umami.track (stubbed below).
 import { isAnalyticsEventName, ANALYTICS_EVENT_NAMES, MEANINGFUL_ACTIVITY_EVENTS } from '$lib/shared/analytics-taxonomy';
 import {
   trackLiveTvOpen,
@@ -387,15 +388,22 @@ const fallbackMigrationSql = read('../supabase/migrations/20261104000000_live_tv
     assert.doesNotMatch(source, /livetgtv/i, 'no LiveGT URLs');
   }
   // The adapter module imports cleanly under Node (this suite does exactly
-  // that), and the REAL dispatcher no-ops outside the browser — calling it
-  // must neither throw nor record anything.
+  // that). Phase 3/6 (Umami Cloud migration): the adapter emits through
+  // window.umami.track — the stub installs the same shape the real Umami
+  // Cloud script exposes; SSR (no window) must be a silent no-op that
+  // neither throws nor records anything.
   let threw = false;
+  const globalScope = globalThis as unknown as { window?: unknown };
+  const originalWindow = globalScope.window;
+  delete (globalScope as { window?: unknown }).window;
   try {
-    (analytics as unknown as { track: (n: never) => void }).track('live_tv_open');
+    trackLiveTvOpen();
   } catch {
     threw = true;
+  } finally {
+    globalScope.window = originalWindow;
   }
-  assert.equal(threw, false, 'dispatcher.track under Node (SSR import context) never throws');
+  assert.equal(threw, false, 'adapter track under Node (SSR import context, no window) never throws');
   // Taxonomy source documents the Live TV extension inline.
   assert.match(taxonomySource, /Live TV \(LT-5/, 'taxonomy source documents the Live TV extension');
   ok('security scans: adapter cannot send playback material; no console/storage/cookies; SSR-safe');

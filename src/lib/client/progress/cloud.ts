@@ -2,6 +2,7 @@ import { listFavoriteDeletions, listFavorites, listProgress, putFavorite, putFav
 import { mergeFavoriteDeletions, mergeFavorites, mergeFavoritesWithProgress, mergeProgress } from '$lib/shared/progress-merge';
 import { favoriteKey, type FavoriteDeletionRecord, type FavoriteRecord, type WatchProgressRecord } from './types';
 import type { FutureCloudProgressAdapter } from './service';
+import { umamiTrack } from '$lib/client/analytics/umami';
 
 export type SyncStatus = 'synced' | 'syncing' | 'pending' | 'offline' | 'error';
 
@@ -122,6 +123,15 @@ export async function deleteCloudFavorite(contentType: string, contentId: string
     // Phase 9 fix: also delete cloud watch_progress for this title (all episodes).
     await deleteCloudProgress(contentType, contentId, fetcher);
     const response = await fetcher(`/api/account/favorites?contentType=${encodeURIComponent(contentType)}&contentId=${encodeURIComponent(contentId)}`, { method: 'DELETE' });
+    // Phase 6 (Umami Cloud migration) — client-side `favorite_removed`
+    // event. The old server-authoritative emission on the DELETE endpoint
+    // was removed with the custom pipeline; the event now fires HERE,
+    // after a successful removal, with the same content identity the
+    // server event carried. umamiTrack is a guarded no-op — it can never
+    // break library sync.
+    if (response.ok) {
+      umamiTrack('favorite_removed', { content_id: contentId, content_type: contentType });
+    }
     return response.ok;
   } catch {
     return false;

@@ -47,7 +47,8 @@ const apiSourcesPage = readFileSync(new URL('../src/routes/admin/system/api-sour
 const featureControlPage = readFileSync(new URL('../src/routes/admin/system/feature-control/+page.svelte', import.meta.url), 'utf8');
 const downloadsPage = readFileSync(new URL('../src/routes/admin/system/downloads/+page.svelte', import.meta.url), 'utf8');
 const integrationsPage = readFileSync(new URL('../src/routes/admin/system/integrations/+page.svelte', import.meta.url), 'utf8');
-const analyticsPage = readFileSync(new URL('../src/routes/admin/analytics/+page.svelte', import.meta.url), 'utf8');
+// Phase 6 (Umami Cloud migration): the analytics page was deleted — its
+// mobile-touch contracts are retired with it.
 
 // ============================================================
 // 1. Mobile shell — safe-area on header
@@ -192,11 +193,12 @@ assert.match(adminOpsAttention, /a2-attention-summary[\s\S]*?grid-template-colum
 ok('14a. Attention summary cards have responsive breakpoint');
 
 // ============================================================
-// 15. Analytics 640px breakpoint
+// 15. Analytics 640px breakpoint — RETIRED (Phase 6)
 // ============================================================
 
-assert.match(analyticsPage, /a2-kpi-grid[\s\S]*?grid-template-columns: 1fr 1fr/, 'Analytics KPI grid has 2-column breakpoint');
-ok('15a. Analytics KPI grid has responsive breakpoint');
+// Phase 6 (Umami Cloud migration): the analytics page was deleted with
+// the custom dashboard — the KPI-grid breakpoint pin died with it.
+// Umami Cloud serves the analytics dashboards now.
 
 // ============================================================
 // 16. System API & Sources safe-area
@@ -320,7 +322,7 @@ ok('24a. All major components respect prefers-reduced-motion');
 assert.match(adminAppShell, /mobileNav[\s\S]*?Home.*\/admin'/, 'mobile nav has Home');
 assert.match(adminAppShell, /\{ id: 'media-library', label: 'Media', href: '\/admin\/media\/library'/, 'mobile nav has Media (Media Library)');
 assert.match(adminAppShell, /mobileNav[\s\S]*?Missing.*\/admin\/media\/missing'/, 'mobile nav has Missing (Missing Media — the Hosting slot replacement)');
-assert.match(adminAppShell, /mobileNav[\s\S]*?Analytics.*\/admin\/analytics'/, 'mobile nav has Analytics');
+assert.match(adminAppShell, /mobileNav[\s\S]*?Analytics.*cloud\.umami\.is\/analytics\/us\/websites\//, 'mobile nav has Analytics (external Umami Cloud link, Phase 6)');
 // 2026-10 admin restructure round 3: the More item is RESTORED in the
 // mobile nav. It toggles the More sheet (a left-anchored drawer that
 // surfaces the Settings group on mobile). Without it, Feature Control

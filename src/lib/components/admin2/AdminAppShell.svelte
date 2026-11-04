@@ -68,12 +68,17 @@
     /**
      * Optional route prefix used for active-state detection.
      * Defaults to `href`. Use this when a single nav item should
-     * stay active across multiple sibling routes — e.g. "Analytics"
-     * covers /admin/users/overview AND /admin/users/[id].
+     * stay active across multiple sibling routes.
      */
     matchPrefix?: string;
     /** Marks placeholder destinations not yet implemented. */
     placeholder?: boolean;
+    /**
+     * Phase 6 (Umami Cloud migration): external destinations open in a
+     * NEW TAB (target="_blank" rel="noopener noreferrer") and never
+     * participate in internal active-state detection.
+     */
+    external?: boolean;
   };
 
   type ConfigItem = {
@@ -152,9 +157,12 @@
         {
           id: 'analytics',
           label: 'Analytics',
-          href: '/admin/analytics',
+          // Phase 6 (Umami Cloud migration): the custom analytics
+          // dashboard was REMOVED — Analytics now links straight to the
+          // Umami Cloud dashboard (external, new tab).
+          href: 'https://cloud.umami.is/analytics/us/websites/3183b974-d71f-4c82-a3fb-8fde8cfdba49',
           icon: BarChart3,
-          matchPrefix: '/admin/analytics',
+          external: true,
         },
       ]
     },
@@ -177,7 +185,7 @@
     { id: 'overview', label: 'Home', href: '/admin', icon: LayoutGrid },
     { id: 'media-library', label: 'Media', href: '/admin/media/library', icon: Library, matchPrefix: '/admin/media/library' },
     { id: 'missing-media', label: 'Missing', href: '/admin/media/missing', icon: AlertCircle },
-    { id: 'analytics', label: 'Analytics', href: '/admin/analytics', icon: BarChart3, matchPrefix: '/admin/analytics' },
+    { id: 'analytics', label: 'Analytics', href: 'https://cloud.umami.is/analytics/us/websites/3183b974-d71f-4c82-a3fb-8fde8cfdba49', icon: BarChart3, external: true },
     { id: 'more', label: 'More', href: '#more', icon: Menu },
   ];
 
@@ -190,13 +198,14 @@
   //
   //   - Exact match for /admin (overview)
   //   - Equal OR child-of-prefix for everything else
-  //   - matchPrefix override (e.g. Analytics covers /admin/users/*)
+  //   - External items (e.g. the Umami Cloud dashboard) never activate
   //
   // Survives: direct nav, refresh, nested routes, query params,
-  // dynamic route segments (e.g. /admin/users/[userId]).
+  // dynamic route segments.
   // ============================================================
 
   function isItemActive(item: NavItem, pathname: string): boolean {
+    if (item.external) return false;
     const prefix = item.matchPrefix ?? item.href;
     // Overview is exact-match only — /admin/foo must NOT highlight Overview.
     if (prefix === '/admin') {
@@ -398,6 +407,8 @@
               class="a2-nav-link"
               class:active={activeItemId === item.id}
               href={item.href}
+              target={item.external ? '_blank' : undefined}
+              rel={item.external ? 'noopener noreferrer' : undefined}
               aria-current={activeItemId === item.id ? 'page' : undefined}
               title={sidebarCollapsed ? item.label : undefined}
             >
@@ -495,6 +506,8 @@
                   class="a2-more-link"
                   class:active={activeItemId === item.id}
                   href={item.href}
+                  target={item.external ? '_blank' : undefined}
+                  rel={item.external ? 'noopener noreferrer' : undefined}
                   aria-current={activeItemId === item.id ? 'page' : undefined}
                   onclick={closeMore}
                 >
@@ -547,6 +560,8 @@
           class="a2-bottom-item"
           class:active={activeItemId === item.id || (item.id === 'overview' && activeItemId === '')}
           href={item.href}
+          target={item.external ? '_blank' : undefined}
+          rel={item.external ? 'noopener noreferrer' : undefined}
           aria-current={activeItemId === item.id || (item.id === 'overview' && activeItemId === '') ? 'page' : undefined}
         >
           <span class="a2-bottom-icon"><Icon size={20} /></span>

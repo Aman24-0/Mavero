@@ -1,10 +1,11 @@
 // LT-5 — Live TV analytics adapter (page-owned, safe payloads ONLY).
 //
 // This module is the SINGLE place Live TV events enter Mavero's analytics
-// system. Phase 3 (Umami Cloud migration): events now flow through
+// system. Phase 3/6 (Umami Cloud migration): events flow through
 // umamiTrack ($lib/client/analytics/umami.ts) → the Umami Cloud script
-// (window.umami.track, loaded in app.html) instead of the Phase 1
-// dispatcher queue. The module still exists to make the payload contract
+// (window.umami.track, loaded in app.html). The old Phase 1 dispatcher
+// queue and /api/events ingest were deleted in the Phase 6 final
+// cleanup. The module still exists to make the payload contract
 // STRUCTURAL instead of conventional: every event is constructed here
 // from typed, non-sensitive inputs, so no caller can accidentally attach
 // playback material to an event.

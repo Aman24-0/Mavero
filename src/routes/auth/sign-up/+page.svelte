@@ -2,7 +2,7 @@
   import { ArrowRight, Mail, LockKeyhole, UserRound, Eye, EyeOff, ShieldCheck, AlertCircle, CheckCircle2 } from 'lucide-svelte';
   import AuthShell from '$components/AuthShell.svelte';
   import GoogleOAuthButton from '$components/auth/GoogleOAuthButton.svelte';
-  import { markPendingUmamiAuthEvent } from '$lib/client/analytics/umami';
+  import { markPendingUmamiAuthEvent, umamiTrack } from '$lib/client/analytics/umami';
 
   type AuthForm = { message?: string; success?: boolean; displayName?: string; email?: string };
   let { form }: { form?: AuthForm } = $props();
@@ -11,7 +11,7 @@
   let resendOpen = $state(false);
   let resendEmail = $state('');
 
-  // Phase 4 (Umami Cloud migration) — client-side `signup_completed`
+  // Phase 4/6 (Umami Cloud migration) — client-side `signup_completed`
   // event. The old server-authoritative emission was removed from the
   // signUp action (auto-session path) and from /auth/callback (Google
   // + email-confirmation paths); the event now fires from the root
@@ -22,6 +22,15 @@
   // confirmation email in the same tab — the email-confirmation
   // redirect, covering all three completion paths that had server
   // emissions before.
+  //
+  // Phase 6: the server-side `signup_started` emission was also removed
+  // (with the whole custom pipeline) — the attempt event now fires HERE,
+  // at the moment of the password form submit (the Google button has its
+  // own form and never fired signup_started).
+  function handleSignUpSubmit() {
+    umamiTrack('signup_started', { method: 'password' });
+    markPendingUmamiAuthEvent('signup_completed');
+  }
 </script>
 
 <svelte:head>
@@ -46,7 +55,7 @@
   {/if}
 
   {#if !form?.success}
-    <form method="POST" action="?/signUp" class="auth-form" onsubmit={() => markPendingUmamiAuthEvent('signup_completed')}>
+    <form method="POST" action="?/signUp" class="auth-form" onsubmit={handleSignUpSubmit}>
       <input type="hidden" name="next" value="/settings" />
 
       <label class="field">

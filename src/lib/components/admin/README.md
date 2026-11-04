@@ -9,13 +9,12 @@ audit's P4 acceptance criterion requires ("every remaining admin component has a
 **or a documented reason**"). Nothing here is dead weight by accident: every component without a
 page importer carries its reason below, and the pin suites that assert its quality are named.
 
-## Generation 1 — `src/lib/components/admin/` (v1 primitives) — LIVE for 6 routes
+## Generation 1 — `src/lib/components/admin/` (v1 primitives) — LIVE for 5 routes
 
 Kept as-is. The following routes import v1 primitives and are LIVE, actively maintained pages:
 
 | Route | v1 components used |
 |---|---|
-| `admin/users/[userId]` | AdminSection, AdminMetricCard, AdminStatusBadge, AdminEmptyState |
 | `admin/system/api-sources` | AdminSheet, AdminFormSection, AdminStatusBadge, AdminAddButton |
 | `admin/system/downloads` | AdminSheet, AdminFormSection, AdminStatusBadge, AdminAddButton |
 | `admin/system/content-rules` | AdminSheet, AdminFormSection, AdminStatusBadge, AdminAddButton |
@@ -24,22 +23,34 @@ Kept as-is. The following routes import v1 primitives and are LIVE, actively mai
 
 **Why not migrate to admin2** (decision, not omission): admin2 has NO 1:1 equivalents for these
 primitives — admin2's architecture is page-shell based (`AdminPage`, `AdminAppShell`,
-`AdminEpisodeSheet`, `dialog-stack`), while the six pages above are built on the v1
-sheet/section/badge primitives. A migration is a UI REWRITE of six live pages (several extended
+`AdminEpisodeSheet`, `dialog-stack`), while the five pages above are built on the v1
+sheet/section/badge primitives. A migration is a UI REWRITE of five live pages (several extended
 as recently as 2026-10-16: bulk reposition in content-rules, the Reposition editor in
 api-sources), not a consolidation — it cannot preserve behavior by construction and needs its own
 owner-approved design task. The boundary is also deliberately porous: admin2's own
 `AdminCloudStreamManager.svelte` imports v1 `AdminStatusBadge`.
 
+## Phase 6 retirement (2026-11 — Umami Cloud migration)
+
+The custom admin analytics dashboard was ABANDONED (Umami Cloud requires a Pro plan for API
+access, so the app links directly to the Umami Cloud dashboard instead). Deleted together with
+it, per the README's own retirement path (components + their pin suites removed in the SAME
+commit):
+
+- **Routes**: `admin/analytics`, the legacy `admin/users/*` redirect stubs, and
+  `admin/users/[userId]` (its user-detail drill-down existed only for the dashboard).
+- **Services**: `src/lib/server/analytics/{overview,users,viewing,providers,retention,ingest,anonymous-id}.ts`,
+  `src/lib/shared/analytics-period.ts`, the `/api/events` ingest endpoint and the client
+  `dispatcher.ts`.
+- **v1 components**: `AdminFunnel`, `AdminTrendChart`, `AdminMetricCard`, `AdminEmptyState`,
+  `AdminSection`, `AdminDateRangePicker` (the latter three were rendered only by the deleted
+  `[userId]` page).
+- **Pin suites**: `phase1_analytics_foundation_test`, `phase2_overview_dashboard_test`,
+  `phase3_user_management_test`, `phase4_viewing_discovery_test`,
+  `phase5_provider_analytics_test`, `phase6_retention_cohorts_test`, `admin2_phaseH_test`,
+  `admin2_phase4_test`.
+
 ## Test-only components — kept, each with its documented reason
-
-### v1 (`admin/`)
-
-| Component | Reason it is kept without a page importer | Pinned by |
-|---|---|---|
-| `AdminDateRangePicker` | Explicitly legacy-kept: "legacy list route is a redirect stub; canonical analytics page uses inline period controls" (the pin's own wording) | `phase3_user_management_test` 14d-vi, `phase2_overview_dashboard_test` 12a |
-| `AdminFunnel` | Dashboard chart primitive retained with the overview dashboard's quality pins; no page renders it since the overview redesign inlined its charts | `phase2_overview_dashboard_test` 12c |
-| `AdminTrendChart` | Same as above — inline-SVG a11y contract (`role="img"`) pinned | `phase2_overview_dashboard_test` 12b/12d/12e |
 
 ### admin2 (`admin2/`)
 
@@ -65,4 +76,4 @@ Deleting any component above requires, in the SAME commit: deleting the componen
 removing each named suite's assertions (presence-pins become absence-pins or are dropped with a
 recorded rationale — never silently), and updating this table. `admin2_phaseC_test`'s
 "old Phase C component set" assertion already pins the NON-rendering side, so absence-pins have
-precedent.
+precedent. (The Phase 6 Umami retirement above follows exactly this path.)

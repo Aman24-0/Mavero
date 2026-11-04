@@ -48,18 +48,12 @@ assert.match(manualLinkContract, /recordMediaOperation/, 'manual-link contract a
 ok('A3. Manual-link contract uses the rehomed audit writer (no upload dependency)');
 
 // ============================================================
-// B. Analytics trend uses correct field name
+// B. Analytics trend field-name contract — RETIRED (Phase 6)
 // ============================================================
-
-const analyticsPage = readFileSync('src/routes/admin/analytics/+page.svelte', 'utf8');
-assert.doesNotMatch(analyticsPage, /o\.trend\.series/, 'analytics page does NOT reference o.trend.series');
-assert.match(analyticsPage, /o\.trend\.points/, 'analytics page references o.trend.points');
-ok('B1. Analytics page uses o.trend.points (not o.trend.series)');
-
-const overviewService = readFileSync('src/lib/server/analytics/overview.ts', 'utf8');
-assert.match(overviewService, /points: TrendPoint\[\]/, 'TrendSeries type has points field');
-assert.doesNotMatch(overviewService, /series: TrendPoint\[\]/, 'TrendSeries type does NOT have series field');
-ok('B2. TrendSeries type has points (not series) — contract is consistent');
+// Phase 6 (Umami Cloud migration): the custom analytics dashboard and
+// its server services were DELETED. The o.trend.points field-name
+// contract died with them — Umami Cloud owns the analytics dashboards
+// now. Section B is intentionally empty.
 
 // ============================================================
 // C. TMDB search API returns array

@@ -1,8 +1,6 @@
 import { json } from '@sveltejs/kit';
 import { favoriteKey, type LocalContentType } from '$lib/shared/progress-records';
 import { favoriteDeletionToRow } from '$lib/server/supabase/records';
-import { recordServerEvent } from '$lib/server/analytics/ingest';
-import { createSupabaseAdminClient } from '$lib/server/supabase/admin';
 import type { RequestHandler } from './$types';
 
 function validType(value: string | null): value is LocalContentType {
@@ -28,36 +26,12 @@ export const DELETE: RequestHandler = async ({ locals, url }) => {
   const favoriteResult = await locals.supabase.from('favorites').delete().eq('user_id', user.id).eq('favorite_key', key);
   if (favoriteResult.error) return json({ message: 'Cloud library removal failed.' }, { status: 503 });
 
-  // Phase 1 Analytics Foundation — server-authoritative `favorite_removed`
-  // event. Emitted AFTER the successful tombstone + delete so we only
-  // record events for actual removals. Fire-and-forget; never breaks the
-  // response.
-  //
-  // Phase 7 audit note: `favorite_added` is NOT emitted anywhere in the
-  // current codebase (neither server-side nor client-side). It is defined
-  // in the taxonomy but deferred — there is no dedicated "add favorite"
-  // endpoint; adds go through the sync endpoint as a batch upsert. Adding
-  // `favorite_added` instrumentation is a future enhancement, not a Phase 7
-  // scope item.
-  if (locals.anonymousId) {
-    try {
-      const admin = createSupabaseAdminClient();
-      void recordServerEvent(
-        admin,
-        {
-          event_id: crypto.randomUUID(),
-          event_name: 'favorite_removed',
-          anonymous_id: locals.anonymousId,
-          user_id: user.id,
-          content_id: contentId,
-          content_type: contentType,
-        },
-        { requestId: locals.requestId }
-      );
-    } catch {
-      // Analytics must not break favorite removal.
-    }
-  }
+  // Phase 6 (Umami Cloud migration): the server-authoritative
+  // `favorite_removed` event was removed. The event now fires CLIENT-SIDE
+  // — deleteCloudFavorite() in $lib/client/progress/cloud.ts emits
+  // umamiTrack('favorite_removed', { content_id, content_type }) — so
+  // this endpoint no longer initializes a Supabase admin client just for
+  // analytics.
 
   return json({ ok: true, deletedAt });
 };

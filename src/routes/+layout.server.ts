@@ -58,16 +58,10 @@ export const load: LayoutServerLoad = async ({ locals, request, cookies }) => {
   });
   const deviceType: ClientDeviceType = deviceMetadata.deviceType;
 
-  // Phase 1 Analytics Foundation — project the server-resolved
-  // anonymous_id (issued by hooks.server.ts) to the client. The client
-  // dispatcher uses this value to enrich queued events; the server
-  // remains the source of truth at ingest time (cookie value wins).
-  // analyticsEnabled is a kill switch for the dispatcher: it is FALSE
-  // during SSR (no dispatcher should run on the server) and TRUE for
-  // normal browser requests. The dispatcher itself also checks
-  // `typeof window !== 'undefined'` so a misconfigured SSR call is a
-  // no-op rather than a crash.
-  const anonymousId = locals.anonymousId ?? null;
+  // Phase 6 (Umami Cloud migration): the anonymous_id + analyticsEnabled
+  // projections were REMOVED together with the custom analytics pipeline
+  // (dispatcher + /api/events ingest). Umami Cloud manages its own
+  // visitor identity — the layout no longer projects analytics fields.
   // App-wide config (footer/account social links) — fail-safe, never throws.
   const appConfig = await getAppConfig(locals.supabase);
 
@@ -76,7 +70,7 @@ export const load: LayoutServerLoad = async ({ locals, request, cookies }) => {
     // Guests are NOT exempt — DevTools protection is enabled for them,
     // and no profiles lookup is needed (zero extra DB cost for the
     // unauthenticated majority).
-    return { user: null, isAuthenticated: false, deviceType, devtoolExempt: false, isAdmin: false, anonymousId, analyticsEnabled: true, appConfig };
+    return { user: null, isAuthenticated: false, deviceType, devtoolExempt: false, isAdmin: false, appConfig };
   }
   const userMeta = user.user_metadata;
   const displayName = typeof userMeta?.display_name === 'string' && userMeta.display_name.trim()
@@ -99,8 +93,6 @@ export const load: LayoutServerLoad = async ({ locals, request, cookies }) => {
     deviceType,
     devtoolExempt,
     isAdmin: devtoolExempt,
-    anonymousId,
-    analyticsEnabled: true,
     appConfig
   };
 };

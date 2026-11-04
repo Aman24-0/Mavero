@@ -2,8 +2,6 @@ import { fail, redirect } from '@sveltejs/kit';
 import { friendlyAuthMessage, safeRedirectPath } from '$lib/server/supabase/server';
 import { isValidEmail, MIN_PASSWORD_LENGTH } from '$lib/shared/auth';
 import { env as publicEnv } from '$env/dynamic/public';
-import { recordServerEvent } from '$lib/server/analytics/ingest';
-import { createSupabaseAdminClient } from '$lib/server/supabase/admin';
 import { buildUnauthenticatedOAuthState, buildOAuthRedirectUrl, GOOGLE_PROVIDER, OAuthConfigError } from '$lib/shared/oauth';
 import type { Actions } from './$types';
 
@@ -28,28 +26,12 @@ export const actions: Actions = {
       return fail(400, { message: `Enter your name, a valid email, and a password with at least ${MIN_PASSWORD_LENGTH} characters.`, displayName, email });
     }
 
-    // Phase 1 Analytics Foundation — `signup_started` event. Emitted BEFORE
-    // the Supabase signUp call so we capture the attempt even if Supabase
-    // rejects it (e.g. email already registered). This is a server-side
-    // event because the form-submit is server-handled; anonymous_id is
-    // taken from the cookie. user_id is null (the user does not exist yet).
-    if (locals.anonymousId) {
-      try {
-        const admin = createSupabaseAdminClient();
-        void recordServerEvent(
-          admin,
-          {
-            event_id: crypto.randomUUID(),
-            event_name: 'signup_started',
-            anonymous_id: locals.anonymousId,
-            metadata: { method: 'password' },
-          },
-          { requestId: locals.requestId }
-        );
-      } catch {
-        // Analytics must not break sign-up.
-      }
-    }
+    // Phase 6 (Umami Cloud migration): the server-authoritative
+    // `signup_started` event was removed together with the custom
+    // analytics pipeline. The event now fires CLIENT-SIDE — the sign-up
+    // page emits umamiTrack('signup_started') from the form submit
+    // handler (the same handler that marks the pending
+    // signup_completed event consumed by the root layout).
 
     const { data, error } = await locals.supabase.auth.signUp({
       email,

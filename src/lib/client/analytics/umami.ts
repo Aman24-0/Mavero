@@ -1,8 +1,7 @@
-// Umami Cloud migration (Phase 3 — Event Migration, Client-Side).
+// Umami Cloud migration (Phases 3-6, complete).
 //
-// The old client pipeline (the dispatcher queueing batches to /api/events)
-// is being replaced by Umami Cloud: the official script (loaded in
-// src/app.html from cloud.umami.is, id injected from the
+// Umami Cloud replaced the custom pipeline: the official script (loaded
+// in src/app.html from cloud.umami.is, id injected from the
 // PUBLIC_UMAMI_WEBSITE_ID env var) records page views automatically and
 // exposes `window.umami.track(name, payload)` for custom events.
 //
@@ -14,12 +13,13 @@
 //     and never block playback — the exact reliability contract the old
 //     dispatcher gave us.
 //   * CONTRACT-STABLE — event names and payloads are UNCHANGED from the
-//     Phase 1 taxonomy (src/lib/shared/analytics-taxonomy.ts), so the
-//     admin dashboard (Phase 5) and any downstream consumer keep working.
+//     Phase 1 taxonomy (src/lib/shared/analytics-taxonomy.ts), so any
+//     downstream consumer keeps working.
 //
-// The backend dispatcher + /api/events ingest stay in place until the
-// server-side migration phase removes them — nothing here deletes or
-// bypasses them.
+// Phase 6 (final cleanup): the old pipeline — the client dispatcher and
+// the /api/events ingest endpoint — has been DELETED. This Umami helper
+// is now the app's ONLY analytics transport; event names still follow
+// the Phase 1 taxonomy (src/lib/shared/analytics-taxonomy.ts).
 
 // ── Phase 4 (server-event migration): pending auth events ──────────
 //
