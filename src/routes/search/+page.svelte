@@ -5,6 +5,7 @@
   import { Search, LoaderCircle, X, Compass, History, XCircle } from 'lucide-svelte';
   import ScrollToTop from '$components/ScrollToTop.svelte';
   import { getRecentSearches, recordRecentSearch, removeRecentSearch } from '$lib/client/recent-searches';
+  import { umamiTrack } from '$lib/client/analytics/umami';
   import type { PageData } from './$types';
   import { PRODUCTION_ORIGIN } from '$lib/shared/seo';
   import type { MediaItem } from '$data/content';
@@ -145,6 +146,13 @@
       const params = new URLSearchParams({ q: normalized });
       const selectedType = typeParam(type);
       if (selectedType) params.set('type', selectedType);
+      // Phase 4 (Umami Cloud migration) — client-side `search` event.
+      // The old server-authoritative emission on /api/content/search was
+      // removed; the event now fires here, immediately BEFORE the search
+      // request, with the same 120-char query bound the server enforced.
+      // umamiTrack is a silent no-op until the Umami script has loaded
+      // and can never break the search.
+      umamiTrack('search', { query: normalized.slice(0, 120) });
       const response = await fetch(`/api/content/search?${params.toString()}`, { signal: controller.signal });
       if (requestId !== requestSequence || controller.signal.aborted || !isSearchRouteActive()) return;
       const payload = await response.json();

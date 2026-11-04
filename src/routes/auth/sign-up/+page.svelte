@@ -2,6 +2,7 @@
   import { ArrowRight, Mail, LockKeyhole, UserRound, Eye, EyeOff, ShieldCheck, AlertCircle, CheckCircle2 } from 'lucide-svelte';
   import AuthShell from '$components/AuthShell.svelte';
   import GoogleOAuthButton from '$components/auth/GoogleOAuthButton.svelte';
+  import { markPendingUmamiAuthEvent } from '$lib/client/analytics/umami';
 
   type AuthForm = { message?: string; success?: boolean; displayName?: string; email?: string };
   let { form }: { form?: AuthForm } = $props();
@@ -9,6 +10,18 @@
   let showPassword = $state(false);
   let resendOpen = $state(false);
   let resendEmail = $state('');
+
+  // Phase 4 (Umami Cloud migration) — client-side `signup_completed`
+  // event. The old server-authoritative emission was removed from the
+  // signUp action (auto-session path) and from /auth/callback (Google
+  // + email-confirmation paths); the event now fires from the root
+  // layout once the post-auth redirect lands with an authenticated
+  // session. This submit handler only MARKS the pending event
+  // (synchronously, before the browser navigates). The marker survives
+  // the Google OAuth roundtrip AND — when the visitor opens the
+  // confirmation email in the same tab — the email-confirmation
+  // redirect, covering all three completion paths that had server
+  // emissions before.
 </script>
 
 <svelte:head>
@@ -33,7 +46,7 @@
   {/if}
 
   {#if !form?.success}
-    <form method="POST" action="?/signUp" class="auth-form">
+    <form method="POST" action="?/signUp" class="auth-form" onsubmit={() => markPendingUmamiAuthEvent('signup_completed')}>
       <input type="hidden" name="next" value="/settings" />
 
       <label class="field">
@@ -88,7 +101,7 @@
          authorization screen. Supabase Auth creates a new user when no
          matching Google identity exists, or signs in an existing one when
          it does — no duplicate account is created. -->
-    <GoogleOAuthButton action="?/google" next="/settings" label="Continue with Google" />
+    <GoogleOAuthButton action="?/google" next="/settings" label="Continue with Google" onMarkPendingAuth={() => markPendingUmamiAuthEvent('signup_completed')} />
 
     {#if !resendOpen}
       <button type="button" class="inline-link" onclick={() => (resendOpen = true)}>

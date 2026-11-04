@@ -28,6 +28,7 @@
   import { escapeJsonForScript, jsonLdScriptElement } from '$lib/shared/json-ld';
   import { haptic } from '$lib/client/haptics';
   import { showSuccessToast, showErrorToast } from '$lib/client/toast.svelte';
+  import { umamiTrack } from '$lib/client/analytics/umami';
   import type { PublicDownloadProvider, DownloadMediaType } from '$lib/shared/downloader';
   import { filterProvidersByMediaType } from '$lib/shared/downloader';
   // MAV-22 — Detail Page 3.0 dynamic artwork palette (scoped to this page).
@@ -397,6 +398,19 @@
     clientRecommendations = [];
     recommendationState = 'loading';
     void loadRecommendations(forId);
+  });
+
+  // Phase 4 (Umami Cloud migration) — client-side `detail_open` event.
+  // The old server-authoritative emission on /api/content/[type]/[id]
+  // was removed; the event now fires here in the SHARED detail component
+  // (single place covers /movie, /tv-show, /anime-movie, /anime-series).
+  // A $effect keyed on id + type (not onMount) also covers client-side
+  // navigations between two titles of the same route, where SvelteKit
+  // updates the props WITHOUT remounting the component. $effect never
+  // runs during SSR and umamiTrack is a guarded no-op — this can never
+  // break a detail page.
+  $effect(() => {
+    umamiTrack('detail_open', { content_id: id, content_type: type });
   });
 
   onMount(() => {

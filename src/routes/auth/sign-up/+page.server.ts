@@ -59,28 +59,16 @@ export const actions: Actions = {
 
     if (error) return fail(400, { message: friendlyAuthMessage(error.message, 'sign-up'), displayName, email });
 
-    // Phase 1 Analytics Foundation — `signup_completed` event. Emitted
-    // ONLY when signUp returned an immediate session (Supabase auto-logs
-    // in when email confirmation is disabled). When email confirmation
-    // is required, the actual signup_completed is emitted in the
-    // /auth/callback handler on email click.
-    if (data.session && data.user && locals.anonymousId) {
-      try {
-        const admin = createSupabaseAdminClient();
-        void recordServerEvent(
-          admin,
-          {
-            event_id: crypto.randomUUID(),
-            event_name: 'signup_completed',
-            anonymous_id: locals.anonymousId,
-            user_id: data.user.id,
-            metadata: { method: 'password_auto_session' },
-          },
-          { requestId: locals.requestId }
-        );
-      } catch {
-        // Analytics must not break sign-up.
-      }
+    // Phase 4 (Umami Cloud migration): the server-authoritative
+    // `signup_completed` emission for the auto-session path was REMOVED.
+    // The event now fires CLIENT-SIDE — the sign-up page marks a pending
+    // auth event on submit (the same marker covers the Google flow and
+    // the email-confirmation redirect) and the root layout's $effect
+    // consumes it once the redirect lands authenticated — so the
+    // sign-up action no longer initializes a Supabase admin client.
+    // `signup_started` above REMAINS a server event (the form submit is
+    // server-handled; there is no equivalent client hook for the attempt).
+    if (data.session && data.user) {
       throw redirect(303, next);
     }
 

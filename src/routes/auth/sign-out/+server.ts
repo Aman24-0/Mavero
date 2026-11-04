@@ -6,7 +6,6 @@ import { extractSessionId } from '$lib/server/auth/jwt-session-id';
 import { revokeSession } from '$lib/server/auth/device-sessions';
 import { invalidateRevocationCache } from '$lib/server/auth/session-revocation-cache';
 import { invalidateAdminCapabilityCache } from '$lib/server/streaming/admin-auth';
-import { recordServerEvent } from '$lib/server/analytics/ingest';
 
 // Sign-out endpoint.
 //
@@ -48,36 +47,11 @@ function safeLog(message: string, detail: { name?: string; code?: string | numbe
 }
 
 export const POST: RequestHandler = async ({ locals }) => {
-  // Phase 1 Analytics Foundation — server-authoritative `logout` event.
-  // Emitted BEFORE the actual signOut so we still have a valid user_id
-  // to associate with the event. anonymous_id is taken from the cookie
-  // (still present). Fire-and-forget with a bounded timeout — must not
-  // block the sign-out flow. Uses the same admin client created below
-  // for the device-session revocation (no extra client init).
-  if (locals.user?.id && locals.anonymousId) {
-    try {
-      const adminUrl = publicEnv.PUBLIC_SUPABASE_URL;
-      const adminKey = privateEnv.PRIVATE_SUPABASE_SERVICE_ROLE_KEY;
-      if (adminUrl && adminKey) {
-        const { createClient } = await import('@supabase/supabase-js');
-        const admin = createClient(adminUrl, adminKey, {
-          auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
-        });
-        void recordServerEvent(
-          admin,
-          {
-            event_id: crypto.randomUUID(),
-            event_name: 'logout',
-            anonymous_id: locals.anonymousId,
-            user_id: locals.user.id,
-          },
-          { requestId: locals.requestId }
-        );
-      }
-    } catch {
-      // Analytics must not break sign-out.
-    }
-  }
+  // Phase 4 (Umami Cloud migration): the server-authoritative `logout`
+  // event was removed. The event now fires CLIENT-SIDE — the settings
+  // page emits umamiTrack('logout') from the sign-out confirmation
+  // handler BEFORE the POST — so this endpoint no longer builds an
+  // admin client just for analytics.
 
   // Phase 1 Device Auth + Newtask §13: mark the current device session
   // as revoked BEFORE calling signOut (which invalidates the access

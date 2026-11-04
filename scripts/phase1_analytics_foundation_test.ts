@@ -377,33 +377,65 @@ const rateLimit = read('src/lib/server/http/rate-limit.ts');
 ok(/eventsIngest: \{ limit: 60, windowMs: 60_000 \}/.test(rateLimit), '9a. eventsIngest bucket registered at 60/min');
 
 // ============================================================
-// 10. Server-authoritative events wired into flows
+// 10. Events wired into flows
+//
+//     Phase 4 (Umami Cloud migration): search / detail_open / login /
+//     signup_completed / logout are now CLIENT-fired through
+//     umamiTrack → window.umami.track. The server-side recordServerEvent
+//     emissions for these five events were REMOVED (the backend
+//     dispatcher + /api/events ingest stay in place for the remaining
+//     client-dispatcher events, and signup_started stays server-side —
+//     the form submit is server-handled).
 // ============================================================
 
-// 10a. Search API emits `search`.
+// 10a. The search page emits `search` client-side BEFORE the request;
+//      the search API no longer emits it server-side.
+const searchPage = read('src/routes/search/+page.svelte');
+ok(/umamiTrack\('search', \{ query: normalized\.slice\(0, 120\) \}\)/.test(searchPage), '10a-i. the search page emits umamiTrack("search") before the request');
 const searchApi = read('src/routes/api/content/search/+server.ts');
-ok(/event_name: 'search'/.test(searchApi), '10a. search API emits search event');
+ok(!searchApi.includes('recordServerEvent'), '10a-ii. the search API no longer emits the server-side search event');
+ok(!searchApi.includes('$lib/server/analytics/ingest'), '10a-iii. the search API no longer imports the analytics ingest');
 
-// 10b. Detail API emits `detail_open`.
+// 10b. The shared DetailPage emits `detail_open` client-side for every
+//      detail route (/movie, /tv-show, /anime-movie, /anime-series); the
+//      detail API no longer emits it server-side.
+const detailPage = read('src/lib/components/DetailPage.svelte');
+ok(/umamiTrack\('detail_open', \{ content_id: id, content_type: type \}\)/.test(detailPage), '10b-i. DetailPage emits umamiTrack("detail_open") for every detail route');
 const detailApi = read('src/routes/api/content/[type]/[id]/+server.ts');
-ok(/event_name: 'detail_open'/.test(detailApi), '10b. detail API emits detail_open event');
+ok(!detailApi.includes('recordServerEvent'), '10b-ii. the detail API no longer emits the server-side detail_open event');
 
-// 10c. Sign-in emits `login`.
+// 10c. The sign-in page MARKS a pending `login` event on submit and the
+//      root layout consumes it once the session is authenticated; the
+//      sign-in action no longer emits it server-side.
+const signInPage = read('src/routes/auth/sign-in/+page.svelte');
+ok(/markPendingUmamiAuthEvent\('login'\)/.test(signInPage), '10c-i. the sign-in page marks a pending login event on submit');
 const signIn = read('src/routes/auth/sign-in/+page.server.ts');
-ok(/event_name: 'login'/.test(signIn), '10c. sign-in emits login event');
+ok(!signIn.includes('recordServerEvent'), '10c-ii. the sign-in action no longer emits the server-side login event');
 
-// 10d. Sign-up emits `signup_started` + `signup_completed`.
+// 10d. Sign-up keeps `signup_started` (server-side attempt event) but no
+//      longer emits `signup_completed`; the sign-up page marks the
+//      pending `signup_completed` event client-side (covers the
+//      auto-session, Google, and same-tab email-confirmation paths).
 const signUp = read('src/routes/auth/sign-up/+page.server.ts');
-ok(/event_name: 'signup_started'/.test(signUp), '10d-i. sign-up emits signup_started event');
-ok(/event_name: 'signup_completed'/.test(signUp), '10d-ii. sign-up emits signup_completed event (auto-session path)');
+ok(/event_name: 'signup_started'/.test(signUp), '10d-i. sign-up still emits signup_started (server-side attempt event)');
+ok(!/event_name: 'signup_completed'/.test(signUp), '10d-ii. sign-up no longer emits the server-side signup_completed event');
+const signUpPage = read('src/routes/auth/sign-up/+page.svelte');
+ok(/markPendingUmamiAuthEvent\('signup_completed'\)/.test(signUpPage), '10d-iii. the sign-up page marks a pending signup_completed event on submit');
 
-// 10e. Callback emits `signup_completed` (email-confirmation path).
+// 10e. The callback no longer emits server analytics (the Google and
+//      email-confirmation completion paths are covered by the client
+//      marker mechanism consumed by the root layout).
 const callback = read('src/routes/auth/callback/+server.ts');
-ok(/event_name: 'signup_completed'/.test(callback), '10e. /auth/callback emits signup_completed event (email confirmation path)');
+ok(!callback.includes('recordServerEvent'), '10e-i. /auth/callback no longer emits server-side auth events');
+const rootLayout = read('src/routes/+layout.svelte');
+ok(/consumePendingUmamiAuthEvent\(\)/.test(rootLayout) && /umamiTrack\(pending\)/.test(rootLayout), '10e-ii. the root layout consumes the pending auth marker via umamiTrack');
 
-// 10f. Sign-out emits `logout`.
+// 10f. The settings page emits `logout` client-side before the sign-out
+//      POST; the sign-out endpoint no longer emits it server-side.
+const settingsPage = read('src/routes/settings/+page.svelte');
+ok(/umamiTrack\('logout'\)/.test(settingsPage), '10f-i. the settings page emits umamiTrack("logout") before the sign-out POST');
 const signOut = read('src/routes/auth/sign-out/+server.ts');
-ok(/event_name: 'logout'/.test(signOut), '10f. sign-out emits logout event');
+ok(!signOut.includes('recordServerEvent'), '10f-ii. the sign-out endpoint no longer emits the server-side logout event');
 
 // 10g. Favorites DELETE emits `favorite_removed`.
 const favoritesDelete = read('src/routes/api/account/favorites/+server.ts');

@@ -4,6 +4,7 @@
   import AuthShell from '$components/AuthShell.svelte';
   import GoogleOAuthButton from '$components/auth/GoogleOAuthButton.svelte';
   import { isBigScreen } from '$lib/shared/device-class';
+  import { markPendingUmamiAuthEvent } from '$lib/client/analytics/umami';
 
   type AuthForm = { message?: string; email?: string; success?: boolean };
   let { form, data }: { form?: AuthForm; data?: { deviceType?: string } } = $props();
@@ -31,6 +32,16 @@
   // svelte-ignore state_referenced_locally -- intentional initial-value capture; form is a server snapshot
   let resetEmailValue = $state(form?.email ?? '');
   let resetOpen = $state(false);
+
+  // Phase 4 (Umami Cloud migration) — client-side `login` event. The old
+  // server-authoritative emission was removed from the signIn action; the
+  // event now fires from the root layout once the post-auth redirect
+  // lands with an authenticated session. This submit handler only MARKS
+  // the pending event (synchronously, before the browser navigates) —
+  // the layout consumes it and emits umamiTrack('login'). A failed
+  // submit leaves the marker harmless until the next submit overwrites
+  // it. The marker ALSO covers the Google flow (it survives the OAuth
+  // roundtrip in sessionStorage).
 </script>
 
 <svelte:head>
@@ -55,7 +66,7 @@
   {/if}
 
   {#if !form?.success}
-    <form method="POST" action="?/signIn" class="auth-form">
+    <form method="POST" action="?/signIn" class="auth-form" onsubmit={() => markPendingUmamiAuthEvent('login')}>
       <input type="hidden" name="next" value={nextPath} />
 
       <label class="field">
@@ -106,7 +117,7 @@
          Posts to ?/google which signs the OAuth state token (intent=sign-in
          + safe next) and redirects to Google's authorization screen. The
          QR-login option (below) remains available on big screens. -->
-    <GoogleOAuthButton action="?/google" next={nextPath} label="Continue with Google" />
+    <GoogleOAuthButton action="?/google" next={nextPath} label="Continue with Google" onMarkPendingAuth={() => markPendingUmamiAuthEvent('login')} />
 
     <!-- Newtask §8 — big-screen QR login. Navigates to the existing
          canonical big-screen QR route (/tv-login); NO pairing logic is

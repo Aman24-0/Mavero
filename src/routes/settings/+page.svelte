@@ -12,6 +12,7 @@
   import { isQrScannerDevice, deviceTypeLabel } from '$lib/shared/device-class';
   import { haptic } from '$lib/client/haptics';
   import { showSuccessToast, showErrorToast } from '$lib/client/toast.svelte';
+  import { umamiTrack } from '$lib/client/analytics/umami';
 
   let { data, form }: { data: PageData; form?: ActionData } = $props();
 
@@ -347,6 +348,12 @@
     if (signoutBusy) return;
     signoutBusy = true;
     signoutError = '';
+    // Phase 4 (Umami Cloud migration) — client-side `logout` event. The
+    // old server-authoritative emission on /auth/sign-out was removed;
+    // the event now fires HERE, before the sign-out POST (so the Umami
+    // identify context from the still-active session still applies).
+    // umamiTrack is a guarded no-op and can never block sign-out.
+    umamiTrack('logout');
     try {
       const response = await fetch('/auth/sign-out', {
         method: 'POST',

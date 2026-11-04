@@ -399,11 +399,13 @@ console.log('\n§15 — Google-specific analytics does not contain sensitive val
   const signInServer = readCode('src/routes/auth/sign-in/+page.server.ts');
   const signUpServer = readCode('src/routes/auth/sign-up/+page.server.ts');
 
-  // The analytics event metadata only carries `method: 'google'` — no
-  // tokens, no identity payloads, no provider-specific user data.
-  ok(/metadata:\s*\{\s*method:\s*['"]google['"]\s*\}/.test(callbackServer), '15a. the callback analytics event carries only method: "google"');
-  ok(/metadata:\s*\{\s*method:\s*['"]google['"]\s*\}/.test(signInServer) || !/metadata.*google/.test(signInServer), '15b. sign-in does NOT emit a Google-specific event with sensitive metadata (the callback emits the login event)');
-  ok(/metadata:\s*\{\s*method:\s*['"]google['"]\s*\}/.test(signUpServer) || !/metadata.*google/.test(signUpServer), '15c. sign-up does NOT emit a Google-specific event with sensitive metadata (the callback emits the signup_completed event)');
+  // Phase 4 (Umami Cloud migration): the callback no longer emits ANY
+  // server-side analytics — the auth events fire client-side through
+  // umamiTrack — so there is no server analytics surface left to carry
+  // tokens, identity payloads, or provider-specific user data.
+  ok(!callbackServer.includes('recordServerEvent'), '15a. the callback emits no server-side analytics at all (Phase 4: auth events are client-fired via Umami)');
+  ok(/metadata:\s*\{\s*method:\s*['"]google['"]\s*\}/.test(signInServer) || !/metadata.*google/.test(signInServer), '15b. sign-in does NOT emit a Google-specific event with sensitive metadata (auth events are client-fired via Umami)');
+  ok(/metadata:\s*\{\s*method:\s*['"]google['"]\s*\}/.test(signUpServer) || !/metadata.*google/.test(signUpServer), '15c. sign-up does NOT emit a Google-specific event with sensitive metadata (auth events are client-fired via Umami)');
 
   // No tokens, codes, identity payloads are logged anywhere.
   const allSources = callbackServer + signInServer + signUpServer;

@@ -15,6 +15,7 @@
   import { isLibraryAwareRoute } from '$lib/shared/route-policy';
   import { recordInAppNavigation } from '$lib/shared/navigation';
   import { analytics } from '$lib/client/analytics/dispatcher';
+  import { umamiTrack, consumePendingUmamiAuthEvent } from '$lib/client/analytics/umami';
 
   let { children: pageChildren, data }: { children: Snippet; data: LayoutData } = $props();
   const title = 'Mavero — Movies, TV shows & anime';
@@ -116,6 +117,28 @@
   // ONLY input. There is no client-side bypass by construction.
   $effect(() => {
     syncDevtoolProtection(data.devtoolExempt === true);
+  });
+
+  // Phase 4 (Umami Cloud migration) — client-side auth success events.
+  // The old server-authoritative `login` / `signup_completed` emissions
+  // (sign-in action, sign-up action auto-session, /auth/callback) were
+  // removed. The auth forms are plain POST forms, so the client never
+  // sees the Supabase response; instead the sign-in / sign-up pages mark
+  // a PENDING auth event in sessionStorage on submit (it survives the
+  // password redirect AND the Google OAuth roundtrip), and THIS effect
+  // consumes it the moment the layout data reports an authenticated
+  // session — umamiTrack('login' | 'signup_completed').
+  //
+  //   * Consume-on-read → the event fires exactly once per auth flow.
+  //   * No marker → no event: an already-authenticated user refreshing
+  //     a page (or any deep link) never registers a phantom login.
+  //   * $effect re-runs whenever the server layout data refreshes
+  //     (invalidateAll after the QR big-screen login, for example), so
+  //     every path that can produce a fresh session is covered.
+  $effect(() => {
+    if (data.isAuthenticated !== true) return;
+    const pending = consumePendingUmamiAuthEvent();
+    if (pending) umamiTrack(pending);
   });
 
   // Root layout snapshot — captures the scroll position whenever the

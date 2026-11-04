@@ -4,8 +4,6 @@ import { contentErrorResponse } from '$lib/server/content/response';
 import { isContentType, isValidContentId } from '$lib/server/content/types';
 import { canAccessAdultContent } from '$lib/server/content/adult-policy';
 import { detailVerdict } from '$lib/server/content/search-classify';
-import { recordServerEvent } from '$lib/server/analytics/ingest';
-import { createSupabaseAdminClient } from '$lib/server/supabase/admin';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async ({ params, locals, cookies }) => {
@@ -35,34 +33,12 @@ export const GET: RequestHandler = async ({ params, locals, cookies }) => {
       }
     }
 
-    // Phase 1 Analytics Foundation — server-authoritative `detail_open`
-    // event. Emitted AFTER the access guard so unauthorized adult-access
-    // attempts do NOT generate a detail_open (they 404 above). Only
-    // successful detail resolutions count. Fire-and-forget with a bounded
-    // timeout; failures never break the response.
-    if (locals.anonymousId) {
-      try {
-        const admin = createSupabaseAdminClient();
-        void recordServerEvent(
-          admin,
-          {
-            event_id: crypto.randomUUID(),
-            event_name: 'detail_open',
-            anonymous_id: locals.anonymousId,
-            user_id: locals.user?.id ?? null,
-            content_id: params.id,
-            content_type: params.type as 'movie' | 'series' | 'anime',
-            metadata: {
-              title: result?.title?.slice(0, 200) ?? null,
-              adult: detailVerdict(result.tags) === 'adult',
-            },
-          },
-          { requestId: locals.requestId }
-        );
-      } catch {
-        // Analytics must not break detail — silently ignore.
-      }
-    }
+    // Phase 4 (Umami Cloud migration): the server-authoritative
+    // `detail_open` event was removed. The event now fires CLIENT-SIDE —
+    // the shared DetailPage component emits umamiTrack('detail_open',
+    // { content_id, content_type }) when a detail page mounts — so a
+    // plain detail navigation no longer depends on this API route (the
+    // pages resolve their data through the server load function).
 
     return json({ ok: true, item: result });
   } catch (error) {

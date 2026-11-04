@@ -26,9 +26,22 @@
   export let next: string = '/settings';
   /** The visible button label. */
   export let label: string = 'Continue with Google';
+  /**
+   * Optional submit hook (Phase 4 Umami migration): the sign-in /
+   * sign-up pages mark a pending auth analytics event here, BEFORE the
+   * browser navigates to Google — the marker then survives the whole
+   * OAuth roundtrip in sessionStorage and the root layout consumes it.
+   * Purely optional — callers without analytics needs stay untouched.
+   */
+  export let onMarkPendingAuth: (() => void) | undefined = undefined;
+
+  function handleSubmit() {
+    // Runs synchronously inside the submit event, before navigation.
+    onMarkPendingAuth?.();
+  }
 </script>
 
-<form method="POST" action={action} class="google-oauth-form">
+<form method="POST" action={action} class="google-oauth-form" onsubmit={handleSubmit}>
   <input type="hidden" name="next" value={next} />
   <button type="submit" class="google-cta">
     <span class="google-mark" aria-hidden="true">

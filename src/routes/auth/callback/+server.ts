@@ -1,7 +1,5 @@
 import { redirect } from '@sveltejs/kit';
 import { safeRedirectPath } from '$lib/server/supabase/server';
-import { recordServerEvent } from '$lib/server/analytics/ingest';
-import { createSupabaseAdminClient } from '$lib/server/supabase/admin';
 import {
   verifyOAuthState,
   GOOGLE_PROVIDER,
@@ -52,7 +50,8 @@ import type { RequestHandler } from './$types';
 //     safeRedirectPath before being encoded, and the fallback is
 //     /settings (the canonical account route).
 //   * No tokens, codes, identity payloads, or provider secrets are
-//     logged. Analytics events carry method metadata only.
+//     logged. (Since the Phase 4 Umami migration this route emits no
+//     analytics at all — auth events fire on the client.)
 //   * A failed Google flow cannot leave an unintended authenticated
 //     session: on conflict / verification failure we sign the user out
 //     and redirect to /auth/sign-in.
@@ -126,7 +125,7 @@ export const GET: RequestHandler = async ({ url, locals }) => {
   // For 'sign-in' / 'sign-up': this creates a fresh session.
   // For 'link': Supabase's linkIdentity uses the same PKCE code-exchange
   // path; the identity is linked to the currently authenticated user.
-  const { data, error } = await locals.supabase.auth.exchangeCodeForSession(code);
+  const { error } = await locals.supabase.auth.exchangeCodeForSession(code);
   if (error) {
     // Distinguish duplicate-identity conflicts (the Google identity is
     // already linked to ANOTHER user) from generic code-exchange errors.
@@ -169,57 +168,15 @@ export const GET: RequestHandler = async ({ url, locals }) => {
   }
 
   // ── sign-in / sign-up success ──────────────────────────────────────
-  // Phase 1 Analytics Foundation — server-authoritative events. Two
-  // distinct contracts meet here:
-  //
-  //   * EMAIL CONFIRMATION (no signed state → intent === null): this
-  //     callback is where a pending sign-up COMPLETES (the sign-up
-  //     action only emits `signup_completed` for the auto-session path
-  //     — its own comment defers the confirmation case to this route).
-  //     Emits `signup_completed` with `method: 'email_confirmation'`.
-  //     [2026-10 fix] the Google rewrite accidentally dropped this
-  //     emission and labeled the email path `method: 'google'` — both
-  //     the event name and the method are restored to the documented
-  //     foundation contract (funnel counts + honest method metadata).
-  //
-  //   * GOOGLE flows discriminate on the signed intent: 'sign-up' (new
-  //     user) → `signup_completed`, 'sign-in' (existing user) →
-  //     `login`. Both carry `method: 'google'` — no tokens, no
-  //     identity payloads.
-  try {
-    const user = data.user;
-    if (user && locals.anonymousId) {
-      const admin = createSupabaseAdminClient();
-      if (intent === 'sign-in' || intent === 'sign-up') {
-        const eventName = intent === 'sign-up' ? 'signup_completed' : 'login';
-        void recordServerEvent(
-          admin,
-          {
-            event_id: crypto.randomUUID(),
-            event_name: eventName,
-            anonymous_id: locals.anonymousId,
-            user_id: user.id,
-            metadata: { method: 'google' },
-          },
-          { requestId: locals.requestId }
-        );
-      } else {
-        void recordServerEvent(
-          admin,
-          {
-            event_id: crypto.randomUUID(),
-            event_name: 'signup_completed',
-            anonymous_id: locals.anonymousId,
-            user_id: user.id,
-            metadata: { method: 'email_confirmation' },
-          },
-          { requestId: locals.requestId }
-        );
-      }
-    }
-  } catch {
-    // Analytics must not break the callback redirect.
-  }
+  // Phase 4 (Umami Cloud migration): the server-authoritative `login` /
+  // `signup_completed` emissions were REMOVED from this callback. Auth
+  // success events now fire CLIENT-SIDE: the sign-in / sign-up pages
+  // mark a pending auth event when the visitor submits the form
+  // (password or Google), and the root layout's $effect consumes that
+  // marker as soon as the post-auth redirect lands with an
+  // authenticated session — umamiTrack('login' | 'signup_completed').
+  // The marker survives the OAuth roundtrip (sessionStorage), so the
+  // Google flows are covered by the same client mechanism.
 
   throw redirect(303, next);
 };
