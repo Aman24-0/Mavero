@@ -41,6 +41,23 @@
   // Guests remain local-only — the `data.user` guard below already
   // short-circuits for unauthenticated users.
   onMount(() => {
+    // Umami Cloud — Phase 2 (User Identification). The tracker script is
+    // loaded in app.html (deferred, so it may not be present yet — every
+    // access is guarded and the call is a no-op until it arrives).
+    // Authenticated sessions identify themselves so Umami can distinguish
+    // logged-in users from guests. The payload is the SAME minimal,
+    // token-free identity the layout already projects (id + email +
+    // display name — never tokens, never user_metadata).
+    if (data.isAuthenticated && data.user) {
+      const umami = (window as unknown as { umami?: { identify: (profile: Record<string, unknown>) => void } }).umami;
+      if (umami) {
+        umami.identify({
+          userId: data.user.id,
+          email: data.user.email ?? undefined,
+          name: data.user.displayName ?? undefined
+        });
+      }
+    }
     // Phase 1 Analytics Foundation — initialize the client dispatcher
     // with the server-projected anonymous_id. The dispatcher no-ops
     // track() calls if analyticsEnabled is false (used as a kill switch)

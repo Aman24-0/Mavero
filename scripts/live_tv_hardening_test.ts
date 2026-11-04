@@ -2,7 +2,7 @@
 //
 // Covers the LT-5 additions and the security invariants they must uphold:
 //   * §1  Analytics adapter payload safety (BEHAVIORAL — the real adapter
-//         runs against an instrumented dispatcher singleton; every emitted
+//         runs against an instrumented Umami transport stub; every emitted
 //         payload is inspected field-by-field)
 //   * §2  Error normalization for analytics (fixed kinds only, hostile
 //         errors collapse to 'unknown', no upstream material escapes)
@@ -67,10 +67,17 @@ const fallbackMigrationSql = read('../supabase/migrations/20261104000000_live_tv
 {
   type Recorded = { name: string; props: Record<string, unknown> };
   const recorded: Recorded[] = [];
-  const dispatcher = analytics as unknown as { track: (name: string, props?: Record<string, unknown>) => void };
-  const originalTrack = dispatcher.track.bind(analytics);
-  dispatcher.track = (name: string, props?: Record<string, unknown>) => {
-    recorded.push({ name, props: props ?? {} });
+  // Phase 3 (Umami Cloud migration) — the adapter now emits through the
+  // Umami transport (window.umami.track) instead of the dispatcher. The
+  // stub installs the same shape the real Umami Cloud script exposes.
+  const globalScope = globalThis as unknown as { window?: unknown };
+  const originalWindow = globalScope.window;
+  globalScope.window = {
+    umami: {
+      track: (name: string, props?: Record<string, unknown>) => {
+        recorded.push({ name, props: props ?? {} });
+      }
+    }
   };
   try {
     const channel: LiveTvChannel = {
@@ -161,7 +168,7 @@ const fallbackMigrationSql = read('../supabase/migrations/20261104000000_live_tv
     assert.equal(((recorded[0].props.metadata as Record<string, unknown>).category as string).length, 64, 'category bounded to 64 chars');
     ok('category handling: absent omitted, length-bounded');
   } finally {
-    dispatcher.track = originalTrack;
+    globalScope.window = originalWindow;
   }
 }
 
@@ -200,10 +207,15 @@ const fallbackMigrationSql = read('../supabase/migrations/20261104000000_live_tv
   }
   // And the end-to-end guarantee: the hostile material never reaches a payload.
   const recorded: Array<Record<string, unknown>> = [];
-  const dispatcher = analytics as unknown as { track: (name: string, props?: Record<string, unknown>) => void };
-  const originalTrack = dispatcher.track.bind(analytics);
-  dispatcher.track = (_name: string, props?: Record<string, unknown>) => {
-    recorded.push(props ?? {});
+  // Phase 3 — same Umami transport stub as §1 (window.umami.track).
+  const globalScope = globalThis as unknown as { window?: unknown };
+  const originalWindow = globalScope.window;
+  globalScope.window = {
+    umami: {
+      track: (_name: string, props?: Record<string, unknown>) => {
+        recorded.push(props ?? {});
+      }
+    }
   };
   try {
     trackLiveTvError('143', hostile[2]);
@@ -213,7 +225,7 @@ const fallbackMigrationSql = read('../supabase/migrations/20261104000000_live_tv
     assert.ok(!serialized.includes('deadbeef'), 'no ClearKey material');
     assert.ok(serialized.includes('"error_kind":"unknown"'), 'normalized kind present');
   } finally {
-    dispatcher.track = originalTrack;
+    globalScope.window = originalWindow;
   }
   ok('error normalization: fixed kinds preserved, hostile errors collapse to unknown, no material leaks');
 }

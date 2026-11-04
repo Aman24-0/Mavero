@@ -163,18 +163,25 @@ function sliceOf(source: string, startMarker: string, endMarker: string): string
   assert.ok(/alter table public\.analytics_events/.test(newMigration), 'the new migration only widens the CHECK');
 
   // Behavioral: the adapter emits channelId + normalized kind ONLY.
+  // Phase 3 (Umami Cloud migration): the adapter emits through the Umami
+  // transport (window.umami.track) instead of the dispatcher — the stub
+  // installs the same shape the real Umami Cloud script exposes.
   type Recorded = { name: string; props: Record<string, unknown> };
   const recorded: Recorded[] = [];
-  const dispatcher = analytics as unknown as { track: (name: string, props?: Record<string, unknown>) => void };
-  const originalTrack = dispatcher.track.bind(analytics);
-  dispatcher.track = (name: string, props?: Record<string, unknown>) => {
-    recorded.push({ name, props: props ?? {} });
+  const globalScope = globalThis as unknown as { window?: unknown };
+  const originalWindow = globalScope.window;
+  globalScope.window = {
+    umami: {
+      track: (name: string, props?: Record<string, unknown>) => {
+        recorded.push({ name, props: props ?? {} });
+      }
+    }
   };
   try {
     trackLiveTvFallbackEmbed('154', new LiveTvPlaybackError('drm_playback_failed', 6012));
     trackLiveTvFallbackEmbed('165', new LiveTvPlaybackError('manifest_load_failed', 1001));
   } finally {
-    dispatcher.track = originalTrack;
+    globalScope.window = originalWindow;
   }
   assert.equal(recorded.length, 2, 'exactly one event per activation');
   for (const [i, entry] of recorded.entries()) {

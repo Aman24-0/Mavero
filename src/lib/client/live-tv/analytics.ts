@@ -1,11 +1,13 @@
 // LT-5 — Live TV analytics adapter (page-owned, safe payloads ONLY).
 //
-// This module is the SINGLE place Live TV events enter Mavero's existing
-// analytics system (the Phase 1 dispatcher — src/lib/client/analytics/
-// dispatcher.ts — queueing to /api/events). It exists to make the payload
-// contract STRUCTURAL instead of conventional: every event is constructed
-// here from typed, non-sensitive inputs, so no caller can accidentally
-// attach playback material to an event.
+// This module is the SINGLE place Live TV events enter Mavero's analytics
+// system. Phase 3 (Umami Cloud migration): events now flow through
+// umamiTrack ($lib/client/analytics/umami.ts) → the Umami Cloud script
+// (window.umami.track, loaded in app.html) instead of the Phase 1
+// dispatcher queue. The module still exists to make the payload contract
+// STRUCTURAL instead of conventional: every event is constructed here
+// from typed, non-sensitive inputs, so no caller can accidentally attach
+// playback material to an event.
 //
 // PAYLOAD SECURITY CONTRACT (LT-5 brief §8, live-tv-plan.md §14):
 //   ALLOWED (and nothing else):
@@ -23,13 +25,13 @@
 //     playback source arrays, query strings, user free-text.
 //
 // PRIVACY (LT-5 brief §9): no new identifiers, no cookies, no storage, no
-// fingerprinting, no session replay. The dispatcher's existing anonymous-id
-// model is reused as-is; Live TV adds nothing to it.
+// fingerprinting, no session replay. Umami records page views + these
+// events under its own anonymous visitor model; Live TV adds nothing to it.
 //
-// RELIABILITY (LT-5 brief §9): track() is a synchronous queue push that
-// no-ops when analytics is disabled — it can never block or fail playback,
-// channel selection, resolution or guide loading. This module never throws
-// (every function is a fire-and-forget call into the dispatcher).
+// RELIABILITY (LT-5 brief §9): umamiTrack() is a guarded fire-and-forget
+// call — it no-ops during SSR, until the Umami script has loaded, or if
+// the script is blocked. It can never block or fail playback, channel
+// selection, resolution or guide loading. This module never throws.
 //
 // EVENT TAXONOMY (mirrored by the DB CHECK constraint in
 // supabase/migrations/20261103000000_live_tv_analytics_events.sql and
@@ -45,7 +47,7 @@
 // High-frequency telemetry (timeupdate, buffering ticks, seek positions) is
 // deliberately NOT part of this taxonomy.
 
-import { track } from '$lib/client/analytics/dispatcher';
+import { umamiTrack } from '$lib/client/analytics/umami';
 import type { LiveTvChannel } from './types';
 import { LiveTvError } from './errors';
 import { LiveTvPlaybackError } from './player-errors';
@@ -96,7 +98,7 @@ function metadata(meta: LiveTvEventMetadata): { metadata?: Record<string, unknow
 
 /** The /live-tv page was opened (page mount). */
 export function trackLiveTvOpen(): void {
-  track('live_tv_open');
+  umamiTrack('live_tv_open');
 }
 
 /**
@@ -109,7 +111,7 @@ export function trackLiveTvChannelAction(
   reason: LiveTvSelectReason
 ): void {
   const eventName = reason === 'switch' ? 'live_tv_channel_switch' : 'live_tv_channel_select';
-  track(eventName, {
+  umamiTrack(eventName, {
     content_id: channel.id,
     ...metadata({ reason, category: channel.category })
   });
@@ -117,12 +119,12 @@ export function trackLiveTvChannelAction(
 
 /** A playback session actually reached the playing state (first time per session). */
 export function trackLiveTvPlay(channelId: string): void {
-  track('live_tv_play', { content_id: channelId });
+  umamiTrack('live_tv_play', { content_id: channelId });
 }
 
 /** The user paused an active session (user action only, never a system pause). */
 export function trackLiveTvPause(channelId: string): void {
-  track('live_tv_pause', { content_id: channelId });
+  umamiTrack('live_tv_pause', { content_id: channelId });
 }
 
 /**
@@ -130,7 +132,7 @@ export function trackLiveTvPause(channelId: string): void {
  * only the fixed LT-2/LT-3 kinds (or 'unknown') are ever transmitted.
  */
 export function trackLiveTvError(channelId: string | null, err: unknown): void {
-  track('live_tv_error', {
+  umamiTrack('live_tv_error', {
     ...(channelId !== null ? { content_id: channelId } : {}),
     ...metadata({ error_kind: liveTvErrorKindForAnalytics(err) })
   });
@@ -138,7 +140,7 @@ export function trackLiveTvError(channelId: string | null, err: unknown): void {
 
 /** The user entered or exited fullscreen on the player surface. */
 export function trackLiveTvFullscreen(channelId: string | null, action: 'enter' | 'exit'): void {
-  track('live_tv_fullscreen', {
+  umamiTrack('live_tv_fullscreen', {
     ...(channelId !== null ? { content_id: channelId } : {}),
     ...metadata({ action })
   });
@@ -155,7 +157,7 @@ export function trackLiveTvFullscreen(channelId: string | null, action: 'enter' 
  * `trackLiveTvError`, never a raw Shaka payload, URL, token or key.
  */
 export function trackLiveTvFallbackEmbed(channelId: string, err: unknown): void {
-  track('live_tv_fallback_embed', {
+  umamiTrack('live_tv_fallback_embed', {
     content_id: channelId,
     ...metadata({ error_kind: liveTvErrorKindForAnalytics(err) })
   });

@@ -411,11 +411,15 @@ ok(/event_name: 'favorite_removed'/.test(favoritesDelete), '10g. favorites DELET
 
 // 10h. Watch route emits client-side events for both guests and users.
 const watchPage = read('src/routes/watch/[type]/[id]/+page.svelte');
-ok(/trackAnalytics\('watch_start'/.test(watchPage), '10h-i. watch page emits watch_start');
-ok(/trackAnalytics\('watch_progress'/.test(watchPage), '10h-ii. watch page emits watch_progress');
-ok(/trackAnalytics\('watch_complete'/.test(watchPage), '10h-iii. watch page emits watch_complete');
-ok(/trackAnalytics\('provider_selected'/.test(watchPage), '10h-iv. watch page emits provider_selected');
-ok(/trackAnalytics\('provider_switched'/.test(watchPage), '10h-v. watch page emits provider_switched');
+// Phase 3 (Umami Cloud migration): the same five events now emit through
+// umamiTrack → window.umami.track (the dispatcher pipeline stays in place
+// until the server-side migration phase removes it).
+ok(/umamiTrack\('watch_start'/.test(watchPage), '10h-i. watch page emits watch_start');
+ok(/umamiTrack\('watch_progress'/.test(watchPage), '10h-ii. watch page emits watch_progress');
+ok(/umamiTrack\('watch_complete'/.test(watchPage), '10h-iii. watch page emits watch_complete');
+ok(/umamiTrack\('provider_selected'/.test(watchPage), '10h-iv. watch page emits provider_selected');
+ok(/umamiTrack\('provider_switched'/.test(watchPage), '10h-v. watch page emits provider_switched');
+ok(!watchPage.includes("from '$lib/client/analytics/dispatcher'"), '10h-vi. the watch page no longer imports the old dispatcher (Umami transport)');
 
 // ============================================================
 // 11. Client dispatcher — non-blocking, idempotent, session-aware
