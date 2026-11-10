@@ -1,6 +1,10 @@
 import { error, redirect } from '@sveltejs/kit';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '$lib/server/supabase/database.types';
+// Production-hardening round (2026-11): STALL protection for the uncached
+// role lookup (supabase-js has no socket timeout — a wedged connection used
+// to keep the awaited lookup pending forever and hang the load).
+import { LOAD_READ_DEADLINE_MS, withDeadline } from '$lib/server/http/with-deadline';
 
 export async function requireAdmin(locals: App.Locals, options: { redirectTo?: string } = {}) {
   // Phase 2-A: use hook-resolved locals.user (no second auth roundtrip).
@@ -109,19 +113,32 @@ export async function isAdminUser(client: SupabaseClient<Database>, userId: stri
   }
 
   try {
-    const { data, error } = await client
-      .from('profiles')
-      .select('role')
-      .eq('id', userId)
-      .limit(1)
-      .maybeSingle();
-    if (error) {
-      console.error('[Admin] Role capability lookup failed', { code: error.code, message: error.message });
-      return false; // fail-closed — cache nothing on error
-    }
-    const isAdmin = data?.role === 'admin';
-    adminCapabilityCache.set(userId, { isAdmin, expiresAt: now + ADMIN_CAPABILITY_TTL_MS });
-    return isAdmin;
+    // STALL protection (2026-11 hardening): the uncached lookup is raced
+    // against the load-read deadline. A wedged socket would otherwise keep
+    // the awaited promise pending forever and hang the whole layout load.
+    // A stall degrades EXACTLY like an error — fail-closed false, cache
+    // nothing — so the security contract is unchanged.
+    return await withDeadline(
+      (async () => {
+        const { data, error } = await client
+          .from('profiles')
+          .select('role')
+          .eq('id', userId)
+          .limit(1)
+          .maybeSingle();
+        if (error) {
+          console.error('[Admin] Role capability lookup failed', { code: error.code, message: error.message });
+          return false; // fail-closed — cache nothing on error
+        }
+        const isAdmin = data?.role === 'admin';
+        adminCapabilityCache.set(userId, { isAdmin, expiresAt: now + ADMIN_CAPABILITY_TTL_MS });
+        return isAdmin;
+      })(),
+      LOAD_READ_DEADLINE_MS,
+      // Deadline → fail-closed false; the abandoned lookup's result is
+      // ignored and nothing is cached.
+      () => false
+    );
   } catch (err) {
     console.error('[Admin] Role capability lookup exception', { name: (err as Error)?.name ?? 'unknown' });
     return false; // fail-closed — cache nothing on error

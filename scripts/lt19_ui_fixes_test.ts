@@ -185,7 +185,7 @@ function sliceOf(source: string, start: string, end: string): string {
         // The ≤640px override keeps ONLY the phone geometry — it no longer
         // switches to position:fixed and no longer couples a padding
         // compensation.
-        const phoneBlock = sliceOf(appShell, '@media (max-width: 640px) {', '@media (min-width: 1025px) {');
+        const phoneBlock = sliceOf(appShell, '@media (max-width: 640px) {', '@media (prefers-reduced-motion: reduce) {');
         const phoneTopbar = sliceOf(phoneBlock, '.topbar {', '}');
         assert.ok(!phoneTopbar.includes('position: fixed'), 'the phone topbar is NOT fixed (sticky from the base rule)');
         assert.ok(!phoneTopbar.includes('left: 0'), 'no fixed-position edge rules');
@@ -200,13 +200,14 @@ function sliceOf(source: string, start: string, end: string): string {
         assert.ok(appCss.includes('--topbar-h-safe: calc(var(--topbar-h) + env(safe-area-inset-top, 0px));'), 'the safe-area height token survives');
         // Explorer chips still stick below exactly the topbar height.
         assert.ok(explorerPage.includes('top: var(--topbar-h-safe)'), 'Explorer chips still stick below the topbar height');
-        // The desktop range is untouched (header account control fixed at the
-        // top-right — no transform there either).
-        const desktopBlock = sliceOf(appShell, '@media (min-width: 1025px) {', '</style>');
-        const headerAccount = sliceOf(desktopBlock, '.header-account {', '}');
-        assert.ok(headerAccount.includes('position: fixed'), 'the desktop account control keeps its fixed position');
-        assert.ok(!headerAccount.includes('transform'), 'the desktop account control carries no transform');
-        ok('3b. phone topbar: sticky like the tablet range, geometry verbatim, compensation removed, desktop untouched');
+        // The desktop floating chrome is REMOVED (2026-11 desktop-UX fix:
+        // Search + Account moved INTO the desktop sidebar). The desktop
+        // range no longer carries any fixed-position shell chrome — the
+        // sticky-vs-fixed contract now holds on BOTH ranges by construction.
+        assert.ok(!appShell.includes('.header-account'), 'the floating desktop chip is REMOVED from the shell (no .header-account class)');
+        assert.ok(!appShell.includes('@media (min-width: 1025px) {'), 'no desktop floating-chrome media block remains');
+        assert.ok(appShell.includes('sidebar-account'), 'the desktop Account chip lives in the sidebar');
+        ok('3b. phone topbar: sticky like the tablet range, geometry verbatim, compensation removed, desktop chrome moved into the sidebar');
 }
 
 // ============================================================

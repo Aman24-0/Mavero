@@ -125,18 +125,22 @@ assert.doesNotMatch(appShell, /label: 'My List'/, 'no My List primary nav entry'
 assert.doesNotMatch(appShell, /label: 'Account'/, 'no Account primary nav entry');
 assert.doesNotMatch(linksBlock![1], /\/my-list/, 'primaryLinks carries no /my-list href');
 assert.doesNotMatch(linksBlock![1], /\/account/, 'primaryLinks carries no /account href');
-// Phase 2 — Account lives in the HEADER, not the sidebar:
-assert.match(appShell, /class="topbar-account"/, 'mobile/tablet topbar account control exists (≤1024px)');
-assert.match(appShell, /class="header-account"/, 'desktop header account control exists (≥1025px)');
+// Phase 2 — Account lives OUTSIDE the primary nav on every breakpoint
+// (2026-11 desktop-UX fix: the desktop Account chip moved INTO the sidebar
+// bottom — the former fixed top-right header chip is removed):
+assert.match(appShell, /class="topbar-account"/, 'mobile/tablet topbar search control exists (≤1024px)');
+assert.match(appShell, /class="sidebar-account"/, 'desktop sidebar Account chip exists (≥1025px, inside the sidebar container)');
+assert.doesNotMatch(appShell, /class="header-account"/, 'the floating top-right header chip is REMOVED (Search moved into the sidebar)');
 assert.match(appShell, /class="account-sheet"|AccountSheet/, 'the compact Account sheet is mounted in the shell');
 assert.match(appShell, /aria-label="Account"/, 'the account control is announced to assistive tech');
-// The desktop sidebar carries ONLY the six content destinations — no
-// Account link inside the sidebar.
+// The sidebar Account chip opens the SHEET — it is not an /account link
+// (that route is a 308 redirect to /settings).
 const sidebarBottom = appShell.match(/<div class="sidebar-bottom">([\s\S]*?)<\/div>/);
 assert.ok(sidebarBottom, 'sidebar-bottom block captured');
-assert.doesNotMatch(sidebarBottom![1], /\/account/, 'the sidebar bottom block carries no Account link (the header owns Account)');
+assert.doesNotMatch(sidebarBottom![1], /\/account/, 'the sidebar bottom block carries no /account link (Account opens the sheet)');
+assert.match(sidebarBottom![1], /sidebar-account/, 'the sidebar bottom block carries the Account chip');
 assert.match(appShell, /sidebar-section-label/, 'the desktop sidebar has a Browse hierarchy label (desktop-appropriate structure)');
-ok('4. My List + Account removed from primary navigation; Account is a header control on every breakpoint');
+ok('4. My List + Account removed from primary navigation; Account is a sidebar chip on desktop + pill entry on touch');
 
 // ============================================================
 // 5. ROUTE ARCHITECTURE — legacy paths are 308 redirects (Phase 1)
@@ -184,19 +188,25 @@ ok('7. mobile + tablet pill: 6 columns across the ≤1024px touch range, nowrap 
 
 // ============================================================
 // 8. DESKTOP — vertical sidebar composition (intentionally different
-//    from the mobile pill) + header account control
+//    from the mobile pill) + Search & Account INSIDE the sidebar
 // ============================================================
 assert.match(appShell, /aria-label="Primary navigation"/, 'desktop rail landmark preserved');
 assert.match(appShell, /class="brand-lockup"/, 'brand lockup preserved');
 assert.match(appShell, /class="sidebar-nav"/, 'sidebar nav container preserved');
 assert.match(appShell, /class="sidebar-caption"/, 'sidebar caption preserved');
-assert.match(appShell, /class="sidebar-bottom"/, 'sidebar bottom container preserved (rule + caption only)');
-assert.match(appShell, /@media \(min-width: 1025px\)[\s\S]*?\.header-account \{[\s\S]*?position: fixed; top: 18px; right: 22px;/, 'the desktop header account control is fixed at the top-right (header right side)');
+assert.match(appShell, /class="sidebar-bottom"/, 'sidebar bottom container preserved');
+// 2026-11 desktop-UX fix: the floating top-right chip is GONE — Search and
+// Account live INSIDE the desktop sidebar (standard desktop IA). The
+// sidebar container is hidden ≤1024px, so the additions can never touch the
+// mobile/tablet composition (the desktop-only media contract).
+assert.doesNotMatch(appShell, /class="header-account"/, 'no floating top-right chip (removed from the desktop composition)');
+assert.match(appShell, /href="\/search"[\s\S]{0,400}sidebar-label">Search<\/span>/, 'Search is a sidebar link inside the nav (desktop)');
+assert.match(appShell, /\.sidebar-account \{/, 'the Account chip mirrors the sidebar-link styling');
 assert.match(appShell, /min-height: 44px/, 'sidebar links keep the 44px touch/keyboard target');
 assert.match(appShell, /\.sidebar-link:focus-visible/, 'sidebar links expose focus-visible outlines');
-assert.match(appShell, /\.header-account:focus-visible/, 'the header account control exposes focus-visible outlines');
-assert.match(appShell, /prefers-reduced-motion: reduce[\s\S]*?\.header-account/, 'the header account control honors reduced motion');
-ok('8. desktop: vertical sidebar (Browse label, collapse, 44px targets) + fixed top-right header account control');
+assert.match(appShell, /\.sidebar-account:focus-visible/, 'the sidebar Account chip exposes focus-visible outlines');
+assert.match(appShell, /prefers-reduced-motion: reduce[\s\S]*?\.sidebar-account/, 'the sidebar Account chip honors reduced motion');
+ok('8. desktop: vertical sidebar (Browse label, collapse, 44px targets) with Search + Account INSIDE the sidebar — no floating chrome');
 
 // ============================================================
 // 9. SETTINGS ROUTE — the canonical account-management experience

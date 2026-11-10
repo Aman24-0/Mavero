@@ -685,8 +685,28 @@
     //
     // For guests (no user), syncAuthenticatedState returns immediately
     // with { authenticated: false } — no network call, no delay.
+    //
+    // STALL GATE (2026-11 hardening — the "player never starts / infinite
+    // Loading player" fix): this await gates `progressReady`, which gates
+    // source selection AND the resolver start. The sync's `/api/account/sync`
+    // fetch has NO socket timeout — a wedged connection (network flake on a
+    // mobile carrier) kept the promise pending FOREVER, `prepareSource()`
+    // never ran, and the player showed its loading card indefinitely. The
+    // sync is now raced against a 1.5s gate: on timeout the route proceeds
+    // with the best LOCAL (IndexedDB) record — the exact graceful
+    // degradation the offline path already documents — while the sync
+    // CONTINUES in the background (it is a shared singleton; its merged
+    // records land in IndexedDB for the next visit). Healthy networks
+    // (sync < 1.5s) behave exactly as before: cloud-authoritative resume
+    // position and saved source.
+    const SYNC_GATE_TIMEOUT_MS = 1_500;
     if (data.user) {
-      try { await syncAuthenticatedState(); } catch { /* offline/failed — use local */ }
+      try {
+        await Promise.race([
+          syncAuthenticatedState(),
+          new Promise((resolve) => setTimeout(resolve, SYNC_GATE_TIMEOUT_MS))
+        ]);
+      } catch { /* offline/failed — use local */ }
     }
     // Phase 9 fix: load existing progress BEFORE creating the writer so
     // sourceRuntimes from the record are available at writer initialization.

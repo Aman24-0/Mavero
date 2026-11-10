@@ -60,6 +60,9 @@ import {
   userPreferenceFromRead
 } from './adult-authz';
 import type { AdultModePolicy, AdultAccessContext } from './adult-authz';
+// Production-hardening round (2026-11): STALL protection for the fresh
+// policy read (see canAccessAdultContent below).
+import { LOAD_READ_DEADLINE_MS, withDeadline } from '$lib/server/http/with-deadline';
 
 // Preserve the public type API for existing consumers.
 export type { AdultModePolicy, AdultAccessContext } from './adult-authz';
@@ -200,13 +203,26 @@ export async function getAdultAccessContext(
 
 /**
  * Convenience: just the boolean. Use this in content queries.
+ *
+ * STALL protection (2026-11 hardening): the fresh Supabase policy read has
+ * no socket-level timeout in supabase-js — a wedged connection kept this
+ * authorization evaluation pending FOREVER and hung the awaiting load
+ * function (the watch route's adult gate → infinite spinner). The read is
+ * raced against the load-read deadline; a stall THROWS, which degrades
+ * EXACTLY like an existing error: callers fail-closed (non-disclosing 404)
+ * per the documented authorization contract. Fail-closed on a stall is the
+ * same security posture the module already documents for errors.
  */
 export async function canAccessAdultContent(
   supabase: SupabaseClient<Database>,
   user: { id: string } | null | undefined,
   cookies?: { get: (name: string) => string | undefined }
 ): Promise<boolean> {
-  const ctx = await getAdultAccessContext(supabase, user, cookies);
+  const ctx = await withDeadline(
+    getAdultAccessContext(supabase, user, cookies),
+    LOAD_READ_DEADLINE_MS,
+    () => { throw new Error('adult access evaluation timed out (stall deadline exceeded)'); }
+  );
   return ctx.canAccessAdultContent;
 }
 

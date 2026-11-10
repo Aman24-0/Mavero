@@ -62,11 +62,31 @@
   //
   // Phase 2 — responsive compositions:
   //   MOBILE + TABLET (≤1024px): floating pill bottom nav (touch
-  //   composition) + topbar with the Account control on the right.
+  //   composition) + topbar with the Search control on the right.
   //   DESKTOP (≥1025px): proper vertical sidebar (Browse hierarchy,
-  //   collapse behavior) + the Account control in the header right side.
+  //   collapse behavior) + the Search AND Account controls INSIDE the
+  //   sidebar (2026-11 desktop-UX fix — see the sidebar markup).
   // The pill and the sidebar are intentionally DIFFERENT compositions —
   // the mobile pill is never copied onto desktop and vice versa.
+  //
+  // 2026-11 DESKTOP-UX FIX (reported: "Account Chip missing on desktop;
+  // Search floating in the top-right corner"): the former desktop
+  // composition rendered ONLY a fixed top-right glass chip (which was —
+  // despite its misleading `header-account` class — a SEARCH link) and had
+  // NO desktop Account control at all. The floating chip is REMOVED; the
+  // sidebar now carries both controls like any standard desktop app:
+  //   * Search  — a sidebar-link in the nav list (real <a>, active state,
+  //     collapsed-mode icon rail);
+  //   * Account — a sidebar chip above the bottom rule that opens the SAME
+  //     compact AccountSheet the mobile pill uses.
+  // BREAKPOINT CONTRACT (the user-visible ask was "@media (min-width:
+  // 1024px) so this ONLY applies to Desktop"): the additions live INSIDE
+  // the .app-sidebar container, which the ≤1024px block sets to display:
+  // none — so they render exactly on the desktop composition (≥1025px,
+  // this app's established desktop boundary) and can never touch the
+  // mobile/tablet topbar + bottom-pill layout. Keeping 1025px avoids a
+  // 1px-wide viewport (exactly 1024px) where both media queries would
+  // otherwise match and double-render the controls.
   const primaryLinks = $derived([
     { label: 'Discover', href: '/discover', key: '/discover', icon: Compass },
     { label: 'Movies', href: '/movies', key: '/movies', icon: Film },
@@ -77,10 +97,10 @@
 
   const isActive = (key: string) => currentPath === key || currentPath.startsWith(`${key}/`);
 
-  // Phase 3 — the compact Account sheet, opened from the header account
-  // control (topbar ≤1024px, header chip ≥1025px). Contains ONLY the
-  // identity block + My List + Settings per the plan; everything else
-  // lives on the /settings page.
+  // Phase 3 — the compact Account sheet, opened from the Account control:
+  // the bottom-pill Account entry (≤1024px) or the sidebar Account chip
+  // (≥1025px). Contains ONLY the identity block + My List + Settings per
+  // the plan; everything else lives on the /settings page.
   let accountSheetOpen = $state(false);
   const isAccountSurface = $derived(isActive('/settings'));
 
@@ -150,8 +170,40 @@
           {#if !sidebarCollapsed}<span class="sidebar-label">{link.label}</span>{/if}
         </a>
       {/each}
+      <!-- 2026-11 desktop-UX fix: Search belongs IN the sidebar (standard
+           desktop IA) — the former fixed top-right floating chip is removed
+           (see the removal note above). Same link styling + active state as
+           the Browse entries; collapses to the icon rail like them. -->
+      <a
+        class:active={isActive('/search')}
+        class="sidebar-link"
+        href="/search"
+        aria-current={isActive('/search') ? 'page' : undefined}
+        title={sidebarCollapsed ? 'Search' : undefined}
+      >
+        <span class="sidebar-icon"><Search size={19} strokeWidth={isActive('/search') ? 2.3 : 1.8} /></span>
+        {#if !sidebarCollapsed}<span class="sidebar-label">Search</span>{/if}
+      </a>
     </nav>
     <div class="sidebar-bottom">
+      <!-- 2026-11 desktop-UX fix: the Account chip lives in the desktop
+           sidebar (it was MISSING entirely on desktop before — the mobile
+           pill's Account entry had no desktop counterpart). Opens the SAME
+           compact AccountSheet. Sits above the bottom rule so the sidebar
+           reads: navigation → search → account → tagline. -->
+      <button
+        type="button"
+        class:active={isAccountSurface}
+        class="sidebar-account"
+        aria-haspopup="dialog"
+        aria-expanded={accountSheetOpen}
+        aria-label="Account"
+        onclick={openAccountSheet}
+        title={sidebarCollapsed ? 'Account' : undefined}
+      >
+        <span class="sidebar-icon"><UserRound size={19} strokeWidth={isAccountSurface ? 2.3 : 1.8} /></span>
+        {#if !sidebarCollapsed}<span class="sidebar-label">Account</span>{/if}
+      </button>
       <div class="sidebar-rule"></div>
       {#if !sidebarCollapsed}<span class="sidebar-caption">Your screen. Your story.</span>{/if}
     </div>
@@ -178,20 +230,6 @@
 
     <main>{@render children()}</main>
   </div>
-
-  <!-- Desktop header account control (right side, 1025px+) — opens the
-       compact Account sheet (Phase 3). The sidebar carries the six
-       content destinations; Account lives in the header per the
-       Final IA. -->
-  <a
-    class:active={isActive('/search')}
-    class="header-account"
-    href="/search"
-    aria-label="Search"
-    aria-current={isActive('/search') ? 'page' : undefined}
-  >
-    <Search size={20} strokeWidth={isActive('/search') ? 2.3 : 1.8} />
-  </a>
 
   <!-- Compact Account sheet (Phase 3 + LT-1): identity + Upcoming + My
        List + Settings -->
@@ -297,6 +335,30 @@
   }
   .sidebar-link.active :global(svg) { color: var(--color-primary); }
   .sidebar-link:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+  /* 2026-11 desktop-UX fix: the sidebar Account chip mirrors the link
+     styling exactly (same metrics, hover lift, active glow, focus ring)
+     so the sidebar reads as ONE balanced composition. It is a <button>
+     (opens the AccountSheet) instead of an <a>. */
+  .sidebar-account {
+    display: flex; align-items: center; gap: 13px; min-height: 44px; padding: 0 12px;
+    border: 1px solid transparent; border-radius: 10px;
+    color: var(--color-text-muted); font-size: .82rem; font-weight: 600;
+    background: transparent; cursor: pointer; text-align: left; width: 100%;
+    font-family: inherit;
+    transition: color var(--motion-fast), background var(--motion-fast), border-color var(--motion-fast), transform var(--motion-fast);
+  }
+  .sidebar-account:hover {
+    color: var(--color-primary); background: var(--color-primary-soft);
+    transform: translateX(2px);
+  }
+  .sidebar-account.active {
+    color: var(--color-primary); font-weight: 700;
+    border-color: var(--color-primary-border);
+    background: var(--color-primary-soft);
+    box-shadow: var(--glow-primary);
+  }
+  .sidebar-account.active :global(svg) { color: var(--color-primary); }
+  .sidebar-account:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
   .sidebar-bottom { display: grid; gap: 14px; margin-top: auto; }
   .sidebar-rule { height: 1px; background: var(--color-border); }
   .sidebar-caption {
@@ -304,8 +366,13 @@
     color: var(--color-text-deep); font-size: .68rem; font-weight: 500; line-height: 1.4;
   }
 
-  /* Collapsed sidebar — icon only */
+  /* Collapsed sidebar — icon only. The Account chip centers with the links
+     (the :has() probe keys on the LINKS' missing labels; collapsed mode
+     hides every label in the rail together). */
   :global(.page-shell:has(.app-sidebar .sidebar-link:not(:has(.sidebar-label)))) .sidebar-link {
+    justify-content: center; padding: 0;
+  }
+  :global(.page-shell:has(.app-sidebar .sidebar-link:not(:has(.sidebar-label)))) .sidebar-account {
     justify-content: center; padding: 0;
   }
 
@@ -313,9 +380,6 @@
   .topbar { display: none; }
   .mobile-brand { display: none; }
   .topbar-account { display: none; }
-
-  /* ---- Desktop header account control (≥1025px, header right side) ---- */
-  .header-account { display: none; }
 
   /* ---- Mobile + tablet bottom pill (touch composition) ----
      Hidden by default (desktop); shown + positioned at ≤1024px below. */
@@ -444,36 +508,12 @@
     .mobile-nav a { font-size: .54rem; }
   }
 
-  /* Desktop (≥1025px): the header account control on the right side —
-     a quiet glass chip floating at the top-right of the content area,
-     above the cinematic full-bleed pages (no persistent bar stealing
-     vertical space). Opens the compact Account sheet (Phase 3). */
-  @media (min-width: 1025px) {
-    .header-account {
-      position: fixed; top: 18px; right: 22px; z-index: 60;
-      display: grid; place-items: center;
-      width: 40px; height: 40px;
-      border: 1px solid var(--color-border);
-      border-radius: 12px;
-      color: var(--color-text-muted);
-      background: rgba(8, 11, 13, .55);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
-      cursor: pointer;
-      transition: color var(--motion-fast), background var(--motion-fast), border-color var(--motion-fast);
-    }
-    .header-account:hover { color: var(--color-primary); border-color: var(--color-primary-border); }
-    .header-account.active {
-      color: var(--color-primary);
-      border-color: var(--color-primary-border);
-      background: var(--color-primary-soft);
-      box-shadow: var(--glow-primary);
-    }
-    .header-account.active :global(svg) { color: var(--color-primary); }
-    .header-account:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
-  }
+  /* 2026-11 desktop-UX fix: the former fixed top-right glass chip (a
+     Search link mis-named as the account control) is REMOVED; desktop
+     Search and Account live inside the sidebar now. No desktop floating
+     chrome remains. */
 
   @media (prefers-reduced-motion: reduce) {
-    .sidebar-link, .topbar-account, .header-account, .mobile-nav a { transition: none; }
+    .sidebar-link, .sidebar-account, .topbar-account, .mobile-nav a { transition: none; }
   }
 </style>

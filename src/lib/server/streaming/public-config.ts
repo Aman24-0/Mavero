@@ -27,7 +27,25 @@ export function isMissingDefaultSlotsTableError(error: { code?: string | null; m
   return /does not exist/i.test(message) || /schema cache/i.test(message);
 }
 
+// Production-hardening round (2026-11): STALL protection. supabase-js has no
+// socket-level timeout — a wedged connection kept the awaited reads pending
+// FOREVER, and every load function that awaits this helper (watch route, the
+// layout via callers) never returned → the SvelteKit router waited
+// indefinitely → the user's "infinite spinner". The whole read is raced
+// against the load-read deadline; a stall THROWS, which degrades EXACTLY
+// like an existing error (callers already catch → EMPTY_STREAMING_CONFIG /
+// their own fail-safe shapes — the documented error contract, unchanged).
+import { LOAD_READ_DEADLINE_MS, withDeadline } from '$lib/server/http/with-deadline';
+
 export async function getPublicStreamingConfig(client: StreamingClient): Promise<PublicStreamingConfig> {
+  return withDeadline(
+    loadPublicStreamingConfig(client),
+    LOAD_READ_DEADLINE_MS,
+    () => { throw new Error('Public streaming config lookup timed out (stall deadline exceeded)'); }
+  );
+}
+
+async function loadPublicStreamingConfig(client: StreamingClient): Promise<PublicStreamingConfig> {
   const metaResult = await client
     .from('streaming_config_meta')
     .select('version,updated_at')

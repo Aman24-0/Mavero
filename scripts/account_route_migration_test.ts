@@ -130,10 +130,10 @@ assert.ok(linksBlock, 'AppShell still defines primaryLinks (R-2: now $derived fo
 const labels = [...linksBlock![1].matchAll(/label: '([^']+)'/g)].map((m) => m[1]);
 assert.deepEqual(labels, ['Discover', 'Movies', 'TV Shows', 'Anime', 'Live TV'], 'R-2: primary nav contains the five link labels (Search moved to the header; Live TV is conditional)');
 assert.match(appShell, /\.\.\.\(\(liveTvAvailable && \(isAdmin \|\| livetvNavVisible\)\) \?\s*\[\{ label: 'Live TV'[\s\S]{0,200}\] : \[\]\)/, 'R-2: Live TV is conditionally included via the liveTvAvailable + nav-visibility gate');
-assert.match(appShell, /class="topbar-account"/, 'the mobile/tablet account control exists');
-assert.match(appShell, /class="header-account"/, 'the desktop header account control exists');
+assert.match(appShell, /class="topbar-account"/, 'the mobile/tablet topbar search control exists');
+assert.match(appShell, /class="sidebar-account"/, 'the desktop Account chip exists INSIDE the sidebar (2026-11 desktop-UX fix — the floating top-right chip is removed)');
 assert.match(appShell, /aria-haspopup="dialog"/, 'the account controls open the Account sheet (dialog)');
-ok('7. primary navigation: Discover, Movies, TV Shows, Anime, [Live TV when available], Search + header account sheet control');
+ok('7. primary navigation: Discover, Movies, TV Shows, Anime, [Live TV when available], Search (sidebar + topbar) + sidebar Account chip (desktop) / pill entry (touch)');
 
 // ============================================================
 // 7b. ACCOUNT SHEET — the compact Phase 3 sheet contract

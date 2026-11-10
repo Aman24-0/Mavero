@@ -379,16 +379,22 @@ ok(/externalSubtitleStatus: 'loading' \| 'ready' \| 'empty' \| 'failed' = 'loadi
 ok(/externalSubtitleNotice = result\.tracks\.length \? '' : 'No subtitles available';/.test(shell), '4. empty API result → "No subtitles available" (distinguishable from success)');
 ok(/externalSubtitleStatus = 'failed';\s*\n\s*externalSubtitleNotice = 'Subtitles unavailable';/.test(shell), '4. a failed lookup → "Subtitles unavailable" (errors are never silently swallowed)');
 ok(/externalSubtitleNotice = 'Checking subtitles…';/.test(shell), '4. the in-flight state is visible ("request has not completed")');
-ok(/console\.info\(`\[mavero:subtitles\]/.test(shell), '4. safe subtitle diagnostics are logged (state + counts + typed failure kind)');
-ok(!/console\.info\(`\[mavero:subtitles\][^`]*\$\{result\.tracks\[0\]|console\.info\(`\[mavero:subtitles\][^`]*proxyPath/.test(shell), '4. subtitle diagnostics never log URLs or provider payloads');
-ok(/error=\$\{result\.error\}/.test(shell), '4. the typed failure kind (network/timeout/invalid-response) reaches the diagnostic line');
+// CONTRACT CHANGE (2026-11 production sweep): the console.info diagnostic
+// lines were REMOVED from the client bundle — no unnecessary console
+// statements ship in the production build. Diagnosability is preserved
+// through the typed state machine above: the subtitle failure kind rides
+// `externalSubtitleError` and the intro kind rides `introErrorKind`, both
+// surfaced through the honest UI states (never swallowed).
+ok(!/console\.info\(/.test(shell), '4. the shell ships ZERO console.info statements (2026-11 production sweep — no unnecessary logging in the build)');
+ok(!/console\.log\(/.test(shell), '4. the shell ships ZERO console.log statements');
+ok(/externalSubtitleError = result\.error;/.test(shell), '4. the typed subtitle failure kind still reaches the UI state (diagnosability preserved without logging)');
+ok(/introErrorKind = result\.errorKind;/.test(shell), '4. the typed intro failure kind still reaches the UI state (diagnosability preserved without logging)');
 
 // Intro states.
 ok(/introStatus: 'waiting-duration' \| 'loading' \| 'available' \| 'no-data' \| 'unavailable' = 'waiting-duration'/.test(shell), '4. the shell carries the typed intro feature-state machine (waiting → loading → available/no-data/unavailable)');
 ok(/errorKind: 'api' \| 'timeout' \| 'invalid' \| 'network' \| null;/.test(introClient), '4. the intro lookup exposes the TYPED failure kind (no-data ≠ failed)');
 ok(/error instanceof TheIntroDbApiError\s*\?\s*'api'/.test(introClient), '4. API errors (incl. rate limits / Cloudflare blocks) are typed as api');
 ok(/error instanceof Error && error\.name === 'AbortError'\s*\?\s*'timeout'/.test(introClient), '4. timeouts are typed as timeout');
-ok(/console\.info\(`\[mavero:intro\]/.test(shell), '4. safe intro diagnostics are logged (state + typed kind)');
 ok(/\{#if activeSkipSegment && source\?\.type === 'direct' && !touchLocked && !castConnected\}/.test(shell), '4. Skip Intro renders ONLY with a verified in-segment playhead (never a fake button)');
 
 // Behavioral: typed error kinds through the REAL lookup with mocked fetch.

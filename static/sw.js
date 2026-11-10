@@ -19,6 +19,8 @@
 //     networks) the respondWith promise stayed pending for 30-60s+ and the
 //     OS PWA splash screen hung on the app icon with nothing rendering.
 //     The timeout race guarantees the user ALWAYS gets a painted page.
+//     v3: the race's timer is CLEARED when the network wins (no dangling
+//     timer keeps the worker's task queue warm after every navigation).
 //   * Static assets: cache-first for the safe immutable set only (scripts,
 //     styles, fonts, /_app/immutable, icons, manifest, robots.txt).
 //   * Cross-origin requests — INCLUDING every provider iframe stream
@@ -36,7 +38,7 @@
 // wrapped so an unexpected error falls through to the browser's default
 // network handling instead of producing a failed respondWith promise.
 
-const VERSION = 'mavero-shell-v2';
+const VERSION = 'mavero-shell-v3';
 const STATIC_CACHE = `${VERSION}-static`;
 const OFFLINE_URL = '/offline.html';
 const NAVIGATION_TIMEOUT_MS = 8000;
@@ -109,17 +111,23 @@ self.addEventListener('fetch', (event) => {
       // Network-first WITH A HARD TIMEOUT. The race guarantees a painted
       // page: either the network responds, or (stall/slow socket) the
       // offline shell renders after NAVIGATION_TIMEOUT_MS instead of the
-      // PWA splash hanging for the socket's full timeout window.
+      // PWA splash hanging for the socket's full timeout window. The
+      // timer is cleared the moment the race settles — a won-by-network
+      // navigation must not leave a dangling 8s timer behind.
       event.respondWith(
-        Promise.race([
-          fetch(request),
-          new Promise((resolve) => setTimeout(() => resolve(undefined), NAVIGATION_TIMEOUT_MS))
-        ]).then((response) => {
-          if (response && response.ok) return response;
-          // Timeout (undefined) or non-OK network response → offline shell,
-          // falling back to an honest error if even that is unavailable.
-          return caches.match(OFFLINE_URL).then((cached) => cached || Response.error());
-        })
+        (() => {
+          let timerId;
+          const network = fetch(request);
+          const timeout = new Promise((resolve) => {
+            timerId = setTimeout(() => resolve(undefined), NAVIGATION_TIMEOUT_MS);
+          });
+          return Promise.race([network, timeout]).finally(() => clearTimeout(timerId)).then((response) => {
+            if (response && response.ok) return response;
+            // Timeout (undefined) or non-OK network response → offline shell,
+            // falling back to an honest error if even that is unavailable.
+            return caches.match(OFFLINE_URL).then((cached) => cached || Response.error());
+          });
+        })()
       );
       return;
     }

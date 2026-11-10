@@ -1,6 +1,14 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '$lib/server/supabase/database.types';
 import { DEFAULT_SCRAPER_CONFIG, type ScraperConfig } from '$lib/server/vod/vidsrc-scraper';
+// Production-hardening round (2026-11): STALL protection. supabase-js has
+// no socket-level timeout — a wedged connection kept the awaited read
+// pending forever, and the layout load (which awaits this helper on EVERY
+// request) never returned → the SvelteKit router waited indefinitely and
+// the user saw an infinite spinner. The read is now raced against a 6s
+// deadline; a stall degrades to the same all-null config as an error
+// (the documented fail-safe contract below).
+import { LOAD_READ_DEADLINE_MS, withDeadline } from '$lib/server/http/with-deadline';
 
 /**
  * App-wide config read (the single-row `app_config` table). Currently only the
@@ -38,20 +46,32 @@ function cleanUrl(value: unknown): string | null {
 }
 
 export async function getAppConfig(client: SupabaseClient<Database>): Promise<AppConfig> {
+        const nullConfig = (): AppConfig => ({ telegramUrl: null, discordUrl: null, livetvIndianProxyUrl: null });
         try {
-                const { data, error } = await client
-                        .from('app_config')
-                        .select('telegram_url, discord_url, livetv_indian_proxy_url')
-                        .eq('id', 1)
-                        .maybeSingle();
-                if (error || !data) return { telegramUrl: null, discordUrl: null, livetvIndianProxyUrl: null };
-                return {
-                        telegramUrl: cleanUrl(data.telegram_url),
-                        discordUrl: cleanUrl(data.discord_url),
-                        livetvIndianProxyUrl: cleanUrl(data.livetv_indian_proxy_url)
-                };
+                // The read is mapped to the AppConfig shape FIRST, then raced
+                // against the stall deadline with a typed AppConfig fallback —
+                // a stall degrades to the exact same fail-safe value as an
+                // error. The abandoned query still settles in the background;
+                // its result is deliberately ignored.
+                return await withDeadline(
+                        (async () => {
+                                const { data, error } = await client
+                                        .from('app_config')
+                                        .select('telegram_url, discord_url, livetv_indian_proxy_url')
+                                        .eq('id', 1)
+                                        .maybeSingle();
+                                if (error || !data) return nullConfig();
+                                return {
+                                        telegramUrl: cleanUrl(data.telegram_url),
+                                        discordUrl: cleanUrl(data.discord_url),
+                                        livetvIndianProxyUrl: cleanUrl(data.livetv_indian_proxy_url)
+                                };
+                        })(),
+                        LOAD_READ_DEADLINE_MS,
+                        nullConfig
+                );
         } catch {
-                return { telegramUrl: null, discordUrl: null, livetvIndianProxyUrl: null };
+                return nullConfig();
         }
 }
 

@@ -177,10 +177,12 @@ console.log('\n9. Service worker caching unchanged');
 const swSource = readFileSync(join(repoRoot, 'static', 'sw.js'), 'utf8');
 // Production-hardening round: the cache VERSION bumped v1 → v2 (the SW's
 // fetch/install logic was hardened — resilient install + navigation
-// timeout). The SAFE_ASSETS set and the on-demand static caching contract
+// timeout) and v2 → v3 (2026-11: the navigation race's timer is cleared
+// when the network wins — no dangling 8s timer after every navigation).
+// The SAFE_ASSETS set and the on-demand static caching contract
 // are unchanged, which is what this suite actually pins.
-assert.match(swSource, /const VERSION = 'mavero-shell-v2'/,
-  'SW version bumped to v2 (production-hardening round)');
+assert.match(swSource, /const VERSION = 'mavero-shell-v3'/,
+  'SW version bumped to v3 (navigation timer cleanup round)');
 // The hardening additions are present: resilient (per-asset) install so
 // one bad asset can no longer strand the worker in `installing`, and the
 // navigation timeout race so a stalled socket can no longer hang the PWA

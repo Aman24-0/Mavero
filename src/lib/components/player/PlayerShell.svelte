@@ -536,7 +536,19 @@
     landscapeGridCell ? gridCellInlineStyle(landscapeGridCell) : landscapeControlInlineStyle(resolveLandscapeControlPlacement(activeSourceOption?.controlsPosition ?? null, playerOrientation)),
     controlsSizeInlineStyle(activeSourceOption?.controlsPosition ?? null, 'landscape', '--landscape-fab-size'),
   ].filter(Boolean).join(';');
-  $: effectiveState = resolving ? 'switching-source' : resolutionError ? resolutionKind : state;
+  // 2026-11 first-load loading-label fix: the route's `resolving` flag is
+  // true during the FIRST resolver roundtrip too — the previous unconditional
+  // mapping showed "Switching source…" on a fresh player open, a state that
+  // never happened (nothing was playing before it). The shell now tracks
+  // whether ANY source has resolved in this mount: a first resolve shows the
+  // honest "Loading player…", while a re-resolve WITH a live source (manual
+  // switch, provider fallback walk) genuinely IS a source switch and keeps
+  // "Switching source…". Removes the misleading intermediate loading state
+  // from the reported Black Screen → Loading → Switching Source → Starting
+  // sequence.
+  let everResolvedSource = false;
+  $: if (source) everResolvedSource = true;
+  $: effectiveState = resolving ? (everResolvedSource ? 'switching-source' : 'resolving') : resolutionError ? resolutionKind : state;
   // Player UI V2 (Part 1, Phase 1B) — SUPERSEDED by the approved Player V2
   // corrections layout: the Blue Velvet provider-slug detection and its
   // in-row Back/Fullscreen + hidden-FAB exceptions are RETIRED. The approved
@@ -988,11 +1000,9 @@
       externalSubtitleStatus = 'failed';
       externalSubtitleNotice = 'Subtitles unavailable';
     }
-    // Safe diagnostic line (Player V2 corrections Phase 2C): state, track
-    // count and typed failure kind only — never URLs, provider payloads or
-    // credentials. Makes the reported "no subtitle controls" diagnosable
-    // from the field (not-initialized / pending / empty / failed / ready).
-    console.info(`[mavero:subtitles] ${kind} tmdb=${tmdbId} status=${externalSubtitleStatus} tracks=${result.tracks.length}${result.error ? ` error=${result.error}` : ''}`);
+    // 2026-11 production sweep: the console.info diagnostic line was removed
+    // (unnecessary production logging — the typed status already surfaces in
+    // the subtitle UI state).
   }
 
   async function loadIntro(key: string) {
@@ -1023,10 +1033,9 @@
     introSegments = result.segments;
     introErrorKind = result.errorKind;
     introStatus = result.segments.length ? 'available' : result.errorKind ? 'unavailable' : 'no-data';
-    // Safe diagnostic line (Phase 2C): state + typed failure kind only. The
-    // API is IP-blocked from some networks (Cloudflare) — 'unavailable' with
-    // a typed kind makes that distinguishable from 'no-data' in the field.
-    console.info(`[mavero:intro] ${kind} tmdb=${tmdbId} status=${introStatus}${introErrorKind ? ` error=${introErrorKind}` : ''} segments=${result.segments.length}`);
+    // 2026-11 production sweep: the console.info diagnostic line was removed
+    // (unnecessary production logging — the typed failure kind already
+    // surfaces through the Skip-Intro availability state).
   }
 
   $: if (browser && mediaLookupKey !== externalSubtitlesKey) {
@@ -2224,15 +2233,34 @@
   }
 
   /**
-   * Player redesign a11y guard: true while keyboard focus rests inside a
-   * Mavero-owned control surface (FABs, source chip, direct controls, sheets).
-   * Focused controls must never auto-hide — keyboard/TV users would lose the
-   * element they are interacting with.
+   * Player redesign a11y guard: true while KEYBOARD focus rests inside a
+   * Mavero-owned control surface (FABs, source chip, direct controls,
+   * sheets). Focused controls must never auto-hide — keyboard/TV users
+   * would lose the element they are interacting with.
+   *
+   * 2026-11 auto-hide stickiness fix: the guard is now KEYBOARD-ONLY via
+   * `:focus-visible`. Previously a TOUCH tap on a FAB/chip also satisfied
+   * the guard — touch devices leave the tapped button as
+   * `document.activeElement` indefinitely (Android Chrome focuses buttons
+   * on tap; the sheet-close focus-restore makes it persistent) — so the
+   * hide-timer callback bailed FOREVER and the FABs + side chips "stuck"
+   * visible until the user happened to tap something that moved focus away
+   * (the reported "never auto-hides; only hides after multiple taps").
+   * `:focus-visible` is true for keyboard/TV navigation only, so the
+   * a11y guarantee is preserved exactly; pointer/touch focus no longer
+   * pins the controls.
    */
   function focusWithinMaveroControls(): boolean {
     if (!playerRoot) return false;
     const active = document.activeElement;
     if (!(active instanceof HTMLElement) || !playerRoot.contains(active)) return false;
+    // Keyboard-focus check with an old-engine fallback: engines without
+    // :focus-visible support (legacy TV/embedded webviews) throw on the
+    // selector — fall back to TRUE (the previous never-hide guarantee)
+    // rather than silently breaking keyboard a11y there.
+    let keyboardFocus = true;
+    try { keyboardFocus = active.matches(':focus-visible'); } catch { keyboardFocus = true; }
+    if (!keyboardFocus) return false;
     return Boolean(active.closest('.back-fab, .control-fab-group, .source-chip, .episode-chip, .direct-controls-overlay, .source-sheet, .episode-sheet, .player-option-sheet, .unlock-fab, .skip-intro-button'));
   }
 

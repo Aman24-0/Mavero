@@ -442,8 +442,12 @@ clearCache();
   assert.ok(sharedBatchSrc.includes("'popular-series',") && sharedBatchSrc.includes("'popular-anime',"), 'SECTION_PRIORITY intact');
 
   // Service search: both halves + the isAnime-only filter; the old
-  // series-only filter is gone.
-  assert.match(serviceSrc, /searchTmdb\(normalized, 'movie', page, filters, canAccessAdult\),\s*\n\s*searchTmdb\(normalized, 'series', page, filters, canAccessAdult\)/, 'anime search queries BOTH halves in parallel');
+  // series-only filter is gone. (Identifier note 2026-11: the production-
+  // hardening round made search()'s adult-access parameter a
+  // boolean | Promise<boolean> — the resolver warm-up overlap — and the
+  // two searchTmdb halves now receive the awaited `adultAccess` local.
+  // The parallel contract is unchanged; the pin follows the identifier.)
+  assert.match(serviceSrc, /searchTmdb\(normalized, 'movie', page, filters, adultAccess\),\s*\n\s*searchTmdb\(normalized, 'series', page, filters, adultAccess\)/, 'anime search queries BOTH halves in parallel');
   assert.match(serviceSrc, /\.filter\(isAnimeItem\)/, 'anime search filters to isAnime === true');
   assert.ok(!serviceSrc.includes('filterAnimeSeries'), 'the pre-MAV-21 series-only anime filter is removed');
 
