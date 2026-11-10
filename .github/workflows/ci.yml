@@ -38,6 +38,8 @@
 #     itself when PRIVATE_SUPABASE_SERVICE_ROLE_KEY is unset. CI never
 #     connects to production Supabase.
 #   - This workflow NEVER deploys: production deploys stay with Netlify.
+#   - The runner is PINNED to ubuntu-24.04 (never ubuntu-latest): see the
+#     job-level comment on runs-on for the 2026-11 ubuntu-26.04 breakage.
 #
 # The gate reports real failures: any non-zero exit fails the job.
 
@@ -55,7 +57,19 @@ concurrency:
 jobs:
   gates:
     name: check · build · test
-    runs-on: ubuntu-latest
+    # PINNED, deliberately NOT ubuntu-latest (2026-11 breakage): the
+    # ubuntu-latest label migrated to ubuntu-26.04 runner images, and
+    # playwright@1.57.0 (pinned below, 2026-10) predates that distro —
+    # `playwright install --with-deps chromium` hard-fails with
+    # "Playwright does not support chromium on ubuntu26.04-x64" before any
+    # gate runs (CI run on 2d69450). ubuntu-24.04 is the image ubuntu-latest
+    # resolved to when this gate was last green, so the pinned toolchain
+    # (node 22 / pnpm 10.30.3 / playwright 1.57.0) keeps its validated
+    # host. Re-evaluate this pin TOGETHER with the playwright@1.57.0 pin:
+    # playwright-core >=1.65.0 added ubuntu26.04 support entries, so bumping
+    # playwright re-enables ubuntu-26.04 / ubuntu-latest. Every other pin in
+    # this workflow is deliberate — the runner is no exception.
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       # fetch-depth: 0 — CloudStream regression tests inspect historical
