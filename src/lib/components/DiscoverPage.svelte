@@ -387,28 +387,45 @@
     }
   }
 
-  // OTT provider list (loaded client-side from /api/discover/providers).
-  // Built from real TMDB India provider metadata — never random favicons.
+  // OTT provider list — PRODUCTION-HARDENING PASS-THROUGH: the list now
+  // travels IN the page payload (`page.data.ottProviders`, projected by the
+  // server load with the exact /api/discover/providers shape), so the
+  // normal first paint of / and /discover needs NO extra HTTP roundtrip.
+  // The endpoint fetch is kept as the fallback for the cases the server
+  // data cannot cover (upstream failure → empty server list, or a load
+  // payload composed before this change).
   let ottProviders = $state<{ value: string; label: string; logoUrl?: string }[]>([]);
 
+  /** Curate + sort + project the raw provider list (shared by both paths). */
+  function applyOttProviders(list: { key: string; name: string; logoUrl: string }[]) {
+    // Curate to ~15 recognizable India-relevant providers. We prioritize
+    // well-known names; the rest are still available but lower in the list.
+    const known = ['netflix', 'amazon-prime-video', 'prime-video', 'jiocinema', 'jiohotstar', 'hotstar', 'sonyliv', 'sony-liv', 'zee5', 'sunnxt', 'sun-nxt', 'mx-player', 'aha', 'hoichoi', 'mubi', 'lionsgate-play', 'discovery-plus', 'apple-tv', 'apple-tv-plus'];
+    const sorted = [...list].sort((a, b) => {
+      const ai = known.indexOf(a.key);
+      const bi = known.indexOf(b.key);
+      if (ai !== -1 && bi !== -1) return ai - bi;
+      if (ai !== -1) return -1;
+      if (bi !== -1) return 1;
+      return a.name.localeCompare(b.name);
+    });
+    ottProviders = sorted.slice(0, 15).map((p) => ({ value: p.key, label: p.name, logoUrl: p.logoUrl }));
+  }
+
   async function loadOttProviders() {
+    // Server pass-through first (see above): present AND non-empty means
+    // the load composed a healthy provider list — zero extra requests.
+    const serverProviders = page.data.ottProviders;
+    if (Array.isArray(serverProviders) && serverProviders.length > 0) {
+      applyOttProviders(serverProviders);
+      return;
+    }
     try {
       const response = await fetch('/api/discover/providers');
       if (!response.ok) return;
       const payload = await response.json();
       if (!payload.ok || !Array.isArray(payload.providers)) return;
-      // Curate to ~15 recognizable India-relevant providers. We prioritize
-      // well-known names; the rest are still available but lower in the list.
-      const known = ['netflix', 'amazon-prime-video', 'prime-video', 'jiocinema', 'jiohotstar', 'hotstar', 'sonyliv', 'sony-liv', 'zee5', 'sunnxt', 'sun-nxt', 'mx-player', 'aha', 'hoichoi', 'mubi', 'lionsgate-play', 'discovery-plus', 'apple-tv', 'apple-tv-plus'];
-      const sorted = [...payload.providers].sort((a: { key: string; name: string }, b: { key: string; name: string }) => {
-        const ai = known.indexOf(a.key);
-        const bi = known.indexOf(b.key);
-        if (ai !== -1 && bi !== -1) return ai - bi;
-        if (ai !== -1) return -1;
-        if (bi !== -1) return 1;
-        return a.name.localeCompare(b.name);
-      });
-      ottProviders = sorted.slice(0, 15).map((p: { key: string; name: string; logoUrl: string }) => ({ value: p.key, label: p.name, logoUrl: p.logoUrl }));
+      applyOttProviders(payload.providers);
     } catch {
       // Silent fail — the OTT section will still load with "All OTT" only.
     }

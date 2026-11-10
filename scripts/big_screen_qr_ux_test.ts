@@ -26,7 +26,10 @@ const tvLogin = read('src/routes/tv-login/+page.svelte');
 const layout = read('src/routes/+layout.server.ts');
 const appHtml = read('src/app.html');
 const appDts = read('src/app.d.ts');
-const sessionsApi = read('src/routes/api/account/sessions/+server.ts');
+// Production-hardening round: the session projection moved to the shared
+// $lib/server/account/safe-sessions.ts helper (single-sourced with the
+// /settings server load pass-through) — the F30/S-section pins read it there.
+const sessionsPipeline = read('src/lib/server/account/safe-sessions.ts');
 const scanTv = read('src/routes/settings/scan-tv/+page.svelte');
 const authorize = read('src/routes/authorize/+page.svelte');
 
@@ -42,10 +45,10 @@ const authorize = read('src/routes/authorize/+page.svelte');
   ok(!account.includes('Android \u2022 Chrome'), 'F29c: no hardcoded device label in the page');
 
   // 30. current session correctly identified (server-side isCurrent flag).
-  ok(sessionsApi.includes('isCurrent: row.supabase_session_id === currentSessionId'), 'F30a: isCurrent computed server-side from JWT session_id');
+  ok(sessionsPipeline.includes('isCurrent: row.supabase_session_id === currentSessionId'), 'F30a: isCurrent computed server-side from JWT session_id');
   ok(account.includes('session.isCurrent'), 'F30b: UI consumes the per-row isCurrent flag');
-  ok(!sessionsApi.includes('currentSessionId }'), 'F30c: raw currentSessionId is NOT returned to the client (RC-6)');
-  ok(!sessionsApi.includes('supabase_session_id:'), 'F30d: raw supabase_session_id never projected to the client');
+  ok(!sessionsPipeline.includes('currentSessionId }'), 'F30c: raw currentSessionId is NOT returned to the client (RC-6)');
+  ok(!sessionsPipeline.includes('supabase_session_id:'), 'F30d: raw supabase_session_id never projected to the client');
 
   // 31. newly logged-in browser appears — covered behaviorally by registry v2
   //     (A2/A5); here we pin the refresh plumbing:
@@ -206,12 +209,13 @@ const authorize = read('src/routes/authorize/+page.svelte');
 // ============================================================
 {
   console.log('Sessions API (§16)');
-
-  ok(sessionsApi.includes('deviceType: row.device_type'), 'S1: deviceType in DTO');
-  ok(sessionsApi.includes('deviceName: row.device_name'), 'S2: deviceName in DTO');
-  ok(sessionsApi.includes('lastSeenAt: row.last_seen_at'), 'S3: lastSeenAt in DTO');
-  ok(sessionsApi.includes('isCurrent'), 'S4: isCurrent flag in DTO');
-  const dtoBlock = sessionsApi.slice(sessionsApi.indexOf('const projected'), sessionsApi.indexOf('return json'));
+  // Production-hardening round: the DTO projection lives in the shared
+  // safe-sessions helper (single-sourced with the /settings pass-through).
+  ok(sessionsPipeline.includes('deviceType: row.device_type'), 'S1: deviceType in DTO');
+  ok(sessionsPipeline.includes('deviceName: row.device_name'), 'S2: deviceName in DTO');
+  ok(sessionsPipeline.includes('lastSeenAt: row.last_seen_at'), 'S3: lastSeenAt in DTO');
+  ok(sessionsPipeline.includes('isCurrent'), 'S4: isCurrent flag in DTO');
+  const dtoBlock = sessionsPipeline.slice(sessionsPipeline.indexOf('const projected'), sessionsPipeline.indexOf('return { ok: true, sessions: projected }'));
   ok(!dtoBlock.includes('access_token') && !dtoBlock.includes('refresh_token') && !dtoBlock.includes('supabase_session_id:') && !dtoBlock.includes('ip_hash:'), 'S5: no tokens / raw session ids / ip_hash in the DTO');
 }
 

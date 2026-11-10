@@ -115,14 +115,18 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 {
   const accountPage = read('src/routes/settings/+page.svelte');
   const sessionsApi = read('src/routes/api/account/sessions/+server.ts');
+  // Production-hardening round: the read→project pipeline moved to the
+  // shared $lib/server/account/safe-sessions.ts helper (single-sourced
+  // with the /settings server load pass-through).
+  const sessionsPipeline = read('src/lib/server/account/safe-sessions.ts');
 
   // Sessions UI loads device sessions.
   ok(accountPage.includes('loadSessions'), 'C. account: has loadSessions');
   ok(accountPage.includes('/api/account/sessions'), 'C. account: fetches sessions API');
 
   // Current session identified server-side.
-  ok(sessionsApi.includes('extractSessionId'), 'C. sessions API: identifies current via JWT');
-  ok(sessionsApi.includes('isCurrent'), 'C. sessions API: returns isCurrent flag');
+  ok(sessionsPipeline.includes('extractSessionId'), 'C. sessions pipeline: identifies current via JWT');
+  ok(sessionsPipeline.includes('isCurrent'), 'C. sessions pipeline: returns isCurrent flag');
 
   // No tokens reach client.
   ok(!accountPage.includes('access_token'), 'C. account: no access_token');

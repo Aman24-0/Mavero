@@ -605,28 +605,42 @@ function section_regression(): void {
       `§H27: every removed DownloadSheet code line belongs to the sanctioned CS-5/FINAL-TASK/MAV-23-palette evolutions (removed ${codeRemovals.length})`,
     );
     const codeAdditions = sheetCode.filter((line) => !pristineCode.includes(line));
+    // Sanctioned added-line contract. Production-hardening round: the
+    // provider + embedded-sheet iframes now carry a sandbox attribute (no
+    // allow-top-navigation) and openEmbeddedSheet is https-only — both are
+    // sanctioned security evolutions.
+    const sanctionedAddition = (line: string) =>
+      line.includes('MaveroUnifiedDownload')
+      || line.includes('MAVERO_DOWNLOADER_2_PROVIDER_ID')
+      || line.includes('MaveroCloudStreamDownload')
+      || line.includes('isMaveroDownloader')
+      || line.includes('.dl-item-name')
+      || line.includes('.dl-item-badge')
+      || line.includes('.dl-dropdown-item')
+      || line.includes('flex-start')
+      || line.includes('min-width: 0')
+      || line.includes('margin-left: auto')
+      || line.includes('retired')
+      || line.includes('unified')
+      || line.includes('retire')
+      // MAV-23 palette contract: only --dp-* var fallbacks, the
+      // paletteStyle prop, and the design-system text-token fallbacks.
+      // (Prefix match 'var(--color-text' covers BOTH the bare token and
+      // the -muted/-soft variants' fallback declarations — the closing
+      // paren in the pre-hardening matcher was a latent typo that no
+      // longer matched the sanctioned `var(--color-text, #fallback)`
+      // fallback declarations at all.)
+      || line.includes('--dp-')
+      || line.includes('paletteStyle')
+      || line.includes('var(--color-text')
+      // Production-hardening round (sanctioned security evolution):
+      // iframe sandbox attributes + the https-only embedded-sheet guard.
+      || line.includes('sandbox=')
+      || line.includes('/^https:/i.test(url)');
     ok(
       codeAdditions.some((line) => line.includes('MaveroUnifiedDownload'))
-      && codeAdditions.every((line) =>
-        line.includes('MaveroUnifiedDownload')
-        || line.includes('MAVERO_DOWNLOADER_2_PROVIDER_ID')
-        || line.includes('MaveroCloudStreamDownload')
-        || line.includes('isMaveroDownloader')
-        || line.includes('.dl-item-name')
-        || line.includes('.dl-item-badge')
-        || line.includes('.dl-dropdown-item')
-        || line.includes('flex-start')
-        || line.includes('min-width: 0')
-        || line.includes('margin-left: auto')
-        || line.includes('retired')
-        || line.includes('unified')
-        || line.includes('retire')
-        // MAV-23 palette contract: only --dp-* var fallbacks, the
-        // paletteStyle prop, and the design-system text-token fallbacks.
-        || line.includes('--dp-')
-        || line.includes('paletteStyle')
-        || line.includes('var(--color-text')),
-      `§H27: every added DownloadSheet code line is the unified-panel swap, the retirement, the PART J dropdown fix, or the MAV-23 palette contract (added ${codeAdditions.length})`,
+      && codeAdditions.every(sanctionedAddition),
+      `§H27: every added DownloadSheet code line is the unified-panel swap, the retirement, the PART J dropdown fix, the MAV-23 palette contract, or the sanctioned iframe-sandbox/https-guard hardening (added ${codeAdditions.length})`,
     );
   } else {
     ok(true, '§H27: pristine sheet unavailable — FINAL TASK wiring checked structurally');

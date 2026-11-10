@@ -256,8 +256,16 @@ const adminAuth = read('src/lib/server/streaming/admin-auth.ts');
 {
   // Guest: exempt=false, and the guest branch returns BEFORE any
   // profiles lookup — guests need no account for protection.
-  ok(/if \(!user\) \{\s*\n\s*\/\/ Guests are NOT exempt[\s\S]*?devtoolExempt: false/.test(layoutServer), '3a. guest branch resolves devtoolExempt: false');
-  ok(/devtoolExempt: false[\s\S]*?\}\s*\n\s*const userMeta/.test(layoutServer), '3b. guest branch returns before the profiles lookup (no login required for protection)');
+  // (Production-hardening round: the guest branch now awaits appConfig
+  // inline before returning; the pin below follows the branch shape, not
+  // the comment wording.)
+  ok(/if \(!user\) \{[\s\S]*?devtoolExempt: false[\s\S]*?\}/.test(layoutServer), '3a. guest branch resolves devtoolExempt: false');
+  // 3b — semantic pin: between the guest branch opening and the
+  // authenticated userMeta projection there is a return with
+  // devtoolExempt: false and NO profiles/admin lookup (production-
+  // hardening round: the branch awaits appConfig inline first).
+  const guestBranch = layoutServer.slice(layoutServer.indexOf('if (!user)'), layoutServer.indexOf('const userMeta'));
+  ok(guestBranch.includes('devtoolExempt: false') && !guestBranch.includes('isAdminUser'), '3b. guest branch returns before the profiles lookup (no login required for protection)');
   // Authenticated: resolved through the canonical profiles.role check.
   ok(/isAdminUser\(locals\.supabase,\s*user\.id\)/.test(layoutServer), '4a. authenticated exemption resolved via isAdminUser (profiles.role)');
   ok(/export async function isAdminUser/.test(adminAuth), '4b. isAdminUser exported from the canonical admin-auth module');

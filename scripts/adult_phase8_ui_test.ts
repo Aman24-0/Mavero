@@ -306,7 +306,10 @@ const POLICY_OFF = { allowLoggedIn: false, allowGuest: false };
 {
   const searchServer = await read('src/routes/search/+page.server.ts');
   assert.match(searchServer, /canAccessAdultContent\(locals\.supabase, user, cookies\)/, 'the SSR search page evaluates the real server-side policy');
-  assert.match(searchServer, /search\(query, type, 1, \{\}, canAccessAdult\)/, 'the SSR page passes the authorization decision into the search service');
+  // Production-hardening round: the decision is passed as a pre-started
+  // PROMISE (policy read overlaps the search's warm-up) — same server-side
+  // authorization, only the sequencing moved.
+  assert.match(searchServer, /search\(\s*query, type, 1, \{\},\s*canAccessAdultContent\(locals\.supabase, user, cookies\)\s*\)/, 'the SSR page passes the authorization decision (as a promise) into the search service');
   const searchEndpoint = await read('src/routes/api/content/search/+server.ts');
   assert.match(searchEndpoint, /canAccessAdultContent\(locals\.supabase, user, cookies\)/, 'the search API evaluates the same policy per request');
   ok('13. authorized SSR may carry Adult search results (same server policy as the API — parity intact)');

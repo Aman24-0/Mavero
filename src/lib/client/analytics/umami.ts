@@ -95,7 +95,21 @@ function umamiClient(): UmamiClient | null {
  * never throws, never queues, never blocks — if Umami is not loaded yet
  * (or blocked) the event is simply dropped, exactly like the old
  * dispatcher's disabled-state no-op.
+ *
+ * ADMIN EXCLUSION (production-hardening round): events fired while the
+ * SPA is on ANY /admin path are dropped. This is the second layer of the
+ * Umami exclusion (the first is the guarded inline loader in app.html,
+ * which never injects the tracker script on admin URLs) — it covers the
+ * case the loader cannot see: the user loads a PUBLIC route (tracker
+ * injected), then client-side navigates INTO /admin without a full page
+ * load. The pathname check is prefix-based, mirroring the loader, so the
+ * whole admin panel (23 pages) is excluded from both page views and
+ * custom events. SSR calls remain no-ops (window undefined).
  */
 export function umamiTrack(eventName: string, data?: Record<string, unknown>): void {
+  // `window.location?.` — optional chaining keeps the guard safe even in
+  // exotic environments where a `window` global exists without a
+  // `location` object (SSR stubs, test harnesses, odd embedded browsers).
+  if (typeof window !== 'undefined' && window.location?.pathname.indexOf('/admin') === 0) return;
   umamiClient()?.track(eventName, data);
 }

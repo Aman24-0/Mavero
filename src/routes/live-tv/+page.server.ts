@@ -34,15 +34,24 @@ import { env as publicEnv } from '$env/dynamic/public';
 export const load: PageServerLoad = async () => {
         try {
                 const client = createSupabaseAdminClient();
-                const availability = await getLivetvAvailabilityState(client);
-                // 2026-11 round 36 — the effective LIVE TV INDIAN PROXY base.
-                // The admin's app_config override (Admin → Feature Control)
-                // wins; the deployment-level PUBLIC_INDIAN_PROXY_URL env var is
-                // the fallback. Fail-safe: any read error degrades to the env
-                // value alone — a config read can never break the page. The
-                // value is public by design (every browser builds proxied
-                // stream URLs from it).
-                const adminOverride = await getLivetvIndianProxyUrl(client);
+                // Production-hardening round: the two independent registry
+                // reads now run CONCURRENTLY (Promise.all) instead of back-
+                // to-back — one Supabase roundtrip of latency off the
+                // /live-tv server load. Failure semantics are unchanged:
+                // Promise.all rejects on the first failure and the same
+                // fail-closed catch below degrades to the honest
+                // unavailable state.
+                const [availability, adminOverride] = await Promise.all([
+                        getLivetvAvailabilityState(client),
+                        // 2026-11 round 36 — the effective LIVE TV INDIAN PROXY base.
+                        // The admin's app_config override (Admin → Feature Control)
+                        // wins; the deployment-level PUBLIC_INDIAN_PROXY_URL env var is
+                        // the fallback. Fail-safe: any read error degrades to the env
+                        // value alone — a config read can never break the page. The
+                        // value is public by design (every browser builds proxied
+                        // stream URLs from it).
+                        getLivetvIndianProxyUrl(client)
+                ]);
                 const envIndianProxy = (publicEnv.PUBLIC_INDIAN_PROXY_URL ?? '').trim();
                 const indianProxyUrl = adminOverride ?? (envIndianProxy || null);
                 return { availability, indianProxyUrl };

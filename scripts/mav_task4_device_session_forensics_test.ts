@@ -106,15 +106,19 @@ async function run() {
   // §E — list projection safety
   console.log('\n§E — session list projection safety');
   {
+    // Production-hardening round: the read→project pipeline is single-sourced
+    // in $lib/server/account/safe-sessions.ts (the /settings server load calls
+    // the SAME function); the safety assertions follow the projection there.
     const endpoint = src('src/routes/api/account/sessions/+server.ts');
+    const pipeline = src('src/lib/server/account/safe-sessions.ts');
     // The projected object body is the authoritative surface — comments may
     // legitimately NAME the forbidden fields ("never expose …").
-    const projectedBody = endpoint.slice(endpoint.indexOf('const projected = sessions.map'), endpoint.indexOf('return json({ ok: true, sessions: projected }'));
+    const projectedBody = pipeline.slice(pipeline.indexOf('const projected: SafeDeviceSession[] = sessions.map'), pipeline.indexOf('return { ok: true, sessions: projected }'));
     for (const forbidden of ['supabase_session_id: row.supabase_session_id', 'device_id: row.device_id', 'ip_hash', 'user_id: row.user_id']) {
-      ok(!projectedBody.includes(forbidden), `E1. projection never exposes ${forbidden.split(':')[0].trim()}`);
+      ok(projectedBody.length > 0 && !projectedBody.includes(forbidden), `E1. projection never exposes ${forbidden.split(':')[0].trim()}`);
     }
-    ok(/isCurrent: row\.supabase_session_id === currentSessionId/.test(endpoint), 'E2. isCurrent computed SERVER-side from the JWT claim (raw id never returned)');
-    ok(/listUserSessions\(admin, user\.id\)/.test(endpoint), 'E3. user-scoped listing only');
+    ok(/isCurrent: row\.supabase_session_id === currentSessionId/.test(pipeline), 'E2. isCurrent computed SERVER-side from the JWT claim (raw id never returned)');
+    ok(/listUserSessions\(admin, userId\)/.test(pipeline) && /listSafeDeviceSessions\(/.test(endpoint), 'E3. user-scoped listing only (endpoint delegates to the user-scoped pipeline)');
     ok(/'cache-control': 'no-store'/.test(endpoint), 'E4. no-store on the session list');
   }
 

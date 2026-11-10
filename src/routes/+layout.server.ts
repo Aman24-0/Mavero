@@ -62,16 +62,19 @@ export const load: LayoutServerLoad = async ({ locals, request, cookies }) => {
   // projections were REMOVED together with the custom analytics pipeline
   // (dispatcher + /api/events ingest). Umami Cloud manages its own
   // visitor identity — the layout no longer projects analytics fields.
-  // App-wide config (footer/account social links) — fail-safe, never throws.
-  const appConfig = await getAppConfig(locals.supabase);
 
   const user = locals.user;
   if (!user) {
-    // Guests are NOT exempt — DevTools protection is enabled for them,
-    // and no profiles lookup is needed (zero extra DB cost for the
-    // unauthenticated majority).
+    // Guests: app config only — fail-safe, never throws. No profiles
+    // lookup is needed (zero extra DB cost for the unauthenticated
+    // majority).
+    const appConfig = await getAppConfig(locals.supabase);
     return { user: null, isAuthenticated: false, deviceType, devtoolExempt: false, isAdmin: false, appConfig };
   }
+  // Authenticated users: the app-config read and the admin-capability
+  // read are INDEPENDENT — they now run CONCURRENTLY (production-
+  // hardening round). The layout runs on EVERY request, so the removed
+  // serial wait is a direct cut off every authenticated server render.
   const userMeta = user.user_metadata;
   const displayName = typeof userMeta?.display_name === 'string' && userMeta.display_name.trim()
     ? userMeta.display_name.trim()
@@ -86,7 +89,10 @@ export const load: LayoutServerLoad = async ({ locals, request, cookies }) => {
   // no other profile data is exposed with it. One indexed PK read per
   // authenticated full page load — comparable to the session
   // registration the hook already performs.
-  const devtoolExempt = await isAdminUser(locals.supabase, user.id);
+  const [appConfig, devtoolExempt] = await Promise.all([
+    getAppConfig(locals.supabase),
+    isAdminUser(locals.supabase, user.id)
+  ]);
   return {
     user: { id: user.id, email: user.email, displayName },
     isAuthenticated: true,

@@ -1,7 +1,7 @@
 import { discover, popular, selectFeatured, trendingMoviesByLanguages } from './service';
 import { toMediaItem } from './presenter';
 import { getOrSet, getOrSetValidated } from './cache';
-import { getTmdbIndiaFlatrateIds, getTmdbHeroMoviePool, getTmdbHeroSeriesPool } from './adapters/tmdb';
+import { getTmdbIndiaFlatrateIds, getTmdbHeroMoviePool, getTmdbHeroSeriesPool, getTmdbIndiaProviders, providerLogoUrl } from './adapters/tmdb';
 import { selectHeroLineup, heroDailyBucket, isHeroLineupCacheable, type HeroCandidate, type HeroDiagnostics, type HeroLineupResult } from './hero-select';
 import type { ContentType, ContentList, NormalizedMediaItem } from './types';
 import type { MediaItem } from '$data/content';
@@ -128,7 +128,18 @@ const HERO_CACHE_VERSION = 'v3';
 async function loadHeroLineup(
   trendingMovies: RailResult,
   trendingSeries: RailResult,
-  trendingAnime: RailResult
+  trendingAnime: RailResult,
+  // Production-hardening round: the pool/streaming-id fetches may be
+  // PRE-STARTED by the caller (loadDiscoverDataUncached) so they run
+  // concurrently with the trending rails instead of strictly after them —
+  // only the pool MERGE below actually needs the rails. Each promise is
+  // already failure-guarded by the caller (identical catch handlers), so
+  // they can be awaited as-is here.
+  pools?: {
+    moviePool: Promise<{ items: NormalizedMediaItem[] }>;
+    seriesPool: Promise<{ items: NormalizedMediaItem[]; activeSeriesIds: Set<string> }>;
+    streamingIds: Promise<Set<string>>;
+  }
 ): Promise<MediaItem[]> {
   const bucket = heroDailyBucket();
   // Versioned key — guarantees a fresh namespace, immune to any
@@ -139,7 +150,13 @@ async function loadHeroLineup(
     // active-series id set in parallel (all cached via the existing
     // getOrSet path with the standard list TTL — these have SHORT
     // TTLs so a transient failure self-heals in minutes).
-    const [moviePoolRes, seriesPoolRes, streamingIds] = await Promise.all([
+    // Production-hardening round: when the caller pre-started the
+    // promises (concurrently with the trending rails), they are awaited
+    // here directly — same failure guards, zero duplicated fetches.
+    const [moviePoolRes, seriesPoolRes, streamingIds] = await Promise.all(
+      pools
+        ? [pools.moviePool, pools.seriesPool, pools.streamingIds]
+        : [
       getTmdbHeroMoviePool().catch((error) => {
         console.warn('[Hero] getTmdbHeroMoviePool failed — using empty pool', error);
         return { items: [] as NormalizedMediaItem[] };
@@ -152,7 +169,8 @@ async function loadHeroLineup(
         console.warn('[Hero] getTmdbIndiaFlatrateIds failed — using empty set', error);
         return new Set<string>();
       })
-    ]);
+        ]
+    );
 
     // Merge the expanded fresh pools with the trending rails so we
     // have both depth (trending) AND freshness (now_playing /
@@ -271,7 +289,8 @@ type DiscoverPagePayload = Awaited<ReturnType<typeof loadDiscoverDataUncached>>;
 
 // Bump the version when the payload SHAPE changes; the policy TTLs below
 // bound how long any composition is reused.
-const DISCOVER_PAGE_CACHE_KEY = 'v1:discover:page';
+// v2 — production-hardening round: added `ottProviders` to the payload.
+const DISCOVER_PAGE_CACHE_KEY = 'v2:discover:page';
 const DISCOVER_PAGE_POLICY = { ttlMs: 45_000, staleWhileRevalidateMs: 150_000 };
 
 /**
@@ -291,6 +310,35 @@ async function loadDiscoverDataUncached() {
   // load only needs to fetch enough for the hero gallery's featured
   // item (trending movie + series + anime). This keeps SSR fast and
   // avoids N parallel server-side TMDB calls.
+  //
+  // Production-hardening round — the three hero-pool fetches below do NOT
+  // depend on the trending rails (only the pool MERGE inside
+  // loadHeroLineup does). They are PRE-STARTED here, concurrent with the
+  // rails, cutting one full TMDB roundtrip off the cold discover path
+  // (the previous shape awaited the rails first, THEN started the hero
+  // pools). Each promise carries its own failure guard, identical to the
+  // ones loadHeroLineup used to install inline.
+  const heroPoolMovies = getTmdbHeroMoviePool().catch((error) => {
+    console.warn('[Hero] getTmdbHeroMoviePool failed — using empty pool', error);
+    return { items: [] as NormalizedMediaItem[] };
+  });
+  const heroPoolSeries = getTmdbHeroSeriesPool().catch((error) => {
+    console.warn('[Hero] getTmdbHeroSeriesPool failed — using empty pool', error);
+    return { items: [] as NormalizedMediaItem[], activeSeriesIds: new Set<string>() };
+  });
+  const heroStreamingIds = getTmdbIndiaFlatrateIds(2).catch((error) => {
+    console.warn('[Hero] getTmdbIndiaFlatrateIds failed — using empty set', error);
+    return new Set<string>();
+  });
+  // Production-hardening round — the OTT provider list is PRE-STARTED here
+  // too (concurrent with the pools + rails) and now travels IN the page
+  // payload as `ottProviders` — the same projection the
+  // /api/discover/providers endpoint returns (providerId/name/key/logoUrl).
+  // The DiscoverPage consumes `page.data.ottProviders` when present and no
+  // longer pays a second HTTP roundtrip on first paint of / and /discover.
+  // Failure-guarded to an empty list: the client falls back to the existing
+  // endpoint fetch when the server data is missing/empty.
+  const ottProvidersPromise = getTmdbIndiaProviders().catch(() => []);
   const [
     trendingMovies, trendingSeries, trendingAnime
   ] = await Promise.all([
@@ -306,7 +354,22 @@ async function loadDiscoverDataUncached() {
   // the India flatrate streaming-id set, cached for ~24h via a daily
   // bucket key. Empty on failure (the DiscoverPage falls back to the
   // legacy createFeaturedItems path when heroItems is empty).
-  const heroItems = await loadHeroLineup(trendingMovies, trendingSeries, trendingAnime);
+  const heroItems = await loadHeroLineup(trendingMovies, trendingSeries, trendingAnime, {
+    moviePool: heroPoolMovies,
+    seriesPool: heroPoolSeries,
+    streamingIds: heroStreamingIds
+  });
+
+  // Await the pre-started providers read and project it EXACTLY like
+  // /api/discover/providers does (providerLogoUrl → absolute TMDB image
+  // URL). The projection must stay in lockstep with that endpoint.
+  const ottProviderList = await ottProvidersPromise;
+  const ottProviders = ottProviderList.map((p) => ({
+    providerId: p.providerId,
+    name: p.name,
+    key: p.key,
+    logoUrl: providerLogoUrl(p.logoPath),
+  }));
 
   return {
     movies: trendingMovies.items,
@@ -330,6 +393,10 @@ async function loadDiscoverDataUncached() {
     // createFeaturedItems path. May be empty on failure — the
     // DiscoverPage handles the fallback.
     heroItems,
+    // Production-hardening round: the India OTT provider chips travel with
+    // the page payload (same projection as /api/discover/providers). Empty
+    // on upstream failure — the client falls back to its endpoint fetch.
+    ottProviders,
     errorMessage: errors.length ? `${[...new Set(errors)].join(' ')} Check the server catalog configuration and try again.` : undefined
   };
 }

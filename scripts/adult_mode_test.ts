@@ -229,19 +229,29 @@ const accountPage = await readFile(path.join(repoRoot, 'src/routes/settings/+pag
 // ============================================================================
 {
   assert.match(searchEndpoint, /canAccessAdultContent\(locals\.supabase, user, cookies\)/, 'search endpoint evaluates adult policy with cookies');
-  assert.match(service, /export async function search\(query.*canAccessAdult = false/, 'search accepts canAccessAdult parameter');
+  // Production-hardening round: the parameter now ALSO accepts a
+  // PRE-STARTED PROMISE (the caller's policy read runs concurrently with
+  // the search service's warm-up instead of strictly before it). The
+  // security property is unchanged — server-side fail-closed evaluation,
+  // never a client-supplied flag.
+  assert.match(service, /export async function search\(query.*canAccessAdult: boolean \| Promise<boolean> = false/, 'search accepts canAccessAdult parameter (boolean or pre-started promise)');
   // Phase 4: service passes the authorization decision to searchTmdb —
   // classification + filtering happen server-side in the content layer.
-  assert.match(service, /searchTmdb\(normalized, 'series', page, filters, canAccessAdult\)/, 'service passes canAccessAdult to searchTmdb for anime');
-  assert.match(service, /searchTmdb\(normalized, type, page, filters, canAccessAdult\)/, 'service passes canAccessAdult to searchTmdb for typed search');
-  assert.match(service, /searchTmdb\(normalized, 'movie', page, filters, canAccessAdult\)/, 'service passes canAccessAdult to searchTmdb for the merged search');
+  // (The resolved decision is awaited once at the top of search as
+  // `adultAccess`, then forwarded to every searchTmdb call.)
+  assert.match(service, /const adultAccess = await Promise\.resolve\(canAccessAdult\)/, 'search awaits the policy decision at the boundary where it is first needed');
+  assert.match(service, /searchTmdb\(normalized, 'series', page, filters, adultAccess\)/, 'service passes the resolved authorization to searchTmdb for anime');
+  assert.match(service, /searchTmdb\(normalized, type, page, filters, adultAccess\)/, 'service passes the resolved authorization to searchTmdb for typed search');
+  assert.match(service, /searchTmdb\(normalized, 'movie', page, filters, adultAccess\)/, 'service passes the resolved authorization to searchTmdb for the merged search');
   // No client-side bypass parameter (the endpoint must not accept ?adult=true as a query param).
   assert.doesNotMatch(searchEndpoint, /url\.searchParams\.get\('adult'\)/, 'search endpoint does NOT accept adult query param');
   assert.doesNotMatch(searchEndpoint, /url\.searchParams\.get\('userId'\)/, 'search endpoint does NOT accept userId query param');
   // SSR parity: the search page evaluates the same policy server-side.
   const searchPageServer = await readFile(path.join(repoRoot, 'src/routes/search/+page.server.ts'), 'utf8');
   assert.match(searchPageServer, /canAccessAdultContent\(locals\.supabase, user, cookies\)/, 'SSR search page evaluates the adult policy server-side');
-  assert.match(searchPageServer, /search\(query, type, 1, \{\}, canAccessAdult\)/, 'SSR search page passes the authorization decision down');
+  // Production-hardening round: the SSR page passes the policy PROMISE
+  // (un-awaited) so the Supabase read overlaps the search's own warm-up.
+  assert.match(searchPageServer, /search\(\s*query, type, 1, \{\},\s*canAccessAdultContent\(locals\.supabase, user, cookies\)\s*\)/, 'SSR search page passes the authorization decision (as a promise) down');
 }
 
 // ============================================================================

@@ -695,6 +695,8 @@
             style="position:absolute;inset:0;width:100%;height:100%;border:0"
             allowfullscreen
             allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
+            sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
+            referrerpolicy="no-referrer"
             onload={() => {
               embedLoaded = true;
               onembedready(); // Phase 5: passive notify (bounded embed window)

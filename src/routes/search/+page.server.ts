@@ -34,9 +34,17 @@ export const load: PageServerLoad = async ({ url, locals, cookies }) => {
     // content layer; the client is never trusted.
     //
     // Phase 2-A: use hook-resolved locals.user (no second auth roundtrip).
+    // Production-hardening round: the policy decision is passed as a
+    // PROMISE so the Supabase policy read runs CONCURRENTLY with the
+    // search service's own warm-up (provider-cache) + TMDB roundtrips
+    // instead of strictly before them — the search service awaits it at
+    // the boundary where it is first needed. The decision is unchanged
+    // (same fail-closed server-side policy); only the sequencing moved.
     const user = locals.user;
-    const canAccessAdult = await canAccessAdultContent(locals.supabase, user, cookies);
-    const result = await search(query, type, 1, {}, canAccessAdult);
+    const result = await search(
+      query, type, 1, {},
+      canAccessAdultContent(locals.supabase, user, cookies)
+    );
     return {
       query: result.query, type,
       items: result.items.map(toMediaItem),

@@ -233,9 +233,16 @@ function applyAnimeFilters(items: NormalizedMediaItem[], filters: SearchFilters)
   return filtered;
 }
 
-export async function search(query: string, type?: ContentType, page = 1, filters: SearchFilters = {}, canAccessAdult = false): Promise<ContentSearchResult> {
+export async function search(query: string, type?: ContentType, page = 1, filters: SearchFilters = {}, canAccessAdult: boolean | Promise<boolean> = false): Promise<ContentSearchResult> {
   const normalized = query.trim();
   if (!normalized) return { query: normalized, items: [], page, hasNextPage: false, filters, source: fixtureSource() };
+  // Production-hardening round — the authorization decision may now arrive
+  // as a PROMISE so callers can run the policy read (a Supabase roundtrip)
+  // CONCURRENTLY with this function's own warm-up work instead of paying
+  // two sequential roundtrips on the hot search path (SSR ?q= deep links
+  // AND /api/content/search). The decision itself is unchanged: the same
+  // policy function, fail-closed, evaluated server-side — it is just
+  // awaited at the boundary where it is first needed, not before entry.
   // Phase 4: Adult-aware search. TMDB's /search endpoint supports NEITHER
   // without_watch_providers NOR without_networks, and search rows carry no
   // networks metadata — include_adult=false alone CANNOT be trusted. When
@@ -248,6 +255,7 @@ export async function search(query: string, type?: ContentType, page = 1, filter
   // is exactly the pre-Phase-4 shape. Authorization is evaluated by the
   // CALLER (API route / SSR page) with the existing policy function — no
   // authorization redesign here (Phase 5).
+  const adultAccess = await Promise.resolve(canAccessAdult);
   // The provider cache is still kept warm so the classifier's transitional
   // (movie-side) provider signal stays effective for detail classification.
   await ensureAdultProvidersResolved(() => getTmdbIndiaProviders());
@@ -259,8 +267,8 @@ export async function search(query: string, type?: ContentType, page = 1, filter
       // popularity (the same interleave discipline as the merged anime
       // rails) and dedupe by canonical type+id.
       const [movieResult, seriesResult] = await Promise.all([
-        searchTmdb(normalized, 'movie', page, filters, canAccessAdult),
-        searchTmdb(normalized, 'series', page, filters, canAccessAdult)
+        searchTmdb(normalized, 'movie', page, filters, adultAccess),
+        searchTmdb(normalized, 'series', page, filters, adultAccess)
       ]);
       const animeItems = [...movieResult.items, ...seriesResult.items]
         .filter(isAnimeItem)
@@ -282,12 +290,12 @@ export async function search(query: string, type?: ContentType, page = 1, filter
       };
     }
     if (type === 'movie' || type === 'series') {
-      const result = await searchTmdb(normalized, type, page, filters, canAccessAdult);
+      const result = await searchTmdb(normalized, type, page, filters, adultAccess);
       return { ...result, query: normalized, filters };
     }
     const [movies, series] = await Promise.allSettled([
-      searchTmdb(normalized, 'movie', page, filters, canAccessAdult),
-      searchTmdb(normalized, 'series', page, filters, canAccessAdult),
+      searchTmdb(normalized, 'movie', page, filters, adultAccess),
+      searchTmdb(normalized, 'series', page, filters, adultAccess),
     ]);
     const tmdbResults = [movies, series].filter((result): result is PromiseFulfilledResult<ContentList> => result.status === 'fulfilled');
     if (!tmdbResults.length) {

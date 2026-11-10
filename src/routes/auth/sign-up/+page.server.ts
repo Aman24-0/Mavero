@@ -2,7 +2,7 @@ import { fail, redirect } from '@sveltejs/kit';
 import { friendlyAuthMessage, safeRedirectPath } from '$lib/server/supabase/server';
 import { isValidEmail, MIN_PASSWORD_LENGTH } from '$lib/shared/auth';
 import { env as publicEnv } from '$env/dynamic/public';
-import { buildUnauthenticatedOAuthState, buildOAuthRedirectUrl, GOOGLE_PROVIDER, OAuthConfigError } from '$lib/shared/oauth';
+import { buildUnauthenticatedOAuthState, buildOAuthRedirectUrl, GOOGLE_PROVIDER, OAuthConfigError } from '$lib/server/oauth';
 import type { Actions } from './$types';
 
 export const actions: Actions = {

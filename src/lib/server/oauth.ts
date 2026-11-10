@@ -46,14 +46,14 @@
 import { env as privateEnv } from '$env/dynamic/private';
 import { env as publicEnv } from '$env/dynamic/public';
 import type { UserIdentity } from '@supabase/supabase-js';
-import { safeRedirectPath } from './auth';
+import { safeRedirectPath } from '$lib/shared/auth';
 import {
   signOAuthState as signOAuthStatePure,
   verifyOAuthState as verifyOAuthStatePure,
   OAUTH_STATE_TTL_MS,
   type OAuthIntent,
   type OAuthStatePayload,
-} from './oauth-crypto';
+} from '$lib/shared/oauth-crypto';
 
 export { OAUTH_STATE_TTL_MS, type OAuthIntent, type OAuthStatePayload };
 

@@ -48,15 +48,28 @@
          connection the images never use. -->
     <link rel="preconnect" href="https://image.tmdb.org" />
     %sveltekit.head%
-    <!-- Umami Cloud analytics (Phase 1 — Setup & Script Installation).
-         Loaded on EVERY page, before hydration; `defer` keeps it out of
-         the critical path and out of the LCP measurement.
-         The website id is injected from the PUBLIC_UMAMI_WEBSITE_ID
-         environment variable (Netlify → Site configuration → Environment
-         variables) via SvelteKit's app.html env template placeholder —
-         resolved from the server's public env on every SSR render (the
-         placeholder is runtime-substituted, not build-inlined; if the
-         variable is unset the id renders as an empty string).
+    <!-- Umami Cloud analytics (Phase 1 — Setup & Script Installation;
+         production-hardening round: /admin exclusion).
+         The tracker is loaded by the GUARDED INLINE LOADER below, before
+         hydration, on every NON-ADMIN route. Umami Cloud has no built-in
+         path-exclusion UI, so the exclusion is enforced at the only two
+         layers Mavero controls:
+           1. HERE — the loader checks window.location.pathname and NEVER
+              injects the tracker script on /admin/* URLs (first paint of
+              an admin route ships zero analytics requests);
+           2. src/lib/client/analytics/umami.ts — umamiTrack() early-returns
+              when the SPA is currently ON an /admin path, which also covers
+              client-side navigation INTO /admin after the script already
+              loaded on a public route.
+         `defer` semantics are preserved by injecting with defer=true, so
+         the tracker stays out of the critical path and out of the LCP
+         measurement. The website id is injected from the
+         PUBLIC_UMAMI_WEBSITE_ID environment variable (Netlify → Site
+         configuration → Environment variables) via SvelteKit's app.html
+         env template placeholder — resolved from the server's public env
+         on every SSR render (the placeholder is runtime-substituted, not
+         build-inlined; if the variable is unset the id renders as an
+         empty string).
          BUILD SAFETY (deploy breakage seen 2026-11): SvelteKit validates
          EVERY env placeholder pattern that appears anywhere in this file —
          COMMENTS AND PROSE INCLUDED — and hard-fails `vite build` and
@@ -70,9 +83,38 @@
          covers VITE_* prefixes) and would ship a literal, broken id — the
          SvelteKit-native placeholder below is the equivalent of that
          intent. -->
-    <script defer src="https://cloud.umami.is/script.js" data-website-id="%sveltekit.env.PUBLIC_UMAMI_WEBSITE_ID%"></script>
+    <script>
+      // Umami Cloud loader — admin-route exclusion (production-hardening
+      // round). Runs inline, synchronously, BEFORE hydration: on /admin
+      // routes the tracker is never added to the DOM at all, so the admin
+      // panel ships zero analytics network requests and Umami's website
+      // stats stay limited to the user-facing app. Everything is wrapped
+      // in try/catch — analytics must never break the app.
+      (function () {
+        try {
+          if (window.location.pathname.indexOf('/admin') === 0) return;
+          var umamiScript = document.createElement('script');
+          umamiScript.defer = true;
+          umamiScript.src = 'https://cloud.umami.is/script.js';
+          umamiScript.setAttribute('data-website-id', '%sveltekit.env.PUBLIC_UMAMI_WEBSITE_ID%');
+          document.head.appendChild(umamiScript);
+        } catch (e) {
+          /* analytics must never break the app */
+        }
+      })();
+    </script>
   </head>
-  <body data-sveltekit-preload-data="hover">
+  <body data-sveltekit-preload-data="tap">
+    <!-- Production-hardening round: preload-data upgraded 'hover' → 'tap'.
+         'hover' preloads on mouseenter/focus — on touch-only devices
+         (the PWA's PRIMARY audience) emulated hover fires at the same
+         moment as the click itself, so it buys ZERO head start and the
+         router always waits for the load roundtrip. 'tap' preloads on
+         pointerdown (finger DOWN), which fires 100-250ms before the
+         click completes (finger up) — on mobile that head start is the
+         difference between "click and it's there" and "click, wait for
+         the server". Desktop still preloads (pointerdown precedes
+         click there too, and focus preloading covers keyboard users). -->
     <script>
       // Newtask §6 — touch-capable Mac detection (iPad-as-Mac).
       //

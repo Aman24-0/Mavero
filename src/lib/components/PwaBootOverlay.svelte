@@ -177,6 +177,26 @@
     pointer-events: none;
     opacity: 1;
     transition: opacity 200ms var(--ease-out, cubic-bezier(.22, 1, .36, 1));
+    /* CSS-ONLY SPLASH FAILSAFE (production-hardening round).
+       This overlay is rendered into the SSR HTML — the ONLY thing that
+       removes it is client JS. If the JS bundle ever fails to load, is
+       blocked, or dies during hydration, the old overlay covered the app
+       FOREVER: the user saw a black branded screen with the wordmark that
+       looks exactly like a stuck app-icon splash — the reported "PWA gets
+       stuck on the splash screen and never opens". CSS runs even with
+       zero working JavaScript, so this animation force-fades the overlay
+       out after 6s no matter what. The JS lifecycle (finish() at ~0.6-3s)
+       removes the element long before 6s in every healthy load, so the
+       failsafe is invisible in normal operation; it exists purely for the
+       dead-JS catastrophe. The 1ms delay-phase cannot fill backwards, so
+       it never fights the JS-driven opacity transition. */
+    animation: pwa-boot-css-failsafe 1ms 6s forwards;
+  }
+  @keyframes pwa-boot-css-failsafe {
+    to {
+      opacity: 0;
+      visibility: hidden;
+    }
   }
   .pwa-boot.fading {
     opacity: 0;

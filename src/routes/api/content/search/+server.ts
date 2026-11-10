@@ -36,7 +36,11 @@ export const GET: RequestHandler = async ({ url, request, locals, cookies }) => 
   // re-evaluates the per-request policy from the verified user + cookie, and
   // never trusts a client-supplied flag.
   const user = locals.user;
-  const canAccessAdult = await canAccessAdultContent(locals.supabase, user, cookies);
+  // Production-hardening round: the policy decision is passed as a PROMISE
+  // (same fail-closed server-side policy — only the sequencing moved), so
+  // the Supabase policy read runs CONCURRENTLY with the search service's
+  // own warm-up + TMDB roundtrips instead of strictly before them.
+  const canAccessAdult = canAccessAdultContent(locals.supabase, user, cookies);
 
   try {
     const result = await search(query, type, page, filters, canAccessAdult);

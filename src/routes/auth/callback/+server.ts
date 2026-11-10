@@ -5,7 +5,7 @@ import {
   GOOGLE_PROVIDER,
   findGoogleIdentity,
   type OAuthIntent,
-} from '$lib/shared/oauth';
+} from '$lib/server/oauth';
 import type { RequestHandler } from './$types';
 
 // MAVERO — OAuth callback handler (focused Google OAuth implementation, 2026-10).

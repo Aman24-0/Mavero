@@ -6,7 +6,7 @@ import {
   findGoogleIdentity,
   GOOGLE_PROVIDER,
   OAuthConfigError,
-} from '$lib/shared/oauth';
+} from '$lib/server/oauth';
 import type { User } from '@supabase/supabase-js';
 
 // MAVERO — Connected-accounts server actions (focused Google OAuth, 2026-10).

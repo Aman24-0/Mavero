@@ -18,30 +18,36 @@ const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 
 // ============================================================
 {
   const api = read('src/routes/api/account/sessions/+server.ts');
+  // Production-hardening round: the read→project pipeline is single-sourced
+  // in $lib/server/account/safe-sessions.ts (the /settings server load
+  // calls the SAME function for its first-paint pass-through), so the
+  // service/safe-field pins live there; the endpoint pins the delegation.
+  const helper = read('src/lib/server/account/safe-sessions.ts');
 
   ok(api.includes('RequestHandler'), 'sessions API: RequestHandler type');
   ok(api.includes('locals.user'), 'sessions API: uses locals.user for auth');
   ok(api.includes('if (!user)'), 'sessions API: authentication guard');
   ok(api.includes('401'), 'sessions API: returns 401 for unauthenticated');
-  ok(api.includes('listUserSessions'), 'sessions API: uses listUserSessions service');
-  ok(api.includes('extractSessionId'), 'sessions API: identifies current session via JWT');
-  ok(api.includes('isCurrent'), 'sessions API: includes current-session indicator');
+  ok(api.includes('listSafeDeviceSessions'), 'sessions API: delegates to the shared safe-sessions pipeline');
+  ok(helper.includes('listUserSessions'), 'sessions pipeline: uses listUserSessions service');
+  ok(helper.includes('extractSessionId'), 'sessions pipeline: identifies current session via JWT');
+  ok(helper.includes('isCurrent'), 'sessions pipeline: includes current-session indicator');
   ok(api.includes('cache-control'), 'sessions API: cache-control header');
   ok(!api.includes('user_id.*request') && !api.includes('body.*user_id'), 'sessions API: does NOT accept user_id from client');
 
   // Safe fields only.
-  ok(api.includes('deviceType'), 'sessions API: exposes deviceType');
-  ok(api.includes('deviceName'), 'sessions API: exposes deviceName');
-  ok(api.includes('browser'), 'sessions API: exposes browser');
-  ok(api.includes('os'), 'sessions API: exposes os');
-  ok(api.includes('createdAt'), 'sessions API: exposes createdAt');
-  ok(api.includes('lastSeenAt'), 'sessions API: exposes lastSeenAt');
-  ok(!api.includes('access_token') || api.includes('extractSessionId'), 'sessions API: access_token only used for server-side JWT extraction');
+  ok(helper.includes('deviceType'), 'sessions pipeline: exposes deviceType');
+  ok(helper.includes('deviceName'), 'sessions pipeline: exposes deviceName');
+  ok(helper.includes('browser'), 'sessions pipeline: exposes browser');
+  ok(helper.includes('os:'), 'sessions pipeline: exposes os');
+  ok(helper.includes('createdAt'), 'sessions pipeline: exposes createdAt');
+  ok(helper.includes('lastSeenAt'), 'sessions pipeline: exposes lastSeenAt');
+  ok(helper.includes('access_token') && helper.includes('extractSessionId'), 'sessions pipeline: access_token only used for server-side JWT extraction');
   ok(!api.includes('refresh_token'), 'sessions API: does NOT expose refresh tokens');
   // ip_hash appears only in comments explaining what's NOT exposed, not in actual response fields.
-  ok(!api.match(/ip_hash[^*].*json/) && !api.match(/ip_hash.*\brow\b/), 'sessions API: ip_hash not in response payload');
+  ok(!helper.match(/ip_hash[^*].*json/) && !helper.match(/ip_hash.*\brow\b/), 'sessions pipeline: ip_hash not in response payload');
 
-  ok('1. session list API contract (auth, service, safe fields, no tokens)');
+  ok('1. session list API contract (auth, shared pipeline, safe fields, no tokens)');
 }
 
 // ============================================================

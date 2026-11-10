@@ -436,14 +436,52 @@
   // removed in onDestroy so navigating away never leaks them).
   let refreshSessionsSilently: (() => void) | null = null;
   let sessionRefreshTimer: number | null = null;
+  // Production-hardening round — first-paint pass-through. The server load
+  // now ships the session list and the Adult Mode state, so the FIRST
+  // render has data without the two onMount fetches. The endpoints are
+  // still used for every subsequent refresh (focus / visibility / 30s /
+  // post-mutation) and as the fallback when the pass-through is absent.
+  let sessionsPrimedFromLoad = false;
+  let adultModePrimedFromLoad = false;
+
+  /** Prime the session list from the server-load pass-through (once). */
+  function primeSessionsFromLoad(): boolean {
+    if (sessionsPrimedFromLoad) return false;
+    sessionsPrimedFromLoad = true;
+    const initial = data.sessions;
+    if (data.isAuthenticated && Array.isArray(initial) && initial.length >= 0) {
+      sessions = initial;
+      sessionsError = '';
+      sessionsLoading = false;
+      return true;
+    }
+    return false;
+  }
+
+  /** Prime the Adult Mode state from the server-load pass-through (once). */
+  function primeAdultModeFromLoad(): boolean {
+    if (adultModePrimedFromLoad) return false;
+    adultModePrimedFromLoad = true;
+    const initial = data.adultMode;
+    if (initial && typeof initial === 'object') {
+      adultAvailable = Boolean(initial.adminAllows);
+      adultEnabled = Boolean(initial.userEnabled);
+      return true;
+    }
+    return false;
+  }
 
   onMount(() => {
     // Phase 2-J (audit UIX-1): the dead mavero.settings localStorage load
     // was removed (autoplay / autoResume / reducedMotion toggles were
     // never read by runtime code). Adult Mode loads via loadAdultMode below.
     void loadSyncStatus();
-    void loadSessions();
-    void loadAdultMode();
+    // Production-hardening round: BOTH first-paint reads are served by the
+    // server-load pass-through when present; only a missing/unusable
+    // payload falls back to the initial endpoint fetch. Refreshes after
+    // this always hit the endpoints (same freshness as before).
+    if (!primeSessionsFromLoad()) void loadSessions();
+    if (!primeAdultModeFromLoad()) void loadAdultMode();
 
     // Newtask §18 — session freshness strategy. Server fetch on:
     //   - window focus (returning to the tab)

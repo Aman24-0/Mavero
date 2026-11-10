@@ -301,6 +301,17 @@
 
   function openEmbeddedSheet(url: string): void {
     if (!url) return;
+    // SECURITY (production-hardening round): the embedded-sheet iframe
+    // hosts EXTERNAL provider/download pages. Only https URLs are allowed:
+    // an https document cannot frame an http page at all (mixed content is
+    // blocked by the browser), so non-https input was ALREADY dead — now
+    // the guard is explicit and fails closed instead of relying on the
+    // mixed-content machinery. Provider-resolved hrefs are https by
+    // construction; anything else (a malformed adapter payload) is
+    // rejected here rather than rendered. The iframe itself carries the
+    // sandbox attribute (no allow-top-navigation), so a framed provider
+    // page can never navigate Mavero's tab away from the app.
+    if (!/^https:/i.test(url)) return;
     embeddedSheetUrl = url;
     embeddedSheetLoading = true;
     embeddedSheetError = false;
@@ -584,6 +595,7 @@
                 loading="eager"
                 referrerpolicy="no-referrer"
                 allow="fullscreen; encrypted-media"
+                sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads allow-presentation"
                 onload={handleIframeLoad}
                 onerror={handleIframeError}
               ></iframe>
@@ -687,6 +699,7 @@
               loading="eager"
               referrerpolicy="no-referrer"
               allow="fullscreen; encrypted-media"
+              sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads allow-presentation"
               onload={handleEmbeddedIframeLoad}
               onerror={handleEmbeddedIframeError}
             ></iframe>

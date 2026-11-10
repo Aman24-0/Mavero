@@ -72,7 +72,7 @@ console.log('\n§1 — Google sign-in/signup initiation uses the expected provid
 {
   const signInServer = readCode('src/routes/auth/sign-in/+page.server.ts');
   const signUpServer = readCode('src/routes/auth/sign-up/+page.server.ts');
-  const oauthSource = readCode('src/lib/shared/oauth.ts');
+  const oauthSource = readCode('src/lib/server/oauth.ts');
 
   // Both routes have a `google` action that initiates the OAuth flow.
   ok(/google:\s*async\s*\(/.test(signInServer), '1a. sign-in has a `google` form action');
@@ -148,7 +148,7 @@ console.log('\n§3 — Existing email confirmation + password reset still work')
 
 console.log('\n§4 — OAuth callback preserves safe `next` redirects and rejects external redirects');
 {
-  const oauthSource = readCode('src/lib/shared/oauth.ts');
+  const oauthSource = readCode('src/lib/server/oauth.ts');
   const authSource = readCode('src/lib/shared/auth.ts');
 
   // safeOAuthNext delegates to safeRedirectPath — verify the latter's
@@ -163,7 +163,7 @@ console.log('\n§4 — OAuth callback preserves safe `next` redirects and reject
   ok(authSource.includes("includes('://')") || authSource.includes('includes("://")'), '4b3. safeRedirectPath rejects URLs containing ://');
 
   // safeOAuthNext wraps safeRedirectPath (with the same /settings fallback).
-  ok(/function\s+safeOAuthNext/.test(oauthSource), '4c. safeOAuthNext exists in src/lib/shared/oauth.ts');
+  ok(/function\s+safeOAuthNext/.test(oauthSource), '4c. safeOAuthNext exists in src/lib/server/oauth.ts');
   ok(/safeRedirectPath\(value,\s*fallback\)/.test(oauthSource), '4d. safeOAuthNext delegates to safeRedirectPath');
 
   // The state token's `next` is sanitized through safeOAuthNext before
@@ -230,7 +230,7 @@ console.log('\n§6 — Linking requires an authenticated user');
 
 console.log('\n§7 — The linked identity belongs to the initiating user');
 {
-  const oauthSource = readCode('src/lib/shared/oauth.ts');
+  const oauthSource = readCode('src/lib/server/oauth.ts');
   const callbackServer = readCode('src/routes/auth/callback/+server.ts');
 
   // buildLinkOAuthState encodes the user id in the state token.
@@ -349,7 +349,7 @@ console.log('\n§12 — Profile, watch progress, watch history, favorites, sessi
   ok(!/from\(['"]device_sessions['"]\)/.test(connectedAccounts), '12e. connected-accounts.ts never writes to device_sessions');
 
   // The OAuth helpers never touch the database.
-  const oauth = readCode('src/lib/shared/oauth.ts');
+  const oauth = readCode('src/lib/server/oauth.ts');
   ok(!/from\(['"]/.test(oauth), '12f. oauth.ts never touches the database (pure helpers)');
 }
 
@@ -467,9 +467,9 @@ console.log('\n§16 — OAuth state token: signing + verification (pure unit tes
 
 console.log('\n§17 — findGoogleIdentity: pure identity lookup (source inspection)');
 {
-  const oauthSource = readCode('src/lib/shared/oauth.ts');
+  const oauthSource = readCode('src/lib/server/oauth.ts');
   // findGoogleIdentity exists and matches on provider === 'google'.
-  ok(/function\s+findGoogleIdentity/.test(oauthSource), '17a. findGoogleIdentity exists in src/lib/shared/oauth.ts');
+  ok(/function\s+findGoogleIdentity/.test(oauthSource), '17a. findGoogleIdentity exists in src/lib/server/oauth.ts');
   ok(/identity\.provider\s*===\s*GOOGLE_PROVIDER/.test(oauthSource), '17b. findGoogleIdentity matches on provider === GOOGLE_PROVIDER');
   ok(/return\s+null/.test(oauthSource), '17c. findGoogleIdentity returns null when the input is not an array');
   // The GOOGLE_PROVIDER constant is 'google' (verified in §1e).

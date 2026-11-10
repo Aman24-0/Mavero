@@ -175,7 +175,16 @@
     jsonLdScriptElement(escapeJsonForScript(structuredData)),
   );
   const trailerKey = $derived(item.trailerKey ?? '');
-  const hasTrailer = $derived(Boolean(trailerKey));
+  // Production-hardening round — YouTube trailer-id guard. trailerKey is a
+  // TMDB/admin-supplied value interpolated into the embed URL. Svelte
+  // escapes attribute interpolation (no markup breakout is possible), but
+  // a malformed or malicious value could still CRAFT the embed URL (extra
+  // path segments / query params). The strict YouTube-id shape (letters,
+  // digits, dash, underscore) makes the embed URL unforgeable: anything
+  // that does not match simply disables the trailer, exactly like a
+  // missing one.
+  const trailerKeyValid = $derived(/^[A-Za-z0-9_-]{1,64}$/.test(trailerKey));
+  const hasTrailer = $derived(trailerKeyValid && Boolean(trailerKey));
   const castMembers = $derived(item.cast ?? []);
 
   // ============================================================
@@ -841,6 +850,8 @@
               title={`${item.title} trailer`}
               allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
               allowfullscreen
+              sandbox="allow-scripts allow-same-origin allow-presentation allow-popups"
+              referrerpolicy="no-referrer"
               onload={() => { clearTrailerLoadTimeout(); trailerStatus = 'ready'; }}
               onerror={() => { clearTrailerLoadTimeout(); trailerStatus = 'error'; }}
             ></iframe>

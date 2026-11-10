@@ -634,7 +634,13 @@ function section_sheetContracts(): void {
         // paletteStyle prop, and the design-system text-token fallbacks.
         || line.includes('--dp-')
         || line.includes('paletteStyle')
-        || line.includes('var(--color-text')),
+        || line.includes('var(--color-text')
+        // Production-hardening round (sanctioned security evolution): the
+        // provider + embedded-sheet iframes carry a sandbox attribute and
+        // openEmbeddedSheet is https-only.
+        || line.includes('sandbox=')
+        || line.includes('/^https:/i.test(url)')),
+
       `§C6: every added code line is the unified swap, the retirement, or the PART J fix (added ${codeAdditions.length})`,
     );
     // C6b hard guarantees: existing behavior lines survive verbatim.

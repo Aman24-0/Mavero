@@ -175,8 +175,24 @@ ok('No old accidental icon references (apple-touch + favicon updated)');
 console.log('\n9. Service worker caching unchanged');
 
 const swSource = readFileSync(join(repoRoot, 'static', 'sw.js'), 'utf8');
-assert.match(swSource, /const VERSION = 'mavero-shell-v1'/,
-  'SW version unchanged');
+// Production-hardening round: the cache VERSION bumped v1 → v2 (the SW's
+// fetch/install logic was hardened — resilient install + navigation
+// timeout). The SAFE_ASSETS set and the on-demand static caching contract
+// are unchanged, which is what this suite actually pins.
+assert.match(swSource, /const VERSION = 'mavero-shell-v2'/,
+  'SW version bumped to v2 (production-hardening round)');
+// The hardening additions are present: resilient (per-asset) install so
+// one bad asset can no longer strand the worker in `installing`, and the
+// navigation timeout race so a stalled socket can no longer hang the PWA
+// on its splash screen.
+assert.match(swSource, /Promise\.allSettled\(/,
+  'SW install is resilient (per-asset caching, never all-or-nothing)');
+assert.match(swSource, /self\.skipWaiting\(\)/,
+  'SW skipWaiting present (updates apply instantly)');
+assert.match(swSource, /self\.clients\.claim\(\)/,
+  'SW clientsClaim present (activated worker takes over immediately)');
+assert.match(swSource, /NAVIGATION_TIMEOUT_MS/,
+  'SW navigation requests carry a hard timeout (splash-hang fix)');
 assert.match(swSource, /url\.pathname\.startsWith\('\/icons\/'\)/,
   'SW still caches /icons/ on-demand (isSafeStaticRequest)');
 // SAFE_ASSETS should still contain the original 4 entries.

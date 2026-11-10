@@ -1,6 +1,11 @@
 <script lang="ts">
   import { browser } from '$app/environment';
-  import { goto } from '$app/navigation';
+  // Production-hardening round — beforeNavigate powers the INSTANT embed
+  // iframe teardown: heavy cross-origin provider frames (VidRift / VidCore
+  // / vidsrc …) are neutralized (about:blank swap) the moment a navigation
+  // away from the player is confirmed, so the browser never blocks the
+  // back transition on a multi-second browsing-context destruction.
+  import { beforeNavigate, goto } from '$app/navigation';
   import { page } from '$app/state';
   import { onDestroy, onMount } from 'svelte';
   import PlayerShell from '$lib/components/player/PlayerShell.svelte';
@@ -22,6 +27,10 @@
   import { isSourceBadge, parseSourceBadges } from '$lib/shared/source-presentation';
   import { umamiTrack } from '$lib/client/analytics/umami';
   import { markPlayerMilestone } from '$lib/client/player/player-timing';
+  // Production-hardening round — instant embed-iframe teardown registry
+  // (populated by PlayerViewport; see the beforeNavigate hook below and
+  // src/lib/client/player/embed-teardown.ts for the full mechanism).
+  import { neutralizeActiveEmbedIframe } from '$lib/client/player/embed-teardown';
 
   export let data: PageData;
 
@@ -608,6 +617,45 @@
     seasonViewSeq += 1;
     seasonViewController?.abort();
     seasonViewController = undefined;
+  });
+
+  // ── Production-hardening round: INSTANT back-navigation from the player ──
+  //
+  // SYMPTOM (user report): with a heavy cross-origin provider embed
+  // (VidRift / VidCore / vidsrc …) playing, Back took 3-4 seconds.
+  //
+  // DIAGNOSIS: everything in this route's teardown is already
+  // non-blocking (progress flushes are fire-and-forget IndexedDB,
+  // manager.dispose() is synchronous, the close path awaits nothing) —
+  // the delay was the BROWSER, not app logic. At the end of a client-side
+  // navigation Svelte detaches the live cross-origin <iframe>, and the
+  // engine destroys that browsing context SYNCHRONOUSLY inside the
+  // navigation's DOM-update task: every worker, media decoder and open
+  // connection the provider page spawned is torn down on the main thread
+  // at once. Heavy embeds → multi-second main-thread block → the back
+  // transition appears to hang.
+  //
+  // FIX: neutralize the embed the moment a navigation AWAY from this route
+  // is confirmed (beforeNavigate runs before any data load / DOM swap).
+  // neutralizeActiveEmbedIframe() (1) hides the frame instantly — the user
+  // sees the dark viewport + the global nav progress bar instead of a
+  // frozen provider page — and (2) swaps its document to about:blank,
+  // which starts the provider document's unload ASYNCHRONOUSLY right then
+  // and there. By the time Svelte detaches the element, the frame hosts an
+  // empty document and its destruction is trivial: the router proceeds
+  // instantly.
+  //
+  // SCOPE GUARD: this hook fires for EVERY navigation while the player is
+  // mounted, including same-route parameter changes (season/episode
+  // switches in the sheet). Those keep the current behavior — the old
+  // iframe keeps playing until the new source resolves — because
+  // blanking it there would black out the player during the resolver
+  // roundtrip for no teardown benefit (the swap is expected and
+  // user-initiated). Only genuinely LEAVING the player (different route
+  // id, or a full document unload where `to` is null) neutralizes.
+  beforeNavigate((navigation) => {
+    const leavingPlayer = navigation.to === null || navigation.to.route.id !== navigation.from?.route.id;
+    if (leavingPlayer) neutralizeActiveEmbedIframe();
   });
 
   async function setupProgressContext() {

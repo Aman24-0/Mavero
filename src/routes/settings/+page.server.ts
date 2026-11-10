@@ -1,5 +1,7 @@
 import { saveProfile, updateEmail, updatePassword } from '$lib/server/account/actions';
 import { getConnectedAccountsState, linkGoogle, unlinkGoogle } from '$lib/server/account/connected-accounts';
+import { listSafeDeviceSessions } from '$lib/server/account/safe-sessions';
+import { getPublicAdultModeSettings } from '$lib/server/content/adult-policy';
 import type { Actions, PageServerLoad } from './$types';
 
 // Navigation & Settings Redesign, Phase 3 — Settings page actions.
@@ -21,7 +23,7 @@ import type { Actions, PageServerLoad } from './$types';
 // screen). The unlink action is gated behind the last-identity
 // lockout guard (see $lib/server/account/connected-accounts.ts).
 
-export const load: PageServerLoad = async ({ locals }) => {
+export const load: PageServerLoad = async ({ locals, cookies }) => {
   // Re-fetch the user server-side so the identities list is fresh for
   // the connected-accounts projection. locals.user was resolved by the
   // hook, but the identities field can be stale if the user just
@@ -32,7 +34,33 @@ export const load: PageServerLoad = async ({ locals }) => {
     const { data: { user } } = await locals.supabase.auth.getUser();
     connectedAccounts = getConnectedAccountsState(user);
   }
-  return { connectedAccounts };
+
+  // Production-hardening round — FIRST-PAINT PASS-THROUGH. The page
+  // previously fetched its device-session list AND its Adult Mode state
+  // client-side in onMount (two extra roundtrips before the settings
+  // sections had data). Both now ride the load: the session pipeline is
+  // the SAME single-sourced function the /api/account/sessions endpoint
+  // uses (identical projection, zero drift), and the Adult Mode read is
+  // the SAME server-authoritative policy function the
+  // /api/settings/adult-mode endpoint uses. The client keeps its polling
+  // + focus/visibility refresh via the endpoints for post-mutation
+  // updates. Both reads run CONCURRENTLY and fail SOFT (null → the page
+  // falls back to its existing endpoint fetch), so a registry hiccup can
+  // never fail the settings page.
+  let sessions = null;
+  let adultMode = null;
+  if (locals.user && locals.session) {
+    const [sessionsResult, adultSettings] = await Promise.all([
+      listSafeDeviceSessions(locals.session, locals.user.id),
+      getPublicAdultModeSettings(locals.supabase, locals.user, cookies).catch(() => null),
+    ]);
+    sessions = sessionsResult.ok ? sessionsResult.sessions : null;
+    adultMode = adultSettings
+      ? { adminAllows: adultSettings.adminAllows, userEnabled: adultSettings.userEnabled }
+      : null;
+  }
+
+  return { connectedAccounts, sessions, adultMode };
 };
 
 export const actions: Actions = {

@@ -6,6 +6,14 @@
   import { urlPathIsM3u8 } from '$lib/shared/hls-detect';
   import { HlsPlaybackEngine, resolveDirectPlaybackMode, type HlsAudioTrackLike } from '$lib/client/player/hls-engine';
   import { markPlayerMilestone } from '$lib/client/player/player-timing';
+  // Production-hardening round — instant embed-iframe teardown: this
+  // component OWNS the heavy cross-origin provider <iframe>, so it also
+  // owns the teardown registry. The watch route's beforeNavigate hook
+  // calls neutralizeActiveEmbedIframe() (see embed-teardown.ts) to swap
+  // the live provider document for about:blank BEFORE the navigation's
+  // DOM swap — the browser then tears down an empty frame instead of
+  // blocking the main thread on a full browsing-context destruction.
+  import { registerEmbedIframe, unregisterEmbedIframe } from '$lib/client/player/embed-teardown';
   // 2026-10 round 19 — DirectStream VOD proxy routing: when the resolver
   // returns a raw vidsrc.party URL (no Worker configured), the client-side
   // HLS engine can't fetch it directly (CORS — vidsrc.party sends no
@@ -339,7 +347,27 @@
     markPlayerMilestone('mavero:iframe-mounted');
   }
 
-  onDestroy(teardownHlsEngine);
+  // Production-hardening round — teardown registry lifecycle. The embed
+  // iframe element binds inside the {#key iframeKey} block: it mounts when
+  // the key changes and the whole keyed block unmounts on destroy. The
+  // handler diffs against the LAST registered element so every transition
+  // is covered — embed remounts (episode/source switches), embed→direct
+  // switches (element unbinds to undefined) and destroy — and the module
+  // registry never holds a stale detached frame. With no embed mounted
+  // (direct source / empty viewport) neutralizeActiveEmbedIframe() is an
+  // honest no-op.
+  let registeredEmbedIframe: HTMLIFrameElement | null = null;
+  $: handleEmbedIframeBinding(iframeElement);
+  function handleEmbedIframeBinding(element: HTMLIFrameElement | undefined) {
+    if (element === registeredEmbedIframe) return;
+    if (registeredEmbedIframe) unregisterEmbedIframe(registeredEmbedIframe);
+    registeredEmbedIframe = element ?? null;
+    if (element) registerEmbedIframe(element);
+  }
+  onDestroy(() => {
+    handleEmbedIframeBinding(undefined);
+    teardownHlsEngine();
+  });
 
   // ----- Phase 6: generic internal-quality controller (spec §31) -----
   //
