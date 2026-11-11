@@ -1,4 +1,4 @@
-// MAVERO service worker — production-hardening round (PWA splash-hang fix).
+// MAVERO service worker — v4 (false-offline navigation fallback fix).
 //
 // What this worker does (and deliberately does NOT do):
 //   * Install: pre-cache the tiny SAFE_ASSETS set, resiliently — ONE bad
@@ -13,14 +13,24 @@
 //   * skipWaiting + clientsClaim: both are wired (install + activate) so
 //     an updated worker activates IMMEDIATELY — no "waiting for old tabs
 //     to close" limbo that used to leave users on stale shells.
-//   * Navigations: network-first with a HARD 8s TIMEOUT, then the cached
-//     offline page. The previous handler awaited `fetch(request)` with no
-//     timeout: on a stalled connection (PWA cold launch on flaky mobile
-//     networks) the respondWith promise stayed pending for 30-60s+ and the
-//     OS PWA splash screen hung on the app icon with nothing rendering.
-//     The timeout race guarantees the user ALWAYS gets a painted page.
-//     v3: the race's timer is CLEARED when the network wins (no dangling
-//     timer keeps the worker's task queue warm after every navigation).
+//   * Navigations: pure network-first, NO timeout race. The fetch is
+//     awaited for as long as it takes and ANY response the network
+//     produces (200, 304 revalidation, 4xx/5xx) is passed through
+//     untouched — the server answered, so the user is online. The cached
+//     offline page is served ONLY when fetch() actually THROWS a network
+//     error (TypeError "Failed to fetch" / ERR_INTERNET_DISCONNECTED /
+//     refused socket — true offline), never because a timer fired or a
+//     response was merely non-OK.
+//     History: v2/v3 raced the fetch against a hard 8s timer and routed
+//     BOTH the timer branch AND every non-OK response to the offline
+//     shell. That produced the false "You're offline" regression: a
+//     slow-but-healthy connection (>8s) or a conditional-request 304
+//     revalidation (Netlify serves HTML with max-age=0, must-revalidate)
+//     landed on the offline page, and "Try again" instantly "worked"
+//     because the retry re-navigated onto a now-warm network. v4 removed
+//     the race entirely: a genuinely stalled navigation now keeps the OS
+//     splash / boot screen visible until the socket resolves or errors —
+//     the honest UX instead of force-faking an offline state.
 //   * Static assets: cache-first for the safe immutable set only (scripts,
 //     styles, fonts, /_app/immutable, icons, manifest, robots.txt).
 //   * Cross-origin requests — INCLUDING every provider iframe stream
@@ -38,10 +48,12 @@
 // wrapped so an unexpected error falls through to the browser's default
 // network handling instead of producing a failed respondWith promise.
 
-const VERSION = 'mavero-shell-v3';
+// v4: bump forces every client to discard the v3 worker (whose 8s
+// navigation timeout race caused the false offline fallback) on the next
+// navigation — skipWaiting + clientsClaim make it active immediately.
+const VERSION = 'mavero-shell-v4';
 const STATIC_CACHE = `${VERSION}-static`;
 const OFFLINE_URL = '/offline.html';
-const NAVIGATION_TIMEOUT_MS = 8000;
 const SAFE_ASSETS = [
   OFFLINE_URL,
   '/manifest.webmanifest',
@@ -108,26 +120,23 @@ self.addEventListener('fetch', (event) => {
 
   try {
     if (request.mode === 'navigate') {
-      // Network-first WITH A HARD TIMEOUT. The race guarantees a painted
-      // page: either the network responds, or (stall/slow socket) the
-      // offline shell renders after NAVIGATION_TIMEOUT_MS instead of the
-      // PWA splash hanging for the socket's full timeout window. The
-      // timer is cleared the moment the race settles — a won-by-network
-      // navigation must not leave a dangling 8s timer behind.
+      // Pure network-first (v4 false-offline fix). NO timeout race: a slow
+      // network keeps the OS splash / boot screen visible until the page
+      // actually arrives, instead of being force-shown the offline shell.
+      // ANY response the network produces is passed through untouched —
+      // including 304 revalidations (Netlify HTML is max-age=0,
+      // must-revalidate, so navigations legitimately revalidate) and
+      // 4xx/5xx from the origin (the server ANSWERED, so the user is
+      // online; SvelteKit renders its own error pages for those).
+      // The cached offline shell is served ONLY when fetch() THROWS —
+      // TypeError "Failed to fetch", ERR_INTERNET_DISCONNECTED, refused
+      // socket, DNS failure — i.e. a true network error, never a timer.
+      // If even the offline shell is missing from the cache, fall through
+      // to Response.error() for an honest browser error page.
       event.respondWith(
-        (() => {
-          let timerId;
-          const network = fetch(request);
-          const timeout = new Promise((resolve) => {
-            timerId = setTimeout(() => resolve(undefined), NAVIGATION_TIMEOUT_MS);
-          });
-          return Promise.race([network, timeout]).finally(() => clearTimeout(timerId)).then((response) => {
-            if (response && response.ok) return response;
-            // Timeout (undefined) or non-OK network response → offline shell,
-            // falling back to an honest error if even that is unavailable.
-            return caches.match(OFFLINE_URL).then((cached) => cached || Response.error());
-          });
-        })()
+        fetch(request).catch(() =>
+          caches.match(OFFLINE_URL).then((cached) => cached || Response.error())
+        )
       );
       return;
     }

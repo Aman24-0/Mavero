@@ -175,26 +175,39 @@ ok('No old accidental icon references (apple-touch + favicon updated)');
 console.log('\n9. Service worker caching unchanged');
 
 const swSource = readFileSync(join(repoRoot, 'static', 'sw.js'), 'utf8');
-// Production-hardening round: the cache VERSION bumped v1 → v2 (the SW's
-// fetch/install logic was hardened — resilient install + navigation
-// timeout) and v2 → v3 (2026-11: the navigation race's timer is cleared
-// when the network wins — no dangling 8s timer after every navigation).
-// The SAFE_ASSETS set and the on-demand static caching contract
-// are unchanged, which is what this suite actually pins.
-assert.match(swSource, /const VERSION = 'mavero-shell-v3'/,
-  'SW version bumped to v3 (navigation timer cleanup round)');
-// The hardening additions are present: resilient (per-asset) install so
-// one bad asset can no longer strand the worker in `installing`, and the
-// navigation timeout race so a stalled socket can no longer hang the PWA
-// on its splash screen.
+// The cache VERSION tracks every fetch/install logic change: v1 → v2
+// (resilient install + navigation timeout), v2 → v3 (navigation timer
+// cleanup), v3 → v4 (2026-11: false-offline regression fix — the 8s
+// timeout race was REMOVED; the offline shell is now served ONLY when
+// the navigation fetch actually throws a network error, while every
+// real network response — 200, 304 revalidation, 4xx/5xx — passes
+// through untouched). The SAFE_ASSETS set and the on-demand static
+// caching contract are unchanged, which is what this suite actually pins.
+assert.match(swSource, /const VERSION = 'mavero-shell-v4'/,
+  'SW version bumped to v4 (false-offline navigation regression fix)');
+// The resilient-install additions are still present: per-asset caching so
+// one bad asset can no longer strand the worker in `installing`.
 assert.match(swSource, /Promise\.allSettled\(/,
   'SW install is resilient (per-asset caching, never all-or-nothing)');
 assert.match(swSource, /self\.skipWaiting\(\)/,
   'SW skipWaiting present (updates apply instantly)');
 assert.match(swSource, /self\.clients\.claim\(\)/,
   'SW clientsClaim present (activated worker takes over immediately)');
-assert.match(swSource, /NAVIGATION_TIMEOUT_MS/,
-  'SW navigation requests carry a hard timeout (splash-hang fix)');
+// v4 false-offline regression fix: navigations must NOT race a timeout.
+// The old 8s timer branch (and the non-OK → offline branch) force-served
+// the offline shell on slow-but-healthy connections and 304
+// revalidations. The offline shell is reserved for a THROWN network
+// error only (TypeError "Failed to fetch" — true offline).
+assert.doesNotMatch(swSource, /NAVIGATION_TIMEOUT_MS/,
+  'SW has NO navigation timeout constant (false-offline regression fix)');
+assert.doesNotMatch(swSource, /Promise\.race\(/,
+  'SW never races a timeout against the network fetch');
+assert.doesNotMatch(swSource, /setTimeout/,
+  'SW has no timer left anywhere (slow networks keep loading instead of falling back)');
+assert.match(swSource, /fetch\(request\)\.catch\(\(\) =>\s*caches\.match\(OFFLINE_URL\)/,
+  'SW offline fallback is wired ONLY to a thrown network error (catch path)');
+assert.doesNotMatch(swSource, /response\.ok\)\s*return\s*response;\s*\/\/[^]*?OFFLINE_URL/,
+  'SW never serves the offline shell for a merely non-OK (304/4xx/5xx) response');
 assert.match(swSource, /url\.pathname\.startsWith\('\/icons\/'\)/,
   'SW still caches /icons/ on-demand (isSafeStaticRequest)');
 // SAFE_ASSETS should still contain the original 4 entries.
