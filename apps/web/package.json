@@ -9,7 +9,7 @@
   "packageManager": "pnpm@10.30.3",
   "scripts": {
     "dev": "vite dev",
-    "build": "vite build && node scripts/build_executor_function.mjs && node scripts/build_livetv_scheduler_function.mjs",
+    "build": "svelte-kit sync && vite build && node scripts/build_executor_function.mjs && node scripts/build_livetv_scheduler_function.mjs",
     "preview": "pnpm run build && vite preview",
     "start": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.test.json",
