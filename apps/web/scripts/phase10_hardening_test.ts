@@ -54,7 +54,7 @@ console.log('--- 1. Provider health service ---');
   ok(src.includes('SECURITY'), '1.13 documents security: no credentials exposed');
   ok(src.includes('lightweight'), '1.14 documents lightweight health check');
   // The health source mentions env var NAMES (VIDARA_API_KEY, ABYSS_API_KEY,
-  // ABYSS_EMAIL, ABYSS_PASSWORD) in error messages and function parameters —
+  // ABYSS_USER, ABYSS_PASSWORD) in error messages and function parameters —
   // these are variable names, NOT credential values. Check for actual
   // credential VALUES (not names).
   ok(!/54c822e4|adad12|dahayataman/i.test(src), '1.15 NO credential VALUES in health source');

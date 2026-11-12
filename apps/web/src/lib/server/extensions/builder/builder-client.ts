@@ -12,7 +12,7 @@
  *     call time (dynamic import — testable, never bundled client-side) and
  *     is NEVER stored in the database, NEVER returned to any client, and
  *     NEVER logged.
- *   * Timeouts are bounded (PRIVATE_ADAPTER_BUILDER_TIMEOUT_MS, default
+ *   * Timeouts are bounded (ADAPTER_BUILDER_TIMEOUT_MS, default
  *     conservative for serverless) — a cold/unreachable Builder can never
  *     stall an admin request indefinitely.
  *   * BUILDER_UNAVAILABLE is a controlled admin-facing outcome: zero
@@ -64,7 +64,7 @@ export async function readBuilderClientConfig(): Promise<BuilderClientConfig | n
     return null;
   }
   if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return null;
-  const timeoutRaw = Number.parseInt(env.PRIVATE_ADAPTER_BUILDER_TIMEOUT_MS ?? '', 10);
+  const timeoutRaw = Number.parseInt(env.ADAPTER_BUILDER_TIMEOUT_MS ?? '', 10);
   const timeoutMs = Number.isInteger(timeoutRaw) && timeoutRaw >= 5_000 && timeoutRaw <= 600_000
     ? timeoutRaw
     : DEFAULT_BUILDER_TIMEOUT_MS;

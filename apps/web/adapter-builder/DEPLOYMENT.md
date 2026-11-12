@@ -96,7 +96,7 @@ Configure these server-only environment variables on the Mavero deployment
 | --- | --- |
 | `PRIVATE_ADAPTER_BUILDER_URL` | `https://<builder-service>.onrender.com` (the actual Render URL — never hardcode it in source) |
 | `PRIVATE_ADAPTER_BUILDER_SECRET` | the same `BUILDER_SECRET` configured on Render |
-| `PRIVATE_ADAPTER_BUILDER_TIMEOUT_MS` | `300000` (recommended — covers Render free-instance cold start + a full build; default 150000 covers builds only) |
+| `ADAPTER_BUILDER_TIMEOUT_MS` | `300000` (recommended — covers Render free-instance cold start + a full build; default 150000 covers builds only) |
 
 Behavior when unconfigured or unreachable: the admin Create Adapter action
 reports an honest `BUILDER_UNAVAILABLE` outcome; **Downloader 2 never calls

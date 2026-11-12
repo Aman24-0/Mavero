@@ -51,11 +51,11 @@ Real values must be provided through Netlify’s encrypted environment-variable 
 | `MAVERO_ADULT_COOKIE_SECRET` | HMAC-SHA256 signing secret for the guest Adult Mode cookie | Encrypted server-side secret; never public |
 | `VIDARA_API_KEY` | Server-side Vidara hosting-provider credential | Encrypted server-side secret; never public |
 | `VIDARA_API_BASE_URL` | Vidara API base URL (defaults to `https://api.vidara.so`) | Runtime configuration; never a secret |
-| `ABYSS_EMAIL` / `ABYSS_PASSWORD` | Server-side Abyss hosting-provider credentials | Encrypted server-side secret; never public |
+| `ABYSS_USER` / `ABYSS_PASSWORD` | Server-side Abyss hosting-provider credentials | Encrypted server-side secret; never public |
 | `ABYSS_API_BASE_URL` | Abyss API base URL (defaults to `https://api.abyssplayer.com`) | Runtime configuration; never a secret |
 | `PRIVATE_ADAPTER_BUILDER_URL` | External Adapter Builder Service base URL (admin Create Adapter flow only; also consumed by the background build executor) | Encrypted server-side secret; never public |
 | `PRIVATE_ADAPTER_BUILDER_SECRET` | Shared secret with the Builder deployment (also authorizes the background executor invoke) | Encrypted server-side secret; never public |
-| `PRIVATE_ADAPTER_BUILDER_TIMEOUT_MS` | Builder call timeout (default 150000, min 5000, max 600000) | Runtime configuration; never a secret |
+| `ADAPTER_BUILDER_TIMEOUT_MS` | Builder call timeout (default 150000, min 5000, max 600000) | Runtime configuration; never a secret |
 | `PUBLIC_STREAM_PROXY_URL` | Cloudflare Worker stream-proxy base (`cloudflare-stream-proxy/`) — routes VOD (VidSrc/VidCore) and Live TV media through the Worker’s edge IPs with per-CDN Referer/Origin spoofing and manifest rewriting | Public runtime configuration |
 | `PUBLIC_INDIAN_PROXY_URL` | Indian-egress stream proxy base for the geo-blocked Live TV CDNs (Jio answers `451 Unavailable For Legal Reasons` to every non-Indian IP — the Worker’s and Netlify’s included; a geo-block is an IP/ASN decision no header spoofing can fix). Points at a deployment of the standalone `indian-proxy/` Node service (repo root — syncs the Jio playlist every 5 h, injects the rotating `__hdnea__` cookies + User-Agents server-side, rewrites DASH/HLS manifests back onto itself). The Admin → System → Feature Control “Live TV — Indian Proxy URL” field (`app_config.livetv_indian_proxy_url`) overrides this env var at runtime. When NEITHER is set, Jio channels fail fast with “Jio channels require an Indian Proxy. Please set the Indian Proxy URL in Admin Settings.” instead of a guaranteed-451 player | Public runtime configuration |
 
@@ -226,7 +226,7 @@ HTTP request (Netlify synchronous functions are capped at 10s default /
   `PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `PRIVATE_SUPABASE_SERVICE_ROLE_KEY`,
   `PRIVATE_ADAPTER_BUILDER_URL`, `PRIVATE_ADAPTER_BUILDER_SECRET` (also
   authorizes the background executor invoke — server-side only),
-  optionally `PRIVATE_ADAPTER_BUILDER_TIMEOUT_MS` (default 150000).
+  optionally `ADAPTER_BUILDER_TIMEOUT_MS` (default 150000).
 
 ### Database
 

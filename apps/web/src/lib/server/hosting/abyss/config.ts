@@ -17,7 +17,7 @@
  *
  * Convention:
  *   - ABYSS_API_BASE_URL — Abyss API base URL (default: https://api.abyss.to)
- *   - ABYSS_EMAIL — login email (server-only)
+ *   - ABYSS_USER — login email (server-only)
  *   - ABYSS_PASSWORD — login password (server-only)
  *   - ABYSS_API_KEY — the Abyss apiKey for uploads via up.abyss.to (server-only)
  *
@@ -37,10 +37,10 @@ export type AbyssConfig = {
 };
 
 export function createAbyssConfig(): AbyssConfig {
-  const email = privateEnv.ABYSS_EMAIL;
+  const email = privateEnv.ABYSS_USER;
   const password = privateEnv.ABYSS_PASSWORD;
   if (!email || !password) {
-    throw new Error('ABYSS_EMAIL / ABYSS_PASSWORD are not configured. Set them in the deployment secret manager.');
+    throw new Error('ABYSS_USER / ABYSS_PASSWORD are not configured. Set them in the deployment secret manager.');
   }
   const baseUrl = privateEnv.ABYSS_API_BASE_URL || DEFAULT_ABYSS_BASE_URL;
   const apiKey = privateEnv.ABYSS_API_KEY || null;

@@ -110,11 +110,11 @@ The application uses public Supabase runtime configuration for browser-safe valu
 | `MAVERO_ADULT_COOKIE_SECRET` | HMAC signing secret for the guest Adult Mode cookie (required in production; missing secret fails closed) | Secret; never public |
 | `VIDARA_API_KEY` | Server-side Vidara hosting-provider credential | Secret; never public |
 | `VIDARA_API_BASE_URL` | Vidara API base URL (defaults to `https://api.vidara.so`) | Runtime configuration; never a secret |
-| `ABYSS_EMAIL` / `ABYSS_PASSWORD` | Server-side Abyss hosting-provider credentials | Secret; never public |
+| `ABYSS_USER` / `ABYSS_PASSWORD` | Server-side Abyss hosting-provider credentials | Secret; never public |
 | `ABYSS_API_BASE_URL` | Abyss API base URL (defaults to `https://api.abyssplayer.com`) | Runtime configuration; never a secret |
 | `PRIVATE_ADAPTER_BUILDER_URL` | External Adapter Builder Service base URL (admin Create Adapter flow only) | Secret; never public |
 | `PRIVATE_ADAPTER_BUILDER_SECRET` | Shared secret with the Builder deployment (also authorizes the background build executor) | Secret; never public |
-| `PRIVATE_ADAPTER_BUILDER_TIMEOUT_MS` | Builder call timeout (default 150000, min 5000, max 600000) | Runtime configuration; never a secret |
+| `ADAPTER_BUILDER_TIMEOUT_MS` | Builder call timeout (default 150000, min 5000, max 600000) | Runtime configuration; never a secret |
 
 Only variable names are documented here. Values belong in local ignored files or Netlify’s encrypted environment-variable store. Never prefix server-only credentials with `PUBLIC_` or return them through client-facing APIs.[1] [8]
 

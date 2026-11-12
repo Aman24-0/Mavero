@@ -110,7 +110,7 @@ ok('2b. Provider health uses real API calls — never faked');
 // Misconfigured when credentials missing
 assert.match(healthService, /misconfigured/, 'health service returns misconfigured when credentials missing');
 assert.match(healthService, /VIDARA_API_KEY is not configured/, 'Vidara misconfigured message');
-assert.match(healthService, /ABYSS_EMAIL.*ABYSS_PASSWORD are not configured/, 'Abyss misconfigured message');
+assert.match(healthService, /ABYSS_USER.*ABYSS_PASSWORD are not configured/, 'Abyss misconfigured message');
 ok('2c. Health service returns misconfigured (NOT healthy) when credentials are missing');
 
 // Providers UI component uses health service, doesn't fake healthy

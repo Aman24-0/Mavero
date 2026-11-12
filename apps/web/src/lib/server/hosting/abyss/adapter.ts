@@ -199,7 +199,7 @@ export class AbyssAdapter implements HostingProviderAdapter {
    */
   private async ensureToken(): Promise<string> {
     if (this.loginPermanentlyFailed) {
-      throw new HostingProviderError('AUTHENTICATION', { message: 'Abyss login is permanently failed. Check ABYSS_EMAIL / ABYSS_PASSWORD server-side credentials.' });
+      throw new HostingProviderError('AUTHENTICATION', { message: 'Abyss login is permanently failed. Check ABYSS_USER / ABYSS_PASSWORD server-side credentials.' });
     }
     if (this.tokenCache && this.tokenCache.expiresAt > Date.now()) {
       return this.tokenCache.token;

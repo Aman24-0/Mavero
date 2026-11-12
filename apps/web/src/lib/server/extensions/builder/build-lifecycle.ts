@@ -110,7 +110,7 @@ const TERMINAL_JOB_STATES: readonly AdapterBuildJobState[] = ['succeeded', 'fail
 /**
  * Deterministic stale budgets — DERIVED from the budgets that actually
  * bound each phase (never an arbitrary duration):
- *   building  ≤ Builder client timeout (PRIVATE_ADAPTER_BUILDER_TIMEOUT_MS,
+ *   building  ≤ Builder client timeout (ADAPTER_BUILDER_TIMEOUT_MS,
  *              default 150s) + artifact validation/write margin
  *   testing   ≤ representative resolution (2 cases × 30s adapter budget)
  *              + persistence margin

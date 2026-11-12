@@ -1185,7 +1185,7 @@ async function sectionL(): Promise<void> {
   // SUCCESS path (a queued job) is reachable through the real endpoint.
   process.env.PRIVATE_ADAPTER_BUILDER_URL = 'http://builder.test';
   process.env.PRIVATE_ADAPTER_BUILDER_SECRET = 's';
-  process.env.PRIVATE_ADAPTER_BUILDER_TIMEOUT_MS = '30000';
+  process.env.ADAPTER_BUILDER_TIMEOUT_MS = '30000';
   const { createServer } = await import('vite');
   const server = await createServer({
     server: { middlewareMode: true },

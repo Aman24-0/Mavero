@@ -67,7 +67,7 @@ export class ProviderHealthService {
     if (adapterId === 'abyss') {
       const config = getAbyssConfigOrNull();
       if (!config) {
-        return { providerAdapterId: adapterId, status: 'misconfigured', configured: false, latencyMs: null, quota: null, lastError: 'ABYSS_EMAIL / ABYSS_PASSWORD are not configured.', checkedAt };
+        return { providerAdapterId: adapterId, status: 'misconfigured', configured: false, latencyMs: null, quota: null, lastError: 'ABYSS_USER / ABYSS_PASSWORD are not configured.', checkedAt };
       }
       return this.checkAbyssHealth(config.baseUrl, config.email, config.password, config.apiKey, checkedAt);
     }
