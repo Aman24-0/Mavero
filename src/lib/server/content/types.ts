@@ -35,6 +35,20 @@ export type Season = {
   episodes?: Episode[];
 };
 
+/**
+ * Current Airing rail (TV Shows + Anime Explorers) — the latest-aired
+ * episode of a series, extracted from the TMDB TV detail response's
+ * `last_episode_to_air` object (list endpoints never carry it).
+ * Optional everywhere: a show announced but yet to air keeps it
+ * undefined and the UI badge hides honestly.
+ */
+export type LatestEpisodeInfo = {
+  seasonNumber: number;
+  episodeNumber: number;
+  /** ISO date (YYYY-MM-DD) the episode aired, from TMDB air_date. */
+  airDate: string;
+};
+
 /** P3: Streaming/OTT provider for the "Streaming on" section on DetailPage. */
 export type StreamingProvider = {
   id: number;
@@ -137,6 +151,14 @@ export type NormalizedMediaItem = {
   tmdbGenreIds?: number[];
   /** P3: India streaming/OTT providers (flatrate only) from TMDB watch/providers. */
   streamingProviders?: StreamingProvider[];
+  /**
+   * Current Airing rail — the latest-aired episode from the TMDB TV
+   * detail response (`last_episode_to_air`: season + episode + air_date).
+   * Populated ONLY on the cached TV detail path (list-shaped endpoints do
+   * not carry the object); stays undefined when a show has not aired an
+   * episode yet, and the UI badge hides honestly. Pure display metadata.
+   */
+  lastEpisodeToAir?: LatestEpisodeInfo;
 };
 
 export type ContentDetail = NormalizedMediaItem & {

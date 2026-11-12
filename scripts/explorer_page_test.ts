@@ -214,12 +214,15 @@ assert.match(loader, /hasExplorerFilters\(filters\)/, 'the loader distinguishes 
 ok('5. filtered results: responsive first batch (columns × rows, bounded), infinite deduped loading via a validated feed endpoint');
 
 // ============================================================
-// 6. UNFILTERED SECTIONS — Popular + Top Rated, deduped, distinct
+// 6. UNFILTERED SECTIONS — Current Airing + Popular + Top Rated,
+//    deduped, distinct
 // ============================================================
 // Follow-up task 2 (§10): every section rail carries the canonical
 // Show-more CTA (header position, "Show more" label, the route's own
-// ?sort= query state).
-assert.match(explorerPage, /\{#each sections as section \(section\.key\)\}[\s\S]*?<ContentRail title=\{section\.title\} items=\{section\.items\} href=\{section\.showMoreHref \|\| ''\} linkLabel="Show more" \/>/, 'unfiltered sections render through the existing ContentRail with the Show-more CTA');
+// ?sort= query state). Current Airing (2026-11) renders ABOVE Popular
+// with per-card latest-episode badges — the dedicated
+// explorer_current_airing_test.ts pins the full feature contract.
+assert.match(explorerPage, /\{#each sections as section \(section\.key\)\}[\s\S]*?<ContentRail title=\{section\.title\} items=\{section\.items\} href=\{section\.showMoreHref \|\| ''\} linkLabel="Show more" episodeBadges=\{section\.episodeBadges\} \/>/, 'unfiltered sections render through the existing ContentRail with the Show-more CTA (Current Airing passes its per-card episode badges through)');
 assert.match(loader, /key: 'popular'[\s\S]*?key: 'top-rated'/, 'the server composes exactly the Popular + Top Rated sections');
 assert.match(loader, /SECTION_TITLES: Record<ContentType/, 'section titles are per-type');
 assert.match(loader, /showMoreHref: `\$\{DESTINATION_ROUTES\[type\]\}\?sort=popular`/, 'Popular Show-more targets the canonical ?sort=popular route state');

@@ -1,7 +1,7 @@
 import { env } from '$env/dynamic/private';
-import { getOrSet } from '../cache';
+import { getOrSet, getOrSetValidated } from '../cache';
 import { asNumber, asString, asStringArray, fetchJson } from '../http';
-import { ContentServiceError, type CollectionFilters, type ContentList, type ContentSource, type ContentType, type Episode, type ContentDetail, type NormalizedMediaItem, type Season, type SearchFilters, type CastMember, type DiscoverLanguage, type DiscoverProvider, POPULAR_TV_WITHOUT_GENRES } from '../types';
+import { ContentServiceError, type CollectionFilters, type ContentList, type ContentSource, type ContentType, type Episode, type ContentDetail, type LatestEpisodeInfo, type NormalizedMediaItem, type Season, type SearchFilters, type CastMember, type DiscoverLanguage, type DiscoverProvider, POPULAR_TV_WITHOUT_GENRES } from '../types';
 import { ottProviders } from '$lib/shared/ott';
 import { getAdultProviderIds, resolveAdultProviders, getCachedAdultProviders, isAdultContent, ensureAdultProvidersResolved, type AdultAttributionInput } from '../adult-providers';
 import { getAdultOrphanIdsForProvider } from '../adult-orphans';
@@ -87,6 +87,12 @@ type TmdbTv = {
   recommendations?: TmdbList<TmdbTv>;
   seasons?: { season_number?: number; name?: string; episode_count?: number; air_date?: string; poster_path?: string | null }[];
   credits?: TmdbCredits;
+  /**
+   * Current Airing rail — the most recently aired episode. Present ONLY
+   * in the /tv/{id} detail response (list endpoints never carry it); the
+   * detail path forwards it as NormalizedMediaItem.lastEpisodeToAir.
+   */
+  last_episode_to_air?: TmdbEpisode;
 };
 type TmdbCredit = { id: number; name?: string; character?: string; profile_path?: string | null; job?: string };
 type TmdbCredits = { cast?: TmdbCredit[]; crew?: TmdbCredit[] };
@@ -840,6 +846,21 @@ export async function getTmdbDetail(type: Exclude<ContentType, 'anime'>, externa
         ?? tvCertEntries.find((entry) => entry.iso_3166_1 === 'US')?.rating?.trim()
         ?? tvCertEntries.find((entry) => entry.rating?.trim())?.rating?.trim();
     if (certification) item.maturity = certification;
+    // Current Airing rail (TV Shows + Anime Explorers): forward the TV
+    // detail's last_episode_to_air (season + episode + air_date). Optional
+    // and honest — a show announced but yet to air keeps it undefined and
+    // the UI badge hides. List-shaped endpoints never carry the object.
+    if (type === 'series') {
+      const lastEpisode = (raw as TmdbTv).last_episode_to_air;
+      if (
+        lastEpisode
+        && typeof lastEpisode.season_number === 'number' && lastEpisode.season_number > 0
+        && typeof lastEpisode.episode_number === 'number' && lastEpisode.episode_number > 0
+        && typeof lastEpisode.air_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(lastEpisode.air_date.trim())
+      ) {
+        item.lastEpisodeToAir = { seasonNumber: lastEpisode.season_number, episodeNumber: lastEpisode.episode_number, airDate: lastEpisode.air_date.trim() } satisfies LatestEpisodeInfo;
+      }
+    }
     // MAV-21 — movie director (credits.crew job === 'Director') and TV
     // creators (created_by). Only displayed when present; never inferred.
     if (type === 'movie') {
@@ -2032,6 +2053,129 @@ export async function getTmdbHeroSeriesPool(): Promise<{ items: NormalizedMediaI
     return { items, activeSeriesIds };
   });
   return { items: value.items, activeSeriesIds: value.activeSeriesIds, stale };
+}
+
+// ============================================================
+// Current Airing rail (TV Shows + Anime Explorers, 2026-11).
+//
+// A dedicated rail of currently-airing series with their latest-aired
+// episode (S2 E5 · Today-style badge), sorted newest first.
+//
+// Data path (the user-visible contract):
+//   1. /tv/on_the_air pages 1..AIRING_LIST_PAGES — TMDB's own "has an
+//      episode airing within ~7 days" curation (per-page failures are
+//      tolerated via allSettled; a total failure yields an EMPTY result,
+//      which the Explorer treats as "hide the section").
+//   2. Kind filter, server-side:
+//        'series' → excludesAnimeRows (the canonical MAV-21 exclusion —
+//                   anime belongs to the Anime category);
+//        'anime'  → keep ONLY rows matching the canonical anime predicate
+//                   (isAnimeTitle: genre 16 'Animation' + original_language
+//                   'ja') — the exact classification the rest of the anime
+//                   catalog uses.
+//   3. Candidates go through ONE cached getTmdbDetail('series', id) call
+//      each (30 min TTL, in-flight deduped) which serves TWO purposes at
+//      once:
+//        - the central adult classification (detailVerdict(detail.tags);
+//          failures are fail-closed excluded — the same contract
+//          filterSafeRailItems enforces on every normal rail), and
+//        - the raw detail's last_episode_to_air, forwarded by the detail
+//          path as NormalizedMediaItem.lastEpisodeToAir (list endpoints
+//          never carry it).
+//   4. Sort: lastEpisodeToAir.airDate newest → oldest (ISO strings compare
+//      lexicographically); shows that have not aired an episode yet keep
+//      NO badge and sort to the end (they never block the rail).
+//
+// Cache: getOrSetValidated with empty-is-never-cached (the v3 Hero
+// lesson — a transient TMDB failure must not freeze an empty rail until
+// the TTL expires; the next request recomputes instead).
+// ============================================================
+
+export type CurrentAiringResult = {
+  items: NormalizedMediaItem[];
+  /** Latest-episode info keyed by the MediaItem composite key
+   *  (`${type}:${id}`) — the exact key the UI looks up per card. */
+  latestEpisodes: Record<string, LatestEpisodeInfo>;
+};
+
+const airingPolicy = { ttlMs: 1000 * 60 * 30, staleWhileRevalidateMs: 1000 * 60 * 60 * 3 };
+const AIRING_LIST_PAGES = 3;
+const AIRING_CANDIDATE_CAP = 16;
+const AIRING_RAIL_SIZE = 12;
+const AIRING_DETAIL_CONCURRENCY = 4;
+
+export async function getTmdbCurrentAiring(kind: 'series' | 'anime'): Promise<CurrentAiringResult> {
+  const key = `tmdb:current-airing:${kind}:v1`;
+  const { value } = await getOrSetValidated<CurrentAiringResult>(
+    key,
+    airingPolicy,
+    (result) => result.items.length > 0,
+    async () => {
+      const pageResults = await Promise.allSettled(
+        Array.from({ length: AIRING_LIST_PAGES }, (_, index) =>
+          tmdbRequest<TmdbList<TmdbTv>>('/tv/on_the_air', { page: index + 1 })
+        )
+      );
+      const rows: TmdbTv[] = [];
+      const seenIds = new Set<number>();
+      for (const page of pageResults) {
+        if (page.status === 'rejected') {
+          console.warn('[Current airing] /tv/on_the_air page failed', page.reason);
+          continue;
+        }
+        for (const raw of page.value.results ?? []) {
+          if (!hasRequiredListMetadata(raw, 'series')) continue;
+          if (seenIds.has(raw.id)) continue;
+          seenIds.add(raw.id);
+          rows.push(raw);
+        }
+      }
+
+      const kindFiltered = kind === 'anime'
+        ? rows.filter((row) => isAnimeTitle(row.genre_ids ?? row.genres?.map((genre) => genre.id) ?? [], row.original_language))
+        : excludesAnimeRows(rows);
+      const candidates = kindFiltered.slice(0, AIRING_CANDIDATE_CAP);
+      if (candidates.length === 0) return { items: [], latestEpisodes: {} };
+
+      // ONE cached detail call per candidate: central adult verdict +
+      // last_episode_to_air in the same payload. Failures (including the
+      // classifier being unresolvable) are fail-closed: the candidate is
+      // dropped, never rendered "not adult".
+      const classified = await mapWithConcurrency(
+        candidates,
+        async (raw): Promise<NormalizedMediaItem | undefined> => {
+          try {
+            const detail = await getTmdbDetail('series', String(raw.id));
+            return detailVerdict(detail.tags) === 'safe' ? detail : undefined;
+          } catch {
+            return undefined;
+          }
+        },
+        AIRING_DETAIL_CONCURRENCY
+      );
+
+      const seenItemIds = new Set<string>();
+      const safe = classified.filter((item): item is NormalizedMediaItem => {
+        if (!item || seenItemIds.has(item.id)) return false;
+        seenItemIds.add(item.id);
+        return true;
+      });
+      // Newest-first by the last-aired episode's air_date; shows without a
+      // last-aired episode (announced but unaired) sort to the end, in
+      // TMDB order, badgeless — they never block or mislabel the rail.
+      const dated = safe.filter((item) => item.lastEpisodeToAir !== undefined);
+      dated.sort((a, b) => (b.lastEpisodeToAir?.airDate ?? '').localeCompare(a.lastEpisodeToAir?.airDate ?? ''));
+      const undated = safe.filter((item) => item.lastEpisodeToAir === undefined);
+      const items = [...dated, ...undated].slice(0, AIRING_RAIL_SIZE);
+
+      const latestEpisodes: Record<string, LatestEpisodeInfo> = {};
+      for (const item of items) {
+        if (item.lastEpisodeToAir) latestEpisodes[`${item.type}:${item.id}`] = item.lastEpisodeToAir;
+      }
+      return { items, latestEpisodes };
+    }
+  );
+  return value;
 }
 
 /**

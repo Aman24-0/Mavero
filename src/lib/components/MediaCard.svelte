@@ -15,6 +15,18 @@
   export let compact = false;
   export let editorial = false;
   // ============================================================
+  // Current Airing rail (2026-11) — latest-episode badge.
+  //
+  // Opt-in, server-composed TEXT (e.g. "S2 E5 · Today") shown under the
+  // title. Only the Current Airing rail passes it (ContentRail →
+  // episodeBadges map); every other caller leaves it undefined so the
+  // card renders byte-identical to before. There is deliberately no
+  // relative time ("2h ago") — the badge is composed server-side and
+  // cached with the rail, so only air-date FACTS (date labels) are used,
+  // never drifting relative times.
+  // ============================================================
+  export let episodeBadge = '';
+  // ============================================================
   // Opt-in selection props (My List management only).
   //
   // Default behavior is UNCHANGED: selectable=false means the card
@@ -263,6 +275,7 @@
         <div class="mc-meta"><span>{item.year}</span>{#if item.runtime}<span class="mc-sep">·</span><span>{item.runtime}</span>{/if}</div>
       </a>
     {/if}
+    {#if episodeBadge}<div class="mc-episode-badge" title="Latest aired episode">{episodeBadge}</div>{/if}
     {#if item.progressLabel}<div class="mc-progress-label">{item.progressLabel}</div>{/if}
   </div>
   {#if !selectable && item.resumeHref}<a class="mc-detail" href={detailHref} aria-label={`Open details for ${item.title}`}>Details</a>{/if}
@@ -423,6 +436,19 @@
   .mc-meta { display: flex; align-items: center; gap: 4px; margin-top: 3px; color: var(--color-text-muted); font-size: .66rem; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   .mc-sep { color: var(--color-text-deep); opacity: .65; }
   .mc-progress-label { margin-top: 3px; color: var(--color-primary); font-size: .58rem; font-weight: 700; letter-spacing: .02em; }
+  /* Current Airing badge — small pill under the title, styled after the
+     poster's badge language (mc-type) but in the accent color so it reads
+     as live-episode status. Renders ONLY when the rail passes a badge. */
+  .mc-episode-badge {
+    display: inline-flex; align-items: center;
+    margin-top: 5px; padding: 1px 7px;
+    border-radius: 4px;
+    color: var(--color-primary);
+    font-size: .56rem; font-weight: 800; letter-spacing: .04em;
+    background: rgba(5, 7, 8, .7);
+    border: 1px solid var(--color-border-strong);
+    white-space: nowrap;
+  }
   .mc-detail { position: absolute; bottom: -22px; left: 0; font-size: .58rem; color: var(--color-text-muted); text-decoration: none; opacity: 0; transition: opacity 150ms ease; }
   .mc-wrap:hover .mc-detail { opacity: .7; }
 
@@ -433,6 +459,7 @@
     .mc-type { font-size: .46rem; padding: 1px 6px; }
     .mc-type-secondary { font-size: .46rem; padding: 1px 6px; }
     .mc-rating { font-size: .5rem; padding: 1px 6px; }
+    .mc-episode-badge { font-size: .52rem; padding: 1px 6px; margin-top: 4px; }
     /* Mobile / touch: don't elevate the card on hover — there's no
        hover on touch, and an accidental :hover would leave the card
        visually elevated with no way to dismiss it. TV remotes still

@@ -115,7 +115,7 @@ assert.match(routes.movies, /<ExplorerPage\s+type="movie"/, '/movies renders the
 assert.match(routes.series, /<ExplorerPage\s+type="series"/, '/tv-shows renders the shared ExplorerPage');
 assert.match(routes.anime, /<ExplorerPage\s+type="anime"/, '/anime renders the shared ExplorerPage');
 assert.match(explorerPage, /<SpotlightCarousel items=\{spotlight\}/, 'the Explorer embeds the spotlight carousel');
-assert.match(explorerPage, /<ContentRail title=\{section\.title\} items=\{section\.items\} href=\{section\.showMoreHref \|\| ''\} linkLabel="Show more" \/>/, 'unfiltered sections render through the existing ContentRail (+ the Follow-up task 2 Show-more CTA)');
+assert.match(explorerPage, /<ContentRail title=\{section\.title\} items=\{section\.items\} href=\{section\.showMoreHref \|\| ''\} linkLabel="Show more" episodeBadges=\{section\.episodeBadges\} \/>/, 'unfiltered sections render through the existing ContentRail (+ the Follow-up task 2 Show-more CTA; Current Airing passes its per-card episode badges)');
 // Deep-audit: the pre-Phase-5 assertion pinned the inline string
 // `/watch/${slide.type}/${slide.id}` — the codebase has routed ALL card
 // URLs through the shared route helpers since Phase 5 (single source of

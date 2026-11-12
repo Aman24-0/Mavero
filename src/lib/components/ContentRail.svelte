@@ -11,7 +11,8 @@
     href = '',
     linkLabel = 'View all',
     compact = false,
-    variant = 'default'
+    variant = 'default',
+    episodeBadges = undefined
   }: {
     title: string;
     eyebrow?: string;
@@ -24,6 +25,11 @@
     linkLabel?: string;
     compact?: boolean;
     variant?: 'default' | 'editorial';
+    /** Current Airing rail only — latest-episode badge text per card,
+     *  keyed by the MediaItem composite key (`${type}:${id}`), composed
+     *  server-side (formatLatestEpisodeBadge). Undefined on every other
+     *  rail → cards render with no badge, byte-identical to before. */
+    episodeBadges?: Record<string, string>;
   } = $props();
 
   let railEl: HTMLElement;
@@ -136,7 +142,7 @@
       onscroll={updateScrollState}
     >
       {#each items as item (item.type + ':' + item.id)}
-        <div role="listitem"><MediaCard {item} {compact} editorial={variant === 'editorial'} /></div>
+        <div role="listitem"><MediaCard {item} {compact} editorial={variant === 'editorial'} episodeBadge={episodeBadges?.[item.type + ':' + item.id] ?? ''} /></div>
       {/each}
     </div>
   </div>

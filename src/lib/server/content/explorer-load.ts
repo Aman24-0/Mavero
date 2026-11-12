@@ -1,9 +1,9 @@
 import { collection, discover, popular } from './service';
 import { toMediaItem } from './presenter';
 import { getOrSetValidated } from './cache';
-import { getTmdbHeroMoviePool, getTmdbHeroSeriesPool, getTmdbAnimeMerged, type AnimeGenreConstraint } from './adapters/tmdb';
+import { getTmdbHeroMoviePool, getTmdbHeroSeriesPool, getTmdbAnimeMerged, getTmdbCurrentAiring, type AnimeGenreConstraint } from './adapters/tmdb';
 import { heroDailyBucket, selectSpotlightLineup, SPOTLIGHT_SIZE, type SpotlightResult } from './hero-select';
-import { isDiscoverLanguageValue, type CollectionFilters, type ContentType, type ContentList, type DiscoverLanguage, type NormalizedMediaItem } from './types';
+import { isDiscoverLanguageValue, type CollectionFilters, type ContentType, type ContentList, type DiscoverLanguage, type LatestEpisodeInfo, type NormalizedMediaItem } from './types';
 import { isExplorerGenre, isExplorerLanguage, isExplorerSort, explorerGenreId, EXPLORER_GENRES, type ExplorerSort } from '$lib/shared/explorer-taxonomy';
 import { DESTINATION_ROUTES } from '$lib/shared/content-labels';
 import type { MediaItem } from '$data/content';
@@ -40,7 +40,19 @@ import type { MediaItem } from '$data/content';
 
 export type ExplorerFilters = { genre?: string; language?: DiscoverLanguage; sort?: ExplorerSort };
 
-export type ExplorerSection = { key: 'popular' | 'top-rated'; title: string; items: MediaItem[]; showMoreHref: string };
+export type ExplorerSection = {
+  key: 'current-airing' | 'popular' | 'top-rated';
+  title: string;
+  items: MediaItem[];
+  /** Canonical Show-more target. Omitted on Current Airing (there is no
+   *  canonical full-collection state for "airing now" — the rail would
+   *  rather carry no CTA than a dishonest one). */
+  showMoreHref?: string;
+  /** Current Airing only — latest-episode badge text per card, keyed by
+   *  the MediaItem composite key (`${type}:${id}`). Cards without an
+   *  entry render no badge (the info is optional by contract). */
+  episodeBadges?: Record<string, string>;
+};
 
 export type ExplorerFeedResult = {
   items: MediaItem[];
@@ -246,13 +258,23 @@ export async function explorerFeed(type: ContentType, filters: ExplorerFilters, 
 }
 
 // ============================================================
-// Unfiltered sections — Popular + Top Rated, cross-section dedup.
+// Unfiltered sections — Current Airing + Popular + Top Rated,
+// cross-section dedup.
 //
 // "Filter chips ke neeche ye section rahenge par kisi section me title
 // repeat na ho": a title that already appears in an EARLIER section
 // (or in the spotlight) is not repeated in a later section; a section
 // left thin by dedup is topped up with eligible non-duplicate titles
 // (trending rail — a distinct, already-cached source).
+//
+// Current Airing (TV Shows + Anime Explorers only — 2026-11) is the
+// page's TOPMOST content rail: it renders ABOVE Popular. It composes
+// the cached getTmdbCurrentAiring adapter (on_the_air pages → kind
+// filter → cached-detail enrichment: central catalog safety verdict +
+// last_episode_to_air → newest-first sort). Every failure mode —
+// empty upstream, TMDB outage, no credentials — resolves to undefined
+// and the section gracefully hides (never an empty rail, never a
+// broken page, never a catalog warning).
 // ============================================================
 
 const SECTION_TITLES: Record<ContentType, { popular: string; topRated: string }> = {
@@ -260,6 +282,53 @@ const SECTION_TITLES: Record<ContentType, { popular: string; topRated: string }>
   series: { popular: 'Popular TV shows', topRated: 'Top rated TV shows' },
   anime: { popular: 'Popular anime', topRated: 'Top rated anime' }
 };
+
+const CURRENT_AIRING_TITLE = 'Current Airing';
+
+/**
+ * Latest-episode badge text for a Current Airing card: `S2 E5`, made a
+ * touch friendlier with an HONEST air-date suffix (`· Today`,
+ * `· Yesterday`, `· Nov 6`). Date-only labels are air-date FACTS — unlike
+ * relative times ("2h ago") they cannot drift into a lie while the SSR
+ * result sits in the rail's 30-min TTL / stale-while-revalidate cache.
+ * Anything unexpected (future dates, malformed dates) degrades to the
+ * plain `S2 E5` form — the badge never blocks on this helper.
+ */
+export function formatLatestEpisodeBadge(info: LatestEpisodeInfo): string {
+  const base = `S${info.seasonNumber} E${info.episodeNumber}`;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(info.airDate)) return base;
+  const airDate = new Date(`${info.airDate}T00:00:00`);
+  if (Number.isNaN(airDate.getTime())) return base;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const dayDiff = Math.round((today.getTime() - airDate.getTime()) / (1000 * 60 * 60 * 24));
+  if (dayDiff === 0) return `${base} · Today`;
+  if (dayDiff === 1) return `${base} · Yesterday`;
+  if (dayDiff > 1 && dayDiff <= 30) {
+    return `${base} · ${new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(airDate)}`;
+  }
+  return base;
+}
+
+async function loadCurrentAiringSection(type: ContentType): Promise<ExplorerSection | undefined> {
+  // TV-only feature: the TV Shows and Anime Explorers. Movies have no
+  // airing dimension — the Movies page is byte-identical to before.
+  if (type !== 'series' && type !== 'anime') return undefined;
+  try {
+    const result = await getTmdbCurrentAiring(type);
+    if (result.items.length === 0) return undefined; // graceful hide
+    const episodeBadges: Record<string, string> = {};
+    for (const [key, info] of Object.entries(result.latestEpisodes)) {
+      episodeBadges[key] = formatLatestEpisodeBadge(info);
+    }
+    return { key: 'current-airing', title: CURRENT_AIRING_TITLE, items: result.items.map(toMediaItem), episodeBadges };
+  } catch {
+    // Upstream failure / missing credentials — the section hides itself
+    // (never an empty rail, never a broken page). Empty results are never
+    // cached by the adapter either, so the next request recomputes.
+    return undefined;
+  }
+}
 
 // Minimum items a section keeps before the trending top-up kicks in.
 const MIN_SECTION_ITEMS = 10;
@@ -298,7 +367,8 @@ function excludeSeen(items: MediaItem[], seen: Set<string>): MediaItem[] {
 }
 
 async function loadExplorerSections(type: ContentType): Promise<{ sections: ExplorerSection[]; errorMessage: string | undefined }> {
-  const [popularRail, topRatedRail, trending] = await Promise.all([
+  const [airingSection, popularRail, topRatedRail, trending] = await Promise.all([
+    loadCurrentAiringSection(type),
     loadSectionRail(type, 'popular'),
     loadSectionRail(type, 'top-rated'),
     loadTrendingForTopUp(type)
@@ -307,11 +377,19 @@ async function loadExplorerSections(type: ContentType): Promise<{ sections: Expl
   const seen = new Set<string>();
   const sections: ExplorerSection[] = [];
 
-  // Popular first (intentional ordering — the broadest entry rail).
-  // Follow-up task 2 (§10): each section carries its canonical
-  // Show-more target — the Explorer route's own ?sort= state over the
-  // SAME service that feeds the rail (no new endpoint, the legacy
-  // collection-route URL mechanism restored).
+  // Current Airing first (2026-11 — the page's topmost content rail,
+  // above Popular). A title shown here is not repeated in Popular/Top
+  // Rated below (the same no-repeat rule every earlier section sets).
+  if (airingSection && airingSection.items.length > 0) {
+    airingSection.items.forEach((item) => seen.add(itemKey(item)));
+    sections.push(airingSection);
+  }
+
+  // Popular (the broadest entry rail). Follow-up task 2 (§10): each
+  // section carries its canonical Show-more target — the Explorer
+  // route's own ?sort= state over the SAME service that feeds the rail
+  // (no new endpoint, the legacy collection-route URL mechanism
+  // restored).
   const popularItems = excludeSeen(popularRail.items, seen);
   popularItems.forEach((item) => seen.add(itemKey(item)));
   if (popularItems.length > 0) {

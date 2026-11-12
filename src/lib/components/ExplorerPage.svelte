@@ -87,7 +87,7 @@
   }: {
     type: ContentType;
     spotlight?: MediaItem[];
-    sections?: { key: string; title: string; items: MediaItem[]; showMoreHref?: string }[];
+    sections?: { key: string; title: string; items: MediaItem[]; showMoreHref?: string; episodeBadges?: Record<string, string> }[];
     filteredItems?: MediaItem[];
     currentPage?: number;
     hasNextPage?: boolean;
@@ -578,7 +578,10 @@
         <div class="catalog-warning" role="alert">{errorMessage}</div>
       {/if}
       {#each sections as section (section.key)}
-        <ContentRail title={section.title} items={section.items} href={section.showMoreHref || ''} linkLabel="Show more" />
+        <!-- Current Airing (server-composed) passes its per-card
+             latest-episode badges through; Popular / Top Rated carry
+             none and the rail renders exactly as before. -->
+        <ContentRail title={section.title} items={section.items} href={section.showMoreHref || ''} linkLabel="Show more" episodeBadges={section.episodeBadges} />
       {/each}
     </div>
   {/if}
