@@ -1,3 +1,4 @@
+import { RATE_LIMITED_ERROR_CODE, RATE_LIMITED_MESSAGE, checkRateLimit, clientIdentity } from '$lib/server/http/rate-limit';
 import { json } from '@sveltejs/kit';
 import { getTmdbIndiaProviders, providerLogoUrl } from '$lib/server/content/adapters/tmdb';
 import { contentErrorResponse } from '$lib/server/content/response';
@@ -14,7 +15,13 @@ import type { RequestHandler } from './$types';
 // can serve the response across users.
 // Auth: public — no user state, no Adult Mode dimension.
 
-export const GET: RequestHandler = async ({ setHeaders }) => {
+export const GET: RequestHandler = async ({ setHeaders, request, locals }) => {
+  // Security/perf: bounded per-identity rate limit (each call fans out to TMDB).
+  const rateVerdict = checkRateLimit('contentBrowse', clientIdentity(request.headers, locals.user?.id));
+  if (!rateVerdict.allowed) {
+    return json({ ok: false, error: { code: RATE_LIMITED_ERROR_CODE, message: RATE_LIMITED_MESSAGE } }, { status: 429, headers: { 'retry-after': String(rateVerdict.retryAfterSeconds) } });
+  }
+
   try {
     const providers = await getTmdbIndiaProviders();
     // Phase 2-C: this response carries no user/adult dimension — safe to

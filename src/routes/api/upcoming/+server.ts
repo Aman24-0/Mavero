@@ -1,3 +1,4 @@
+import { RATE_LIMITED_ERROR_CODE, RATE_LIMITED_MESSAGE, checkRateLimit, clientIdentity } from '$lib/server/http/rate-limit';
 import { json } from '@sveltejs/kit';
 import { loadUpcomingPage, parseUpcomingStartDate, parseUpcomingType, serializeCursor } from '$lib/server/content/upcoming';
 import { UpcomingCursorError } from '$lib/server/content/upcoming-cursor';
@@ -36,7 +37,13 @@ import type { RequestHandler } from './$types';
 // failure never permanently marks the source exhausted. Internal stack
 // traces are never exposed.
 
-export const GET: RequestHandler = async ({ url, setHeaders }) => {
+export const GET: RequestHandler = async ({ url, setHeaders, request, locals }) => {
+  // Security/perf: bounded per-identity rate limit (each call fans out to TMDB).
+  const rateVerdict = checkRateLimit('contentBrowse', clientIdentity(request.headers, locals.user?.id));
+  if (!rateVerdict.allowed) {
+    return json({ ok: false, error: { code: RATE_LIMITED_ERROR_CODE, message: RATE_LIMITED_MESSAGE } }, { status: 429, headers: { 'retry-after': String(rateVerdict.retryAfterSeconds) } });
+  }
+
   // F7-B: single startDate (YYYY-MM-DD) opens a fixed 30-day window.
   // Strict parse: missing/empty/malformed/impossible dates fail safe
   // to TODAY's UTC calendar date. The legacy month/year parameters are

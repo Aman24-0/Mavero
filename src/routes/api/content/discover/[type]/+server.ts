@@ -1,3 +1,4 @@
+import { RATE_LIMITED_ERROR_CODE, RATE_LIMITED_MESSAGE, checkRateLimit, clientIdentity } from '$lib/server/http/rate-limit';
 import { json } from '@sveltejs/kit';
 import { discover } from '$lib/server/content/service';
 import { contentErrorResponse } from '$lib/server/content/response';
@@ -12,7 +13,13 @@ import type { RequestHandler } from './$types';
 // is enforced at the adapter layer, so only non-adult content ever reaches
 // this response. Safe to cache publicly at the CDN.
 
-export const GET: RequestHandler = async ({ params, url, setHeaders }) => {
+export const GET: RequestHandler = async ({ params, url, setHeaders, request, locals }) => {
+  // Security/perf: bounded per-identity rate limit (each call fans out to TMDB).
+  const rateVerdict = checkRateLimit('contentBrowse', clientIdentity(request.headers, locals.user?.id));
+  if (!rateVerdict.allowed) {
+    return json({ ok: false, error: { code: RATE_LIMITED_ERROR_CODE, message: RATE_LIMITED_MESSAGE } }, { status: 429, headers: { 'retry-after': String(rateVerdict.retryAfterSeconds) } });
+  }
+
   if (!isContentType(params.type)) {
     return json({ ok: false, error: { code: 'INVALID_TYPE', message: 'Unsupported content type.' } }, { status: 400 });
   }

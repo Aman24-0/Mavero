@@ -1,3 +1,4 @@
+import { RATE_LIMITED_ERROR_CODE, RATE_LIMITED_MESSAGE, checkRateLimit, clientIdentity } from '$lib/server/http/rate-limit';
 import { json } from '@sveltejs/kit';
 import { discoverBatchDeduped, isDiscoverLanguage, isDiscoverSectionKey } from '$lib/server/content/service';
 import { toMediaItem } from '$lib/server/content/presenter';
@@ -40,7 +41,13 @@ import type { RequestHandler } from './$types';
  *     }
  *   }
  */
-export const GET: RequestHandler = async ({ url, locals, cookies }) => {
+export const GET: RequestHandler = async ({ url, locals, cookies, request }) => {
+  // Security/perf: bounded per-identity rate limit (each call fans out to TMDB).
+  const rateVerdict = checkRateLimit('contentBrowse', clientIdentity(request.headers, locals.user?.id));
+  if (!rateVerdict.allowed) {
+    return json({ ok: false, error: { code: RATE_LIMITED_ERROR_CODE, message: RATE_LIMITED_MESSAGE } }, { status: 429, headers: { 'retry-after': String(rateVerdict.retryAfterSeconds) } });
+  }
+
   const languageParam = url.searchParams.get('language') ?? 'all';
   const provider = url.searchParams.get('provider') ?? undefined;
   const sectionsParam = url.searchParams.get('sections') ?? undefined;

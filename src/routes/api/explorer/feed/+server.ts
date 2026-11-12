@@ -1,3 +1,4 @@
+import { RATE_LIMITED_ERROR_CODE, RATE_LIMITED_MESSAGE, checkRateLimit, clientIdentity } from '$lib/server/http/rate-limit';
 import { json } from '@sveltejs/kit';
 import { isContentType } from '$lib/server/content/types';
 import { explorerFeed, hasExplorerFilters } from '$lib/server/content/explorer-load';
@@ -33,7 +34,13 @@ import type { RequestHandler } from './$types';
 // (the same "section unavailable" convention as /api/discover/rail —
 // the client shows the empty/error state, never fixtures).
 
-export const GET: RequestHandler = async ({ url }) => {
+export const GET: RequestHandler = async ({ url, request, locals }) => {
+  // Security/perf: bounded per-identity rate limit (each call fans out to TMDB).
+  const rateVerdict = checkRateLimit('contentBrowse', clientIdentity(request.headers, locals.user?.id));
+  if (!rateVerdict.allowed) {
+    return json({ ok: false, error: { code: RATE_LIMITED_ERROR_CODE, message: RATE_LIMITED_MESSAGE } }, { status: 429, headers: { 'retry-after': String(rateVerdict.retryAfterSeconds) } });
+  }
+
   const typeParam = url.searchParams.get('type') ?? '';
   if (!isContentType(typeParam)) {
     return json({ ok: false, error: { code: 'INVALID_TYPE', message: 'Unknown Explorer content type.' } }, { status: 400 });

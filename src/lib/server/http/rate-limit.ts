@@ -102,6 +102,10 @@ export const RATE_LIMIT_RULES = {
   // additive-only convention).
   downloaderUnifiedSources: { limit: 30, windowMs: 60_000 },
   search: { limit: 30, windowMs: 60_000 },
+  // Public TMDB-backed browse endpoints (discover/batch, providers, upcoming,
+  // explorer feed, content discover) — each call fans out to TMDB. 60/min per
+  // identity covers fast browsing while bounding upstream quota burn.
+  contentBrowse: { limit: 60, windowMs: 60_000 },
   stremioSession: { limit: 20, windowMs: 60_000 },
   pairingCreate: { limit: 10, windowMs: 60_000 },
   pairingPoll: { limit: 60, windowMs: 60_000 },
