@@ -260,7 +260,7 @@ console.log('\n§5 — regression safety');
   // the source-qualities selector, then the base source URL.
   ok(/\$: mediaUrl = selectedServer \|\| selectedQualityOption\?\.url \|\| source\?\.url \|\| null;/.test(shell), '5d. the server/qualities selector chain swaps the media URL (server menu + BV variant playback path)');
   ok(!/download/i.test(controls) || !/downloader/i.test(shell), '5e. NO downloader surface in the player');
-  ok(/connect-src 'self' https:\/\/\*\.supabase\.co[\s\S]*?sub\.vdrk\.site[\s\S]*?api\.theintrodb\.org/.test(cspLine), '5f. the CSP pins for the optional lookups remain');
+  ok(/connect-src 'self'( https:\/\/\*\.workers\.dev)? https:\/\/\*\.supabase\.co[\s\S]*?sub\.vdrk\.site[\s\S]*?api\.theintrodb\.org/.test(cspLine), '5f. the CSP pins for the optional lookups remain (the ace9159 stream-proxy Worker entry is additive)');
   ok(/\$: if \(browser && duration > 0 && mediaLookupKey !== introKey\) \{/.test(shell), '5g. the intro lookup still waits for a trustworthy ACTUAL duration');
   ok(/introKey = mediaLookupKey;[\s\S]{0,80}introSegments = \[\];/.test(shell), '5h. episode switches still clear stale intro state before the next lookup');
 }

@@ -67,6 +67,11 @@ function ok(condition: unknown, label: string) {
 }
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+// Historical-commit git lookups (<rev>:<path>) resolve the path relative to
+// the invocation cwd; anchor them at the repository root (see the longer
+// note in cloudstream_registry_integration_test.ts) — the monorepo layout
+// runs this suite from apps/web, while the pristine tree predates it.
+const GIT_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: REPO_ROOT, encoding: 'utf8' }).trim();
 const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 'utf8');
 
 // The pristine pre-CS-4 commit — the frozen-surface pin for §H.
@@ -540,7 +545,7 @@ async function section_runtimeMount(): Promise<void> {
 
 function pristineFile(relative: string): string | null {
   try {
-    return execFileSync('git', ['show', `${PRISTINE_CS3}:${relative}`], { cwd: REPO_ROOT, encoding: 'utf8' });
+    return execFileSync('git', ['show', `${PRISTINE_CS3}:${relative}`], { cwd: GIT_ROOT, encoding: 'utf8' });
   } catch {
     return null;
   }

@@ -60,6 +60,14 @@ function ok(condition: unknown, label: string) {
 }
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+// Git tree lookups (ls-tree pathspecs and <rev>:<path> arguments) resolve
+// relative to the invocation cwd. Since the monorepo restructure moved the
+// app to apps/web, git calls that inspect HISTORICAL commits must run from
+// the repository root — from apps/web they would look up
+// apps/web/supabase/migrations inside the pristine commit's tree (which
+// predates the restructure) and match nothing. GIT_ROOT keeps the lookups
+// cwd-independent regardless of where the suite is invoked from.
+const GIT_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: REPO_ROOT, encoding: 'utf8' }).trim();
 const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 'utf8');
 
 // The pristine pre-CS-5 commit (CS-4) — the frozen-surface pin for §F.
@@ -130,7 +138,7 @@ const JSON_ROW: PublicDownloadProvider = {
 
 function pristineFile(relative: string): string | null {
   try {
-    return execFileSync('git', ['show', `${PRISTINE_CS4}:${relative}`], { cwd: REPO_ROOT, encoding: 'utf8' });
+    return execFileSync('git', ['show', `${PRISTINE_CS4}:${relative}`], { cwd: GIT_ROOT, encoding: 'utf8' });
   } catch {
     return null;
   }
@@ -139,7 +147,10 @@ function pristineFile(relative: string): string | null {
 /** Lists the migration filenames as they existed at the pristine commit. */
 function pristineMigrationNames(): string[] {
   try {
-    return execFileSync('git', ['ls-tree', '--name-only', PRISTINE_CS4, 'supabase/migrations/'], { cwd: REPO_ROOT, encoding: 'utf8' })
+    // Runs from GIT_ROOT (see the note at the GIT_ROOT definition): the
+    // pathspec is tree-root-relative only when the invocation cwd IS the
+    // repo root. Output keeps the supabase/migrations/ prefix, stripped below.
+    return execFileSync('git', ['ls-tree', '--name-only', PRISTINE_CS4, 'supabase/migrations/'], { cwd: GIT_ROOT, encoding: 'utf8' })
       .split('\n')
       .filter(Boolean)
       .map((name) => name.replace('supabase/migrations/', ''));

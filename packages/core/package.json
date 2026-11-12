@@ -1,0 +1,9 @@
+{
+  "name": "@mavero/core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Shared Mavero API clients, types and platform-agnostic business logic (TMDB, Supabase, providers). Consumed by apps/web today and by the Tizen/Android apps in upcoming phases.",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts"
+}

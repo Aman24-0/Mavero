@@ -31,6 +31,11 @@ function ok(condition: unknown, label: string) {
 }
 
 const REPO_ROOT = new URL('..', import.meta.url);
+// Git tree lookups (<rev>:<path> and pathspecs) resolve relative to the
+// invocation cwd; anchor them at the repository root so they stay
+// cwd-independent after the monorepo restructure moved the app to apps/web
+// (see the longer note in cloudstream_registry_integration_test.ts).
+const GIT_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: new URL('..', import.meta.url).pathname, encoding: 'utf8' }).trim();
 function read(relative: string): string {
   return readFileSync(new URL(relative, REPO_ROOT), 'utf8');
 }
@@ -1169,7 +1174,7 @@ function pristineFile(relative: string): string | null {
   // different, older plan) are untouched; the pin is that the CloudStream
   // Permanent Adapter Plan adds no NEW migration files in Phase 4.
   const migrationFiles = readdirSync(new URL('../supabase/migrations', import.meta.url));
-  const pristineMigrations = execFileSync('git', ['ls-tree', '--name-only', '434d02b:supabase/migrations'], { cwd: new URL('..', import.meta.url).pathname, encoding: 'utf8' }).split('\n').filter(Boolean);
+  const pristineMigrations = execFileSync('git', ['ls-tree', '--name-only', '434d02b:supabase/migrations'], { cwd: GIT_ROOT, encoding: 'utf8' }).split('\n').filter(Boolean);
   // FINAL TASK evolution + DURABLE BUILD LIFECYCLE (20261102000000,
   // sanctioned): the ONLY migrations added since the Phase 3.5 tip are the
   // unified-downloader global-order migration (20261004000000) and the

@@ -32,6 +32,13 @@ function ok(condition: unknown, label: string) {
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 'utf8');
 
+// Monorepo layout (2026-11 restructuring): the SvelteKit app lives in
+// apps/web, while two artifacts of the checks below stay at the MONOREPO
+// root — the single pnpm workspace lockfile (pnpm only ever reads it from
+// the workspace root) and the GitHub Actions workflows directory (GitHub
+// requires .github/ at the repository root).
+const MONOREPO_ROOT = path.resolve(REPO_ROOT, '../..');
+
 // ============================================================
 // 1. Root package.json engines.node aligned with the actual supported floor.
 // ============================================================
@@ -52,11 +59,13 @@ ok(/NODE_VERSION\s*=\s*"22"/.test(netlify), '2a. netlify.toml pins NODE_VERSION=
 // net round (2026-10-17, .github/workflows/ci.yml) with these pins
 // enforced. The version-pin checks below apply to ANY workflow file that
 // exists, so future workflow edits stay consistent.
-const workflowsDir = path.join(REPO_ROOT, '.github/workflows');
+const workflowsDir = path.join(MONOREPO_ROOT, '.github/workflows');
 const workflowFiles = existsSync(workflowsDir)
   ? readdirSync(workflowsDir).filter((name) => name.endsWith('.yml') || name.endsWith('.yaml'))
   : [];
-const allWorkflows = workflowFiles.map((name) => read(path.join('.github/workflows', name))).join('\n');
+const allWorkflows = workflowFiles
+  .map((name) => readFileSync(path.join(MONOREPO_ROOT, '.github/workflows', name), 'utf8'))
+  .join('\n');
 if (workflowFiles.length > 0) {
   ok(/node-version:\s*22/.test(allWorkflows), '2b. CI workflow uses node-version: 22');
 } else {
@@ -83,7 +92,7 @@ ok(/Node\.js 22 or newer/.test(deployment), '3c. DEPLOYMENT.md still says "Node.
 ok(!existsSync(path.join(REPO_ROOT, 'package-lock.json')), '4a. package-lock.json removed (stale npm-format lockfile)');
 
 // pnpm-lock.yaml is preserved (the active lockfile).
-ok(existsSync(path.join(REPO_ROOT, 'pnpm-lock.yaml')), '4b. pnpm-lock.yaml preserved (the active lockfile)');
+ok(existsSync(path.join(MONOREPO_ROOT, 'pnpm-lock.yaml')), '4b. pnpm-lock.yaml preserved (the active pnpm workspace lockfile, at the monorepo root)');
 
 // ============================================================
 // 5. .gitignore excludes package-lock.json so it can't drift back in.

@@ -51,6 +51,9 @@ function ok(condition: unknown, label: string) {
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (relative: string) => readFileSync(path.join(REPO_ROOT, relative), 'utf8');
+// Monorepo layout (2026-11 restructuring): the single pnpm workspace
+// lockfile lives at the repository root, not inside apps/web.
+const MONOREPO_ROOT = path.resolve(REPO_ROOT, '../..');
 
 /** Flushes pending promise microtasks so guard state transitions settle. */
 const tick = async () => {
@@ -226,7 +229,7 @@ function makeFakeHooks() {
   const pkg = JSON.parse(read('package.json'));
   ok(pkg.dependencies && typeof pkg.dependencies['disable-devtool'] === 'string', '1a. disable-devtool present in dependencies');
   ok(pkg.dependencies['disable-devtool'] === '0.3.9', '1b. disable-devtool pinned to the exact audited version 0.3.9');
-  const lock = read('pnpm-lock.yaml');
+  const lock = readFileSync(path.join(MONOREPO_ROOT, 'pnpm-lock.yaml'), 'utf8');
   ok(/disable-devtool@0\.3\.9/.test(lock), '1c. pnpm-lock.yaml records disable-devtool@0.3.9');
   const libPkg = JSON.parse(read('node_modules/disable-devtool/package.json'));
   ok(libPkg.version === '0.3.9', '1d. installed package is 0.3.9');

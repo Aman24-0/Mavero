@@ -55,6 +55,10 @@ function ok(message: string) {
 const { upcomingInternals, UPCOMING_PAGE_SIZE } = await import('../src/lib/server/content/upcoming.ts');
 const { clearCache } = await import('../src/lib/server/content/cache.ts');
 const apiModule = await import('../src/routes/api/upcoming/+server.ts');
+// ace9159 rate-limits the public browse endpoints (contentBrowse, 60/min per
+// identity) — this suite asserts stream-identity behavior, not throttling, so
+// it uses the module's official test seam to keep the fixed window out of the way.
+const { resetRateLimitsForTests } = await import('../src/lib/server/http/rate-limit.ts');
 const { computeStreamId } = await import('../src/lib/server/content/upcoming-cursor.ts');
 
 type UpcomingItem = {
@@ -263,7 +267,12 @@ globalThis.fetch = mockFetch;
 
 async function callApi(query: Record<string, string>): Promise<{ status: number; body: any }> {
   const search = new URLSearchParams(query).toString();
-  const res = await apiModule.GET({ url: new URL(`http://localhost/api/upcoming?${search}`) } as never);
+  const url = new URL(`http://localhost/api/upcoming?${search}`);
+  // The event carries request + locals because clientIdentity() (route line
+  // 42, added by ace9159) dereferences both; setHeaders stays omitted — the
+  // route already guards it for test harnesses.
+  resetRateLimitsForTests();
+  const res = await apiModule.GET({ url, request: new Request(url), locals: { user: null } } as never);
   const body = await res.json();
   return { status: res.status, body };
 }

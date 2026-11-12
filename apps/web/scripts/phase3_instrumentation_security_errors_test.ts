@@ -63,7 +63,7 @@ ok(/default-src 'self'/.test(netlify), 'I-1b. CSP default-src is self');
 ok(/script-src 'self' 'unsafe-inline'/.test(netlify), 'I-1c. CSP script-src allows self + unsafe-inline (SvelteKit compat)');
 ok(/style-src 'self' 'unsafe-inline'/.test(netlify), 'I-1d. CSP style-src allows self + unsafe-inline (Tailwind compat)');
 ok(/img-src 'self' data: https:\/\/image\.tmdb\.org/.test(netlify), 'I-1e. CSP img-src allows self + data: + TMDB images');
-ok(/connect-src 'self' https:\/\/\*\.supabase\.co https:\/\/image\.tmdb\.org/.test(netlify), 'I-1f. CSP connect-src allows self + Supabase + TMDB images');
+ok(/connect-src 'self' https:\/\/\*\.workers\.dev https:\/\/\*\.supabase\.co https:\/\/image\.tmdb\.org/.test(netlify), 'I-1f. CSP connect-src allows self + the stream-proxy Worker (ace9159, additive) + Supabase + TMDB images');
 ok(/frame-src \*/.test(netlify), 'I-1g. CSP frame-src is permissive (admin-configured providers — restricting would break playback)');
 ok(/frame-ancestors 'none'/.test(netlify), 'I-1h. CSP frame-ancestors none (nobody can iframe Mavero)');
 ok(/object-src 'none'/.test(netlify), 'I-1i. CSP object-src none (no plugins)');

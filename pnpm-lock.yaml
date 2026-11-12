@@ -9,7 +9,9 @@ overrides:
 
 importers:
 
-  .:
+  .: {}
+
+  apps/web:
     dependencies:
       '@supabase/ssr':
         specifier: ^0.12.4
@@ -117,6 +119,10 @@ importers:
       vite:
         specifier: ^7.1.4
         version: 7.3.6(@types/node@26.2.0)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.12)
+
+  packages/core: {}
+
+  packages/tv-ui: {}
 
 packages:
 

@@ -34,7 +34,7 @@
 
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { Readable } from 'node:stream';
@@ -50,37 +50,61 @@ function readCode(relativePath: string): string {
   return readFileSync(resolve(process.cwd(), relativePath), 'utf8');
 }
 
-const serverJs = readCode('indian-proxy/server.js');
+// indian-proxy/ is the owner's LOCAL UNTRACKED standalone proxy project (it
+// deploys from its own render.yaml and is NOT part of this repository), so CI
+// checkouts do not contain it — and the monorepo restructure moved this app to
+// apps/web, away from the directory's previous repo-root neighbor. The
+// checkout is resolved in both layouts (cwd = repo root, or repo root two
+// levels up); when absent, every pin over its source reports a skip instead of
+// failing the gate over a directory that was never committed.
+const INDIAN_PROXY_SOURCE = 'indian-proxy/server.js';
+const indianProxyPath = [
+  resolve(process.cwd(), INDIAN_PROXY_SOURCE),
+  resolve(process.cwd(), '../..', INDIAN_PROXY_SOURCE)
+].find((candidate) => existsSync(candidate));
+const hasIndianProxy = indianProxyPath !== undefined;
+const serverJs = hasIndianProxy ? readFileSync(indianProxyPath!, 'utf8') : '';
+
+let skipped = 0;
+/** ok() over the untracked indian-proxy source — skips when the checkout is absent. */
+function proxyOk(condition: unknown, label: string, hint?: string) {
+  if (!hasIndianProxy) {
+    skipped += 1;
+    console.log(`  skip - ${label} (untracked indian-proxy/ absent)`);
+    return;
+  }
+  ok(condition, label, hint);
+}
 
 // ============================================================
 console.log('§1 — the callback-shaped pipeline misuse is gone');
 // ============================================================
 {
-  ok(
+  proxyOk(
     !serverJs.includes('pipeline(reader, res,'),
     '§1.1 the INVALID `pipeline(stream, res, callback)` call is gone (stream/promises parses a function arg as a "destination function" → ERR_INVALID_RETURN_VALUE → process death)'
   );
-  ok(
+  proxyOk(
     serverJs.includes('Readable.fromWeb(upstream.body)'),
     '§1.2 the fetch() Web ReadableStream is converted to a NODE stream before pipeline'
   );
-  ok(
+  proxyOk(
     serverJs.includes('await pipeline(nodeStream, res);'),
     '§1.3 the pipeline is AWAITED inside sendUpstreamResponse (no floating rejection)'
   );
-  ok(
+  proxyOk(
     /async function sendUpstreamResponse\(res, upstream\) \{[\s\S]{0,1200}?await pipeline\(nodeStream, res\);[\s\S]{0,400}?\} catch \(err\) \{[\s\S]{0,300}?isBenignStreamError\(err\)/.test(serverJs),
     '§1.4 the pipeline call is wrapped in try/catch and disconnects are classified as benign'
   );
-  ok(
+  proxyOk(
     ['ERR_STREAM_PREMATURE_CLOSE', 'AbortError', 'ECONNRESET', 'EPIPE'].every((needle) => serverJs.includes(needle)),
     '§1.5 the benign set covers premature close / abort / reset / pipe (the Quick Tunnel `context canceled` family)'
   );
-  ok(
+  proxyOk(
     serverJs.includes('await sendUpstreamResponse(res, upstream);'),
     '§1.6 streamUpstream AWAITS sendUpstreamResponse'
   );
-  ok(
+  proxyOk(
     serverJs.includes('res.send(body);') &&
       !/const body = await upstream\.text\(\);[\s\S]{0,600}?sendUpstreamResponse\(res, upstream\)/.test(serverJs),
     '§1.7 /api/fetch no longer hands an ALREADY-CONSUMED (.text()) body to the streamer — the buffered bytes are sent directly'
@@ -99,19 +123,23 @@ let proxy: {
   sendUpstreamResponse: (res: http.ServerResponse, upstream: unknown) => Promise<void>;
   isBenignStreamError: (err: unknown) => boolean;
 } | null = null;
-try {
-  proxy = createRequire(import.meta.url)('../indian-proxy/server.js');
-} catch {
-  proxy = null; // dynamic section skipped below
+if (hasIndianProxy) {
+  try {
+    // Load the OWNER'S checkout (absolute path — cwd-independent in both the
+    // single-repo and the monorepo layout).
+    proxy = createRequire(import.meta.url)(indianProxyPath!);
+  } catch {
+    proxy = null; // dynamic section skipped below (deps not installed)
+  }
 }
 
 {
-  ok(serverJs.includes("process.on('uncaughtException'"), '§2.1 uncaughtException guard present');
-  ok(serverJs.includes("process.on('unhandledRejection'"), '§2.2 unhandledRejection guard present');
+  proxyOk(serverJs.includes("process.on('uncaughtException'"), '§2.1 uncaughtException guard present');
+  proxyOk(serverJs.includes("process.on('unhandledRejection'"), '§2.2 unhandledRejection guard present');
   const guardAt = serverJs.indexOf("process.on('uncaughtException'");
   const firstRequire = serverJs.indexOf("require('express')");
-  ok(guardAt >= 0 && firstRequire > 0 && guardAt < firstRequire, '§2.3 the guards are registered BEFORE any require (boot-time failures are caught too)');
-  ok(serverJs.includes('[CRASH PREVENTED]'), '§2.4 crash-guard log tag present (errors are logged with their stack, not buried)');
+  proxyOk(guardAt >= 0 && firstRequire > 0 && guardAt < firstRequire, '§2.3 the guards are registered BEFORE any require (boot-time failures are caught too)');
+  proxyOk(serverJs.includes('[CRASH PREVENTED]'), '§2.4 crash-guard log tag present (errors are logged with their stack, not buried)');
 
   if (proxy) {
     ok(
@@ -234,10 +262,11 @@ if (proxy) {
   console.log('  skip §4 — indian-proxy deps not installed');
 }
 
-console.log(`\nRound 38 proxy stream-crash summary: ${passed} passed, 0 failed`);
+console.log(`\nRound 38 proxy stream-crash summary: ${passed} passed, ${skipped} skipped (untracked indian-proxy/ absent), 0 failed`);
 const dynamicRan = proxy !== null;
-if (passed < (dynamicRan ? 18 : 11)) {
-  console.error(`Expected at least ${dynamicRan ? 18 : 11} assertions — the suite itself is broken`);
+const expectedPins = dynamicRan ? 18 : hasIndianProxy ? 11 : 0;
+if (passed < expectedPins) {
+  console.error(`Expected at least ${expectedPins} assertions — the suite itself is broken`);
   process.exit(1);
 }
 process.exit(0); // the http test servers are down — exit even if a stray handle remains
