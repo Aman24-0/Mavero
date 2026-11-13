@@ -1,20 +1,34 @@
 // ============================================================
 // Mavero TV — home screen UI (Tizen.NUI, API 6).
 //
-// Phase 1 scaffold: brand header + horizontally scrollable
-// "Trending movies" rail of rounded cards, positioned on the
-// fixed 1920x1080 TV surface with the web app's exact palette
-// (see Theme.cs). Cards are placeholders here; the next
-// iteration binds ApiService.FetchHomeRailsAsync() output to
-// real poster cards.
+// Data-driven phase: the header stays fixed and ALL rails returned
+// by GET /api/tv/home render below it as (title + horizontal rail)
+// sections inside a vertically scrollable host. Every card is a
+// MediaCard bound to a real MediaItem — full-bleed 2:3 poster with
+// rounded corners, bottom scrim, title, cyan focus ring.
+//
+// D-pad focus engine:
+//   - cards are Focusable and linked Left/Right along each rail;
+//   - FocusManager (built-in keyboard navigation) moves focus on
+//     arrow keys, honouring those links inside a rail and its
+//     spatial algorithm across rails;
+//   - FocusGained triggers the card visuals (MediaCard) and the
+//     keep-in-view scrolling (vertical host + horizontal rail);
+//   - initial focus lands on the first card of the first rail once
+//     the API data is bound.
+//
+// Threading: the API fetch completes on the thread pool; rail
+// binding is marshaled back through UiDispatcher (DALi objects are
+// only touched on the UI thread).
 //
 // API 6 notes (verified against the TizenFX 6.0.0.14995 refs):
 //   - Positioning uses the modern pivot pattern (API5+):
 //     PositionUsesPivotPoint + PivotPoint.TopLeft so Position2D measures
-//     from the parent's top-left to the view's own top-left.
+//     from the parent's top-left to the view's own pivot point.
 //   - The scrollable container is Tizen.NUI.ScrollView (the only API6
-//     scrollable) with scroll bounds via Scrollable.ScrollPositionMin/Max.
-//   - Rounded card corners come from a 9-patch image visual
+//     scrollable) with scroll bounds via Scrollable.ScrollPositionMin/Max
+//     and animated moves via ScrollView.ScrollTo(Vector2, duration, alpha).
+//   - Rounded corners come from 9-patch image visuals
 //     (ImageVisualProperty.Border) because API6 color visuals
 //     have no corner-radius support.
 // ============================================================
@@ -25,44 +39,58 @@ using Tizen;
 using Tizen.NUI;
 using Tizen.NUI.BaseComponents;
 
+// CS0618: every Tizen.NUI.ScrollView member used here (ctor, ScrollPositionMin/Max,
+// ScrollPosition, ScrollTo) is marked "use Tizen.NUI.Components", but API6
+// Components ships no scrollable replacement — this is the only scrollable
+// container in the target API profile.
+#pragma warning disable CS0618
+
 namespace MaveroTv
 {
-    /// <summary>TV home screen: header + scrollable rail of rounded cards.</summary>
+    /// <summary>TV home screen: fixed header + vertically scrolled rails of poster cards.</summary>
     public class HomePage : View
     {
-        // Modern NUI positioning (API5+): pivot-based. PositionUsesPivotPoint
-        // makes Position2D measure from the parent's top-left to the view's
-        // own top-left. Tizen.NUI.PivotPoint is a static class shadowed by
-        // the same-named View property, so the value is cached once here.
-        private static readonly Position TopLeftPivot = Tizen.NUI.PivotPoint.TopLeft;
-
-        // Rail metrics (8 scaffold cards at the real Theme card metrics).
-        private const int CardCount = 8;
-        private static readonly int RailContentWidth = CardCount * Theme.CardWidth + (CardCount - 1) * Theme.CardGap;
-
-        /// <summary>9-patch border inset of card-bg.png (corner-safe stretch margin).</summary>
-        private const float CardPatchBorder = 18f;
+        // Honest status states (no fake content on outages).
+        private const string StatusLoading = "Loading...";
+        private const string StatusUnavailable = "Content unavailable - check the network connection";
+        private const string StatusEmpty = "No content available right now";
 
         private readonly ApiService _api = new ApiService();
+        private readonly List<RailSection> _sections = new List<RailSection>();
+
+        private ScrollView _pageScroll;
+        private View _railsContent;
+        private TextLabel _status;
+        private int _contentHeight;
+
+        /// <summary>One bound rail: its scroll container, cards, and page offset.</summary>
+        private class RailSection
+        {
+            public ScrollView Rail;
+            public List<MediaCard> Cards = new List<MediaCard>();
+            public int Top; // y within the page content
+        }
 
         public HomePage()
         {
             Size2D = new Size2D(Theme.ScreenWidth, Theme.ScreenHeight);
             BackgroundColor = Theme.Background;
-            PivotPoint = TopLeftPivot;
+            PivotPoint = Theme.TopLeftPivot;
             PositionUsesPivotPoint = true;
 
             Add(CreateHeader());
-            Add(CreateTrendingRail());
+            CreateRailsHost();
 
-            // Prove the data path inside the native runtime: fetch the
-            // production rails and print every title via Tizen.Log.
-            // (Continuations leave the UI thread, so this phase only logs;
-            // main-thread UI binding arrives with the data-driven cards.)
-            _ = FetchHomeDataAsync();
+            _status = CreateStatus();
+            Add(_status);
+
+            // The pump must be created on the UI thread, before any
+            // background continuation can Post rail binding to it.
+            UiDispatcher.Start();
+            _ = LoadRailsAsync();
         }
 
-        // ---- UI construction ---------------------------------------------
+        // ---- chrome -------------------------------------------------------
 
         private static View CreateHeader()
         {
@@ -73,7 +101,7 @@ namespace MaveroTv
                 PointSize = 36,
                 Position2D = new Position2D(Theme.PageMargin, 48),
                 Size2D = new Size2D(600, 72),
-                PivotPoint = TopLeftPivot,
+                PivotPoint = Theme.TopLeftPivot,
                 PositionUsesPivotPoint = true
             };
 
@@ -83,7 +111,7 @@ namespace MaveroTv
                 Position2D = new Position2D(Theme.PageMargin, 128),
                 Size2D = new Size2D(96, 6),
                 BackgroundColor = Theme.Accent,
-                PivotPoint = TopLeftPivot,
+                PivotPoint = Theme.TopLeftPivot,
                 PositionUsesPivotPoint = true
             };
 
@@ -92,7 +120,7 @@ namespace MaveroTv
                 Position2D = new Position2D(0, 0),
                 Size2D = new Size2D(Theme.ScreenWidth, 160),
                 BackgroundColor = Color.Transparent,
-                PivotPoint = TopLeftPivot,
+                PivotPoint = Theme.TopLeftPivot,
                 PositionUsesPivotPoint = true
             };
             header.Add(brand);
@@ -100,128 +128,260 @@ namespace MaveroTv
             return header;
         }
 
-        private static View CreateTrendingRail()
+        /// <summary>Vertical host that scrolls the rails below the fixed header.</summary>
+        private void CreateRailsHost()
         {
-            TextLabel sectionTitle = new TextLabel
-            {
-                Text = "Trending movies",
-                TextColor = Theme.TextSecondary,
-                PointSize = 24,
-                Position2D = new Position2D(Theme.PageMargin, 196),
-                Size2D = new Size2D(600, 44),
-                PivotPoint = TopLeftPivot,
-                PositionUsesPivotPoint = true
-            };
-
-            // Horizontal rail: 8 cards (1928px content) inside a 1792px
-            // viewport -> 136px of horizontal scroll range.
-            // CS0618: the API6 ScrollView ctor is marked "use Tizen.NUI.Components",
-            // but API6 Components ships no scrollable replacement — this is the
-            // only scrollable container in the target API profile.
-#pragma warning disable CS0618
-            ScrollView rail = new ScrollView
-            {
-                Position2D = new Position2D(Theme.PageMargin, 264),
-                Size2D = new Size2D(Theme.ScreenWidth - Theme.PageMargin * 2, Theme.CardHeight),
-                PivotPoint = TopLeftPivot,
-                PositionUsesPivotPoint = true,
-                ScrollPositionMin = new Vector2(0f, 0f),
-                ScrollPositionMax = new Vector2(RailContentWidth - (Theme.ScreenWidth - Theme.PageMargin * 2), 0f)
-            };
-#pragma warning restore CS0618
-
-            for (int i = 0; i < CardCount; i++)
-            {
-                rail.Add(CreatePlaceholderCard(i));
-            }
-
-            View section = new View
+            _railsContent = new View
             {
                 Position2D = new Position2D(0, 0),
-                Size2D = new Size2D(Theme.ScreenWidth, 264 + Theme.CardHeight),
+                Size2D = new Size2D(Theme.ScreenWidth, 0), // height set once rails bind
                 BackgroundColor = Color.Transparent,
-                PivotPoint = TopLeftPivot,
+                PivotPoint = Theme.TopLeftPivot,
                 PositionUsesPivotPoint = true
             };
-            section.Add(sectionTitle);
-            section.Add(rail);
-            return section;
+
+            _pageScroll = new ScrollView
+            {
+                Position2D = new Position2D(0, Theme.PageScrollY),
+                Size2D = new Size2D(Theme.ScreenWidth, Theme.PageViewportHeight),
+                PivotPoint = Theme.TopLeftPivot,
+                PositionUsesPivotPoint = true,
+                ScrollPositionMin = new Vector2(0f, 0f),
+                ScrollPositionMax = new Vector2(0f, 0f)
+            };
+
+            _pageScroll.Add(_railsContent);
+            Add(_pageScroll);
         }
 
-        private static View CreatePlaceholderCard(int index)
+        private static TextLabel CreateStatus()
         {
-            int x = index * (Theme.CardWidth + Theme.CardGap);
-            View card = new View
+            return new TextLabel
             {
-                Position2D = new Position2D(x, 0),
-                Size2D = new Size2D(Theme.CardWidth, Theme.CardHeight),
-                Background = RoundedCardSurface(),
-                PivotPoint = TopLeftPivot,
-                PositionUsesPivotPoint = true
-            };
-
-            // Dim poster placeholder block inside the card.
-            View posterBlock = new View
-            {
-                Position2D = new Position2D(12, 12),
-                Size2D = new Size2D(Theme.CardWidth - 24, Theme.CardHeight - 76),
-                BackgroundColor = Theme.SurfaceFocused,
-                PivotPoint = TopLeftPivot,
-                PositionUsesPivotPoint = true
-            };
-            card.Add(posterBlock);
-
-            TextLabel placeholderTitle = new TextLabel
-            {
-                Text = "Coming soon",
+                Text = StatusLoading,
                 TextColor = Theme.TextSecondary,
-                PointSize = 14,
-                Position2D = new Position2D(12, Theme.CardHeight - 56),
-                Size2D = new Size2D(Theme.CardWidth - 24, 36),
-                PivotPoint = TopLeftPivot,
+                PointSize = 20,
+                Position2D = new Position2D(Theme.PageMargin, Theme.PageScrollY + 64),
+                Size2D = new Size2D(Theme.RailViewportWidth, 40),
+                PivotPoint = Theme.TopLeftPivot,
                 PositionUsesPivotPoint = true
             };
-            card.Add(placeholderTitle);
-            return card;
         }
 
-        /// <summary>
-        /// Rounded card background matching the web app's 12px card radius.
-        /// card-bg.png is a #161616 rounded rectangle with transparent
-        /// corners; the 18px 9-patch border keeps the corners intact while
-        /// the middle stretches to any card size.
-        /// </summary>
-        private static PropertyMap RoundedCardSurface()
-        {
-            PropertyMap map = new PropertyMap();
-            map.Insert(Visual.Property.Type, new PropertyValue((int)Visual.Type.Image));
-            map.Insert(ImageVisualProperty.URL, new PropertyValue("card-bg.png"));
-            map.Insert(ImageVisualProperty.Border, new PropertyValue(new Vector4(CardPatchBorder, CardPatchBorder, CardPatchBorder, CardPatchBorder)));
-            return map;
-        }
+        // ---- data → UI binding -------------------------------------------
 
-        // ---- Data proof (this phase) ------------------------------------
-
-        private async Task FetchHomeDataAsync()
+        private async Task LoadRailsAsync()
         {
             try
             {
                 List<TvRail> rails = await _api.FetchHomeRailsAsync();
-                Log.Info(ApiService.LogTag, $"TV home fetch OK — {rails.Count} rail(s)");
-
-                foreach (TvRail rail in rails)
-                {
-                    Log.Info(ApiService.LogTag, $"Rail '{rail.Title}' [{rail.Key}] — {rail.Items.Count} item(s)");
-                    foreach (MediaItem item in rail.Items)
-                    {
-                        Log.Info(ApiService.LogTag, $"  [{rail.Title}] {item.Title} ({item.Year}) — id={item.Id}, type={item.Type}");
-                    }
-                }
+                Log.Info(ApiService.LogTag, $"TV home fetched — {rails.Count} rail(s); binding on UI thread");
+                UiDispatcher.Post(() => BindRails(rails));
             }
             catch (Exception ex)
             {
                 Log.Error(ApiService.LogTag, $"TV home fetch failed: {ex.Message}");
+                UiDispatcher.Post(() => ShowStatus(StatusUnavailable));
             }
+        }
+
+        private void BindRails(List<TvRail> rails)
+        {
+            if (rails == null || rails.Count == 0)
+            {
+                ShowStatus(StatusEmpty);
+                return;
+            }
+
+            _status.Hide();
+
+            MediaCard firstCard = null;
+            foreach (TvRail rail in rails)
+            {
+                if (rail == null || rail.Items == null || rail.Items.Count == 0)
+                {
+                    continue;
+                }
+
+                RailSection section = BuildSection(rail, _sections.Count);
+                _sections.Add(section);
+                if (firstCard == null && section.Cards.Count > 0)
+                {
+                    firstCard = section.Cards[0];
+                }
+            }
+
+            _contentHeight = _sections.Count * Theme.SectionHeight;
+            _railsContent.Size2D = new Size2D(Theme.ScreenWidth, _contentHeight);
+            _pageScroll.ScrollPositionMax = new Vector2(
+                0f, Math.Max(0f, _contentHeight - Theme.PageViewportHeight));
+
+            Log.Info(ApiService.LogTag,
+                $"Bound {_sections.Count} rail(s), {_contentHeight}px of content, focus lands on first card");
+
+            if (firstCard != null)
+            {
+                FocusManager.Instance.SetCurrentFocusView(firstCard);
+            }
+        }
+
+        /// <summary>Builds one (title + horizontal card rail) section and wires the
+        /// focus links along the rail.</summary>
+        private RailSection BuildSection(TvRail rail, int sectionIndex)
+        {
+            int top = sectionIndex * Theme.SectionHeight;
+
+            TextLabel sectionTitle = new TextLabel
+            {
+                Text = rail.Title,
+                TextColor = Theme.TextSecondary,
+                PointSize = 24,
+                Position2D = new Position2D(Theme.PageMargin, Theme.RailTitleOffset),
+                Size2D = new Size2D(600, Theme.RailTitleHeight),
+                PivotPoint = Theme.TopLeftPivot,
+                PositionUsesPivotPoint = true
+            };
+
+            ScrollView railScroll = new ScrollView
+            {
+                Position2D = new Position2D(Theme.PageMargin, Theme.RailOffset),
+                Size2D = new Size2D(Theme.RailViewportWidth, Theme.CardHeight),
+                PivotPoint = Theme.TopLeftPivot,
+                PositionUsesPivotPoint = true,
+                ScrollPositionMin = new Vector2(0f, 0f),
+                ScrollPositionMax = new Vector2(0f, 0f)
+            };
+
+            RailSection section = new RailSection { Rail = railScroll, Top = top };
+
+            MediaCard previous = null;
+            for (int i = 0; i < rail.Items.Count; i++)
+            {
+                MediaItem item = rail.Items[i];
+                if (item == null)
+                {
+                    continue;
+                }
+
+                MediaCard card = new MediaCard(item)
+                {
+                    // Center pivot: Position2D measures to the card's own center,
+                    // so the 1.05 focus scale grows symmetrically in place.
+                    Position2D = new Position2D(
+                        i * (Theme.CardWidth + Theme.CardGap) + Theme.CardWidth / 2,
+                        Theme.CardHeight / 2)
+                };
+
+                card.FocusGained += OnCardFocusGained;
+                card.Selected += OnCardSelected;
+
+                // Explicit focus links along the rail; edges stay null so the
+                // built-in navigation clamps at rail boundaries.
+                if (previous != null)
+                {
+                    previous.RightFocusableView = card;
+                    card.LeftFocusableView = previous;
+                }
+
+                railScroll.Add(card);
+                section.Cards.Add(card);
+                previous = card;
+            }
+
+            int railContentWidth = section.Cards.Count * (Theme.CardWidth + Theme.CardGap) - Theme.CardGap;
+            railScroll.ScrollPositionMax = new Vector2(
+                Math.Max(0f, railContentWidth - Theme.RailViewportWidth), 0f);
+
+            Log.Info(ApiService.LogTag,
+                $"Rail '{rail.Title}' [{rail.Key}] — {section.Cards.Count} card(s) bound");
+
+            View sectionView = new View
+            {
+                Position2D = new Position2D(0, top),
+                Size2D = new Size2D(Theme.ScreenWidth, Theme.SectionHeight),
+                BackgroundColor = Color.Transparent,
+                PivotPoint = Theme.TopLeftPivot,
+                PositionUsesPivotPoint = true
+            };
+            sectionView.Add(sectionTitle);
+            sectionView.Add(railScroll);
+            _railsContent.Add(sectionView);
+
+            return section;
+        }
+
+        // ---- focus-driven scrolling ---------------------------------------
+
+        private void OnCardFocusGained(object source, EventArgs e)
+        {
+            MediaCard card = source as MediaCard;
+            if (card == null)
+            {
+                return;
+            }
+
+            RailSection section = _sections.Find(s => s.Cards.Contains(card));
+            if (section == null)
+            {
+                return;
+            }
+
+            // Vertical: keep the focused card's rail inside the page viewport.
+            int railTop = section.Top + Theme.RailOffset;
+            float scrollY = _pageScroll.ScrollPosition.Y;
+            float targetY = scrollY;
+            if (railTop < scrollY)
+            {
+                targetY = railTop;
+            }
+            else if (railTop + Theme.CardHeight > scrollY + Theme.PageViewportHeight)
+            {
+                targetY = railTop + Theme.CardHeight - Theme.PageViewportHeight;
+            }
+
+            if (Math.Abs(targetY - scrollY) > 0.5f)
+            {
+                _pageScroll.ScrollTo(new Vector2(0f, targetY), Theme.ScrollAnimMs,
+                    new AlphaFunction(AlphaFunction.BuiltinFunctions.EaseOut));
+            }
+
+            // Horizontal: keep the focused card inside its rail viewport with
+            // a one-card peek of the next/previous card.
+            int index = section.Cards.IndexOf(card);
+            int cardLeft = index * (Theme.CardWidth + Theme.CardGap);
+            float scrollX = section.Rail.ScrollPosition.X;
+            float targetX = scrollX;
+            if (cardLeft - Theme.CardGap < scrollX)
+            {
+                targetX = Math.Max(0f, cardLeft - Theme.CardGap);
+            }
+            else if (cardLeft + Theme.CardWidth + Theme.CardGap > scrollX + Theme.RailViewportWidth)
+            {
+                targetX = cardLeft + Theme.CardWidth + Theme.CardGap - Theme.RailViewportWidth;
+            }
+
+            if (Math.Abs(targetX - scrollX) > 0.5f)
+            {
+                section.Rail.ScrollTo(new Vector2(targetX, 0f), Theme.ScrollAnimMs,
+                    new AlphaFunction(AlphaFunction.BuiltinFunctions.EaseOut));
+            }
+        }
+
+        // ---- selection (Enter/OK) -----------------------------------------
+
+        private void OnCardSelected(MediaItem item)
+        {
+            // Proof for this phase: selection reaches the app layer. The
+            // native detail page consumes this in the next iteration.
+            Log.Info(MaveroApp.LogTag,
+                $"Selected: '{item.Title}' (id={item.Id}, year={item.Year})");
+        }
+
+        private void ShowStatus(string message)
+        {
+            _status.Text = message;
+            _status.Show();
         }
     }
 }
+#pragma warning restore CS0618

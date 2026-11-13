@@ -9,8 +9,11 @@
 //
 // Colors are stored as Tizen.NUI.Color (floats 0-1) converted from
 // the same hex values the web app uses in its global styles.
+//
+// The layout block also pins the D-pad focus engine metrics: focus
+// scale, focus/scroll animation durations, and the rail/section
+// geometry that the keep-in-view scrolling math in HomePage uses.
 // ============================================================
-using System;
 using Tizen.NUI;
 
 namespace MaveroTv
@@ -46,8 +49,28 @@ namespace MaveroTv
         /// <summary>Horizontal safe margin — matches the web app's page gutter.</summary>
         public const int PageMargin = 64;
 
-        /// <summary>Vertical gap between header / section title / rail.</summary>
-        public const int SectionGap = 48;
+        /// <summary>y offset where the vertically scrollable rails host starts (below the fixed header).</summary>
+        public const int PageScrollY = 160;
+
+        /// <summary>Viewport height of the vertical rails host.</summary>
+        public const int PageViewportHeight = ScreenHeight - PageScrollY;
+
+        // ---- Rails (one section = title + horizontal card rail) ----
+
+        /// <summary>Rail viewport width: screen minus both page margins.</summary>
+        public const int RailViewportWidth = ScreenWidth - PageMargin * 2;
+
+        /// <summary>Section title top offset inside its section.</summary>
+        public const int RailTitleOffset = 16;
+
+        /// <summary>Section title height.</summary>
+        public const int RailTitleHeight = 44;
+
+        /// <summary>Rail y offset inside its section (below the title).</summary>
+        public const int RailOffset = RailTitleOffset + RailTitleHeight + 12;
+
+        /// <summary>Total section height: title block + card rail + bottom gap.</summary>
+        public const int SectionHeight = RailOffset + CardHeight + 56;
 
         // ---- Cards (2:3 poster ratio, rounded like the web app) ----
 
@@ -55,6 +78,51 @@ namespace MaveroTv
         public const int CardHeight = 330;
         public const int CardGap = 24;
         public const float CardCornerRadius = 12f;
+
+        /// <summary>Height of the dark scrim laid over the poster bottom (title strip).</summary>
+        public const int CardScrimHeight = 120;
+
+        /// <summary>Card title font size (PointSize).</summary>
+        public const int CardTitlePointSize = 16;
+
+        /// <summary>Horizontal inset of the card title.</summary>
+        public const int CardTitleInset = 14;
+
+        // ---- D-pad focus engine ----
+
+        /// <summary>Focused card scale-up (web-app hover feel).</summary>
+        public const float FocusScale = 1.05f;
+
+        /// <summary>Focus scale animation duration (ms).</summary>
+        public const int FocusAnimMs = 120;
+
+        /// <summary>Keep-in-view scroll animation duration (ms).</summary>
+        public const int ScrollAnimMs = 240;
+
+        /// <summary>9-patch border inset of card-focus.png (corner-safe stretch margin).</summary>
+        public const float FocusPatchBorder = 26f;
+
+        /// <summary>9-patch border inset of card-bg.png (corner-safe stretch margin).</summary>
+        public const float CardPatchBorder = 18f;
+
+        /// <summary>9-patch border (left, top, right, bottom) of scrim.png: the 2px
+        /// side margins stretch horizontally; the full 120px height maps 1:1.</summary>
+        public const int ScrimPatchBorderX = 3;
+
+        // ---- Packed assets (Content items in MaveroTv.csproj) ----
+
+        public const string CardBgAsset = "card-bg.png";
+        public const string CardFocusAsset = "card-focus.png";
+        public const string PosterMaskAsset = "poster-mask.png";
+        public const string ScrimAsset = "scrim.png";
+
+        // ---- Pivots ----
+
+        /// <summary>Pivot at the view's own top-left (standard HomePage positioning).</summary>
+        public static readonly Position TopLeftPivot = Tizen.NUI.PivotPoint.TopLeft;
+
+        /// <summary>Pivot at the view's center (cards scale around their center on focus).</summary>
+        public static readonly Position CenterPivot = Tizen.NUI.PivotPoint.Center;
 
         /// <summary>Converts a 0xRRGGBB web-app hex value into a NUI color.</summary>
         public static Color Hex(int value)

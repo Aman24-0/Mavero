@@ -32,10 +32,18 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- App assets: launcher icon (referenced by tizen-manifest.xml) and
-         the 9-patch rounded card background (referenced by HomePage.cs). -->
+    <!-- App assets referenced by tizen-manifest.xml (launcher icon) and
+         the card visuals in MediaCard.cs / HomePage.cs:
+           MaveroTv.png    launcher icon
+           card-bg.png     9-patch rounded card surface (#161616)
+           card-focus.png  9-patch cyan focus ring
+           scrim.png       9-patch bottom scrim ramp (title readability)
+           poster-mask.png alpha mask rounding the 2:3 poster corners -->
     <Content Include="MaveroTv.png" />
     <Content Include="card-bg.png" />
+    <Content Include="card-focus.png" />
+    <Content Include="scrim.png" />
+    <Content Include="poster-mask.png" />
   </ItemGroup>
 
 </Project>
