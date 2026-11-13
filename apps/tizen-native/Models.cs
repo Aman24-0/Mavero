@@ -167,4 +167,205 @@ namespace MaveroTv
         [JsonProperty("photo")]
         public string Photo { get; set; }
     }
+
+    // ============================================================
+    // Streaming (server list + playback resolution).
+    //
+    // Verified against the LIVE backend on 2026-11:
+    //   GET  /api/streaming/config
+    //        -> { ok, config: { version, updatedAt, providers[],
+    //             sources[], defaults: { movie, series, anime, adult } } }
+    //     sources[] entries are the user-facing servers (Plutonium,
+    //     Vanadium, DirectStream, ...) each with id/name/ordering/
+    //     enabled/visibility/status + capabilities.result_type
+    //     ("direct" | "embed").
+    //   POST /api/playback/resolve
+    //        body { sourceId, contentId, mediaType, allowFallback }
+    //        -> { ok, source: { type: "direct"|"embed"|"unavailable"|"error",
+    //             url, providerId, sourceId, mediaType, qualities?,
+    //             metadata: { providerName, protocol, servers? } } }
+    //     a "direct" url is a playable stream (HLS/MP4 — AVPlay
+    //     handles both); an "embed" url is an HTML player page that
+    //     the native player can only attempt, never guarantee.
+    // ============================================================
+
+    /// <summary>Envelope of GET /api/streaming/config.</summary>
+    public class StreamingConfigResponse
+    {
+        [JsonProperty("ok")]
+        public bool Ok { get; set; }
+
+        [JsonProperty("config")]
+        public PublicStreamingConfig Config { get; set; }
+    }
+
+    /// <summary>Public streaming configuration (server catalog).</summary>
+    public class PublicStreamingConfig
+    {
+        [JsonProperty("providers")]
+        public List<PublicProvider> Providers { get; set; }
+
+        [JsonProperty("sources")]
+        public List<PublicSource> Sources { get; set; }
+
+        /// <summary>Per-media-type default source id ("movie" -> source id).</summary>
+        [JsonProperty("defaults")]
+        public Dictionary<string, string> Defaults { get; set; }
+    }
+
+    /// <summary>One streaming provider entry from the public config.</summary>
+    public class PublicProvider
+    {
+        [JsonProperty("id")]
+        public string Id { get; set; }
+
+        [JsonProperty("name")]
+        public string Name { get; set; }
+
+        [JsonProperty("capabilities")]
+        public SourceCapabilities Capabilities { get; set; }
+    }
+
+    /// <summary>One user-facing server (a configured provider source).</summary>
+    public class PublicSource
+    {
+        [JsonProperty("id")]
+        public string Id { get; set; }
+
+        [JsonProperty("name")]
+        public string Name { get; set; }
+
+        [JsonProperty("provider_id")]
+        public string ProviderId { get; set; }
+
+        [JsonProperty("enabled")]
+        public bool Enabled { get; set; }
+
+        /// <summary>"public" | "private" — only public entries serve unauthenticated clients.</summary>
+        [JsonProperty("visibility")]
+        public string Visibility { get; set; }
+
+        /// <summary>"active" | "experimental".</summary>
+        [JsonProperty("status")]
+        public string Status { get; set; }
+
+        [JsonProperty("ordering")]
+        public int Ordering { get; set; }
+
+        [JsonProperty("capabilities")]
+        public SourceCapabilities Capabilities { get; set; }
+    }
+
+    /// <summary>Playback capabilities block (shared by providers and sources).</summary>
+    public class SourceCapabilities
+    {
+        /// <summary>"direct" | "embed" — whether resolution yields a playable stream.</summary>
+        [JsonProperty("result_type")]
+        public string ResultType { get; set; }
+
+        [JsonProperty("supports_direct")]
+        public bool SupportsDirect { get; set; }
+
+        [JsonProperty("movie")]
+        public bool Movie { get; set; }
+
+        [JsonProperty("series")]
+        public bool Series { get; set; }
+
+        [JsonProperty("anime")]
+        public bool Anime { get; set; }
+    }
+
+    /// <summary>Envelope of POST /api/playback/resolve.</summary>
+    public class ResolveResponse
+    {
+        [JsonProperty("ok")]
+        public bool Ok { get; set; }
+
+        [JsonProperty("source")]
+        public ResolvedSource Source { get; set; }
+
+        [JsonProperty("error")]
+        public ResolverError Error { get; set; }
+    }
+
+    /// <summary>One resolved playback source (server-side resolution result).</summary>
+    public class ResolvedSource
+    {
+        /// <summary>"direct" | "embed" | "unavailable" | "error".</summary>
+        [JsonProperty("type")]
+        public string Type { get; set; }
+
+        [JsonProperty("url")]
+        public string Url { get; set; }
+
+        [JsonProperty("providerId")]
+        public string ProviderId { get; set; }
+
+        [JsonProperty("sourceId")]
+        public string SourceId { get; set; }
+
+        [JsonProperty("mediaType")]
+        public string MediaType { get; set; }
+
+        [JsonProperty("qualities")]
+        public List<QualityOption> Qualities { get; set; }
+
+        [JsonProperty("metadata")]
+        public ResolvedSourceMetadata Metadata { get; set; }
+    }
+
+    /// <summary>One quality rendition of a resolved stream.</summary>
+    public class QualityOption
+    {
+        [JsonProperty("url")]
+        public string Url { get; set; }
+
+        [JsonProperty("label")]
+        public string Label { get; set; }
+
+        [JsonProperty("height")]
+        public int Height { get; set; }
+
+        [JsonProperty("bitrate")]
+        public int Bitrate { get; set; }
+    }
+
+    /// <summary>Presentation metadata attached to a resolution.</summary>
+    public class ResolvedSourceMetadata
+    {
+        [JsonProperty("providerName")]
+        public string ProviderName { get; set; }
+
+        [JsonProperty("sourceName")]
+        public string SourceName { get; set; }
+
+        /// <summary>"hls" | "dash" | "mp4" | "file" | "unknown".</summary>
+        [JsonProperty("protocol")]
+        public string Protocol { get; set; }
+
+        /// <summary>Playback mirrors exposed by the resolution ("Server 1/2", "Auto", ...).</summary>
+        [JsonProperty("servers")]
+        public List<ServerMirror> Servers { get; set; }
+    }
+
+    /// <summary>One playback mirror of the active resolution.</summary>
+    public class ServerMirror
+    {
+        [JsonProperty("url")]
+        public string Url { get; set; }
+
+        [JsonProperty("label")]
+        public string Label { get; set; }
+    }
+
+    /// <summary>Error envelope entry of a failed resolution.</summary>
+    public class ResolverError
+    {
+        [JsonProperty("code")]
+        public string Code { get; set; }
+
+        [JsonProperty("message")]
+        public string Message { get; set; }
+    }
 }

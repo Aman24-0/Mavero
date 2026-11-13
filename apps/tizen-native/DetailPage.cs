@@ -124,6 +124,15 @@ namespace MaveroTv
             _closed = true;
         }
 
+        /// <summary>Re-arms focus when the page returns from the Player screen.</summary>
+        public void RestoreFocus()
+        {
+            if (_playButton != null)
+            {
+                FocusManager.Instance.SetCurrentFocusView(_playButton);
+            }
+        }
+
         // ---- chrome -------------------------------------------------------
 
         /// <summary>Full-bleed hero art: rail backdrop, poster crop fallback;

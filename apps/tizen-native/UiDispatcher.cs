@@ -13,9 +13,14 @@
 // constructed on the DALi thread, and Post() must therefore never
 // touch it. A permanent 50ms pump that peeks at an empty queue is
 // negligible for a TV app.
+//
+// Drain() absorbs exceptions from posted closures (logged via
+// Tizen.Log): one failing continuation (e.g. a player event racing
+// a disposed view) must never wedge the pump for every later post.
 // ============================================================
 using System;
 using System.Collections.Concurrent;
+using Tizen;
 using Tizen.NUI;
 
 namespace MaveroTv
@@ -62,7 +67,14 @@ namespace MaveroTv
                     break;
                 }
 
-                action();
+                try
+                {
+                    action();
+                }
+                catch (Exception ex)
+                {
+                    Log.Error(MaveroApp.LogTag, $"UI dispatch failed: {ex.Message}");
+                }
             }
         }
     }

@@ -155,6 +155,44 @@ namespace MaveroTv
         public const int BackdropDecodeWidth = 1280;
         public const int BackdropDecodeHeight = 720;
 
+        // ---- Player page (video + overlay + popups) ----
+
+        /// <summary>Overlay control row: y and height (top edge of the screen).</summary>
+        public const int OverlayY = 56;
+        public const int OverlayHeight = 56;
+        public const int OverlayGap = 20;
+
+        public const int PlayerBackButtonWidth = 140;
+        public const int PlayerPlayButtonWidth = 160;
+        public const int PlayerServerButtonWidth = 240;
+        public const int PlayerSourceButtonWidth = 200;
+
+        /// <summary>Overlay auto-hide delay (ms) — TV-standard 3s of inactivity.</summary>
+        public const int OverlayHideMs = 3000;
+
+        /// <summary>Status line (buffering/errors) pinned to the bottom of the screen;
+        /// it stays visible even while the overlay is hidden.</summary>
+        public const int PlayerStatusY = 980;
+        public const int PlayerStatusHeight = 48;
+        public const int PlayerStatusPointSize = 16;
+
+        // ---- Player popups (server / source selectors) ----
+
+        public const int PopupWidth = 640;
+        public const int PopupPadding = 24;
+        public const int PopupTitleHeight = 48;
+        public const int PopupTitleGap = 20;
+        public const int PopupTitlePointSize = 20;
+        public const int PopupRowWidth = 592;
+        public const int PopupRowHeight = 72;
+        public const int PopupRowGap = 12;
+
+        /// <summary>Rows are laid out unscrolled — hard cap keeps the panel on screen.</summary>
+        public const int PopupMaxRows = 10;
+
+        /// <summary>Alpha of the full-screen scrim behind a popup.</summary>
+        public const float PopupScrimAlpha = 0.72f;
+
         // ---- Packed assets (Content items in MaveroTv.csproj) ----
 
         public const string CardBgAsset = "card-bg.png";

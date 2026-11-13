@@ -81,6 +81,14 @@ namespace MaveroTv
             KeyEvent += OnButtonKeyEvent;
         }
 
+        // ---- label updates --------------------------------------------------
+
+        /// <summary>Re-labels the button (Play/Pause toggle, current server/source).</summary>
+        public void SetLabel(string text)
+        {
+            _label.Text = text ?? string.Empty;
+        }
+
         // ---- surfaces -------------------------------------------------------
 
         /// <summary>Dark rounded 9-patch surface (idle for both tiers).</summary>

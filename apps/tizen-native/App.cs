@@ -7,18 +7,31 @@
 // view in Theme-matched colors, so the app never flashes white on
 // boot.
 //
-// Screen navigation (two-level stack):
-//   Home --Enter on card--> Detail --Back key / Back button--> Home
+// Screen navigation (three-level stack):
+//   Home --Enter on card--> Detail --PLAY--> Player --Back--> Detail
+//   --Back--> Home --Back--> exit
+//
 //   - OpenDetail: clears DALi focus, hides the HomePage (kept alive
 //     so rails, scroll positions and focus survive the round-trip),
 //     then adds the DetailPage on top of the window;
+//   - OpenPlayer: clears focus, hides the DetailPage and switches
+//     the WINDOW background to transparent — the video rendered by
+//     Tizen.Multimedia.Player composites on the video layer BELOW
+//     the DALi surface, so every opaque layer above it must go or
+//     it would cover the picture (PlayerPage itself is transparent
+//     and shows an opaque black curtain until playback starts);
+//   - ClosePlayer: tears down the player, restores the opaque
+//     window background and re-shows the DetailPage (Play focused);
 //   - CloseDetail: marks the detail page closed (fences its queued
 //     fetch binding), clears focus, removes + disposes the page,
 //     re-shows the HomePage and restores focus to the card the user
 //     came from;
 //   - Hardware Back key (remote: XF86Back, platform code 10009;
-//     emulator/desktop: Escape): pops Detail when one is open,
-//     otherwise terminates the app.
+//     emulator/desktop: Escape): pops the topmost screen — a popup
+//     on the player first (PlayerPage.HandleBack), then the player,
+//     then the detail page, then terminates the app. Non-Back keys
+//     are forwarded to the player as remote activity so the overlay
+//     can wake up.
 // ============================================================
 using Tizen;
 using Tizen.NUI;
@@ -28,7 +41,8 @@ namespace MaveroTv
     /// <summary>
     /// Application lifecycle and screen navigation. Mounts the
     /// <see cref="HomePage"/>, opens the <see cref="DetailPage"/> on
-    /// selection and pops back on the hardware Back key.
+    /// selection, the <see cref="PlayerPage"/> on PLAY and pops back
+    /// level by level on the hardware Back key.
     /// </summary>
     public class MaveroApp : NUIApplication
     {
@@ -41,6 +55,8 @@ namespace MaveroTv
         private Window _window;
         private HomePage _homePage;
         private DetailPage _detailPage;
+        private PlayerPage _playerPage;
+        private MediaItem _detailItem;
 
         protected override void OnCreate()
         {
@@ -70,6 +86,7 @@ namespace MaveroTv
             }
 
             Log.Info(LogTag, $"Navigate Home -> Detail: '{item.Title}' (id={item.Id})");
+            _detailItem = item;
 
             // Detach focus from the card before the page hides, so the
             // FocusManager never holds a hidden view as its current focus.
@@ -92,6 +109,7 @@ namespace MaveroTv
 
             DetailPage page = _detailPage;
             _detailPage = null;
+            _detailItem = null;
 
             page.MarkClosing();
             page.PlayRequested -= OnDetailPlayRequested;
@@ -109,18 +127,72 @@ namespace MaveroTv
             Log.Info(LogTag, "Navigate Detail -> Home (focus restored to the last card)");
         }
 
-        private void OnDetailPlayRequested()
-        {
-            // The native video player consumes this in the next iteration.
-            Log.Info(LogTag, "PlayRequested reached app layer — video player lands next iteration");
-        }
-
         private void OnDetailCloseRequested()
         {
             CloseDetail();
         }
 
-        // Back key: pop Detail when one is open, otherwise exit the app.
+        private void OnDetailPlayRequested()
+        {
+            OpenPlayer();
+        }
+
+        private void OpenPlayer()
+        {
+            if (_playerPage != null || _detailPage == null)
+            {
+                return;
+            }
+
+            Log.Info(LogTag,
+                $"Navigate Detail -> Player: '{_detailItem.Title}' (id={_detailItem.Id})");
+
+            FocusManager.Instance.SetCurrentFocusView(null);
+            _detailPage.Hide();
+
+            // The video layer composites BELOW the DALi surface: everything
+            // opaque above it must go transparent or it would cover the
+            // picture. The page paints its own black curtain until playback.
+            _window.BackgroundColor = Color.Transparent;
+
+            _playerPage = new PlayerPage(_detailItem, _window);
+            _playerPage.CloseRequested += OnPlayerCloseRequested;
+            _window.Add(_playerPage);
+            _playerPage.SetInitialFocus();
+        }
+
+        private void ClosePlayer()
+        {
+            if (_playerPage == null)
+            {
+                return;
+            }
+
+            PlayerPage page = _playerPage;
+            _playerPage = null;
+
+            page.MarkClosing();
+            page.ShutdownPlayer();
+            page.CloseRequested -= OnPlayerCloseRequested;
+
+            FocusManager.Instance.SetCurrentFocusView(null);
+            _window.Remove(page);
+            page.Dispose();
+
+            _window.BackgroundColor = Theme.Background;
+            _detailPage.Show();
+            _detailPage.RestoreFocus();
+
+            Log.Info(LogTag, "Navigate Player -> Detail");
+        }
+
+        private void OnPlayerCloseRequested()
+        {
+            ClosePlayer();
+        }
+
+        // ---- hardware keys --------------------------------------------------
+
         private void OnKeyEvent(object sender, Window.KeyEventArgs e)
         {
             if (e.Key.State != Key.StateType.Up)
@@ -133,6 +205,25 @@ namespace MaveroTv
             bool isBack = e.Key.KeyPressedName == "XF86Back"
                 || e.Key.KeyPressedName == "Escape"
                 || e.Key.KeyCode == BackKeyCode;
+
+            if (_playerPage != null)
+            {
+                if (isBack)
+                {
+                    // A popup on the player eats the first Back press.
+                    if (!_playerPage.HandleBack())
+                    {
+                        ClosePlayer();
+                    }
+                }
+                else
+                {
+                    // D-pad keys with nothing focused reach the window here —
+                    // they wake the auto-hidden overlay.
+                    _playerPage.NotifyRemoteActivity();
+                }
+                return;
+            }
 
             if (!isBack)
             {

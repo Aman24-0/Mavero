@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- Mavero TV — native Tizen .NET application manifest (TV profile, API 6.0).
-     The internet privilege is required by ApiService (HttpClient calls to
-     https://maveroweb.space). type="dotnet" + exec pointing at the managed
-     entry assembly are what make the Tizen launcher boot the mono runtime. -->
+     Privileges: internet for the API client (HttpClient), mediaplayback for
+     Tizen.Multimedia.Player (hardware AVPlay) in PlayerPage.
+     type="dotnet" + exec pointing at the managed entry assembly are what make
+     the Tizen launcher boot the mono runtime. -->
 <manifest xmlns="http://tizen.org/ns/packages"
           api-version="6.0"
           package="org.mavero.tv"
@@ -21,6 +22,7 @@
     </ui-application>
     <privileges>
         <privilege>http://tizen.org/privilege/internet</privilege>
+        <privilege>http://tizen.org/privilege/mediaplayback</privilege>
     </privileges>
     <feature name="http://tizen.org/feature/screen.size.all">true</feature>
 </manifest>
