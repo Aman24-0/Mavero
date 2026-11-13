@@ -1,0 +1,41 @@
+<Project Sdk="Tizen.NET.Sdk/1.1.9">
+
+  <!-- ============================================================
+       Mavero TV — native Tizen .NET application (Tizen.NUI / C#).
+
+       Why tizen60 and not net6.0-tizen/net8.0-tizen:
+         Samsung's platform feature matrix ships the "Tizen .NET v2.1"
+         profile (netstandard2.0, mono-based) on Tizen 4.0-6.0 TVs.
+         The net6.0-tizen TFMs only exist from Tizen 7.0 (2023 models)
+         onward, and Tizen .NET is deprecated for new TV models. To run
+         on our target hardware (Tizen 6.0 TV) the classic tizen60 TFM
+         with TizenFX API6 is the only workable choice.
+
+       Build: requires the Tizen .NET toolchain (Tizen Studio / Visual
+       Studio Tizen workload). `tizen build-cs` produces the .tpk signed
+       with a Samsung distributor certificate for on-device install.
+       ============================================================ -->
+  <PropertyGroup>
+    <TargetFramework>tizen60</TargetFramework>
+    <AssemblyName>MaveroTv</AssemblyName>
+    <RootNamespace>MaveroTv</RootNamespace>
+    <Version>0.0.1</Version>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- All TizenFX API 6 reference assemblies, incl. Tizen.NUI. -->
+    <PackageReference Include="Tizen.NET" Version="6.0.0.14995" />
+    <!-- JSON parsing. The Tizen v2.1 profile is netstandard2.0-based and
+         does not bundle System.Text.Json, so we use the ecosystem-standard
+         Newtonsoft.Json (Samsung's own Tizen samples use it). -->
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- App assets: launcher icon (referenced by tizen-manifest.xml) and
+         the 9-patch rounded card background (referenced by HomePage.cs). -->
+    <Content Include="MaveroTv.png" />
+    <Content Include="card-bg.png" />
+  </ItemGroup>
+
+</Project>
