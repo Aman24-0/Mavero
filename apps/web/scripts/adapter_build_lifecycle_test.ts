@@ -1290,7 +1290,10 @@ async function sectionM(): Promise<void> {
   // M2 — the Render Builder source is BYTE-IDENTICAL (no Builder changes).
   {
     for (const file of ['adapter-builder/server.ts', 'adapter-builder/config.ts', 'adapter-builder/sandbox.ts', 'adapter-builder/nuvio-compiler.ts', 'adapter-builder/cloudstream-families.ts', 'adapter-builder/context.ts']) {
-      const pristine = execFileSync('git', ['show', `HEAD:${file}`], { cwd: REPO_ROOT, encoding: 'utf8' });
+      // `HEAD:` paths resolve from the GIT root — in the monorepo the Builder
+      // lives under apps/web, so the pathspec must be CWD-relative (`./`) to
+      // match the REPO_ROOT (= apps/web) cwd this suite uses everywhere else.
+      const pristine = execFileSync('git', ['show', `HEAD:./${file}`], { cwd: REPO_ROOT, encoding: 'utf8' });
       ok(pristine === read(file), `M2 ${path.basename(file)} is byte-identical (the standalone Builder security model is untouched)`);
     }
   }
