@@ -109,12 +109,61 @@ namespace MaveroTv
         /// side margins stretch horizontally; the full 120px height maps 1:1.</summary>
         public const int ScrimPatchBorderX = 3;
 
+        // ---- Detail page (hero + metadata + actions) ----
+
+        /// <summary>Backdrop hero height — top ~57% of the screen.</summary>
+        public const int BackdropHeight = 620;
+
+        /// <summary>Height of the bottom fade that blends the backdrop into the page.</summary>
+        public const int HeroScrimHeight = 300;
+
+        /// <summary>9-patch border (left, right) of hero-scrim.png (same shape as scrim.png).</summary>
+        public const int HeroPatchBorderX = 3;
+
+        public const int DetailTitlePointSize = 40;
+        public const int DetailMetaPointSize = 17;
+        public const int DetailSynopsisPointSize = 16;
+
+        /// <summary>y of the detail title block (just below the backdrop).</summary>
+        public const int DetailTitleY = 650;
+        public const int DetailTitleHeight = 92;
+
+        public const int DetailMetaY = 750;
+        public const int DetailMetaHeight = 40;
+
+        public const int PlayButtonY = 816;
+        public const int PlayButtonWidth = 260;
+        public const int PlayButtonHeight = 76;
+
+        public const int BackButtonX = 64;
+        public const int BackButtonY = 56;
+        public const int BackButtonWidth = 150;
+        public const int BackButtonHeight = 56;
+
+        public const int SynopsisY = 928;
+        public const int SynopsisWidth = 1200;
+        public const int SynopsisHeight = 116;
+
+        /// <summary>Synopsis is clamped to this many chars (~3 wrapped lines at
+        /// 1200px / 16pt) — API6 TextLabel has no max-line property.</summary>
+        public const int SynopsisMaxChars = 240;
+
+        /// <summary>9-patch border inset of button-idle.png / button-active.png.</summary>
+        public const int ButtonPatchBorder = 22;
+
+        /// <summary>Detail-page backdrop decode size (TMDB w1280 is 1280x720).</summary>
+        public const int BackdropDecodeWidth = 1280;
+        public const int BackdropDecodeHeight = 720;
+
         // ---- Packed assets (Content items in MaveroTv.csproj) ----
 
         public const string CardBgAsset = "card-bg.png";
         public const string CardFocusAsset = "card-focus.png";
         public const string PosterMaskAsset = "poster-mask.png";
         public const string ScrimAsset = "scrim.png";
+        public const string HeroScrimAsset = "hero-scrim.png";
+        public const string ButtonIdleAsset = "button-idle.png";
+        public const string ButtonActiveAsset = "button-active.png";
 
         // ---- Pivots ----
 

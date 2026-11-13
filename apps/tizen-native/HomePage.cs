@@ -13,9 +13,15 @@
 //     arrow keys, honouring those links inside a rail and its
 //     spatial algorithm across rails;
 //   - FocusGained triggers the card visuals (MediaCard) and the
-//     keep-in-view scrolling (vertical host + horizontal rail);
+//     keep-in-view scrolling (vertical host + horizontal rail), and
+//     records the focused card so App can restore focus after a
+//     Detail round-trip (RestoreFocus);
 //   - initial focus lands on the first card of the first rail once
 //     the API data is bound.
+//
+// Navigation: Enter/OK on a card raises ItemSelected; App.cs swaps
+// in the DetailPage and this page is hidden (kept alive so the
+// rails and scroll positions survive the round-trip).
 //
 // Threading: the API fetch completes on the thread pool; rail
 // binding is marshaled back through UiDispatcher (DALi objects are
@@ -62,6 +68,12 @@ namespace MaveroTv
         private View _railsContent;
         private TextLabel _status;
         private int _contentHeight;
+
+        /// <summary>Most recently focused card — restored after Detail round-trips.</summary>
+        private MediaCard _focusedCard;
+
+        /// <summary>Raised when the user presses Enter/OK on a focused card.</summary>
+        public event Action<MediaItem> ItemSelected;
 
         /// <summary>One bound rail: its scroll container, cards, and page offset.</summary>
         private class RailSection
@@ -320,6 +332,8 @@ namespace MaveroTv
                 return;
             }
 
+            _focusedCard = card;
+
             RailSection section = _sections.Find(s => s.Cards.Contains(card));
             if (section == null)
             {
@@ -371,10 +385,25 @@ namespace MaveroTv
 
         private void OnCardSelected(MediaItem item)
         {
-            // Proof for this phase: selection reaches the app layer. The
-            // native detail page consumes this in the next iteration.
             Log.Info(MaveroApp.LogTag,
-                $"Selected: '{item.Title}' (id={item.Id}, year={item.Year})");
+                $"Selected: '{item.Title}' (id={item.Id}, year={item.Year}) — opening detail");
+            ItemSelected?.Invoke(item);
+        }
+
+        /// <summary>Re-arms focus after the page returns from the Detail screen.</summary>
+        public void RestoreFocus()
+        {
+            MediaCard target = _focusedCard;
+            if (target == null)
+            {
+                RailSection first = _sections.Find(s => s.Cards.Count > 0);
+                target = first?.Cards[0];
+            }
+
+            if (target != null)
+            {
+                FocusManager.Instance.SetCurrentFocusView(target);
+            }
         }
 
         private void ShowStatus(string message)
