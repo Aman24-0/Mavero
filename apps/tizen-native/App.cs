@@ -8,8 +8,12 @@
 // boot.
 //
 // Screen navigation (three-level stack):
-//   Home --Enter on card--> Detail --PLAY--> Player --Back--> Detail
+//   Home --Enter on card--> Detail --PLAY/episode--> Player --Back--> Detail
 //   --Back--> Home --Back--> exit
+//
+// Series/anime playback carries a PlaybackTarget (season + episode)
+// from the detail page's Play button (Season 1 Episode 1 default) or
+// the picked EpisodeCard; movies pass null.
 //
 //   - OpenDetail: clears DALi focus, hides the HomePage (kept alive
 //     so rails, scroll positions and focus survive the round-trip),
@@ -132,12 +136,12 @@ namespace MaveroTv
             CloseDetail();
         }
 
-        private void OnDetailPlayRequested()
+        private void OnDetailPlayRequested(PlaybackTarget target)
         {
-            OpenPlayer();
+            OpenPlayer(target);
         }
 
-        private void OpenPlayer()
+        private void OpenPlayer(PlaybackTarget target)
         {
             if (_playerPage != null || _detailPage == null)
             {
@@ -145,7 +149,8 @@ namespace MaveroTv
             }
 
             Log.Info(LogTag,
-                $"Navigate Detail -> Player: '{_detailItem.Title}' (id={_detailItem.Id})");
+                $"Navigate Detail -> Player: '{_detailItem.Title}' (id={_detailItem.Id})" +
+                (target != null ? $" target={target.Label}" : string.Empty));
 
             FocusManager.Instance.SetCurrentFocusView(null);
             _detailPage.Hide();
@@ -155,7 +160,7 @@ namespace MaveroTv
             // picture. The page paints its own black curtain until playback.
             _window.BackgroundColor = Color.Transparent;
 
-            _playerPage = new PlayerPage(_detailItem, _window);
+            _playerPage = new PlayerPage(_detailItem, _window, target);
             _playerPage.CloseRequested += OnPlayerCloseRequested;
             _window.Add(_playerPage);
             _playerPage.SetInitialFocus();

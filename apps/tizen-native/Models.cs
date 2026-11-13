@@ -42,6 +42,12 @@ namespace MaveroTv
         [JsonProperty("type")]
         public string Type { get; set; }
 
+        /// <summary>True when the title is anime (TMDB genre 16 + original
+        /// language 'ja'; purely a categorization hint — anime series play
+        /// through the same season/episode pipeline as regular series).</summary>
+        [JsonProperty("isAnime")]
+        public bool IsAnime { get; set; }
+
         /// <summary>Full-size poster URL.</summary>
         [JsonProperty("poster")]
         public string Poster { get; set; }
@@ -125,6 +131,20 @@ namespace MaveroTv
         [JsonProperty("runtime")]
         public string Runtime { get; set; }
 
+        /// <summary>True when the title is anime (see MediaItem.IsAnime).</summary>
+        [JsonProperty("isAnime")]
+        public bool IsAnime { get; set; }
+
+        /// <summary>
+        /// Per-season metadata for series/anime titles (number, title,
+        /// episode count, poster) — NO episodes. The episode lists are
+        /// fetched per season from GET /api/content/series/{id}/season/{n}
+        /// (verified live, 2026-11: the detail payload carries seasonsData
+        /// but never inline episodes).
+        /// </summary>
+        [JsonProperty("seasonsData")]
+        public List<Season> SeasonsData { get; set; }
+
         [JsonProperty("rating")]
         public double Rating { get; set; }
 
@@ -169,6 +189,130 @@ namespace MaveroTv
     }
 
     // ============================================================
+    // Seasons & episodes (series/anime detail + playback).
+    //
+    // Verified against the LIVE backend on 2026-11:
+    //   GET /api/content/series/{id}/season/{n}
+    //     -> { ok, season: { number, title, episodeCount, airDate?,
+    //          poster?, episodes: [ { id, number, season, title,
+    //          overview?, airDate?, runtime?, still? } ] } }
+    //   - the route lives ONLY under the "series" path segment, but
+    //     the endpoint accepts BOTH "series-{tmdbId}" and
+    //     "anime-{tmdbId}" ids (anime is TMDB TV on the backend);
+    //   - "still" is a TMDB w500 episode thumbnail URL (may be absent
+    //     for unaired episodes);
+    //   - announced-but-unreleased seasons never appear in seasonsData
+    //     (the server filters them), so a selected season always has
+    //     real episodes.
+    // ============================================================
+
+    /// <summary>One episode of a season (season endpoint response row).</summary>
+    public class Episode
+    {
+        /// <summary>TMDB episode id (numeric string).</summary>
+        [JsonProperty("id")]
+        public string Id { get; set; }
+
+        /// <summary>1-based episode number inside its season.</summary>
+        [JsonProperty("number")]
+        public int Number { get; set; }
+
+        [JsonProperty("season")]
+        public int Season { get; set; }
+
+        [JsonProperty("title")]
+        public string Title { get; set; }
+
+        [JsonProperty("overview")]
+        public string Overview { get; set; }
+
+        /// <summary>ISO air date ("yyyy-MM-dd"); absent for unaired episodes.</summary>
+        [JsonProperty("airDate")]
+        public string AirDate { get; set; }
+
+        /// <summary>Human runtime ("44m").</summary>
+        [JsonProperty("runtime")]
+        public string Runtime { get; set; }
+
+        /// <summary>TMDB w500 still thumbnail (absent for unaired episodes).</summary>
+        [JsonProperty("still")]
+        public string Still { get; set; }
+    }
+
+    /// <summary>One season of a series (detail record's seasonsData row; no episodes).</summary>
+    public class Season
+    {
+        [JsonProperty("number")]
+        public int Number { get; set; }
+
+        [JsonProperty("title")]
+        public string Title { get; set; }
+
+        [JsonProperty("episodeCount")]
+        public int EpisodeCount { get; set; }
+
+        [JsonProperty("airDate")]
+        public string AirDate { get; set; }
+
+        [JsonProperty("poster")]
+        public string Poster { get; set; }
+    }
+
+    /// <summary>Envelope of GET /api/content/series/{id}/season/{n}.</summary>
+    public class SeasonResponse
+    {
+        [JsonProperty("ok")]
+        public bool Ok { get; set; }
+
+        [JsonProperty("season")]
+        public SeasonDetail Season { get; set; }
+    }
+
+    /// <summary>Season record WITH its full episode list (season endpoint body).</summary>
+    public class SeasonDetail
+    {
+        [JsonProperty("number")]
+        public int Number { get; set; }
+
+        [JsonProperty("title")]
+        public string Title { get; set; }
+
+        [JsonProperty("episodeCount")]
+        public int EpisodeCount { get; set; }
+
+        [JsonProperty("airDate")]
+        public string AirDate { get; set; }
+
+        [JsonProperty("poster")]
+        public string Poster { get; set; }
+
+        [JsonProperty("episodes")]
+        public List<Episode> Episodes { get; set; }
+    }
+
+    /// <summary>
+    /// Which episode of a series to play. Null season/episode = a movie
+    /// (or an unspecified series default) — the resolve body omits both.
+    /// </summary>
+    public class PlaybackTarget
+    {
+        public int? Season { get; set; }
+
+        public int? Episode { get; set; }
+
+        /// <summary>"S1E1"-style label for logs and status lines; null for movies.</summary>
+        public string Label
+        {
+            get
+            {
+                return Season.HasValue && Episode.HasValue
+                    ? "S" + Season.Value + "E" + Episode.Value
+                    : null;
+            }
+        }
+    }
+
+    // ============================================================
     // Streaming (server list + playback resolution).
     //
     // Verified against the LIVE backend on 2026-11:
@@ -180,7 +324,8 @@ namespace MaveroTv
     //     enabled/visibility/status + capabilities.result_type
     //     ("direct" | "embed").
     //   POST /api/playback/resolve
-    //        body { sourceId, contentId, mediaType, allowFallback }
+    //        body { sourceId, contentId, mediaType, allowFallback,
+    //               season?, episode? }   (season/episode for series/anime)
     //        -> { ok, source: { type: "direct"|"embed"|"unavailable"|"error",
     //             url, providerId, sourceId, mediaType, qualities?,
     //             metadata: { providerName, protocol, servers? } } }

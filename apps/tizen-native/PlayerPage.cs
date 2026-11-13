@@ -21,6 +21,9 @@
 //   2. explicit walk over direct-capable servers;
 //   3. first resolved embed url attempted (AVPlay rejects HTML
 //      pages -> honest error status).
+// Series/anime playback passes the picked Season/Episode numbers in
+// every resolve body (PlaybackTarget from the detail page) so the
+// backend resolves the exact episode.
 //
 // Overlay (D-pad):
 //   - one top row: BACK / PAUSE / SERVER / SOURCE, FocusButtons
@@ -76,6 +79,9 @@ namespace MaveroTv
         private readonly MediaItem _item;
         private readonly ApiService _api = new ApiService();
         private readonly Window _window;
+        private readonly int? _season;
+        private readonly int? _episode;
+        private readonly string _targetLabel;
         private bool _closed;
 
         private Player _player;
@@ -116,10 +122,14 @@ namespace MaveroTv
 
         /// <param name="item">The title being played (carries id/type for resolution).</param>
         /// <param name="window">The NUI window — Player.Display binds to it.</param>
-        public PlayerPage(MediaItem item, Window window)
+        /// <param name="target">Which episode to play for series/anime (null = movie).</param>
+        public PlayerPage(MediaItem item, Window window, PlaybackTarget target = null)
         {
             _item = item;
             _window = window;
+            _season = target?.Season;
+            _episode = target?.Episode;
+            _targetLabel = target?.Label;
 
             // Transparent root: the video layer below the DALi surface shows
             // through wherever nothing opaque is drawn (see header).
@@ -142,7 +152,11 @@ namespace MaveroTv
 
             FocusManager.Instance.FocusChanged += OnGlobalFocusChanged;
 
-            SetStatus("Resolving servers...");
+            SetStatus(_targetLabel != null ? $"Resolving {_targetLabel}..." : "Resolving servers...");
+            Log.Info(MaveroApp.LogTag,
+                "Player opened" +
+                (_targetLabel != null ? $" for {_targetLabel}" : string.Empty) +
+                $": '{_item.Title}' (id={_item.Id}, type={_item.Type})");
             _ = ResolveAndPlayAsync();
         }
 
@@ -317,8 +331,9 @@ namespace MaveroTv
                 if (!string.IsNullOrEmpty(defaultSourceId))
                 {
                     tried.Add(defaultSourceId);
-                    SetStatusOnUi("Resolving servers...");
-                    resolved = await _api.ResolveStreamAsync(defaultSourceId, _item.Id, _item.Type, true);
+                    SetStatusOnUi(ResolveStatusText("Resolving servers..."));
+                    resolved = await _api.ResolveStreamAsync(defaultSourceId, _item.Id, _item.Type, true,
+                        _season, _episode);
                     if (_closed)
                     {
                         return;
@@ -346,9 +361,9 @@ namespace MaveroTv
 
                         attempts++;
                         tried.Add(server.SourceId);
-                        SetStatusOnUi($"Trying server {server.Name}...");
+                        SetStatusOnUi(ResolveStatusText($"Trying server {server.Name}..."));
                         ResolvedSource candidate = await _api.ResolveStreamAsync(
-                            server.SourceId, _item.Id, _item.Type, false);
+                            server.SourceId, _item.Id, _item.Type, false, _season, _episode);
                         if (_closed)
                         {
                             return;
@@ -410,8 +425,9 @@ namespace MaveroTv
         {
             try
             {
-                SetStatusOnUi($"Resolving {entry.Name}...");
-                ResolvedSource resolved = await _api.ResolveStreamAsync(entry.SourceId, _item.Id, _item.Type, false);
+                SetStatusOnUi(ResolveStatusText($"Resolving {entry.Name}..."));
+                ResolvedSource resolved = await _api.ResolveStreamAsync(entry.SourceId, _item.Id, _item.Type, false,
+                    _season, _episode);
                 if (_closed)
                 {
                     return;
@@ -473,6 +489,13 @@ namespace MaveroTv
                 && !string.IsNullOrEmpty(resolved.Url);
         }
 
+        /// <summary>Resolve-phase status line, prefixed with the episode target
+        /// when one is set ("S1E2 — Trying server X...").</summary>
+        private string ResolveStatusText(string message)
+        {
+            return _targetLabel != null ? $"{_targetLabel} — {message}" : message;
+        }
+
         private void BindServers(StreamingSourceList serverList)
         {
             _serverList = serverList ?? new StreamingSourceList { Entries = new List<ServerEntry>() };
@@ -522,7 +545,9 @@ namespace MaveroTv
                 _player.SetSource(new MediaUriSource(url));
                 WirePlayerEvents();
 
-                Log.Info(MaveroApp.LogTag, $"Player: preparing stream ({_item.Id})");
+                Log.Info(MaveroApp.LogTag,
+                    $"Player: preparing stream ({_item.Id}" +
+                    (_targetLabel != null ? " " + _targetLabel : string.Empty) + ")");
 
                 await _player.PrepareAsync();
                 if (_closed)

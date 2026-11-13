@@ -155,6 +155,77 @@ namespace MaveroTv
         public const int BackdropDecodeWidth = 1280;
         public const int BackdropDecodeHeight = 720;
 
+        // ---- Detail page, series/anime variant ----
+        //
+        // Same page, compressed hero: the vertical space movies spend on a
+        // tall backdrop + bottom synopsis is given to the season selector
+        // and the episode rail instead. The synopsis moves to a right-hand
+        // column beside the actions.
+        //
+        //   [0..420]    backdrop hero (full-bleed, bottom fade);
+        //   [436]       title (left column);
+        //   [520]       meta line;
+        //   [576..644]  PLAY button;
+        //   [668..724]  season selector (horizontal FocusButtons);
+        //   [748]       EPISODES label;
+        //   [788..988]  episode rail (16:9 still cards);
+        //   right of the left column: synopsis (y 440..740).
+
+        /// <summary>Series hero height — compressed so the episode rail fits.</summary>
+        public const int SeriesBackdropHeight = 420;
+
+        /// <summary>Bottom fade height over the series hero (same asset as movies).</summary>
+        public const int SeriesHeroScrimHeight = 220;
+
+        public const int SeriesTitleY = 436;
+        public const int SeriesTitleHeight = 76;
+        public const int SeriesTitlePointSize = 38;
+
+        public const int SeriesMetaY = 520;
+        public const int SeriesMetaHeight = 34;
+
+        public const int SeriesPlayButtonY = 576;
+        public const int SeriesPlayButtonWidth = 260;
+        public const int SeriesPlayButtonHeight = 68;
+
+        /// <summary>Left column width: title, meta, PLAY and the season viewport.</summary>
+        public const int SeriesColumnWidth = 1020;
+
+        public const int SeriesSynopsisX = 1128;
+        public const int SeriesSynopsisY = 440;
+        public const int SeriesSynopsisWidth = 728;
+        public const int SeriesSynopsisHeight = 300;
+
+        /// <summary>Synopsis clamp for the narrower right column (~6 wrapped lines).</summary>
+        public const int SeriesSynopsisMaxChars = 280;
+
+        public const int SeriesSeasonRowY = 668;
+        public const int SeriesSeasonButtonWidth = 210;
+        public const int SeriesSeasonButtonHeight = 56;
+        public const int SeasonGap = 16;
+
+        public const int SeriesEpisodesLabelY = 748;
+        public const int SeriesEpisodesLabelHeight = 30;
+
+        /// <summary>Top of the episode rail (label sits directly above).</summary>
+        public const int SeriesEpisodeRailY = 788;
+
+        /// <summary>16:9 episode still card (rounded via episode-mask.png).</summary>
+        public const int EpisodeCardWidth = 356;
+        public const int EpisodeCardHeight = 200;
+        public const int EpisodeCardGap = 24;
+
+        /// <summary>Episode number badge ("E1") inset inside the card.</summary>
+        public const int EpisodeBadgeInset = 12;
+        public const int EpisodeBadgeWidth = 64;
+        public const int EpisodeBadgeHeight = 36;
+
+        /// <summary>Bottom scrim strip over the episode still (title strip).</summary>
+        public const int EpisodeScrimHeight = 72;
+
+        /// <summary>9-patch border inset of episode-mask.png (matches poster-mask radius).</summary>
+        public const float EpisodeCornerRadius = 12f;
+
         // ---- Player page (video + overlay + popups) ----
 
         /// <summary>Overlay control row: y and height (top edge of the screen).</summary>
@@ -198,6 +269,7 @@ namespace MaveroTv
         public const string CardBgAsset = "card-bg.png";
         public const string CardFocusAsset = "card-focus.png";
         public const string PosterMaskAsset = "poster-mask.png";
+        public const string EpisodeMaskAsset = "episode-mask.png";
         public const string ScrimAsset = "scrim.png";
         public const string HeroScrimAsset = "hero-scrim.png";
         public const string ButtonIdleAsset = "button-idle.png";
