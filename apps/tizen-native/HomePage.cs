@@ -12,6 +12,10 @@
 //   - FocusManager (built-in keyboard navigation) moves focus on
 //     arrow keys, honouring those links inside a rail and its
 //     spatial algorithm across rails;
+//   - the header's SEARCH pill (top-right) is focusable too: Down
+//     returns to the first card of the first rail, and Up from that
+//     card lands on it — Enter raises SearchRequested and App.cs
+//     swaps in the SearchPage;
 //   - FocusGained triggers the card visuals (MediaCard) and the
 //     keep-in-view scrolling (vertical host + horizontal rail), and
 //     records the focused card so App can restore focus after a
@@ -75,6 +79,10 @@ namespace MaveroTv
         /// <summary>Raised when the user presses Enter/OK on a focused card.</summary>
         public event Action<MediaItem> ItemSelected;
 
+        /// <summary>Raised when the user presses Enter/OK on the header's SEARCH
+        /// pill — App.cs swaps in the SearchPage.</summary>
+        public event Action SearchRequested;
+
         /// <summary>One bound rail: its scroll container, cards, and page offset.</summary>
         private class RailSection
         {
@@ -82,6 +90,9 @@ namespace MaveroTv
             public List<MediaCard> Cards = new List<MediaCard>();
             public int Top; // y within the page content
         }
+
+        /// <summary>Header SEARCH pill — the entry point to the SearchPage.</summary>
+        private FocusButton _searchButton;
 
         public HomePage()
         {
@@ -104,7 +115,7 @@ namespace MaveroTv
 
         // ---- chrome -------------------------------------------------------
 
-        private static View CreateHeader()
+        private View CreateHeader()
         {
             TextLabel brand = new TextLabel
             {
@@ -127,6 +138,19 @@ namespace MaveroTv
                 PositionUsesPivotPoint = true
             };
 
+            // SEARCH pill, top-right — the header's focusable entry point to
+            // the SearchPage (TV remotes have no text input; the SearchPage
+            // brings its own D-pad virtual keyboard).
+            _searchButton = new FocusButton("SEARCH", Theme.HeaderSearchButtonWidth,
+                Theme.HeaderSearchButtonHeight, false)
+            {
+                // Center pivot: Position2D measures to the button's own center.
+                Position2D = new Position2D(
+                    Theme.HeaderSearchButtonX + Theme.HeaderSearchButtonWidth / 2,
+                    Theme.HeaderSearchButtonY + Theme.HeaderSearchButtonHeight / 2)
+            };
+            _searchButton.Selected += OnSearchSelected;
+
             View header = new View
             {
                 Position2D = new Position2D(0, 0),
@@ -137,6 +161,7 @@ namespace MaveroTv
             };
             header.Add(brand);
             header.Add(accentBar);
+            header.Add(_searchButton);
             return header;
         }
 
@@ -229,10 +254,20 @@ namespace MaveroTv
                 0f, Math.Max(0f, _contentHeight - Theme.PageViewportHeight));
 
             Log.Info(ApiService.LogTag,
-                $"Bound {_sections.Count} rail(s), {_contentHeight}px of content, focus lands on first card");
+                "Bound " + _sections.Count + " rail(s), " + _contentHeight +
+                "px of content, focus lands on first card");
 
             if (firstCard != null)
             {
+                // Link the header SEARCH pill into the focus flow now that
+                // the first card exists: Down from SEARCH returns here, Up
+                // from the first card jumps to SEARCH.
+                if (_searchButton != null)
+                {
+                    _searchButton.DownFocusableView = firstCard;
+                    firstCard.UpFocusableView = _searchButton;
+                }
+
                 FocusManager.Instance.SetCurrentFocusView(firstCard);
             }
         }
@@ -388,6 +423,12 @@ namespace MaveroTv
             Log.Info(MaveroApp.LogTag,
                 $"Selected: '{item.Title}' (id={item.Id}, year={item.Year}) — opening detail");
             ItemSelected?.Invoke(item);
+        }
+
+        private void OnSearchSelected()
+        {
+            Log.Info(MaveroApp.LogTag, "Search button pressed — opening search");
+            SearchRequested?.Invoke();
         }
 
         /// <summary>Re-arms focus after the page returns from the Detail screen.</summary>

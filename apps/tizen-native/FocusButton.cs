@@ -23,7 +23,7 @@ using Tizen.NUI.BaseComponents;
 
 namespace MaveroTv
 {
-    /// <summary>One selectable button (Play, Back, ...) on the detail page.</summary>
+    /// <summary>One selectable button (Play, Back, seasons, keyboard keys, ...).</summary>
     public class FocusButton : View
     {
         /// <summary>Enter key names the OK button reports as on Tizen remotes.</summary>
@@ -39,7 +39,15 @@ namespace MaveroTv
         /// <summary>Raised when the user presses Enter/OK while the button is focused.</summary>
         public event Action Selected;
 
-        public FocusButton(string label, int width, int height, bool primaryCta)
+        /// <param name="label">Static button text (re-labelable via SetLabel).</param>
+        /// <param name="width">Button width in pixels.</param>
+        /// <param name="height">Button height in pixels.</param>
+        /// <param name="primaryCta">True for the cyan-fill CTA tier (Play, SEARCH);
+        /// false for the ring-focus tier (Back, seasons, keyboard keys).</param>
+        /// <param name="labelPointSize">Label size — keyboard keys and the wide
+        /// search field use smaller text than the standard pill.</param>
+        public FocusButton(string label, int width, int height, bool primaryCta,
+            int labelPointSize = Theme.CardTitlePointSize + 4)
         {
             _primaryCta = primaryCta;
             _width = width;
@@ -57,7 +65,7 @@ namespace MaveroTv
             {
                 Text = label,
                 TextColor = Theme.TextPrimary,
-                PointSize = Theme.CardTitlePointSize + 4,
+                PointSize = labelPointSize,
                 Ellipsis = true,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalLineAlignment = VerticalLineAlignment.Center,

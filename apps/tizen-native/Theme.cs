@@ -140,6 +140,10 @@ namespace MaveroTv
         public const int BackButtonWidth = 150;
         public const int BackButtonHeight = 56;
 
+        /// <summary>x of the search page's BACK pill (top-right corner; width/height
+        /// shared with the detail page's pill).</summary>
+        public const int SearchBackButtonX = ScreenWidth - PageMargin - BackButtonWidth;
+
         public const int SynopsisY = 928;
         public const int SynopsisWidth = 1200;
         public const int SynopsisHeight = 116;
@@ -246,6 +250,100 @@ namespace MaveroTv
         public const int PlayerStatusY = 980;
         public const int PlayerStatusHeight = 48;
         public const int PlayerStatusPointSize = 16;
+
+        // ---- Search page (virtual keyboard + results grid) ----
+        //
+        // Vertical budget on the fixed 1080 screen:
+        //   [0..160]    header — brand + accent bar, BACK pill top-right;
+        //   [160..244]  search field (query display, Focusable);
+        //   [268..560]  keyboard — 4 rows: three staggered QWERTY letter
+        //               rows + a special row (DEL / SPACE / SEARCH);
+        //   [588..622]  status line (hint / searching / count / empty);
+        //   [636..1080] results grid viewport — vertical ScrollView, 6
+        //               poster cards per row, focus-driven keep-in-view
+        //               scrolling.
+
+        /// <summary>Search field (query display) width — full rail width.</summary>
+        public const int SearchFieldWidth = RailViewportWidth;
+
+        public const int SearchFieldY = 160;
+        public const int SearchFieldHeight = 84;
+
+        /// <summary>Placeholder shown while the query is empty.</summary>
+        public const string SearchFieldPlaceholder = "Search movies, series and anime...";
+
+        /// <summary>Search query cap — mirrors the server's INVALID_QUERY limit (120 chars).</summary>
+        public const int SearchQueryMaxChars = 120;
+
+        /// <summary>Top y of the keyboard block (first letter row).</summary>
+        public const int KeyboardTopY = 268;
+
+        // Keyboard grid: uniform letter keys on staggered QWERTY rows.
+        public const int KeyWidth = 112;
+        public const int KeyHeight = 64;
+        public const int KeyGap = 12;
+
+        /// <summary>Vertical pitch of the keyboard rows (key height + gap).</summary>
+        public const int KeyRowPitch = KeyHeight + KeyGap;
+
+        /// <summary>x of row 0 (QWERTYUIOP, 10 keys) — the row is centered.</summary>
+        public const int KeyRow0X = (ScreenWidth - (10 * KeyWidth + 9 * KeyGap)) / 2;
+
+        /// <summary>x of row 1 (ASDFGHJKL, 9 keys) — staggered half a key.</summary>
+        public const int KeyRow1X = KeyRow0X + (KeyWidth + KeyGap) / 2;
+
+        /// <summary>x of row 2 (ZXCVBNM, 7 keys) — staggered a full key.</summary>
+        public const int KeyRow2X = KeyRow0X + (KeyWidth + KeyGap);
+
+        // Special row (DEL / SPACE / SEARCH), wider keys, 16px gaps, centered.
+        public const int KeySpecialGap = 16;
+        public const int DelKeyWidth = 240;
+        public const int SpaceKeyWidth = 460;
+        public const int SearchKeyWidth = 320;
+
+        /// <summary>x of the special row — centered on the screen.</summary>
+        public const int KeySpecialRowX = (ScreenWidth -
+            (DelKeyWidth + SpaceKeyWidth + SearchKeyWidth + 2 * KeySpecialGap)) / 2;
+
+        public const int KeyboardLetterPointSize = 24;
+        public const int KeyboardSpecialPointSize = 17;
+
+        public const int SearchStatusY = 588;
+        public const int SearchStatusHeight = 34;
+
+        /// <summary>Top of the results grid viewport (status line sits above).</summary>
+        public const int ResultsViewportY = 636;
+
+        /// <summary>Height of the results grid viewport (runs to the screen bottom).</summary>
+        public const int ResultsViewportHeight = ScreenHeight - ResultsViewportY;
+
+        // Results grid: poster cards in a 6-column layout, one vertical
+        // scroller hosting every row (rows are aligned, no horizontal scroll).
+        public const int GridColumns = 6;
+
+        /// <summary>Horizontal pitch of grid columns (card width + gap).</summary>
+        public const int GridCellWidth = CardWidth + CardGap;
+
+        /// <summary>Vertical pitch of grid rows (card height + breathing room
+        /// for the 1.05 focus scale).</summary>
+        public const int GridRowPitch = CardHeight + 40;
+
+        /// <summary>Width the grid rows occupy (6 cards, 5 gaps).</summary>
+        public const int GridViewportWidth = GridColumns * GridCellWidth - CardGap;
+
+        /// <summary>x of the grid viewport — centered on the screen.</summary>
+        public const int GridX = (ScreenWidth - GridViewportWidth) / 2;
+
+        // ---- Home header search entry ----
+
+        public const int HeaderSearchButtonWidth = 150;
+        public const int HeaderSearchButtonHeight = 56;
+
+        /// <summary>x of the header SEARCH pill (top-right corner).</summary>
+        public const int HeaderSearchButtonX = ScreenWidth - PageMargin - HeaderSearchButtonWidth;
+
+        /// <summary>y of the header SEARCH pill (center-aligned with the brand).</summary>
+        public const int HeaderSearchButtonY = 56;
 
         // ---- Player popups (server / source selectors) ----
 

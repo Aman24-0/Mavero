@@ -93,6 +93,51 @@ namespace MaveroTv
         public List<TvRail> Rails { get; set; }
     }
 
+    // ============================================================
+    // Search (GET /api/content/search).
+    //
+    // Verified against the LIVE backend on 2026-11:
+    //   GET /api/content/search?q=batman[&type=movie|series|anime]
+    //                                     [&page=1..20]
+    //     -> { ok, items: [ <MediaItem>... ], page, hasNextPage,
+    //          query, filters, source }
+    //   - item rows are the SAME toMediaItem() projection the home
+    //     rails serve (id/title/year/type/isAnime/poster/...), so the
+    //     existing MediaItem model binds them as-is and MediaCard
+    //     renders them unchanged;
+    //   - no match / empty query returns ok:true with items:[] — the
+    //     caller renders the honest "No results found" state;
+    //   - queries over 120 chars are rejected server-side
+    //     (INVALID_QUERY, HTTP 400) — the keyboard caps the query at
+    //     the same limit before the request is ever sent;
+    //   - the endpoint is rate-limited per identity (HTTP 429):
+    //     GetStringAsync surfaces that as an HttpRequestException the
+    //     caller handles as a plain "search unavailable" state.
+    // ============================================================
+
+    /// <summary>Envelope of GET /api/content/search.</summary>
+    public class SearchResponse
+    {
+        /// <summary>False on a catalog outage or a rejected query.</summary>
+        [JsonProperty("ok")]
+        public bool Ok { get; set; }
+
+        [JsonProperty("items")]
+        public List<MediaItem> Items { get; set; }
+
+        /// <summary>1-based result page the server served.</summary>
+        [JsonProperty("page")]
+        public int Page { get; set; }
+
+        /// <summary>True when the server holds more pages for this query.</summary>
+        [JsonProperty("hasNextPage")]
+        public bool HasNextPage { get; set; }
+
+        /// <summary>The query echoed back by the server.</summary>
+        [JsonProperty("query")]
+        public string Query { get; set; }
+    }
+
     /// <summary>Envelope of GET /api/content/{type}/{id}.</summary>
     public class ContentDetailResponse
     {

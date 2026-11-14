@@ -34,7 +34,7 @@
   <ItemGroup>
     <!-- App assets referenced by tizen-manifest.xml (launcher icon) and
          the visuals in MediaCard.cs / EpisodeCard.cs / HomePage.cs /
-         DetailPage.cs / FocusButton.cs:
+         DetailPage.cs / FocusButton.cs / SearchPage.cs:
            MaveroTv.png       launcher icon
            card-bg.png        9-patch rounded card surface (#161616)
            card-focus.png     9-patch cyan focus ring

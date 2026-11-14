@@ -8,6 +8,8 @@
 //   - GET  /api/content/series/{id}/season/{n} -> one season's episodes
 //        (the route lives only under the "series" segment but accepts
 //        both series- and anime- prefixed ids — anime is TMDB TV);
+//   - GET  /api/content/search?q={query}   -> catalog search results
+//        (same MediaItem wire shape as the home rails' items);
 //   - GET  /api/streaming/config           -> public server catalog
 //        (providers + sources; sources[] are the user-facing servers,
 //        each carrying capabilities.result_type "direct"|"embed");
@@ -120,6 +122,39 @@ namespace MaveroTv
             }
 
             return response.Season;
+        }
+
+        /// <summary>
+        /// Runs a catalog search. Returns the matched MediaItems — the
+        /// search endpoint serves the SAME toMediaItem() projection as the
+        /// home rails, so the items bind straight into MediaCard.
+        /// Returns an empty list when the API is unreachable, rate-limited
+        /// or reports an outage — the search page keeps its honest empty
+        /// state, never fake data.
+        ///
+        /// Wire shape verified live, 2026-11:
+        ///   GET /api/content/search?q={query}
+        ///     -> { ok, items: [MediaItem...], page, hasNextPage, query }
+        ///   - an unknown query returns ok:true with items:[] (the
+        ///     "No results found" state, never an error);
+        ///   - the server rejects queries over 120 chars (HTTP 400) and
+        ///     rate-limits per identity (HTTP 429) — GetStringAsync
+        ///     surfaces both as exceptions the caller handles.
+        /// </summary>
+        public async Task<List<MediaItem>> SearchAsync(string query)
+        {
+            string url = $"{SearchUrl}?q={Uri.EscapeDataString(query ?? string.Empty)}";
+
+            string json = await _client.GetStringAsync(url);
+
+            SearchResponse response = JsonConvert.DeserializeObject<SearchResponse>(json);
+            if (response == null || !response.Ok || response.Items == null)
+            {
+                Log.Warn(LogTag, "Search response empty or not ok");
+                return new List<MediaItem>();
+            }
+
+            return response.Items;
         }
 
         /// <summary>
@@ -305,6 +340,9 @@ namespace MaveroTv
 
         /// <summary>Full home-rails endpoint (kept for log diagnostics).</summary>
         public const string TvHomeUrl = ContentBaseUrl + "/api/tv/home";
+
+        /// <summary>Catalog search endpoint (the query is appended URL-escaped).</summary>
+        public const string SearchUrl = ContentBaseUrl + "/api/content/search";
 
         /// <summary>Public streaming server catalog endpoint.</summary>
         public const string StreamingConfigUrl = ContentBaseUrl + "/api/streaming/config";
