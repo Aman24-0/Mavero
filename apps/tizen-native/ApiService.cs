@@ -18,6 +18,10 @@
 //        episode? } body -> { ok, source: { type, url, qualities,
 //        metadata } }); season/episode mirror the web player's
 //        ResolverRequest contract for series/anime playback.
+//   - GET  /api/downloader/mavero          -> Stremio addon stream
+//        groups for one title (PRIORITY 1 playback source; the
+//        backend derives IMDb/TMDB ids server-side, so the TV app
+//        only echoes the TMDB digits embedded in the catalog id).
 //
 // Authentication (verified against the backend source, 2026-11):
 //   the backend ships a DEVICE PAIRING flow (the same one the web TV
@@ -71,6 +75,15 @@ namespace MaveroTv
         /// </summary>
         private readonly HttpClient _authClient;
 
+        /// <summary>
+        /// Addon resolution rides its OWN client: the backend resolves every
+        /// enabled Stremio addon in parallel under a 40s aggregate budget
+        /// (healthy addons can take 15-25s under load), so the shared 30s
+        /// client timeout would abort perfectly healthy batches. 50s gives
+        /// the full backend budget plus transport overhead.
+        /// </summary>
+        private readonly HttpClient _addonClient;
+
         public ApiService()
         {
             _client = new HttpClient();
@@ -83,6 +96,9 @@ namespace MaveroTv
             };
             _authClient = new HttpClient(authHandler);
             _authClient.Timeout = TimeSpan.FromSeconds(30);
+
+            _addonClient = new HttpClient();
+            _addonClient.Timeout = TimeSpan.FromSeconds(50);
         }
 
         /// <summary>
@@ -345,6 +361,275 @@ namespace MaveroTv
                 case "anime": return capabilities.Anime;
                 default: return capabilities.Movie;
             }
+        }
+
+        // ============================================================
+        // Stremio addon streams (PRIORITY 1 playback source).
+        //
+        // IMDB CONVERSION IS SERVER-SIDE — verified in
+        // apps/web/src/lib/server/streaming/stremio/addon-download-service.ts:
+        // Stremio addons are usually keyed by IMDb ids ("tt1234567"), but
+        // the endpoint accepts NO imdb parameter. The backend loads the
+        // content detail (getDetail) and derives identifiers itself
+        // (normalizeContentIdentifiers), then constructs each addon's
+        // video id per THAT addon's own idProperty/idPrefixes ("tt…" or
+        // "tmdb:…", appending ":s:e" for episodes). The TV app only sends
+        // the catalog id + the TMDB digits it already contains — fetching
+        // an IMDB id here would be dead weight the wire never carries.
+        // ============================================================
+
+        /// <summary>
+        /// Fetches the playable Stremio addon streams for one title from the
+        /// Mavero Downloader batch endpoint (the exact endpoint the web
+        /// downloader uses — GET /api/downloader/mavero). Returns the
+        /// deduplicated, BEST-FIRST ordered list of streams AVPlay can
+        /// actually play: HLS manifests and direct HTTP(S) video files
+        /// (MKV/MP4/...). P2P/magnet/DASH/external entries never surface.
+        ///
+        /// Returns an EMPTY list when no addons are configured, no addon
+        /// yielded a playable stream, the title lacks a usable TMDB id, or
+        /// the endpoint is unavailable/rate-limited — every one of those is
+        /// the caller's cue to fall back to the regular server pipeline,
+        /// exactly one failure surface for the player.
+        /// </summary>
+        /// <param name="contentId">Catalog id ("movie-969681" / "series-2734").</param>
+        /// <param name="mediaType">"movie" | "series" | "anime" (passed through; the backend maps anime to the series contract itself).</param>
+        /// <param name="season">Season number for series/anime (REQUIRED together with episode for non-movie types).</param>
+        /// <param name="episode">Episode number for series/anime.</param>
+        public async Task<List<AddonStream>> FetchAddonStreamsAsync(string contentId, string mediaType,
+            int? season = null, int? episode = null)
+        {
+            List<AddonStream> empty = new List<AddonStream>();
+
+            string type = (mediaType ?? string.Empty).Trim().ToLowerInvariant();
+            string tmdbId = TmdbIdFromContentId(contentId);
+            if (string.IsNullOrEmpty(tmdbId))
+            {
+                Log.Warn(LogTag, $"Addon fetch skipped: no TMDB id in '{contentId}'");
+                return empty;
+            }
+
+            // The backend rejects non-movie requests without BOTH season and
+            // episode (INVALID_REQUEST) — don't spend a round trip.
+            bool needsEpisode = type != "movie";
+            if (needsEpisode && (!season.HasValue || !episode.HasValue))
+            {
+                Log.Warn(LogTag, $"Addon fetch skipped: {type} playback needs season+episode");
+                return empty;
+            }
+
+            StringBuilder url = new StringBuilder(AddonStreamsUrl);
+            url.Append("?mediaType=").Append(Uri.EscapeDataString(type));
+            url.Append("&contentId=").Append(Uri.EscapeDataString(contentId ?? string.Empty));
+            url.Append("&tmdbId=").Append(Uri.EscapeDataString(tmdbId));
+            if (needsEpisode)
+            {
+                url.Append("&season=").Append(season.Value);
+                url.Append("&episode=").Append(episode.Value);
+            }
+
+            string json = await _addonClient.GetStringAsync(url.ToString());
+
+            AddonStreamsResponse response;
+            try
+            {
+                response = JsonConvert.DeserializeObject<AddonStreamsResponse>(json);
+            }
+            catch (Exception ex)
+            {
+                Log.Warn(LogTag, $"Addon payload unparsable: {ex.Message}");
+                return empty;
+            }
+
+            if (response == null || !response.Ok || response.Groups == null)
+            {
+                Log.Warn(LogTag, "Addon response empty or not ok");
+                return empty;
+            }
+
+            List<AddonStream> playable = new List<AddonStream>();
+            int loadedGroups = 0;
+            foreach (AddonStreamGroup group in response.Groups)
+            {
+                if (group == null || group.Streams == null)
+                {
+                    continue;
+                }
+
+                if (string.Equals(group.Status, "loaded", StringComparison.OrdinalIgnoreCase))
+                {
+                    loadedGroups++;
+                }
+
+                foreach (AddonStream stream in group.Streams)
+                {
+                    if (stream == null || string.IsNullOrEmpty(stream.Url) || !IsPlayableAddonStream(stream))
+                    {
+                        continue;
+                    }
+
+                    // Stamp the source addon for the selector labels (never
+                    // on the wire — presentation metadata only).
+                    stream.AddonName = group.AddonName;
+                    playable.Add(stream);
+                }
+            }
+
+            // Deterministic BEST-FIRST order: quality (4K -> auto), then
+            // adaptive HLS before a direct file (safer start on flaky TV
+            // networks). OrderBy is stable, so streams that tie on both
+            // keys keep the backend's own deterministic wire order (addon
+            // ordering -> stream index) — no extra tiebreaker needed.
+            List<AddonStream> ordered = playable
+                .OrderByDescending(s => AddonQualityRank(s.Quality))
+                .ThenByDescending(s => s.IsHls ? 1 : 0)
+                .ToList();
+
+            // True-duplicate-URL dedup (first-wins in the ordered sequence):
+            // two addons exposing the same CDN stream stay one option.
+            List<AddonStream> unique = new List<AddonStream>();
+            HashSet<string> seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (AddonStream stream in ordered)
+            {
+                if (seen.Add(stream.Url))
+                {
+                    unique.Add(stream);
+                }
+            }
+
+            Log.Info(LogTag,
+                $"Addon resolution: {response.ConsideredAddons} considered, {loadedGroups} loaded, " +
+                $"{unique.Count} playable (best={DescribeAddonStream(unique.Count > 0 ? unique[0] : null)})");
+
+            return unique;
+        }
+
+        /// <summary>Extracts the TMDB digits from a "{type}-{tmdbId}" catalog id.
+        /// Null when the id has no pure-numeric suffix (the endpoint's bounded
+        /// sanity check would reject the request anyway).</summary>
+        public static string TmdbIdFromContentId(string contentId)
+        {
+            if (string.IsNullOrEmpty(contentId))
+            {
+                return null;
+            }
+
+            int dash = contentId.LastIndexOf('-');
+            if (dash < 0 || dash == contentId.Length - 1)
+            {
+                return null;
+            }
+
+            string tail = contentId.Substring(dash + 1);
+            foreach (char c in tail)
+            {
+                if (c < '0' || c > '9')
+                {
+                    return null;
+                }
+            }
+
+            return tail;
+        }
+
+        /// <summary>AVPlay playability gate: HLS manifests always play; direct
+        /// files play when a video container is recognizable from the URL
+        /// path, the release filename or the addon's container label.
+        /// Extensionless opaque links stay out — AVPlay would just fail on
+        /// them and waste the user's time. DASH (frequently DRM), P2P,
+        /// magnet and external entries are never playable natively.</summary>
+        private static bool IsPlayableAddonStream(AddonStream stream)
+        {
+            if (stream.IsHls)
+            {
+                return true;
+            }
+
+            if (!stream.IsDirectFile)
+            {
+                return false;
+            }
+
+            return HasVideoExtension(stream.Url)
+                || HasVideoExtension(stream.Filename)
+                || HasVideoExtension(stream.Title)
+                || HasVideoExtension(stream.Name)
+                || IsVideoContainer(stream.Container);
+        }
+
+        /// <summary>Video extensions AVPlay's parsers handle over HTTP.</summary>
+        private static readonly string[] VideoExtensions =
+        {
+            ".mkv", ".mp4", ".m4v", ".webm", ".avi", ".ts", ".mov",
+            ".mpg", ".mpeg", ".3gp", ".ogv", ".wmv", ".flv"
+        };
+
+        private static bool HasVideoExtension(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                return false;
+            }
+
+            // Strip a query string before matching ("...mkv?token=x").
+            string path = value;
+            int query = path.IndexOf('?');
+            if (query >= 0)
+            {
+                path = path.Substring(0, query);
+            }
+
+            string trimmed = path.TrimEnd();
+            foreach (string extension in VideoExtensions)
+            {
+                if (trimmed.EndsWith(extension, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool IsVideoContainer(string container)
+        {
+            if (string.IsNullOrEmpty(container))
+            {
+                return false;
+            }
+
+            string normalized = container.Trim().ToLowerInvariant();
+            return normalized.Contains("mkv") || normalized.Contains("matroska")
+                || normalized.Contains("mp4") || normalized.Contains("webm")
+                || normalized.Contains("mpeg") || normalized == "ts"
+                || normalized.Contains("avi") || normalized.Contains("mov")
+                || normalized.Contains("m4v");
+        }
+
+        /// <summary>Numeric rank of the addon quality label (higher = better).
+        /// "4K" outranks everything; unknown labels rank as "auto".</summary>
+        private static int AddonQualityRank(string quality)
+        {
+            switch ((quality ?? string.Empty).Trim())
+            {
+                case "4K": return 2160;
+                case "1080p": return 1080;
+                case "720p": return 720;
+                case "480p": return 480;
+                default: return 0;
+            }
+        }
+
+        /// <summary>One-line description for logs ("Torrentio 4K HEVC").</summary>
+        private static string DescribeAddonStream(AddonStream stream)
+        {
+            if (stream == null)
+            {
+                return "none";
+            }
+
+            string name = NonEmpty(stream.AddonName) ?? NonEmpty(stream.Name) ?? NonEmpty(stream.Title) ?? "addon";
+            return $"{name} {NonEmpty(stream.Quality) ?? "auto"} {NonEmpty(stream.Codec) ?? ""}".Trim();
         }
 
         // ============================================================
@@ -819,6 +1104,9 @@ namespace MaveroTv
 
         /// <summary>Playback resolution endpoint (POST).</summary>
         public const string PlaybackResolveUrl = ContentBaseUrl + "/api/playback/resolve";
+
+        /// <summary>Stremio addon stream groups endpoint (PRIORITY 1 source; GET).</summary>
+        public const string AddonStreamsUrl = ContentBaseUrl + "/api/downloader/mavero";
 
         /// <summary>Device-pairing endpoints (create/status/exchange, all POST).</summary>
         public const string DevicePairingCreateUrl = ContentBaseUrl + "/api/auth/device-pairing/create";

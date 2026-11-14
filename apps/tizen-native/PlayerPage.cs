@@ -13,17 +13,25 @@
 //     until Start() — the screen looks black while resolving/
 //     preparing, then the video appears.
 //
-// Streams (ApiService): GET /api/streaming/config lists the public
-// servers, POST /api/playback/resolve resolves one. Priority order
-// mirrors the web player's rule — direct streams first (HLS/MP4,
-// AVPlay-playable), embeds only as the last resort:
+// Streams (ApiService): GET /api/downloader/mavero resolves the
+// Stremio addon groups for the title; GET /api/streaming/config
+// lists the public servers, POST /api/playback/resolve resolves
+// one. Priority order:
+//   0. PRIORITY 1 — Stremio addon streams: direct MKV/HEVC files and
+//      HLS manifests AVPlay plays NATIVELY (no embed guessing). The
+//      best-quality stream starts immediately; the Source popup
+//      lists the other addon streams ("Addon 4K HEVC", ...).
+//      Fallback to the server pipeline happens when no addon stream
+//      is playable AND when the chosen addon stream itself fails to
+//      prepare — one graceful degradation, never a loop.
 //   1. admin default source with allowFallback (server-side walk);
 //   2. explicit walk over direct-capable servers;
 //   3. first resolved embed url attempted (AVPlay rejects HTML
 //      pages -> honest error status).
 // Series/anime playback passes the picked Season/Episode numbers in
 // every resolve body (PlaybackTarget from the detail page) so the
-// backend resolves the exact episode.
+// backend resolves the exact episode; the addon endpoint derives
+// the IMDb/TMDB ids server-side from the same catalog id.
 //
 // Overlay (D-pad):
 //   - one top row: BACK / PAUSE / SERVER / SOURCE, FocusButtons
@@ -90,6 +98,10 @@ namespace MaveroTv
         private string _activeUrl;
         private List<SourceOption> _sourceOptions;
 
+        // ---- addon streams (PRIORITY 1 playback source) --------------------
+        private List<AddonStream> _addonStreams;
+        private AddonStream _activeAddonStream;
+
         private View _curtain;
         private View _overlay;
         private TextLabel _status;
@@ -118,6 +130,11 @@ namespace MaveroTv
         {
             public string Label;
             public string Url;
+
+            /// <summary>Set when the row is an addon stream (the Source popup
+            /// mixes nothing else in — but the select handler distinguishes
+            /// addon rows from server renditions to keep the labels honest).</summary>
+            public AddonStream AddonStream;
         }
 
         /// <param name="item">The title being played (carries id/type for resolution).</param>
@@ -152,7 +169,7 @@ namespace MaveroTv
 
             FocusManager.Instance.FocusChanged += OnGlobalFocusChanged;
 
-            SetStatus(_targetLabel != null ? $"Resolving {_targetLabel}..." : "Resolving servers...");
+            SetStatus(_targetLabel != null ? $"Resolving {_targetLabel}..." : "Resolving addon streams...");
             Log.Info(MaveroApp.LogTag,
                 "Player opened" +
                 (_targetLabel != null ? $" for {_targetLabel}" : string.Empty) +
@@ -305,10 +322,69 @@ namespace MaveroTv
 
         // ---- resolution pipeline -------------------------------------------
 
+        /// <summary>
+        /// Play priority: Stremio addon streams FIRST (direct MKV/HEVC + HLS
+        /// that AVPlay handles natively), the classic server pipeline only
+        /// when the addons yield nothing playable. Every addon failure
+        /// (fetch error, empty result, unparsable payload) lands in exactly
+        /// one place — the server pipeline below — so the user always gets
+        /// the previous behavior as the floor.
+        /// </summary>
         private async Task ResolveAndPlayAsync()
         {
             try
             {
+                SetStatusOnUi(ResolveStatusText("Resolving addon streams..."));
+                List<AddonStream> addonStreams = await _api.FetchAddonStreamsAsync(
+                    _item.Id, _item.Type, _season, _episode);
+                if (_closed)
+                {
+                    return;
+                }
+
+                if (addonStreams != null && addonStreams.Count > 0)
+                {
+                    _addonStreams = addonStreams;
+                    UiDispatcher.Post(() =>
+                    {
+                        if (_closed)
+                        {
+                            return;
+                        }
+                        ApplyAddonStream(addonStreams[0]);
+                    });
+
+                    // Keep the SERVER popup functional while the addon plays:
+                    // bind the server catalog in the background (cheap config
+                    // GET, never blocks or delays the addon stream).
+                    _ = BindServersInBackgroundAsync();
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warn(MaveroApp.LogTag, $"Addon resolution failed — falling back to servers: {ex.Message}");
+                if (_closed)
+                {
+                    return;
+                }
+            }
+
+            // FALLBACK — embeds/default sources, exactly the pre-addon flow.
+            await ResolveAndPlayFromServersAsync();
+        }
+
+        /// <summary>
+        /// The server pipeline (the former sole resolution path): admin
+        /// default with fallback walk, then the direct-capable walk, then
+        /// the first embed as the last resort. Also the graceful landing
+        /// when an addon stream fails to prepare.
+        /// </summary>
+        private async Task ResolveAndPlayFromServersAsync()
+        {
+            try
+            {
+                SetStatusOnUi(ResolveStatusText("Resolving servers..."));
                 StreamingSourceList serverList = await _api.FetchStreamingSourcesAsync(_item.Type);
                 if (_closed)
                 {
@@ -421,6 +497,36 @@ namespace MaveroTv
             }
         }
 
+        /// <summary>
+        /// Binds the server catalog while an addon stream plays so the
+        /// SERVER popup stays truthful. Best-effort: a failure just leaves
+        /// the popup empty-handed ("No servers available"), never breaks
+        /// addon playback.
+        /// </summary>
+        private async Task BindServersInBackgroundAsync()
+        {
+            try
+            {
+                StreamingSourceList serverList = await _api.FetchStreamingSourcesAsync(_item.Type);
+                if (_closed)
+                {
+                    return;
+                }
+                UiDispatcher.Post(() =>
+                {
+                    if (_closed)
+                    {
+                        return;
+                    }
+                    BindServers(serverList);
+                });
+            }
+            catch (Exception ex)
+            {
+                Log.Warn(MaveroApp.LogTag, $"Background server bind failed: {ex.Message}");
+            }
+        }
+
         private async Task ResolveAndPlaySpecificAsync(ServerEntry entry)
         {
             try
@@ -505,6 +611,7 @@ namespace MaveroTv
         private void ApplyResolution(ResolvedSource resolved)
         {
             _resolved = resolved;
+            _activeAddonStream = null; // a server choice always outranks a stale addon pick
             UpdateServerButtonLabel();
             UpdateSourceButtonLabel();
 
@@ -514,6 +621,55 @@ namespace MaveroTv
                 $"protocol={resolved.Metadata?.Protocol ?? "unknown"}");
 
             _ = PlayStreamAsync(resolved.Url);
+        }
+
+        /// <summary>
+        /// Applies one Stremio addon stream (PRIORITY 1 path). No ResolvedSource
+        /// is involved — the addon url IS the playback url; AVPlay reads the
+        /// HLS manifest or the MKV/MP4 container directly.
+        /// </summary>
+        private void ApplyAddonStream(AddonStream stream)
+        {
+            _activeAddonStream = stream;
+            _resolved = null;
+            UpdateServerButtonLabel();
+            UpdateSourceButtonLabel();
+
+            Log.Info(MaveroApp.LogTag,
+                $"Player: applying addon stream '{stream.AddonName}' " +
+                $"quality={stream.Quality ?? "auto"} codec={stream.Codec ?? "unknown"} " +
+                $"kind={stream.Kind ?? "?"}");
+
+            _ = PlayStreamAsync(stream.Url);
+        }
+
+        /// <summary>
+        /// Selector label for one addon stream, mirroring the user-facing
+        /// "Addon 1080p" / "Addon 4K HEVC" shape: addon name + quality,
+        /// with the codec called out only when it is the reason this stream
+        /// is special on a TV (HEVC/AV1 — H.264 needs no billing).
+        /// </summary>
+        private static string BuildAddonStreamLabel(AddonStream stream)
+        {
+            if (stream == null)
+            {
+                return "Addon stream";
+            }
+
+            string name = string.IsNullOrWhiteSpace(stream.AddonName)
+                ? (string.IsNullOrWhiteSpace(stream.Host) ? "Stremio" : stream.Host)
+                : stream.AddonName.Trim();
+            string quality = string.IsNullOrWhiteSpace(stream.Quality) ? "Auto" : stream.Quality.Trim();
+
+            string label = $"{name} {quality}";
+            string codec = (stream.Codec ?? string.Empty).Trim();
+            if (string.Equals(codec, "HEVC", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(codec, "AV1", StringComparison.OrdinalIgnoreCase))
+            {
+                label += " " + codec.ToUpperInvariant();
+            }
+
+            return label;
         }
 
         // ---- playback -------------------------------------------------------
@@ -574,12 +730,29 @@ namespace MaveroTv
             {
                 Log.Error(MaveroApp.LogTag, $"Player prepare failed: {ex.Message}");
                 DestroyPlayer();
+
+                bool addonStreamFailed = _activeAddonStream != null
+                    && string.Equals(_activeUrl, _activeAddonStream.Url, StringComparison.Ordinal);
+
                 UiDispatcher.Post(() =>
                 {
                     if (_closed)
                     {
                         return;
                     }
+
+                    if (addonStreamFailed)
+                    {
+                        // The chosen addon stream could not prepare — degrade
+                        // gracefully to the server pipeline instead of a dead
+                        // end (one fallback, the server path cannot loop back
+                        // into the addon path).
+                        Log.Warn(MaveroApp.LogTag, "Addon stream unplayable — falling back to servers");
+                        SetStatus("Addon stream unplayable - trying servers...");
+                        _ = ResolveAndPlayFromServersAsync();
+                        return;
+                    }
+
                     SetStatus("Playback failed - this source cannot be played natively");
                     ShowOverlay();
                 });
@@ -818,7 +991,8 @@ namespace MaveroTv
                 return;
             }
 
-            List<SourceOption> options = BuildSourceOptions();
+            bool addonMode = _activeAddonStream != null;
+            List<SourceOption> options = addonMode ? BuildAddonSourceOptions() : BuildSourceOptions();
             if (options.Count <= 1)
             {
                 SetStatus("Single source available");
@@ -837,7 +1011,34 @@ namespace MaveroTv
             }
 
             _sourceOptions = options;
-            OpenPopup(new StreamSelectorPopup("Select source", labels), PopupKind.Source);
+            OpenPopup(new StreamSelectorPopup(addonMode ? "Select addon stream" : "Select source", labels), PopupKind.Source);
+        }
+
+        /// <summary>The playable addon streams, already ordered best-first by the
+        /// ApiService — the Source popup rows while addon playback is active.</summary>
+        private List<SourceOption> BuildAddonSourceOptions()
+        {
+            List<SourceOption> options = new List<SourceOption>();
+
+            if (_addonStreams != null)
+            {
+                foreach (AddonStream stream in _addonStreams)
+                {
+                    if (stream == null || string.IsNullOrEmpty(stream.Url))
+                    {
+                        continue;
+                    }
+
+                    options.Add(new SourceOption
+                    {
+                        Label = BuildAddonStreamLabel(stream),
+                        Url = stream.Url,
+                        AddonStream = stream
+                    });
+                }
+            }
+
+            return options;
         }
 
         /// <summary>Qualities of the active resolution, falling back to its mirrors.</summary>
@@ -921,6 +1122,14 @@ namespace MaveroTv
                 return;
             }
 
+            if (_activeAddonStream != null)
+            {
+                // Addon playback: the button bills the active addon stream
+                // ("Torrentio 4K HEVC") instead of the server qualities.
+                _sourceButton.SetLabel(BuildAddonStreamLabel(_activeAddonStream));
+                return;
+            }
+
             List<SourceOption> options = BuildSourceOptions();
             _sourceButton.SetLabel(options.Count > 0 ? options[0].Label : "AUTO");
         }
@@ -990,6 +1199,11 @@ namespace MaveroTv
 
                 if (option != null)
                 {
+                    // Track WHICH surface owns playback now: selecting an
+                    // addon row moves the addon state forward; selecting a
+                    // server rendition clears it (ApplyResolution does the
+                    // same when the SERVER popup resolves a server).
+                    _activeAddonStream = option.AddonStream;
                     _sourceButton.SetLabel(option.Label);
                     _ = PlayStreamAsync(option.Url);
                 }

@@ -19,7 +19,13 @@
 //    series-2734 does NOT error, it silently returns the wrong
 //    title (movie-2734), so FetchDetailAsync always derives the
 //    segment from the item itself.
+//
+// 3. GET /api/downloader/mavero — the Stremio addon stream groups
+//    (AddonStreamsResponse/AddonStreamGroup/AddonStream, PRIORITY 1
+//    playback source for the native player; see the block at the
+//    end of this file for the verified wire contract).
 // ============================================================
+using System;
 using System.Collections.Generic;
 using Newtonsoft.Json;
 
@@ -773,5 +779,158 @@ namespace MaveroTv
 
         [JsonProperty("message")]
         public string Message { get; set; }
+    }
+
+    // ============================================================
+    // Stremio addon streams (PRIORITY 1 playback source).
+    //
+    // Verified against the backend source on 2026-11:
+    //   GET /api/downloader/mavero
+    //        ?mediaType=movie|series|anime
+    //        &contentId={catalog id}      ("movie-969681")
+    //        &tmdbId={tmdb digits}        (bounded sanity check)
+    //        [&season=N&episode=M]        (REQUIRED for series/anime)
+    //     -> { ok, consideredAddons,
+    //          groups: [ { addonId, addonName, addonSlug, addonOrdering,
+    //                      status: "loaded" | "empty" | "failed",
+    //                      errorCode?, streams: [AddonStream...] } ] }
+    //
+    // IMDB CONVERSION IS SERVER-SIDE (verified in
+    // apps/web/src/lib/server/streaming/stremio/addon-download-service.ts):
+    // Stremio addons are usually keyed by IMDb ids ("tt…"), but the
+    // endpoint never accepts one from the client — the backend loads the
+    // content detail (getDetail) and derives the identifiers itself
+    // (normalizeContentIdentifiers), then builds each addon's video id
+    // according to THAT addon's own idProperty/idPrefixes ("tt…" or
+    // "tmdb:…"). The TV app therefore only echoes the TMDB digits
+    // embedded in the catalog id — no IMDB lookup is ever needed here.
+    //
+    // Stream kind taxonomy (server-side classification, phase 17):
+    //   http / https          direct file (mkv/mp4/webm/extensionless)
+    //   hls                   m3u8 manifest (adaptive)
+    //   dash                  mpd manifest (frequently DRM — not playable)
+    //   p2p / magnet / external  not playable by AVPlay
+    // quality: "4K" | "1080p" | "720p" | "480p" | "auto"
+    // codec:   "H.264" | "HEVC" | "AV1" | "VP9" | "unknown"
+    // ============================================================
+
+    /// <summary>Envelope of GET /api/downloader/mavero.</summary>
+    public class AddonStreamsResponse
+    {
+        [JsonProperty("ok")]
+        public bool Ok { get; set; }
+
+        /// <summary>Enabled addons CONSIDERED for this title (the query baseline).</summary>
+        [JsonProperty("consideredAddons")]
+        public int ConsideredAddons { get; set; }
+
+        [JsonProperty("groups")]
+        public List<AddonStreamGroup> Groups { get; set; }
+    }
+
+    /// <summary>One addon's resolution result (per-addon status model).</summary>
+    public class AddonStreamGroup
+    {
+        [JsonProperty("addonId")]
+        public string AddonId { get; set; }
+
+        [JsonProperty("addonName")]
+        public string AddonName { get; set; }
+
+        [JsonProperty("addonSlug")]
+        public string AddonSlug { get; set; }
+
+        [JsonProperty("addonOrdering")]
+        public int AddonOrdering { get; set; }
+
+        /// <summary>"loaded" | "empty" | "failed" (a failed addon never affects others).</summary>
+        [JsonProperty("status")]
+        public string Status { get; set; }
+
+        /// <summary>Closed error-code vocabulary entry; present when status = "failed".</summary>
+        [JsonProperty("errorCode")]
+        public string ErrorCode { get; set; }
+
+        [JsonProperty("streams")]
+        public List<AddonStream> Streams { get; set; }
+    }
+
+    /// <summary>One addon-supplied stream (safe presentation view — the backend
+    /// never exposes manifest URLs, addon configuration or auth tokens).</summary>
+    public class AddonStream
+    {
+        /// <summary>The playable media URL (HLS manifest or direct file), verbatim.</summary>
+        [JsonProperty("url")]
+        public string Url { get; set; }
+
+        /// <summary>"http" | "https" | "hls" | "dash" | "p2p" | "magnet" | "external".</summary>
+        [JsonProperty("kind")]
+        public string Kind { get; set; }
+
+        /// <summary>"4K" | "1080p" | "720p" | "480p" | "auto".</summary>
+        [JsonProperty("quality")]
+        public string Quality { get; set; }
+
+        /// <summary>"H.264" | "HEVC" | "AV1" | "VP9" | "unknown".</summary>
+        [JsonProperty("codec")]
+        public string Codec { get; set; }
+
+        /// <summary>"multi" | "dual" | "mono" | "unknown" (audio class).</summary>
+        [JsonProperty("audio")]
+        public string Audio { get; set; }
+
+        /// <summary>Addon-derived container label ("mkv", "mp4", ...); may be absent.</summary>
+        [JsonProperty("container")]
+        public string Container { get; set; }
+
+        /// <summary>Release filename when the addon supplied one ("Title.2024.1080p.WEB.mkv").</summary>
+        [JsonProperty("filename")]
+        public string Filename { get; set; }
+
+        /// <summary>Addon-supplied long title; may be absent.</summary>
+        [JsonProperty("title")]
+        public string Title { get; set; }
+
+        /// <summary>Addon-supplied short name; may be absent.</summary>
+        [JsonProperty("name")]
+        public string Name { get; set; }
+
+        /// <summary>Addon-supplied description (size/languages/seeders text); may be absent.</summary>
+        [JsonProperty("description")]
+        public string Description { get; set; }
+
+        /// <summary>Reported size in bytes when the addon supplied one.</summary>
+        [JsonProperty("sizeBytes")]
+        public long? SizeBytes { get; set; }
+
+        /// <summary>"http" | "https" | "magnet" | "external" transport classification.</summary>
+        [JsonProperty("transport")]
+        public string Transport { get; set; }
+
+        /// <summary>Lowercased stream host (leading "www." stripped) for display.</summary>
+        [JsonProperty("host")]
+        public string Host { get; set; }
+
+        /// <summary>Source addon's display name, stamped by ApiService while
+        /// flattening the groups (never on the wire — drives the
+        /// "Addon 1080p" selector labels).</summary>
+        [JsonIgnore]
+        public string AddonName { get; set; }
+
+        /// <summary>True when the stream is an HLS manifest AVPlay plays natively.</summary>
+        public bool IsHls
+        {
+            get { return string.Equals(Kind, "hls", StringComparison.OrdinalIgnoreCase); }
+        }
+
+        /// <summary>True when the stream is a direct HTTP(S) file download URL.</summary>
+        public bool IsDirectFile
+        {
+            get
+            {
+                return string.Equals(Kind, "http", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(Kind, "https", StringComparison.OrdinalIgnoreCase);
+            }
+        }
     }
 }
