@@ -67,6 +67,19 @@ namespace MaveroTv
         private readonly HttpClient _client;
 
         /// <summary>
+        /// TLS-BYPASS FALLBACK client. The primary client deliberately does
+        /// NOT set ServerCertificateCustomValidationCallback: on Tizen 6.0
+        /// TV Mono the callback path is the least-battle-tested TLS route
+        /// (field suspicion: setting it can abort the handshake natively).
+        /// The default Mono TLS stack with its baked-in Mozilla roots trusts
+        /// the catalog origin (Netlify + Let's Encrypt / ISRG Root X1), so
+        /// every request rides the PRIMARY plain client first; only when
+        /// that fails with a MANAGED exception (trust failure, chain error)
+        /// does the request retry through this callback-enabled client.
+        /// </summary>
+        private readonly HttpClient _tlsClient;
+
+        /// <summary>
         /// Authenticated requests ride a SEPARATE handler: no automatic
         /// cookies (the jar is manual, so every captured cookie is also
         /// persisted) and no automatic redirect following (the sign-out
@@ -84,40 +97,59 @@ namespace MaveroTv
         /// </summary>
         private readonly HttpClient _addonClient;
 
+        /// <summary>Addon-resolution TLS-bypass fallback (same policy as _tlsClient).</summary>
+        private readonly HttpClient _addonTlsClient;
+
         public ApiService()
         {
-            _client = new HttpClient(CreateHardenedHandler(true, true));
+            // PRIMARY catalog client — PLAIN TLS, no certificate callback
+            // (the most battle-tested transport path on Tizen 6.0 Mono).
+            _client = new HttpClient(CreateHandler(true, true, false));
             _client.Timeout = TimeSpan.FromSeconds(30);
             ApplyUserAgent(_client);
 
-            HttpClientHandler authHandler = CreateHardenedHandler(false, false);
+            // FALLBACK catalog client — accepts any server chain (stale TV
+            // trust stores). Used ONLY when the primary attempt threw.
+            _tlsClient = new HttpClient(CreateHandler(true, true, true));
+            _tlsClient.Timeout = TimeSpan.FromSeconds(30);
+            ApplyUserAgent(_tlsClient);
+
+            HttpClientHandler authHandler = CreateHandler(false, false, false);
             _authClient = new HttpClient(authHandler);
             _authClient.Timeout = TimeSpan.FromSeconds(30);
             ApplyUserAgent(_authClient);
 
-            _addonClient = new HttpClient(CreateHardenedHandler(true, true));
+            // PRIMARY addon client — plain TLS, longer budget (the backend
+            // resolves every enabled Stremio addon in parallel under a 40s
+            // aggregate budget; healthy addons can take 15-25s under load).
+            _addonClient = new HttpClient(CreateHandler(true, true, false));
             _addonClient.Timeout = TimeSpan.FromSeconds(50);
             ApplyUserAgent(_addonClient);
+
+            _addonTlsClient = new HttpClient(CreateHandler(true, true, true));
+            _addonTlsClient.Timeout = TimeSpan.FromSeconds(50);
+            ApplyUserAgent(_addonTlsClient);
         }
 
         /// <summary>
-        /// TV-HARDENED transport. Two Tizen-6.0 reality checks drive this:
+        /// TV-HARDENED transport factory. Two Tizen-6.0 reality checks drive
+        /// this:
         ///
         ///   1. TLS trust store: smart TVs ship a CA snapshot from the year
         ///      their firmware was built. Modern origins (Let's Encrypt,
-        ///      CDN chains) fail the handshake with "CertificateError" or
-        ///      mono's "trust failure" — the fetch throws, the UI shows an
-        ///      outage, the user blames the app. The catalog origin is
-        ///      pinned by URL and the TV app carries no browser-grade
-        ///      secrets, so accepting the presented chain is the pragmatic
-        ///      TV fix (the same fallback the user asked for).
+        ///      CDN chains) can fail the handshake with "CertificateError"
+        ///      or mono's "trust failure" — the fetch throws, the UI shows
+        ///      an outage, the user blames the app. When `tlsBypass` is set
+        ///      the presented chain is accepted (the pragmatic TV fix); the
+        ///      primary path runs WITHOUT it because the callback route is
+        ///      the least-tested TLS path on Tizen Mono (see _tlsClient).
         ///   2. User-Agent: some CDN/WAF edges drop requests with no UA
         ///      (400/403) — mono's HttpClient sends none by default.
         ///
         /// Every property is set defensively: a profile that lacks a setter
         /// must degrade to the classic handler, not crash the client.
         /// </summary>
-        private static HttpClientHandler CreateHardenedHandler(bool allowAutoRedirect, bool useCookies)
+        private static HttpClientHandler CreateHandler(bool allowAutoRedirect, bool useCookies, bool tlsBypass)
         {
             HttpClientHandler handler = new HttpClientHandler
             {
@@ -125,23 +157,47 @@ namespace MaveroTv
                 UseCookies = useCookies
             };
 
-            try
+            if (tlsBypass)
             {
-                // Accept any server certificate chain (stale TV trust stores).
-                handler.ServerCertificateCustomValidationCallback =
-                    (message, certificate, chain, sslErrors) => true;
-            }
-            catch (Exception ex)
-            {
-                Log.Warn(LogTag, "TLS fallback unavailable on this profile: " + ex.Message);
+                try
+                {
+                    // Accept any server certificate chain (stale TV trust stores).
+                    handler.ServerCertificateCustomValidationCallback =
+                        (message, certificate, chain, sslErrors) => true;
+                }
+                catch (Exception ex)
+                {
+                    Log.Warn(LogTag, "TLS fallback unavailable on this profile: " + ex.Message);
+                }
             }
 
             return handler;
         }
 
+        /// <summary>
+        /// GET with TLS fallback: the PLAIN primary client is always tried
+        /// first (the standard Tizen Mono transport path); any MANAGED
+        /// failure (trust failure, chain error, transport error) retries
+        /// once through the certificate-bypass client. If both fail the
+        /// fallback's exception surfaces to the caller unchanged.
+        /// </summary>
+        private static async Task<string> GetStringWithTlsFallbackAsync(
+            HttpClient primary, HttpClient fallback, string url, string what)
+        {
+            try
+            {
+                return await primary.GetStringAsync(url);
+            }
+            catch (Exception primaryEx)
+            {
+                Log.Warn(LogTag, $"{what}: primary (plain TLS) failed — {primaryEx.GetType().Name}: {primaryEx.Message}; retrying with TLS bypass");
+                return await fallback.GetStringAsync(url);
+            }
+        }
+
         /// <summary>Identifies the native TV app to CDN/WAF edges that drop
         /// UA-less requests.</summary>
-        private const string UserAgentValue = "MaveroTV/0.0.2 (Tizen; SmartTV)";
+        private const string UserAgentValue = "MaveroTV/0.0.3 (Tizen; SmartTV)";
 
         /// <summary>Stamps the User-Agent on a client (TryAdd — never throws on
         /// a profile with restricted header validation).</summary>
@@ -158,14 +214,24 @@ namespace MaveroTv
         }
 
         /// <summary>
-        /// Fetches the home rails. Returns an empty list when the API is
-        /// unreachable or reports a catalog outage (ok:false) — the UI
-        /// keeps its honest empty state, never fake data.
+        /// Fetches the RAW home-rails JSON body (no parsing). Split from the
+        /// parse step so the boot console can log the exact boundary
+        /// "[BOOT 5/6] Network response received (N chars) -> Parsing JSON..."
+        /// between transport and deserialization on a field TV.
+        /// Throws on transport failure — the caller handles the outage.
         /// </summary>
-        public async Task<List<TvRail>> FetchHomeRailsAsync()
+        public async Task<string> FetchHomeJsonAsync()
         {
-            string json = await _client.GetStringAsync(TvHomeUrl);
+            return await GetStringWithTlsFallbackAsync(_client, _tlsClient, TvHomeUrl, "TV home");
+        }
 
+        /// <summary>
+        /// Parses the home-rails JSON into rails. Pure managed work, fully
+        /// defensive: malformed/empty bodies degrade to an empty list, never
+        /// a NullReference/JsonReader escape onto the caller.
+        /// </summary>
+        public List<TvRail> ParseHomeRails(string json)
+        {
             TvHomeResponse response;
             try
             {
@@ -173,8 +239,6 @@ namespace MaveroTv
             }
             catch (Exception ex)
             {
-                // Malformed/empty body must degrade to the honest empty state,
-                // never a NullReference/JsonReader escape onto the caller.
                 Log.Warn(LogTag, "TV home payload unparsable: " + ex.Message);
                 return new List<TvRail>();
             }
@@ -198,7 +262,7 @@ namespace MaveroTv
             string segment = DetailSegmentFor(item);
             string url = $"{ContentBaseUrl}/api/content/{segment}/{Uri.EscapeDataString(item.Id ?? string.Empty)}";
 
-            string json = await _client.GetStringAsync(url);
+            string json = await GetStringWithTlsFallbackAsync(_client, _tlsClient, url, "detail");
 
             ContentDetailResponse response;
             try
@@ -236,7 +300,7 @@ namespace MaveroTv
             string url = $"{ContentBaseUrl}/api/content/series/" +
                 $"{Uri.EscapeDataString(contentId ?? string.Empty)}/season/{seasonNumber}";
 
-            string json = await _client.GetStringAsync(url);
+            string json = await GetStringWithTlsFallbackAsync(_client, _tlsClient, url, "season");
 
             SeasonResponse response;
             try
@@ -279,7 +343,7 @@ namespace MaveroTv
         {
             string url = $"{SearchUrl}?q={Uri.EscapeDataString(query ?? string.Empty)}";
 
-            string json = await _client.GetStringAsync(url);
+            string json = await GetStringWithTlsFallbackAsync(_client, _tlsClient, url, "search");
 
             SearchResponse response;
             try
@@ -311,7 +375,7 @@ namespace MaveroTv
         /// </summary>
         public async Task<StreamingSourceList> FetchStreamingSourcesAsync(string mediaType)
         {
-            string json = await _client.GetStringAsync(StreamingConfigUrl);
+            string json = await GetStringWithTlsFallbackAsync(_client, _tlsClient, StreamingConfigUrl, "streaming config");
 
             StreamingConfigResponse response;
             try
@@ -536,7 +600,7 @@ namespace MaveroTv
                 url.Append("&episode=").Append(episode.Value);
             }
 
-            string json = await _addonClient.GetStringAsync(url.ToString());
+            string json = await GetStringWithTlsFallbackAsync(_addonClient, _addonTlsClient, url.ToString(), "addon streams");
 
             AddonStreamsResponse response;
             try

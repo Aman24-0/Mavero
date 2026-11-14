@@ -23,9 +23,12 @@
 // case the panel degrades to a bare black screen + text. Every NUI
 // touch is wrapped; a failure inside Report logs and returns.
 //
-// Threading: callers may sit on any thread. All NUI work is posted
-// through UiDispatcher; the overlay itself must be created on the
-// DALi thread (guarded, on the UI thread inside the posted closure).
+// Threading: callers may sit on any thread. When the caller IS the DALi
+// thread the overlay is built inline (also the pump-less fallback: if
+// boot fails BEFORE UiDispatcher.Initialize() ran, a Post() would land
+// in a queue nobody drains and the panel would never appear — the exact
+// silent-boot-kill this file exists to prevent); otherwise the NUI work
+// is posted through UiDispatcher.
 // ============================================================
 using System;
 using System.Text;
@@ -72,19 +75,44 @@ namespace MaveroTv
             Log.Error(MaveroApp.LogTag,
                 $"DIAGNOSTICS ({context ?? "runtime"}): {ex.GetType().FullName}: {ex.Message}\n{ex.StackTrace}");
 
-            UiDispatcher.Post(() =>
+            if (UiDispatcher.IsOnUiThread)
             {
-                try
+                if (UiDispatcher.IsInitialized)
                 {
-                    ShowOverlay(ex, context, retry);
+                    // Already the DALi thread AND the pump is live: still Post,
+                    // never build inline. The overlay must be constructed AND
+                    // focused on a LATER pump pass — building + focusing a
+                    // freshly-added view tree on the current pass aborts
+                    // natively on real TV hardware (FocusManager vs an
+                    // un-laid-out view). One pump pass later is safe.
+                    UiDispatcher.Post(() => SafeShowOverlay(ex, context, retry));
+                    return;
                 }
-                catch (Exception inner)
-                {
-                    // The reporter itself must never kill the app.
-                    Log.Error(MaveroApp.LogTag,
-                        "Diagnostics overlay failed: " + inner.GetType().FullName + ": " + inner.Message);
-                }
-            });
+
+                // Pump-less boot edge case (OnCreate failed before the pump
+                // could start): inline is the only channel that can ever show
+                // this panel — a Post() would strand in the queue forever.
+                // Best-effort focus (guarded); dlog above is the backup log.
+                SafeShowOverlay(ex, context, retry);
+                return;
+            }
+
+            UiDispatcher.Post(() => SafeShowOverlay(ex, context, retry));
+        }
+
+        /// <summary>Guarded overlay build — the reporter must never kill the app.</summary>
+        private static void SafeShowOverlay(Exception ex, string context, Action retry)
+        {
+            try
+            {
+                ShowOverlay(ex, context, retry);
+            }
+            catch (Exception inner)
+            {
+                // The reporter itself must never kill the app.
+                Log.Error(MaveroApp.LogTag,
+                    "Diagnostics overlay failed: " + inner.GetType().FullName + ": " + inner.Message);
+            }
         }
 
         /// <summary>Non-fatal variant (queued-bind failures, player hiccups...):
@@ -145,13 +173,43 @@ namespace MaveroTv
             });
             _window.Add(_overlay);
 
-            try
+            // Keep the boot console readable above the panel: the stack trace
+            // AND the last [BOOT k/6] line together pinpoint a native crash.
+            BootLog.RaiseToTop();
+
+            // Focus the RETRY/CLOSE button AFTER the panel has rendered: the
+            // overlay was just added to the window, and focusing an
+            // un-laid-out view aborts natively on real TV hardware (the same
+            // trap as the home rail focus handoff — a ~120ms render lead
+            // fixes it). Pump-less inline path: best-effort immediate focus.
+            DiagnosticOverlay overlayForFocus = _overlay;
+            if (UiDispatcher.IsInitialized)
             {
-                _overlay.FocusRetryButton();
+                UiDispatcher.PostDelayed(() =>
+                {
+                    try
+                    {
+                        if (overlayForFocus != null)
+                        {
+                            overlayForFocus.FocusRetryButton();
+                        }
+                    }
+                    catch (Exception focusEx)
+                    {
+                        Log.Warn(MaveroApp.LogTag, "Diagnostics focus failed: " + focusEx.Message);
+                    }
+                }, 120);
             }
-            catch (Exception focusEx)
+            else
             {
-                Log.Warn(MaveroApp.LogTag, "Diagnostics focus failed: " + focusEx.Message);
+                try
+                {
+                    _overlay.FocusRetryButton();
+                }
+                catch (Exception focusEx)
+                {
+                    Log.Warn(MaveroApp.LogTag, "Diagnostics focus failed: " + focusEx.Message);
+                }
             }
         }
 

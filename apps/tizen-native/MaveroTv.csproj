@@ -51,7 +51,7 @@
     <TargetFramework>tizen60</TargetFramework>
     <AssemblyName>MaveroTv</AssemblyName>
     <RootNamespace>MaveroTv</RootNamespace>
-    <Version>0.0.2</Version>
+    <Version>0.0.3</Version>
     <!-- The explicit Tizen.NET reference below is REQUIRED by the classic
          tizen60 TFM (Tizen.NET.Sdk 1.1.9 predates implicit TizenFX refs;
          Samsung's tizen build-cs expects it). NETSDK1023 is emitted only by

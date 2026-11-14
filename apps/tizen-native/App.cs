@@ -93,6 +93,11 @@ namespace MaveroTv
         private PlayerPage _playerPage;
         private MediaItem _detailItem;
 
+        /// <summary>Shared API client — created in BOOT STAGE 2 (after the
+        /// boot console exists) so a crash during HttpClient/TLS setup is
+        /// pinpointed on screen instead of dying silently.</summary>
+        private ApiService _apiService;
+
         /// <summary>The screen (Home, Search or My List) the Detail page was
         /// opened from — Back returns to it and restores its focus.</summary>
         private View _detailReturnPage;
@@ -109,11 +114,17 @@ namespace MaveroTv
             //      back on the DALi thread through UiDispatcher's pump, so
             //      post-await UI mutations can never land on the thread pool
             //      (the classic silent SIGSEGV on TV hardware).
-            //   2. Register the window with Diagnostics — every caught failure
+            //   2. Start the dispatcher pump — ONE persistent Tizen.NUI.Timer
+            //      created + started HERE on the DALi thread; background
+            //      threads only ConcurrentQueue.Enqueue (zero native calls).
+            //      Starting it BEFORE anything risky also guarantees that
+            //      every Diagnostics.Report below can actually render.
+            //   3. Register the window with Diagnostics — every caught failure
             //      renders on screen (the field TV has no sdb / dlog access).
             UiSynchronizationContext.Install();
             _window = GetDefaultWindow();
             Diagnostics.Initialize(_window);
+            UiDispatcher.Initialize();
 
             try
             {
@@ -125,15 +136,28 @@ namespace MaveroTv
                 _window.BackgroundColor = Theme.Background;
                 _window.KeyEvent += OnKeyEvent;
 
-                Log.Info(LogTag, "Mavero TV boot: default window ready, mounting HomePage");
+                Log.Info(LogTag, "Mavero TV boot: default window ready, staging boot console");
 
-                _homePage = new HomePage();
-                _homePage.ItemSelected += OnItemSelected;
-                _homePage.SearchRequested += OnSearchRequested;
-                _homePage.MyListRequested += OnMyListRequested;
-                _window.Add(_homePage);
+                // LIVE BOOT CONSOLE: paints a bottom-strip log on the TV and
+                // runs the risky boot steps in staged 150ms ticks — each
+                // step's [BOOT k/6] line renders on screen BEFORE its code
+                // executes, so a NATIVE crash (SIGSEGV/SIGABRT — invisible to
+                // every managed handler) still leaves the culprit's line on
+                // the screen. The TV is the log; a photo of it suffices.
+                BootLog.Initialize(_window);
 
-                Log.Info(LogTag, "Mavero TV boot: HomePage mounted");
+                BootStage[] stages = new BootStage[]
+                {
+                    new BootStage("[BOOT 1/6] Window & Dispatcher initialized",
+                        BootStage1_Confirm),
+                    new BootStage("[BOOT 2/6] Creating ApiService & HttpClient (plain TLS first)...",
+                        BootStage2_CreateApi),
+                    new BootStage("[BOOT 3/6] Constructing HomePage shell (Header & Empty Layout)...",
+                        BootStage3_BuildShell),
+                    new BootStage("[BOOT 4/6] Starting network fetch (Home feed)...",
+                        BootStage4_StartFetch),
+                };
+                BootLog.RunStages(stages);
             }
             catch (Exception ex)
             {
@@ -142,6 +166,52 @@ namespace MaveroTv
                 // this works even if the res/ payload is broken).
                 Diagnostics.Report(ex, "startup", null);
             }
+        }
+
+        // ---- staged boot steps (BootLog.RunStages calls these) ---------------
+
+        /// <summary>Stage 1 — confirms the synchronous pre-console boot (window,
+        /// sync context, dispatcher pump, session restore) on screen.</summary>
+        private void BootStage1_Confirm()
+        {
+            Log.Info(LogTag, "Mavero TV boot: stage 1 — window + dispatcher ready");
+        }
+
+        /// <summary>Stage 2 — HttpClient/TLS setup in isolation. A native abort
+        /// here (TLS/handler profile issue on Tizen Mono) leaves
+        /// "[BOOT 2/6] ..." as the last console line on screen.</summary>
+        private void BootStage2_CreateApi()
+        {
+            _apiService = new ApiService();
+            Log.Info(LogTag, "Mavero TV boot: stage 2 — ApiService + HttpClient created");
+        }
+
+        /// <summary>Stage 3 — the HomePage SHELL only (header, rails host, status
+        /// label; no network). A native abort during NUI construction leaves
+        /// "[BOOT 3/6] ..." as the last console line on screen.</summary>
+        private void BootStage3_BuildShell()
+        {
+            _homePage = new HomePage(_apiService);
+            _homePage.ItemSelected += OnItemSelected;
+            _homePage.SearchRequested += OnSearchRequested;
+            _homePage.MyListRequested += OnMyListRequested;
+            _window.Add(_homePage);
+
+            // Window children stack in add order: HomePage (added LAST) would
+            // cover the boot console with its opaque background. Raise the
+            // console back on top so stages 4-6 stay visible.
+            BootLog.RaiseToTop();
+
+            Log.Info(LogTag, "Mavero TV boot: stage 3 — HomePage shell mounted");
+        }
+
+        /// <summary>Stage 4 — starts the home-feed pipeline; its network-paced
+        /// continuations report BOOT 5/6 (response + parse) and BOOT 6/6
+        /// (MediaCard bind) on the console as they happen.</summary>
+        private void BootStage4_StartFetch()
+        {
+            _homePage.BeginFetch();
+            Log.Info(LogTag, "Mavero TV boot: stage 4 — home fetch started");
         }
 
         // ---- screen navigation --------------------------------------------

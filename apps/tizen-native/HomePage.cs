@@ -32,7 +32,9 @@
 //
 // Threading: the API fetch completes on the thread pool; rail
 // binding is marshaled back through UiDispatcher (DALi objects are
-// only touched on the UI thread).
+// only touched on the UI thread). Boot is STAGED by App.cs/BootLog:
+// this page builds its shell in one boot stage and starts the fetch
+// only when App calls BeginFetch() from a later stage.
 //
 // API 6 notes (verified against the TizenFX 6.0.0.14995 refs):
 //   - Positioning uses the modern pivot pattern (API5+):
@@ -68,7 +70,7 @@ namespace MaveroTv
         private const string StatusUnavailable = "Content unavailable - check the network connection";
         private const string StatusEmpty = "No content available right now";
 
-        private readonly ApiService _api = new ApiService();
+        private readonly ApiService _api;
         private readonly List<RailSection> _sections = new List<RailSection>();
 
         private ScrollView _pageScroll;
@@ -104,8 +106,17 @@ namespace MaveroTv
         /// <summary>Header MY LIST pill — the entry point to My List / Login.</summary>
         private FocusButton _listButton;
 
-        public HomePage()
+        /// <summary>
+        /// Builds the page SHELL only (header, rails host, status). The
+        /// ApiService is created by App.OnCreate in an earlier boot stage
+        /// and injected here; the network fetch starts ONLY when App calls
+        /// <see cref="BeginFetch"/> from a later boot stage — so the boot
+        /// console can show exactly which stage the TV dies in.
+        /// </summary>
+        public HomePage(ApiService api)
         {
+            _api = api;
+
             Size2D = new Size2D(Theme.ScreenWidth, Theme.ScreenHeight);
             BackgroundColor = Theme.Background;
             PivotPoint = Theme.TopLeftPivot;
@@ -116,10 +127,13 @@ namespace MaveroTv
 
             _status = CreateStatus();
             Add(_status);
+        }
 
-            // The pump must be created on the UI thread, before any
-            // background continuation can Post rail binding to it.
-            UiDispatcher.Start();
+        /// <summary>Boot stage 4 entry (and diagnostics RETRY): shows the
+        /// loading status and starts the home-feed pipeline.</summary>
+        public void BeginFetch()
+        {
+            ShowStatus(StatusLoading);
             _ = LoadRailsAsync();
         }
 
@@ -233,33 +247,55 @@ namespace MaveroTv
         /// home fetch/bind re-runs this pipeline from the top).</summary>
         public void ReloadRails()
         {
-            ShowStatus(StatusLoading);
-            _ = LoadRailsAsync();
+            BeginFetch();
         }
 
         private async Task LoadRailsAsync()
         {
             try
             {
-                List<TvRail> rails = await _api.FetchHomeRailsAsync();
+                string json = await _api.FetchHomeJsonAsync();
+
+                // Boot console step 5/6: the transport boundary — the raw
+                // body arrived; parsing is next (pure managed, guarded).
+                BootLog.Step($"[BOOT 5/6] Network response received ({(json != null ? json.Length : 0)} chars) -> Parsing JSON...");
+
+                List<TvRail> rails = _api.ParseHomeRails(json);
                 Log.Info(ApiService.LogTag, $"TV home fetched — {rails.Count} rail(s); binding on UI thread");
-                UiDispatcher.Post(() => BindRailsGuarded(rails));
+
+                // Boot console step 6/6: the console line renders BEFORE the
+                // MediaCard bind (the riskiest NUI construction of the app)
+                // thanks to the 120ms render lead inside StepBefore.
+                UiDispatcher.Post(() =>
+                {
+                    BootLog.StepBefore("[BOOT 6/6] Populating MediaCards into UI...",
+                        () => BindRailsGuarded(rails, delegate { BootLog.Complete(); }));
+                });
             }
             catch (Exception ex)
             {
                 Log.Error(ApiService.LogTag, $"TV home fetch failed: {ex.Message}");
-                UiDispatcher.Post(() => ShowStatus(StatusUnavailable));
+                BootLog.Step("[BOOT] home fetch failed: " + ex.GetType().Name + ": " + ex.Message);
+                UiDispatcher.Post(() =>
+                {
+                    ShowStatus(StatusUnavailable);
+                    BootLog.Complete();
+                });
             }
         }
 
         /// <summary>Bind wrapper: a bind exception becomes the on-screen
         /// diagnostics panel with a working RETRY (never a silent exit —
         /// this path runs right after boot on real TV hardware).</summary>
-        private void BindRailsGuarded(List<TvRail> rails)
+        private void BindRailsGuarded(List<TvRail> rails, Action onBound)
         {
             try
             {
                 BindRails(rails);
+                if (onBound != null)
+                {
+                    onBound();
+                }
             }
             catch (Exception ex)
             {
@@ -326,14 +362,16 @@ namespace MaveroTv
                 }
 
                 // TV-SAFE FOCUS HANDOFF: never call SetCurrentFocusView on
-                // the same pump tick that built the card tree — on real TV
+                // the same pump pass that built the card tree — on real TV
                 // hardware the freshly-added views have not been laid out
-                // yet and the focus algorithm can abort natively. One pump
-                // tick (~50ms) later a frame has rendered and focus lands
-                // deterministically. Guarded + fenced so a user who already
-                // navigated away cannot re-focus a dead view.
+                // yet and the focus algorithm can abort natively. The
+                // PostDelayed one-shot Timer is created ON the DALi thread
+                // by the pump (zero native calls from any background
+                // thread), and the ~120ms lead lets DALi render + lay out
+                // the card tree first. Guarded + fenced so a user who
+                // already navigated away cannot re-focus a dead view.
                 MediaCard focusTarget = firstCard;
-                UiDispatcher.Post(() =>
+                UiDispatcher.PostDelayed(() =>
                 {
                     try
                     {
@@ -346,7 +384,7 @@ namespace MaveroTv
                     {
                         Log.Warn(ApiService.LogTag, "Initial focus failed: " + ex.Message);
                     }
-                });
+                }, 120);
             }
         }
 

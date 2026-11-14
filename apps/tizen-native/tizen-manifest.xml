@@ -7,7 +7,7 @@
 <manifest xmlns="http://tizen.org/ns/packages"
           api-version="6.0"
           package="org.mavero.tv"
-          version="0.0.2"
+          version="0.0.3"
           install-location="internal-only">
     <profile name="tv" />
     <ui-application appid="org.mavero.tv"
