@@ -82,7 +82,7 @@ namespace MaveroTv
         {
             PropertyMap map = new PropertyMap();
             map.Insert(Visual.Property.Type, new PropertyValue((int)Visual.Type.Image));
-            map.Insert(ImageVisualProperty.URL, new PropertyValue(Theme.CardBgAsset));
+            map.Insert(ImageVisualProperty.URL, new PropertyValue(Theme.AssetUrl(Theme.CardBgAsset)));
             map.Insert(ImageVisualProperty.Border, new PropertyValue(new Vector4(
                 Theme.CardPatchBorder, Theme.CardPatchBorder, Theme.CardPatchBorder, Theme.CardPatchBorder)));
             return map;
@@ -112,7 +112,7 @@ namespace MaveroTv
                 PivotPoint = Theme.TopLeftPivot,
                 PositionUsesPivotPoint = true,
                 ResourceUrl = _episode.Still,
-                AlphaMaskURL = Theme.EpisodeMaskAsset,
+                AlphaMaskURL = Theme.AssetUrl(Theme.EpisodeMaskAsset),
                 FittingMode = FittingModeType.ScaleToFill,
                 DesiredWidth = Theme.EpisodeCardWidth * 2,   // decode at 2x for crisp downscale
                 DesiredHeight = Theme.EpisodeCardHeight * 2
@@ -157,7 +157,7 @@ namespace MaveroTv
         {
             PropertyMap map = new PropertyMap();
             map.Insert(Visual.Property.Type, new PropertyValue((int)Visual.Type.Image));
-            map.Insert(ImageVisualProperty.URL, new PropertyValue(Theme.ScrimAsset));
+            map.Insert(ImageVisualProperty.URL, new PropertyValue(Theme.AssetUrl(Theme.ScrimAsset)));
             map.Insert(ImageVisualProperty.Border, new PropertyValue(new Vector4(
                 Theme.ScrimPatchBorderX, 0f, Theme.ScrimPatchBorderX, 0f)));
 
@@ -194,7 +194,7 @@ namespace MaveroTv
         {
             PropertyMap map = new PropertyMap();
             map.Insert(Visual.Property.Type, new PropertyValue((int)Visual.Type.Image));
-            map.Insert(ImageVisualProperty.URL, new PropertyValue(Theme.CardFocusAsset));
+            map.Insert(ImageVisualProperty.URL, new PropertyValue(Theme.AssetUrl(Theme.CardFocusAsset)));
             map.Insert(ImageVisualProperty.Border, new PropertyValue(new Vector4(
                 Theme.FocusPatchBorder, Theme.FocusPatchBorder, Theme.FocusPatchBorder, Theme.FocusPatchBorder)));
 

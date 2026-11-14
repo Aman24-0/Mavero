@@ -100,6 +100,8 @@ namespace MaveroTv
         {
             base.OnCreate();
 
+            Log.Info(LogTag, "Mavero TV boot: OnCreate entered");
+
             // Restore the persisted session (secure store, file fallback)
             // BEFORE any page mounts — DetailPage builds its My List pill
             // from AuthSession at construction time.
@@ -109,11 +111,15 @@ namespace MaveroTv
             _window.BackgroundColor = Theme.Background;
             _window.KeyEvent += OnKeyEvent;
 
+            Log.Info(LogTag, "Mavero TV boot: default window ready, mounting HomePage");
+
             _homePage = new HomePage();
             _homePage.ItemSelected += OnItemSelected;
             _homePage.SearchRequested += OnSearchRequested;
             _homePage.MyListRequested += OnMyListRequested;
             _window.Add(_homePage);
+
+            Log.Info(LogTag, "Mavero TV boot: HomePage mounted");
         }
 
         // ---- screen navigation --------------------------------------------

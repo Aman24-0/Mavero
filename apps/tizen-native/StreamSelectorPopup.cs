@@ -90,7 +90,7 @@ namespace MaveroTv
         {
             PropertyMap surface = new PropertyMap();
             surface.Insert(Visual.Property.Type, new PropertyValue((int)Visual.Type.Image));
-            surface.Insert(ImageVisualProperty.URL, new PropertyValue(Theme.CardBgAsset));
+            surface.Insert(ImageVisualProperty.URL, new PropertyValue(Theme.AssetUrl(Theme.CardBgAsset)));
             surface.Insert(ImageVisualProperty.Border, new PropertyValue(new Vector4(
                 Theme.CardPatchBorder, Theme.CardPatchBorder, Theme.CardPatchBorder, Theme.CardPatchBorder)));
 

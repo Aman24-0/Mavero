@@ -449,7 +449,16 @@ namespace MaveroTv
         /// <summary>Alpha of the full-screen scrim behind a popup.</summary>
         public const float PopupScrimAlpha = 0.72f;
 
-        // ---- Packed assets (Content items in MaveroTv.csproj) ----
+        // ---- Packed assets (files under res/, packed into the tpk res/ dir) ----
+        //
+        // Why the names are bare and AssetUrl() must be used everywhere:
+        // Tizen.NET.Sdk packaging copies the project's res/ folder into the
+        // tpk res/ directory, and at runtime Tizen resolves images only via
+        // the ABSOLUTE Application.Current.DirectoryInfo.Resource path (the
+        // same pattern Samsung's own TV samples use). Bare relative URLs
+        // ("card-bg.png") are not resolved reliably by the DALi image
+        // loader on all profiles — passing them would silently render no
+        // visual at all.
 
         public const string CardBgAsset = "card-bg.png";
         public const string CardFocusAsset = "card-focus.png";
@@ -459,6 +468,23 @@ namespace MaveroTv
         public const string HeroScrimAsset = "hero-scrim.png";
         public const string ButtonIdleAsset = "button-idle.png";
         public const string ButtonActiveAsset = "button-active.png";
+
+        /// <summary>
+        /// Absolute resource URL for a packed asset: app's res/ dir + file
+        /// name. The Tizen DirectoryInfo.Resource property ends with a
+        /// slash (Samsung's samples concatenate directly); the trailing
+        /// slash is normalized defensively so the helper is stable even if
+        /// the platform omits it.
+        /// </summary>
+        public static string AssetUrl(string fileName)
+        {
+            string resDir = Tizen.Applications.Application.Current.DirectoryInfo.Resource;
+            if (string.IsNullOrEmpty(resDir))
+            {
+                return fileName;
+            }
+            return resDir.EndsWith("/") ? resDir + fileName : resDir + "/" + fileName;
+        }
 
         // ---- Pivots ----
 

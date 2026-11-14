@@ -41,6 +41,19 @@
 #   as a Library (tizen-manifest.xml exec="MaveroTv.dll" expects the
 #   managed-dll entry shape), so the flag must be passed explicitly.
 #
+#   Self-contained tpk contract (verified in the "Verify the .tpk" step):
+#   Tizen.NET.Sdk 1.1.9 packs only the project's res/, lib/, shared/
+#   folders plus the publish output into the tpk — <Content> items are
+#   silently ignored. That is why the UI assets MUST live in
+#   apps/tizen-native/res/*.png (→ tpk res/) and the launcher icon in
+#   apps/tizen-native/shared/res/MaveroTv.png (→ tpk shared/res/, where
+#   the manifest <icon> is resolved from). A tpk missing them installs
+#   but boots into an invisible app. The build step fails if any of the
+#   8 res/ assets, the icon, MaveroTv.dll or Newtonsoft.Json.dll is
+#   absent. Note: classic tizen60 tpks are pure managed IL — no
+#   RuntimeIdentifier/arch slicing; the same tpk runs on the x86
+#   emulator and ARM hardware via the platform's mono runtime.
+#
 # Certificates for retail TVs:
 #   A tpk signed with the dummy author + Samsung TEST distributor cert does
 #   NOT install on a retail Tizen TV — Samsung verifies the distributor
@@ -198,18 +211,32 @@ jobs:
             "/p:AuthorPath=$AUTHOR_PATH" "/p:AuthorPass=$AUTHOR_PASS" \
             "/p:DistributorPath=$DIST_PATH" "/p:DistributorPass=$DIST_PASS"
 
-      # Fail fast with a readable error if packaging produced nothing.
+      # Fail fast with a readable error if packaging produced anything
+      # less than a fully self-contained tpk: manifest, managed entry
+      # assembly, every NuGet dependency, ALL res/ UI assets, the
+      # launcher icon, and both signatures. Each grep exits non-zero
+      # (set -e) when the file is missing, naming the gap.
       - name: Verify the .tpk
         run: |
           set -euo pipefail
           TPK="$(ls apps/tizen-native/bin/Release/tizen60/*.tpk)"
           echo "Artifact: $TPK"
           test -s "$TPK"
-          unzip -l "$TPK" | tee /dev/stderr | grep -q "tizen-manifest.xml"
-          unzip -l "$TPK" | grep -q "bin/MaveroTv.dll"
-          unzip -l "$TPK" | grep -q "author-signature.xml"
-          unzip -l "$TPK" | grep -q "signature1.xml"
-          echo "tpk verified: manifest, managed entry assembly, author + distributor signatures all present"
+          LIST="$(mktemp)"
+          unzip -l "$TPK" | tee "$LIST" | tee /dev/stderr | grep -q "tizen-manifest.xml"
+          grep -q "bin/MaveroTv.dll" "$LIST"
+          grep -q "bin/Newtonsoft.Json.dll" "$LIST"
+          grep -q "author-signature.xml" "$LIST"
+          grep -q "signature1.xml" "$LIST"
+          # Launcher icon (resolved from shared/res/ by the manifest <icon>)
+          grep -q "shared/res/MaveroTv.png" "$LIST"
+          # Every UI asset the code loads via Theme.AssetUrl()
+          for asset in card-bg card-focus scrim poster-mask episode-mask \
+                       hero-scrim button-idle button-active; do
+            grep -q "res/${asset}.png" "$LIST" || {
+              echo "MISSING tpk payload: res/${asset}.png"; exit 1; }
+          done
+          echo "tpk verified: manifest, managed entry assembly, dependencies, launcher icon, all 8 res/ UI assets, author + distributor signatures all present"
 
       - name: Upload .tpk artifact
         uses: actions/upload-artifact@v4

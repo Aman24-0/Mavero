@@ -436,7 +436,7 @@ namespace MaveroTv
 
             PropertyMap map = new PropertyMap();
             map.Insert(Visual.Property.Type, new PropertyValue((int)Visual.Type.Image));
-            map.Insert(ImageVisualProperty.URL, new PropertyValue(Theme.HeroScrimAsset));
+            map.Insert(ImageVisualProperty.URL, new PropertyValue(Theme.AssetUrl(Theme.HeroScrimAsset)));
             map.Insert(ImageVisualProperty.Border, new PropertyValue(new Vector4(
                 Theme.HeroPatchBorderX, 0f, Theme.HeroPatchBorderX, 0f)));
 

@@ -11,9 +11,41 @@
          on our target hardware (Tizen 6.0 TV) the classic tizen60 TFM
          with TizenFX API6 is the only workable choice.
 
+       Why there is NO RuntimeIdentifier (emulator vs device):
+         The classic tizen60 toolchain (Tizen.NET.Sdk 1.1.x) has no
+         RID concept at all — verified in the Sdk's props/targets, which
+         contain no RuntimeIdentifier/tizen-x86/tizen-armel anywhere.
+         The tpk payload is pure managed IL plus resources, executed by
+         the mono runtime that ships with the platform: x86 on the TV
+         emulator, ARM on real hardware. Arch-specific RIDs
+         (<RuntimeIdentifier>tizen-x86</RuntimeIdentifier>) belong to
+         the net6.0-tizen+ AOT toolchain only, which TV 6.0 cannot run.
+
+       Resources — where the visuals actually come from:
+         Tizen.NET.Sdk 1.1.9 packs ONLY the project's res/, lib/ and
+         shared/ folders (plus the publish output) into the tpk;
+         <Content Include> items at the project root are silently
+         ignored (verified against the Sdk's Packaging.targets and by
+         unzipping a built tpk — res/ and shared/res/ were empty and
+         the app rendered with no visuals at all). The layout that
+         works:
+           res/*.png           UI assets (9-patch surfaces, masks,
+                               scrims) — packed to tpk res/, loaded at
+                               runtime via Theme.AssetUrl() =
+                               DirectoryInfo.Resource + file name
+                               (Samsung's own TV-sample pattern; bare
+                               relative URLs are not reliably resolved
+                               by the DALi image loader)
+           shared/res/*.png    launcher icon(s) — the location the
+                               manifest <icon> entry is resolved from
+         Do NOT move these files back to the project root.
+
        Build: requires the Tizen .NET toolchain (Tizen Studio / Visual
-       Studio Tizen workload). `tizen build-cs` produces the .tpk signed
-       with a Samsung distributor certificate for on-device install.
+       Studio Tizen workload, or plain `dotnet build` — the Tizen.NET.Sdk
+       NuGet package carries default author/distributor certificates for
+       CI-style builds). The build output
+       bin/Release/tizen60/org.mavero.tv-<version>.tpk installs on the
+       Tizen TV emulator and on device.
        ============================================================ -->
   <PropertyGroup>
     <TargetFramework>tizen60</TargetFramework>
@@ -29,36 +61,16 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- All TizenFX API 6 reference assemblies, incl. Tizen.NUI. -->
+    <!-- All TizenFX API 6 reference assemblies, incl. Tizen.NUI.
+         Framework assemblies are provided by the platform runtime and
+         are NOT packed into the tpk; only MaveroTv.dll and the
+         third-party dependencies below are. -->
     <PackageReference Include="Tizen.NET" Version="6.0.0.14995" />
     <!-- JSON parsing. The Tizen v2.1 profile is netstandard2.0-based and
          does not bundle System.Text.Json, so we use the ecosystem-standard
-         Newtonsoft.Json (Samsung's own Tizen samples use it). -->
+         Newtonsoft.Json (Samsung's own Tizen samples use it). The Tizen
+         SDK packs NuGet dependency assemblies into the tpk bin/ folder. -->
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <!-- App assets referenced by tizen-manifest.xml (launcher icon) and
-         the visuals in MediaCard.cs / EpisodeCard.cs / HomePage.cs /
-         DetailPage.cs / FocusButton.cs / SearchPage.cs:
-           MaveroTv.png       launcher icon
-           card-bg.png        9-patch rounded card surface (#161616)
-           card-focus.png     9-patch cyan focus ring
-           scrim.png          9-patch bottom scrim ramp (card title readability)
-           poster-mask.png    alpha mask rounding the 2:3 poster corners
-           episode-mask.png   alpha mask rounding the 16:9 episode still corners
-           hero-scrim.png     9-patch bottom fade under the detail backdrop
-           button-idle.png    9-patch dark rounded button surface
-           button-active.png  9-patch cyan rounded button surface (focused Play) -->
-    <Content Include="MaveroTv.png" />
-    <Content Include="card-bg.png" />
-    <Content Include="card-focus.png" />
-    <Content Include="scrim.png" />
-    <Content Include="poster-mask.png" />
-    <Content Include="episode-mask.png" />
-    <Content Include="hero-scrim.png" />
-    <Content Include="button-idle.png" />
-    <Content Include="button-active.png" />
   </ItemGroup>
 
 </Project>
