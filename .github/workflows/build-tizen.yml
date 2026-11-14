@@ -1,0 +1,220 @@
+# MAVERO TV — signed .tpk build on GitHub Actions (2026-11).
+#
+# Local Tizen Studio builds were abandoned: the SDK download and package
+# management are too slow/painful to maintain on a dev machine. This workflow
+# produces the installable `org.mavero.tv-<version>.tpk` on every push to main
+# (and on demand via workflow_dispatch) and uploads it as a build artifact.
+#
+# Pipeline shape (every command below was validated end-to-end against a
+# real Tizen Studio 6.1 CLI install before this workflow was committed):
+#
+#   1. Tizen Studio 6.1 CLI installer (download.tizen.org) -> silent install
+#      into <workspace>/tizen-studio. The installer REFUSES target paths
+#      outside $HOME ("Install target is not valid" -> exit 7), so the
+#      install directory must stay inside $GITHUB_WORKSPACE (which lives
+#      under /home/runner). It also insists the directory already exists,
+#      hence the mkdir first. No extra apt packages are needed on
+#      ubuntu-24.04: the installer bundles its own Corretto JDK 8 for the
+#      package-manager tooling.
+#   2. Author certificate generated with the Tizen CLI itself
+#      (`tizen certificate`) — a throwaway CI identity, per the dummy-cert
+#      requirement. It lands in the Tizen data dir reported by
+#      sdk.info (TIZEN_SDK_DATA_PATH — the installer places it next to the
+#      install dir when the CWD is under $HOME).
+#   3. Distributor certificate: Tizen Studio ships a permanent test signer
+#      at tools/certificate-generator/certificates/distributor/
+#      tizen-distributor-signer.p12 (password: tizenpkcs12passfordsigner —
+#      the well-known Samsung SDK test credential). We sign against that.
+#   4. Build + package + sign: `dotnet build` with the Tizen.NET.Sdk
+#      targets (same NuGet SDK that `tizen build-cs` shells out to
+#      internally — build-cs literally runs `dotnet restore`/`dotnet build`
+#      on this csproj). The classic `tizen build-cs` command itself is NOT
+#      usable in CI: its signing step unconditionally opens an interactive
+#      "Author password:" console prompt and hard-crashes with a
+#      NullPointerException on non-TTY stdin (ConsolePrompter.password,
+#      observed on Tizen CLI 2.5.25 / Tizen Studio 6.1). The dotnet route
+#      performs the identical packaging/signing through
+#      Tizen.NET.Build.Tasks + BouncyCastle with zero interactivity.
+#
+#   /p:TizenCreateTpkOnBuild=true is REQUIRED: the Sdk only auto-creates
+#   the tpk when OutputType is Exe, but MaveroTv.csproj deliberately builds
+#   as a Library (tizen-manifest.xml exec="MaveroTv.dll" expects the
+#   managed-dll entry shape), so the flag must be passed explicitly.
+#
+# Certificates for retail TVs:
+#   A tpk signed with the dummy author + Samsung TEST distributor cert does
+#   NOT install on a retail Tizen TV — Samsung verifies the distributor
+#   chain against the device DUID. When you are ready to install on real
+#   hardware, create the real certificates once (Tizen Studio Certificate
+#   Manager with your Samsung account + TV DUID, or DUKS) and add four
+#   repository secrets; this workflow picks them up automatically and
+#   switches from the dummy certs to yours:
+#     TIZEN_AUTHOR_P12_B64        base64 of author .p12
+#     TIZEN_AUTHOR_PASS           author .p12 password
+#     TIZEN_DISTRIBUTOR_P12_B64   base64 of distributor .p12
+#     TIZEN_DISTRIBUTOR_PASS      distributor .p12 password
+#   (base64 -w0 yourcert.p12 | paste into the secret)
+#
+# Package installs (package-manager-cli) are intentionally ABSENT: the
+# catalog no longer contains the TV-6.0 platform (Samsung moved TV SDKs to
+# the web-only TV-SAMSUNG-* extensions; only TV-4.0/TV-5.0 web leftovers
+# remain), the TizenFX API-6 assemblies come from the NuGet Tizen.NET
+# package the csproj already references, and the NativeCLI chain fails on
+# modern runners (it dpkg-installs a focal-era libboost-iostreams1.71 deb).
+# Nothing in this pipeline needs them — verified: restore/compile/package/
+# sign all succeed with the bare CLI + NuGet.
+#
+# Runner pin: ubuntu-24.04, deliberately NOT ubuntu-latest — same policy as
+# ci.yml, whose job-level comment documents the 2026-11 ubuntu-26.04
+# image breakage. The Tizen CLI is old tooling; do not migrate this pin
+# without re-validating the full pipeline.
+
+name: Tizen Build
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/tizen-native/**"
+      - ".github/workflows/build-tizen.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: tizen-build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TIZEN_STUDIO_VERSION: "6.1"
+  TIZEN_HOME: ${{ github.workspace }}/tizen-studio
+  # Dummy CI certificate password (author cert generated per-run; fine to
+  # be public — it signs nothing but throwaway builds).
+  TIZEN_CI_CERT_PASS: "MaveroCi2026"
+  # Samsung's permanent SDK test-distributor credential (documented above).
+  TIZEN_TEST_DISTRIBUTOR_PASS: "tizenpkcs12passfordsigner"
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+  DOTNET_NOLOGO: true
+
+jobs:
+  build-tpk:
+    name: build · sign · upload .tpk
+    # PINNED — see the runner-pin note in the file header. Do not switch to
+    # ubuntu-latest without re-validating the Tizen installer on the image.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # JDK per the Tizen tooling requirement (setup-java also pins temurin
+      # so the install is reproducible). The Tizen CLI itself runs on the
+      # Corretto JDK 8 bundled by the installer; this satisfies anything
+      # that expects a system java.
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # .NET SDK 8 — the actual C# compiler. Tizen.NET.Sdk 1.1.9 +
+      # Tizen.NET 6.0.0.14995 restore against it (the same 8.0.4xx band the
+      # repo's local TizenFX verification uses).
+      - name: Setup .NET SDK 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Install Tizen Studio CLI
+        run: |
+          set -euo pipefail
+          # The installer requires (a) the target dir to already exist and
+          # (b) the target to live under $HOME — both handled here.
+          mkdir -p "$TIZEN_HOME"
+          INSTALLER="web-cli_Tizen_Studio_${TIZEN_STUDIO_VERSION}_ubuntu-64.bin"
+          curl -fL --retry 3 \
+            "http://download.tizen.org/sdk/Installer/tizen-studio_${TIZEN_STUDIO_VERSION}/${INSTALLER}" \
+            -o "$INSTALLER"
+          chmod 755 "$INSTALLER"
+          # Run from the workspace so the data dir is created next to the
+          # install dir (workspace is under $HOME on GH runners).
+          ./"$INSTALLER" --no-java-check --accept-license "$TIZEN_HOME"
+          rm -f "$INSTALLER"
+          export PATH="$TIZEN_HOME/tools:$TIZEN_HOME/tools/ide/bin:$PATH"
+          tizen version
+          # The installer decides the Tizen data dir at install time and
+          # records it in sdk.info — trust that, not an assumption.
+          TIZEN_DATA="$(grep '^TIZEN_SDK_DATA_PATH=' "$TIZEN_HOME/sdk.info" | cut -d= -f2-)"
+          echo "TIZEN_DATA=$TIZEN_DATA" >> "$GITHUB_ENV"
+          echo "Tizen data dir: $TIZEN_DATA"
+
+      # Optional real certificates (see header). When the secrets are
+      # absent this is a no-op and the dummy CI certs below are used.
+      - name: Unpack real certificate secrets (if provided)
+        env:
+          TIZEN_AUTHOR_P12_B64: ${{ secrets.TIZEN_AUTHOR_P12_B64 }}
+          TIZEN_DISTRIBUTOR_P12_B64: ${{ secrets.TIZEN_DISTRIBUTOR_P12_B64 }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/certs"
+          if [ -n "${TIZEN_AUTHOR_P12_B64:-}" ]; then
+            printf '%s' "$TIZEN_AUTHOR_P12_B64" | base64 -d > "$RUNNER_TEMP/certs/author.p12"
+            echo "Using real author certificate from secrets"
+          fi
+          if [ -n "${TIZEN_DISTRIBUTOR_P12_B64:-}" ]; then
+            printf '%s' "$TIZEN_DISTRIBUTOR_P12_B64" | base64 -d > "$RUNNER_TEMP/certs/distributor.p12"
+            echo "Using real distributor certificate from secrets"
+          fi
+
+      - name: Generate dummy author certificate (Tizen CLI)
+        run: |
+          set -euo pipefail
+          export PATH="$TIZEN_HOME/tools:$TIZEN_HOME/tools/ide/bin:$PATH"
+          tizen certificate -a mavero-ci -p "$TIZEN_CI_CERT_PASS" -f mavero-author
+          ls -la "$TIZEN_DATA/keystore/author/mavero-author.p12"
+
+      - name: Build, package and sign the .tpk
+        env:
+          TIZEN_AUTHOR_P12_B64: ${{ secrets.TIZEN_AUTHOR_P12_B64 }}
+          TIZEN_AUTHOR_PASS: ${{ secrets.TIZEN_AUTHOR_PASS }}
+          TIZEN_DISTRIBUTOR_P12_B64: ${{ secrets.TIZEN_DISTRIBUTOR_P12_B64 }}
+          TIZEN_DISTRIBUTOR_PASS: ${{ secrets.TIZEN_DISTRIBUTOR_PASS }}
+        run: |
+          set -euo pipefail
+          AUTHOR_PATH="$TIZEN_DATA/keystore/author/mavero-author.p12"
+          AUTHOR_PASS="$TIZEN_CI_CERT_PASS"
+          DIST_PATH="$TIZEN_HOME/tools/certificate-generator/certificates/distributor/tizen-distributor-signer.p12"
+          DIST_PASS="$TIZEN_TEST_DISTRIBUTOR_PASS"
+          if [ -n "${TIZEN_AUTHOR_P12_B64:-}" ]; then
+            AUTHOR_PATH="$RUNNER_TEMP/certs/author.p12"
+            AUTHOR_PASS="$TIZEN_AUTHOR_PASS"
+          fi
+          if [ -n "${TIZEN_DISTRIBUTOR_P12_B64:-}" ]; then
+            DIST_PATH="$RUNNER_TEMP/certs/distributor.p12"
+            DIST_PASS="${TIZEN_DISTRIBUTOR_PASS:-$DIST_PASS}"
+          fi
+          echo "Signing with author: $AUTHOR_PATH / distributor: $DIST_PATH"
+          dotnet build apps/tizen-native/MaveroTv.csproj \
+            -c Release \
+            /p:TizenCreateTpkOnBuild=true \
+            "/p:AuthorPath=$AUTHOR_PATH" "/p:AuthorPass=$AUTHOR_PASS" \
+            "/p:DistributorPath=$DIST_PATH" "/p:DistributorPass=$DIST_PASS"
+
+      # Fail fast with a readable error if packaging produced nothing.
+      - name: Verify the .tpk
+        run: |
+          set -euo pipefail
+          TPK="$(ls apps/tizen-native/bin/Release/tizen60/*.tpk)"
+          echo "Artifact: $TPK"
+          test -s "$TPK"
+          unzip -l "$TPK" | tee /dev/stderr | grep -q "tizen-manifest.xml"
+          unzip -l "$TPK" | grep -q "bin/MaveroTv.dll"
+          unzip -l "$TPK" | grep -q "author-signature.xml"
+          unzip -l "$TPK" | grep -q "signature1.xml"
+          echo "tpk verified: manifest, managed entry assembly, author + distributor signatures all present"
+
+      - name: Upload .tpk artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mavero-tv-tpk-${{ github.run_number }}
+          path: apps/tizen-native/bin/Release/tizen60/*.tpk
+          if-no-files-found: error
+          retention-days: 30
