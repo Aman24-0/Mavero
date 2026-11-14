@@ -12,9 +12,12 @@
 //   - FocusManager (built-in keyboard navigation) moves focus on
 //     arrow keys, honouring those links inside a rail and its
 //     spatial algorithm across rails;
-//   - the header's SEARCH pill (top-right) is focusable too: Down
-//     returns to the first card of the first rail, and Up from that
-//     card lands on it — Enter raises SearchRequested and App.cs
+//   - the header's MY LIST + SEARCH pills (top-right) are focusable
+//     too: MY LIST --Left--> SEARCH, both pills --Down--> the first
+//     card of the first rail, and Up from that card lands on SEARCH
+//     (MY LIST stays one Left press away) — Enter on MY LIST raises
+//     MyListRequested (App.cs routes to My List or the LoginPage by
+//     AuthSession), Enter on SEARCH raises SearchRequested and App.cs
 //     swaps in the SearchPage;
 //   - FocusGained triggers the card visuals (MediaCard) and the
 //     keep-in-view scrolling (vertical host + horizontal rail), and
@@ -83,6 +86,10 @@ namespace MaveroTv
         /// pill — App.cs swaps in the SearchPage.</summary>
         public event Action SearchRequested;
 
+        /// <summary>Raised when the user presses Enter/OK on the header's MY LIST
+        /// pill — App.cs routes to MyListPage (signed in) or LoginPage (guest).</summary>
+        public event Action MyListRequested;
+
         /// <summary>One bound rail: its scroll container, cards, and page offset.</summary>
         private class RailSection
         {
@@ -93,6 +100,9 @@ namespace MaveroTv
 
         /// <summary>Header SEARCH pill — the entry point to the SearchPage.</summary>
         private FocusButton _searchButton;
+
+        /// <summary>Header MY LIST pill — the entry point to My List / Login.</summary>
+        private FocusButton _listButton;
 
         public HomePage()
         {
@@ -151,6 +161,17 @@ namespace MaveroTv
             };
             _searchButton.Selected += OnSearchSelected;
 
+            // MY LIST pill, left of SEARCH — the entry point to the saved
+            // list (signed in) or the sign-in flow (guest); App.cs routes.
+            _listButton = new FocusButton("MY LIST", Theme.HeaderListButtonWidth,
+                Theme.HeaderListButtonHeight, false)
+            {
+                Position2D = new Position2D(
+                    Theme.HeaderListButtonX + Theme.HeaderListButtonWidth / 2,
+                    Theme.HeaderListButtonY + Theme.HeaderListButtonHeight / 2)
+            };
+            _listButton.Selected += OnListSelected;
+
             View header = new View
             {
                 Position2D = new Position2D(0, 0),
@@ -161,6 +182,7 @@ namespace MaveroTv
             };
             header.Add(brand);
             header.Add(accentBar);
+            header.Add(_listButton);
             header.Add(_searchButton);
             return header;
         }
@@ -259,13 +281,24 @@ namespace MaveroTv
 
             if (firstCard != null)
             {
-                // Link the header SEARCH pill into the focus flow now that
-                // the first card exists: Down from SEARCH returns here, Up
-                // from the first card jumps to SEARCH.
+                // Link the header pills into the focus flow now that the
+                // first card exists: Down from either pill returns here, Up
+                // from the first card jumps to SEARCH (MY LIST is one Left
+                // press away from it). SEARCH --Left--> MY LIST completes
+                // the header cluster.
                 if (_searchButton != null)
                 {
                     _searchButton.DownFocusableView = firstCard;
                     firstCard.UpFocusableView = _searchButton;
+                }
+                if (_listButton != null)
+                {
+                    _listButton.DownFocusableView = firstCard;
+                    _listButton.RightFocusableView = _searchButton;
+                    if (_searchButton != null)
+                    {
+                        _searchButton.LeftFocusableView = _listButton;
+                    }
                 }
 
                 FocusManager.Instance.SetCurrentFocusView(firstCard);
@@ -429,6 +462,12 @@ namespace MaveroTv
         {
             Log.Info(MaveroApp.LogTag, "Search button pressed — opening search");
             SearchRequested?.Invoke();
+        }
+
+        private void OnListSelected()
+        {
+            Log.Info(MaveroApp.LogTag, "My List button pressed — signedIn=" + AuthSession.IsSignedIn);
+            MyListRequested?.Invoke();
         }
 
         /// <summary>Re-arms focus after the page returns from the Detail screen.</summary>

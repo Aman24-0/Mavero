@@ -19,6 +19,19 @@
 //        metadata } }); season/episode mirror the web player's
 //        ResolverRequest contract for series/anime playback.
 //
+// Authentication (verified against the backend source, 2026-11):
+//   the backend ships a DEVICE PAIRING flow (the same one the web TV
+//   login uses) — the TV shows an 8-char short code, the user approves
+//   on a signed-in phone, and POST /api/auth/device-pairing/exchange
+//   establishes the session as Supabase auth COOKIES (chunked
+//   sb-*-auth-token). The session therefore lives in the shared
+//   AuthSession cookie jar, never in a JSON body — no bearer token is
+//   ever exposed. The authenticated endpoints are
+//   GET/PUT /api/account/sync, DELETE /api/account/favorites and
+//   POST /auth/sign-out; every response's Set-Cookie headers are
+//   captured back into the jar so server-side token refreshes keep
+//   the session alive exactly like a browser.
+//
 // Detail endpoint shape (verified live, 2026-11):
 //   - ids are "{type}-{tmdbId}" ("movie-969681", "series-2734");
 //   - the {type} path segment MUST come from the item's own type:
@@ -49,10 +62,27 @@ namespace MaveroTv
     {
         private readonly HttpClient _client;
 
+        /// <summary>
+        /// Authenticated requests ride a SEPARATE handler: no automatic
+        /// cookies (the jar is manual, so every captured cookie is also
+        /// persisted) and no automatic redirect following (the sign-out
+        /// endpoint answers with a 303 whose Set-Cookie headers must be
+        /// captured, not swallowed by the redirect chain).
+        /// </summary>
+        private readonly HttpClient _authClient;
+
         public ApiService()
         {
             _client = new HttpClient();
             _client.Timeout = TimeSpan.FromSeconds(30);
+
+            HttpClientHandler authHandler = new HttpClientHandler
+            {
+                AllowAutoRedirect = false,
+                UseCookies = false
+            };
+            _authClient = new HttpClient(authHandler);
+            _authClient.Timeout = TimeSpan.FromSeconds(30);
         }
 
         /// <summary>
@@ -317,6 +347,446 @@ namespace MaveroTv
             }
         }
 
+        // ============================================================
+        // Authentication (device pairing) — see LoginPage for the UI flow.
+        // ============================================================
+
+        /// <summary>
+        /// Creates a device-pairing challenge. Returns the short code the
+        /// user enters on their phone plus the TV's bearer secret for the
+        /// status/exchange polls. Null when the pairing service is
+        /// unavailable (rate-limited or outage) — the login page shows the
+        /// honest error state and the user can retry.
+        /// </summary>
+        public async Task<PairingInfo> CreatePairingAsync()
+        {
+            using (StringContent content = new StringContent("{}", Encoding.UTF8, "application/json"))
+            using (HttpResponseMessage httpResponse = await _authClient.PostAsync(DevicePairingCreateUrl, content))
+            {
+                string json = await httpResponse.Content.ReadAsStringAsync();
+
+                PairingCreateResponse response;
+                try
+                {
+                    response = JsonConvert.DeserializeObject<PairingCreateResponse>(json);
+                }
+                catch (Exception ex)
+                {
+                    Log.Warn(LogTag, $"Pairing create unparsable ({(int)httpResponse.StatusCode}): {ex.Message}");
+                    return null;
+                }
+
+                if (response == null || !response.Ok || response.Pairing == null)
+                {
+                    Log.Warn(LogTag, $"Pairing create failed: HTTP {(int)httpResponse.StatusCode}");
+                    return null;
+                }
+
+                Log.Info(LogTag, "Pairing challenge created (code " + response.Pairing.ShortCode + ")");
+                return response.Pairing;
+            }
+        }
+
+        /// <summary>
+        /// Polls one pairing status cycle. Returns the status string
+        /// ("pending" | "approved" | "expired" | "cancelled" | ...) or null
+        /// on a transport/unparsable failure (the poll loop counts
+        /// consecutive errors before giving up, mirroring the web TV login).
+        /// </summary>
+        public async Task<string> PollPairingStatusAsync(string secret)
+        {
+            Dictionary<string, object> body = new Dictionary<string, object>
+            {
+                ["secret"] = secret
+            };
+
+            using (StringContent content = new StringContent(
+                JsonConvert.SerializeObject(body), Encoding.UTF8, "application/json"))
+            using (HttpResponseMessage httpResponse = await _authClient.PostAsync(DevicePairingStatusUrl, content))
+            {
+                string json = await httpResponse.Content.ReadAsStringAsync();
+
+                PairingStatusResponse response;
+                try
+                {
+                    response = JsonConvert.DeserializeObject<PairingStatusResponse>(json);
+                }
+                catch (Exception ex)
+                {
+                    Log.Warn(LogTag, $"Pairing status unparsable ({(int)httpResponse.StatusCode}): {ex.Message}");
+                    return null;
+                }
+
+                if (response == null)
+                {
+                    return null;
+                }
+
+                // Both ok:true statuses and ok:false envelopes carry a status
+                // field ("expired" on stale secrets) — surface it either way.
+                return string.IsNullOrEmpty(response.Status) ? null : response.Status;
+            }
+        }
+
+        /// <summary>
+        /// Attempts the session exchange for an approved pairing. On success
+        /// the response's Set-Cookie headers ARE the session — they are
+        /// captured into the shared AuthSession jar (and persisted there).
+        /// Returns the outcome (Ok / Retryable / Message); transient
+        /// failures may be retried with the SAME secret by the caller.
+        /// </summary>
+        public async Task<ExchangeOutcome> ExchangePairingAsync(string secret)
+        {
+            Dictionary<string, object> body = new Dictionary<string, object>
+            {
+                ["secret"] = secret
+            };
+
+            using (StringContent content = new StringContent(
+                JsonConvert.SerializeObject(body), Encoding.UTF8, "application/json"))
+            using (HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, DevicePairingExchangeUrl))
+            {
+                request.Content = content;
+                using (HttpResponseMessage httpResponse = await _authClient.SendAsync(request))
+                {
+                    // The exchange response's Set-Cookie headers establish the
+                    // session (chunked sb-*-auth-token). Capture BEFORE
+                    // disposing the response.
+                    IEnumerable<string> setCookies;
+                    if (httpResponse.Headers.TryGetValues("Set-Cookie", out setCookies))
+                    {
+                        AuthSession.CaptureSetCookies(setCookies);
+                    }
+
+                    string json = await httpResponse.Content.ReadAsStringAsync();
+
+                    PairingExchangeResponse response;
+                    try
+                    {
+                        response = JsonConvert.DeserializeObject<PairingExchangeResponse>(json);
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Warn(LogTag, $"Pairing exchange unparsable ({(int)httpResponse.StatusCode}): {ex.Message}");
+                        return new ExchangeOutcome
+                        {
+                            Ok = false,
+                            Retryable = true,
+                            Message = "Network hiccup while signing in."
+                        };
+                    }
+
+                    if (httpResponse.IsSuccessStatusCode && response != null && response.Ok)
+                    {
+                        Log.Info(LogTag, "Pairing exchange succeeded — session cookies captured");
+                        AuthSession.DecodeEmailFromCookies();
+                        AuthSession.Persist();
+                        return new ExchangeOutcome { Ok = true };
+                    }
+
+                    bool retryable = response != null && response.Retryable;
+                    Log.Warn(LogTag, "Pairing exchange failed: " +
+                        (response != null && !string.IsNullOrEmpty(response.Message)
+                            ? response.Message
+                            : "HTTP " + (int)httpResponse.StatusCode) +
+                        " retryable=" + retryable);
+                    return new ExchangeOutcome
+                    {
+                        Ok = false,
+                        Retryable = retryable,
+                        Message = response != null && !string.IsNullOrEmpty(response.Message)
+                            ? response.Message
+                            : "Unable to establish a session."
+                    };
+                }
+            }
+        }
+
+        // ============================================================
+        // My List (cloud favorites) — authenticated via the AuthSession
+        // cookie jar; every response's Set-Cookie is captured back so
+        // server-side refreshes keep the session alive.
+        // ============================================================
+
+        /// <summary>
+        /// Fetches the signed-in user's saved list (GET /api/account/sync;
+        /// the tombstone filtering happens server-side). Returns:
+        ///   - the favorites list (possibly empty) on success;
+        ///   - null when the session is gone (401 — expired/revoked; the
+        ///     stale session is locally reset, the caller offers sign-in);
+        ///   - THROWS HttpRequestException on a transport failure or a
+        ///     server outage — the My List page renders its honest
+        ///     "unavailable" state from the catch.
+        /// </summary>
+        public async Task<List<FavoriteRecord>> FetchFavoritesAsync()
+        {
+            using (HttpResponseMessage httpResponse = await SendAuthenticatedAsync(HttpMethod.Get, AccountSyncUrl, null))
+            {
+                if (httpResponse == null)
+                {
+                    // No session jar or a transport failure — the caller
+                    // treats both as "cannot fetch" (unavailable state).
+                    throw new HttpRequestException("My List fetch: no session or transport failure");
+                }
+
+                string json = await httpResponse.Content.ReadAsStringAsync();
+
+                if ((int)httpResponse.StatusCode == 401)
+                {
+                    Log.Info(LogTag, "Account sync unauthorized — clearing the stale session");
+                    AuthSession.Clear();
+                    return null;
+                }
+
+                if (!httpResponse.IsSuccessStatusCode)
+                {
+                    Log.Warn(LogTag, "Account sync failed: HTTP " + (int)httpResponse.StatusCode);
+                    throw new HttpRequestException("My List fetch failed: HTTP " + (int)httpResponse.StatusCode);
+                }
+
+                AccountSyncResponse response;
+                try
+                {
+                    response = JsonConvert.DeserializeObject<AccountSyncResponse>(json);
+                }
+                catch (Exception ex)
+                {
+                    Log.Warn(LogTag, $"Account sync unparsable (200): {ex.Message}");
+                    throw new HttpRequestException("My List fetch: unparsable response");
+                }
+
+                if (response == null || response.Favorites == null)
+                {
+                    return new List<FavoriteRecord>();
+                }
+
+                return response.Favorites;
+            }
+        }
+
+        /// <summary>
+        /// Upserts one favorite (the "Add to My List" write path —
+        /// PUT /api/account/sync with a single-record favorites array;
+        /// omitted arrays are never touched server-side). True on success.
+        /// </summary>
+        public async Task<bool> AddFavoriteAsync(FavoriteRecord record)
+        {
+            if (record == null)
+            {
+                return false;
+            }
+
+            string body = JsonConvert.SerializeObject(new Dictionary<string, object>
+            {
+                ["favorites"] = new List<FavoriteRecord> { record }
+            });
+
+            using (HttpResponseMessage httpResponse = await SendAuthenticatedAsync(HttpMethod.Put, AccountSyncUrl, body))
+            {
+                if (httpResponse == null)
+                {
+                    return false;
+                }
+
+                if (httpResponse.IsSuccessStatusCode)
+                {
+                    Log.Info(LogTag, "Favorite saved: " + record.Key);
+                    return true;
+                }
+
+                Log.Warn(LogTag, "Favorite save failed: HTTP " + (int)httpResponse.StatusCode);
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Removes one favorite (DELETE /api/account/favorites with the
+        /// canonical content type + id). True on success.
+        /// </summary>
+        public async Task<bool> RemoveFavoriteAsync(string contentType, string contentId)
+        {
+            string url = AccountFavoritesUrl + "?contentType=" + Uri.EscapeDataString(contentType ?? "movie")
+                + "&contentId=" + Uri.EscapeDataString(contentId ?? string.Empty);
+
+            using (HttpResponseMessage httpResponse = await SendAuthenticatedAsync(HttpMethod.Delete, url, null))
+            {
+                if (httpResponse == null)
+                {
+                    return false;
+                }
+
+                if (httpResponse.IsSuccessStatusCode)
+                {
+                    Log.Info(LogTag, "Favorite removed: " + contentType + ":" + contentId);
+                    return true;
+                }
+
+                Log.Warn(LogTag, "Favorite removal failed: HTTP " + (int)httpResponse.StatusCode);
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Signs out (POST /auth/sign-out — revokes the server session and
+        /// clears the auth cookies), then resets the local jar regardless of
+        /// the wire outcome (a network failure must not strand the TV in a
+        /// half-signed-in state).
+        /// </summary>
+        public async Task<bool> SignOutAsync()
+        {
+            bool ok = false;
+            try
+            {
+                using (StringContent content = new StringContent("{}", Encoding.UTF8, "application/json"))
+                using (HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, SignOutUrl))
+                {
+                    request.Content = content;
+                    using (HttpResponseMessage httpResponse = await _authClient.SendAsync(request))
+                    {
+                        // The 303/200 response clears the cookies server-side —
+                        // capture the Set-Cookie lines before disposing.
+                        IEnumerable<string> setCookies;
+                        if (httpResponse.Headers.TryGetValues("Set-Cookie", out setCookies))
+                        {
+                            AuthSession.CaptureSetCookies(setCookies);
+                        }
+                        ok = httpResponse.IsSuccessStatusCode || (int)httpResponse.StatusCode == 303;
+                        Log.Info(LogTag, "Sign out: HTTP " + (int)httpResponse.StatusCode);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warn(LogTag, "Sign out transport failure: " + ex.Message);
+            }
+
+            AuthSession.Clear();
+            return ok;
+        }
+
+        /// <summary>
+        /// One authenticated request: attaches the session Cookie header,
+        /// captures Set-Cookie into the jar. Returns null on a transport
+        /// failure (callers keep their honest empty/error states).
+        /// </summary>
+        private async Task<HttpResponseMessage> SendAuthenticatedAsync(HttpMethod method, string url, string jsonBody)
+        {
+            string cookieHeader = AuthSession.CookieHeader();
+            if (cookieHeader == null)
+            {
+                Log.Info(LogTag, "Authenticated request without a session — " + url);
+                return null;
+            }
+
+            try
+            {
+                using (HttpRequestMessage request = new HttpRequestMessage(method, url))
+                {
+                    request.Headers.Add("Cookie", cookieHeader);
+                    if (jsonBody != null)
+                    {
+                        request.Content = new StringContent(jsonBody, Encoding.UTF8, "application/json");
+                    }
+
+                    HttpResponseMessage httpResponse = await _authClient.SendAsync(request);
+
+                    IEnumerable<string> setCookies;
+                    if (httpResponse.Headers.TryGetValues("Set-Cookie", out setCookies))
+                    {
+                        AuthSession.CaptureSetCookies(setCookies);
+                    }
+
+                    return httpResponse;
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warn(LogTag, "Authenticated request failed: " + ex.Message);
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Builds the wire record for "Add to My List" from a catalog item,
+        /// clamping every field to the server validator's bounds (a record
+        /// that violates ANY bound is rejected with HTTP 400):
+        ///   - canonical type: an anime-flagged series is stored as "anime"
+        ///     (the web app's canonicalFavoriteType rule);
+        ///   - key = "{contentType}:{contentId}" exactly;
+        ///   - title <= 240, poster/backdrop <= 2000, runtime <= 80,
+        ///     description <= 4000, genres <= 20 x 80 chars;
+        ///   - year/rating omitted when unknown (present-but-invalid values
+        ///     fail validation); status "planned"; timestamps now.
+        /// </summary>
+        public static FavoriteRecord BuildFavoriteRecord(MediaItem item, long nowMs)
+        {
+            if (item == null || string.IsNullOrEmpty(item.Id))
+            {
+                return null;
+            }
+
+            string contentType = (item.Type ?? "movie").Trim().ToLowerInvariant();
+            if (contentType != "series" && contentType != "anime" && contentType != "movie")
+            {
+                contentType = "movie";
+            }
+            if (contentType == "series" && item.IsAnime)
+            {
+                contentType = "anime";
+            }
+
+            string contentId = Clamp(item.Id, 120);
+
+            string title = Clamp((item.Title ?? string.Empty).Trim(), 240);
+            if (title.Length == 0)
+            {
+                title = "Untitled";
+            }
+
+            List<string> genres = null;
+            if (item.Genres != null && item.Genres.Count > 0)
+            {
+                genres = new List<string>();
+                foreach (string genre in item.Genres.GetRange(0, Math.Min(20, item.Genres.Count)))
+                {
+                    genres.Add(Clamp(genre ?? string.Empty, 80));
+                }
+            }
+
+            return new FavoriteRecord
+            {
+                Key = contentType + ":" + contentId,
+                ContentType = contentType,
+                ContentId = contentId,
+                Snapshot = new ContentSnapshot
+                {
+                    Title = title,
+                    Poster = Clamp(item.Poster ?? string.Empty, 2000),
+                    Backdrop = string.IsNullOrEmpty(item.Backdrop) ? null : Clamp(item.Backdrop, 2000),
+                    Year = item.Year >= 1800 && item.Year <= 3000 ? item.Year : (int?)null,
+                    Runtime = string.IsNullOrEmpty(item.Runtime) ? null : Clamp(item.Runtime, 80),
+                    Rating = item.Rating > 0 && item.Rating <= 10 ? item.Rating : (double?)null,
+                    Genres = genres,
+                    Description = string.IsNullOrEmpty(item.Description) ? null : Clamp(item.Description, 4000),
+                    IsAnime = item.IsAnime ? (bool?)true : null,
+                    AnimeFormat = null
+                },
+                Status = "planned",
+                CreatedAt = nowMs,
+                UpdatedAt = nowMs
+            };
+        }
+
+        /// <summary>Length clamp for validator-bounded string fields.</summary>
+        private static string Clamp(string value, int maxLength)
+        {
+            if (value == null)
+            {
+                return null;
+            }
+            return value.Length <= maxLength ? value : value.Substring(0, maxLength);
+        }
+
         private static string NonEmpty(string value)
         {
             return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
@@ -349,6 +819,18 @@ namespace MaveroTv
 
         /// <summary>Playback resolution endpoint (POST).</summary>
         public const string PlaybackResolveUrl = ContentBaseUrl + "/api/playback/resolve";
+
+        /// <summary>Device-pairing endpoints (create/status/exchange, all POST).</summary>
+        public const string DevicePairingCreateUrl = ContentBaseUrl + "/api/auth/device-pairing/create";
+        public const string DevicePairingStatusUrl = ContentBaseUrl + "/api/auth/device-pairing/status";
+        public const string DevicePairingExchangeUrl = ContentBaseUrl + "/api/auth/device-pairing/exchange";
+
+        /// <summary>Cloud favorites endpoints (GET/PUT sync, DELETE favorites).</summary>
+        public const string AccountSyncUrl = ContentBaseUrl + "/api/account/sync";
+        public const string AccountFavoritesUrl = ContentBaseUrl + "/api/account/favorites";
+
+        /// <summary>Sign-out endpoint (POST, revokes the session + clears cookies).</summary>
+        public const string SignOutUrl = ContentBaseUrl + "/auth/sign-out";
 
         /// <summary>dlog tag for all API logging.</summary>
         public const string LogTag = "MAVERO";

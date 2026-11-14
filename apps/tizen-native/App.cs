@@ -7,13 +7,15 @@
 // view in Theme-matched colors, so the app never flashes white on
 // boot.
 //
-// Screen navigation (four-level stack):
+// Screen navigation (six-level stack):
 //   Home --Enter on card--> Detail --PLAY/episode--> Player --Back--> Detail
 //   --Back--> Home --Back--> exit
 //   Home --SEARCH pill / search key--> Search --Enter on result--> Detail
-//   (any later level Back pops one screen: Player -> Detail -> Search -> Home
-//   -> exit; the Detail page returns to whichever screen opened it — Home
-//   or Search — via _detailReturnPage)
+//   Home --MY LIST pill--> (signed in) My List --Enter on title--> Detail
+//   Home --MY LIST pill--> (guest) Login --pairing approved--> My List
+//   (any later level Back pops one screen: Player -> Detail -> Search ->
+//   My List -> Login -> exit; the Detail page returns to whichever screen
+//   opened it — Home, Search or My List — via _detailReturnPage)
 //
 // Series/anime playback carries a PlaybackTarget (season + episode)
 // from the detail page's Play button (Season 1 Episode 1 default) or
@@ -26,11 +28,17 @@
 //     search binds), clears focus, removes + disposes the page,
 //     re-shows the HomePage and restores focus to the card the user
 //     came from;
+//   - OpenMyList / CloseMyList: same round-trip pattern for the My
+//     List grid (only reachable when signed in — AuthSession);
+//   - OpenLogin / CloseLogin: the device-pairing sign-in screen for
+//     guests; a completed pairing (SignedInCompleted) closes Login
+//     and lands on My List — the intent the user expressed when
+//     pressing MY LIST;
 //   - OpenDetail: clears DALi focus, hides the page the user is on
-//     (HomePage OR SearchPage — remembered in _detailReturnPage so
-//     Back restores the right one; both stay alive so their state
-//     survives the round-trip), then adds the DetailPage on top of
-//     the window;
+//     (HomePage, SearchPage OR MyListPage — remembered in
+//     _detailReturnPage so Back restores the right one; all stay
+//     alive so their state survives the round-trip), then adds the
+//     DetailPage on top of the window;
 //   - OpenPlayer: clears focus, hides the DetailPage and switches
 //     the WINDOW background to transparent — the video rendered by
 //     Tizen.Multimedia.Player composites on the video layer BELOW
@@ -41,15 +49,16 @@
 //     window background and re-shows the DetailPage (Play focused);
 //   - CloseDetail: marks the detail page closed (fences its queued
 //     fetch binding), clears focus, removes + disposes the page,
-//     re-shows the remembered return page (Home or Search) and
-//     restores focus to the card the user came from;
+//     re-shows the remembered return page (Home, Search or My List)
+//     and restores focus to the card the user came from;
 //   - Hardware Back key (remote: XF86Back, platform code 10009;
 //     emulator/desktop: Escape): pops the topmost screen — a popup
 //     on the player first (PlayerPage.HandleBack), then the player,
-//     then the detail page, then the search page, then terminates
-//     the app. Non-Back keys are forwarded to the player as remote
-//     activity so the overlay can wake up; a remote's dedicated
-//     search key (XF86Search) opens Search directly from Home.
+//     then the detail page, then the search page, then My List,
+//     then Login, then terminates the app. Non-Back keys are
+//     forwarded to the player as remote activity so the overlay can
+//     wake up; a remote's dedicated search key (XF86Search) opens
+//     Search directly from Home.
 // ============================================================
 using Tizen;
 using Tizen.NUI;
@@ -60,9 +69,11 @@ namespace MaveroTv
     /// <summary>
     /// Application lifecycle and screen navigation. Mounts the
     /// <see cref="HomePage"/>, opens the <see cref="SearchPage"/> from the
-    /// header's SEARCH pill, the <see cref="DetailPage"/> on selection (from
-    /// either screen), the <see cref="PlayerPage"/> on PLAY and pops back
-    /// level by level on the hardware Back key.
+    /// header's SEARCH pill, the <see cref="MyListPage"/> (or the
+    /// <see cref="LoginPage"/> for guests) from the MY LIST pill, the
+    /// <see cref="DetailPage"/> on selection (from Home, Search or My List),
+    /// the <see cref="PlayerPage"/> on PLAY and pops back level by level on
+    /// the hardware Back key.
     /// </summary>
     public class MaveroApp : NUIApplication
     {
@@ -75,17 +86,24 @@ namespace MaveroTv
         private Window _window;
         private HomePage _homePage;
         private SearchPage _searchPage;
+        private MyListPage _myListPage;
+        private LoginPage _loginPage;
         private DetailPage _detailPage;
         private PlayerPage _playerPage;
         private MediaItem _detailItem;
 
-        /// <summary>The screen (Home or Search) the Detail page was opened
-        /// from — Back returns to it and restores its focus.</summary>
+        /// <summary>The screen (Home, Search or My List) the Detail page was
+        /// opened from — Back returns to it and restores its focus.</summary>
         private View _detailReturnPage;
 
         protected override void OnCreate()
         {
             base.OnCreate();
+
+            // Restore the persisted session (secure store, file fallback)
+            // BEFORE any page mounts — DetailPage builds its My List pill
+            // from AuthSession at construction time.
+            AuthSession.LoadFromDisk();
 
             _window = GetDefaultWindow();
             _window.BackgroundColor = Theme.Background;
@@ -94,6 +112,7 @@ namespace MaveroTv
             _homePage = new HomePage();
             _homePage.ItemSelected += OnItemSelected;
             _homePage.SearchRequested += OnSearchRequested;
+            _homePage.MyListRequested += OnMyListRequested;
             _window.Add(_homePage);
         }
 
@@ -107,6 +126,18 @@ namespace MaveroTv
         private void OnSearchRequested()
         {
             OpenSearch();
+        }
+
+        private void OnMyListRequested()
+        {
+            if (AuthSession.IsSignedIn)
+            {
+                OpenMyList();
+            }
+            else
+            {
+                OpenLogin();
+            }
         }
 
         private void OpenSearch()
@@ -166,6 +197,161 @@ namespace MaveroTv
             CloseSearch();
         }
 
+        // ---- My List / Login navigation ------------------------------------
+
+        private void OpenMyList()
+        {
+            if (_myListPage != null || _loginPage != null || _detailPage != null || _playerPage != null)
+            {
+                return; // My List is only reachable from a clean Home screen
+            }
+
+            Log.Info(LogTag, "Navigate Home -> My List");
+
+            FocusManager.Instance.SetCurrentFocusView(null);
+            _homePage.Hide();
+
+            _myListPage = new MyListPage();
+            _myListPage.ItemSelected += OnMyListItemSelected;
+            _myListPage.CloseRequested += OnMyListCloseRequested;
+            _myListPage.LoginRequested += OnMyListLoginRequested;
+            _window.Add(_myListPage);
+            _myListPage.SetInitialFocus();
+        }
+
+        private void CloseMyList()
+        {
+            if (_myListPage == null)
+            {
+                return;
+            }
+
+            MyListPage page = _myListPage;
+            _myListPage = null;
+
+            page.MarkClosing();
+            page.ItemSelected -= OnMyListItemSelected;
+            page.CloseRequested -= OnMyListCloseRequested;
+            page.LoginRequested -= OnMyListLoginRequested;
+
+            // Clear focus before removing the page: the focused key must
+            // not linger in the FocusManager as its tree dies.
+            FocusManager.Instance.SetCurrentFocusView(null);
+            _window.Remove(page);
+            page.Dispose();
+
+            _homePage.Show();
+            _homePage.RestoreFocus();
+
+            Log.Info(LogTag, "Navigate My List -> Home (focus restored to the last card)");
+        }
+
+        private void OnMyListItemSelected(MediaItem item)
+        {
+            OpenDetail(item);
+        }
+
+        private void OnMyListCloseRequested()
+        {
+            CloseMyList();
+        }
+
+        /// <summary>The session died on the My List screen — swap to Login.</summary>
+        private void OnMyListLoginRequested()
+        {
+            CloseMyList();
+            OpenLogin();
+        }
+
+        private void OpenLogin()
+        {
+            if (_loginPage != null || _myListPage != null || _detailPage != null || _playerPage != null)
+            {
+                return; // Login is only reachable from a clean Home screen
+            }
+
+            Log.Info(LogTag, "Navigate Home -> Login (device pairing)");
+
+            FocusManager.Instance.SetCurrentFocusView(null);
+            _homePage.Hide();
+
+            _loginPage = new LoginPage();
+            _loginPage.CloseRequested += OnLoginCloseRequested;
+            _loginPage.SignedInCompleted += OnLoginSignedInCompleted;
+            _loginPage.OpenMyListRequested += OnLoginOpenMyListRequested;
+            _window.Add(_loginPage);
+            _loginPage.SetInitialFocus();
+        }
+
+        private void CloseLogin()
+        {
+            if (_loginPage == null)
+            {
+                return;
+            }
+
+            LoginPage page = _loginPage;
+            _loginPage = null;
+
+            page.MarkClosing();
+            page.CloseRequested -= OnLoginCloseRequested;
+            page.SignedInCompleted -= OnLoginSignedInCompleted;
+            page.OpenMyListRequested -= OnLoginOpenMyListRequested;
+
+            // Clear focus before removing the page: the focused key must
+            // not linger in the FocusManager as its tree dies.
+            FocusManager.Instance.SetCurrentFocusView(null);
+            _window.Remove(page);
+            page.Dispose();
+
+            _homePage.Show();
+            _homePage.RestoreFocus();
+
+            Log.Info(LogTag, "Navigate Login -> Home (focus restored to the last card)");
+        }
+
+        /// <summary>Close Login WITHOUT showing Home underneath (the caller
+        /// immediately opens another page on top of the still-hidden Home).</summary>
+        private void CloseLoginOnly()
+        {
+            if (_loginPage == null)
+            {
+                return;
+            }
+
+            LoginPage page = _loginPage;
+            _loginPage = null;
+
+            page.MarkClosing();
+            page.CloseRequested -= OnLoginCloseRequested;
+            page.SignedInCompleted -= OnLoginSignedInCompleted;
+            page.OpenMyListRequested -= OnLoginOpenMyListRequested;
+
+            FocusManager.Instance.SetCurrentFocusView(null);
+            _window.Remove(page);
+            page.Dispose();
+        }
+
+        /// <summary>Pairing succeeded — the user pressed MY LIST to get here,
+        /// so continue the intent and land on My List.</summary>
+        private void OnLoginSignedInCompleted()
+        {
+            CloseLoginOnly();
+            OpenMyList();
+        }
+
+        /// <summary>Already signed in, OPEN MY LIST pressed on the login screen.</summary>
+        private void OnLoginOpenMyListRequested()
+        {
+            CloseLoginOnly();
+            OpenMyList();
+        }
+
+        private void OnLoginCloseRequested()
+        {
+            CloseLogin();
+        }
+
         private void OpenDetail(MediaItem item)
         {
             if (_detailPage != null)
@@ -173,19 +359,24 @@ namespace MaveroTv
                 return; // already showing a detail page
             }
 
-            Log.Info(LogTag, $"Navigate {(_searchPage != null ? "Search" : "Home")} -> Detail: " +
+            Log.Info(LogTag, $"Navigate {(_searchPage != null ? "Search" : _myListPage != null ? "My List" : "Home")} -> Detail: " +
                 $"'{item.Title}' (id={item.Id})");
             _detailItem = item;
 
             // Detach focus from the card before the page hides, so the
             // FocusManager never holds a hidden view as its current focus.
-            // The page beneath (Home or Search) is remembered so Back
-            // restores the right one; both stay alive with their state.
+            // The page beneath (Home, Search or My List) is remembered so
+            // Back restores the right one; all stay alive with their state.
             FocusManager.Instance.SetCurrentFocusView(null);
             if (_searchPage != null)
             {
                 _detailReturnPage = _searchPage;
                 _searchPage.Hide();
+            }
+            else if (_myListPage != null)
+            {
+                _detailReturnPage = _myListPage;
+                _myListPage.Hide();
             }
             else
             {
@@ -226,6 +417,11 @@ namespace MaveroTv
                 _searchPage.Show();
                 _searchPage.RestoreFocus();
             }
+            else if (_detailReturnPage != null && _detailReturnPage == _myListPage)
+            {
+                _myListPage.Show();
+                _myListPage.RestoreFocus();
+            }
             else
             {
                 _homePage.Show();
@@ -234,7 +430,8 @@ namespace MaveroTv
             _detailReturnPage = null;
 
             Log.Info(LogTag, "Navigate Detail -> " +
-                (_searchPage != null ? "Search" : "Home") + " (focus restored to the last card)");
+                (_searchPage != null ? "Search" : _myListPage != null ? "My List" : "Home") +
+                " (focus restored to the last card)");
         }
 
         private void OnDetailCloseRequested()
@@ -341,6 +538,7 @@ namespace MaveroTv
                 // A remote's dedicated search key (X11 keysym XF86Search)
                 // opens Search directly from a clean Home screen.
                 if (_playerPage == null && _detailPage == null && _searchPage == null
+                    && _myListPage == null && _loginPage == null
                     && e.Key.KeyPressedName == "XF86Search")
                 {
                     OpenSearch();
@@ -356,6 +554,14 @@ namespace MaveroTv
             else if (_searchPage != null)
             {
                 CloseSearch();
+            }
+            else if (_myListPage != null)
+            {
+                CloseMyList();
+            }
+            else if (_loginPage != null)
+            {
+                CloseLogin();
             }
             else
             {

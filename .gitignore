@@ -14,3 +14,7 @@ coverage/
 # package-lock.json (npm-format) is stale and not maintained — keep it out of
 # the repo so it can't drift from pnpm-lock.yaml.
 package-lock.json
+
+# C# / Tizen .NET build artifacts (apps/tizen-native dotnet builds).
+bin/
+obj/

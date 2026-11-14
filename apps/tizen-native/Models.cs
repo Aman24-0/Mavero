@@ -549,6 +549,222 @@ namespace MaveroTv
         public string Label { get; set; }
     }
 
+    // ============================================================
+    // Authentication (device pairing) + cloud sync (My List).
+    //
+    // Verified against the backend source on 2026-11:
+    //
+    //   POST /api/auth/device-pairing/create          (no auth)
+    //     -> { ok, pairing: { secret, shortCode, qrUrl,
+    //          expiresAt (ISO, 5-minute TTL), deviceName } }
+    //     The 8-char shortCode (alphabet without 0/O/1/I) is what the
+    //     user types on their phone; the secret is the TV's bearer
+    //     credential for the status/exchange polls.
+    //
+    //   POST /api/auth/device-pairing/status   body { secret } (no auth)
+    //     -> { ok, status: "pending" | "approved" | "exchanging" |
+    //                    "consumed" | "failed" | "expired" | "cancelled" }
+    //     The TV polls this every 3s (the pairingPoll rate limit allows
+    //     60/min) until the phone approves.
+    //
+    //   POST /api/auth/device-pairing/exchange body { secret } (no auth)
+    //     -> ok  : { ok, message: "Session established." } + Set-Cookie
+    //              establishing the Supabase session (chunked
+    //              sb-*-auth-token cookies — the session lives in the
+    //              cookie jar, never in the JSON body);
+    //     fail  : { ok:false, message, reason, retryable } — transient
+    //              failures (retryable:true) may be retried with the
+    //              SAME secret (the pairing is released back to
+    //              "approved"); terminal failures need a fresh pairing.
+    //
+    //   GET /api/account/sync                  (auth: session cookies)
+    //     -> { progress, favorites: [FavoriteRecord],
+    //          favoriteDeletions }
+    //   PUT /api/account/sync                  (auth: session cookies)
+    //     body { favorites?: [FavoriteRecord], ... } — upserts the
+    //     records (the "Add to My List" write path; omitted arrays are
+    //     treated as empty and never touched).
+    //
+    //   DELETE /api/account/favorites?contentType=&contentId=
+    //                                          (auth: session cookies)
+    //     -> { ok, deletedAt } — the "remove from My List" write path.
+    //
+    // FavoriteRecord wire shape (shared validator progress-records.ts):
+    //   key            = "{contentType}:{contentId}" (required, exact);
+    //   contentType    = "movie" | "series" | "anime";
+    //   contentId      = the catalog id ("movie-969681"), <= 120 chars;
+    //   snapshot       = { title (<=240), poster (<=2000, may be ""),
+    //                      backdrop?, year? 1800..3000, runtime?, rating?
+    //                      0..10, genres? <=20x80, description?, isAnime?,
+    //                      animeFormat? "movie"|"series" };
+    //   status?        = "planned" | "watching" | "completed";
+    //   createdAt/updatedAt = epoch milliseconds (> 0).
+    //   A record that violates ANY bound is rejected by the server
+    //   (HTTP 400) — the native builder clamps every field.
+    // ============================================================
+
+    /// <summary>Envelope of POST /api/auth/device-pairing/create.</summary>
+    public class PairingCreateResponse
+    {
+        [JsonProperty("ok")]
+        public bool Ok { get; set; }
+
+        [JsonProperty("pairing")]
+        public PairingInfo Pairing { get; set; }
+    }
+
+    /// <summary>One device-pairing challenge (create response body).</summary>
+    public class PairingInfo
+    {
+        /// <summary>The TV's bearer credential for status/exchange polls.</summary>
+        [JsonProperty("secret")]
+        public string Secret { get; set; }
+
+        /// <summary>8-char code (no ambiguous chars) the user enters on their phone.</summary>
+        [JsonProperty("shortCode")]
+        public string ShortCode { get; set; }
+
+        /// <summary>The QR URL (&lt;origin&gt;/authorize#s=...) — informational for the native TV.</summary>
+        [JsonProperty("qrUrl")]
+        public string QrUrl { get; set; }
+
+        /// <summary>ISO-8601 instant; the pairing expires 5 minutes later.</summary>
+        [JsonProperty("expiresAt")]
+        public string ExpiresAt { get; set; }
+
+        /// <summary>Display name the backend derived for this device.</summary>
+        [JsonProperty("deviceName")]
+        public string DeviceName { get; set; }
+    }
+
+    /// <summary>Envelope of POST /api/auth/device-pairing/status.</summary>
+    public class PairingStatusResponse
+    {
+        [JsonProperty("ok")]
+        public bool Ok { get; set; }
+
+        /// <summary>"pending" | "approved" | "exchanging" | "consumed" | "failed" | "expired" | "cancelled".</summary>
+        [JsonProperty("status")]
+        public string Status { get; set; }
+
+        [JsonProperty("message")]
+        public string Message { get; set; }
+    }
+
+    /// <summary>Envelope of POST /api/auth/device-pairing/exchange.</summary>
+    public class PairingExchangeResponse
+    {
+        [JsonProperty("ok")]
+        public bool Ok { get; set; }
+
+        [JsonProperty("message")]
+        public string Message { get; set; }
+
+        /// <summary>True on transient failures — the exchange may be retried with the same secret.</summary>
+        [JsonProperty("retryable")]
+        public bool Retryable { get; set; }
+    }
+
+    /// <summary>Outcome of one exchange attempt (client-side projection).</summary>
+    public class ExchangeOutcome
+    {
+        public bool Ok { get; set; }
+
+        /// <summary>True when the failure is transient and a retry may succeed.</summary>
+        public bool Retryable { get; set; }
+
+        public string Message { get; set; }
+    }
+
+    /// <summary>Envelope of GET /api/account/sync (only favorites are consumed).</summary>
+    public class AccountSyncResponse
+    {
+        [JsonProperty("favorites")]
+        public List<FavoriteRecord> Favorites { get; set; }
+    }
+
+    /// <summary>One saved title in the user's cloud list (favorites row).</summary>
+    public class FavoriteRecord
+    {
+        /// <summary>"{contentType}:{contentId}" — must match the two fields exactly.</summary>
+        [JsonProperty("key")]
+        public string Key { get; set; }
+
+        /// <summary>"movie" | "series" | "anime".</summary>
+        [JsonProperty("contentType")]
+        public string ContentType { get; set; }
+
+        /// <summary>Catalog id ("movie-969681").</summary>
+        [JsonProperty("contentId")]
+        public string ContentId { get; set; }
+
+        [JsonProperty("snapshot")]
+        public ContentSnapshot Snapshot { get; set; }
+
+        /// <summary>"planned" | "watching" | "completed" (absent = planned).</summary>
+        [JsonProperty("status")]
+        public string Status { get; set; }
+
+        /// <summary>Epoch milliseconds.</summary>
+        [JsonProperty("createdAt")]
+        public long CreatedAt { get; set; }
+
+        /// <summary>Epoch milliseconds.</summary>
+        [JsonProperty("updatedAt")]
+        public long UpdatedAt { get; set; }
+    }
+
+    /// <summary>Title metadata that travels with a favorite (web ContentSnapshot).</summary>
+    /// Optional fields are omitted from the JSON when null/empty — the server's
+    /// record validator treats PRESENT-but-null/0 fields as invalid records,
+    /// so NullValueHandling.Ignore is a wire-correctness requirement.
+    public class ContentSnapshot
+    {
+        [JsonProperty("title")]
+        public string Title { get; set; }
+
+        /// <summary>May be empty (bounded at 2000 chars, empty allowed).</summary>
+        [JsonProperty("poster")]
+        public string Poster { get; set; }
+
+        [JsonProperty("backdrop", NullValueHandling = NullValueHandling.Ignore)]
+        public string Backdrop { get; set; }
+
+        /// <summary>1800..3000 when present; omitted when unknown.</summary>
+        [JsonProperty("year", NullValueHandling = NullValueHandling.Ignore)]
+        public int? Year { get; set; }
+
+        [JsonProperty("runtime", NullValueHandling = NullValueHandling.Ignore)]
+        public string Runtime { get; set; }
+
+        /// <summary>0..10 when present; omitted when unrated.</summary>
+        [JsonProperty("rating", NullValueHandling = NullValueHandling.Ignore)]
+        public double? Rating { get; set; }
+
+        [JsonProperty("genres", NullValueHandling = NullValueHandling.Ignore)]
+        public List<string> Genres { get; set; }
+
+        [JsonProperty("description", NullValueHandling = NullValueHandling.Ignore)]
+        public string Description { get; set; }
+
+        [JsonProperty("isAnime", NullValueHandling = NullValueHandling.Ignore)]
+        public bool? IsAnime { get; set; }
+
+        /// <summary>"movie" | "series" (absent for regular titles).</summary>
+        [JsonProperty("animeFormat", NullValueHandling = NullValueHandling.Ignore)]
+        public string AnimeFormat { get; set; }
+    }
+
+    /// <summary>Envelope of PUT /api/account/sync and DELETE /api/account/favorites.</summary>
+    public class SyncWriteResponse
+    {
+        [JsonProperty("ok")]
+        public bool Ok { get; set; }
+
+        [JsonProperty("message")]
+        public string Message { get; set; }
+    }
+
     /// <summary>Error envelope entry of a failed resolution.</summary>
     public class ResolverError
     {

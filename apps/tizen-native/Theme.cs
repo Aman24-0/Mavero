@@ -345,6 +345,93 @@ namespace MaveroTv
         /// <summary>y of the header SEARCH pill (center-aligned with the brand).</summary>
         public const int HeaderSearchButtonY = 56;
 
+        // ---- Home header MY LIST entry ----
+        //
+        // Sits LEFT of the SEARCH pill (24px gap). Pressing it opens the
+        // MyListPage when the user is signed in, the LoginPage otherwise
+        // (App.cs owns that routing via AuthSession).
+
+        public const int HeaderListButtonWidth = 150;
+        public const int HeaderListButtonHeight = 56;
+
+        /// <summary>x of the header MY LIST pill (left of SEARCH, 24px gap).</summary>
+        public const int HeaderListButtonX = HeaderSearchButtonX - HeaderListButtonWidth - 24;
+
+        /// <summary>y of the header MY LIST pill (aligned with SEARCH).</summary>
+        public const int HeaderListButtonY = HeaderSearchButtonY;
+
+        /// <summary>Gap between the two header pills.</summary>
+        public const int HeaderPillGap = 24;
+
+        // ---- Login page (device pairing) ----
+        //
+        // Vertical budget on the fixed 1080 screen:
+        //   [0..160]    header — brand + accent bar, BACK pill top-right;
+        //   [~280]      state title (SIGN IN / PAIR YOUR DEVICE / ...);
+        //   [~380]      caption lines (what to do, where);
+        //   [500..]     action buttons (intro state: PAIR DEVICE primary +
+        //               CONTINUE AS GUEST secondary; signed-in state:
+        //               OPEN MY LIST primary + SIGN OUT secondary);
+        //   pairing state: instruction lines, the authorize URL, the 8-char
+        //               code in giant type, then the live status line.
+        //   All text blocks are full-width, center-aligned TextLabels; the
+        //   buttons are centered FocusButtons.
+
+        public const int LoginTitleY = 264;
+        public const int LoginTitlePointSize = 44;
+        public const int LoginCaptionY = 372;
+        public const int LoginCaptionPointSize = 21;
+        public const int LoginCaptionLineHeight = 44;
+
+        public const int LoginPairButtonY = 520;
+        public const int LoginPairButtonWidth = 400;
+        public const int LoginPairButtonHeight = 84;
+
+        public const int LoginGuestButtonY = 652;
+        public const int LoginGuestButtonWidth = 400;
+        public const int LoginGuestButtonHeight = 76;
+
+        /// <summary>Instruction line y (pairing state, two stacked lines).</summary>
+        public const int LoginInstructionY = 288;
+
+        /// <summary>The authorize URL line (pairing state) — the accent-colored target.</summary>
+        public const int LoginUrlY = 456;
+        public const int LoginUrlPointSize = 40;
+
+        /// <summary>The "enter this code" lead-in line.</summary>
+        public const int LoginCodeLabelY = 556;
+        public const int LoginCodePointSize = 88;
+        public const int LoginCodeY = 628;
+        public const int LoginCodeHeight = 120;
+
+        /// <summary>Live status line (waiting / exchanging / expired / error).</summary>
+        public const int LoginStatusY = 920;
+        public const int LoginStatusPointSize = 20;
+
+        /// <summary>Pairing poll cadence (the pairingPoll rate limit allows 60/min).</summary>
+        public const int PairingPollIntervalMs = 3000;
+
+        /// <summary>Exchange retry policy — transient failures are retried with the
+        /// SAME secret (the backend releases the pairing back to "approved").</summary>
+        public const int ExchangeMaxRetries = 3;
+        public const int ExchangeRetryDelayMs = 2000;
+
+        // ---- My List page ----
+        //
+        // Same chrome + 6-column poster grid as the search results: BACK
+        // pill top-right, a subtitle line ("N titles - signed in as ..."),
+        // then the vertically scrollable grid.
+
+        public const int MyListSubtitleY = 168;
+        public const int MyListSubtitleHeight = 44;
+        public const int MyListSubtitlePointSize = 20;
+
+        /// <summary>Top of the My List grid viewport (subtitle sits above).</summary>
+        public const int MyListViewportY = 232;
+
+        /// <summary>Height of the My List grid viewport (runs to the screen bottom).</summary>
+        public const int MyListViewportHeight = ScreenHeight - MyListViewportY;
+
         // ---- Player popups (server / source selectors) ----
 
         public const int PopupWidth = 640;

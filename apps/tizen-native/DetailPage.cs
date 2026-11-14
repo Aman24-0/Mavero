@@ -56,6 +56,13 @@
 // to PLAY when the user returns, so the hide timer can never steal
 // focus during season/episode browsing.
 //
+// My List: when the user is signed in (AuthSession), an ADD TO LIST
+// pill sits right of PLAY. It checks the cloud list on open ("IN LIST"
+// marker) and toggles on Enter: PUT /api/account/sync upserts the
+// favorite (server-validated record via ApiService.BuildFavoriteRecord),
+// DELETE /api/account/favorites removes it. Guests get no pill — the
+// honest state for a signed-out TV.
+//
 // Threading: the detail + season fetches complete on the thread
 // pool; binding is marshaled through UiDispatcher (DALi objects are
 // only touched on the UI thread). MarkClosing() fences the queued
@@ -97,6 +104,10 @@ namespace MaveroTv
         /// <summary>Guards against a stale season fetch binding over a newer one.</summary>
         private int _episodeFetchGeneration;
 
+        /// <summary>Generation counter fencing My List membership checks and
+        /// toggle results against newer user actions (or a closed page).</summary>
+        private int _listCheckGeneration;
+
         private ImageView _backdrop;
         private string _backdropUrl;
         private TextLabel _title;
@@ -104,6 +115,16 @@ namespace MaveroTv
         private TextLabel _synopsis;
         private FocusButton _playButton;
         private FocusButton _backButton;
+
+        // My List pill (signed-in users only; built in the constructor).
+        private FocusButton _addListButton;
+        private bool _inList;
+        private bool _listBusy;
+
+        /// <summary>Canonical content type of this title ("movie"|"series"|"anime"
+        /// — an anime-flagged series canonicalizes to "anime"), shared by the
+        /// favorite key check and the DELETE remove call.</summary>
+        private string _canonicalType;
 
         // Series-only chrome (built in the constructor, bound on detail arrival).
         private ScrollView _seasonScroll;
@@ -148,6 +169,7 @@ namespace MaveroTv
             Add(_meta);
             _playButton = CreatePlayButton();
             Add(_playButton);
+            CreateMyListButton();
 
             if (_seriesMode)
             {
@@ -175,6 +197,12 @@ namespace MaveroTv
             // Explicit focus links: BACK above PLAY, edges clamp.
             _playButton.UpFocusableView = _backButton;
             _backButton.DownFocusableView = _playButton;
+            if (_addListButton != null)
+            {
+                _playButton.RightFocusableView = _addListButton;
+                _addListButton.LeftFocusableView = _playButton;
+                _addListButton.UpFocusableView = _backButton;
+            }
 
             _playButton.Selected += OnPlaySelected;
             _backButton.Selected += OnBackSelected;
@@ -189,6 +217,159 @@ namespace MaveroTv
         public void SetInitialFocus()
         {
             FocusManager.Instance.SetCurrentFocusView(_playButton);
+        }
+
+        // ---- My List (Add / Remove) ----------------------------------------
+
+        /// <summary>
+        /// The ADD TO LIST pill — built ONLY for signed-in users (guests see
+        /// no dead button; the honest My List surface is the LOGIN flow from
+        /// the home header). Starts as "ADD TO LIST"; the async cloud check
+        /// flips it to "IN LIST" when this title is already saved.
+        /// </summary>
+        private void CreateMyListButton()
+        {
+            if (!AuthSession.IsSignedIn)
+            {
+                return;
+            }
+
+            _canonicalType = CanonicalFavoriteType();
+
+            int y = _seriesMode ? Theme.SeriesPlayButtonY : Theme.PlayButtonY;
+            int height = _seriesMode ? Theme.SeriesPlayButtonHeight : Theme.PlayButtonHeight;
+            int x = Theme.PageMargin + Theme.PlayButtonWidth + 24;
+
+            _addListButton = new FocusButton("ADD TO LIST", Theme.PlayButtonWidth, height, false)
+            {
+                // Center pivot: Position2D measures to the button's own center.
+                Position2D = new Position2D(x + Theme.PlayButtonWidth / 2, y + height / 2)
+            };
+            _addListButton.Selected += OnAddListSelected;
+            Add(_addListButton);
+
+            // Membership check in the background — the page paints instantly
+            // with "ADD TO LIST" and the marker arrives with the fetch.
+            int generation = ++_listCheckGeneration;
+            _ = CheckListMembershipAsync(generation);
+        }
+
+        /// <summary>Canonical favorite type: an anime-flagged series is stored
+        /// as "anime" (the web app's canonicalFavoriteType rule).</summary>
+        private string CanonicalFavoriteType()
+        {
+            string type = (_item.Type ?? "movie").Trim().ToLowerInvariant();
+            if (type != "series" && type != "anime" && type != "movie")
+            {
+                type = "movie";
+            }
+            if (type == "series" && _item.IsAnime)
+            {
+                type = "anime";
+            }
+            return type;
+        }
+
+        private async Task CheckListMembershipAsync(int generation)
+        {
+            try
+            {
+                List<FavoriteRecord> favorites = await _api.FetchFavoritesAsync();
+                UiDispatcher.Post(() =>
+                {
+                    if (_closed || generation != _listCheckGeneration || _addListButton == null)
+                    {
+                        return;
+                    }
+
+                    _inList = ContainsFavorite(favorites, _canonicalType, _item.Id);
+                    _addListButton.SetLabel(_inList ? "IN LIST" : "ADD TO LIST");
+                    Log.Info(MaveroApp.LogTag, "My List check for " + _item.Id + ": " +
+                        (_inList ? "already saved" : "not saved"));
+                });
+            }
+            catch (Exception ex)
+            {
+                Log.Warn(MaveroApp.LogTag, "My List check failed for " + _item.Id + ": " + ex.Message);
+                // The pill keeps its ADD TO LIST default — pressing it will
+                // simply upsert (idempotent server-side).
+            }
+        }
+
+        /// <summary>Exact key membership ("{type}:{id}" — the server validator's
+        /// key rule) against the fetched favorites.</summary>
+        private static bool ContainsFavorite(List<FavoriteRecord> favorites, string contentType, string contentId)
+        {
+            if (favorites == null || string.IsNullOrEmpty(contentId))
+            {
+                return false;
+            }
+
+            string key = contentType + ":" + contentId;
+            foreach (FavoriteRecord record in favorites)
+            {
+                if (record != null && record.Key == key)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private void OnAddListSelected()
+        {
+            if (_listBusy || _addListButton == null)
+            {
+                return;
+            }
+
+            _listBusy = true;
+            int generation = ++_listCheckGeneration;
+            _ = ToggleListAsync(generation);
+        }
+
+        private async Task ToggleListAsync(int generation)
+        {
+            bool success;
+            if (_inList)
+            {
+                Log.Info(MaveroApp.LogTag, "Removing from My List: " + _canonicalType + ":" + _item.Id);
+                success = await _api.RemoveFavoriteAsync(_canonicalType, _item.Id);
+            }
+            else
+            {
+                FavoriteRecord record = ApiService.BuildFavoriteRecord(_item,
+                    DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                if (record == null)
+                {
+                    success = false;
+                }
+                else
+                {
+                    Log.Info(MaveroApp.LogTag, "Adding to My List: " + record.Key);
+                    success = await _api.AddFavoriteAsync(record);
+                }
+            }
+
+            UiDispatcher.Post(() =>
+            {
+                if (_closed || generation != _listCheckGeneration || _addListButton == null)
+                {
+                    return;
+                }
+
+                if (success)
+                {
+                    _inList = !_inList;
+                    _addListButton.SetLabel(_inList ? "IN LIST" : "ADD TO LIST");
+                }
+                else
+                {
+                    // Honest failure state; reverts to the actionable label.
+                    _addListButton.SetLabel("RETRY");
+                }
+                _listBusy = false;
+            });
         }
 
         /// <summary>Fences in-flight fetch binding before the page leaves the window.</summary>
