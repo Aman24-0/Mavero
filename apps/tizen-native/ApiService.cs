@@ -56,7 +56,6 @@ using System.Linq;
 using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
-using Newtonsoft.Json;
 using Tizen;
 
 namespace MaveroTv
@@ -197,7 +196,7 @@ namespace MaveroTv
 
         /// <summary>Identifies the native TV app to CDN/WAF edges that drop
         /// UA-less requests.</summary>
-        private const string UserAgentValue = "MaveroTV/0.0.3 (Tizen; SmartTV)";
+        private const string UserAgentValue = "MaveroTV/0.0.4 (Tizen; SmartTV)";
 
         /// <summary>Stamps the User-Agent on a client (TryAdd — never throws on
         /// a profile with restricted header validation).</summary>

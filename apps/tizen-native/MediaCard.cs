@@ -103,18 +103,30 @@ namespace MaveroTv
 
             // Full-bleed 2:3 poster (220x330 card). ScaleToFill crops the
             // rare off-ratio source; AlphaMaskURL rounds the corners to the
-            // same 12px radius as the web app cards.
+            // same 12px radius as the web app cards. API4 ImageView has no
+            // FittingMode/DesiredWidth/AlphaMaskURL properties (those are
+            // API5/6 additions) — the identical effect ships through the
+            // ImageVisual PropertyMap on ImageView.Image, using the same
+            // ImageVisualProperty keys the rest of the app already uses.
+            PropertyMap posterMap = new PropertyMap();
+            posterMap.Insert(Visual.Property.Type, new PropertyValue((int)Visual.Type.Image));
+            posterMap.Insert(ImageVisualProperty.URL, new PropertyValue(_item.Poster));
+            posterMap.Insert(ImageVisualProperty.AlphaMaskURL,
+                new PropertyValue(Theme.AssetUrl(Theme.PosterMaskAsset)));
+            posterMap.Insert(ImageVisualProperty.FittingMode,
+                new PropertyValue((int)FittingModeType.ScaleToFill));
+            posterMap.Insert(ImageVisualProperty.DesiredWidth,
+                new PropertyValue(Theme.CardWidth * 2));   // decode at 2x for crisp downscale
+            posterMap.Insert(ImageVisualProperty.DesiredHeight,
+                new PropertyValue(Theme.CardHeight * 2));
+
             return new ImageView
             {
                 Position2D = new Position2D(0, 0),
                 Size2D = new Size2D(Theme.CardWidth, Theme.CardHeight),
                 PivotPoint = Theme.TopLeftPivot,
                 PositionUsesPivotPoint = true,
-                ResourceUrl = _item.Poster,
-                AlphaMaskURL = Theme.AssetUrl(Theme.PosterMaskAsset),
-                FittingMode = FittingModeType.ScaleToFill,
-                DesiredWidth = Theme.CardWidth * 2,   // decode at 2x for crisp downscale
-                DesiredHeight = Theme.CardHeight * 2
+                Image = posterMap
             };
         }
 

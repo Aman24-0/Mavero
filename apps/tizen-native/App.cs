@@ -102,11 +102,123 @@ namespace MaveroTv
         /// opened from — Back returns to it and restores its focus.</summary>
         private View _detailReturnPage;
 
+        /// <summary>The STAGE 1 "alive proof" label — painted in OnCreate and
+        /// deliberately LEFT on the window (under every page's opaque
+        /// background) so a native death later in boot still leaves it,
+        /// plus the dark-green window, visible on screen.</summary>
+        private TextLabel _stageOneLabel;
+
+        /// <summary>One-shot 500ms gate Timer created in OnCreate — the ONLY
+        /// thing OnCreate does after painting STAGE 1.</summary>
+        private Tizen.NUI.Timer _bootGate;
+
+        // ------------------------------------------------------------
+        // ONCREATE — ULTRA-MINIMAL FIRST FRAME (v0.0.4 field-TV rule)
+        // ------------------------------------------------------------
+        // Finding: 0.0.2/0.0.3 died BEFORE OnCreate's first frame while
+        // the OS splash ("<label> Loading") was still up, so NO boot
+        // console ever rendered. Two likely kill zones live before any
+        // risky code: the launcher/CLR binding the api-version=6
+        // assemblies, and anything slow/failing INSIDE OnCreate (which
+        // delays the first frame — the splash only clears when OnCreate
+        // returns AND the main loop paints one clean frame).
+        //
+        // This OnCreate therefore does ONLY:
+        //   1. base.OnCreate();
+        //   2. paint a DISTINCT DARK GREEN window background (never
+        //      mistakable for the black OS splash — if the TV shows it,
+        //      managed C# ran, NUI works, Program.Main executed);
+        //   3. add one plain TextLabel "MAVERO C# ALIVE - STAGE 1" to
+        //      the default layer;
+        //   4. start a one-shot Tizen.NUI.Timer(500) and RETURN — so
+        //      OnCreate hands back to the Tizen main loop immediately,
+        //      the OS splash dismisses, and the green "C# ALIVE" frame
+        //      paints BEFORE any initialization (UiDispatcher, BootLog,
+        //      HomePage, ApiService) is allowed to run.
+        // ------------------------------------------------------------
         protected override void OnCreate()
         {
             base.OnCreate();
 
-            Log.Info(LogTag, "Mavero TV boot: OnCreate entered");
+            Log.Info(LogTag, "Mavero TV boot: OnCreate entered (STAGE 1 minimal frame)");
+
+            try
+            {
+                Window window = Window.Instance;
+
+                // DARK GREEN — deliberately un-black: proves THIS frame is
+                // ours, not the OS splash lingering or a dead process.
+                window.BackgroundColor = new Color(0.05f, 0.25f, 0.1f, 1.0f);
+
+                _stageOneLabel = new TextLabel("MAVERO C# ALIVE - STAGE 1");
+                _stageOneLabel.TextColor = Color.White;
+                _stageOneLabel.PointSize = 26;
+                _stageOneLabel.HorizontalAlignment = HorizontalAlignment.Center;
+                _stageOneLabel.VerticalAlignment = VerticalAlignment.Center;
+                _stageOneLabel.Position2D = new Position2D(0, 480);
+                _stageOneLabel.Size2D = new Size2D(1920, 120);
+                window.GetDefaultLayer().Add(_stageOneLabel);
+
+                Log.Info(LogTag, "Mavero TV boot: STAGE 1 painted (dark green + C# ALIVE label)");
+            }
+            catch (Exception ex)
+            {
+                // STAGE 1 itself failing means NUI/window APIs are broken on
+                // this profile — report loudly; the deferred boot still runs
+                // and its console/Diagnostics may find the screen.
+                Log.Error(LogTag, "Mavero TV boot: STAGE 1 failed: " + ex.GetType().FullName + ": " + ex.Message);
+            }
+
+            // Defer EVERYTHING else by 500ms: OnCreate returns to the main
+            // loop NOW, the splash clears, the green frame renders, and
+            // only then does any risky initialization run.
+            try
+            {
+                _bootGate = new Tizen.NUI.Timer(500);
+                _bootGate.Tick += OnBootGateTick;
+                _bootGate.Start();
+            }
+            catch (Exception ex)
+            {
+                // Degradation path: no timer on this profile — run the boot
+                // inline (still safer than never booting at all).
+                Log.Error(LogTag, "Mavero TV boot: gate timer unavailable (" + ex.Message + ") — booting inline");
+                _bootGate = null;
+                DeferredBoot();
+            }
+        }
+
+        /// <summary>One-shot gate tick: the green frame has been on screen
+        /// 500ms — run the real boot. Returns false so the timer stops.</summary>
+        private bool OnBootGateTick(object source, Tizen.NUI.Timer.TickEventArgs args)
+        {
+            Tizen.NUI.Timer gate = source as Tizen.NUI.Timer;
+            _bootGate = null;
+
+            if (gate != null)
+            {
+                UiDispatcher.Post(() =>
+                {
+                    try
+                    {
+                        gate.Dispose();
+                    }
+                    catch
+                    {
+                        // deferred dispose off the Tick callback; never fatal
+                    }
+                });
+            }
+
+            DeferredBoot();
+            return false; // one-shot
+        }
+
+        /// <summary>The REAL boot — every step that used to live in OnCreate,
+        /// now running 500ms after the first frame rendered.</summary>
+        private void DeferredBoot()
+        {
+            Log.Info(LogTag, "Mavero TV boot: deferred init starting (STAGE 1 was on screen 500ms)");
 
             // UI-THREAD CONTRACT (Tizen NUI / DALi):
             //   1. Install the SynchronizationContext FIRST — every `await`
@@ -117,14 +229,20 @@ namespace MaveroTv
             //   2. Start the dispatcher pump — ONE persistent Tizen.NUI.Timer
             //      created + started HERE on the DALi thread; background
             //      threads only ConcurrentQueue.Enqueue (zero native calls).
-            //      Starting it BEFORE anything risky also guarantees that
-            //      every Diagnostics.Report below can actually render.
             //   3. Register the window with Diagnostics — every caught failure
             //      renders on screen (the field TV has no sdb / dlog access).
-            UiSynchronizationContext.Install();
-            _window = GetDefaultWindow();
-            Diagnostics.Initialize(_window);
-            UiDispatcher.Initialize();
+            try
+            {
+                UiSynchronizationContext.Install();
+                _window = Window.Instance;
+                Diagnostics.Initialize(_window);
+                UiDispatcher.Initialize();
+            }
+            catch (Exception ex)
+            {
+                Log.Error(LogTag, "Mavero TV boot: dispatcher/window setup failed: "
+                    + ex.GetType().FullName + ": " + ex.Message);
+            }
 
             try
             {
@@ -133,10 +251,12 @@ namespace MaveroTv
                 // from AuthSession at construction time.
                 AuthSession.LoadFromDisk();
 
-                _window.BackgroundColor = Theme.Background;
+                // The window keeps the STAGE 1 dark-green background here —
+                // every page is opaque and covers it; if a later boot step
+                // dies natively the green + STAGE 1 label stay as evidence.
                 _window.KeyEvent += OnKeyEvent;
 
-                Log.Info(LogTag, "Mavero TV boot: default window ready, staging boot console");
+                Log.Info(LogTag, "Mavero TV boot: window ready, staging boot console");
 
                 // LIVE BOOT CONSOLE: paints a bottom-strip log on the TV and
                 // runs the risky boot steps in staged 150ms ticks — each

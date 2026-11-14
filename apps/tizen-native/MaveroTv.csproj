@@ -3,23 +3,36 @@
   <!-- ============================================================
        Mavero TV — native Tizen .NET application (Tizen.NUI / C#).
 
-       Why tizen60 and not net6.0-tizen/net8.0-tizen:
-         Samsung's platform feature matrix ships the "Tizen .NET v2.1"
-         profile (netstandard2.0, mono-based) on Tizen 4.0-6.0 TVs.
-         The net6.0-tizen TFMs only exist from Tizen 7.0 (2023 models)
-         onward, and Tizen .NET is deprecated for new TV models. To run
-         on our target hardware (Tizen 6.0 TV) the classic tizen60 TFM
-         with TizenFX API6 is the only workable choice.
+       Why tizen40 (API 4) and not tizen60 (API 6):
+         Field-test finding (v0.0.2/0.0.3): the app died BEFORE
+         Program.Main on a real Samsung TV while the OS splash
+         ("... Loading") was still up — the classic signature of the
+         launcher/CLR failing to bind api-version=6 assemblies on TV
+         firmware whose Tizen .NET v2.1 profile only guarantees the
+         API4 surface. Samsung's own guidance for maximum TV hardware
+         compatibility is api-version="4" + <TargetFramework>tizen40
+         </TargetFramework>, which boots on EVERY Samsung Tizen TV
+         from 2018 through current models. API4 code runs on API5/6/7
+         TVs (upward compatible), the reverse is not true.
 
        Why there is NO RuntimeIdentifier (emulator vs device):
-         The classic tizen60 toolchain (Tizen.NET.Sdk 1.1.x) has no
-         RID concept at all — verified in the Sdk's props/targets, which
-         contain no RuntimeIdentifier/tizen-x86/tizen-armel anywhere.
-         The tpk payload is pure managed IL plus resources, executed by
-         the mono runtime that ships with the platform: x86 on the TV
-         emulator, ARM on real hardware. Arch-specific RIDs
-         (<RuntimeIdentifier>tizen-x86</RuntimeIdentifier>) belong to
-         the net6.0-tizen+ AOT toolchain only, which TV 6.0 cannot run.
+         The classic tizen TFM toolchain (Tizen.NET.Sdk 1.1.x) has no
+         RID concept at all — verified in the Sdk's props/targets,
+         which contain no RuntimeIdentifier/tizen-x86/tizen-armel
+         anywhere. The tpk payload is pure managed IL plus resources,
+         executed by the mono runtime that ships with the platform:
+         x86 on the TV emulator, ARM on real hardware. Arch-specific
+         RIDs belong to the net6.0-tizen+ AOT toolchain only.
+
+       ZERO third-party NuGet dependencies (assembly-load hardening):
+         The tpk bin/ previously shipped Newtonsoft.Json.dll. On real
+         TV hardware a missing/unresolvable dependent assembly aborts
+         the mono runtime BEFORE Program.Main — invisible to every
+         managed handler. The JSON layer is now the in-repo
+         SimpleJson.cs (parser + reflection mapper + serializer,
+         Newtonsoft-compatible [JsonProperty] attribute), so bin/
+         contains ONLY MaveroTv.dll and nothing can fail assembly
+         resolution at boot.
 
        Resources — where the visuals actually come from:
          Tizen.NET.Sdk 1.1.9 packs ONLY the project's res/, lib/ and
@@ -44,16 +57,16 @@
        Studio Tizen workload, or plain `dotnet build` — the Tizen.NET.Sdk
        NuGet package carries default author/distributor certificates for
        CI-style builds). The build output
-       bin/Release/tizen60/org.mavero.tv-<version>.tpk installs on the
+       bin/Release/tizen40/org.mavero.tv-<version>.tpk installs on the
        Tizen TV emulator and on device.
        ============================================================ -->
   <PropertyGroup>
-    <TargetFramework>tizen60</TargetFramework>
+    <TargetFramework>tizen40</TargetFramework>
     <AssemblyName>MaveroTv</AssemblyName>
     <RootNamespace>MaveroTv</RootNamespace>
-    <Version>0.0.3</Version>
+    <Version>0.0.4</Version>
     <!-- The explicit Tizen.NET reference below is REQUIRED by the classic
-         tizen60 TFM (Tizen.NET.Sdk 1.1.9 predates implicit TizenFX refs;
+         tizen TFM (Tizen.NET.Sdk 1.1.9 predates implicit TizenFX refs;
          Samsung's tizen build-cs expects it). NETSDK1023 is emitted only by
          the modern desktop SDK used for verification builds and would
          otherwise be the sole warning in an otherwise clean build. -->
@@ -61,16 +74,12 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- All TizenFX API 6 reference assemblies, incl. Tizen.NUI.
+    <!-- All TizenFX API 4 reference assemblies, incl. Tizen.NUI.
          Framework assemblies are provided by the platform runtime and
-         are NOT packed into the tpk; only MaveroTv.dll and the
-         third-party dependencies below are. -->
-    <PackageReference Include="Tizen.NET" Version="6.0.0.14995" />
-    <!-- JSON parsing. The Tizen v2.1 profile is netstandard2.0-based and
-         does not bundle System.Text.Json, so we use the ecosystem-standard
-         Newtonsoft.Json (Samsung's own Tizen samples use it). The Tizen
-         SDK packs NuGet dependency assemblies into the tpk bin/ folder. -->
-    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+         are NOT packed into the tpk; only MaveroTv.dll is packed —
+         there are NO third-party NuGet packages on purpose (see the
+         SimpleJson.cs note above). -->
+    <PackageReference Include="Tizen.NET" Version="4.0.1.14164" />
   </ItemGroup>
 
 </Project>

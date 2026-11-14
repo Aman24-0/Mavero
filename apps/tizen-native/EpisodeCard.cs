@@ -105,18 +105,29 @@ namespace MaveroTv
             }
 
             // Full-bleed 16:9 still, corners rounded to the same 12px
-            // radius as the poster cards via the 16:9 mask twin.
+            // radius as the poster cards via the 16:9 mask twin. API4
+            // ImageView carries no FittingMode/DesiredWidth/AlphaMaskURL
+            // properties (API5/6 additions) — the identical effect ships
+            // through the ImageVisual PropertyMap on ImageView.Image.
+            PropertyMap stillMap = new PropertyMap();
+            stillMap.Insert(Visual.Property.Type, new PropertyValue((int)Visual.Type.Image));
+            stillMap.Insert(ImageVisualProperty.URL, new PropertyValue(_episode.Still));
+            stillMap.Insert(ImageVisualProperty.AlphaMaskURL,
+                new PropertyValue(Theme.AssetUrl(Theme.EpisodeMaskAsset)));
+            stillMap.Insert(ImageVisualProperty.FittingMode,
+                new PropertyValue((int)FittingModeType.ScaleToFill));
+            stillMap.Insert(ImageVisualProperty.DesiredWidth,
+                new PropertyValue(Theme.EpisodeCardWidth * 2));   // decode at 2x for crisp downscale
+            stillMap.Insert(ImageVisualProperty.DesiredHeight,
+                new PropertyValue(Theme.EpisodeCardHeight * 2));
+
             return new ImageView
             {
                 Position2D = new Position2D(0, 0),
                 Size2D = new Size2D(Theme.EpisodeCardWidth, Theme.EpisodeCardHeight),
                 PivotPoint = Theme.TopLeftPivot,
                 PositionUsesPivotPoint = true,
-                ResourceUrl = _episode.Still,
-                AlphaMaskURL = Theme.AssetUrl(Theme.EpisodeMaskAsset),
-                FittingMode = FittingModeType.ScaleToFill,
-                DesiredWidth = Theme.EpisodeCardWidth * 2,   // decode at 2x for crisp downscale
-                DesiredHeight = Theme.EpisodeCardHeight * 2
+                Image = stillMap
             };
         }
 

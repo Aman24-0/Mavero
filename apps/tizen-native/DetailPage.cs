@@ -415,16 +415,26 @@ namespace MaveroTv
             _backdropUrl = !string.IsNullOrEmpty(_item.Backdrop) ? _item.Backdrop : _item.Poster;
             int height = _seriesMode ? Theme.SeriesBackdropHeight : Theme.BackdropHeight;
 
+            // API4 ImageView carries no FittingMode/DesiredWidth properties
+            // (API5/6 additions) — the scale-to-fill hero decode ships
+            // through the ImageVisual PropertyMap on ImageView.Image.
+            PropertyMap backdropMap = new PropertyMap();
+            backdropMap.Insert(Visual.Property.Type, new PropertyValue((int)Visual.Type.Image));
+            backdropMap.Insert(ImageVisualProperty.URL, new PropertyValue(_backdropUrl));
+            backdropMap.Insert(ImageVisualProperty.FittingMode,
+                new PropertyValue((int)FittingModeType.ScaleToFill));
+            backdropMap.Insert(ImageVisualProperty.DesiredWidth,
+                new PropertyValue(Theme.BackdropDecodeWidth));
+            backdropMap.Insert(ImageVisualProperty.DesiredHeight,
+                new PropertyValue(Theme.BackdropDecodeHeight));
+
             return new ImageView
             {
                 Position2D = new Position2D(0, 0),
                 Size2D = new Size2D(Theme.ScreenWidth, height),
                 PivotPoint = Theme.TopLeftPivot,
                 PositionUsesPivotPoint = true,
-                ResourceUrl = _backdropUrl,
-                FittingMode = FittingModeType.ScaleToFill,
-                DesiredWidth = Theme.BackdropDecodeWidth,
-                DesiredHeight = Theme.BackdropDecodeHeight
+                Image = backdropMap
             };
         }
 

@@ -1,11 +1,11 @@
 // ============================================================
 // Mavero TV — UI-thread marshaling helper.
 //
-// Tizen.NUI (tizen60 profile) installs no SynchronizationContext,
-// so await-continuations (ApiService's HttpClient tasks) resume on
-// the thread pool. DALi views must only be touched from the DALi
-// (UI) thread, so background work posts closures here and ONE
-// persistent pump Timer drains the queue.
+// Tizen.NUI (tizen40/tizen60 profiles alike) installs no
+// SynchronizationContext, so await-continuations (ApiService's
+// HttpClient tasks) resume on the thread pool. DALi views must only
+// be touched from the DALi (UI) thread, so background work posts
+// closures here and ONE persistent pump Timer drains the queue.
 //
 // ZERO-NATIVE-ON-BACKGROUND-THREAD CONTRACT (field-TV crash rule):
 //   Tizen.NUI.Timer is a native DALi/Ecore object. Creating or

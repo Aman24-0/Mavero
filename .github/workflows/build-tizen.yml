@@ -49,9 +49,12 @@
 #   apps/tizen-native/shared/res/MaveroTv.png (→ tpk shared/res/, where
 #   the manifest <icon> is resolved from). A tpk missing them installs
 #   but boots into an invisible app. The build step fails if any of the
-#   8 res/ assets, the icon, MaveroTv.dll or Newtonsoft.Json.dll is
-#   absent. Note: classic tizen60 tpks are pure managed IL — no
-#   RuntimeIdentifier/arch slicing; the same tpk runs on the x86
+#   8 res/ assets, the icon or MaveroTv.dll is absent. Since v0.0.4 the
+#   app has ZERO third-party NuGet dependencies (SimpleJson.cs replaced
+#   Newtonsoft.Json — a foreign DLL in bin/ is a pre-Main assembly-load
+#   crash vector on real TV hardware): the verify step also asserts NO
+#   other .dll ships in bin/. Note: classic tizen tpks are pure managed
+#   IL — no RuntimeIdentifier/arch slicing; the same tpk runs on the x86
 #   emulator and ARM hardware via the platform's mono runtime.
 #
 # Certificates for retail TVs:
@@ -71,7 +74,7 @@
 # Package installs (package-manager-cli) are intentionally ABSENT: the
 # catalog no longer contains the TV-6.0 platform (Samsung moved TV SDKs to
 # the web-only TV-SAMSUNG-* extensions; only TV-4.0/TV-5.0 web leftovers
-# remain), the TizenFX API-6 assemblies come from the NuGet Tizen.NET
+# remain), the TizenFX API-4 assemblies come from the NuGet Tizen.NET
 # package the csproj already references, and the NativeCLI chain fails on
 # modern runners (it dpkg-installs a focal-era libboost-iostreams1.71 deb).
 # Nothing in this pipeline needs them — verified: restore/compile/package/
@@ -129,8 +132,8 @@ jobs:
           java-version: "17"
 
       # .NET SDK 8 — the actual C# compiler. Tizen.NET.Sdk 1.1.9 +
-      # Tizen.NET 6.0.0.14995 restore against it (the same 8.0.4xx band the
-      # repo's local TizenFX verification uses).
+      # Tizen.NET 4.0.1.14164 (API4 ref assemblies) restore against it
+      # (the same 8.0.4xx band the repo's local TizenFX verification uses).
       - name: Setup .NET SDK 8
         uses: actions/setup-dotnet@v4
         with:
@@ -213,21 +216,29 @@ jobs:
 
       # Fail fast with a readable error if packaging produced anything
       # less than a fully self-contained tpk: manifest, managed entry
-      # assembly, every NuGet dependency, ALL res/ UI assets, the
-      # launcher icon, and both signatures. Each grep exits non-zero
-      # (set -e) when the file is missing, naming the gap.
+      # assembly, deps.json, ZERO foreign DLLs, ALL res/ UI assets, the
+      # launcher icon, and both signatures. Each check exits non-zero
+      # when the expectation is violated, naming the gap.
       - name: Verify the .tpk
         run: |
           set -euo pipefail
-          TPK="$(ls apps/tizen-native/bin/Release/tizen60/*.tpk)"
+          TPK="$(ls apps/tizen-native/bin/Release/tizen40/*.tpk)"
           echo "Artifact: $TPK"
           test -s "$TPK"
           LIST="$(mktemp)"
           unzip -l "$TPK" | tee "$LIST" | tee /dev/stderr | grep -q "tizen-manifest.xml"
           grep -q "bin/MaveroTv.dll" "$LIST"
-          grep -q "bin/Newtonsoft.Json.dll" "$LIST"
+          grep -q "MaveroTv.deps.json" "$LIST"
           grep -q "author-signature.xml" "$LIST"
           grep -q "signature1.xml" "$LIST"
+          # ZERO third-party DLLs: any foreign bin/*.dll (the old
+          # Newtonsoft.Json.dll) is a pre-Main assembly-resolution crash
+          # vector on real TV hardware — fail the build if one sneaks in.
+          if unzip -l "$TPK" | grep -E "bin/.*\.dll" | grep -qv "bin/MaveroTv.dll"; then
+            echo "FOREIGN DLL in tpk bin/ — third-party packages are forbidden (see SimpleJson.cs):";
+            unzip -l "$TPK" | grep "bin/.*\.dll";
+            exit 1;
+          fi
           # Launcher icon (resolved from shared/res/ by the manifest <icon>)
           grep -q "shared/res/MaveroTv.png" "$LIST"
           # Every UI asset the code loads via Theme.AssetUrl()
@@ -236,12 +247,12 @@ jobs:
             grep -q "res/${asset}.png" "$LIST" || {
               echo "MISSING tpk payload: res/${asset}.png"; exit 1; }
           done
-          echo "tpk verified: manifest, managed entry assembly, dependencies, launcher icon, all 8 res/ UI assets, author + distributor signatures all present"
+          echo "tpk verified: manifest, managed entry assembly, deps.json, ZERO foreign DLLs, launcher icon, all 8 res/ UI assets, author + distributor signatures all present"
 
       - name: Upload .tpk artifact
         uses: actions/upload-artifact@v4
         with:
           name: mavero-tv-tpk-${{ github.run_number }}
-          path: apps/tizen-native/bin/Release/tizen60/*.tpk
+          path: apps/tizen-native/bin/Release/tizen40/*.tpk
           if-no-files-found: error
           retention-days: 30

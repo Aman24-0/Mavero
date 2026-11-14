@@ -1,57 +1,76 @@
 // ============================================================
 // Mavero TV — native Tizen entry point (Tizen.NUI, C#).
 //
-// This is the NATIVE Tizen application (apps/tizen-native) that
-// replaces the retired WebView/.wgt approach. It renders the TV
-// home experience with Tizen.NUI and consumes the same public
-// production API the web app serves (GET /api/tv/home on
-// https://maveroweb.space) — see ApiService.cs.
+// JIT/TYPE-LOAD ISOLATION (field-TV boot-death rule, v0.0.4):
+//   On the real Samsung TV the process used to die BEFORE any managed
+//   handler ever ran — while the OS splash was still up. A .NET JIT
+//   compiles Main as ONE method: if Main directly referenced App/NUI/
+//   JSON types, their type-load and JIT failures would abort BEFORE
+//   Main's try/catch could ever execute. The fix:
+//     - Main references ONLY System types (Exception, Console) plus
+//       the single call to Start();
+//     - Start() is [MethodImpl(MethodImplOptions.NoInlining)] so JIT
+//       never inlines its body into Main — every Tizen/NUI/App type
+//       load happens INSIDE Start(), safely inside Main's try/catch;
+//     - any TypeLoadException/MissingMethodException/FileNotFound
+//       (the tpk payload problem class) is now REPORTED instead of
+//       dying invisibly (Console.Error → platform crash log + the
+//       launcher's stderr capture).
 //
-// Lifecycle: Main → MaveroApp (NUIApplication) → OnCreate mounts
-// HomePage on the default TV window (fixed 1920x1080).
+// Lifecycle: Main → Start → MaveroApp (NUIApplication) → OnCreate
+// (STAGE 1 minimal green frame) → +500ms deferred boot → HomePage.
 //
-// Crash diagnostics: the field-test TV runs with no PC and no
-// `sdb dlog`, so every failure must become visible ON SCREEN:
-//   - AppDomain.UnhandledException + TaskScheduler.UnobservedTask
-//     Exception route into the Diagnostics overlay (Diagnostics.cs)
-//     in addition to dlog — the TV itself becomes the log;
-//   - an exception that escapes Main (DALi init failure, missing
-//     tpk payload) still lands in dlog for emulator debugging;
-//     nothing can render before the NUI window exists.
-// To read it on a booted failure:  sdb dlog | grep MAVERO   (or
-// `sdb shell dlog -s MAVERO` inside the emulator shell).
+// Screen diagnostics: the field TV runs with no PC and no `sdb dlog`,
+// so the app paints its own boot console (BootLog.cs) + Diagnostics
+// overlay (Diagnostics.cs) — the TV screen itself is the log.
 // ============================================================
 using System;
+using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
-using Tizen;
-using Tizen.NUI;
 
 namespace MaveroTv
 {
-    /// <summary>Tizen native entry point.</summary>
+    /// <summary>Tizen native entry point (JIT-isolated, System-only Main).</summary>
     internal static class Program
     {
         private static void Main(string[] args)
         {
-            AppDomain.CurrentDomain.UnhandledException += OnUnhandledException;
-            TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
-
+            // ONLY System types below — any richer reference (Tizen.Log,
+            // NUIApplication, MaveroApp) would pull Tizen/NUI type loads
+            // into Main's JIT compilation, defeating the isolation.
             try
             {
-                Log.Info(MaveroApp.LogTag, "Mavero TV boot: starting MaveroApp");
-                var app = new MaveroApp();
-                app.Run(args);
-                Log.Info(MaveroApp.LogTag, "Mavero TV exit: app.Run returned cleanly");
+                Start(args);
             }
             catch (Exception ex)
             {
-                // The failure that used to be invisible: dependency load
-                // errors (missing tpk payload), API skew between the NuGet
-                // refs and the platform, DALi init failures — all land here.
-                Log.Error(MaveroApp.LogTag, "Mavero TV FATAL: " + ex.GetType().FullName
-                    + ": " + ex.Message + "\n" + ex.StackTrace);
+                // Reached for: TypeLoadException/MissingMethodException during
+                // Start()'s JIT, tpk payload holes, NUIApplication ctor aborts —
+                // everything that previously killed the process pre-handler.
+                Console.Error.WriteLine("MAVERO FATAL: " + ex.GetType().FullName + ": " + ex.Message);
+                Console.Error.WriteLine(ex.StackTrace);
+                Console.Error.Flush();
                 throw; // preserve the crash for the platform crash handler
             }
+        }
+
+        /// <summary>
+        /// The real entry body, kept OUT of Main's JIT frame. Everything
+        /// Tizen-flavored (Tizen.Log, MaveroApp, NUI) loads here — one
+        /// level beneath Main's guard.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static void Start(string[] args)
+        {
+            AppDomain.CurrentDomain.UnhandledException += OnUnhandledException;
+            TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
+
+            Tizen.Log.Info(MaveroApp.LogTag, "Mavero TV boot: Program.Main reached (JIT-isolated entry OK)");
+            Console.Error.WriteLine("MAVERO: Program.Main reached");
+
+            var app = new MaveroApp();
+            app.Run(args);
+            Tizen.Log.Info(MaveroApp.LogTag, "Mavero TV exit: app.Run returned cleanly");
         }
 
         /// <summary>Background-thread escapes (IO continuations, timers) also
@@ -59,7 +78,7 @@ namespace MaveroTv
         private static void OnUnhandledException(object sender, UnhandledExceptionEventArgs e)
         {
             Exception ex = e.ExceptionObject as Exception;
-            Log.Error(MaveroApp.LogTag, "Mavero TV UNHANDLED (" + (e.IsTerminating ? "terminating" : "observed") + "): "
+            Tizen.Log.Error(MaveroApp.LogTag, "Mavero TV UNHANDLED (" + (e.IsTerminating ? "terminating" : "observed") + "): "
                 + (ex != null ? ex.GetType().FullName + ": " + ex.Message + "\n" + ex.StackTrace
                               : Convert.ToString(e.ExceptionObject)));
 
@@ -86,7 +105,7 @@ namespace MaveroTv
                 ? e.Exception.InnerExceptions[0]
                 : (Exception)e.Exception;
 
-            Log.Error(MaveroApp.LogTag, "Mavero TV UNOBSERVED TASK: "
+            Tizen.Log.Error(MaveroApp.LogTag, "Mavero TV UNOBSERVED TASK: "
                 + (ex != null ? ex.GetType().FullName + ": " + ex.Message : "unknown")
                 + (e.Exception != null ? "\n" + e.Exception.StackTrace : string.Empty));
 

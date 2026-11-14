@@ -1,13 +1,19 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Mavero TV — native Tizen .NET application manifest (TV profile, API 6.0).
+<!-- Mavero TV — native Tizen .NET application manifest (TV profile, API 4).
+     api-version="4" is Samsung's recommended maximum-compatibility target
+     for TV apps: it boots on EVERY Samsung Tizen TV from 2018 through the
+     latest models (API4 code is upward compatible with API5/6/7 firmware,
+     the reverse is not). Version + <label> carry the release number so the
+     OS loading splash itself ("Mavero 0.0.4 Loading") proves which package
+     is actually running on the TV.
      Privileges: internet for the API client (HttpClient), mediaplayback for
      Tizen.Multimedia.Player (hardware AVPlay) in PlayerPage.
      type="dotnet" + exec pointing at the managed entry assembly are what make
      the Tizen launcher boot the mono runtime. -->
 <manifest xmlns="http://tizen.org/ns/packages"
-          api-version="6.0"
+          api-version="4"
           package="org.mavero.tv"
-          version="0.0.3"
+          version="0.0.4"
           install-location="internal-only">
     <profile name="tv" />
     <ui-application appid="org.mavero.tv"
@@ -17,7 +23,7 @@
                     nodisplay="false"
                     taskid="0"
                     launch_mode="single">
-        <label>Mavero TV</label>
+        <label>Mavero 0.0.4</label>
         <icon>MaveroTv.png</icon>
     </ui-application>
     <privileges>

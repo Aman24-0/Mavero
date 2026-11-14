@@ -693,11 +693,10 @@ namespace MaveroTv
                 _player.Display = new Display(_window);
                 _player.DisplaySettings.Mode = PlayerDisplayMode.LetterBox;
                 _player.DisplaySettings.IsVisible = true;
-                _player.BufferingTime = new PlayerBufferingTime
-                {
-                    PreBufferMillisecond = 4000,
-                    ReBufferMillisecond = 2000
-                };
+                // NOTE: the API6 Player.BufferingTime (PlayerBufferingTime
+                // pre/re-buffer tuning) does not exist in the API4 surface —
+                // removed in the tizen40 downgrade; the platform defaults
+                // apply (AVPlay's own buffering is adequate on TV firmware).
                 _player.SetSource(new MediaUriSource(url));
                 WirePlayerEvents();
 
