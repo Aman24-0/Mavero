@@ -60,6 +60,7 @@
 //     wake up; a remote's dedicated search key (XF86Search) opens
 //     Search directly from Home.
 // ============================================================
+using System;
 using Tizen;
 using Tizen.NUI;
 using Tizen.NUI.BaseComponents;
@@ -102,24 +103,45 @@ namespace MaveroTv
 
             Log.Info(LogTag, "Mavero TV boot: OnCreate entered");
 
-            // Restore the persisted session (secure store, file fallback)
-            // BEFORE any page mounts — DetailPage builds its My List pill
-            // from AuthSession at construction time.
-            AuthSession.LoadFromDisk();
-
+            // UI-THREAD CONTRACT (Tizen NUI / DALi):
+            //   1. Install the SynchronizationContext FIRST — every `await`
+            //      continuation captured on the DALi thread from here on runs
+            //      back on the DALi thread through UiDispatcher's pump, so
+            //      post-await UI mutations can never land on the thread pool
+            //      (the classic silent SIGSEGV on TV hardware).
+            //   2. Register the window with Diagnostics — every caught failure
+            //      renders on screen (the field TV has no sdb / dlog access).
+            UiSynchronizationContext.Install();
             _window = GetDefaultWindow();
-            _window.BackgroundColor = Theme.Background;
-            _window.KeyEvent += OnKeyEvent;
+            Diagnostics.Initialize(_window);
 
-            Log.Info(LogTag, "Mavero TV boot: default window ready, mounting HomePage");
+            try
+            {
+                // Restore the persisted session (secure store, file fallback)
+                // BEFORE any page mounts — DetailPage builds its My List pill
+                // from AuthSession at construction time.
+                AuthSession.LoadFromDisk();
 
-            _homePage = new HomePage();
-            _homePage.ItemSelected += OnItemSelected;
-            _homePage.SearchRequested += OnSearchRequested;
-            _homePage.MyListRequested += OnMyListRequested;
-            _window.Add(_homePage);
+                _window.BackgroundColor = Theme.Background;
+                _window.KeyEvent += OnKeyEvent;
 
-            Log.Info(LogTag, "Mavero TV boot: HomePage mounted");
+                Log.Info(LogTag, "Mavero TV boot: default window ready, mounting HomePage");
+
+                _homePage = new HomePage();
+                _homePage.ItemSelected += OnItemSelected;
+                _homePage.SearchRequested += OnSearchRequested;
+                _homePage.MyListRequested += OnMyListRequested;
+                _window.Add(_homePage);
+
+                Log.Info(LogTag, "Mavero TV boot: HomePage mounted");
+            }
+            catch (Exception ex)
+            {
+                // Boot must never die silently: the user has no sdb. Show the
+                // error + stack on screen (the overlay paints asset-free, so
+                // this works even if the res/ payload is broken).
+                Diagnostics.Report(ex, "startup", null);
+            }
         }
 
         // ---- screen navigation --------------------------------------------
@@ -509,6 +531,19 @@ namespace MaveroTv
 
         private void OnKeyEvent(object sender, Window.KeyEventArgs e)
         {
+            try
+            {
+                HandleKeyEvent(e);
+            }
+            catch (Exception ex)
+            {
+                // A key-handler escape must not kill the app: show it.
+                Diagnostics.Report(ex, "key handling", null);
+            }
+        }
+
+        private void HandleKeyEvent(Window.KeyEventArgs e)
+        {
             if (e.Key.State != Key.StateType.Up)
             {
                 return;
@@ -519,6 +554,17 @@ namespace MaveroTv
             bool isBack = e.Key.KeyPressedName == "XF86Back"
                 || e.Key.KeyPressedName == "Escape"
                 || e.Key.KeyCode == BackKeyCode;
+
+            // While the diagnostics panel is up it owns the screen: RETRY is
+            // a focused button (Enter runs it); BACK leaves the app for real.
+            if (Diagnostics.IsShowing)
+            {
+                if (isBack)
+                {
+                    Exit();
+                }
+                return;
+            }
 
             if (_playerPage != null)
             {

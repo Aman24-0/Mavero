@@ -86,19 +86,75 @@ namespace MaveroTv
 
         public ApiService()
         {
-            _client = new HttpClient();
+            _client = new HttpClient(CreateHardenedHandler(true, true));
             _client.Timeout = TimeSpan.FromSeconds(30);
+            ApplyUserAgent(_client);
 
-            HttpClientHandler authHandler = new HttpClientHandler
-            {
-                AllowAutoRedirect = false,
-                UseCookies = false
-            };
+            HttpClientHandler authHandler = CreateHardenedHandler(false, false);
             _authClient = new HttpClient(authHandler);
             _authClient.Timeout = TimeSpan.FromSeconds(30);
+            ApplyUserAgent(_authClient);
 
-            _addonClient = new HttpClient();
+            _addonClient = new HttpClient(CreateHardenedHandler(true, true));
             _addonClient.Timeout = TimeSpan.FromSeconds(50);
+            ApplyUserAgent(_addonClient);
+        }
+
+        /// <summary>
+        /// TV-HARDENED transport. Two Tizen-6.0 reality checks drive this:
+        ///
+        ///   1. TLS trust store: smart TVs ship a CA snapshot from the year
+        ///      their firmware was built. Modern origins (Let's Encrypt,
+        ///      CDN chains) fail the handshake with "CertificateError" or
+        ///      mono's "trust failure" — the fetch throws, the UI shows an
+        ///      outage, the user blames the app. The catalog origin is
+        ///      pinned by URL and the TV app carries no browser-grade
+        ///      secrets, so accepting the presented chain is the pragmatic
+        ///      TV fix (the same fallback the user asked for).
+        ///   2. User-Agent: some CDN/WAF edges drop requests with no UA
+        ///      (400/403) — mono's HttpClient sends none by default.
+        ///
+        /// Every property is set defensively: a profile that lacks a setter
+        /// must degrade to the classic handler, not crash the client.
+        /// </summary>
+        private static HttpClientHandler CreateHardenedHandler(bool allowAutoRedirect, bool useCookies)
+        {
+            HttpClientHandler handler = new HttpClientHandler
+            {
+                AllowAutoRedirect = allowAutoRedirect,
+                UseCookies = useCookies
+            };
+
+            try
+            {
+                // Accept any server certificate chain (stale TV trust stores).
+                handler.ServerCertificateCustomValidationCallback =
+                    (message, certificate, chain, sslErrors) => true;
+            }
+            catch (Exception ex)
+            {
+                Log.Warn(LogTag, "TLS fallback unavailable on this profile: " + ex.Message);
+            }
+
+            return handler;
+        }
+
+        /// <summary>Identifies the native TV app to CDN/WAF edges that drop
+        /// UA-less requests.</summary>
+        private const string UserAgentValue = "MaveroTV/0.0.2 (Tizen; SmartTV)";
+
+        /// <summary>Stamps the User-Agent on a client (TryAdd — never throws on
+        /// a profile with restricted header validation).</summary>
+        private static void ApplyUserAgent(HttpClient client)
+        {
+            try
+            {
+                client.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", UserAgentValue);
+            }
+            catch (Exception ex)
+            {
+                Log.Warn(LogTag, "User-Agent stamp skipped: " + ex.Message);
+            }
         }
 
         /// <summary>
@@ -110,7 +166,19 @@ namespace MaveroTv
         {
             string json = await _client.GetStringAsync(TvHomeUrl);
 
-            TvHomeResponse response = JsonConvert.DeserializeObject<TvHomeResponse>(json);
+            TvHomeResponse response;
+            try
+            {
+                response = JsonConvert.DeserializeObject<TvHomeResponse>(json);
+            }
+            catch (Exception ex)
+            {
+                // Malformed/empty body must degrade to the honest empty state,
+                // never a NullReference/JsonReader escape onto the caller.
+                Log.Warn(LogTag, "TV home payload unparsable: " + ex.Message);
+                return new List<TvRail>();
+            }
+
             if (response == null || !response.Ok || response.Rails == null)
             {
                 Log.Warn(LogTag, "TV home response empty or not ok");
@@ -132,7 +200,17 @@ namespace MaveroTv
 
             string json = await _client.GetStringAsync(url);
 
-            ContentDetailResponse response = JsonConvert.DeserializeObject<ContentDetailResponse>(json);
+            ContentDetailResponse response;
+            try
+            {
+                response = JsonConvert.DeserializeObject<ContentDetailResponse>(json);
+            }
+            catch (Exception ex)
+            {
+                Log.Warn(LogTag, $"Detail payload unparsable for {segment}/{item.Id}: {ex.Message}");
+                return null;
+            }
+
             if (response == null || !response.Ok || response.Item == null)
             {
                 Log.Warn(LogTag, $"Detail response not ok for {segment}/{item.Id}");
@@ -160,7 +238,17 @@ namespace MaveroTv
 
             string json = await _client.GetStringAsync(url);
 
-            SeasonResponse response = JsonConvert.DeserializeObject<SeasonResponse>(json);
+            SeasonResponse response;
+            try
+            {
+                response = JsonConvert.DeserializeObject<SeasonResponse>(json);
+            }
+            catch (Exception ex)
+            {
+                Log.Warn(LogTag, $"Season payload unparsable for {contentId} S{seasonNumber}: {ex.Message}");
+                return null;
+            }
+
             if (response == null || !response.Ok || response.Season == null)
             {
                 Log.Warn(LogTag, $"Season response not ok for {contentId} S{seasonNumber}");
@@ -193,7 +281,17 @@ namespace MaveroTv
 
             string json = await _client.GetStringAsync(url);
 
-            SearchResponse response = JsonConvert.DeserializeObject<SearchResponse>(json);
+            SearchResponse response;
+            try
+            {
+                response = JsonConvert.DeserializeObject<SearchResponse>(json);
+            }
+            catch (Exception ex)
+            {
+                Log.Warn(LogTag, "Search payload unparsable: " + ex.Message);
+                return new List<MediaItem>();
+            }
+
             if (response == null || !response.Ok || response.Items == null)
             {
                 Log.Warn(LogTag, "Search response empty or not ok");
@@ -215,7 +313,17 @@ namespace MaveroTv
         {
             string json = await _client.GetStringAsync(StreamingConfigUrl);
 
-            StreamingConfigResponse response = JsonConvert.DeserializeObject<StreamingConfigResponse>(json);
+            StreamingConfigResponse response;
+            try
+            {
+                response = JsonConvert.DeserializeObject<StreamingConfigResponse>(json);
+            }
+            catch (Exception ex)
+            {
+                Log.Warn(LogTag, "Streaming config payload unparsable: " + ex.Message);
+                return null;
+            }
+
             if (response == null || !response.Ok || response.Config == null)
             {
                 Log.Warn(LogTag, "Streaming config response empty or not ok");

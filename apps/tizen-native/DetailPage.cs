@@ -625,7 +625,16 @@ namespace MaveroTv
                     {
                         return;
                     }
-                    BindDetail(detail);
+                    try
+                    {
+                        BindDetail(detail);
+                    }
+                    catch (Exception ex)
+                    {
+                        // Visible failure with a working RETRY — never a silent exit.
+                        Log.Error(MaveroApp.LogTag, "Detail bind failed: " + ex.Message);
+                        Diagnostics.Report(ex, "detail bind", ReloadDetail);
+                    }
                 });
             }
             catch (Exception ex)
@@ -645,6 +654,13 @@ namespace MaveroTv
                     });
                 }
             }
+        }
+
+        /// <summary>Reload entry for the diagnostics RETRY button (re-fetches
+        /// the detail record and rebinds this page).</summary>
+        public void ReloadDetail()
+        {
+            _ = LoadDetailAsync();
         }
 
         /// <summary>Enriches the page with the fetched record (maturity, runtime,
@@ -869,7 +885,16 @@ namespace MaveroTv
                     {
                         return; // page gone or a newer season fetch superseded this one
                     }
-                    BindEpisodes(detail);
+                    try
+                    {
+                        BindEpisodes(detail);
+                    }
+                    catch (Exception ex)
+                    {
+                        // Visible failure with a working RETRY — never a silent exit.
+                        Log.Error(MaveroApp.LogTag, "Episode bind failed: " + ex.Message);
+                        Diagnostics.Report(ex, "episode bind", () => ReloadSeason(season));
+                    }
                 });
             }
             catch (Exception ex)
@@ -885,6 +910,16 @@ namespace MaveroTv
                     ClearEpisodeRail();
                     SetEpisodesStatus("Episodes unavailable");
                 });
+            }
+        }
+
+        /// <summary>Reload entry for the diagnostics RETRY button (re-fetches
+        /// one season's episodes).</summary>
+        private void ReloadSeason(Season season)
+        {
+            if (season != null)
+            {
+                _ = LoadEpisodesAsync(season);
             }
         }
 

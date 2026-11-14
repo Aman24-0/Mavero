@@ -18,6 +18,7 @@
 //     built-in navigation (same contract as MediaCard).
 // ============================================================
 using System;
+using Tizen;
 using Tizen.NUI;
 using Tizen.NUI.BaseComponents;
 
@@ -196,7 +197,9 @@ namespace MaveroTv
         }
 
         /// <summary>Enter/OK select only — arrows intentionally fall through to the
-        /// FocusManager's built-in D-pad navigation.</summary>
+        /// FocusManager's built-in D-pad navigation. The selection chain is
+        /// guarded: any handler exception surfaces on the diagnostics panel
+        /// instead of killing the process on real TV hardware.</summary>
         private bool OnButtonKeyEvent(object source, View.KeyEventArgs e)
         {
             if (e.Key.State != Key.StateType.Up)
@@ -208,7 +211,15 @@ namespace MaveroTv
             {
                 if (e.Key.KeyPressedName == name)
                 {
-                    Selected?.Invoke();
+                    try
+                    {
+                        Selected?.Invoke();
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Error(MaveroApp.LogTag, "Button select failed: " + ex.Message);
+                        Diagnostics.ReportNonFatal(ex, "button: " + (_label != null ? _label.Text : "?"));
+                    }
                     return true;
                 }
             }

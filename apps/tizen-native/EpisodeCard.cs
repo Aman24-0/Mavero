@@ -27,6 +27,7 @@
 //     built-in navigation — consuming them here risks double-moves.
 // ============================================================
 using System;
+using Tizen;
 using Tizen.NUI;
 using Tizen.NUI.BaseComponents;
 
@@ -244,7 +245,9 @@ namespace MaveroTv
         }
 
         /// <summary>Enter/OK select only — arrows intentionally fall through to the
-        /// FocusManager's built-in D-pad navigation.</summary>
+        /// FocusManager's built-in D-pad navigation. The selection chain is
+        /// guarded: any handler exception surfaces on the diagnostics panel
+        /// instead of killing the process on real TV hardware.</summary>
         private bool OnCardKeyEvent(object source, View.KeyEventArgs e)
         {
             if (e.Key.State != Key.StateType.Up)
@@ -256,7 +259,15 @@ namespace MaveroTv
             {
                 if (e.Key.KeyPressedName == name)
                 {
-                    Selected?.Invoke(_episode);
+                    try
+                    {
+                        Selected?.Invoke(_episode);
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Error(MaveroApp.LogTag, "Episode select failed: " + ex.Message);
+                        Diagnostics.ReportNonFatal(ex, "play: " + (_episode.Title ?? "episode"));
+                    }
                     return true;
                 }
             }

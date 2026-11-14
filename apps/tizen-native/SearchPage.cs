@@ -328,7 +328,16 @@ namespace MaveroTv
                     {
                         return; // page gone or a newer search superseded this one
                     }
-                    BindResults(query, items);
+                    try
+                    {
+                        BindResults(query, items);
+                    }
+                    catch (Exception ex)
+                    {
+                        // Visible failure with a working RETRY — never a silent exit.
+                        Log.Error(ApiService.LogTag, "Search bind failed: " + ex.Message);
+                        Diagnostics.Report(ex, "search results bind", () => RunSearch(query));
+                    }
                 });
             }
             catch (Exception ex)

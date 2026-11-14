@@ -254,6 +254,14 @@ namespace MaveroTv
 
         // ---- data -> UI binding -------------------------------------------
 
+        /// <summary>Reload entry for the diagnostics RETRY button (re-fetches
+        /// the cloud list and rebinds the grid).</summary>
+        public void ReloadList()
+        {
+            ShowStatus(StatusLoading);
+            _ = LoadListAsync();
+        }
+
         private async Task LoadListAsync()
         {
             try
@@ -270,7 +278,16 @@ namespace MaveroTv
                     {
                         return;
                     }
-                    BindList(favorites);
+                    try
+                    {
+                        BindList(favorites);
+                    }
+                    catch (Exception ex)
+                    {
+                        // Visible failure with a working RETRY — never a silent exit.
+                        Log.Error(MaveroApp.LogTag, "My List bind failed: " + ex.Message);
+                        Diagnostics.Report(ex, "my list bind", ReloadList);
+                    }
                 });
             }
             catch (Exception ex)

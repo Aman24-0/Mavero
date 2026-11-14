@@ -229,18 +229,42 @@ namespace MaveroTv
 
         // ---- data → UI binding -------------------------------------------
 
+        /// <summary>Reload entry for the diagnostics RETRY button (a failed
+        /// home fetch/bind re-runs this pipeline from the top).</summary>
+        public void ReloadRails()
+        {
+            ShowStatus(StatusLoading);
+            _ = LoadRailsAsync();
+        }
+
         private async Task LoadRailsAsync()
         {
             try
             {
                 List<TvRail> rails = await _api.FetchHomeRailsAsync();
                 Log.Info(ApiService.LogTag, $"TV home fetched — {rails.Count} rail(s); binding on UI thread");
-                UiDispatcher.Post(() => BindRails(rails));
+                UiDispatcher.Post(() => BindRailsGuarded(rails));
             }
             catch (Exception ex)
             {
                 Log.Error(ApiService.LogTag, $"TV home fetch failed: {ex.Message}");
                 UiDispatcher.Post(() => ShowStatus(StatusUnavailable));
+            }
+        }
+
+        /// <summary>Bind wrapper: a bind exception becomes the on-screen
+        /// diagnostics panel with a working RETRY (never a silent exit —
+        /// this path runs right after boot on real TV hardware).</summary>
+        private void BindRailsGuarded(List<TvRail> rails)
+        {
+            try
+            {
+                BindRails(rails);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ApiService.LogTag, "Home rail bind failed: " + ex.Message);
+                Diagnostics.Report(ex, "home content bind", ReloadRails);
             }
         }
 
@@ -301,7 +325,28 @@ namespace MaveroTv
                     }
                 }
 
-                FocusManager.Instance.SetCurrentFocusView(firstCard);
+                // TV-SAFE FOCUS HANDOFF: never call SetCurrentFocusView on
+                // the same pump tick that built the card tree — on real TV
+                // hardware the freshly-added views have not been laid out
+                // yet and the focus algorithm can abort natively. One pump
+                // tick (~50ms) later a frame has rendered and focus lands
+                // deterministically. Guarded + fenced so a user who already
+                // navigated away cannot re-focus a dead view.
+                MediaCard focusTarget = firstCard;
+                UiDispatcher.Post(() =>
+                {
+                    try
+                    {
+                        if (focusTarget != null)
+                        {
+                            FocusManager.Instance.SetCurrentFocusView(focusTarget);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Warn(ApiService.LogTag, "Initial focus failed: " + ex.Message);
+                    }
+                });
             }
         }
 
