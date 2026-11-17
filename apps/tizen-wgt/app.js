@@ -39,9 +39,12 @@
             url: 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8'
         },
         {
-            name: 'MP4 — Big Buck Bunny',
+            name: 'MP4 — Sintel 480p (blender, reachable)',
             tag: 'MP4',
-            url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4'
+            // commondatastorage.googleapis.com was PLAYER_ERROR_CONNECTION_FAILED
+            // on the TV (host blocked/unreachable in its region) — use the same
+            // blender host the Sintel entry already streamed audio from.
+            url: 'https://download.blender.org/durian/trailer/sintel_trailer-480p.mp4'
         }
     ];
 
@@ -99,27 +102,44 @@
         playerView.style.display = 'block';
         playing = true;
 
-        var w = window.innerWidth;
-        var h = window.innerHeight;
-
         try {
             avplayStop();
             webapis.avplay.open(src.url);
 
-            // Render AVPlay into the full-screen video element.
-            var rect = document.getElementById('video').getBoundingClientRect();
+            // AVPlay draws onto the video plane that belongs to the
+            // <object id="av-player"> plugin element (Samsung's official
+            // AVPlay sample: playerEl = the <object>, NOT a div).
+            //
+            // Its rect comes in WEB-viewport px, but the video plane is in
+            // PHYSICAL screen px (1920x1080) and the web viewport is usually
+            // SMALLER than the screen — scale web px -> physical px exactly
+            // like Samsung's sample (screenWidth / viewportWidth):
+            var playerEl = document.getElementById('av-player');
+            var rect = playerEl.getBoundingClientRect();
+            var sx = window.screen.width / (document.documentElement.clientWidth || window.screen.width);
+            var sy = window.screen.height / (document.documentElement.clientHeight || window.screen.height);
             webapis.avplay.setDisplayRect(
-                Math.round(rect.left), Math.round(rect.top),
-                Math.round(rect.width || w), Math.round(rect.height || h)
+                Math.round(rect.left * sx), Math.round(rect.top * sy),
+                Math.round(rect.width * sx), Math.round(rect.height * sy)
             );
+            webapis.avplay.setDisplayMethod('PLAYER_DISPLAY_MODE_AUTO_ASPECT_RATIO');
+
+            // Debug (visible in the status bar on the TV): screen vs viewport
+            // vs the scaled rect actually handed to the video plane.
+            setStatus('open: screen ' + window.screen.width + 'x' + window.screen.height +
+                ', viewport ' + document.documentElement.clientWidth + 'x' + document.documentElement.clientHeight +
+                ', rect->' + Math.round(rect.width * sx) + 'x' + Math.round(rect.height * sy) +
+                ' px (scale ' + sx.toFixed(2) + '/' + sy.toFixed(2) + ')');
 
             webapis.avplay.setListener({
                 onbufferingstart: function () { setStatus('Buffering… ' + src.url); },
                 onbufferingprogress: function (p) { setStatus('Buffering ' + p + '%'); },
                 onbufferingcomplete: function () { setStatus('Playing: ' + src.url); },
-                onstreamcompleted: function () { setStatus('Completed: ' + src.url); backToList(); },
+                // Do NOT auto-return to the list (not even on completion) —
+                // keep the message readable; only Back goes to the list.
+                onstreamcompleted: function () { setStatus('Completed: ' + src.url + ' — press Back for the list'); },
                 oncurrentplaytime: function () { /* noop */ },
-                onerror: function (e) { setStatus('AVPLAY ERROR: ' + e + ' — ' + src.url); },
+                onerror: function (e) { setStatus('AVPLAY ERROR: ' + e + ' — ' + src.url + ' (staying on player; Back = list)'); },
                 onsubtitlechange: function () { /* noop */ },
                 ondrmevent: function () { /* noop */ },
                 onevent: function () { /* noop */ }

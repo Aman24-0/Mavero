@@ -50,16 +50,23 @@
         li .tag.mp4 { background: #a855f7; }
         .hint { color: var(--text-dim); font-size: 16px; margin-top: 18px; }
         #status {
-            position: fixed; left: 0; right: 0; bottom: 0;
+            position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
             padding: 10px 24px; font-size: 15px;
             background: rgba(0,0,0,.72); color: var(--accent);
             font-family: monospace; white-space: pre-wrap; word-break: break-all;
             min-height: 22px;
         }
         #player-view { display: none; position: fixed; inset: 0; background: #000; }
-        #video { width: 100%; height: 100%; background: #000; }
+        /* AVPlay renders INSIDE this plugin element. Tizen's native player only
+           draws into <object type="application/avplayer"> — never into a plain
+           div (a div gets audio but the video plane stays blank/covered). */
+        #av-player {
+            width: 100%; height: 100%;
+            position: fixed; inset: 0;
+            background: #000;
+        }
         #player-hint {
-            position: fixed; top: 20px; left: 24px;
+            position: fixed; top: 20px; left: 24px; z-index: 10;
             background: rgba(0,0,0,.6); padding: 8px 14px; border-radius: 8px;
             font-size: 15px; color: var(--text-dim);
         }
@@ -74,9 +81,11 @@
         <div class="hint">↑ ↓ move &nbsp;·&nbsp; Enter / OK = play &nbsp;·&nbsp; Back = exit</div>
     </div>
 
-    <!-- AVPlay renders INTO this element (setDisplayRect targets it) -->
+    <!-- AVPlay renders INTO the <object> plugin element (Samsung's official
+         AVPlay sample: playerEl = the <object type="application/avplayer">,
+         NOT a div). The status line + D-pad hint sit on top as overlays. -->
     <div id="player-view">
-        <div id="video"></div>
+        <object id="av-player" type="application/avplayer"></object>
         <div id="player-hint">Playing via AVPlay · Back = stop</div>
     </div>
 

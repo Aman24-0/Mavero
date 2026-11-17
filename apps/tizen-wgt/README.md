@@ -59,6 +59,31 @@ The manifest also gained the two privileges the PoC's runtime needs:
 `http://tizen.org/privilege/tv.inputdevice` (D-pad registration) and
 `http://developer.samsung.com/privilege/avplay` (webapis.avplay).
 
+## Audio plays but NO video — root cause (fixed)
+
+AVPlay does **not** render into a plain `<div>`. It needs the plugin element
+Samsung's official sample ([SampleWebApps-PlayerAvplay](https://github.com/SamsungDForum/SampleWebApps-PlayerAvplay))
+uses, and it draws onto a video plane **below** the web layer:
+
+1. `<div id="video">` → `<object id="av-player" type="application/avplayer"></object>`.
+   A plain div never receives frames — you hear audio but the video plane is
+   blank/covered (plus the opaque page background hides everything).
+2. `setDisplayRect()` must be in **physical screen px**, not raw viewport px.
+   The web viewport is usually SMALLER than the physical 1920x1080 screen, so
+   the rect is scaled like Samsung's sample:
+   `coords * (window.screen.width / documentElement.clientWidth)`.
+3. `setDisplayMethod('PLAYER_DISPLAY_MODE_AUTO_ASPECT_RATIO')` — the sample
+   always calls it; without it the plane can letterbox/glitch (the blue
+   striped bar at the bottom).
+4. Errors/completions no longer bounce back to the list — the status line
+   keeps the message readable; only **Back** returns to the list.
+5. The `commondatastorage.googleapis.com` MP4 was a test-data issue
+   (`PLAYER_ERROR_CONNECTION_FAILED`, host unreachable from the TV's region)
+   — replaced with the reachable `download.blender.org` Sintel 480p MP4.
+
+The status bar logs `screen WxH, viewport WxH, rect-> WxH px` on every open,
+so the scaling is verifiable directly on the TV.
+
 ## Build the `.wgt` (official Tizen CLI — NOT a raw zip)
 
 CI builds the package with the **official Tizen Studio CLI** (`.github/workflows/build-wgt.yml`):
@@ -105,9 +130,11 @@ cd apps/tizen-wgt
 ## What to test on the TV
 
 - D-pad **↑ ↓** moves the focus ring, **Enter** plays the highlighted source.
-- The **MKV** entries should start playing (AVPlay). The status bar at the
-  bottom shows `Playing: <url>` or an `AVPLAY ERROR: …` message.
-- **Back** stops playback and returns to the list; **Back** again exits.
+- The sources should show **VIDEO and audio** (not audio alone): MKV, MP4 and
+  HLS all render inside the `<object id="av-player">` element, full screen.
+- The status bar shows `open: screen …, viewport …, rect-> …` then
+  `Playing: <url>`; errors **stay on the player** (only **Back** returns to
+  the list, Back again exits).
 
 ### Test with a REAL addon link
 Open `app.js`, replace the first entry's `url` (or add one) with an actual
