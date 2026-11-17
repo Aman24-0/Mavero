@@ -285,7 +285,7 @@ const lettersOf = (db: { mappings: MappingRow[] }) => {
   // valid) — and the complete intended order is submitted in ONE request.
   {
     const page = markupOnly(read('../src/routes/admin/system/api-sources/+page.svelte'));
-    ok(page.includes('sourceDrafts = { ...sourceDrafts, [entry.id]'), 'I2 (re-pinned 2026-10-16): each assigned row edits a numeric draft keyed by the source id (migrated to api-sources)');
+    ok(page.includes('sourceDrafts = applyPositionMove(sourceRepositionEntries, sourceDrafts, entry.id'), 'I2 (re-pinned 2026-11): each assigned row edits a numeric draft keyed by the source id via applyPositionMove (migrated to api-sources)');
     ok(page.includes('min="1" max={sourceRepositionEntries.length} step="1"'), 'I2 (re-pinned 2026-10-16): the input bounds mirror the server contract (1..list length)');
     ok(page.includes('aria-label={`Position for ${row?.name'), 'I2 (re-pinned 2026-10-16): the position input is labelled per source');
     ok(page.includes('action="?/reorderSourcesBulk"'), 'I2 (re-pinned 2026-10-16): the bulk form posts the complete intended order to reorderSourcesBulk');
