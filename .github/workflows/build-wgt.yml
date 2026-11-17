@@ -1,11 +1,24 @@
-# Mavero TV — build the .wgt (Tizen Web App) on every change to apps/tizen-wgt.
+# Mavero TV — build the .wgt (Tizen Web App) with the OFFICIAL Tizen CLI.
 #
-# A .wgt IS a ZIP archive with config.xml at its root — this workflow packs
-# apps/tizen-wgt/ into MaveroTV.wgt, verifies config.xml is at the zip root,
-# uploads it as a build artifact AND attaches it to a rolling "wgt-latest"
-# release so it can be downloaded directly (no unzip-the-artifact dance).
+# WHY NOT `zip`: [118, -19] "could not read the package's manifest" (Samsung TV
+# package manager, via Apps2Samsung). The TV validates config.xml against the
+# Tizen widget schema and packages against the canonical widget layout. The
+# official Tizen Studio CLI is the tool that enforces exactly those rules —
+# it schema-validates the manifest, normalizes it, adds the signature
+# skeletons a Tizen package manager expects, and produces a structurally
+# correct .wgt. A raw `zip` of the source folder produces none of that.
 #
-# Then install the .wgt on the TV with Apps2Samsung (it signs + installs).
+# The headless CLI used here is tizen-core (`tz`, Go, no Java needed at
+# build/pack time) from the official web-cli Tizen Studio 6.1 installer:
+#   install web-cli → `tz build` (schema-validates config.xml, builds)
+#                   → `tz pack`  (packs + signs with the SDK dummy certs;
+#                                Apps2Samsung re-signs with the real cert)
+#
+# The result is published as a build artifact AND attached to the rolling
+# "wgt-latest" release so it can be downloaded directly (GitHub caches release
+# assets — verify with a cache-buster ?v=<timestamp> query).
+#
+# Then install the .wgt on the TV with Apps2Samsung (it re-signs + installs).
 
 name: Build WGT
 
@@ -24,30 +37,93 @@ concurrency:
   group: build-wgt-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  TIZEN_STUDIO_VERSION: "6.1"
+  TIZEN_STUDIO_DIR: /home/runner/tizen-studio
+
 jobs:
   build-wgt:
-    name: package · verify · publish .wgt
+    name: tizen build · pack · verify · publish .wgt
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Package apps/tizen-wgt into MaveroTV.wgt
+      - name: Cache Tizen Studio (web-cli)
+        id: tizen-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            /home/runner/tizen-studio
+            /home/runner/tizen-studio-data
+            /home/runner/.package-manager
+          key: tizen-webcli-${{ env.TIZEN_STUDIO_VERSION }}
+
+      - name: Install Tizen Studio web-cli (headless)
+        if: steps.tizen-cache.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
+          curl -fsSLo /tmp/web-cli.bin \
+            "http://download.tizen.org/sdk/Installer/tizen-studio_${TIZEN_STUDIO_VERSION}/web-cli_Tizen_Studio_${TIZEN_STUDIO_VERSION}_ubuntu-64.bin"
+          bash /tmp/web-cli.bin --accept-license --no-java-check "${TIZEN_STUDIO_DIR}"
+
+      # The first package-manager run syncs the SDK components (the base
+      # installer leaves tools/tizen-core/tz pending until it runs; "Nothing
+      # to install" afterwards is expected and harmless).
+      - name: Sync SDK components (package-manager-cli)
+        run: |
+          set -euo pipefail
+          "${TIZEN_STUDIO_DIR}/package-manager/package-manager-cli.bin" \
+            install --accept-license --no-java-check TOOLS
+          test -x "${TIZEN_STUDIO_DIR}/tools/tizen-core/tz" || {
+            echo "tizen-core (tz) missing after sync"; exit 1; }
+
+      - name: Build + pack MaveroTV.wgt (official tizen-core CLI)
+        run: |
+          set -euo pipefail
+          TZ="${TIZEN_STUDIO_DIR}/tools/tizen-core/tz"
           cd apps/tizen-wgt
           test -f config.xml || { echo "config.xml missing"; exit 1; }
-          rm -f ../../MaveroTV.wgt
-          # .wgt = ZIP with config.xml at the root (NOT inside a folder)
-          zip -r ../../MaveroTV.wgt config.xml index.html app.js icon.png
+          rm -rf Debug
+          # Schema-validates config.xml (profile tv) and builds the app.
+          "$TZ" build .
+          # Packs the build result and signs it with the SDK dummy certs
+          # (Apps2Samsung re-signs with the real Samsung certificate).
+          "$TZ" pack .
+          WGT=$(find Debug -maxdepth 1 -name '*.wgt' | head -1)
+          test -n "$WGT" || { echo "no .wgt produced by tz pack"; exit 1; }
+          mv "$WGT" ../../MaveroTV.wgt
           cd ../..
+
+      - name: Verify MaveroTV.wgt structure
+        run: |
+          set -euo pipefail
           echo "--- MaveroTV.wgt contents ---"
           unzip -l MaveroTV.wgt
           # config.xml MUST be at the zip root
           unzip -Z1 MaveroTV.wgt | grep -qx 'config.xml' || {
             echo "config.xml is not at the zip root — aborting"; exit 1; }
+          # The signature skeletons the TV's package manager expects
+          unzip -Z1 MaveroTV.wgt | grep -qx 'author-signature.xml' || {
+            echo "author-signature.xml missing — aborting"; exit 1; }
+          unzip -Z1 MaveroTV.wgt | grep -qx 'signature1.xml' || {
+            echo "signature1.xml missing — aborting"; exit 1; }
+          # The manifest the TV will parse: the tv-profile schema requires
+          # package = [0-9a-zA-Z]{10} and id = <package>.<AppName> (the
+          # dotted ids are exactly what produced [118, -19] before).
+          grep -o '<tizen:application[^/]*/>' <(unzip -p MaveroTV.wgt config.xml) | tee /tmp/tizen-application.txt
+          grep -q 'package="MaveroTV01"' /tmp/tizen-application.txt
+          grep -q 'id="MaveroTV01.MaveroTV"' /tmp/tizen-application.txt
+          # The manifest must still be schema-valid XML
+          python3 - <<'PY'
+          import io, zipfile
+          from lxml import etree
+          z = zipfile.ZipFile('MaveroTV.wgt')
+          etree.parse(io.BytesIO(z.read('config.xml')))
+          print('config.xml parses as XML: OK')
+          PY
           ls -la MaveroTV.wgt
 
       - name: Upload .wgt artifact
@@ -66,7 +142,7 @@ jobs:
           gh release view wgt-latest >/dev/null 2>&1 || \
             gh release create wgt-latest \
               --title "Mavero TV (.wgt) — latest" \
-              --notes "Auto-built from apps/tizen-wgt at ${{ github.sha }}."
+              --notes "Auto-built with the official Tizen CLI (tizen-core) from apps/tizen-wgt at ${{ github.sha }}."
           gh release upload wgt-latest MaveroTV.wgt --clobber
           echo "Direct download:"
           echo "https://github.com/${{ github.repository }}/releases/download/wgt-latest/MaveroTV.wgt"

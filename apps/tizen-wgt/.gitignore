@@ -1,0 +1,4 @@
+# tizen-core (tz) build/pack output — committed artifacts live in CI releases.
+Debug/
+Release/
+.buildResult/

@@ -19,31 +19,74 @@ player path to AVPlay (addon sources first, embed iframe as fallback).
 
 ```
 apps/tizen-wgt/
-├── config.xml     Tizen web app manifest (TV profile, internet, hwkey-event)
-├── index.html     Source-list UI (D-pad)
-├── app.js         AVPlay player + key handling  ← the thing under test
-├── icon.png       launcher icon (512×512)
-└── README.md      this file
+├── config.xml                Tizen web app manifest (TV profile, internet, hwkey-event)
+├── index.html                Source-list UI (D-pad)
+├── app.js                    AVPlay player + key handling  ← the thing under test
+├── icon.png                  launcher icon (512×512)
+├── tizen_web_project.yaml    tizen-core project metadata (pinned: profile tv, files, excludes)
+└── README.md                 this file
 ```
 
 ---
 
-## Build the `.wgt` (a `.wgt` is just a ZIP with `config.xml` at the root)
+## The [118, -19] install failure — root cause (fixed)
 
-### Windows (you)
-1. Open the `apps/tizen-wgt` folder.
-2. Select **all files inside it** (`config.xml`, `index.html`, `app.js`,
-   `icon.png`) — **not** the folder itself.
-3. Right-click → **Send to → Compressed (zipped) folder**.
-4. Rename the resulting `.zip` to **`MaveroTV.wgt`** (extension change to `.wgt`).
+`[118, -19] "could not read the package's manifest"` was **not** a packaging
+(zip) problem and **not** a Tizen-version problem (`required_version="2.3"`
+≤ 6.0 is correct). The TV's package manager validates `config.xml` against the
+Tizen widget schema, and the tv-profile schema (`widgets.tizen.xsd`, byte-
+identical in every Tizen Studio profile from 2.3 to 9.0) requires:
 
-> Important: `config.xml` must be at the **root** of the zip. If you zip the
-> folder itself you'll get `tizen-wgt/config.xml` and the TV will reject it.
+```
+tizen:application/@package : [0-9a-zA-Z]{10}                      exactly 10 alphanumerics — NO dots
+tizen:application/@id      : [0-9a-zA-Z]{10}[.][0-9a-zA-Z]{1,52}  <package>.<AppName>
+```
 
-### Linux / macOS
+The old manifest used `package="org.mavero"` / `id="org.mavero.tv"` — dots in
+both, neither pattern matched → the manifest failed schema parsing before any
+version check ran. Verified against the OFFICIAL schema shipped in Tizen
+Studio: the old config is INVALID (exactly two pattern violations), the fixed
+config is VALID. Every known-good shipping TV app follows the same rule:
+
+| App | package (10 chars) | id = package + "." + name |
+|---|---|---|
+| jellyfin-tizen | `AprZAARz4r` | `AprZAARz4r.Jellyfin` |
+| Moonlight | `MoonLightS` | `MoonLightS.MoonlightWasm` |
+| Twellie (smarttv-twitch) | `Twellie001` | `Twellie001.Twellie` |
+| **Mavero** | `MaveroTV01` | `MaveroTV01.MaveroTV` |
+
+The manifest also gained the two privileges the PoC's runtime needs:
+`http://tizen.org/privilege/tv.inputdevice` (D-pad registration) and
+`http://developer.samsung.com/privilege/avplay` (webapis.avplay).
+
+## Build the `.wgt` (official Tizen CLI — NOT a raw zip)
+
+CI builds the package with the **official Tizen Studio CLI** (`.github/workflows/build-wgt.yml`):
+the web-cli installer's `tizen-core` (`tz`) tool schema-validates the manifest,
+builds the app and packs a structurally correct `.wgt` (config.xml at the
+root, `author-signature.xml` + `signature1.xml` skeletons present — Apps2Samsung
+re-signs with the real Samsung certificate on install). The result is attached
+to the rolling **`wgt-latest` release** and as the `MaveroTV-wgt` artifact.
+
+Download: `https://github.com/Aman24-0/Mavero/releases/download/wgt-latest/MaveroTV.wgt`
+(GitHub caches release assets — add a `?v=<timestamp>` cache-buster).
+
+### Build locally (optional)
+
 ```bash
+# 1. Install Tizen Studio web-cli (headless, ~280 MB download):
+curl -fsSLo /tmp/web-cli.bin \
+  "http://download.tizen.org/sdk/Installer/tizen-studio_6.1/web-cli_Tizen_Studio_6.1_ubuntu-64.bin"
+bash /tmp/web-cli.bin --accept-license --no-java-check ~/tizen-studio
+
+# 2. Sync SDK components once (expected output: "Nothing to install"):
+~/tizen-studio/package-manager/package-manager-cli.bin install --accept-license --no-java-check TOOLS
+
+# 3. Build + pack:
 cd apps/tizen-wgt
-zip -r ../MaveroTV.wgt config.xml index.html app.js icon.png
+~/tizen-studio/tools/tizen-core/tz build .
+~/tizen-studio/tools/tizen-core/tz pack .
+# → Debug/<name>.wgt — rename to MaveroTV.wgt and install.
 ```
 
 ---

@@ -2,14 +2,30 @@
 <!--
   Mavero TV — Tizen Web Application (WGT) — PoC.
 
-  Element ORDER mirrors a known-good shipping TV app (jellyfin-tizen) exactly:
-  the Tizen widget manifest is validated against a schema and the TV's package
-  manager rejects ([118, -19] "could not read the package's manifest") when the
-  structure/order does not match, even if the values are valid.
+  ROOT CAUSE of [118, -19] "could not read the package's manifest" (fixed here):
+  the TV's package manager validates config.xml against the Tizen widget
+  schema, and the tv-profile schema (widgets.tizen.xsd, identical in every
+  profile 2.3→9.0) REQUIRES
+
+      tizen:application/@package : [0-9a-zA-Z]{10}                  (EXACTLY 10 alphanumerics, no dots)
+      tizen:application/@id      : [0-9a-zA-Z]{10}[.][0-9a-zA-Z]{1,52}  (<package>.<AppName>)
+
+  The old values (package="org.mavero", id="org.mavero.tv") contained DOTS and
+  did not match either pattern, so the manifest was rejected as unparseable
+  before any version check ran. Every known-good TV app follows the same rule:
+  jellyfin-tizen (AprZAARz4r.Jellyfin / AprZAARz4r), Moonlight
+  (MoonLightS.MoonlightWasm / MoonLightS), Twellie (Twellie001.Twellie /
+  Twellie001).
+
+  Element ORDER mirrors a known-good shipping TV app (jellyfin-tizen) exactly.
+  Privileges: internet (fetch), tv.inputdevice (D-pad registration), and the
+  Samsung AVPlay privilege required by webapis.avplay (the whole point of the
+  PoC) — the latter is validated against Samsung's own TV extension schema on
+  the device.
 -->
-<widget xmlns:tizen="http://tizen.org/ns/widgets" xmlns="http://www.w3.org/ns/widgets" id="http://mavero.tv/MaveroWgt" version="0.1.1" viewmodes="fullscreen">
+<widget xmlns:tizen="http://tizen.org/ns/widgets" xmlns="http://www.w3.org/ns/widgets" id="http://mavero.tv/MaveroWgt" version="0.1.2" viewmodes="fullscreen">
     <access origin="*" subdomains="true"></access>
-    <tizen:application id="org.mavero.tv" package="org.mavero" required_version="2.3"/>
+    <tizen:application id="MaveroTV01.MaveroTV" package="MaveroTV01" required_version="2.3"/>
     <author href="https://maveroweb.space" email="dahayataman@gmail.com">Mavero</author>
     <content src="index.html"/>
     <description>Mavero — AVPlay / MKV proof-of-concept</description>
@@ -18,6 +34,8 @@
     <tizen:metadata key="http://tizen.org/metadata/app_ui_type/base_screen_resolution" value="fullscreen"/>
     <name>Mavero TV</name>
     <tizen:privilege name="http://tizen.org/privilege/internet"/>
+    <tizen:privilege name="http://tizen.org/privilege/tv.inputdevice"/>
+    <tizen:privilege name="http://developer.samsung.com/privilege/avplay"/>
     <tizen:profile name="tv"/>
     <tizen:setting screen-orientation="auto-rotation" context-menu="enable" background-support="disable" encryption="disable" install-location="auto" hwkey-event="enable"/>
 </widget>
