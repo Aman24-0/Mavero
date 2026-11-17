@@ -154,3 +154,63 @@ export function repositionDraftFromEntries(entries: Array<{ id: string; savedPos
 export function repositionDraftIsDirty(entries: Array<{ id: string; savedPosition: number }>, values: Record<string, string>): boolean {
   return entries.some((entry) => String(values[entry.id] ?? '').trim() !== String(entry.savedPosition));
 }
+
+/**
+ * MOVE semantics for DENSE 1..N lists (category-source positions).
+ *
+ * Root cause this exists for (2026-11-17 report: "category me reposition kar
+ * raha hun to new position apply nahi ho raha"): the dense contract requires
+ * the WHOLE proposed set to stay a distinct permutation of 1..N. So a normal
+ * single-row edit — "move Tungsten to 1" — immediately collides with the row
+ * that already holds 1, `validateRepositionSet` flags a duplicate, the Apply
+ * button stays disabled, and (because the hidden `ordered_source_ids` are
+ * only rendered when the set is valid) nothing is ever submitted. From the
+ * admin's seat the reposition simply "doesn't apply".
+ *
+ * This helper resolves the intent instead of rejecting it:
+ *   * the moved row takes the requested position;
+ *   * every row between its old and new slot shifts by one (the standard
+ *     insert-and-shift / drag-and-drop behaviour);
+ *   * the result is ALWAYS a dense 1..N permutation, so Apply is enabled on
+ *     the very first keystroke.
+ *
+ * Anything the admin typed that cannot be a valid target (blank, zero,
+ * negative, decimal, non-numeric, above the list length) is stored VERBATIM
+ * and nothing shifts — the live validation then shows the row/set error. The
+ * helper never clamps or rewrites a value the admin actually typed.
+ */
+export function applyPositionMove(
+  entries: Array<{ id: string; savedPosition: number }>,
+  values: Record<string, string>,
+  movedId: string,
+  rawValue: string,
+): Record<string, string> {
+  const next: Record<string, string> = { ...values, [movedId]: rawValue };
+  if (!entries.some((entry) => entry.id === movedId)) return next;
+
+  const trimmed = rawValue.trim();
+  const target = /^\d+$/.test(trimmed) ? Number(trimmed) : Number.NaN;
+  if (!Number.isSafeInteger(target) || target < 1 || target > entries.length) return next;
+
+  // Current order: the draft value wins, unparseable rows keep their saved
+  // slot, ties break on the saved position — deterministic in every case.
+  const current = entries
+    .map((entry) => {
+      const raw = String(values[entry.id] ?? '').trim();
+      const parsed = /^\d+$/.test(raw) ? Number(raw) : Number.NaN;
+      return { id: entry.id, rank: Number.isSafeInteger(parsed) ? parsed : entry.savedPosition, saved: entry.savedPosition };
+    })
+    .sort((a, b) => (a.rank - b.rank) || (a.saved - b.saved));
+
+  const moved = current.find((row) => row.id === movedId);
+  if (!moved) return next;
+
+  const without = current.filter((row) => row.id !== movedId);
+  without.splice(target - 1, 0, moved);
+
+  const resolved: Record<string, string> = { ...next };
+  without.forEach((row, index) => {
+    resolved[row.id] = String(index + 1);
+  });
+  return resolved;
+}

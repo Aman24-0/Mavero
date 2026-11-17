@@ -39,7 +39,7 @@
   // 2026-10-16 round (Issue 5): the unified bulk-reposition validation
   // contract shared by every Admin ordering list (live duplicate/blank/
   // zero/negative/decimal rejection with the server as the authority).
-  import { validateRepositionSet, repositionDraftFromEntries, repositionDraftIsDirty } from '$lib/shared/bulk-reposition';
+  import { validateRepositionSet, repositionDraftFromEntries, repositionDraftIsDirty, applyPositionMove } from '$lib/shared/bulk-reposition';
   import type { PageData, ActionData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -1249,9 +1249,14 @@
                   <input type="hidden" name="ordered_source_ids" value={orderedId} />
                 {/each}
               {/if}
-              <p class="a2-field-hint">Edit the numbers to reposition (1 = first). Values are validated live — Apply stays disabled until the whole set is valid. Cancel discards unsaved edits.</p>
+              <p class="a2-field-hint">Type a row's new position (1 = first) — the other rows shift to make room, so Apply is ready immediately. Cancel discards unsaved edits.</p>
               {#if sourceRepositionValidation?.setError}
                 <p class="a2-reposition-error" role="alert"><AlertCircle size={13} /> {sourceRepositionValidation.setError}</p>
+              {/if}
+              {#if form?.message}
+                <!-- 2026-11-17: a rejected reorder used to surface ONLY on the page
+                     behind the open sheet, so the admin saw "nothing happen". -->
+                <p class="a2-reposition-error" role="alert"><AlertCircle size={13} /> {form.message}</p>
               {/if}
               <div class="a2-assigned-list">
                 {#each sourceRepositionEntries as entry (entry.id)}
@@ -1260,7 +1265,7 @@
                   <div class="a2-assigned-row">
                     <label class="a2-position-field">
                       <span>Position</span>
-                      <input type="number" value={sourceDrafts[entry.id] ?? String(entry.savedPosition)} min="1" max={sourceRepositionEntries.length} step="1" inputmode="numeric" class:invalid={Boolean(rowError)} aria-invalid={rowError ? 'true' : undefined} aria-label={`Position for ${row?.name ?? 'source'}`} oninput={(e) => { sourceDrafts = { ...sourceDrafts, [entry.id]: (e.currentTarget as HTMLInputElement).value }; }} />
+                      <input type="number" value={sourceDrafts[entry.id] ?? String(entry.savedPosition)} min="1" max={sourceRepositionEntries.length} step="1" inputmode="numeric" class:invalid={Boolean(rowError)} aria-invalid={rowError ? 'true' : undefined} aria-label={`Position for ${row?.name ?? 'source'}`} oninput={(e) => { sourceDrafts = applyPositionMove(sourceRepositionEntries, sourceDrafts, entry.id, (e.currentTarget as HTMLInputElement).value); }} />
                     </label>
                     <span class="a2-assigned-name">{row?.name ?? 'Unknown source'}</span>
                     {#if row?.enabled === false}

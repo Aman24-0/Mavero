@@ -2318,3 +2318,46 @@ refactor, no change to any existing provider's semantics:
   `allow_experimental_playback=true` means the source resolves while it is
   still `experimental`; set Status → active once verified). No further SQL
   needed.
+
+## Admin Reposition Fix — Category Source Positions (2026-11-17)
+
+- Report: "multi audio category me reposition kar raha hun to new position
+  apply nahi ho raha." Root cause pinned with production evidence, not
+  guesswork: the project's API logs show ZERO `rpc/reorder_category_sources`
+  calls (and zero PATCHes on `streaming_source_categories`) for the whole
+  session — only page-load GETs and the single assignment POST — so nothing
+  was ever written. RLS (`is_admin()` policies), the RPC definition and the
+  `unique(category_id, ordering)` constraint were all verified healthy in the
+  live database; the block was entirely client-side.
+- Mechanism: category-source positions are a DENSE 1..N contract, and
+  `validateRepositionSet` rejects duplicates across the whole proposed set.
+  A normal single-row edit ("move Tungsten to 1") therefore collided with the
+  row already holding that number, Apply stayed disabled, and — because the
+  hidden `ordered_source_ids` fields are only rendered for a VALID set — the
+  form submitted nothing at all. The only way to apply anything was to
+  renumber every row by hand, and the explanatory banner sits above a
+  scrollable list on mobile.
+- Fix 1 (behaviour): `applyPositionMove()` in `$lib/shared/bulk-reposition`
+  gives the dense lists insert-and-shift semantics — the moved row takes the
+  typed position, every row between the old and new slot shifts by one, and
+  the result is ALWAYS a dense 1..N permutation, so Apply is enabled on the
+  first keystroke. Unusable input (blank/zero/negative/decimal/non-numeric/
+  out-of-range) is stored VERBATIM and never clamped, so live validation
+  still surfaces the error. Wired into the category sheet's position inputs
+  only — the two gap-permitted lists (global source order, global category
+  order) keep their existing contract untouched.
+- Fix 2 (visibility): a rejected reorder used to surface ONLY as the page
+  level `form.message`, rendered behind the open sheet — so even a genuine
+  server rejection looked like "nothing happened". The reposition form now
+  renders `form.message` inline, above the position list.
+- Tests: NEW `scripts/admin_reposition_move_test.ts` (wired into
+  `test:playback` after `admin_reorder_test.ts`) pins the old failing
+  behaviour, single moves up/down/to-last, same-position no-op, every
+  unusable-input case, chained moves staying dense/distinct, and the exact
+  2026-11-17 scenario end to end (valid set + posted `ordered_source_ids`
+  order). Green here: `admin_reposition_move_test.ts` PASS,
+  `admin2_phase2_test.ts` PASS (26 groups, includes this page's markup pins),
+  and `+page.svelte` compiles with 0 Svelte warnings.
+- Not changed: server action `?/reorderSourcesBulk`, the
+  `reorder_category_sources` RPC, the service layer, validation contracts and
+  every other admin surface.
