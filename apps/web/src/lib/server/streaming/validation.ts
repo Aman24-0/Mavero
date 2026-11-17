@@ -21,6 +21,31 @@ export class StreamingValidationError extends Error {
 const { normalizeSlug, validateSlug } = makeSlugHelpers((message) => new StreamingValidationError(message));
 const parseId = makeIdParser((message) => new StreamingValidationError(message));
 
+/**
+ * Category-id parser for the CATEGORY-SCOPED forms (source assignment,
+ * removal and the bulk reposition).
+ *
+ * Those forms carry the category as `category_id` — `id` in the same sheet
+ * belongs to the category EDIT form — while the shared `parseId` reads `id`.
+ * The mismatch made `?/reorderSourcesBulk` reject every submit with
+ * "Category is required." (2026-11-17). It stayed invisible until the
+ * reposition form could produce a valid payload at all: before the
+ * move-semantics fix the form never submitted anything, so the server never
+ * ran this line.
+ *
+ * `id` remains accepted as a fallback so any existing API caller (and the
+ * single-row `moveCategorySource` contract) keeps working. Validation is
+ * delegated to the shared parser, so the messages, the 80-character cap and
+ * the UUID shape check stay identical to every other id in the registry —
+ * no second copy of those rules can drift.
+ */
+export function parseCategoryId(form: FormData, label = 'Category'): string {
+  const raw = String(form.get('category_id') ?? form.get('id') ?? '');
+  const probe = new FormData();
+  probe.set('id', raw);
+  return parseId(probe, label);
+}
+
 function text(value: FormDataEntryValue | null, label: string, maxLength: number): string | null {
   const normalized = String(value ?? '').trim();
   if (!normalized) return null;

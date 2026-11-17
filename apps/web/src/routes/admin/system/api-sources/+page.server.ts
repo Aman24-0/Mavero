@@ -36,7 +36,7 @@ import { lookupProviderCapabilities } from '$lib/shared/player-capabilities';
 import {
   parseProviderForm, parseSourceForm, parseId, parseBulkOrderings,
   parseCategoryForm, parseSourceAssignmentForm, parseCategoryReorderForm,
-  parseBulkOrderedIds, StreamingValidationError,
+  parseBulkOrderedIds, parseCategoryId, StreamingValidationError,
 } from '$lib/server/streaming/validation';
 
 const VALID_TABS = new Set(['providers', 'sources', 'categories']);
@@ -440,7 +440,11 @@ export const actions: Actions = {
     await requireAdmin(locals, { redirectTo: '/admin/system/api-sources' });
     try {
       const form = await request.formData();
-      const categoryId = parseId(form, 'Category');
+      // The reposition form carries the category as `category_id` (not `id`,
+      // which the category EDIT form in the same sheet owns) — parseCategoryId
+      // resolves both field names, so this action accepts the shipped client
+      // payload as well as the legacy `id` API shape.
+      const categoryId = parseCategoryId(form);
       const orderedSourceIds = parseBulkOrderedIds(form, 'ordered_source_ids', 'Source order');
       if (!orderedSourceIds.length) return fail(400, { message: 'The reorder payload is empty.' });
       await reorderCategorySources(locals.supabase, categoryId, orderedSourceIds);

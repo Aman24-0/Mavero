@@ -2361,3 +2361,19 @@ refactor, no change to any existing provider's semantics:
 - Not changed: server action `?/reorderSourcesBulk`, the
   `reorder_category_sources` RPC, the service layer, validation contracts and
   every other admin surface.
+- Follow-up (same round): once the move-semantics fix made the reposition
+  form submit for the first time, every Apply returned "Category is
+  required." — a SECOND, previously unreachable defect. The sheet's
+  reposition form carries the category as `category_id` (the same sheet's
+  category EDIT form owns `id`), while the shared `parseId()` reads `id`, so
+  `?/reorderSourcesBulk` parsed an empty id and rejected the request before
+  the RPC. Fix: `parseCategoryId()` in
+  `$lib/server/streaming/validation` accepts `category_id` (falling back to
+  `id` for the legacy API shape) and delegates to the shared id parser, so
+  messages/length/UUID rules cannot drift; the bulk action now uses it. The
+  other category-scoped actions were audited and are correct —
+  `assignSource`/`removeSource` use `parseSourceAssignmentForm`, and the
+  category CRUD forms post `id`. NEW
+  `scripts/admin_reorder_category_id_test.ts` (wired into `test:playback`)
+  pins the field-name contract, the exact "Category is required." message,
+  the shared shape/length rules, and that the action/form still agree.
