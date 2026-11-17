@@ -1,47 +1,23 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Mavero TV — Tizen Web Application (WGT) — PoC scaffold.
+  Mavero TV — Tizen Web Application (WGT) — PoC.
 
-  This is a SELF-CONTAINED proof-of-concept: it proves, on the real TV, that
-  (1) a .wgt installs via Apps2Samsung, (2) Samsung AVPlay plays MKV / HLS
-  direct URLs (the formats Stremio/CloudStream addons hand out), and
-  (3) full D-pad navigation works.
-
-  It does NOT touch the web app. The full Mavero UI is wired in later, once
-  AVPlay + MKV playback is confirmed on the device.
-
-  Apps2Samsung signs and installs this package (no Tizen Studio needed).
+  Element ORDER mirrors a known-good shipping TV app (jellyfin-tizen) exactly:
+  the Tizen widget manifest is validated against a schema and the TV's package
+  manager rejects ([118, -19] "could not read the package's manifest") when the
+  structure/order does not match, even if the values are valid.
 -->
-<widget xmlns="http://www.w3.org/ns/widgets"
-        xmlns:tizen="http://tizen.org/ns/widgets"
-        id="http://mavero.tv/MaveroWgt"
-        version="0.1.0"
-        viewmodes="fullscreen">
-
-    <!-- app id = <package>.<name>; package must be the prefix of id -->
+<widget xmlns:tizen="http://tizen.org/ns/widgets" xmlns="http://www.w3.org/ns/widgets" id="http://mavero.tv/MaveroWgt" version="0.1.1" viewmodes="fullscreen">
+    <access origin="*" subdomains="true"></access>
     <tizen:application id="org.mavero.tv" package="org.mavero" required_version="2.3"/>
-
-    <content src="index.html"/>
-    <icon src="icon.png"/>
-    <name>Mavero TV</name>
-    <description>Mavero — AVPlay / MKV proof-of-concept</description>
     <author href="https://maveroweb.space" email="dahayataman@gmail.com">Mavero</author>
-
+    <content src="index.html"/>
+    <description>Mavero — AVPlay / MKV proof-of-concept</description>
     <feature name="http://tizen.org/feature/screen.size.all"/>
-
-    <!-- allow network calls to any origin (addon resolution, streams) -->
-    <access origin="*" subdomains="true"/>
-
-    <tizen:profile name="tv"/>
-
-    <!-- hwkey-event="enable" is REQUIRED so the app receives the remote's
-         Back key (10009) and D-pad key events. -->
-    <tizen:setting screen-orientation="landscape"
-                   context-menu="disable"
-                   background-support="disable"
-                   encryption="disable"
-                   install-location="auto"
-                   hwkey-event="enable"/>
-
+    <icon src="icon.png"/>
+    <tizen:metadata key="http://tizen.org/metadata/app_ui_type/base_screen_resolution" value="fullscreen"/>
+    <name>Mavero TV</name>
     <tizen:privilege name="http://tizen.org/privilege/internet"/>
+    <tizen:profile name="tv"/>
+    <tizen:setting screen-orientation="auto-rotation" context-menu="enable" background-support="disable" encryption="disable" install-location="auto" hwkey-event="enable"/>
 </widget>
