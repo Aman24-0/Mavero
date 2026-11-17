@@ -1,0 +1,72 @@
+# Mavero TV — build the .wgt (Tizen Web App) on every change to apps/tizen-wgt.
+#
+# A .wgt IS a ZIP archive with config.xml at its root — this workflow packs
+# apps/tizen-wgt/ into MaveroTV.wgt, verifies config.xml is at the zip root,
+# uploads it as a build artifact AND attaches it to a rolling "wgt-latest"
+# release so it can be downloaded directly (no unzip-the-artifact dance).
+#
+# Then install the .wgt on the TV with Apps2Samsung (it signs + installs).
+
+name: Build WGT
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/tizen-wgt/**"
+      - ".github/workflows/build-wgt.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-wgt-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-wgt:
+    name: package · verify · publish .wgt
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Package apps/tizen-wgt into MaveroTV.wgt
+        run: |
+          set -euo pipefail
+          cd apps/tizen-wgt
+          test -f config.xml || { echo "config.xml missing"; exit 1; }
+          rm -f ../../MaveroTV.wgt
+          # .wgt = ZIP with config.xml at the root (NOT inside a folder)
+          zip -r ../../MaveroTV.wgt config.xml index.html app.js icon.png
+          cd ../..
+          echo "--- MaveroTV.wgt contents ---"
+          unzip -l MaveroTV.wgt
+          # config.xml MUST be at the zip root
+          unzip -Z1 MaveroTV.wgt | grep -qx 'config.xml' || {
+            echo "config.xml is not at the zip root — aborting"; exit 1; }
+          ls -la MaveroTV.wgt
+
+      - name: Upload .wgt artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MaveroTV-wgt
+          path: MaveroTV.wgt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish to rolling release (direct .wgt download)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release view wgt-latest >/dev/null 2>&1 || \
+            gh release create wgt-latest \
+              --title "Mavero TV (.wgt) — latest" \
+              --notes "Auto-built from apps/tizen-wgt at ${{ github.sha }}."
+          gh release upload wgt-latest MaveroTV.wgt --clobber
+          echo "Direct download:"
+          echo "https://github.com/${{ github.repository }}/releases/download/wgt-latest/MaveroTV.wgt"
