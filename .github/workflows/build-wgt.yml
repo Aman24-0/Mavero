@@ -113,7 +113,9 @@ jobs:
           # The manifest the TV will parse: the tv-profile schema requires
           # package = [0-9a-zA-Z]{10} and id = <package>.<AppName> (the
           # dotted ids are exactly what produced [118, -19] before).
-          grep -o '<tizen:application[^/]*/>' <(unzip -p MaveroTV.wgt config.xml) | tee /tmp/tizen-application.txt
+          # NOTE: tz writes paired tags (<tizen:application ...>...</tizen:application>),
+          # so match the OPENING tag up to the first '>' (both tag forms).
+          grep -o '<tizen:application[^>]*>' <(unzip -p MaveroTV.wgt config.xml) | tee /tmp/tizen-application.txt
           grep -q 'package="MaveroTV01"' /tmp/tizen-application.txt
           grep -q 'id="MaveroTV01.MaveroTV"' /tmp/tizen-application.txt
           # The manifest must still be schema-valid XML

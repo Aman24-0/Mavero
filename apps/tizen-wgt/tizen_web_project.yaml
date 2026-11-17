@@ -56,6 +56,9 @@ excludes:
   - \.wgt
   - tizen_web_project.yaml
   - webUnitTest/*
+  # Repo/VCS metadata must not ship inside the .wgt (tz otherwise packs the
+  # whole non-excluded project directory).
+  - \.gitignore
 
 # project dependencies
 deps: []
