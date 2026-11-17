@@ -16,15 +16,16 @@
         xmlns:tizen="http://tizen.org/ns/widgets"
         id="http://mavero.tv/MaveroWgt"
         version="0.1.0"
-        viewmodes="maximized">
+        viewmodes="fullscreen">
 
     <!-- app id = <package>.<name>; package must be the prefix of id -->
-    <tizen:application id="org.mavero.tv" package="org.mavero" required-version="2.4"/>
+    <tizen:application id="org.mavero.tv" package="org.mavero" required_version="2.3"/>
 
     <content src="index.html"/>
     <icon src="icon.png"/>
     <name>Mavero TV</name>
     <description>Mavero — AVPlay / MKV proof-of-concept</description>
+    <author href="https://maveroweb.space" email="dahayataman@gmail.com">Mavero</author>
 
     <feature name="http://tizen.org/feature/screen.size.all"/>
 
