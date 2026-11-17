@@ -2270,3 +2270,51 @@ refactor, no change to any existing provider's semantics:
   Task-A commit SHA: 7a82d5a (parent 3978c72; docs-only WORKLOG follow-up below).
   No push to main; no force-push; no history rewrite. Phase 1 (hygiene
   removals/archiving) NOT started - awaiting review of Task A.
+
+## Vidly Provider Integration (2026-11-17, main @ 25877aa baseline)
+
+- Provider: **Vidly** (`https://vidly.pro/`) — a new iframe/embed streaming
+  source. Integrated through the EXISTING registry architecture; no existing
+  provider, source, resolver, player component, TV route or Tizen path was
+  modified.
+- Contract (provider docs, read 2026-11-17 — DOCS-LEVEL, not yet verified in
+  a Mavero browser session): movie `https://vidly.pro/movie/{tmdbId}`, TV
+  `https://vidly.pro/tv/{tmdbId}/{season}/{episode}`; documented params
+  `theme`, `color` (hex without `#`), `t` (resume seconds), `autoplay`,
+  `nextEpisode`, `audioPicker`; documented postMessage `VIDLY_PLAYER_EVENT`
+  (`play`/`pause`/`timeupdate` every 10 s/`ended` with `currentTime` +
+  `duration`) and `SYNC_HISTORY` from origin `https://vidly.pro`.
+- Files: `supabase/migrations/20261126000000_vidly_provider.sql` (provider +
+  ONE source, idempotent, non-destructive, ordering 440, seeded experimental
+  and disabled with `allow_experimental_playback=true`),
+  `src/lib/client/player/providers/vidly-adapter.ts`,
+  `VIDLY_CAPABILITIES` + `'vidly'` map entry in
+  `src/lib/shared/player-capabilities.ts` (re-exported from
+  `$lib/client/player/capabilities`), registration in
+  `adapter-registry.ts`, `scripts/vidly_provider_test.ts` (wired into
+  `test:providers`), and `docs/provider-evaluations/vidly-evaluation.md`.
+- Deliberate limits: no command methods (no seek/volume/play/pause/quality
+  protocol is documented); `SYNC_HISTORY` is NOT normalized (the documented
+  `watched` unit is unspecified — guessing would corrupt watch progress);
+  Vidly's internal 3-server selector, quality ladder (up to 4K) and subtitle
+  picker stay provider-owned and are NOT modelled as Mavero sources.
+- Security: strict `https://vidly.pro` origin gate + shape validation +
+  active-iframe `event.source` check on every message; https-only template
+  output through `validatePlaybackUrl` with `allowed_embed_origins`; no CSP
+  change needed (`frame-src *` already covers admin-configured embeds); no
+  scraping, proxying, token extraction or protection bypass.
+- Verification (this environment, offline): `scripts/vidly_provider_test.ts`
+  PASS (resolver movie/TV URLs, disabled-source gate, allowlist rejection,
+  capability map, registry precedence over the generic embed fallback,
+  `color` injection, `t` resume param, all four documented events, malformed
+  payload/origin/stale-window rejection, teardown). Regression neighbours
+  `zxcstream_provider_test.ts`, `vidstuck_provider_test.ts`,
+  `tgvid_provider_test.ts` PASS. Migration SQL parses clean (pglast).
+  NOT run here: `pnpm check` / `pnpm build` / the full `pnpm test` chain
+  (the pod cannot install the workspace — pnpm OOM at the Node 20 ceiling);
+  those remain the gate before merge.
+- PENDING (owner action): real-browser playback + X-Frame-Options check on
+  `vidly.pro`; then enable via System → API & Sources (Enabled → on —
+  `allow_experimental_playback=true` means the source resolves while it is
+  still `experimental`; set Status → active once verified). No further SQL
+  needed.

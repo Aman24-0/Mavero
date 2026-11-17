@@ -15,6 +15,7 @@ import { VidStuckPlayerAdapter } from './providers/vidstuck-adapter';
 import { VidRiftPlayerAdapter } from './providers/vidrift-adapter';
 import { TgvidPlayerAdapter } from './providers/tgvid-adapter';
 import { ZxcStreamPlayerAdapter } from './providers/zxcstream-adapter';
+import { VidlyPlayerAdapter } from './providers/vidly-adapter';
 
 /**
  * Adapter registry — Phase 1 + Phase 3.
@@ -49,7 +50,11 @@ import { ZxcStreamPlayerAdapter } from './providers/zxcstream-adapter';
  *  14. ZxcStreamPlayerAdapter — handles `https://zxcstream.cc`
  *      (2026-10 integration; no documented message protocol — black-box
  *      embed with the documented runtime `color` accent hook).
- *  15. EmbedPlayerAdapter — generic fallback for all other embed sources.
+ *  15. VidlyPlayerAdapter — handles `https://vidly.pro`
+ *      (2026-11 integration; documented VIDLY_PLAYER_EVENT stream —
+ *      play/pause/timeupdate/ended with currentTime + duration — plus the
+ *      documented `t` resume parameter and `color` accent hook).
+ *  16. EmbedPlayerAdapter — generic fallback for all other embed sources.
  *
  * Provider-specific adapters are registered BEFORE the generic EmbedPlayerAdapter
  * so that `pickAdapter(source)` matches the provider-specific adapter first
@@ -129,6 +134,9 @@ export function createDefaultAdapterRegistry(): PlayerAdapterRegistry {
     new TgvidPlayerAdapter(),
     // Black-box embed with the documented color hook (2026-10-16).
     new ZxcStreamPlayerAdapter(),
+    // Verified-event-stream embed (2026-11-17 integration; docs-level
+    // contract — see VIDLY_CAPABILITIES for the verification status).
+    new VidlyPlayerAdapter(),
     // Generic fallback for all other embed sources (black-box).
     new EmbedPlayerAdapter(),
   ]);

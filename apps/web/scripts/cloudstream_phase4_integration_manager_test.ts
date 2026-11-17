@@ -1237,7 +1237,7 @@ function pristineFile(relative: string): string | null {
   // touched — behaviorally proven by
   // scripts/livetv_phase7_migration_test.ts (35 PGlite checks).
   ok(
-    addedMigrations.length === 26
+    addedMigrations.length === 27
       && addedMigrations.includes('20261004000000_unified_downloader_global_order.sql')
       && addedMigrations.includes('20261102000000_adapter_build_lifecycle.sql')
       && addedMigrations.includes('20261103000000_live_tv_analytics_events.sql')
@@ -1290,8 +1290,13 @@ function pristineFile(relative: string): string | null {
       // app_config to vidsrc.party + remove allow_dynamic_embed_origins).
       // UPDATE-only — no cloudstream/downloader/registry surface touched.
       // 2026-10 round 30: Multi Stream (VidCore) source migration.
-      && addedMigrations.includes('20261101000000_multi_stream_vidcore_source.sql'),
-    `F3: the ONLY added migrations are the FINAL TASK unified-order + build-lifecycle + LT-5-analytics + LT-15-fallback-event + VidRift-provider + MAVP-4-icon-badge + MAVP-5-default-slots + MAVP-7-unique-assignment + BlueVelvet-provider + Vixolity/TGVID/ZXCStream-provider + VidStuck-cc-origins + Supabase-remediation + Supabase-final-audit + Livetv-source-registry + Livetv-EPG-guide-data + Livetv-refresh-history + App-config-social-links + App-config-admin-write-rls + Livetv-indian-proxy + DirectStream-scraper + DirectStream-domain-fix + DirectStream-vidsrc-party + Multi-Stream-vidcore migrations (${addedMigrations.join(', ') || 'none'})`,
+      && addedMigrations.includes('20261101000000_multi_stream_vidcore_source.sql')
+      // VIDLY PROVIDER (20261126000000, sanctioned): insert-only
+      // provider/source rows for the Vidly embed provider (seeded
+      // experimental + disabled). No cloudstream/downloader/registry
+      // tables touched — see docs/provider-evaluations/vidly-evaluation.md.
+      && addedMigrations.includes('20261126000000_vidly_provider.sql'),
+    `F3: the ONLY added migrations are the FINAL TASK unified-order + build-lifecycle + LT-5-analytics + LT-15-fallback-event + VidRift-provider + MAVP-4-icon-badge + MAVP-5-default-slots + MAVP-7-unique-assignment + BlueVelvet-provider + Vixolity/TGVID/ZXCStream-provider + VidStuck-cc-origins + Supabase-remediation + Supabase-final-audit + Livetv-source-registry + Livetv-EPG-guide-data + Livetv-refresh-history + App-config-social-links + App-config-admin-write-rls + Livetv-indian-proxy + DirectStream-scraper + DirectStream-domain-fix + DirectStream-vidsrc-party + Multi-Stream-vidcore + Vidly-provider migrations (${addedMigrations.join(', ') || 'none'})`,
   );
   ok(removedMigrations.length === 0, 'F3: no migration was removed');
 

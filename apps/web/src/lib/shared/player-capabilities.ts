@@ -603,6 +603,49 @@ export const ZXCSTREAM_CAPABILITIES: ProviderPlaybackCapabilities = {
   nextEpisode: false,
 };
 
+/**
+ * Vidly — vidly.pro (https://vidly.pro/, official documentation, read
+ * 2026-11-17). DOCS-LEVEL contract: the URL patterns and the postMessage
+ * event list below are documented by the provider; end-to-end playback in a
+ * Mavero browser session is NOT yet verified, so nothing here is upgraded
+ * beyond what the docs state.
+ *
+ * VERIFIED (official documentation):
+ *   URL:   https://vidly.pro/movie/{tmdbId}
+ *          https://vidly.pro/tv/{tmdbId}/{season}/{episode}
+ *          (no API key required)
+ *   Params: theme (aurora|slate|retro), color (hex without '#'),
+ *          t (start position, seconds), autoplay (0|1, default 0),
+ *          nextEpisode (0|1, default 1), audioPicker (0|1, default 0).
+ *   postMessage (origin https://vidly.pro):
+ *     VIDLY_PLAYER_EVENT {data:{event:'play'|'pause'|'timeupdate'|
+ *       'ended', currentTime, duration, tmdbId, mediaType, season,
+ *       episode}} — timeupdate every 10 s while playing.
+ *     SYNC_HISTORY {data:{media_id, media_type, title, duration, watched}}
+ *       — the `watched` unit is undocumented, so it is NOT normalized.
+ *   Documented in-player features (provider-owned, NOT Mavero-controlled):
+ *     multi-language subtitles, adaptive HLS/DASH, manual quality up to 4K,
+ *     and an internal 3-server selector.
+ *   NOT documented: any seek / volume / play / pause / quality COMMAND
+ *   protocol, and any next-up signal → those capabilities stay false.
+ */
+export const VIDLY_CAPABILITIES: ProviderPlaybackCapabilities = {
+  progressEvents: true,
+  currentTime: true,
+  duration: true,
+  seek: false,
+  startAt: true,
+  play: false,
+  pause: false,
+  volume: false,
+  subtitles: true,
+  quality: false,
+  fullscreen: true,
+  pictureInPicture: false,
+  postMessage: true,
+  nextEpisode: false,
+};
+
 // ----- Phase 7: adapter_id → capabilities lookup -----
 //
 // The admin capability matrix uses this map to display per-adapter
@@ -656,6 +699,10 @@ export const PROVIDER_CAPABILITY_MAP: Record<string, ProviderPlaybackCapabilitie
   // ZXCStream (2026-10): no documented message protocol — black-box embed
   // with the verified `color` accent hook only.
   'zxcstream': ZXCSTREAM_CAPABILITIES,
+  // Vidly (2026-11): documented VIDLY_PLAYER_EVENT stream (play/pause/
+  // timeupdate/ended) + documented t= resume and color= accent hooks —
+  // see VIDLY_CAPABILITIES above.
+  'vidly': VIDLY_CAPABILITIES,
 };
 
 /**
