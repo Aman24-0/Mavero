@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mavero TV — AVPlay PoC</title>
+
+    <!-- Tizen web APIs (AVPlay lives on window.webapis.avplay) -->
+    <script src="$WEBAPIS/webapis/webapis.js"></script>
+
+    <style>
+        :root {
+            --bg: #0a0a0a;
+            --surface: #161616;
+            --surface-focus: #1f1f1f;
+            --text: #ffffff;
+            --text-dim: #9ca3af;
+            --accent: #00d9ff;
+        }
+        * { box-sizing: border-box; }
+        html, body {
+            margin: 0; padding: 0; height: 100%;
+            background: var(--bg); color: var(--text);
+            font-family: "Samsung One", "Segoe UI", Roboto, Arial, sans-serif;
+            overflow: hidden;
+        }
+        #list-view {
+            display: flex; flex-direction: column;
+            height: 100%; padding: 48px 80px;
+        }
+        h1 { font-size: 34px; margin: 0 0 8px; }
+        .sub { color: var(--text-dim); font-size: 18px; margin-bottom: 28px; }
+        ul { list-style: none; margin: 0; padding: 0; flex: 1; overflow-y: auto; }
+        li {
+            padding: 20px 26px; margin-bottom: 12px;
+            background: var(--surface); border-radius: 10px;
+            border: 2px solid transparent; font-size: 22px;
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        li.focused {
+            background: var(--surface-focus);
+            border-color: var(--accent);
+            transform: scale(1.01);
+        }
+        li .tag {
+            font-size: 14px; color: var(--bg); background: var(--accent);
+            padding: 4px 10px; border-radius: 6px; font-weight: 700;
+        }
+        li .tag.hls { background: #22c55e; }
+        li .tag.mp4 { background: #a855f7; }
+        .hint { color: var(--text-dim); font-size: 16px; margin-top: 18px; }
+        #status {
+            position: fixed; left: 0; right: 0; bottom: 0;
+            padding: 10px 24px; font-size: 15px;
+            background: rgba(0,0,0,.72); color: var(--accent);
+            font-family: monospace; white-space: pre-wrap; word-break: break-all;
+            min-height: 22px;
+        }
+        #player-view { display: none; position: fixed; inset: 0; background: #000; }
+        #video { width: 100%; height: 100%; background: #000; }
+        #player-hint {
+            position: fixed; top: 20px; left: 24px;
+            background: rgba(0,0,0,.6); padding: 8px 14px; border-radius: 8px;
+            font-size: 15px; color: var(--text-dim);
+        }
+    </style>
+</head>
+<body>
+    <!-- Source list -->
+    <div id="list-view">
+        <h1>Mavero TV · AVPlay PoC</h1>
+        <div class="sub">Confirm MKV / HLS playback on the TV with Samsung's native player (AVPlay).</div>
+        <ul id="list"></ul>
+        <div class="hint">↑ ↓ move &nbsp;·&nbsp; Enter / OK = play &nbsp;·&nbsp; Back = exit</div>
+    </div>
+
+    <!-- AVPlay renders INTO this element (setDisplayRect targets it) -->
+    <div id="player-view">
+        <div id="video"></div>
+        <div id="player-hint">Playing via AVPlay · Back = stop</div>
+    </div>
+
+    <div id="status">Ready.</div>
+
+    <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Mavero TV — Tizen Web Application (WGT) — PoC scaffold.
+
+  This is a SELF-CONTAINED proof-of-concept: it proves, on the real TV, that
+  (1) a .wgt installs via Apps2Samsung, (2) Samsung AVPlay plays MKV / HLS
+  direct URLs (the formats Stremio/CloudStream addons hand out), and
+  (3) full D-pad navigation works.
+
+  It does NOT touch the web app. The full Mavero UI is wired in later, once
+  AVPlay + MKV playback is confirmed on the device.
+
+  Apps2Samsung signs and installs this package (no Tizen Studio needed).
+-->
+<widget xmlns="http://www.w3.org/ns/widgets"
+        xmlns:tizen="http://tizen.org/ns/widgets"
+        id="http://mavero.tv/MaveroWgt"
+        version="0.1.0"
+        viewmodes="maximized">
+
+    <!-- app id = <package>.<name>; package must be the prefix of id -->
+    <tizen:application id="org.mavero.tv" package="org.mavero" required-version="2.4"/>
+
+    <content src="index.html"/>
+    <icon src="icon.png"/>
+    <name>Mavero TV</name>
+    <description>Mavero — AVPlay / MKV proof-of-concept</description>
+
+    <feature name="http://tizen.org/feature/screen.size.all"/>
+
+    <!-- allow network calls to any origin (addon resolution, streams) -->
+    <access origin="*" subdomains="true"/>
+
+    <tizen:profile name="tv"/>
+
+    <!-- hwkey-event="enable" is REQUIRED so the app receives the remote's
+         Back key (10009) and D-pad key events. -->
+    <tizen:setting screen-orientation="landscape"
+                   context-menu="disable"
+                   background-support="disable"
+                   encryption="disable"
+                   install-location="auto"
+                   hwkey-event="enable"/>
+
+    <tizen:privilege name="http://tizen.org/privilege/internet"/>
+</widget>
