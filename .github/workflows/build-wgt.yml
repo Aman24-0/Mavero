@@ -121,9 +121,9 @@ jobs:
           # The manifest must still be schema-valid XML
           python3 - <<'PY'
           import io, zipfile
-          from lxml import etree
+          import xml.etree.ElementTree as ET  # stdlib — runners have no lxml
           z = zipfile.ZipFile('MaveroTV.wgt')
-          etree.parse(io.BytesIO(z.read('config.xml')))
+          ET.fromstring(z.read('config.xml'))
           print('config.xml parses as XML: OK')
           PY
           ls -la MaveroTV.wgt
