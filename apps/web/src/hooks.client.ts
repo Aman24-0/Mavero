@@ -24,6 +24,7 @@
 // or the stack. The route id + pathname are the correlation keys.
 
 import { reportClientUnexpectedError } from '$lib/client/error-reporting';
+import { IS_WGT_BUILD } from '$lib/shared/build-mode';
 
 // STAGE 2 (TV plan) — the wgt fetch bridge installs at client-hook boot,
 // BEFORE any page mount: every root-relative /api/... fetch in the widget is
@@ -32,10 +33,27 @@ import { reportClientUnexpectedError } from '$lib/client/error-reporting';
 // links (kit's hash router classifies them external — see
 // $lib/tv/navigation-bridge). Both installs are compile-time no-ops outside
 // the wgt build (IS_WGT_BUILD is statically false in production).
+//
+// STAGE 4 — the wgt SPATIAL FOCUS manager turns the TV remote into D-PAD
+// navigation (arrows move DOM focus by bounding-rect geometry, Enter
+// activates, Back pops one screen — see $lib/tv/focus). Also compile-time
+// no-op in production: the web keeps native mouse/hover/Tab behavior.
+//
+// PERFORMANCE (Stage 4) — the home payload is PREFETCHED at bundle
+// evaluation, before hydration and before the page's own onMount: the page
+// load consumes the module-level in-flight promise instead of waiting for a
+// mount-time fetch roundtrip (see $lib/tv/discover-payload). Dead branch in
+// production.
 import { installTvFetchBridge } from '$lib/tv/fetch-bridge';
 import { installTvNavigationBridge } from '$lib/tv/navigation-bridge';
+import { installTvFocusManager } from '$lib/tv/focus';
+import { prefetchTvDiscoverPayload } from '$lib/tv/discover-payload';
 installTvFetchBridge();
 installTvNavigationBridge();
+if (IS_WGT_BUILD) {
+  installTvFocusManager();
+  prefetchTvDiscoverPayload();
+}
 
 type ClientHandleErrorInput = {
   error: unknown;

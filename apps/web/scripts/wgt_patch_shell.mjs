@@ -90,6 +90,34 @@
  *    <script src="./app.js" defer> boot tag, so every global exists before
  *    the bundle evaluates.
  *
+ * 7. TV MODE — STAGE 4 layout layer (widget-build-only CSS + the body
+ *    class that activates it). The production web look must stay
+ *    untouched, so ALL TV styling lives here, injected as a single
+ *    <style id="mavero-tv-mode"> into the packed shell only:
+ *      - `body.tv-mode { zoom: 1.2 }` — the couch-distance scale layer
+ *        (the 1920px viewport becomes a 1600px layout; every visual pixel
+ *        grows 1.2x). zoom is supported by every Blink engine; media
+ *        queries still evaluate against the real viewport.
+ *      - POSTER GEOMETRY: the Stage-4 TV feedback reported cards "stretched
+ *        vertically". The app's poster box relies on CSS `aspect-ratio`,
+ *        which the TV engine (Chromium < 88) may not implement — this
+ *        stylesheet REASSERTS aspect-ratio AND adds the engine-proof
+ *        padding-top:150% ::before fallback (150% = 3/2 = the 2:3 poster
+ *        box) plus FIXED TV card widths (200px) on rails, so card height
+ *        ALWAYS derives from the poster aspect and never stretches.
+ *      - FOCUS VISIBILITY: a `.tv-focused` ring + plain :focus outlines
+ *        (the TV's programmatic focus() does not reliably match
+ *        :focus-visible and :has() does not exist on this engine — the
+ *        SpatialFocusManager adds the class, and :focus-within elevates
+ *        the whole poster card, transform-only per the Stage-4 perf rule).
+ *      - SIDEBAR / TYPE SCALE: bigger sidebar icons, labels and card
+ *        titles for the 3m viewing distance; a hero cap so the rails stay
+ *        visible at 1080p; ~5% TV-safe gutter (--d-gutter).
+ *      - NO backdrop-filter anywhere on the TV (GPU cost — Stage-4 perf).
+ *    The body class is added by a tiny classic script inside the body
+ *    wrapper (runs before the bundle boots — no relayout flash, and TV
+ *    mode survives even if the bundle later fails).
+ *
  * Usage: node scripts/wgt_patch_shell.mjs <path-to-built-index.html>
  */
 
@@ -140,6 +168,98 @@ html = html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, (block) => {
   }
   return block;
 });
+
+// ---------------------------------------------------------------------------
+// §7 — TV MODE: the Stage-4 layout layer. Injected ONLY into the packed
+// widget shell (this script never touches the production web build). Every
+// selector is scoped under body.tv-mode so even a leaked copy of this text
+// could not restyle the web app. (Defined early — the body-class script is
+// prepended to the classic boot replacement in §2 below.)
+// ---------------------------------------------------------------------------
+
+const tvModeCss = [
+  '/* mavero-tv-mode: Stage-4 TV layout layer (wgt build only — see the §7 header) */',
+  'body.tv-mode {',
+  '  zoom: 1.2;',
+  '  --d-gutter: 56px;',
+  '}',
+  '/* --- Poster geometry: engine-proof 2:3 (aspect-ratio is missing on the',
+  '   TV-era Chromium < 88 — the padding-top fallback yields the SAME result',
+  '   on engines without it and matches it exactly on engines with it) --- */',
+  'body.tv-mode .mc-poster { aspect-ratio: 2 / 3; }',
+  "body.tv-mode .mc-poster::before { content: ''; display: block; width: 100%; padding-top: 150%; }",
+  'body.tv-mode .skeleton-poster { aspect-ratio: 2 / 3; }',
+  "body.tv-mode .skeleton-poster::before { content: ''; display: block; width: 100%; padding-top: 150%; }",
+  '/* --- Fixed TV card widths (height derives from the poster aspect) --- */',
+  'body.tv-mode .rail { grid-auto-columns: 200px; gap: 16px; }',
+  'body.tv-mode .rail.compact { grid-auto-columns: 172px; }',
+  "/* --- Focus visibility: the spatial manager adds .tv-focused (the TV's",
+  '   programmatic focus() is not reliably :focus-visible; this engine has',
+  '   no :has()) — plain :focus outlines + :focus-within card elevation --- */',
+  'body.tv-mode a:focus,',
+  'body.tv-mode button:focus,',
+  'body.tv-mode input:focus,',
+  'body.tv-mode select:focus,',
+  'body.tv-mode textarea:focus,',
+  'body.tv-mode [tabindex="0"]:focus,',
+  'body.tv-mode .tv-focused {',
+  '  outline: 3px solid rgba(255, 255, 255, .95);',
+  '  outline-offset: 3px;',
+  '  border-radius: 6px;',
+  '}',
+  'body.tv-mode .mc-poster:focus-within {',
+  '  transform: translateY(-3px) scale(1.05);',
+  '  outline: 4px solid #ffffff;',
+  '  outline-offset: 2px;',
+  '  border-color: var(--color-primary-border, #ffffff);',
+  '  box-shadow: 0 0 0 2px rgba(255, 255, 255, .9), 0 18px 36px rgba(0, 0, 0, .55);',
+  '  z-index: 2;',
+  '}',
+  'body.tv-mode .mc-poster:focus-within .mc-play { opacity: 1; transform: scale(1.06); }',
+  '/* The card link fills the poster box — its own outline would double the',
+  '   poster-level ring; the poster ring is THE card focus indicator. */',
+  'body.tv-mode .mc-poster a:focus { outline: none; }',
+  '/* --- Sidebar scale (couch distance) --- */',
+  'body.tv-mode .app-sidebar { padding-left: 20px; }',
+  'body.tv-mode .sidebar-link { min-height: 54px; padding: 10px 14px; }',
+  'body.tv-mode .sidebar-link .sidebar-icon svg,',
+  'body.tv-mode .sidebar-account .sidebar-icon svg { width: 26px; height: 26px; }',
+  'body.tv-mode .sidebar-label { font-size: 1.02rem; font-weight: 700; }',
+  'body.tv-mode .brand-word { font-size: 1.3rem; }',
+  '/* --- Card text scale --- */',
+  'body.tv-mode .mc-title { font-size: .95rem; }',
+  'body.tv-mode .mc-meta { font-size: .8rem; }',
+  'body.tv-mode .mc-type { font-size: .6rem; padding: 3px 8px; }',
+  'body.tv-mode .mc-rating { font-size: .64rem; padding: 3px 8px; }',
+  'body.tv-mode .mc-episode-badge { font-size: .66rem; }',
+  '/* --- Hero: cap so the rails stay visible on 1080p; larger CTA targets --- */',
+  'body.tv-mode .hero-slide, body.tv-mode .hero-content { min-height: min(64vh, 560px); }',
+  'body.tv-mode .hero-play, body.tv-mode .hero-btn { min-height: 52px; font-size: .95rem; }',
+  'body.tv-mode .hero-copy p { font-size: .95rem; }',
+  'body.tv-mode .hero-meta { font-size: .9rem; }',
+  'body.tv-mode .section-title { font-size: 1.5rem; }',
+  'body.tv-mode .section-link { font-size: .88rem; }',
+  '/* --- TV performance: no backdrop blur on the TV GPU (Stage-4 note) --- */',
+  'body.tv-mode * { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }',
+  '/* --- Boot skeleton (the tvBooting state; plain divs — see DiscoverPage) --- */',
+  'body.tv-mode .tv-boot-skeleton { padding: 24px var(--d-gutter, 56px) 40px; }',
+  'body.tv-mode .tv-boot-skel-rail { margin-top: 34px; }',
+  'body.tv-mode .tv-boot-skel-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }',
+  'body.tv-mode .tv-boot-skel-title { display: block; width: 180px; height: 18px; border-radius: 6px; background: var(--surface-2, #10161b); }',
+  'body.tv-mode .tv-boot-skel-link { display: block; width: 72px; height: 12px; border-radius: 6px; background: var(--surface-2, #10161b); }',
+  'body.tv-mode .tv-boot-skel-row { display: grid; grid-auto-flow: column; grid-auto-columns: 200px; gap: 16px; overflow: hidden; }',
+  'body.tv-mode .tv-boot-skel-card { display: block; width: 100%; height: 300px; border-radius: var(--radius-md, 8px); background: var(--surface-2, #10161b); }'
+].join('\n');
+
+// The body class is added the moment the parser reaches the body wrapper —
+// before the bundle evaluates and before the first paint of app content
+// (the boot banner is the only thing visible then, so no relayout flash).
+// Plain ES2017, same discipline as the other shell scripts.
+const tvModeClassScript =
+  '<script>/* mavero-wgt-tv-mode: activate the Stage-4 TV layout layer (see §7) */\n' +
+  'try { document.body.className += (document.body.className ? " " : "") + "tv-mode"; } catch (e) {}</script>';
+
+const tvModeStyleTag = `<style id="mavero-tv-mode">\n${tvModeCss}\n</style>`;
 
 // ---------------------------------------------------------------------------
 // 2. CLASSIC BOOT — replace SvelteKit's module bootstrap (see header §2).
@@ -230,7 +350,7 @@ const classicBootScript =
   `<script src="./polyfill.js"></script>\n` +
   `<script src="./app.js" defer></script>`;
 
-html = html.replace(bootstrapBlock[0], classicBootScript);
+html = html.replace(bootstrapBlock[0], `${tvModeClassScript}\n${classicBootScript}`);
 
 // Strip every modulepreload link — they preload ES chunks that the file://
 // engine refuses (the TV overlay logged exactly this as "failed to load
@@ -426,7 +546,7 @@ try {
   }
 } catch (e) {}</script>`;
 
-const headInjection = cssCount > 0 ? `${bootOverlayScript}${bootScript}\n    ${cssLinks}` : `${bootOverlayScript}${bootScript}`;
+const headInjection = cssCount > 0 ? `${bootOverlayScript}${bootScript}\n    ${cssLinks}\n    ${tvModeStyleTag}` : `${bootOverlayScript}${bootScript}\n    ${tvModeStyleTag}`;
 html = html.replace('<head>', `<head>${headInjection}`);
 
 // ---------------------------------------------------------------------------
@@ -507,6 +627,22 @@ if (!/WeakRef/.test(polyfillSource)) {
   problems.push('polyfill.js does not define a WeakRef shim');
 }
 
+// §7 — TV mode assertions: the Stage-4 layout layer must be present and the
+// body-class activation script must exist (both only ever touch the packed
+// shell — the production web build never runs this script).
+if (!html.includes('mavero-tv-mode')) {
+  problems.push('the <style id="mavero-tv-mode"> Stage-4 TV layout layer is missing');
+}
+if (!html.includes('body.tv-mode {')) {
+  problems.push('the tv-mode stylesheet lost its body.tv-mode root rule');
+}
+if (!html.includes('mavero-wgt-tv-mode')) {
+  problems.push('the body.tv-mode activation script is missing — TV layout would stay inert');
+}
+if (!/body\.tv-mode \.mc-poster::before/.test(html) || !/padding-top:\s*150%/.test(html)) {
+  problems.push('the engine-proof 2:3 poster geometry fallback (padding-top:150%) is missing');
+}
+
 if (problems.length > 0) {
   console.error('wgt_patch_shell: PATCH FAILED self-verification:');
   for (const p of problems) console.error('  - ' + p);
@@ -522,5 +658,6 @@ console.log(
     `${modulePreloadCount} modulepreload link(s) stripped, ${umamiRemoved} Umami loader ` +
     `block(s) removed, ${cssCount} stylesheet link(s) injected, absolute asset paths rewritten ` +
     `(/_app/ strings + ${attrCount} href/src attributes), boot URL normalizer + on-screen ` +
-    `boot diagnostics injected`
+    `boot diagnostics injected, Stage-4 tv-mode layout layer injected (body class + ` +
+    `${Math.round(tvModeCss.length / 1024)}KB CSS)`
 );

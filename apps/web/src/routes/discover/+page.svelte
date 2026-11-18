@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import DiscoverPage from '$components/DiscoverPage.svelte';
   import { IS_WGT_BUILD } from '$lib/shared/build-mode';
-  import { fetchTvDiscoverPayload, type TvDiscoverPayload } from '$lib/tv/discover-payload';
+  import { fetchTvDiscoverPayloadCached, type TvDiscoverPayload } from '$lib/tv/discover-payload';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -11,10 +11,15 @@
   // widget build rebuilds the DiscoverPage payload from the deployed
   // production API (never throws; the empty state stays the fallback);
   // production SSR keeps its server-provided data untouched.
+  //
+  // STAGE 4 — cache-backed + boot-prefetch (see the root page) and the
+  // tvBooting skeleton flag: while the payload is in flight the page shows
+  // skeleton rails instead of the "quiet shelves" empty state. Compile-time
+  // false on production.
   let tvPayload = $state<TvDiscoverPayload | null>(null);
   if (IS_WGT_BUILD) {
     onMount(() => {
-      void fetchTvDiscoverPayload().then((payload) => {
+      void fetchTvDiscoverPayloadCached().then((payload) => {
         tvPayload = payload;
       });
     });
@@ -26,6 +31,7 @@
   const tvSeries = $derived(tvPayload?.series ?? data.series ?? []);
   const tvAnime = $derived(tvPayload?.anime ?? data.anime ?? []);
   const tvErrorMessage = $derived(tvPayload?.errorMessage ?? (data.errorMessage ?? ''));
+  const tvBooting = $derived(IS_WGT_BUILD && tvPayload === null);
 </script>
 
   <DiscoverPage
@@ -45,4 +51,5 @@
     genreCollections={data.genreCollections}
     errorMessage={tvErrorMessage}
     appConfig={data.appConfig ?? null}
+    tvBooting={tvBooting}
   />

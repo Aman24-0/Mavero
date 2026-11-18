@@ -58,6 +58,7 @@
     genreCollections = [],
     errorMessage = '',
     appConfig = null,
+    tvBooting = false,
   }: {
     featuredItem: MediaItem | undefined;
     /** Server-selected Hero lineup in strict M/S/M/S/M/S order. May be empty
@@ -80,6 +81,14 @@
     genreCollections?: { title: string; items: MediaItem[]; href: string }[];
     errorMessage?: string;
     appConfig?: { telegramUrl: string | null; discordUrl: string | null } | null;
+    /** STAGE 4 (TV plan) — widget-build skeleton state. When TRUE the page
+     *  shows skeleton rails instead of the "The shelves are quiet." empty
+     *  state while the TV payload fetch is still in flight (the boot
+     *  prefetch usually lands before mount, so this is rarely seen). Every
+     *  production caller omits it → default false → byte-identical web
+     *  behavior. The skeleton markup is styled ONLY from the injected
+     *  tv-mode stylesheet (wgt_patch_shell §7) — no production CSS here. */
+    tvBooting?: boolean;
   } = $props();
 
   type GalleryCategory = 'Movie' | 'Series' | 'Anime';
@@ -560,6 +569,22 @@
     if (activeIndex >= featuredItems.length && featuredItems.length) activeIndex = 0;
   });
 
+  // ============================================================
+  // STAGE 4 (TV plan) — autoplay re-arm. The onMount call below armed the
+  // 4s rotation ONCE — but on the widget build `featuredItems` is still
+  // EMPTY at mount (the TV payload arrives asynchronously), so the guard
+  // `featuredItems.length < 2 → return` left the timer permanently unset:
+  // the reported "hero does NOT auto-slide on the TV". This effect re-arms
+  // the rotation the moment the slide set becomes navigable. On the web the
+  // onMount call already armed it — queueGalleryRotation clears before
+  // setting, so this effect's single extra call just restarts the SAME 4s
+  // countdown once at mount: no duplicate timers by construction, no web
+  // behavior change.
+  // ============================================================
+  $effect(() => {
+    if (featuredItems.length >= 2) queueGalleryRotation();
+  });
+
   function clearTimers() {
     if (galleryRotationTimer) clearTimeout(galleryRotationTimer);
     if (scrollTimeout) clearTimeout(scrollTimeout);
@@ -897,6 +922,35 @@
       {#if adultCanAccess}
         <AdultDiscoverSection title="Indian Adult Shows" />
       {/if}
+    {:else if tvBooting}
+      <!-- ============================================================
+           STAGE 4 (TV plan) — boot skeleton (widget build only).
+           While the TV payload fetch is in flight, the page shows skeleton
+           rails instead of the "The shelves are quiet." empty state — the
+           TV user sees that loading is happening, never a bare/quiet
+           screen. When the fetch FAILS entirely, tvBooting drops and the
+           honest empty state below still renders (the empty state remains
+           the fallback, exactly per the Stage-2 contract).
+           The markup is deliberately plain divs styled ONLY from the
+           injected tv-mode stylesheet (wgt_patch_shell §7) — no shared
+           component/CSS import that would alter the production bundle.
+           aria-hidden: decorative; the real rails replace it on arrival.
+           ============================================================ -->
+      <div class="tv-boot-skeleton" aria-hidden="true">
+        {#each [0, 1, 2] as _rail}
+          <div class="tv-boot-skel-rail">
+            <div class="tv-boot-skel-head">
+              <span class="tv-boot-skel-title"></span>
+              <span class="tv-boot-skel-link"></span>
+            </div>
+            <div class="tv-boot-skel-row">
+              {#each [0, 1, 2, 3, 4, 5, 6, 7] as _card}
+                <span class="tv-boot-skel-card"></span>
+              {/each}
+            </div>
+          </div>
+        {/each}
+      </div>
     {:else}
       <EmptyState eyebrow="MAVERO / Catalog unavailable" title="The shelves are quiet." message="The live catalog is temporarily unavailable. Please try again in a moment." actionLabel="Retry Discover" actionHref="/discover" />
     {/if}

@@ -34,6 +34,12 @@
  *   - the boot banner auto-hid (MutationObserver saw the SPA render);
  *   - the shell renders: aside.app-sidebar (Primary navigation) + the
  *     discover body (empty state and/or catalog rails).
+ *   - STAGE 4: body.tv-mode is ACTIVE (the §7 patch script ran), the
+ *     <style id="mavero-tv-mode"> layer is in the shell, the spatial
+ *     focus manager is installed (window.__maveroTvFocusManager), and a
+ *     REAL D-PAD simulation moves DOM focus: synthetic ArrowDown (and
+ *     ArrowRight) keydowns with the TV keyCodes re-target
+ *     document.activeElement and the .tv-focused ring follows.
  *
  * USAGE
  * =====
@@ -307,7 +313,82 @@ if (diagnostics.pageErrors.length > 0) {
   await fail(page, diagnostics, `${diagnostics.pageErrors.length} uncaught page error(s) — see the dump below`);
 }
 
-console.log('wgt_file_smoke: PASS — the packed widget boots over file:// on a TV-era engine (simulated built-ins deleted), polyfill fixes the Object.hasOwn crash, __mavero_wgt_app.start exposed, overlay silent, sidebar + discover body rendered');
+// ---- 8. STAGE 4 — tv-mode layer + spatial focus manager + D-PAD simulation --
+const tvModeState = await page.evaluate(() => ({
+  bodyClass: document.body.className,
+  styleInjected: !!document.getElementById('mavero-tv-mode'),
+  focusManager: window.__maveroTvFocusManager === true,
+  zoomApplied: getComputedStyle(document.body).zoom
+}));
+if (!tvModeState.bodyClass.includes('tv-mode')) {
+  await fail(page, diagnostics, `body.tv-mode missing — the §7 patch script did not run (className="${tvModeState.bodyClass}")`);
+}
+if (!tvModeState.styleInjected) {
+  await fail(page, diagnostics, 'the <style id="mavero-tv-mode"> Stage-4 layout layer is missing from the shell');
+}
+if (!tvModeState.focusManager) {
+  await fail(page, diagnostics, 'window.__maveroTvFocusManager is not set — the spatial focus manager did not install');
+}
+console.log(
+  `wgt_file_smoke: tv-mode active (body class + style layer, zoom=${String(tvModeState.zoomApplied)}) — spatial focus manager installed`
+);
+
+// D-PAD simulation: TV keyCodes on window keydown. The manager listens on
+// capture; synthetic events dispatched on document.body reach it.
+const padState = await page.evaluate(async () => {
+  const fire = (keyCode, key) =>
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', { keyCode, key, bubbles: true, cancelable: true })
+    );
+  const focusables = () =>
+    Array.from(
+      document.querySelectorAll(
+        'a[href], button:not([disabled]), [tabindex="0"], input:not([type="hidden"])'
+      )
+    ).filter((el) => {
+      const r = el.getBoundingClientRect();
+      return r.width > 0 && r.height > 0 && !el.closest('[aria-hidden="true"]');
+    });
+  const before = focusables().length;
+  if (before === 0) return { before, moved: null, ring: false };
+  // Seed: press Down once (with nothing focused the manager seeds focus),
+  // then keep pressing across arrows and watch the active element change.
+  const seen = new Set();
+  fire(40, 'ArrowDown');
+  await new Promise((r) => setTimeout(r, 120));
+  const first = document.activeElement;
+  seen.add(String(first && first.className));
+  fire(40, 'ArrowDown');
+  await new Promise((r) => setTimeout(r, 120));
+  seen.add(String(document.activeElement && document.activeElement.className));
+  fire(39, 'ArrowRight');
+  await new Promise((r) => setTimeout(r, 120));
+  seen.add(String(document.activeElement && document.activeElement.className));
+  fire(38, 'ArrowUp');
+  await new Promise((r) => setTimeout(r, 120));
+  seen.add(String(document.activeElement && document.activeElement.className));
+  const ring = !!document.querySelector('.tv-focused');
+  return {
+    before,
+    focusedTag: document.activeElement ? document.activeElement.tagName : null,
+    distinctTargets: seen.size,
+    ring
+  };
+});
+if (padState.before === 0) {
+  await fail(page, diagnostics, 'no focusable elements found — D-PAD simulation impossible');
+}
+if (!padState.focusedTag || padState.focusedTag === 'BODY') {
+  await fail(page, diagnostics, `arrow keys did not move DOM focus (activeElement=${String(padState.focusedTag)})`);
+}
+if (!padState.ring) {
+  await fail(page, diagnostics, 'the .tv-focused focus ring never appeared after arrow navigation');
+}
+console.log(
+  `wgt_file_smoke: D-PAD simulation moved focus (targets seen: ${padState.distinctTargets}, active=${padState.focusedTag}, ring applied)`
+);
+
+console.log('wgt_file_smoke: PASS — the packed widget boots over file:// on a TV-era engine (simulated built-ins deleted), polyfill fixes the Object.hasOwn crash, __mavero_wgt_app.start exposed, overlay silent, sidebar + discover body rendered, tv-mode + spatial D-PAD focus verified');
 
 await browser.close();
 if (extractedDir) rmSync(extractedDir, { recursive: true, force: true });
