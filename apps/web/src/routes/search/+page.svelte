@@ -8,6 +8,7 @@
   import { umamiTrack } from '$lib/client/analytics/umami';
   import type { PageData } from './$types';
   import { PRODUCTION_ORIGIN } from '$lib/shared/seo';
+  import { IS_WGT_BUILD } from '$lib/shared/build-mode';
   import type { MediaItem } from '$data/content';
 
   // BUG 3 FIX: MediaCard is lazily imported only when results exist.
@@ -109,10 +110,19 @@
   }
 
   function isSearchRouteActive() {
-    return routeActive && page.url.pathname === '/search';
+    // STAGE 2 (TV plan): in hash-routing mode (the .wgt build) the route lives
+    // in location.hash — page.url.pathname stays the widget file path, so the
+    // pathname comparison alone would deactivate every search run. On the web
+    // (pathname router) the behaviour is byte-identical: the hash branch can
+    // only match in hash-routing mode.
+    return routeActive && (page.url.pathname === '/search' || (IS_WGT_BUILD && typeof location !== 'undefined' && location.hash.startsWith('#/search')));
   }
 
   function syncUrl() {
+    // STAGE 2 (TV plan): the in-URL snapshot does not apply inside the widget
+    // (no address bar; replaceState across file:// paths is hostile) — the
+    // route-active guard above already covers the web build unchanged.
+    if (IS_WGT_BUILD) return;
     if (!isSearchRouteActive()) return;
     const urlParams = new URLSearchParams(page.url.searchParams);
     const normalized = query.trim();

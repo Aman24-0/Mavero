@@ -246,10 +246,15 @@ if (firstCardHref) {
       null,
       { timeout: 20000 }
     );
+    // The detail hero first renders the static local stub ("Afterlight") and
+    // swaps in the REAL fetched item when /api/tv/content answers — wait for
+    // the title to leave the stub so this gates the DATA wiring, not the
+    // fallback.
     await page.waitForFunction(
       () => {
         const hero = document.querySelector('.detail-hero h1, .detail-title, h1');
-        return Boolean(hero && hero.textContent && hero.textContent.trim().length > 1);
+        const title = hero ? hero.textContent.trim() : '';
+        return title.length > 1 && title !== 'Afterlight';
       },
       null,
       { timeout: 30000 }
@@ -258,7 +263,7 @@ if (firstCardHref) {
       const hero = document.querySelector('.detail-hero h1, .detail-title, h1');
       return hero ? hero.textContent.trim() : '';
     });
-    console.log(`wgt_stage2_verify: Detail opened with title "${detailTitle}"`);
+    console.log(`wgt_stage2_verify: Detail opened with the REAL title "${detailTitle}"`);
   } catch (e) {
     const message = `detail page did not boot with real data for ${firstCardHref} (needs the deployed /api/tv/content endpoint)`;
     if (strict) await fail(page, diagnostics, message);

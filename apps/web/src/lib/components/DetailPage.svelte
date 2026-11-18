@@ -64,8 +64,13 @@
   let tvItem = $state<MediaItem | undefined>(undefined);
   if (IS_WGT_BUILD) {
     $effect(() => {
-      const forId = id;
+      // The leaf pages pass `id={data.item?.id ?? ''}` — on the widget the
+      // server load is stashed, so the REAL id comes from the route param
+      // (hash router: #/movie/1058424 → page.params.id).
+      const paramId = page.params && typeof page.params.id === 'string' ? page.params.id : '';
+      const forId = id || paramId;
       const forType = type;
+      if (!forId) return;
       let cancelled = false;
       tvItem = undefined;
       void fetchTvDetail(forType, forId).then((fetched) => {

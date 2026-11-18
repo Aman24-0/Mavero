@@ -11,4 +11,4 @@
   let { data }: { data: PageData } = $props();
 </script>
 
-<DetailPage id={data.item.id} type="anime" dataItem={data.item} recommendationItems={data.recommendations} />
+<DetailPage id={data.item?.id ?? ''} type="anime" dataItem={data.item} recommendationItems={data.recommendations} />
