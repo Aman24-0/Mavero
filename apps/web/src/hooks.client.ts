@@ -25,6 +25,14 @@
 
 import { reportClientUnexpectedError } from '$lib/client/error-reporting';
 
+// STAGE 2 (TV plan) — the wgt fetch bridge installs at client-hook boot,
+// BEFORE any page mount: every root-relative /api/... fetch in the widget is
+// rewritten to the deployed production API base (see $lib/tv/fetch-bridge).
+// The install is a compile-time no-op outside the wgt build (IS_WGT_BUILD is
+// statically false in production — the web app keeps same-origin fetching).
+import { installTvFetchBridge } from '$lib/tv/fetch-bridge';
+installTvFetchBridge();
+
 type ClientHandleErrorInput = {
   error: unknown;
   event?: { routeId?: string | null; url?: URL | { pathname?: string | null } | null } | null;

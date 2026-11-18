@@ -119,6 +119,9 @@
   } from '$lib/client/live-tv/analytics';
   import type { LiveTvChannel, LiveTvGuide as LiveTvGuideModel } from '$lib/client/live-tv/types';
   import type { PageData } from './$types';
+  // STAGE 2 (TV plan) — DATA WIRING (widget build only).
+  import { IS_WGT_BUILD } from '$lib/shared/build-mode';
+  import { fetchTvLiveTv, type TvLiveTvAvailability } from '$lib/tv/live-tv';
 
   // ---------------------------------------------------------------------
   // R-2 — SSR availability guard. `data.availability.available` is the
@@ -132,13 +135,38 @@
   // was OFF — which is the production default).
   // ---------------------------------------------------------------------
   let { data } = $props<{ data: PageData }>();
-  const availability = $derived(data.availability);
+
+  // STAGE 2 (TV plan) — DATA WIRING. In the .wgt the page's server load is
+  // stashed, so `data.availability`/`data.indianProxyUrl` are undefined and
+  // the page would render the honest unavailable state forever. On the
+  // WIDGET BUILD ONLY, the REAL availability contract is fetched from the
+  // deployed production API (/api/tv/live-tv — same fail-closed semantics
+  // as the server load). Never throws; the fail-closed default stays the
+  // fallback. Production SSR never runs this branch.
+  let tvAvailability = $state<TvLiveTvAvailability | null>(null);
+  let tvIndianProxyUrl = $state<string | null>(null);
+  if (IS_WGT_BUILD) {
+    onMount(() => {
+      void fetchTvLiveTv().then((payload) => {
+        if (payload) {
+          tvAvailability = payload.availability;
+          tvIndianProxyUrl = payload.indianProxyUrl;
+        }
+      });
+    });
+  }
+
+  const availability = $derived(tvAvailability ?? data.availability);
   const sourcesAvailable = $derived(availability?.available === true);
   // 2026-11 round 36 — the effective Indian-proxy configuration. The server
   // load already resolved admin override → env fallback; the env var here is
   // belt-and-braces for a stale page data snapshot.
   const indianProxyConfigured = $derived(
-    Boolean(data.indianProxyUrl ?? publicEnv.PUBLIC_INDIAN_PROXY_URL)
+    Boolean((tvAvailability ? tvIndianProxyUrl : data.indianProxyUrl) ?? publicEnv.PUBLIC_INDIAN_PROXY_URL)
+  );
+  /** STAGE 2 — the proxy base the playback path uses (TV override-aware). */
+  const effectiveIndianProxyUrl = $derived(
+    (tvAvailability ? tvIndianProxyUrl : data.indianProxyUrl) ?? publicEnv.PUBLIC_INDIAN_PROXY_URL ?? ''
   );
   // The bounded list of eligible public sources for the Source selector.
   const selectorSources = $derived(availability?.sources ?? []);
@@ -832,7 +860,7 @@
       // playlist every 5h, injects the rotating cookies and rewrites the
       // DASH/HLS manifests; when absent, Jio candidates fail fast with the
       // honest setup message instead of a broken stream.
-      indianProxyBase: data.indianProxyUrl ?? publicEnv.PUBLIC_INDIAN_PROXY_URL ?? '',
+      indianProxyBase: effectiveIndianProxyUrl,
       handlers: {
         onengine: (eng) => {
           engine = eng;

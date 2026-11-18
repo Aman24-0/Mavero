@@ -441,6 +441,18 @@ jobs:
           # did not expose __mavero_wgt_app.start()").
           node apps/web/scripts/wgt_file_smoke.mjs MaveroTV.wgt
 
+      - name: Stage-2 verify — real data over file:// (TV-era engine)
+        if: github.event.inputs.pack != 'poc'
+        run: |
+          set -euo pipefail
+          # Proves the Stage-2 data wiring on the packed artifact: the fetch
+          # bridge installs, the widget reaches the production API
+          # (/api/tv/home), real TMDB content renders, the empty state is
+          # gone. DATA-tier assertions tolerate the Netlify deploy of the
+          # Stage-2 CORS headers still being in flight (same-push race);
+          # re-run with --strict post-deploy to gate on the full contract.
+          node apps/web/scripts/wgt_stage2_verify.mjs MaveroTV.wgt
+
       - name: Upload .wgt artifact
         uses: actions/upload-artifact@v4
         with:

@@ -11,6 +11,7 @@ import { extractSessionId } from '$lib/server/auth/jwt-session-id';
 import { parseDeviceMetadata, ensureDeviceIdCookie, readDeviceHintCookie, DEVICE_ID_COOKIE, DEVICE_HINT_COOKIE } from '$lib/server/auth/device-metadata';
 import { registerCurrentSession, lookupSessionRevocationState } from '$lib/server/auth/device-sessions';
 import { isSessionRevoked } from '$lib/server/auth/session-revocation-cache';
+import { isTvCorsPath, tvCorsPreflight, TV_CORS_HEADERS } from '$lib/server/http/cors';
 
 // Session-registration timeout (Newtask §3 + §22).
 //
@@ -114,6 +115,18 @@ function isConfigured() {
 }
 
 export const handle: Handle = async ({ event, resolve }) => {
+  // STAGE 2 (TV plan) — TV CORS. The Tizen .wgt calls a fixed allowlist of
+  // /api endpoints cross-origin (Origin "null"). Preflights are answered
+  // HERE (204 + allow headers) before any auth/env work — a preflight must
+  // never depend on session state — and every allowlisted response gains
+  // the open `Access-Control-Allow-Origin: *` on the way out. Header-only:
+  // response bodies, statuses and cache policies are untouched, and the web
+  // app (same-origin, no preflights, no cross reads) is unaffected.
+  if (event.request.method === 'OPTIONS' && isTvCorsPath(event.url.pathname)) {
+    const preflight = await tvCorsPreflight(event);
+    if (preflight) return preflight;
+  }
+
   const supabaseUrl = publicEnv.PUBLIC_SUPABASE_URL;
   const publishableKey = publicEnv.PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 
@@ -360,6 +373,12 @@ export const handle: Handle = async ({ event, resolve }) => {
   // remember to set it.
   try {
     const response = await resolve(event);
+    // STAGE 2 (TV plan) — the open CORS header for the TV allowlist
+    // (header-only; see $lib/server/http/cors.ts for the allowlist and the
+    // security rationale).
+    if (isTvCorsPath(event.url.pathname)) {
+      response.headers.set('access-control-allow-origin', TV_CORS_HEADERS['access-control-allow-origin']);
+    }
     response.headers.set(PUBLIC_REQUEST_ID_HEADER, event.locals.requestId);
     return response;
   } catch (err) {

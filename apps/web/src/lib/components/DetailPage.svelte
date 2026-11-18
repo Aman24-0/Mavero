@@ -33,6 +33,9 @@
   import { filterProvidersByMediaType } from '$lib/shared/downloader';
   // MAV-22 — Detail Page 3.0 dynamic artwork palette (scoped to this page).
   import { DetailPaletteController, buildPaletteStyle, type DetailPalette } from '$lib/client/detail/palette';
+  // STAGE 2 (TV plan) — DATA WIRING (widget build only).
+  import { IS_WGT_BUILD } from '$lib/shared/build-mode';
+  import { fetchTvDetail } from '$lib/tv/detail';
 
   let {
     id = 'afterlight',
@@ -48,6 +51,31 @@
   let watchlistStatus = $state<WatchlistStatus | null>(null);
   let statusSheetOpen = $state(false);
   let saveError = $state('');
+
+  // STAGE 2 (TV plan) — DATA WIRING. In the .wgt the detail server loads are
+  // stashed, so `dataItem` arrives undefined and the page would render the
+  // static local stub (getMedia). On the WIDGET BUILD ONLY the REAL detail
+  // is fetched client-side from the deployed production API
+  // (/api/tv/content/[type]/[id] — the page-load shape, adult-guarded). The
+  // $effect re-runs on id/type change (client-side detail→detail navigation);
+  // it never throws (fetchTvDetail is guarded) and production never registers
+  // it (IS_WGT_BUILD is compile-time false — dataItem always comes from the
+  // server load on the web).
+  let tvItem = $state<MediaItem | undefined>(undefined);
+  if (IS_WGT_BUILD) {
+    $effect(() => {
+      const forId = id;
+      const forType = type;
+      let cancelled = false;
+      tvItem = undefined;
+      void fetchTvDetail(forType, forId).then((fetched) => {
+        if (!cancelled && fetched) tvItem = fetched;
+      });
+      return () => {
+        cancelled = true;
+      };
+    });
+  }
   let resumeEpisode = $state<{ season: number; episode: number } | undefined>(undefined);
   let hasActiveProgress = $state(false);
   let overviewExpanded = $state(false);
@@ -98,7 +126,10 @@
     { key: 'completed', label: 'Completed', icon: '✓', description: 'Mark this story as finished.' },
     { key: 'remove', label: 'Remove from My List', icon: '×', description: 'Take it out of your saved library.' },
   ];
-  const item = $derived(dataItem ?? getMedia(id));
+  // STAGE 2 (TV plan) — the TV fetch takes priority (wgt build); on the web
+  // the server-provided dataItem is used exactly as before; getMedia remains
+  // the last-resort static stub.
+  const item = $derived(tvItem ?? dataItem ?? getMedia(id));
   // MAV-22 — the hero content-type label uses the approved vocabulary:
   // Movie / TV Series / Anime Movie / Anime Series (the card-level
   // formatBadges vocabulary is unchanged for rails).

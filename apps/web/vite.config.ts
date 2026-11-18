@@ -84,7 +84,17 @@ const wgtClassicBundlePlugin: Plugin = {
 export default defineConfig({
   plugins: [tailwindcss(), sveltekit(), ...(isWgtBuild ? [wgtClassicBundlePlugin] : [])],
   define: isWgtBuild
-    ? { 'import.meta.env.VITE_BUILD_TARGET': JSON.stringify('wgt') }
+    ? {
+        'import.meta.env.VITE_BUILD_TARGET': JSON.stringify('wgt'),
+        // STAGE 2 (TV plan) — the single API-base constant every TV fetch is
+        // built from ($lib/tv/api-base.ts). Overridable with TV_API_BASE at
+        // build time; defaults to the deployed production deployment. The
+        // define keeps the wgt bundle free of import.meta (the classic IIFE
+        // must not contain module syntax).
+        'import.meta.env.VITE_TV_API_BASE': JSON.stringify(
+          process.env.TV_API_BASE || 'https://maveroweb.space'
+        )
+      }
     : undefined,
   build: {
     // R-5: Shaka Player (the DASH/HLS engine) is ~820 kB minified and is

@@ -1,16 +1,39 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import DiscoverPage from '$components/DiscoverPage.svelte';
+  import { IS_WGT_BUILD } from '$lib/shared/build-mode';
+  import { fetchTvDiscoverPayload, type TvDiscoverPayload } from '$lib/tv/discover-payload';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
+
+  // STAGE 2 (TV plan) — DATA WIRING: identical to the root (/) page. The
+  // widget build rebuilds the DiscoverPage payload from the deployed
+  // production API (never throws; the empty state stays the fallback);
+  // production SSR keeps its server-provided data untouched.
+  let tvPayload = $state<TvDiscoverPayload | null>(null);
+  if (IS_WGT_BUILD) {
+    onMount(() => {
+      void fetchTvDiscoverPayload().then((payload) => {
+        tvPayload = payload;
+      });
+    });
+  }
+
+  const tvFeaturedItem = $derived(tvPayload?.featuredItem ?? data.featured);
+  const tvHeroItems = $derived(tvPayload?.heroItems ?? data.heroItems ?? []);
+  const tvMovies = $derived(tvPayload?.movies ?? data.movies ?? []);
+  const tvSeries = $derived(tvPayload?.series ?? data.series ?? []);
+  const tvAnime = $derived(tvPayload?.anime ?? data.anime ?? []);
+  const tvErrorMessage = $derived(tvPayload?.errorMessage ?? (data.errorMessage ?? ''));
 </script>
 
   <DiscoverPage
-    featuredItem={data.featured}
-    heroItems={data.heroItems}
-    movies={data.movies}
-    series={data.series}
-    anime={data.anime}
+    featuredItem={tvFeaturedItem}
+    heroItems={tvHeroItems}
+    movies={tvMovies}
+    series={tvSeries}
+    anime={tvAnime}
     popularSeries={data.popularSeries}
     popularAnime={data.popularAnime}
     trendingHindiMovies={data.trendingHindiMovies}
@@ -20,6 +43,6 @@
     topRatedAnime={data.topRatedAnime}
     newMovies={data.newMovies}
     genreCollections={data.genreCollections}
-    errorMessage={data.errorMessage ?? ''}
+    errorMessage={tvErrorMessage}
     appConfig={data.appConfig ?? null}
   />
