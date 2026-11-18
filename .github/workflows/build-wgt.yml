@@ -13,10 +13,18 @@
 #   origin). The TV pages fetch their data from the deployed production
 #   API (https://maveroweb.space/api/…) instead (Stage 2, page by page).
 #
-#   scripts/wgt_patch_shell.mjs then injects a boot script into the BUILT
-#   shell: the TV opens the widget at <root>/index.html, which is not a
-#   SvelteKit route — the script rewrites the URL to the package root
-#   before the client router boots.
+#   scripts/wgt_patch_shell.mjs then patches the BUILT shell (pack-time
+#   injection only — the production HTML is never touched):
+#     1. rewrites ABSOLUTE asset paths ("/_app/…, href="/…) to relative
+#        (./_app/…, href="./…) — the widget runs from a file:// origin where
+#        absolute paths resolve against the filesystem ROOT (blank grey
+#        screen); the workflow asserts no "/_app/ reference survives;
+#     2. injects a boot script that rewrites the widget's /index.html entry
+#        URL to the package root before the client router boots;
+#     3. injects on-screen boot diagnostics ("Mavero booting…" banner +
+#        full-screen error overlay for onerror/unhandledrejection/resource
+#        load errors) — a retail TV has no devtools, so every boot failure
+#        must be readable ON the screen.
 #
 # PACKING: the SPA output + the working config.xml + icon.png are copied
 #   into a staging directory and packed with the OFFICIAL Tizen Studio
@@ -294,6 +302,37 @@ jobs:
           # The shell must reference the SvelteKit entry modules.
           unzip -p MaveroTV.wgt index.html | grep -q '_app/immutable/entry/' || {
             echo "SvelteKit entry script missing from the packed shell — aborting"; exit 1; }
+          # ------------------------------------------------------------------
+          # file:// boot safety (the blank-grey-screen fix). The widget is
+          # opened from a file:// origin where an ABSOLUTE "/_app/…" path
+          # resolves against the FILESYSTEM ROOT — every asset request 404s
+          # and nothing boots. The packed shell must therefore use relative
+          # paths everywhere and carry the on-screen boot diagnostics.
+          # ------------------------------------------------------------------
+          SHELL_HTML=$(unzip -p MaveroTV.wgt index.html)
+          # Relative asset references present …
+          echo "$SHELL_HTML" | grep -q 'href="./_app/' || {
+            echo 'packed shell has no relative href="./_app/…" — absolute asset paths would 404 on the TV (file:// origin); aborting'; exit 1; }
+          echo "$SHELL_HTML" | grep -q 'import("./_app/' || {
+            echo 'packed shell boot script does not dynamically import "./_app/env.js" relatively; aborting'; exit 1; }
+          # … and NO absolute "/_app/ (or '/_app/) references survive.
+          if echo "$SHELL_HTML" | grep -Fq '"/_app/'; then
+            echo 'absolute "/_app/ reference still present in the packed shell — blank grey screen on the TV; aborting'; exit 1
+          fi
+          if echo "$SHELL_HTML" | grep -Fq "'/_app/"; then
+            echo "absolute '/_app/ reference still present in the packed shell — blank grey screen on the TV; aborting"; exit 1
+          fi
+          # No root-relative href/src attribute left (favicon, manifest, icons…).
+          # -P (PCRE) needed for the (?!/) negative lookahead (grep -E has none).
+          if echo "$SHELL_HTML" | grep -Pq '(href|src)="/((?!/).)'; then
+            echo 'root-relative href="/…" or src="/…" attribute still present in the packed shell; aborting'; exit 1
+          fi
+          # On-screen boot diagnostics (retail TV: no devtools, no sdb logs).
+          echo "$SHELL_HTML" | grep -q 'mavero-wgt-boot-overlay' || {
+            echo 'boot-error overlay missing from the packed shell — aborting'; exit 1; }
+          echo "$SHELL_HTML" | grep -q 'mavero-wgt-boot-banner' || {
+            echo 'boot banner ("Mavero booting…") missing from the packed shell — aborting'; exit 1; }
+          echo "file:// boot safety checks: OK"
           ls -la MaveroTV.wgt
 
       - name: Upload .wgt artifact

@@ -20,6 +20,15 @@ export default defineConfig({
     // the Live TV page). It cannot be meaningfully reduced. The limit is
     // set to 900 kB so the justified Shaka chunk doesn't trigger a warning
     // while still catching genuinely unexpected large chunks.
-    chunkSizeWarningLimit: 900
+    chunkSizeWarningLimit: 900,
+    // BUILD_TARGET=wgt — Tizen 6.0 (Samsung UA43AUE60AKLXL) ships a
+    // Chromium 69–76-era web engine. The default Vite client target emits
+    // ES2020+ syntax (optional chaining `?.`, nullish coalescing `??`,
+    // class static blocks) which is a hard SyntaxError there: the entry
+    // chunk dies before the app boots and the TV shows a blank grey
+    // screen. es2019 makes esbuild downlevel all of it. Production
+    // (BUILD_TARGET unset) keeps the default target — kit resolves its
+    // own client target and 'node18.13' for the SSR build.
+    ...(isWgtBuild ? { target: 'es2019' } : {})
   }
 });

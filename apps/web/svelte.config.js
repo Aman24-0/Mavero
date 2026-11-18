@@ -43,6 +43,31 @@ const config = {
           strict: false
         })
       : adapter(),
+    // BUILD_TARGET=wgt — RELATIVE asset URLs. The widget is opened from a
+    // file:// origin, where an absolute "/_app/…" asset URL resolves
+    // against the FILESYSTEM ROOT (not the widget directory): every
+    // stylesheet/module request 404s and the TV shows a blank grey
+    // screen. Ask SvelteKit to emit relative URLs for everything it
+    // controls. NOTE: the adapter-static FALLBACK shell still emits
+    // absolute links + absolute dynamic import specifiers — those are
+    // rewritten at pack time by scripts/wgt_patch_shell.mjs, and
+    // build-wgt.yml asserts the packed shell contains no "/_app/
+    // references.
+    ...(isWgtBuild ? { paths: { relative: true } } : {}),
+    // BUILD_TARGET=wgt — HASH ROUTING. The default pathname router derives
+    // every route id from location.pathname and mutates history with
+    // pushState/replaceState on every navigation. On the widget's file://
+    // origin BOTH are hostile: the pathname is a deep install path
+    // (/opt/usr/apps/<package>/res[/index.html]) that never matches a
+    // route (the app would boot onto the router's 404 page), and stock
+    // Chromium-family engines throw SecurityError for history URL
+    // mutations on file:// (verified in headless Chromium). With
+    // router.type 'hash' the route id comes from location.hash — the
+    // widget boots directly onto its HOME route from ANY install path,
+    // and SPA navigation is a plain location.hash change, which file://
+    // always allows. Production (BUILD_TARGET unset) keeps the pathname
+    // router untouched.
+    ...(isWgtBuild ? { router: { type: 'hash' } } : {}),
     alias: {
       $components: './src/lib/components',
       $data: './src/lib/data'
