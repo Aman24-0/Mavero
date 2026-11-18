@@ -290,7 +290,15 @@ const adminAuth = read('src/lib/server/streaming/admin-auth.ts');
   ok(!/location\.(search|hash|href)/.test(protectionCode), '6c. protection module never reads the URL');
   ok(!/searchParams/.test(protectionCode), '6d. protection module never reads query parameters');
   const layoutSvelte = read('src/routes/+layout.svelte');
-  ok(/syncDevtoolProtection\(data\.devtoolExempt === true\)/.test(layoutSvelte), '6e. the ONLY exemption input is the server layout data boolean');
+  // The exemption inputs: the compile-time wgt build flag (the TV widget
+  // build disables the detector entirely — no devtools exist there) OR the
+  // server-resolved layout capability. On the production web build
+  // VITE_BUILD_TARGET is undefined, so the runtime input remains ONLY the
+  // server layout data boolean.
+  ok(
+    /syncDevtoolProtection\(IS_WGT_BUILD \|\| data\.devtoolExempt === true\)/.test(layoutSvelte),
+    '6e. the ONLY exemption inputs are the compile-time wgt build flag + the server layout data boolean'
+  );
   ok(!/devtoolExempt\s*[:=]\s*true/.test(protectionCode), '6f. no hardcoded exemption in client code');
 }
 
