@@ -1,32 +1,34 @@
 /**
  * TV navigation bridge — STAGE 2/4 glue (widget build only).
  *
- * WHY: SvelteKit's hash router only intercepts `#/...` hrefs — with hash
- * routing ON, a PLAIN pathname link (`/movie/123`) is classified EXTERNAL
- * by kit's own click handler (is_external_url: url.pathname !==
- * location.pathname), so the browser attempts a FULL page navigation to
- * `file:///movie/123` which cannot exist inside the widget — the click
- * silently does nothing and every route change on the TV is dead.
+ * WHY: SvelteKit's hash router only intercepts `#/...` hrefs. With hash
+ * routing ON, a PLAIN pathname link (`/movie/123`) is classified EXTERNAL by
+ * kit's own click handler (is_external_url: url.pathname !==
+ * location.pathname in hash mode), so the browser attempts a FULL page
+ * navigation to `file:///movie/123` — impossible inside the widget — and
+ * every click silently does nothing.
  *
- * Rewriting the whole app's href generators into hash form would touch
- * every shared component; instead this bridge restores the interception
- * at ONE point: a bubble-phase document click handler that
+ * THE FIX (href rewrite, not click hijacking): at capture phase — BEFORE kit
+ * and every element handler see the event — rewrite root-relative app links
+ * IN PLACE into their hash form (`/movie/123` → `#/movie/123`). Kit's own
+ * click handler then classifies the link internal (same pathname, route in
+ * the hash) and does ALL the work natively: beforeNavigate/afterNavigate,
+ * snapshot/scroll restoration, hash history entries, preloading — with ZERO
+ * interception of element handlers (the selection-mode card toggle keeps
+ * preventDefault + stopPropagation semantics) and NO double-firing.
  *
- *   - waits for the element-level handlers first (bubble phase — the
- *     selection-mode card toggle preventDefaults + stops propagation, so
- *     selection never navigates),
- *   - ignores already-handled / modified / non-left clicks, targets,
- *     downloads, hash-only links and API paths,
- *   - preventDefaults the (otherwise-dead) full navigation and
- *   - routes through kit's OWN `goto()` — native router semantics
- *     (beforeNavigate/afterNavigate, snapshot/scroll restoration, hash
- *     history entries the TV Back key can pop in Stage 4).
+ * Rewrites happen on BOTH `pointerdown` (covers mouse/touch taps ahead of
+ * kit's mousedown preloader) and `click` (covers keyboard/D-pad Enter
+ * activation, which synthesizes a click WITHOUT a preceding pointerdown —
+ * the Stage 4 focus manager depends on this).
+ *
+ * Only ROOT-RELATIVE app paths are rewritten ('/movie/…', '/search?q=…'):
+ * protocol-relative, absolute, hash-only and /api/ links pass untouched.
  *
  * IS_WGT_BUILD-gated: compile-time no-op in production (the web app keeps
- * kit's native pathname-router interception).
+ * kit's native pathname-router interception and its real hrefs).
  */
 
-import { goto } from '$app/navigation';
 import { IS_WGT_BUILD } from '$lib/shared/build-mode';
 
 declare global {
@@ -35,53 +37,61 @@ declare global {
   }
 }
 
+/** `/movie/123?from=…` → `#/movie/123?from=…`; null for non-app links. */
+function hashForm(href: string): string | null {
+  if (!href || href.length < 2) return null;
+  if (href.charAt(0) !== '/' || href.charAt(1) === '/') return null; // not root-relative
+  if (href.startsWith('/api/')) return null; // API paths never navigate
+  if (href.startsWith('#')) return null; // already hash-form
+  return '#' + href;
+}
+
+function rewriteAnchor(anchor: Element): void {
+  try {
+    if (anchor.tagName !== 'A') return;
+    const el = anchor as HTMLAnchorElement;
+    if (el.hasAttribute('download')) return;
+    const anchorTarget = el.getAttribute('target');
+    if (anchorTarget && anchorTarget !== '_self') return;
+    const current = el.getAttribute('href');
+    const rewritten = hashForm(current ?? '');
+    if (!rewritten || rewritten === current) return;
+    el.setAttribute('href', rewritten);
+  } catch {
+    /* the bridge must never break an interaction */
+  }
+}
+
+function findAnchor(target: EventTarget | null): HTMLAnchorElement | null {
+  try {
+    if (!target || typeof (target as Element).closest !== 'function') return null;
+    return (target as Element).closest('a');
+  } catch {
+    return null;
+  }
+}
+
 export function installTvNavigationBridge(): void {
   if (!IS_WGT_BUILD) return; // production: dead branch (compile-time flag)
   if (typeof document === 'undefined') return;
   if (window.__maveroTvNavBridge) return;
 
-  document.addEventListener(
-    'click',
-    (event) => {
-      try {
-        // Element-level handlers first: a selection-mode card toggle already
-        // preventDefaulted + stopped propagation; any other handled click
-        // (dialog overlays, custom controls) must keep its own behaviour.
-        if (event.defaultPrevented) return;
-        if (event.button !== 0) return;
-        if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  // Capture phase on document — runs before kit's documentElement listener
+  // and before every element handler, for BOTH event kinds.
+  const rewriteFor = (event: Event) => {
+    try {
+      if (event.defaultPrevented) return;
+      if (event.type === 'click' && (event as MouseEvent).button !== 0) return;
+      const anchor = findAnchor(event.target);
+      if (!anchor) return;
+      rewriteAnchor(anchor);
+    } catch {
+      /* never break an interaction */
+    }
+  };
 
-        const target = event.target;
-        if (!target || typeof (target as Element).closest !== 'function') return;
-        const anchor = (target as Element).closest('a');
-        if (!anchor) return;
-
-        const href = anchor.getAttribute('href');
-        if (!href || href.length < 2) return;
-        // Root-relative APP paths only ('/movie/…', '/discover', '/search?…').
-        // Protocol-relative, absolute (https://), hash-only and API links are
-        // untouched (API paths never navigate).
-        if (href.charAt(0) !== '/' || href.charAt(1) === '/') return;
-        if (href.startsWith('/api/')) return;
-        if (anchor.hasAttribute('download')) return;
-        const anchorTarget = anchor.getAttribute('target');
-        if (anchorTarget && anchorTarget !== '_self') return;
-
-        // The full file:// navigation kit would allow here can never exist
-        // inside the widget — cancel it and route through the router.
-        // NOTE: in hash-routing mode kit derives the ROUTE from
-        // location.hash, so goto() must receive the HASH FORM ('#/movie/…')
-        // — a pathname URL has an empty hash, resolves to no route and
-        // triggers kit's server_fallback full page reload (a dead end on a
-        // file:// origin).
-        event.preventDefault();
-        void goto('#' + href, { keepFocus: false, noScroll: false, replaceState: false });
-      } catch {
-        /* the bridge must never break a click */
-      }
-    },
-    false
-  );
+  document.addEventListener('pointerdown', rewriteFor, true);
+  document.addEventListener('click', rewriteFor, true);
 
   window.__maveroTvNavBridge = true;
 }

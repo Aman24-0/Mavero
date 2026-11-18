@@ -11,5 +11,7 @@
  * app keeps fetching its same-origin /api/... paths).
  */
 export const TV_API_BASE: string = (
-  (import.meta.env.VITE_TV_API_BASE as string | undefined) ?? 'https://maveroweb.space'
+  ((typeof import.meta.env === 'object' && import.meta.env !== null
+    ? import.meta.env.VITE_TV_API_BASE
+    : undefined) as string | undefined) ?? 'https://maveroweb.space'
 ).replace(/\/+$/, '');

@@ -12,4 +12,7 @@
  * detector is a web-app anti-inspection measure that has no meaning
  * inside a Tizen widget (no devtools, false-positive risk, wasted work).
  */
-export const IS_WGT_BUILD = import.meta.env.VITE_BUILD_TARGET === 'wgt';
+export const IS_WGT_BUILD =
+  typeof import.meta.env === 'object' &&
+  import.meta.env !== null &&
+  import.meta.env.VITE_BUILD_TARGET === 'wgt';

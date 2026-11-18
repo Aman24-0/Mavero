@@ -111,7 +111,14 @@ console.log('§4 — The /live-tv page honors the SSR availability guard');
 // ============================================================
 {
   // 4.1 — the page consumes `data.availability` from the SSR load.
-  ok(liveTvPage.includes('const availability = $derived(data.availability)'), '§4.1 the page consumes data.availability from the SSR load');
+  // STAGE 2 (TV plan): the widget build overrides it with the TV availability
+  // fetch ($lib/tv/live-tv — the same fail-closed contract served by
+  // /api/tv/live-tv); `data.availability` remains the production fallback.
+  ok(
+    liveTvPage.includes('const availability = $derived(tvAvailability ?? data.availability)') &&
+      liveTvPage.includes('tvAvailability = $state<TvLiveTvAvailability | null>(null)'),
+    '§4.1 the page consumes data.availability from the SSR load (Stage 2: tvAvailability override with data fallback)'
+  );
   // 4.2 — sourcesAvailable is derived from availability.available.
   ok(liveTvPage.includes("const sourcesAvailable = $derived(availability?.available === true)"), '§4.2 sourcesAvailable is derived from availability.available === true');
   // 4.3 — when unavailable, loadCatalogue returns early WITHOUT calling legacy or unified catalogue.

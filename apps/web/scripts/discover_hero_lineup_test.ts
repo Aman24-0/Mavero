@@ -177,8 +177,17 @@ const repoRoot = new URL('../', import.meta.url).pathname;
   // =========================================================================
   const rootRoute = await readFile(path.join(repoRoot, 'src/routes/+page.svelte'), 'utf8');
   const discoverRoute = await readFile(path.join(repoRoot, 'src/routes/discover/+page.svelte'), 'utf8');
-  assert.match(rootRoute, /heroItems=\{data\.heroItems\}/, 'src/routes/+page.svelte passes heroItems={data.heroItems} to <DiscoverPage>');
-  assert.match(discoverRoute, /heroItems=\{data\.heroItems\}/, 'src/routes/discover/+page.svelte passes heroItems={data.heroItems} to <DiscoverPage>');
+  // STAGE 2 (TV plan): the widget build rebuilds the DiscoverPage payload
+  // client-side ($lib/tv/discover-payload) because the static-SPA .wgt has no
+  // server load — the routes now pass the derived tvHeroItems, which falls
+  // back to data.heroItems when the TV payload is absent (i.e. ALWAYS on the
+  // web). The pin keeps protecting the original production bug: the
+  // heroItems prop must still reach <DiscoverPage>, and the server data must
+  // remain its fallback.
+  assert.match(rootRoute, /heroItems=\{tvHeroItems\}/, 'src/routes/+page.svelte passes heroItems={tvHeroItems} to <DiscoverPage>');
+  assert.match(rootRoute, /tvPayload\?\.heroItems\s*\?\?\s*data\.heroItems/, 'src/routes/+page.svelte derives tvHeroItems with data.heroItems as the fallback');
+  assert.match(discoverRoute, /heroItems=\{tvHeroItems\}/, 'src/routes/discover/+page.svelte passes heroItems={tvHeroItems} to <DiscoverPage>');
+  assert.match(discoverRoute, /tvPayload\?\.heroItems\s*\?\?\s*data\.heroItems/, 'src/routes/discover/+page.svelte derives tvHeroItems with data.heroItems as the fallback');
 }
 
 // ---------- Behavioral tests of the actual selector ----------

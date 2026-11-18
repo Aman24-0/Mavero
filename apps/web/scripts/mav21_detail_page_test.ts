@@ -276,13 +276,13 @@ ok('8. enrichment: certification + director + creators on the SAME detail reques
 // ============================================================
 console.log('\n9. Detail route wrappers');
 
-assert.match(movieRoute, /<DetailPage id=\{data\.item\.id\} type="movie" dataItem=\{data\.item\} recommendationItems=\{data\.recommendations\} \/>/,
-  'movie route: type="movie" + SSR item');
-assert.match(seriesRoute, /<DetailPage id=\{data\.item\.id\} type="series" dataItem=\{data\.item\} recommendationItems=\{data\.recommendations\} \/>/,
-  'series route (canonical /tv-show/[id]): type="series" + SSR item');
+assert.match(movieRoute, /<DetailPage id=\{data\.item\?\.id \?\? ''\} type="movie" dataItem=\{data\.item\} recommendationItems=\{data\.recommendations\} \/>/,
+  'movie route: type="movie" + SSR item (Stage 2: id guard for the stashed-load widget build)');
+assert.match(seriesRoute, /<DetailPage id=\{data\.item\?\.id \?\? ''\} type="series" dataItem=\{data\.item\} recommendationItems=\{data\.recommendations\} \/>/,
+  'series route (canonical /tv-show/[id]): type="series" + SSR item (Stage 2: id guard)');
 assert.match(legacySeriesServer, /tv-show/, 'legacy /series/[id] redirects to /tv-show/[id] (never renders its own markup)');
-assert.match(animeRoute, /<DetailPage id=\{data\.item\.id\} type="anime" dataItem=\{data\.item\} recommendationItems=\{data\.recommendations\} \/>/,
-  'anime route (canonical /anime-series/[id]): shared DetailPage with SSR item (type literal "anime")');
+assert.match(animeRoute, /<DetailPage id=\{data\.item\?\.id \?\? ''\} type="anime" dataItem=\{data\.item\} recommendationItems=\{data\.recommendations\} \/>/,
+  'anime route (canonical /anime-series/[id]): shared DetailPage with SSR item (type literal "anime", Stage 2: id guard)');
 assert.match(legacyAnimeServer, /anime-series/, 'legacy /anime/[id] redirects to /anime-series/[id] (never renders its own markup)');
 assert.match(movieServer, /const detail = await getDetail\('movie', (?:params\.id|id)\);/,
   'server load fetches the PARENT detail only (MAV-20 Phase D preserved)');
