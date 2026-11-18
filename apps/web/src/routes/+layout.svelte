@@ -12,6 +12,7 @@
   import type { LayoutData } from './$types';
   import { syncAuthenticatedState } from '$lib/client/progress/cloud';
   import { syncDevtoolProtection } from '$lib/client/devtool-protection';
+  import { IS_WGT_BUILD } from '$lib/shared/build-mode';
   import { isLibraryAwareRoute } from '$lib/shared/route-policy';
   import { recordInAppNavigation } from '$lib/shared/navigation';
   import { umamiTrack, consumePendingUmamiAuthEvent } from '$lib/client/analytics/umami';
@@ -84,7 +85,11 @@
   // seeded with Date.now() on first load, so it is non-zero even for a
   // deep-linked first entry.)
   afterNavigate(({ from }) => {
-    recordInAppNavigation(from ? `${from.url.pathname}${from.url.search}` : null);
+    // from.url can be null on the static-SPA fallback bootstrap (the
+    // BUILD_TARGET=wgt shell hydrates without an embedded page — there is
+    // no previous in-app URL to record). In the SSR web app from.url is
+    // always a URL, so production behaviour is unchanged.
+    recordInAppNavigation(from && from.url ? `${from.url.pathname}${from.url.search}` : null);
   });
 
   // DevTools protection (disable-devtool integration) — client-only.
@@ -109,7 +114,12 @@
   // (authenticated admin -> true; guest/normal user -> false) — the
   // ONLY input. There is no client-side bypass by construction.
   $effect(() => {
-    syncDevtoolProtection(data.devtoolExempt === true);
+    // TV widget build: the DevTools detector is a web-app anti-inspection
+    // measure — meaningless inside a Tizen widget (no devtools, false-
+    // positive risk on the TV's engine). IS_WGT_BUILD is a compile-time
+    // flag, so this branch is dead code in the production Netlify build
+    // and production behaviour is unchanged. `true` = exempt = off.
+    syncDevtoolProtection(IS_WGT_BUILD || data.devtoolExempt === true);
   });
 
   // Phase 4 (Umami Cloud migration) — client-side auth success events.

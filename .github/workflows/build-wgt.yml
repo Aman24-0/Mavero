@@ -1,24 +1,41 @@
-# Mavero TV — build the .wgt (Tizen Web App) with the OFFICIAL Tizen CLI.
+# Mavero TV — build MaveroTV.wgt: the FULL Mavero UI as a static SPA.
 #
-# WHY NOT `zip`: [118, -19] "could not read the package's manifest" (Samsung TV
-# package manager, via Apps2Samsung). The TV validates config.xml against the
-# Tizen widget schema and packages against the canonical widget layout. The
-# official Tizen Studio CLI is the tool that enforces exactly those rules —
-# it schema-validates the manifest, normalizes it, adds the signature
-# skeletons a Tizen package manager expects, and produces a structurally
-# correct .wgt. A raw `zip` of the source folder produces none of that.
+# ARCHITECTURE (Stage 1 of the TV plan):
+#   The web app is server-rendered (adapter-netlify, 55 +page.server.ts
+#   loads, 104 +server.ts endpoints) — a .wgt has NO server. With
+#   BUILD_TARGET=wgt, apps/web/svelte.config.js swaps to
+#   @sveltejs/adapter-static (fallback index.html) and
+#   apps/web/scripts/wgt_spa_prepare.mjs physically moves the server
+#   route modules out of src/routes for the duration of the build — a
+#   stub would not suffice, because SvelteKit generates its route
+#   manifest from the FILES on disk and the client router would request
+#   <url>/__data.json on hydration (impossible on the widget's file://
+#   origin). The TV pages fetch their data from the deployed production
+#   API (https://maveroweb.space/api/…) instead (Stage 2, page by page).
 #
-# The headless CLI used here is tizen-core (`tz`, Go, no Java needed at
-# build/pack time) from the official web-cli Tizen Studio 6.1 installer:
-#   install web-cli → `tz build` (schema-validates config.xml, builds)
-#                   → `tz pack`  (packs + signs with the SDK dummy certs;
-#                                Apps2Samsung re-signs with the real cert)
+#   scripts/wgt_patch_shell.mjs then injects a boot script into the BUILT
+#   shell: the TV opens the widget at <root>/index.html, which is not a
+#   SvelteKit route — the script rewrites the URL to the package root
+#   before the client router boots.
+#
+# PACKING: the SPA output + the working config.xml + icon.png are copied
+#   into a staging directory and packed with the OFFICIAL Tizen Studio
+#   CLI (tizen-core, `tz`) — the same toolchain that fixed [118, -19]:
+#   it schema-validates the manifest and writes the signature skeletons
+#   a Tizen package manager expects (Apps2Samsung re-signs with the real
+#   certificate). config.xml stays UNTOUCHED (MaveroTV01.MaveroTV /
+#   package MaveroTV01).
 #
 # The result is published as a build artifact AND attached to the rolling
-# "wgt-latest" release so it can be downloaded directly (GitHub caches release
-# assets — verify with a cache-buster ?v=<timestamp> query).
+# "wgt-latest" release (GitHub caches release assets — verify with a
+# cache-buster ?v=<timestamp> query).
 #
-# Then install the .wgt on the TV with Apps2Samsung (it re-signs + installs).
+# workflow_dispatch input `pack: poc` packs the original apps/tizen-wgt
+# AVPlay PoC instead (the proven <object type="application/avplayer">
+# reference implementation) — useful for TV-side debugging comparisons.
+#
+# The production web app is NEVER touched: BUILD_TARGET is unset on
+# Netlify, so its adapter, output and semantics are unchanged.
 
 name: Build WGT
 
@@ -26,9 +43,19 @@ on:
   push:
     branches: [main]
     paths:
+      - "apps/web/**"
       - "apps/tizen-wgt/**"
+      - "pnpm-lock.yaml"
       - ".github/workflows/build-wgt.yml"
   workflow_dispatch:
+    inputs:
+      pack:
+        description: "What to pack into MaveroTV.wgt"
+        type: choice
+        default: "spa"
+        options:
+          - spa
+          - poc
 
 permissions:
   contents: write
@@ -40,12 +67,21 @@ concurrency:
 env:
   TIZEN_STUDIO_VERSION: "6.1"
   TIZEN_STUDIO_DIR: /home/runner/tizen-studio
+  # The SPA shell build runs adapter-static's fallback generator, which
+  # renders the root route through hooks.server.ts — and the hooks FAIL
+  # CLOSED (intentional 503) when the Supabase public env is missing.
+  # Nothing on the shell's render path performs a real Supabase call (the
+  # server route modules are stashed), so placeholders are sufficient and
+  # stay local to this job. Stage 2 replaces these with the real public
+  # values via repo secrets (the anon key is public-by-design).
+  WGT_BUILD_PUBLIC_SUPABASE_URL: https://wgt-build-placeholder.supabase.co
+  WGT_BUILD_PUBLIC_SUPABASE_KEY: wgt-build-placeholder-anon-key
 
 jobs:
   build-wgt:
-    name: tizen build · pack · verify · publish .wgt
+    name: build · pack · verify · publish MaveroTV.wgt
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
@@ -80,22 +116,137 @@ jobs:
           test -x "${TIZEN_STUDIO_DIR}/tools/tizen-core/tz" || {
             echo "tizen-core (tz) missing after sync"; exit 1; }
 
-      - name: Build + pack MaveroTV.wgt (official tizen-core CLI)
+      # ---------------- SPA path (default) ----------------
+
+      - name: Setup pnpm 10.30.3 (the packageManager pin from package.json)
+        if: github.event.inputs.pack != 'poc'
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.30.3
+
+      - name: Setup Node 22 (netlify.toml NODE_VERSION)
+        if: github.event.inputs.pack != 'poc'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies (frozen lockfile)
+        if: github.event.inputs.pack != 'poc'
+        run: pnpm install --frozen-lockfile
+
+      - name: Build the static SPA (BUILD_TARGET=wgt)
+        if: github.event.inputs.pack != 'poc'
+        working-directory: apps/web
+        env:
+          BUILD_TARGET: wgt
+          PUBLIC_SUPABASE_URL: ${{ env.WGT_BUILD_PUBLIC_SUPABASE_URL }}
+          PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ env.WGT_BUILD_PUBLIC_SUPABASE_KEY }}
         run: |
           set -euo pipefail
-          TZ="${TIZEN_STUDIO_DIR}/tools/tizen-core/tz"
+          # Move the server route modules out of src/routes so the generated
+          # manifest is a TRUE static-SPA manifest (see script header), and
+          # restore them even when the build fails (EXIT trap).
+          node scripts/wgt_spa_prepare.mjs stash
+          trap 'node scripts/wgt_spa_prepare.mjs restore' EXIT
+          pnpm exec svelte-kit sync
+          pnpm exec vite build
+          trap - EXIT
+          node scripts/wgt_spa_prepare.mjs restore
+          # Sanity: the SPA shell + client bundle must exist.
+          test -f build/index.html || { echo "build/index.html missing"; exit 1; }
+          test -d build/_app/immutable || { echo "build/_app/immutable missing"; exit 1; }
+          # TV boot patch: normalize the widget's /index.html entry URL to
+          # the package root before the SvelteKit router boots (pack-time
+          # injection ONLY — the production HTML is never touched).
+          node scripts/wgt_patch_shell.mjs build/index.html
+
+      - name: Stage the widget tree (SPA output + working manifest)
+        if: github.event.inputs.pack != 'poc'
+        run: |
+          set -euo pipefail
+          STAGE="${RUNNER_TEMP}/wgt-stage/MaveroTV"
+          rm -rf "${RUNNER_TEMP}/wgt-stage"
+          mkdir -p "$STAGE"
+          # The SPA output CONTENTS go to the stage ROOT (config.xml must
+          # sit next to index.html).
+          cp -a apps/web/build/. "$STAGE"/
+          # The working, TV-accepted manifest + icon — UNTOUCHED.
+          cp apps/tizen-wgt/config.xml apps/tizen-wgt/icon.png "$STAGE"/
+          # Packaging manifest for tizen-core: enumerate every file of the
+          # built SPA (relative paths) so the pack includes the full bundle,
+          # and carry the battle-tested excludes — tz build copies the
+          # project into Debug/ while it runs, so Debug/* MUST stay
+          # excluded or the copy recurses into its own output.
+          python3 - <<'PY'
+          import os
+          SKIP_DIRS = {'Debug', '.result', 'Build', 'Release', '.Build'}
+          SKIP_FILES = {'tizen_web_project.yaml'}
+          entries = []
+          for root, dirs, names in os.walk('.'):
+              dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS)
+              for n in sorted(names):
+                  if n in SKIP_FILES or n == 'config.xml':
+                      continue
+                  entries.append(os.path.relpath(os.path.join(root, n), '.').replace(os.sep, '/'))
+          excludes = [
+              'Build/*', 'Debug/*', 'Directory.Build.targets', 'Release/*', 'Test/*',
+              '\\.Build/.*', '\\.buildResult/.*', '\\.csproj', '\\.externalToolBuilders/.*',
+              '\\.gn', '\\.obj/.*', '\\.package/.*', '\\.project', '\\.rds_delta',
+              '\\.sdk_delta.info', '\\.settings/.*', '\\.sign/.*',
+              '\\.tizen-ui-builder-tool.xml', '\\.tproject', '\\.wgt',
+              'tizen_web_project.yaml', 'webUnitTest/*', '\\.gitignore'
+          ]
+          lines = [
+              '# GENERATED at pack time by .github/workflows/build-wgt.yml.',
+              'project_type: web_app',
+              'profile: tv',
+              'api_version: "2.3"',
+              'build_type: Debug',
+              'output_name: MaveroTV',
+              'excludes:'
+          ]
+          lines += [f'  - {e}' for e in excludes]
+          lines += ['files:']
+          lines += [f'  - {e}' for e in sorted(entries)]
+          open('tizen_web_project.yaml', 'w').write('\n'.join(lines) + '\n')
+          print(f'packaging manifest: {len(entries)} files + excludes')
+          PY
+          echo "STAGE_DIR=$STAGE" >> "$GITHUB_ENV"
+
+      - name: Build + pack MaveroTV.wgt (official tizen-core CLI)
+        if: github.event.inputs.pack != 'poc'
+        run: |
+          set -euo pipefail
+          TZ_BIN="${TIZEN_STUDIO_DIR}/tools/tizen-core/tz"
+          cd "$STAGE_DIR"
+          rm -rf Debug .result
+          # Schema-validates config.xml (profile tv) and builds the app.
+          "$TZ_BIN" build .
+          # Packs the build result and signs it with the SDK dummy certs
+          # (Apps2Samsung re-signs with the real Samsung certificate).
+          "$TZ_BIN" pack .
+          WGT=$(find Debug -maxdepth 1 -name '*.wgt' | head -1)
+          test -n "$WGT" || { echo "no .wgt produced by tz pack"; exit 1; }
+          mv "$WGT" "$GITHUB_WORKSPACE/MaveroTV.wgt"
+
+      # ---------------- PoC path (workflow_dispatch pack=poc) ----------------
+
+      - name: Build + pack MaveroTV.wgt (PoC — apps/tizen-wgt)
+        if: github.event.inputs.pack == 'poc'
+        run: |
+          set -euo pipefail
+          TZ_BIN="${TIZEN_STUDIO_DIR}/tools/tizen-core/tz"
           cd apps/tizen-wgt
           test -f config.xml || { echo "config.xml missing"; exit 1; }
           rm -rf Debug
-          # Schema-validates config.xml (profile tv) and builds the app.
-          "$TZ" build .
-          # Packs the build result and signs it with the SDK dummy certs
-          # (Apps2Samsung re-signs with the real Samsung certificate).
-          "$TZ" pack .
+          "$TZ_BIN" build .
+          "$TZ_BIN" pack .
           WGT=$(find Debug -maxdepth 1 -name '*.wgt' | head -1)
           test -n "$WGT" || { echo "no .wgt produced by tz pack"; exit 1; }
-          mv "$WGT" ../../MaveroTV.wgt
-          cd ../..
+          mv "$WGT" "$GITHUB_WORKSPACE/MaveroTV.wgt"
+
+      # ---------------- Verification + publish ----------------
 
       - name: Verify MaveroTV.wgt structure
         run: |
@@ -120,12 +271,29 @@ jobs:
           grep -q 'id="MaveroTV01.MaveroTV"' /tmp/tizen-application.txt
           # The manifest must still be schema-valid XML
           python3 - <<'PY'
-          import io, zipfile
+          import zipfile
           import xml.etree.ElementTree as ET  # stdlib — runners have no lxml
           z = zipfile.ZipFile('MaveroTV.wgt')
           ET.fromstring(z.read('config.xml'))
           print('config.xml parses as XML: OK')
           PY
+
+      - name: Verify the SPA payload (SPA pack only)
+        if: github.event.inputs.pack != 'poc'
+        run: |
+          set -euo pipefail
+          # The SvelteKit SPA shell + client bundle must be inside the wgt.
+          unzip -Z1 MaveroTV.wgt | grep -qx 'index.html' || {
+            echo "index.html missing from the widget — aborting"; exit 1; }
+          APP_ENTRIES=$(unzip -Z1 MaveroTV.wgt | grep -c '_app/immutable/')
+          echo "_app/immutable entries: $APP_ENTRIES"
+          test "$APP_ENTRIES" -gt 0 || { echo "SPA client bundle missing — aborting"; exit 1; }
+          # The TV boot patch must be present in the packed shell.
+          unzip -p MaveroTV.wgt index.html | grep -q 'mavero-wgt-boot' || {
+            echo "boot URL-normalization script missing from the packed shell — aborting"; exit 1; }
+          # The shell must reference the SvelteKit entry modules.
+          unzip -p MaveroTV.wgt index.html | grep -q '_app/immutable/entry/' || {
+            echo "SvelteKit entry script missing from the packed shell — aborting"; exit 1; }
           ls -la MaveroTV.wgt
 
       - name: Upload .wgt artifact
@@ -144,7 +312,7 @@ jobs:
           gh release view wgt-latest >/dev/null 2>&1 || \
             gh release create wgt-latest \
               --title "Mavero TV (.wgt) — latest" \
-              --notes "Auto-built with the official Tizen CLI (tizen-core) from apps/tizen-wgt at ${{ github.sha }}."
+              --notes "Auto-built from the repo at ${{ github.sha }}."
           gh release upload wgt-latest MaveroTV.wgt --clobber
           echo "Direct download:"
           echo "https://github.com/${{ github.repository }}/releases/download/wgt-latest/MaveroTV.wgt"

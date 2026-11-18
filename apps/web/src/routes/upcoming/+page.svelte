@@ -18,7 +18,9 @@
   // — it never carries item payloads, so the URL stays small for every
   // filter combination. ----
   // svelte-ignore state_referenced_locally -- intentional initial-value capture; the data-sync effect re-syncs on every navigation
-  let allItems = $state<UpcomingItem[]>([...data.items]);
+  // Array.isArray guard: on the static-SPA build (BUILD_TARGET=wgt) the
+  // server load is absent and data is {} — production SSR always provides it.
+  let allItems = $state<UpcomingItem[]>(Array.isArray(data.items) ? [...data.items] : []);
   // svelte-ignore state_referenced_locally -- intentional initial-value capture; the data-sync effect re-syncs on every navigation
   let currentPage = $state(data.page ?? 1);
   // svelte-ignore state_referenced_locally -- intentional initial-value capture; the data-sync effect re-syncs on every navigation
@@ -38,7 +40,7 @@
   let zeroProgressStreak = $state(0);
   // Partial source failures (SSR + latest pagination response).
   // svelte-ignore state_referenced_locally -- intentional initial-value capture; the data-sync effect re-syncs on every navigation
-  let pageWarnings = $state<string[]>([...(data.errors ?? [])]);
+  let pageWarnings = $state<string[]>(Array.isArray(data.errors) ? [...data.errors] : []);
   // Complete upstream failure surfaced through a pagination response.
   // svelte-ignore state_referenced_locally -- intentional initial-value capture; the data-sync effect re-syncs on every navigation
   let pageError = $state<string | null>(data.errorMessage ?? null);
@@ -67,14 +69,17 @@
     loadMoreError = null;
     zeroProgressStreak = 0;
     pageError = d.errorMessage ?? null;
-    pageWarnings = [...(d.errors ?? [])];
-    allItems = [...d.items];
+    pageWarnings = Array.isArray(d.errors) ? [...d.errors] : [];
+    allItems = Array.isArray(d.items) ? [...d.items] : [];
     currentPage = d.page ?? 1;
     hasNextPage = d.hasNextPage ?? false;
     nextCursor = d.cursor ?? '';
-    selectedStartDate = d.filters.startDate;
-    selectedType = d.filters.type;
-    selectedLanguage = String(d.filters.language ?? 'all');
+    // `?.` guards: the static-SPA build (BUILD_TARGET=wgt) has no server
+    // load, so the synced data can be {} — production SSR always provides
+    // filters. Guards are no-ops in production.
+    selectedStartDate = d.filters?.startDate;
+    selectedType = d.filters?.type;
+    selectedLanguage = String(d.filters?.language ?? 'all');
   });
 
   // F7: type options changed from a dropdown with 'All' to three chips:
@@ -96,11 +101,11 @@
   // canonical startDate (YYYY-MM-DD), so this is purely the SSR initial
   // value — direct user input is constrained by <input type="date">.
   // svelte-ignore state_referenced_locally -- intentional initial-value capture, same pattern as the three lines above
-  let selectedStartDate = $state(data.filters.startDate);
+  let selectedStartDate = $state(data.filters?.startDate);
   // svelte-ignore state_referenced_locally -- intentional initial-value capture, same pattern as the three lines above
-  let selectedType = $state<'all' | UpcomingType>(data.filters.type);
+  let selectedType = $state<'all' | UpcomingType>(data.filters?.type);
   // svelte-ignore state_referenced_locally -- intentional initial-value capture, same pattern as the three lines above
-  let selectedLanguage = $state(String(data.filters.language ?? 'all'));
+  let selectedLanguage = $state(String(data.filters?.language ?? 'all'));
 
   // Filter-navigation failure — a rejected goto() is NEVER silently
   // swallowed: the optimistic selection is rolled back to the last
@@ -266,10 +271,11 @@
     loadingMore = true;
     liveMessage = 'Loading more results…';
     try {
+      // `?.` guards: no server load exists in the static-SPA build.
       const params = new URLSearchParams({
-        startDate: data.filters.startDate,
-        type: data.filters.type,
-        language: data.filters.language ?? 'all',
+        startDate: data.filters?.startDate,
+        type: data.filters?.type,
+        language: data.filters?.language ?? 'all',
         page: String(currentPage + 1),
         cursor: nextCursor
       });
@@ -341,10 +347,11 @@
     loadingMore = false;
     liveMessage = 'Results were refreshed — starting from the first page.';
     try {
+      // `?.` guards: no server load exists in the static-SPA build.
       const params = new URLSearchParams({
-        startDate: data.filters.startDate,
-        type: data.filters.type,
-        language: data.filters.language ?? 'all',
+        startDate: data.filters?.startDate,
+        type: data.filters?.type,
+        language: data.filters?.language ?? 'all',
         page: '1'
       });
       const res = await fetch(`/api/upcoming?${params.toString()}`);

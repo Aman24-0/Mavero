@@ -323,11 +323,11 @@ ok('loading states + accessibility: skeleton, aria-busy, aria-live announcements
 
 // Filter controls sync from server state.
 const syncEffect = pageSvelteSource.slice(pageSvelteSource.indexOf('// Server data sync'), pageSvelteSource.indexOf('// Phase F.1 — COMPACT month labels'));
-assert.match(syncEffect, /selectedStartDate = d\.filters\.startDate;/, 'date control re-syncs from URL/server state');
+assert.match(syncEffect, /selectedStartDate = d\.filters\?\.startDate;/, 'date control re-syncs from URL/server state');
 // F7-B: year control removed (single date input replaces month+year).
-assert.match(syncEffect, /selectedType = d\.filters\.type;/, 'type control re-syncs from URL/server state');
-assert.match(syncEffect, /selectedLanguage = String\(d\.filters\.language \?\? 'all'\);/, 'language control re-syncs from URL/server state');
-assert.match(syncEffect, /allItems = \[\.\.\.d\.items\];\s*currentPage = d\.page \?\? 1;\s*hasNextPage = d\.hasNextPage \?\? false;\s*nextCursor = d\.cursor \?\? '';/, 'pagination state resets COMPLETELY on filter change (no old cursor survives)');
+assert.match(syncEffect, /selectedType = d\.filters\?\.type;/, 'type control re-syncs from URL/server state');
+assert.match(syncEffect, /selectedLanguage = String\(d\.filters\?\.language \?\? 'all'\);/, 'language control re-syncs from URL/server state');
+assert.match(syncEffect, /allItems = Array\.isArray\(d\.items\) \? \[\.\.\.d\.items\] : \[\];\s*currentPage = d\.page \?\? 1;\s*hasNextPage = d\.hasNextPage \?\? false;\s*nextCursor = d\.cursor \?\? '';/, 'pagination state resets COMPLETELY on filter change (no old cursor survives)');
 ok('filter state synchronization: controls + pagination fully re-synced from server data');
 
 // Snapshot keeps the small cursor contract.

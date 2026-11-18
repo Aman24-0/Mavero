@@ -34,13 +34,15 @@
   type TypeFilter = 'All' | 'Movie' | 'TV Show';
 
   // svelte-ignore state_referenced_locally -- intentional initial-value capture; the search effect re-syncs on every navigation
-  let query = $state(data.query);
+  // `typeof` guards: on the static-SPA build (BUILD_TARGET=wgt) the server
+  // load is absent and data is {} — production SSR always provides these.
+  let query = $state(typeof data.query === 'string' ? data.query : '');
   // svelte-ignore state_referenced_locally -- intentional initial-value capture; the search effect re-syncs on every navigation
   let type = $state<TypeFilter>(
     data.type === 'movie' ? 'Movie' : data.type === 'series' ? 'TV Show' : 'All'
   );
   // svelte-ignore state_referenced_locally -- intentional initial-value capture; the search effect re-syncs on every navigation
-  let results = $state<MediaItem[]>(data.items);
+  let results = $state<MediaItem[]>(Array.isArray(data.items) ? data.items : []);
   let loading = $state(false);
   // svelte-ignore state_referenced_locally -- intentional initial-value capture; the search effect re-syncs on every navigation
   let errorMessage = $state(data.errorMessage ?? '');

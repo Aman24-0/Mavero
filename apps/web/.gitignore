@@ -26,3 +26,7 @@ netlify/functions/livetv-scheduler.mjs.stale-removed
 # MAV-FOCUSED (2026-10): DOM QA harness generated artifacts — never commit.
 scripts/harness-admin-nav/
 .cache/
+
+# BUILD_TARGET=wgt stash: server route modules parked here during the
+# widget build (scripts/wgt_spa_prepare.mjs) — must never be committed.
+.wgt-spa-stash/
