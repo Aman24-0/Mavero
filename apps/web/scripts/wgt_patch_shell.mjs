@@ -3,44 +3,67 @@
  * MAVERO — wgt shell patcher (pack-time; runs on the BUILD OUTPUT only).
  *
  * The Tizen widget manager opens the app at <package root>/index.html
- * (config.xml `<content src="index.html"/>`). The built shell needs three
- * pack-time fixes that adapter-static cannot produce, because the widget
- * runs from a file:// origin (the production web app is never touched —
- * this script is only ever invoked by .github/workflows/build-wgt.yml):
+ * (config.xml `<content src="index.html"/>`). The built shell needs pack-time
+ * fixes that adapter-static cannot produce, because the widget runs from a
+ * file:// origin (the production web app is never touched — this script is
+ * only ever invoked by .github/workflows/build-wgt.yml):
  *
  * 1. RELATIVE ASSET PATHS. SvelteKit emits ABSOLUTE asset URLs in the
- *    fallback shell (`/_app/…`, `/favicon.ico`, `/manifest.webmanifest`,
- *    and the dynamic `import("/_app/env.js")` boot specifier). On a
- *    file:// origin an absolute path resolves against the FILESYSTEM
- *    ROOT, so every CSS/JS reference 404s, the SPA never boots and the
- *    TV shows a blank grey screen (observed on UA43AUE60AKLXL / Tizen
- *    6.0). `kit.paths.relative` does not rewrite the FALLBACK shell's
- *    links, so this script rewrites them: every `"/_app/` (and
- *    `'/​_app/`) string — attribute values and the inline boot script's
- *    dynamic import specifiers — becomes `./_app/`, and every
- *    `href="/` / `src="/` becomes `href="./` / `src="./` (root-relative
- *    references only — `//` protocol-relative URLs and remote
- *    `https://…` URLs are left alone).
+ *    fallback shell (`/_app/…`, `/favicon.ico`, `/manifest.webmanifest`).
+ *    On a file:// origin an absolute path resolves against the FILESYSTEM
+ *    ROOT, so every CSS/JS reference 404s and the TV shows a blank grey
+ *    screen (observed on UA43AUE60AKLXL / Tizen 6.0). `kit.paths.relative`
+ *    does not rewrite the FALLBACK shell's links, so this script rewrites
+ *    them: every `"/_app/` string and every `href="/` / `src="/` attribute
+ *    becomes relative (root-relative references only — `//`
+ *    protocol-relative and remote `https://…` URLs are left alone).
  *
- * 1.5. HASH-ROUTER-FRIENDLY BOOT. The wgt build runs SvelteKit's hash
- *    router (kit.router.type = 'hash', see svelte.config.js): the route
- *    id comes from location.hash, so the app boots onto its HOME route
- *    from ANY install path and SPA navigation never touches the history
- *    URL APIs that file:// forbids. No pathname surgery is needed here —
- *    the shell's base global stays as kit emitted it.
+ * 2. CLASSIC BOOT (the ES-modules fix — TV-verified). The Tizen web engine
+ *    BLOCKS ES module loading from the widget's file:// origin (origin
+ *    "null"): static `type="module"` scripts, dynamic `import()` calls and
+ *    modulepreload links are all refused. The TV's boot-diagnostics overlay
+ *    proved this ON DEVICE (the chunk files exist but are never executed),
+ *    and the earlier AVPlay PoC proved plain CLASSIC scripts load fine.
+ *    The wgt build therefore ships ONE classic IIFE bundle (app.js — see
+ *    vite.config.ts `mavero-wgt-classic-bundle` + svelte.config.js
+ *    bundleStrategy 'single'), and this script replaces SvelteKit's module
+ *    bootstrap (`import("/_app/env.js")…import("/app.js")…`) with:
+ *      - a CLASSIC inline script that installs the very globals the bundle
+ *        reads (`window.__sveltekit_<hash> = { base, env }` — the dynamic
+ *        public env module is inlined here as data, because the bundle can
+ *        never runtime-import `_app/env.js` as an ES module), captures the
+ *        SvelteKit mount element exactly like the original bootstrap did
+ *        (`document.currentScript.parentElement`), and on DOMContentLoaded
+ *        (which fires AFTER deferred classic scripts) calls the bundle's
+ *        exported `start()` through the IIFE global `__mavero_wgt_app`;
+ *      - `<script src="./app.js" defer></script>` — a plain classic script,
+ *        which file:// origins always allow.
+ *    It also strips every `modulepreload` link (they reference ES chunks
+ *    the engine would refuse and would spam the boot overlay).
  *
- * 2. BOOT URL NORMALIZATION (pre-existing). SvelteKit's router has no
- *    /index.html route — a tiny boot script rewrites the widget entry
- *    URL to the package root BEFORE the client router boots.
+ * 3. STYLESHEET LINK. With the single classic bundle (cssCodeSplit off,
+ *    see vite.config.ts) all app CSS is emitted as ONE merged asset under
+ *    `_app/immutable/assets/*.css`, which NOTHING references automatically
+ *    in the fallback shell. This script injects a relative
+ *    `<link rel="stylesheet">` for every emitted stylesheet.
  *
- * 3. ON-SCREEN BOOT DIAGNOSTICS. A retail Samsung TV has NO devtools,
- *    no sdb, no console — a failed boot is a blank grey screen with zero
- *    information. A plain (classic, non-module) inline script at the
- *    very top of <head> installs:
+ * 4. NO ANALYTICS. The Umami Cloud loader lives in src/app.html (a plain
+ *    template shared with production — it cannot carry a compile-time
+ *    branch, and touching app.html would break the production build's
+ *    byte-identity). On the TV the Umami script is worse than useless:
+ *    its ES2020 syntax is a hard SyntaxError on the Tizen 6.0 engine
+ *    (seen in the TV overlay) and the widget's null origin would beacon
+ *    nothing anyway. This script removes the loader from the packed shell;
+ *    build-wgt.yml asserts `cloud.umami.is` never survives.
+ *
+ * 5. ON-SCREEN BOOT DIAGNOSTICS. A retail Samsung TV has NO devtools, no
+ *    sdb, no console — a failed boot is a blank grey screen with zero
+ *    information. A plain (classic, non-module) inline script at the very
+ *    top of <head> installs:
  *      - a "Mavero booting…" banner painted immediately (distinguishes
  *        "nothing executed at all" from "CSS loaded but JS failed");
- *      - a full-screen error overlay fed by `window.onerror`-style
- *        events (message + source + stack), `unhandledrejection`, and
+ *      - a full-screen error overlay fed by `window.onerror`-style events
+ *        (message + source + stack), `unhandledrejection`, and
  *        capture-phase resource load errors (<script>/<link>/<img>);
  *      - auto-hide of the banner the moment the SPA renders any element
  *        (MutationObserver — the static shell markup parsed at startup
@@ -54,7 +77,8 @@
  * Usage: node scripts/wgt_patch_shell.mjs <path-to-built-index.html>
  */
 
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
 import process from 'node:process';
 
 const target = process.argv[2];
@@ -63,6 +87,7 @@ if (!target) {
   process.exit(1);
 }
 
+const shellDir = path.dirname(path.resolve(target));
 let html = readFileSync(target, 'utf8');
 if (!html.includes('<head>')) {
   console.error('wgt_patch_shell: ERROR — <head> not found in the built shell');
@@ -74,14 +99,136 @@ if (html.includes('mavero-wgt-boot-overlay')) {
 }
 
 // ---------------------------------------------------------------------------
-// 1. Absolute → relative asset paths (the file:// blank-grey-screen fix).
+// 1. NO ANALYTICS — remove the Umami Cloud loader (see header §4).
 // ---------------------------------------------------------------------------
 
-// String literals pointing into /_app/ — both the attribute values and the
-// dynamic import specifiers inside kit's inline boot script
-// (import("/_app/env.js") → import("./_app/env.js")). Single-quoted variants
-// are included for future-proofing; runtime fetch('/api/…') strings are NOT
-// touched (only /_app/ is rewritten, never /api/ or other roots).
+let umamiRemoved = 0;
+html = html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, (block) => {
+  if (block.includes('cloud.umami.is')) {
+    umamiRemoved += 1;
+    return '';
+  }
+  return block;
+});
+
+// ---------------------------------------------------------------------------
+// 2. CLASSIC BOOT — replace SvelteKit's module bootstrap (see header §2).
+// ---------------------------------------------------------------------------
+
+// Locate the module bootstrap: the (only) inline <script> that wires up the
+// kit payload global and dynamically imports the entry modules.
+const scriptBlocks = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)];
+const bootstrapBlock = scriptBlocks.find((m) => /__sveltekit_[A-Za-z0-9]+\s*=/.test(m[1]));
+if (!bootstrapBlock) {
+  console.error(
+    'wgt_patch_shell: ERROR — SvelteKit module bootstrap not found ' +
+      '(no inline <script> containing the __sveltekit_<hash> payload global)'
+  );
+  process.exit(1);
+}
+
+const hashMatch = bootstrapBlock[1].match(/__sveltekit_([A-Za-z0-9]+)\s*=/);
+if (!hashMatch) {
+  console.error('wgt_patch_shell: ERROR — could not extract the __sveltekit_<hash> global name');
+  process.exit(1);
+}
+const kitHash = hashMatch[1];
+
+// Inline the dynamic public env as DATA. The bundle reads
+// `__sveltekit_<hash>.env` — the original bootstrap filled it from a runtime
+// ES-module import of _app/env.js, which file:// forbids. The generated
+// env module is one line: `export const env={PUBLIC_…:"…",…}` — convert it
+// to an object literal and embed it in the classic boot script.
+const envJsPath = path.join(shellDir, '_app', 'env.js');
+let envLiteral = '{}';
+if (existsSync(envJsPath)) {
+  const envSrc = readFileSync(envJsPath, 'utf8');
+  const envMatch = envSrc.match(/export\s+const\s+env\s*=\s*(\{[\s\S]*\})/);
+  if (!envMatch) {
+    console.error(
+      'wgt_patch_shell: ERROR — could not parse the generated env module ' +
+        `(${path.relative(shellDir, envJsPath)}). Expected "export const env={…}".`
+    );
+    process.exit(1);
+  }
+  envLiteral = envMatch[1];
+} else {
+  console.log('wgt_patch_shell: note — no generated _app/env.js (no dynamic public env); env = {}');
+}
+
+// The classic boot script: plain ES2017-style code (no arrow functions,
+// no optional chaining, no template literals — same discipline as the
+// overlay script below), positioned EXACTLY where SvelteKit's bootstrap
+// was (inside the %sveltekit.body% wrapper div) so the mount element is
+// identical, and booting the IIFE bundle after the deferred classic
+// script has executed (DOMContentLoaded always fires after defer).
+const classicBootScript =
+  `<script>/* mavero-wgt-classic-boot: ES modules are blocked on the widget's file:// origin ` +
+  `(Tizen 6.0, origin "null" — TV-verified). This classic script installs the globals the ` +
+  `bundle reads (window.__sveltekit_${kitHash} = { base, env } — the dynamic public env is ` +
+  `inlined as data), captures the SvelteKit mount element exactly like the original module ` +
+  `bootstrap did, and boots the single classic IIFE bundle (./app.js) after it has loaded. */\n` +
+  `(function () {\n` +
+  `  try {\n` +
+  `    var g = window;\n` +
+  `    g.__sveltekit_${kitHash} = {\n` +
+  `      base: new URL('.', location).pathname.slice(0, -1),\n` +
+  `      env: ${envLiteral}\n` +
+  `    };\n` +
+  `    g.__mavero_wgt_mount = document.currentScript ? document.currentScript.parentElement : null;\n` +
+  `    g.addEventListener('DOMContentLoaded', function () {\n` +
+  `      try {\n` +
+  `        var app = g.__mavero_wgt_app;\n` +
+  `        if (!app || typeof app.start !== 'function') {\n` +
+  `          throw new Error('classic bundle did not expose __mavero_wgt_app.start()');\n` +
+  `        }\n` +
+  `        app.start(g.__mavero_wgt_mount);\n` +
+  `      } catch (e) {\n` +
+  `        setTimeout(function () { throw e; }, 0); /* surface on window.onerror (boot overlay) */\n` +
+  `      }\n` +
+  `    });\n` +
+  `  } catch (e) {\n` +
+  `    setTimeout(function () { throw e; }, 0);\n` +
+  `  }\n` +
+  `})();\n` +
+  `</script>\n` +
+  `<script src="./app.js" defer></script>`;
+
+html = html.replace(bootstrapBlock[0], classicBootScript);
+
+// Strip every modulepreload link — they preload ES chunks that the file://
+// engine refuses (the TV overlay logged exactly this as "failed to load
+// link") and would only add boot-overlay noise.
+const modulePreloadCount = (html.match(/<link\b[^>]*\brel="modulepreload"[^>]*>/gi) || []).length;
+html = html.replace(/<link\b[^>]*\brel="modulepreload"[^>]*>/gi, '');
+
+// ---------------------------------------------------------------------------
+// 3. STYLESHEET LINK(S) — link the merged CSS asset(s) (see header §3).
+// ---------------------------------------------------------------------------
+
+// cssCodeSplit is off for the single classic bundle, so every app stylesheet
+// lands in _app/immutable/assets/. Nothing references them in the fallback
+// shell (Vite emits the asset without a chunk linkage), so inject a relative
+// <link rel="stylesheet"> for each one.
+const assetsDir = path.join(shellDir, '_app', 'immutable', 'assets');
+let cssLinks = '';
+let cssCount = 0;
+if (existsSync(assetsDir)) {
+  const cssFiles = readdirSync(assetsDir).filter((f) => f.endsWith('.css')).sort();
+  cssLinks = cssFiles
+    .map((f) => `<link rel="stylesheet" href="./_app/immutable/assets/${f}" />`)
+    .join('\n    ');
+  cssCount = cssFiles.length;
+}
+
+// ---------------------------------------------------------------------------
+// 4. Absolute → relative asset paths (the file:// blank-grey-screen fix).
+// ---------------------------------------------------------------------------
+
+// String literals pointing into /_app/ — attribute values and any remaining
+// import specifiers. Single-quoted variants are included for future-
+// proofing; runtime fetch('/api/…') strings are NOT touched (only /_app/ is
+// rewritten, never /api/ or other roots).
 html = html.replaceAll('"/_app/', '"./_app/').replaceAll("'/_app/", "'./_app/");
 
 // Root-relative attribute references (favicon, manifest, icons…). The
@@ -91,7 +238,7 @@ html = html.replace(/\s(href|src)="\/(?!\/)/g, ' $1="./');
 html = html.replace(/\s(href|src)='\/(?!\/)/g, " $1='./");
 
 // ---------------------------------------------------------------------------
-// 2. On-screen boot diagnostics (plain script, first thing in <head>).
+// 5. On-screen boot diagnostics (plain script, first thing in <head>).
 // ---------------------------------------------------------------------------
 
 // Plain ES2017 — NO optional chaining / nullish coalescing / template
@@ -230,12 +377,12 @@ const bootOverlayScript = `<script>/* mavero-wgt-boot-overlay: on-screen boot di
 </script>`;
 
 // Runs FIRST in <head> (right after the diagnostics script), before the
-// SvelteKit entry modules are evaluated, so the router reads the normalized
-// location at boot. history.state is preserved (the router's own seeded
-// state must survive). On engines that forbid replaceState across file://
-// paths the guard catches the SecurityError and the shell stays on the
-// literal /index.html URL — with relative asset paths both entry URLs
-// resolve correctly anyway.
+// bundle is evaluated, so the router reads the normalized location at boot.
+// history.state is preserved (the router's own seeded state must survive).
+// On engines that forbid replaceState across file:// paths the guard catches
+// the SecurityError and the shell stays on the literal /index.html URL —
+// with relative asset paths + the hash router both entry URLs resolve
+// correctly anyway.
 const bootScript = `<script>/* mavero-wgt-boot: normalize the Tizen widget entry URL (…/index.html) to the package root before the SvelteKit router boots */
 try {
   if (/\\/index\\.html$/.test(location.pathname)) {
@@ -243,10 +390,11 @@ try {
   }
 } catch (e) {}</script>`;
 
-html = html.replace('<head>', `<head>${bootOverlayScript}${bootScript}`);
+const headInjection = cssCount > 0 ? `${bootOverlayScript}${bootScript}\n    ${cssLinks}` : `${bootOverlayScript}${bootScript}`;
+html = html.replace('<head>', `<head>${headInjection}`);
 
 // ---------------------------------------------------------------------------
-// 3. Self-assertions — fail the CI job loudly instead of shipping a
+// 6. Self-assertions — fail the CI job loudly instead of shipping a
 //    blank-grey-screen widget.
 // ---------------------------------------------------------------------------
 
@@ -257,8 +405,32 @@ if (html.includes('"/_app/') || html.includes("'/_app/")) {
 if (!/href="\.\/_app\//.test(html)) {
   problems.push('no relative href="./_app/…" found — rewrite did not apply');
 }
-if (!html.includes('_app/immutable/entry/')) {
-  problems.push('SvelteKit entry reference lost during rewrite');
+if (!html.includes('src="./app.js" defer')) {
+  problems.push('no classic <script src="./app.js" defer> boot tag — the ES-module bootstrap was not replaced');
+}
+if (/type=["']module["']/i.test(html)) {
+  problems.push('a type="module" script survived — ES modules are blocked on the TV file:// origin');
+}
+if (html.includes('import(')) {
+  problems.push('a dynamic import( survived in the shell — blocked on the TV file:// origin');
+}
+if (html.includes('modulepreload')) {
+  problems.push('a modulepreload link survived — ES-chunk preloads are refused on the TV');
+}
+if (!html.includes(`window.__sveltekit_${kitHash} =`)) {
+  problems.push(`the classic env global (window.__sveltekit_${kitHash}) is missing`);
+}
+if (!html.includes('__mavero_wgt_app')) {
+  problems.push('the boot script does not reference the IIFE global __mavero_wgt_app');
+}
+if (cssCount > 0 && !/href="\.\/_app\/immutable\/assets\/[^"]+\.css"/.test(html)) {
+  problems.push('emitted stylesheet asset(s) are not linked from the shell — the TV would boot unstyled');
+}
+if (cssCount === 0) {
+  problems.push('no stylesheet asset found under _app/immutable/assets — the TV would boot unstyled');
+}
+if (html.includes('cloud.umami.is')) {
+  problems.push('the Umami Cloud loader survived — it SyntaxErrors on the TV engine and is useless on TV');
 }
 if (!html.includes('mavero-wgt-boot')) {
   problems.push('boot URL-normalization script missing');
@@ -279,7 +451,10 @@ if (problems.length > 0) {
 writeFileSync(target, html);
 const attrCount = attrRewrites ? attrRewrites.length : 0;
 console.log(
-  `wgt_patch_shell: patched the built shell — absolute asset paths rewritten ` +
-    `(/_app/ strings + ${attrCount} href/src attributes), boot URL normalizer + ` +
-    `on-screen boot diagnostics injected`
+  `wgt_patch_shell: patched the built shell — module bootstrap replaced with the classic ` +
+    `boot (env global __sveltekit_${kitHash} + <script src="./app.js" defer>), ` +
+    `${modulePreloadCount} modulepreload link(s) stripped, ${umamiRemoved} Umami loader ` +
+    `block(s) removed, ${cssCount} stylesheet link(s) injected, absolute asset paths rewritten ` +
+    `(/_app/ strings + ${attrCount} href/src attributes), boot URL normalizer + on-screen ` +
+    `boot diagnostics injected`
 );

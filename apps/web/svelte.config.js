@@ -54,6 +54,19 @@ const config = {
     // build-wgt.yml asserts the packed shell contains no "/_app/
     // references.
     ...(isWgtBuild ? { paths: { relative: true } } : {}),
+    // BUILD_TARGET=wgt — SINGLE-BUNDLE strategy. The default 'split' strategy
+    // emits the client router + one chunk per route node and loads them with
+    // ES module dynamic import() + modulepreload links. The Tizen web engine
+    // BLOCKS ES module loading from the widget's file:// origin (origin
+    // "null" — the TV overlay proved the chunk files EXIST but are refused),
+    // so the widget must ship ONE self-contained CLASSIC script instead.
+    // 'single' collapses the client build to a single entry input
+    // (_app bundle.js) with inlineDynamicImports — vite.config.ts then
+    // switches that single entry to an IIFE (classic) bundle named app.js,
+    // and scripts/wgt_patch_shell.mjs boots it with a plain
+    // <script src="./app.js" defer> tag. Production (BUILD_TARGET unset)
+    // keeps the default split strategy untouched.
+    ...(isWgtBuild ? { output: { bundleStrategy: 'single' } } : {}),
     // BUILD_TARGET=wgt — HASH ROUTING. The default pathname router derives
     // every route id from location.pathname and mutates history with
     // pushState/replaceState on every navigation. On the widget's file://
