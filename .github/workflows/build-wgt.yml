@@ -34,7 +34,21 @@
 #     4. injects on-screen boot diagnostics ("Mavero booting…" banner +
 #        full-screen error overlay for onerror/unhandledrejection/resource
 #        load errors) — a retail TV has no devtools, so every boot failure
-#        must be readable ON the screen.
+#        must be readable ON the screen;
+#     5. writes the classic ES5-safe polyfill.js (wgt_polyfill.js) to the
+#        widget ROOT and loads it with a CLASSIC SYNC <script> BEFORE app.js
+#        — esbuild downlevels syntax but NOT built-ins, and the TV engine
+#        (Chromium 69-76) lacks the ES2021/ES2022 APIs the bundle calls
+#        (TV overlay: "Object.hasOwn is not a function" → cascade "classic
+#        bundle did not expose __mavero_wgt_app.start()"). The workflow
+#        asserts polyfill.js is at the zip root, loads before app.js, and
+#        defines the APIs the TV lacks.
+#
+#   After packing, a Playwright boot smoke runs the ACTUAL packed .wgt over
+#   file:// with the TV-era built-ins DELETED (page.addInitScript — desktop
+#   Chromium has those APIs, so without deletion it would never reproduce
+#   the TV failure) and asserts: polyfill executed, __mavero_wgt_app.start
+#   exposed, NO boot overlay, sidebar + discover body rendered.
 #
 # PACKING: the SPA output + the working config.xml + icon.png are copied
 #   into a staging directory and packed with the OFFICIAL Tizen Studio
@@ -312,6 +326,23 @@ jobs:
           # The classic IIFE bundle must be at the widget root.
           unzip -Z1 MaveroTV.wgt | grep -qx 'app.js' || {
             echo "app.js (classic IIFE bundle) missing from the widget root — aborting"; exit 1; }
+          # The built-in-API polyfill must be at the widget root (esbuild
+          # downlevels SYNTAX only — the TV's ES2021/2022 built-ins are
+          # missing: "Object.hasOwn is not a function" killed the bundle at
+          # module evaluation, TV overlay-verified).
+          unzip -Z1 MaveroTV.wgt | grep -qx 'polyfill.js' || {
+            echo "polyfill.js missing from the widget root — aborting"; exit 1; }
+          unzip -p MaveroTV.wgt polyfill.js > "${RUNNER_TEMP}/mavero-polyfill.js"
+          test -s "${RUNNER_TEMP}/mavero-polyfill.js" || {
+            echo "polyfill.js in the widget is empty — aborting"; exit 1; }
+          grep -q 'Object.hasOwn' "${RUNNER_TEMP}/mavero-polyfill.js" || {
+            echo "polyfill.js does not define Object.hasOwn — the TV boot crash would persist; aborting"; exit 1; }
+          grep -q 'String.prototype.replaceAll' "${RUNNER_TEMP}/mavero-polyfill.js" || {
+            echo 'polyfill.js does not define String.prototype.replaceAll — aborting'; exit 1; }
+          grep -q 'WeakRef' "${RUNNER_TEMP}/mavero-polyfill.js" || {
+            echo 'polyfill.js does not define a WeakRef shim — aborting'; exit 1; }
+          grep -q 'Object.fromEntries' "${RUNNER_TEMP}/mavero-polyfill.js" || {
+            echo 'polyfill.js does not define Object.fromEntries — aborting'; exit 1; }
           # ------------------------------------------------------------------
           # file:// boot safety — ES modules are BLOCKED on the TV. The Tizen
           # web engine refuses type="module" scripts, dynamic import() and
@@ -324,6 +355,20 @@ jobs:
           # … the classic boot tag is present …
           echo "$SHELL_HTML" | grep -q 'src="./app.js" defer' || {
             echo 'packed shell has no classic <script src="./app.js" defer> boot tag; aborting'; exit 1; }
+          # … the polyfill loads as a CLASSIC SYNC script BEFORE the bundle
+          # (byte-offset ordering — every polyfilled global must exist before
+          # the IIFE evaluates, the exact point where the TV crashed).
+          POLY_OFFSET=$(echo "$SHELL_HTML" | grep -bo 'src="./polyfill.js"' | head -1 | cut -d: -f1)
+          APP_OFFSET=$(echo "$SHELL_HTML" | grep -bo 'src="./app.js" defer' | head -1 | cut -d: -f1)
+          test -n "$POLY_OFFSET" || {
+            echo 'packed shell has no <script src="./polyfill.js"> tag — the polyfill would never load; aborting'; exit 1; }
+          test -n "$APP_OFFSET" || {
+            echo 'packed shell has no <script src="./app.js" defer> tag — aborting'; exit 1; }
+          if [ "$POLY_OFFSET" -ge "$APP_OFFSET" ]; then
+            echo "polyfill tag (offset $POLY_OFFSET) is not BEFORE the bundle tag (offset $APP_OFFSET) — the globals would be missing at module evaluation; aborting"
+            exit 1
+          fi
+          echo "polyfill loads before the bundle: offset $POLY_OFFSET < $APP_OFFSET OK"
           # … the kit payload/env global is installed by the classic boot script …
           echo "$SHELL_HTML" | grep -q 'window.__sveltekit_' || {
             echo 'packed shell does not install the window.__sveltekit_<hash> env global; aborting'; exit 1; }
@@ -380,6 +425,21 @@ jobs:
             echo 'boot banner ("Mavero booting…") missing from the packed shell — aborting'; exit 1; }
           echo "file:// boot safety checks: OK"
           ls -la MaveroTV.wgt
+
+      - name: Boot smoke on file:// with a TV-era engine (Playwright)
+        if: github.event.inputs.pack != 'poc'
+        run: |
+          set -euo pipefail
+          # Same toolchain pin as ci.yml (playwright@1.57.0 — see the ci.yml
+          # runner-pin comment before bumping).
+          npm install -g playwright@1.57.0
+          playwright install --with-deps chromium
+          # Boots the ACTUAL packed artifact over file:// with the TV-era
+          # built-ins deleted (page.addInitScript) — desktop Chromium has
+          # them, so without the deletion this smoke can never reproduce the
+          # TV failure ("Object.hasOwn is not a function" → "classic bundle
+          # did not expose __mavero_wgt_app.start()").
+          node apps/web/scripts/wgt_file_smoke.mjs MaveroTV.wgt
 
       - name: Upload .wgt artifact
         uses: actions/upload-artifact@v4

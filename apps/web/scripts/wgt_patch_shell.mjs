@@ -74,12 +74,29 @@
  *    Whatever fails on the TV, the failure text becomes readable on the
  *    screen itself.
  *
+ * 6. BUILT-IN API POLYFILL (the Object.hasOwn fix — TV-verified). esbuild
+ *    downlevels SYNTAX for build.target 'es2019' but does NOT polyfill
+ *    BUILT-INS: the TV overlay logged
+ *      "Uncaught TypeError: Object.hasOwn is not a function (file:///app.js)"
+ *    followed by the cascade "classic bundle did not expose
+ *    __mavero_wgt_app.start()" (the IIFE died at module evaluation, so the
+ *    global was never assigned). This script copies the classic ES5-safe
+ *    scripts/wgt_polyfill.js (Object.hasOwn, Object.fromEntries,
+ *    String.prototype.replaceAll, WeakRef, FinalizationRegistry, globalThis,
+ *    queueMicrotask, Array/String .at(), findLast/findLastIndex,
+ *    Promise.allSettled/any + AggregateError, flat/flatMap, structuredClone —
+ *    every shim guarded) into the widget root as polyfill.js and loads it
+ *    with a CLASSIC SYNC <script src="./polyfill.js"> immediately BEFORE the
+ *    <script src="./app.js" defer> boot tag, so every global exists before
+ *    the bundle evaluates.
+ *
  * Usage: node scripts/wgt_patch_shell.mjs <path-to-built-index.html>
  */
 
-import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
+import { fileURLToPath } from 'node:url';
 
 const target = process.argv[2];
 if (!target) {
@@ -93,8 +110,21 @@ if (!html.includes('<head>')) {
   console.error('wgt_patch_shell: ERROR — <head> not found in the built shell');
   process.exit(1);
 }
+
+// §6 — the built-in-API polyfill is copied BEFORE the idempotency guard so a
+// re-run over an already-patched shell still guarantees the file exists at the
+// widget root (copyFileSync is overwrite-idempotent).
+const polyfillSourcePath = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  'wgt_polyfill.js'
+);
+const polyfillTargetPath = path.join(shellDir, 'polyfill.js');
+const polyfillSource = readFileSync(polyfillSourcePath, 'utf8');
+copyFileSync(polyfillSourcePath, polyfillTargetPath);
+const polyfillWrittenBytes = statSync(polyfillTargetPath).size;
+
 if (html.includes('mavero-wgt-boot-overlay')) {
-  console.log('wgt_patch_shell: already patched — nothing to do');
+  console.log('wgt_patch_shell: already patched — polyfill.js ensured, nothing else to do');
   process.exit(0);
 }
 
@@ -192,6 +222,12 @@ const classicBootScript =
   `  }\n` +
   `})();\n` +
   `</script>\n` +
+  // §6 — the polyfill is a CLASSIC SYNCHRONOUS script loaded BEFORE the
+  // deferred bundle: sync scripts execute in document order during parsing,
+  // and a deferred script executes only AFTER the document has been parsed,
+  // so every polyfilled global exists before app.js module-evaluates (the TV
+  // crash happened exactly at that point).
+  `<script src="./polyfill.js"></script>\n` +
   `<script src="./app.js" defer></script>`;
 
 html = html.replace(bootstrapBlock[0], classicBootScript);
@@ -442,6 +478,35 @@ if (!html.includes('mavero-wgt-boot-banner')) {
   problems.push('boot banner missing');
 }
 
+// §6 — polyfill assertions: the file must sit at the widget root, the shell
+// must load it BEFORE the bundle, and it must define the three APIs the TV
+// actually lacks (the crash list from the boot overlay).
+if (!existsSync(polyfillTargetPath)) {
+  problems.push('polyfill.js was not written to the widget root');
+} else if (statSync(polyfillTargetPath).size === 0) {
+  problems.push('polyfill.js at the widget root is empty');
+}
+const polyfillTagIndex = html.indexOf('<script src="./polyfill.js"></script>');
+const bundleTagIndex = html.indexOf('<script src="./app.js" defer></script>');
+if (polyfillTagIndex === -1) {
+  problems.push('no <script src="./polyfill.js"> tag in the shell — the polyfill would never load');
+}
+if (bundleTagIndex === -1) {
+  problems.push('no <script src="./app.js" defer> boot tag in the shell');
+}
+if (polyfillTagIndex !== -1 && bundleTagIndex !== -1 && polyfillTagIndex > bundleTagIndex) {
+  problems.push('the polyfill script tag comes AFTER the bundle tag — the globals would be missing at module evaluation');
+}
+if (!/Object\.hasOwn\s*=/.test(polyfillSource)) {
+  problems.push('polyfill.js does not define Object.hasOwn — the TV boot crash would persist');
+}
+if (!/String\.prototype\.replaceAll\s*=/.test(polyfillSource)) {
+  problems.push('polyfill.js does not define String.prototype.replaceAll');
+}
+if (!/WeakRef/.test(polyfillSource)) {
+  problems.push('polyfill.js does not define a WeakRef shim');
+}
+
 if (problems.length > 0) {
   console.error('wgt_patch_shell: PATCH FAILED self-verification:');
   for (const p of problems) console.error('  - ' + p);
@@ -452,7 +517,8 @@ writeFileSync(target, html);
 const attrCount = attrRewrites ? attrRewrites.length : 0;
 console.log(
   `wgt_patch_shell: patched the built shell — module bootstrap replaced with the classic ` +
-    `boot (env global __sveltekit_${kitHash} + <script src="./app.js" defer>), ` +
+    `boot (env global __sveltekit_${kitHash} + <script src="./polyfill.js"> + <script src="./app.js" defer>), ` +
+    `polyfill.js written to the widget root (${polyfillWrittenBytes} bytes), ` +
     `${modulePreloadCount} modulepreload link(s) stripped, ${umamiRemoved} Umami loader ` +
     `block(s) removed, ${cssCount} stylesheet link(s) injected, absolute asset paths rewritten ` +
     `(/_app/ strings + ${attrCount} href/src attributes), boot URL normalizer + on-screen ` +
