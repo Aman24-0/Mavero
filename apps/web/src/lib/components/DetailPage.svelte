@@ -137,6 +137,12 @@
   let downloadProvidersLoaded = $state(false);
   let downloadProvidersLoading = $state(false);
   let downloadProvidersFailed = $state(false);
+  // TASK — JSON provider preflight. providerId -> true ONLY when a
+  // /api/downloader/json resolve for the CURRENT media context returned
+  // >= 1 link. Fail-closed: an unresolved / zero-link / errored / timed-out
+  // type='json' provider is OMITTED from the sheet entirely (never an
+  // "empty" downloader showing "No download links found for this title.").
+  let jsonProvidersWithLinks = $state<Record<string, boolean>>({});
   // Phase 2 downloader refinement: the episode-card download target.
   // When the user clicks an episode's Download button, SeasonEpisodes
   // fires onDownload(season, episode) which sets these two values + opens
@@ -243,6 +249,14 @@
   // missing one.
   const trailerKeyValid = $derived(/^[A-Za-z0-9_-]{1,64}$/.test(trailerKey));
   const hasTrailer = $derived(trailerKeyValid && Boolean(trailerKey));
+  // TASK — YouTube error 153 fix. Error 153 means the embed could not verify
+  // the embedding origin/referrer. The trailer iframes below now (a) send
+  // the page origin through the `origin` embed param (JS API handshake), and
+  // (b) let the browser deliver an origin-only Referer via
+  // referrerpolicy="origin". The origin is skipped on file:// widget builds
+  // where location.origin is the non-verifiable string "null" — the fix
+  // targets normal https origins (production web).
+  const trailerOrigin = typeof location !== 'undefined' && location.origin && location.origin !== 'null' ? location.origin : '';
   const castMembers = $derived(item.cast ?? []);
 
   // ============================================================
@@ -816,7 +830,14 @@
   // this list when it has providers; when the prefetch is loading/failed/empty,
   // the sheet itself renders the appropriate state (loading spinner, error
   // retry, or empty "no downloaders" message).
-  const visibleDownloadProviders = $derived(filterProvidersByMediaType(downloadProviders, downloadMediaType));
+  // TASK — JSON preflight: type='json' providers additionally require a
+  // PROVEN >= 1-link resolve (jsonProvidersWithLinks) before they are
+  // listed; 'embed' providers pass through untouched (iframes, no probe).
+  const visibleDownloadProviders = $derived(
+    filterProvidersByMediaType(downloadProviders, downloadMediaType).filter(
+      (provider) => provider.type !== 'json' || jsonProvidersWithLinks[provider.id] === true
+    )
+  );
   // Phase E final corrective (§6): the top-level Download button is shown
   // for ALL movie-like items UNCONDITIONALLY — it must NOT be gated on
   // `downloadProvidersLoaded` or `visibleDownloadProviders.length > 0`.
@@ -854,6 +875,90 @@
       downloadProvidersLoading = false;
     }
   }
+
+  // ============================================================
+  // TASK — JSON provider preflight (no empty JSON downloaders).
+  //
+  // A type='json' provider (e.g. HQ-ORG Audio) resolves to a link list
+  // through /api/downloader/json. When that resolve returns ZERO links,
+  // the provider must never appear in the downloader dropdown — selecting
+  // it previously showed "No download links found for this title."
+  //
+  // Verdict rules (fail-closed):
+  //   * resolved with >= 1 link  -> provider listed
+  //   * resolved with 0 links    -> provider omitted
+  //   * failed / timed out (8s)  -> provider omitted
+  //   * still probing            -> provider omitted (resolved immediately
+  //                                 on config load, so the window is short)
+  // 'embed' providers are NEVER probed — they are iframes, not link lists.
+  // ============================================================
+
+  // Identity of the download context the probe verdicts belong to. JSON
+  // link lists are per-title AND per-episode, so the key includes the
+  // season/episode targets (undefined for the movie-level sheet).
+  const jsonProbeContextKey = $derived(
+    `${downloadMediaType}|${downloadTmdbId}|${item.title ?? ''}|${downloadTargetSeason ?? ''}|${downloadTargetEpisode ?? ''}`
+  );
+
+  async function probeJsonProvider(provider: PublicDownloadProvider): Promise<boolean> {
+    // Same request shape the sheet's inline JsonDownload panel sends, so
+    // the preflight verdict matches what the panel would have shown.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    try {
+      const params = new URLSearchParams({
+        providerId: provider.id,
+        mediaType: downloadMediaType,
+        tmdbId: downloadTmdbId,
+      });
+      if (item.title) params.set('title', item.title);
+      if (type) params.set('contentType', type);
+      if (downloadMediaType === 'tv' && downloadTargetSeason !== undefined) params.set('season', String(downloadTargetSeason));
+      if (downloadMediaType === 'tv' && downloadTargetEpisode !== undefined) params.set('episode', String(downloadTargetEpisode));
+      const res = await fetch(`/api/downloader/json?${params.toString()}`, {
+        headers: { accept: 'application/json' },
+        signal: controller.signal,
+      });
+      if (!res.ok) return false;
+      const payload = (await res.json()) as { ok?: boolean; links?: unknown[] };
+      return Boolean(payload.ok) && Array.isArray(payload.links) && payload.links.length >= 1;
+    } catch {
+      // Network error, 8s timeout (abort), or malformed payload — fail closed.
+      return false;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async function resolveJsonProviders(contextKey: string): Promise<void> {
+    const jsonCandidates = filterProvidersByMediaType(downloadProviders, downloadMediaType).filter(
+      (provider) => provider.type === 'json'
+    );
+    // Fail-closed default: omit every json provider until THIS context's
+    // resolve proves it has links (also clears a previous context's verdicts).
+    jsonProvidersWithLinks = {};
+    if (jsonCandidates.length === 0) return;
+    const verdicts = await Promise.all(
+      jsonCandidates.map(async (provider) => ({ id: provider.id, hasLinks: await probeJsonProvider(provider) }))
+    );
+    // Apply only when the context is unchanged — a stale verdict from a
+    // previous title/episode must never leak through.
+    if (contextKey !== jsonProbeContextKey) return;
+    const proven: Record<string, boolean> = {};
+    for (const verdict of verdicts) {
+      if (verdict.hasLinks) proven[verdict.id] = true;
+    }
+    jsonProvidersWithLinks = proven;
+  }
+
+  // Probe trigger: fires when the registry finishes loading (mount prefetch,
+  // retry) AND whenever the download context changes — client-side
+  // detail→detail navigation or an episode switch re-probes, because JSON
+  // link lists are per-title and per-episode. $effect never runs during SSR.
+  $effect(() => {
+    if (!downloadProvidersLoaded) return;
+    void resolveJsonProviders(jsonProbeContextKey);
+  });
 
   // Phase 2-K: retry entry point — re-attempts the prefetch when the user
   // clicks the inline Retry affordance.
@@ -955,12 +1060,12 @@
         {#if trailerStatus !== 'error'}
           {#key trailerAttempt}
             <iframe
-              src={`https://www.youtube.com/embed/${trailerKey}?autoplay=1&rel=0`}
+              src={`https://www.youtube.com/embed/${trailerKey}?autoplay=1&rel=0&playsinline=1&enablejsapi=1${trailerOrigin ? `&origin=${encodeURIComponent(trailerOrigin)}` : ''}`}
               title={`${item.title} trailer`}
               allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
               allowfullscreen
               sandbox="allow-scripts allow-same-origin allow-presentation allow-popups"
-              referrerpolicy="no-referrer"
+              referrerpolicy="origin"
               onload={() => { clearTrailerLoadTimeout(); trailerStatus = 'ready'; }}
               onerror={() => { clearTrailerLoadTimeout(); trailerStatus = 'error'; }}
             ></iframe>
@@ -1381,12 +1486,12 @@
       {#if trailerStatus !== 'error'}
         {#key trailerAttempt}
           <iframe
-            src={`https://www.youtube.com/embed/${trailerKey}?autoplay=1&rel=0`}
+            src={`https://www.youtube.com/embed/${trailerKey}?autoplay=1&rel=0&playsinline=1&enablejsapi=1${trailerOrigin ? `&origin=${encodeURIComponent(trailerOrigin)}` : ''}`}
             title={`${item.title} trailer`}
             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
             allowfullscreen
             sandbox="allow-scripts allow-same-origin allow-presentation"
-            referrerpolicy="no-referrer"
+            referrerpolicy="origin"
             onload={() => {
               clearTrailerLoadTimeout();
               trailerStatus = 'ready';

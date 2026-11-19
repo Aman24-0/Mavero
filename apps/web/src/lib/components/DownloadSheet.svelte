@@ -6,7 +6,7 @@
 
 <script lang="ts">
   import { onDestroy } from 'svelte';
-  import { X, ExternalLink, ChevronDown, AlertTriangle, Loader2, Info, ArrowLeftRight, RotateCw } from 'lucide-svelte';
+  import { X, ExternalLink, ChevronDown, AlertTriangle, Loader2, CalendarClock, Info, ArrowLeftRight, RotateCw } from 'lucide-svelte';
   import {
     filterProvidersByMediaType,
     getDownloadUrlCandidates,
@@ -679,6 +679,33 @@
           {/if}
         </div>
       {/if}
+
+      {#if alternateUrl}
+        <!-- Restored "Try with year" alternate-URL affordance — now a
+             BOTTOM-LEFT overlay FAB. alternateUrl is produced ONLY by the
+             deterministic Cineverse title-slug provider, so the {#if} gate
+             alone restricts the FAB to that downloader (other providers —
+             inline panels, JSON downloaders, 4K — never set it). Toggling
+             swaps the iframe src between the year-less primary slug URL and
+             the year-suffixed alternate; the load/error state resets so the
+             spinner shows during the swap and a prior error state can never
+             leave the toggle dead. -->
+        <button
+          type="button"
+          class="dl-year-fab"
+          class:dl-year-fab-lifted={usesExternalServers && !externalBannerDismissed && !iframeError}
+          onclick={() => {
+            useAlternate = !useAlternate;
+            iframeLoading = true;
+            iframeError = false;
+          }}
+          aria-pressed={useAlternate}
+          title={useAlternate ? 'Switch back to the primary URL' : 'Try the year-suffixed URL'}
+        >
+          <CalendarClock size={16} />
+          <span class="dl-year-fab-label">{useAlternate ? 'Use primary' : 'Try with year'}</span>
+        </button>
+      {/if}
     </div>
   </div>
 {/if}
@@ -1073,6 +1100,34 @@
     transition: color 180ms ease, border-color 180ms ease;
   }
   .dl-server-banner-close:hover { color: #f5f5f5; border-color: rgba(255, 255, 255, 0.28); }
+
+  /* Restored "Try with year" alternate-URL FAB (Cineverse only —
+     alternateUrl exists exclusively for the deterministic Cineverse
+     title-slug provider). FIXED overlay at the sheet's BOTTOM-LEFT: the
+     control and its label are fully transparent (no chip/panel behind the
+     text) — only the small icon reads as the FAB; the label sits to the
+     RIGHT of the icon and brightens on hover/focus. */
+  .dl-year-fab {
+    position: absolute;
+    left: 14px;
+    bottom: 14px;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: transparent;
+    border: 0;
+    padding: 8px;
+    font-family: inherit;
+    font-size: 0.72rem;
+    color: var(--color-text-muted, #b7b7bd);
+    cursor: pointer;
+    z-index: 5;
+  }
+  .dl-year-fab-label { background: transparent; }
+  .dl-year-fab:hover, .dl-year-fab:focus-visible { color: var(--color-text, #f5f5f5); }
+  /* The Cineverse external-server info banner occupies the sheet's bottom
+     strip; lift the FAB above it so the two never overlap badly. */
+  .dl-year-fab.dl-year-fab-lifted { bottom: 58px; }
 
   /* Desktop: center the sheet instead of bottom-anchoring, but keep the
      70vh height contract. */
