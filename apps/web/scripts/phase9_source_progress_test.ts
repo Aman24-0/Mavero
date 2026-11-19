@@ -36,7 +36,7 @@ assert.doesNotMatch(watchRoute, /\$: if \(!selectedSourceId && sourceOptions\.le
 // saved source remains the fallback when no default is configured. The
 // three-tier validation + fallback chain itself (the Phase 9 intent) is
 // unchanged.
-assert.match(watchRoute, /defaultValid \? defaultSourceId! : \(savedValid \? savedSourceId! : sourceOptions\[0\]\.id\)/, 'priority: default → saved → fallback (admin default authoritative, 1996029)');
+assert.match(watchRoute, /defaultValid \? defaultSourceId! : \(savedValid \? savedSourceId! : \(sourceOptions\[0\]\?\.id \?\? ''\)\)/, 'priority: default → saved → fallback (admin default authoritative, 1996029; TV-UX pass: the final fallback is optional-chained so the widget build — whose TV bootstrap fetches streamingConfig async, leaving sourceOptions empty at init — can never crash on a Play press; the resolved value is the identical first source)');
 
 // prepareSource also gated on progressReady
 assert.match(watchRoute, /\$: if \(browser && progressReady && selectedSourceId && resolutionState === 'idle'\) void prepareSource\(\)/, 'prepareSource gated on progressReady');

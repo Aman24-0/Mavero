@@ -76,7 +76,7 @@ async function run() {
     ok(/api\/content\/series\/\$\{encodeURIComponent\(item\.id\)\}\/season\/\$\{season\}/.test(watch), 'C1. the watch page fetches via the EXISTING /api/content/series/[id]/season/[season] endpoint');
     ok(/payload\?\.ok \|\| !Array\.isArray\(payload\.season\?\.episodes\)/.test(watch), 'C2. parses the established {ok, season:{episodes}} contract');
     ok(!/api\/content\/.*season.*\+server/.test('') && seasonApi.includes('getSeriesSeason'), 'C3. the endpoint itself is UNCHANGED (no duplicate season API)');
-    ok(/getEligibleSeasons\(item\.seasonsData\)/.test(watch), 'C4. season options derive from item.seasonsData via getEligibleSeasons (the detail page selector helper)');
+    ok(/getEligibleSeasons\(item\?\.seasonsData\)/.test(watch), 'C4. season options derive from item.seasonsData via getEligibleSeasons (the detail page selector helper; TV-UX pass: optional-chained — the widget build bootstraps `item` async from the TV API, and getEligibleSeasons already tolerates undefined)');
     ok(/import \{ getEligibleSeasons \} from '\$lib\/shared\/episode-eligibility'/.test(watch), 'C5. the eligibility helper is the shared one (no second implementation)');
   }
 
