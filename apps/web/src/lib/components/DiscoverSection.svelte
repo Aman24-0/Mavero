@@ -45,6 +45,12 @@
   import { ArrowRight, ChevronLeft, ChevronRight, LoaderCircle, Plus, RotateCw } from 'lucide-svelte';
   import type { MediaItem } from '$data/content';
   import MediaCard from '$components/MediaCard.svelte';
+  // TV-UX pass 3 (widget build only): the Discover rail's Show More hands TV
+  // focus to the first newly-added card after the append — the same contract
+  // ContentRail's tvLoadMore owns for the Explorer rails (focus must never
+  // vanish into the loading endcap). Compile-time no-op on production.
+  import { IS_WGT_BUILD } from '$lib/shared/build-mode';
+  import { focusTvElement } from '$lib/tv/focus';
   import DiscoverDropdown from '$components/DiscoverDropdown.svelte';
   import SkeletonCard from '$components/SkeletonCard.svelte';
   import { getCachedRail, setCachedRail } from '$lib/client/discover/rail-cache';
@@ -414,6 +420,13 @@
     // a newer language-switch first-load.
     loadingMore = true;
     showMoreError = ''; // Phase 2-L: clear any previous Show-more error.
+    // TV-UX pass 3 (bug 8c): the boundary the append must hand TV focus to
+    // (the endcap button disables while loading and drops DOM focus — the
+    // handoff below restores it onto the first NEW card). The handoff is
+    // USER-INITIATED ONLY: the row-fill driver also calls loadMore() in the
+    // background, and that must never steal focus from wherever the user is.
+    const tvFocusHandoff = IS_WGT_BUILD && Boolean(railEl && railEl.querySelector('.show-more-card') === document.activeElement);
+    const tvFocusBoundary = items.length;
     try {
       const nextPage = currentPage + 1;
       // Phase 8 fix: build the COMBINED exclude list (higher-priority
@@ -439,6 +452,21 @@
       }
       currentPage = nextPage;
       hasNextPage = Boolean(payload.hasNextPage);
+      // TV-UX pass 3 (bug 8c, widget build only): focus CONTINUES into the
+      // new cards — two frames past the Svelte flush, then the card at the
+      // pre-fetch boundary. Production never evaluates this branch.
+      if (tvFocusHandoff && items.length > tvFocusBoundary) {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            try {
+              const cards = railEl?.querySelectorAll<HTMLElement>('.mc-wrap .mc-card-link');
+              if (cards && cards.length > tvFocusBoundary) focusTvElement(cards[tvFocusBoundary]);
+            } catch {
+              /* focus handoff is best-effort */
+            }
+          });
+        });
+      }
     } catch (error) {
       if (requestId !== requestSequence) return;
       // Phase 2-L: keep existing items visible AND surface a transient

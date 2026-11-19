@@ -907,10 +907,16 @@ function section_regression(): void {
   // visible text was removed; the accessible name carries the semantics),
   // so the pinned icon line gained aria-hidden and an 18px glyph for the
   // square 52px target — the downloader action model lines are unchanged.
+  // TV-UX pass 2/3 (BUILD_TARGET=wgt): the Download button writes its
+  // dialog ARIA attributes CONDITIONALLY (on the widget the button is a
+  // permanently disabled dummy — no sheet, no crash), so the pinned
+  // aria line is the new conditional source text.
   const detailPageSrc = read('src/lib/components/DetailPage.svelte');
   for (const pinned of [
     'function openDownloadSheet(',
-    'aria-haspopup="dialog" aria-expanded={downloadSheetOpen}',
+    "aria-haspopup={IS_WGT_BUILD ? undefined : 'dialog'}",
+    'aria-expanded={IS_WGT_BUILD ? undefined : downloadSheetOpen}',
+    'disabled={IS_WGT_BUILD || undefined}',
     'showDownloadButton',
     'showDownloadFailure',
     'class="download-btn download-unavailable"',

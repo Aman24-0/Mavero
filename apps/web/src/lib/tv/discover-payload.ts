@@ -139,12 +139,38 @@ function dedupeById(items: MediaItem[]): MediaItem[] {
 // 1080p screens: w1280 (~210 KB) is visually equivalent there. Downgrading
 // the TV payload's backdropHero keeps the shared <picture> markup and the
 // production web app untouched while every TV hero loads w1280.
+//
+// STAGE pass 3 (bug 2 — "Discover hero backdrop missing"): the Discover
+// hero renders from `backdrop || poster` (<picture>: backdropHero ||
+// backdrop || backdropSmall || poster). Some upstream rows can arrive
+// WITHOUT the backdrop tiers (an older deployment / a presenter gap) — the
+// hero then renders its poster-only look or nothing at all. The TV layer
+// therefore GUARANTEES the tiers: a missing `backdrop` is synthesized from
+// the item's own TMDB image path upgraded to w1280 (same asset path, the
+// poster IS a TMDB file — swapping the size segment is the exact URL the
+// server-side mapper would have produced), and `backdropHero` always
+// lands on the w1280 tier.
 // ---------------------------------------------------------------------------
+function tmdbPathAtSize(url: string | undefined, size: 'w1280' | 'w780'): string | undefined {
+  if (!url || typeof url !== 'string') return undefined;
+  const match = url.match(/^(https:\/\/image\.tmdb\.org\/t\/p\/)[^/]+(\/.+)$/);
+  return match ? `${match[1]}${size}${match[2]}` : undefined;
+}
+
 function downgradeHeroImages(item: MediaItem): MediaItem {
   if (!item || typeof item !== 'object') return item;
-  const backdrop = typeof item.backdrop === 'string' ? item.backdrop : '';
-  const fallback = backdrop || item.backdropSmall || item.poster;
-  return { ...item, backdropHero: fallback || item.backdropHero };
+  const backdrop =
+    typeof item.backdrop === 'string' && item.backdrop.trim()
+      ? item.backdrop
+      : tmdbPathAtSize(item.backdropSmall, 'w1280') ??
+        tmdbPathAtSize(item.poster, 'w1280') ??
+        '';
+  const backdropSmall =
+    typeof item.backdropSmall === 'string' && item.backdropSmall.trim()
+      ? item.backdropSmall
+      : tmdbPathAtSize(backdrop, 'w780') ?? tmdbPathAtSize(item.poster, 'w780');
+  const fallback = backdrop || backdropSmall || item.poster;
+  return { ...item, backdrop, backdropSmall, backdropHero: fallback || item.backdropHero };
 }
 
 function normalizeItems(items: MediaItem[]): MediaItem[] {

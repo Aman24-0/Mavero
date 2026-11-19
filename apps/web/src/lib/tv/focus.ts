@@ -329,15 +329,21 @@ function cardLayoutRect(el: HTMLElement, shift: number): Rect {
   return { ...visual, left: visual.left + shift, right: visual.right + shift, cx: visual.cx + shift };
 }
 
-/** Is the card inside its rail's VISIBLE window (used by up/down banding)? */
+/**
+ * Is the card inside its rail's VISIBLE window (used by up/down banding)?
+ * TV-UX pass 3 (bug 8): the check reads the card's VISUAL rect (the CSS
+ * transform already applied) against the untransformed wrapper — after a
+ * rail has slid, the layout-coordinate version mis-counted both edges
+ * (cards visually off-screen counted as visible, and vice versa), so
+ * vertical walks and the "first visible card" resolution drifted.
+ */
 function isCardInRailWindow(el: HTMLElement): boolean {
   try {
     const rail = rowContainerOf(el);
     if (!rail) return true;
     const wrap = rail.parentElement;
     if (!wrap) return true;
-    const shift = shiftOfRail(rail);
-    const card = cardLayoutRect(el, shift);
+    const card = rectOf(el); // VISUAL rect — includes the applied transform
     const windowLeft = wrap.getBoundingClientRect().left;
     const windowRight = wrap.getBoundingClientRect().right;
     return card.left >= windowLeft - 4 && card.right <= windowRight + 4;
@@ -349,6 +355,17 @@ function isCardInRailWindow(el: HTMLElement): boolean {
 /**
  * Slide the rail so the focused card is fully inside the visible window.
  * Called after EVERY in-rail focus move (Samsung rule 5).
+ *
+ * TV-UX pass 3 (bug 8 — "Right scrolls but no new cards; Left never slides
+ * back"): the previous math added the CURRENT shift to the target a second
+ * time (card.left here is the LAYOUT coordinate = visual + shift, so the
+ * target shift must be derived from it DIRECTLY). Every slide-after-first
+ * over-shot by exactly the current shift — Right saturated at the rail's
+ * max shift (past the real cards) and Left moved the rail the WRONG WAY
+ * (deeper left instead of back). The corrected targets:
+ *   right edge: shift' = cardLayoutRight − windowRight + gap
+ *   left edge:  shift' = cardLayoutLeft  − windowLeft  − gap
+ * (both clamped to [0, maxShift] by applyRailShift).
  */
 function ensureRailCardVisible(el: HTMLElement): void {
   try {
@@ -357,7 +374,7 @@ function ensureRailCardVisible(el: HTMLElement): void {
     const wrap = rail.parentElement;
     if (!wrap) return;
     const shift = shiftOfRail(rail);
-    const card = cardLayoutRect(el, shift);
+    const card = cardLayoutRect(el, shift); // LAYOUT rect (transform-agnostic)
     const wrapRect = wrap.getBoundingClientRect();
     const style = getComputedStyle(rail);
     const padLeft = parseFloat(style.paddingLeft || '0') || 0;
@@ -366,8 +383,8 @@ function ensureRailCardVisible(el: HTMLElement): void {
     const windowRight = wrapRect.right - padRight;
     const gap = 12; // peek margin so the next card's edge hints at more content
     let next = shift;
-    if (card.right > windowRight) next = card.right - windowRight + shift + gap;
-    else if (card.left < windowLeft) next = card.left - windowLeft + shift - gap;
+    if (card.right > windowRight) next = card.right - windowRight + gap;
+    else if (card.left < windowLeft) next = card.left - windowLeft - gap;
     if (Math.abs(next - shift) > 1) applyRailShift(rail, next);
   } catch {
     /* cosmetic */
@@ -649,7 +666,15 @@ function bandByTop(elements: HTMLElement[]): RowGroup[] {
   for (const el of sorted) {
     const rect = rectOf(el);
     const height = Math.max(24, rect.bottom - rect.top);
-    if (!current || rect.top > current.bottom + height * 0.6) {
+    // TV-UX pass 3 (bug 9 — search Down stopped at the chips): the old
+    // tolerance (height * 0.6) scaled with the PREVIOUS element's height —
+    // a tall media card (~400px) contributed a ~240px tolerance that
+    // SWALLOWED the next visual row (the search results grid banded into
+    // ONE group, so the chip row's Down found no group below and stopped).
+    // The tolerance is now capped at 48px: same-band controls still group,
+    // a tall card can no longer bridge two grid rows.
+    const tolerance = Math.min(height * 0.6, 48);
+    if (!current || rect.top > current.bottom + tolerance) {
       current = { container: null, isGrid: false, top: rect.top, bottom: rect.bottom, members: [el] };
       groups.push(current);
       continue;
@@ -829,6 +854,27 @@ function heroTargets(): HTMLElement[] {
   }
 }
 
+/**
+ * The hero's ENTRY target (TV-UX pass 3, bugs 1+3): the ACTIVE slide's
+ * PRIMARY control — the Play link, first in the actions row's DOM order.
+ * heroTargets() also contains the nav cluster (dots/arrows), and a column
+ * anchored mid-screen used to resolve Up/Right entries to the DOTS — the
+ * reported "entering the hero lands on the slide dots". Every ENTRY into
+ * the hero (boot seed, sidebar Right, Up from content) must land on Play;
+ * the dots stay reachable only by deliberately walking Right past the
+ * slide's own buttons — never as the default landing.
+ */
+function heroPrimaryTarget(): HTMLElement | null {
+  try {
+    const actions = heroTargets().filter((el) => !el.closest('.hero-nav, .spotlight-nav'));
+    if (actions.length) return actions[0];
+    const peers = heroTargets();
+    return peers.length ? peers[0] : null;
+  } catch {
+    return null;
+  }
+}
+
 /** The FIRST card (leftmost, column-aligned) of the FIRST rail below the hero. */
 function firstCardOfFirstRailBelowHero(): HTMLElement | null {
   try {
@@ -900,28 +946,48 @@ function firstMainFocusable(): HTMLElement | null {
 }
 
 /**
- * Content entry point for "Right from the sidebar" (bug 1/7): the HERO
- * carousel's primary control (the active slide's Play) when the page has
- * one — the sidebar → hero → filters → first rail flow starts here —
- * otherwise the remembered content element (pages without a hero, e.g.
- * search), else the first rail's first card, else the first main control.
+ * Content entry point for "Right from the sidebar" (bugs 1/7 + pass-3 bug
+ * 10): the PAGE'S TOP element — the hero carousel's primary control (the
+ * active slide's Play) when the page has one; on pages WITHOUT a hero the
+ * TOPMOST focusable in the content area (the top-most rail heading/filter
+ * control, the search input, the detail Back button — never a mid-page
+ * element). The remembered lastContentFocus is deliberately NOT consulted:
+ * the entry target is the top of the content, not its vertical centre.
  */
 function contentEntryTarget(): HTMLElement | null {
   try {
-    const heroPeers = heroTargets();
-    if (heroPeers.length) return heroPeers[0];
+    const primary = heroPrimaryTarget();
+    if (primary) return primary;
   } catch {
     /* fall through */
   }
   try {
-    if (lastContentFocus && lastContentFocus.isConnected && isVisible(lastContentFocus)) {
-      return lastContentFocus;
+    // Top-most content element (bug 10): the smallest rect.top wins; ties
+    // (a horizontal row) resolve to the LEFTMOST member. Off-screen rails
+    // contribute only their in-window cards; a rail heading row above the
+    // cards is nearer the top and wins for exactly the "top-most rail
+    // heading" contract.
+    const candidates = collectFocusables().filter((el) => {
+      const region = regionOf(el);
+      if (region === 'sidebar' || region === 'dialog') return false;
+      if (region === 'rail' || region === 'grid') return isCardInRailWindow(el);
+      return true;
+    });
+    if (candidates.length) {
+      let best = candidates[0];
+      let bestRect = rectOf(best);
+      for (const el of candidates) {
+        const rect = rectOf(el);
+        if (rect.top < bestRect.top - 8 || (Math.abs(rect.top - bestRect.top) <= 8 && rect.cx < bestRect.cx)) {
+          best = el;
+          bestRect = rect;
+        }
+      }
+      return best;
     }
   } catch {
     /* fall through */
   }
-  const firstRailCard = firstCardOfFirstRailBelowHero();
-  if (firstRailCard) return firstRailCard;
   return firstMainFocusable();
 }
 
@@ -943,22 +1009,23 @@ function routeKeyNow(): string {
 }
 
 /**
- * Boot focus target (bug 1/7): the HERO carousel's primary control when the
- * page has one — every page entry lands on the hero first (the exact
- * sidebar → hero → filters → first rail order the TV feedback demands) —
- * then the first rail card, the first main control, the sidebar's active
- * item, the first sidebar link, anything. Seeded SILENTLY (no scroll — the
- * TV boots showing the hero).
+ * Boot focus target (bugs 1/7 + pass-3 bug 3): the HERO carousel's PRIMARY
+ * control (the active slide's Play — never the dots) when the page has one
+ * — every page entry lands on the hero first (the exact sidebar → hero →
+ * filters → first rail order the TV feedback demands) — then the first
+ * rail card, the first main control, the sidebar's active item, the first
+ * sidebar link, anything. Seeded SILENTLY (no scroll — the TV boots
+ * showing the hero).
  */
 function seedFocusTarget(): HTMLElement | null {
-  const heroPeers = (() => {
+  const heroPrimary = (() => {
     try {
-      return heroTargets();
+      return heroPrimaryTarget();
     } catch {
-      return [] as HTMLElement[];
+      return null;
     }
   })();
-  if (heroPeers.length) return heroPeers[0];
+  if (heroPrimary) return heroPrimary;
   const firstRail = firstCardOfFirstRailBelowHero();
   if (firstRail) return firstRail;
   const inMain = firstMainFocusable();
@@ -1343,6 +1410,11 @@ function moveFocus(direction: 'up' | 'down' | 'left' | 'right', repeat = false):
     if (direction === 'left') {
       target = null; // no wrap, no exit to the left
     } else if (direction === 'right') {
+      // BUG 10 (pass 3): entering content lands on the PAGE'S TOP element
+      // (hero Play / top-most rail heading) — open the destination at the
+      // very top of both scrollers first, so the entry reads as "the top of
+      // the page", never the vertical centre of a scrolled page.
+      resetPageScroll();
       target = contentEntryTarget();
     } else {
       target = pickVerticalFlat(from, regionCandidates('sidebar', active), direction);
@@ -1400,16 +1472,31 @@ function moveFocus(direction: 'up' | 'down' | 'left' | 'right', repeat = false):
       // Right past the row's end: no wrap. A rail's trailing Show More
       // button (when present) is a natural row peer and wins first.
     } else {
-      target = pickVertical(from, contentCandidates(), direction);
+      // Up MUST NOT resolve INTO the hero group (bug 3): the hero's own
+      // controls (dots/arrows at the far right) are members of a geometric
+      // group, and a right-side column anchor used to resolve Up to the
+      // NAV CLUSTER instead of the entry Play. Exclude the hero from the
+      // candidates and use the ENTRY control directly when the content
+      // above is exhausted.
+      const above = direction === 'up'
+        ? contentCandidates().filter((el) => regionOf(el) !== 'hero')
+        : contentCandidates();
+      target = pickVertical(from, above, direction);
       if (!target && direction === 'up') {
-        // Topmost content row → the hero's controls.
-        const heroPeers = heroTargets();
-        if (heroPeers.length) {
-          const anchor = columnAnchor ?? from.cx;
-          target = heroPeers.reduce(
-            (best, el) => (Math.abs(rectOf(el).cx - anchor) < Math.abs(rectOf(best).cx - anchor) ? el : best),
-            heroPeers[0]
-          );
+        // Topmost content row → the hero's ENTRY control (bug 3): the active
+        // slide's Play — NEVER the dots cluster.
+        const heroPrimary = heroPrimaryTarget();
+        if (heroPrimary) {
+          target = heroPrimary;
+        } else {
+          const heroPeers = heroTargets();
+          if (heroPeers.length) {
+            const anchor = columnAnchor ?? from.cx;
+            target = heroPeers.reduce(
+              (best, el) => (Math.abs(rectOf(el).cx - anchor) < Math.abs(rectOf(best).cx - anchor) ? el : best),
+              heroPeers[0]
+            );
+          }
         }
       }
     }
@@ -1425,15 +1512,27 @@ function moveFocus(direction: 'up' | 'down' | 'left' | 'right', repeat = false):
         }
       }
     } else {
-      target = pickVertical(from, contentCandidates(), direction);
+      // Up from the filter row: the hero group is excluded (see the rail
+      // branch — the entry contract is Play, never the dots cluster).
+      const above = direction === 'up'
+        ? contentCandidates().filter((el) => regionOf(el) !== 'hero')
+        : contentCandidates();
+      target = pickVertical(from, above, direction);
       if (!target && direction === 'up') {
-        const heroPeers = heroTargets();
-        if (heroPeers.length) {
-          const anchor = columnAnchor ?? from.cx;
-          target = heroPeers.reduce(
-            (best, el) => (Math.abs(rectOf(el).cx - anchor) < Math.abs(rectOf(best).cx - anchor) ? el : best),
-            heroPeers[0]
-          );
+        // Filters → hero (bug 3): the active slide's Play is the entry
+        // control; the dots are never the default landing.
+        const heroPrimary = heroPrimaryTarget();
+        if (heroPrimary) {
+          target = heroPrimary;
+        } else {
+          const heroPeers = heroTargets();
+          if (heroPeers.length) {
+            const anchor = columnAnchor ?? from.cx;
+            target = heroPeers.reduce(
+              (best, el) => (Math.abs(rectOf(el).cx - anchor) < Math.abs(rectOf(best).cx - anchor) ? el : best),
+              heroPeers[0]
+            );
+          }
         }
       }
     }
@@ -1475,6 +1574,12 @@ function moveFocus(direction: 'up' | 'down' | 'left' | 'right', repeat = false):
 function handleKeydown(event: KeyboardEvent): void {
   const code = typeof event.keyCode === 'number' ? event.keyCode : 0;
   const key = event.key || '';
+
+  // The boot seed may only UPGRADE (bug 1) while the user has not acted;
+  // every real key press hands focus ownership to the user.
+  if (!userInteracted && (code === KEY_UP || code === KEY_DOWN || code === KEY_LEFT || code === KEY_RIGHT || code === KEY_ENTER || code === KEY_BACK || key === 'Enter' || key.startsWith('Arrow'))) {
+    userInteracted = true;
+  }
 
   // --- Back: overlay → status strip → open sheet → in-app history.back() --
   if (code === KEY_BACK || key === 'Back' || key === 'GoBack' || (key === 'Escape' && code === 0)) {
@@ -1643,30 +1748,63 @@ function registerTvKeys(): void {
   }
 }
 
-/** Seed focus once the shell has rendered (bounded polling — boot is async). */
+/**
+ * Has the user ACTED on the remote since boot? The boot seed (bug 1) may
+ * land on a provisional target BEFORE the page's hero renders (the TV
+ * payload arrives asynchronously; the footer's links are the only
+ * focusables while the skeleton shows). Until the user touches a key, the
+ * seed is allowed to UPGRADE to the hero's Play the moment it mounts —
+ * after the first keypress the seed never moves again (the user owns it).
+ */
+let userInteracted = false;
+
 function seedInitialFocus(): void {
   let attempts = 0;
   const tick = () => {
     attempts += 1;
-    if (attempts > 120) return; // ~30s ceiling; never poll forever
+    if (attempts > 240) return; // ~60s ceiling at 250ms; never poll forever
     if (isWatchRoute()) return; // the player surface owns focus there
-    const anyFocused = document.activeElement && document.activeElement !== document.body;
-    if (anyFocused) return;
-    const first = seedFocusTarget();
-    if (first) {
-      // SILENT seed: focus lands without scrolling so the TV boots showing
-      // the hero at the top (scrolling to the seeded element would yank the
-      // page). The first arrow press scrolls + reveals the ring.
-      applyFocusSilent(first);
-      try {
-        columnAnchor = rectOf(first).cx;
-        if (regionOf(first) !== 'sidebar') lastContentFocus = first;
-      } catch {
-        /* cosmetic */
+    const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    if (!active || !isVisible(active)) {
+      // Nothing focused yet: seed the content-first target and KEEP polling
+      // (the payload may still be in flight — the hero replaces this seed
+      // via the upgrade path below the moment it renders).
+      const first = seedFocusTarget();
+      if (first) {
+        // SILENT seed: focus lands without scrolling so the TV boots showing
+        // the hero at the top (scrolling to the seeded element would yank
+        // the page). The first arrow press scrolls + reveals the ring.
+        applyFocusSilent(first);
+        try {
+          columnAnchor = rectOf(first).cx;
+          if (regionOf(first) !== 'sidebar') lastContentFocus = first;
+        } catch {
+          /* cosmetic */
+        }
       }
+      setTimeout(tick, 250);
       return;
     }
-    setTimeout(tick, 250);
+    // BUG 1 (pass 3 — "pressing Down jumps to a far-down rail"): the seed
+    // landed on a provisional element (footer link / rail card) while the
+    // hero payload was still loading, and the old poller STOPPED at the
+    // first focus. While the user has not interacted yet, keep watching:
+    // the moment the page's hero mounts, the seed UPGRADES to its Play.
+    if (!userInteracted && regionOf(active) !== 'hero') {
+      const primary = seedFocusTarget();
+      if (primary && primary !== active && regionOf(primary) === 'hero') {
+        applyFocusSilent(primary);
+        try {
+          columnAnchor = rectOf(primary).cx;
+          lastContentFocus = primary;
+        } catch {
+          /* cosmetic */
+        }
+      }
+      setTimeout(tick, 250);
+      return;
+    }
+    // Focus sits on the hero (or the user interacted): the seed is final.
   };
   setTimeout(tick, 250);
 }
