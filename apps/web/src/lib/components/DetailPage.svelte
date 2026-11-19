@@ -1472,6 +1472,14 @@
   >
     <div class="trailer-sheet-head">
       <span class="trailer-sheet-title">{item.title} — Trailer</span>
+    </div>
+    <div class="trailer-sheet-frame">
+      <!-- TV-UX pass 5: the close X moved INTO the player frame (bottom-right,
+           just above YouTube's own fullscreen control — 64px clears the
+           embed's bottom control bar at 16:9). Same circular translucent
+           style as the inline player's close; the D-pad contract is
+           unchanged: focus still lands here on load (trailerSheetCloseEl)
+           and Back still closes via the sheet's keydown/dialog semantics. -->
       <button
         type="button"
         class="trailer-sheet-close"
@@ -1479,10 +1487,8 @@
         onclick={stopTrailer}
         aria-label="Close trailer"
       >
-        <X size={16} aria-hidden="true" /> <span>Close</span>
+        <X size={18} aria-hidden="true" />
       </button>
-    </div>
-    <div class="trailer-sheet-frame">
       {#if trailerStatus !== 'error'}
         {#key trailerAttempt}
           <iframe
@@ -2030,7 +2036,11 @@
     background: #000;
   }
   .trailer-inline-close {
-    position: absolute; top: 10px; right: 10px; z-index: 2;
+    /* TV-UX pass 5: the close X sits BOTTOM-RIGHT, just above YouTube's own
+       fullscreen control (the engine-owned ⤢ in the embed's bottom control
+       bar — 64px clears that bar at 16:9 without covering it). z-index
+       above the iframe keeps the button clickable. */
+    position: absolute; right: 12px; bottom: 64px; z-index: 6;
     display: grid; place-items: center; width: 38px; height: 38px;
     border: 1px solid rgba(255,255,255,.35); border-radius: 50%;
     background: rgba(0,0,0,.6); color: #fff; cursor: pointer;
@@ -2104,14 +2114,15 @@
     color: var(--color-text); font-size: .85rem; font-weight: 800;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
+  /* TV-UX pass 5: the close X lives INSIDE the player frame now (bottom-right,
+     above YouTube's fullscreen control) — circular translucent, same style
+     as the inline player's close (34–40px spec). */
   .trailer-sheet-close {
-    flex: 0 0 auto;
-    display: inline-flex; align-items: center; gap: 8px;
-    min-height: 46px; padding: 8px 22px;
-    border: 1px solid rgba(255, 255, 255, .35); border-radius: 999px;
-    color: #f2fff8; background: rgba(8, 11, 13, .8);
-    font: inherit; font-size: .85rem; font-weight: 800;
-    cursor: pointer;
+    position: absolute; right: 12px; bottom: 64px; z-index: 6;
+    display: grid; place-items: center; width: 38px; height: 38px;
+    border: 1px solid rgba(255, 255, 255, .35); border-radius: 50%;
+    background: rgba(8, 11, 13, .8); color: #f2fff8; cursor: pointer;
+    backdrop-filter: blur(8px);
   }
   .trailer-sheet-close:hover { background: rgba(0, 0, 0, .9); border-color: rgba(255, 255, 255, .6); }
   .trailer-sheet-frame {
