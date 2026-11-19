@@ -119,6 +119,19 @@
       const appended = await tvLoadMore();
       if (appended === null || appended.length === 0) {
         tvExhausted = true;
+        // EXHAUSTED: the button unmounts while focused — focus must NEVER
+        // fall to body (Samsung rule 6). Hand it to the row's LAST card so
+        // the rail end stays a walkable hard stop.
+        requestAnimationFrame(() => {
+          try {
+            const railCards = railEl?.querySelectorAll<HTMLElement>('.mc-wrap .mc-card-link');
+            if (railCards && railCards.length) {
+              focusTvElement(railCards[railCards.length - 1]);
+            }
+          } catch {
+            /* focus handoff is best-effort */
+          }
+        });
         return;
       }
     } finally {

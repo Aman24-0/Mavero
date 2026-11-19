@@ -156,6 +156,13 @@ function regionOf(el: Element | null): Region {
     if (el.closest('.hero, .spotlight')) return 'hero';
     if (el.closest('.rail')) return 'rail';
     if (el.closest('.explorer-grid')) return 'grid';
+    // TV-UX pass 2: RAIL HEADING rows are focus stops too (the reported
+    // "rail heading filter row not focusable"). Both the Discover section
+    // heads (type chips + language/provider dropdown + View all) and the
+    // Explorer filtered-results heading (title + Clear filters) join the
+    // filters region: Left/Right walk the head's controls, Up/Down cross
+    // to the hero or the rail cards below.
+    if (el.closest('.section-head, .results-heading')) return 'filters';
     if (el.closest('.explorer-filters, .filter-row, .recent-searches, .filter-bar')) return 'filters';
     return 'content';
   } catch {
@@ -167,17 +174,11 @@ function regionOf(el: Element | null): Region {
 function rowContainerOf(el: Element | null): HTMLElement | null {
   try {
     if (!el || typeof el.closest !== 'function') return null;
-    return el.closest<HTMLElement>('.rail, .explorer-grid, .chip-scroll');
+    // TV-UX pass 2: section-head / results-heading rows group their own
+    // controls (chips, dropdown, links) into one horizontal walk.
+    return el.closest<HTMLElement>('.rail, .explorer-grid, .chip-scroll, .section-head, .results-heading');
   } catch {
     return null;
-  }
-}
-
-function isHeroNavControl(el: Element | null): boolean {
-  try {
-    return Boolean(el && typeof el.closest === 'function' && el.closest('.hero-nav, .spotlight-nav'));
-  } catch {
-    return false;
   }
 }
 
@@ -608,15 +609,141 @@ function pickHorizontal(from: Rect, candidates: HTMLElement[], direction: 'left'
   return best;
 }
 
+/* -------------------------------------------------------------------------
+ * STRUCTURAL ROW GROUPS — the TV-UX pass 2 rewrite of the vertical move.
+ *
+ * The previous pass picked the vertical target with a geometric tolerance
+ * band around the nearest candidate; on the real rails that band leaked
+ * into the CURRENT row (the reported "pressing UP switches between the
+ * left/right cards instead of going to the row ABOVE"). The model is now
+ * STRUCTURAL: every focusable belongs to a ROW GROUP (a rail, an explorer
+ * grid row, a section-head/filter row, the hero, the sidebar list, a
+ * dialog, or a banded content row). Up/Down move BETWEEN groups — same-
+ * group elements are structurally unreachable vertically — then the member
+ * whose middle is closest to the remembered COLUMN wins (clamped, Samsung
+ * rules 2+3).
+ * ----------------------------------------------------------------------- */
+
+type RowGroup = { container: HTMLElement | null; isGrid: boolean; top: number; bottom: number; members: HTMLElement[] };
+
+/** Containers that are exactly ONE horizontal row of focus stops. */
+const ROW_CONTAINER_SELECTOR = [
+  '.rail',
+  '.section-head',
+  '.results-heading',
+  '.chip-row',
+  '.filter-row',
+  '.recent-searches',
+  '.filter-bar',
+  '.hero-nav',
+  '.spotlight-nav',
+  '.app-sidebar .sidebar-nav',
+  '[role="dialog"]'
+].join(', ');
+
+/** Band ungrouped candidates into visual rows (top coordinate bands). */
+function bandByTop(elements: HTMLElement[]): RowGroup[] {
+  const sorted = [...elements].sort((a, b) => rectOf(a).top - rectOf(b).top);
+  const groups: RowGroup[] = [];
+  let current: RowGroup | null = null;
+  for (const el of sorted) {
+    const rect = rectOf(el);
+    const height = Math.max(24, rect.bottom - rect.top);
+    if (!current || rect.top > current.bottom + height * 0.6) {
+      current = { container: null, isGrid: false, top: rect.top, bottom: rect.bottom, members: [el] };
+      groups.push(current);
+      continue;
+    }
+    current.members.push(el);
+    current.top = Math.min(current.top, rect.top);
+    current.bottom = Math.max(current.bottom, rect.bottom);
+  }
+  return groups;
+}
+
 /**
- * Vertical pick: the NEAREST ROW in the pressed direction, then the element
- * in that row whose middle is closest to the remembered COLUMN (clamped to
- * the row's own length — Samsung rules 2+3; no wrap, no random jumps).
+ * Group the candidates into structural row groups. Grids (.explorer-grid)
+ * and ungrouped content band by their rendered row tops; everything else
+ * groups by its nearest row container. The HERO is always ONE group whose
+ * members are ONLY the active slide's controls (heroTargets — offscreen
+ * slides must never win a spatial pick).
  */
-function pickVertical(from: Rect, candidates: HTMLElement[], direction: 'up' | 'down'): HTMLElement | null {
+function buildRowGroups(candidates: HTMLElement[]): RowGroup[] {
+  const groups: RowGroup[] = [];
+  const banded: HTMLElement[] = [];
+  const heroSet = new Set(heroTargets());
+  let heroGroup: RowGroup | null = null;
+  const byContainer = new Map<HTMLElement, RowGroup>();
+  for (const el of candidates) {
+    try {
+      const heroSection = el.closest('.hero, .spotlight');
+      if (heroSection && heroSet.size > 0 && heroSection.querySelector('.hero-track, .spotlight-track')) {
+        // CAROUSEL hero: the active slide's actions + the visible nav cluster
+        // form ONE group; offscreen slides are never members.
+        if (!heroSet.has(el)) continue;
+        const rect = rectOf(el);
+        if (!heroGroup) {
+          heroGroup = { container: null, isGrid: false, top: rect.top, bottom: rect.bottom, members: [el] };
+          groups.push(heroGroup);
+        } else {
+          heroGroup.members.push(el);
+          heroGroup.top = Math.min(heroGroup.top, rect.top);
+          heroGroup.bottom = Math.max(heroGroup.bottom, rect.bottom);
+        }
+        continue;
+      }
+      const container = el.closest<HTMLElement>(ROW_CONTAINER_SELECTOR);
+      if (!container) {
+        banded.push(el);
+        continue;
+      }
+      const rect = rectOf(el);
+      let group = byContainer.get(container);
+      if (!group) {
+        group = {
+          container,
+          isGrid: container.classList.contains('explorer-grid'),
+          top: rect.top,
+          bottom: rect.bottom,
+          members: [el]
+        };
+        byContainer.set(container, group);
+        groups.push(group);
+      } else {
+        group.members.push(el);
+        group.top = Math.min(group.top, rect.top);
+        group.bottom = Math.max(group.bottom, rect.bottom);
+      }
+    } catch {
+      /* an ungroupable candidate is simply skipped */
+    }
+  }
+  // Grid containers hold MULTIPLE visual rows — sub-band their members by
+  // their rendered row tops. The banded sub-groups replace the grid group
+  // wholesale (the container Map is rebuilt on every call, so a DOM swap
+  // never carries stale group state).
+  for (let i = groups.length - 1; i >= 0; i--) {
+    const group = groups[i];
+    if (group.isGrid && group.container) {
+      groups.splice(i, 1);
+      for (const sub of bandByTop(group.members)) groups.push(sub);
+    }
+  }
+  for (const sub of bandByTop(banded)) groups.push(sub);
+  return groups;
+}
+
+/**
+ * Flat vertical pick (geometric nearest in direction, column tiebreak) for
+ * surfaces where the structural row model does NOT apply: the sidebar's
+ * single-column nav list and dialogs/sheets whose controls mix rows and
+ * columns. The grouped pickVertical stays the model for page content.
+ */
+function pickVerticalFlat(from: Rect, candidates: HTMLElement[], direction: 'up' | 'down'): HTMLElement | null {
   const sign = direction === 'down' ? 1 : -1;
-  type Scored = { el: HTMLElement; rect: Rect; primary: number };
-  const scored: Scored[] = [];
+  let best: HTMLElement | null = null;
+  let bestScore = Infinity;
+  const anchor = columnAnchor ?? from.cx;
   for (const el of candidates) {
     let to: Rect;
     try {
@@ -625,28 +752,45 @@ function pickVertical(from: Rect, candidates: HTMLElement[], direction: 'up' | '
       continue;
     }
     const primary = (to.cy - from.cy) * sign;
-    if (primary <= 4) continue; // wrong direction / same row
-    scored.push({ el, rect: to, primary });
-  }
-  if (scored.length === 0) return null;
-  scored.sort((a, b) => a.primary - b.primary);
-  // The target ROW: everything whose vertical start is within a half-card of
-  // the nearest candidate's start (rails/grids render equal-height rows, so
-  // this band is exactly "the neighbouring row").
-  const nearest = scored[0];
-  const rowTolerance = Math.max(64, (from.bottom - from.top) * 0.75);
-  const row = scored.filter((entry) => entry.primary <= nearest.primary + rowTolerance);
-  const anchor = columnAnchor ?? from.cx;
-  let best = row[0];
-  let bestOffset = Math.abs(best.rect.cx - anchor);
-  for (const entry of row) {
-    const offset = Math.abs(entry.rect.cx - anchor);
-    if (offset < bestOffset) {
-      bestOffset = offset;
-      best = entry;
+    if (primary <= 2) continue; // wrong direction / same row
+    const score = primary + Math.abs(to.cx - anchor) * 0.4;
+    if (score < bestScore) {
+      bestScore = score;
+      best = el;
     }
   }
-  return best.el;
+  return best;
+}
+
+/**
+ * Vertical pick — the NEAREST ROW GROUP in the pressed direction, then the
+ * member whose middle is closest to the remembered column (Samsung rules
+ * 2+3; no wrap; same-group members are structurally unreachable).
+ */
+function pickVertical(from: Rect, candidates: HTMLElement[], direction: 'up' | 'down'): HTMLElement | null {
+  const groups = buildRowGroups(candidates);
+  if (groups.length === 0) return null;
+  type Scored = { group: RowGroup; distance: number };
+  const scored: Scored[] = [];
+  for (const group of groups) {
+    // RAW distance (group edge to the focused element's opposite edge) —
+    // smaller IS nearer in BOTH directions. (Multiplying by the direction
+    // sign inverted the ordering for Up: the FARTHEST group above sorted
+    // first and every Up move overshot to the hero.)
+    const distance = direction === 'down' ? group.top - from.bottom : from.top - group.bottom;
+    if (distance <= -Math.max(4, (from.bottom - from.top) * 0.5)) continue; // wrong direction / overlapping same row
+    scored.push({ group, distance });
+  }
+  if (scored.length === 0) return null;
+  scored.sort((a, b) => a.distance - b.distance);
+  // The nearest group in the pressed direction; among its members the one
+  // closest to the column anchor (remembered start point — Samsung rule 3).
+  const anchor = columnAnchor ?? from.cx;
+  const target = scored[0].group.members.reduce(
+    (best, el) => (Math.abs(rectOf(el).cx - anchor) < Math.abs(rectOf(best).cx - anchor) ? el : best),
+    scored[0].group.members[0]
+  );
+  return target;
 }
 
 /* -------------------------------------------------------------------------
@@ -756,11 +900,19 @@ function firstMainFocusable(): HTMLElement | null {
 }
 
 /**
- * Content entry point for "Right from the sidebar" and general seeding: the
- * remembered content element when it still exists, otherwise the first
- * rail's first card, otherwise the first main control.
+ * Content entry point for "Right from the sidebar" (bug 1/7): the HERO
+ * carousel's primary control (the active slide's Play) when the page has
+ * one — the sidebar → hero → filters → first rail flow starts here —
+ * otherwise the remembered content element (pages without a hero, e.g.
+ * search), else the first rail's first card, else the first main control.
  */
 function contentEntryTarget(): HTMLElement | null {
+  try {
+    const heroPeers = heroTargets();
+    if (heroPeers.length) return heroPeers[0];
+  } catch {
+    /* fall through */
+  }
   try {
     if (lastContentFocus && lastContentFocus.isConnected && isVisible(lastContentFocus)) {
       return lastContentFocus;
@@ -791,17 +943,28 @@ function routeKeyNow(): string {
 }
 
 /**
- * Boot focus target: the SIDEBAR'S ACTIVE ITEM (the sensible content element
- * the TV feedback asks for — it can never trigger the hero's keydown
- * handler, so Left/Right at app open can never change a slide), falling back
- * to the first rail card, then the first sidebar link, then any main
- * control. Seeded SILENTLY (no scroll — the TV boots showing the hero).
+ * Boot focus target (bug 1/7): the HERO carousel's primary control when the
+ * page has one — every page entry lands on the hero first (the exact
+ * sidebar → hero → filters → first rail order the TV feedback demands) —
+ * then the first rail card, the first main control, the sidebar's active
+ * item, the first sidebar link, anything. Seeded SILENTLY (no scroll — the
+ * TV boots showing the hero).
  */
 function seedFocusTarget(): HTMLElement | null {
-  const sidebarActive = activeSidebarLink();
-  if (sidebarActive) return sidebarActive;
+  const heroPeers = (() => {
+    try {
+      return heroTargets();
+    } catch {
+      return [] as HTMLElement[];
+    }
+  })();
+  if (heroPeers.length) return heroPeers[0];
+  const firstRail = firstCardOfFirstRailBelowHero();
+  if (firstRail) return firstRail;
   const inMain = firstMainFocusable();
   if (inMain) return inMain;
+  const sidebarActive = activeSidebarLink();
+  if (sidebarActive) return sidebarActive;
   const sidebarLink = firstSidebarLink();
   if (sidebarLink) return sidebarLink;
   const any = collectFocusables();
@@ -818,6 +981,7 @@ function restoreRouteFocus(): void {
     ensureRailCardVisible(saved);
     columnAnchor = rectOf(saved).cx;
     if (regionOf(saved) !== 'sidebar') lastContentFocus = saved;
+    setTvSidebarCollapsed(regionOf(saved) === 'sidebar');
     return;
   }
   // The saved element was unmounted (kit rebuilds page trees on navigation).
@@ -834,6 +998,7 @@ function restoreRouteFocus(): void {
             applyFocus(match);
             columnAnchor = rectOf(match).cx;
             if (regionOf(match) !== 'sidebar') lastContentFocus = match;
+            setTvSidebarCollapsed(false);
             return;
           }
         }
@@ -846,6 +1011,7 @@ function restoreRouteFocus(): void {
           applyFocus(match);
           columnAnchor = rectOf(match).cx;
           if (regionOf(match) !== 'sidebar') lastContentFocus = match;
+          setTvSidebarCollapsed(false);
           return;
         }
       }
@@ -858,13 +1024,27 @@ function restoreRouteFocus(): void {
     applyFocusSilent(first);
     columnAnchor = rectOf(first).cx;
     if (regionOf(first) !== 'sidebar') lastContentFocus = first;
+    // DETERMINISTIC SIDEBAR CONTRACT (bug 5): a route change always lands
+    // focus in the content area (the hero on pages that have one) — the
+    // sidebar collapses back to the icon rail with the navigation itself.
+    setTvSidebarCollapsed(regionOf(first) === 'sidebar');
   }
 }
+
+/**
+ * Direction of the last hash change. Browsers deliver popstate BEFORE
+ * hashchange for history.back() — a forward hash navigation (link click /
+ * goto) fires hashchange alone. The flag drives the FORWARD-ONLY scroll
+ * reset below (Back keeps the root layout's own scroll restoration).
+ */
+let popstateSeen = false;
 
 function onHashChange(): void {
   const prevKey = currentRouteKey;
   const nextKey = routeKeyNow();
   if (prevKey === nextKey) return;
+  const wasBackNavigation = popstateSeen;
+  popstateSeen = false;
   currentRouteKey = nextKey;
   resetSpatialMemory();
   try {
@@ -895,13 +1075,59 @@ function onHashChange(): void {
     const target = focusByRoute.get(nextKey);
     const ready = !target || !target.isConnected;
     if (ready || attempts >= 12) {
+      // THE HERO-CUT-OFF FIX (bug 3): a FORWARD navigation must open the
+      // destination at the very top of BOTH scrollers. The app's desktop
+      // scroller (.app-main) is SvelteKit-invisible — kit only resets the
+      // window — so a page entered after scrolling a previous page kept the
+      // stale offset and the new page's hero sat 30-50% above the viewport.
+      // Back navigations keep the root layout's own (correct) restore.
+      if (!wasBackNavigation) resetPageScroll();
       restoreRouteFocus();
+      // TV-UX pass 2: the freshly-rendered page's lazy images must not
+      // depend on the engine's scroll-proximity heuristics — rails slide by
+      // CSS transform (their scroll position never changes), so posters
+      // below/right of the initial window never load on the TV engine.
+      eagerLoadImages();
       return;
     }
     // The saved element is still attached — wait for the swap, then restore.
     requestAnimationFrame(tick);
   };
   requestAnimationFrame(tick);
+}
+
+/** Reset both scrollers to the top (forward navigation opens at the top). */
+function resetPageScroll(): void {
+  try {
+    window.scrollTo(0, 0);
+  } catch {
+    /* cosmetic */
+  }
+  try {
+    const main = document.querySelector<HTMLElement>('.app-main');
+    if (main && main.scrollTop > 0) main.scrollTop = 0;
+  } catch {
+    /* cosmetic */
+  }
+}
+
+/**
+ * TV image loading policy (the reported "rails show BLANK poster areas").
+ * The TV engine's native lazy-loading keys on scroll proximity, but the TV
+ * rails never scroll (they slide by CSS transform) — cards right of the
+ * initial window never intersect and their <img loading="lazy"> never
+ * fetches. Every image the widget renders is forced eager; the posters are
+ * small (w342 ≈ 30-50KB) so the bandwidth cost is bounded.
+ */
+function eagerLoadImages(): void {
+  try {
+    const images = document.querySelectorAll<HTMLImageElement>('img[loading="lazy"]');
+    for (const img of images) {
+      img.loading = 'eager';
+    }
+  } catch {
+    /* cosmetic — a failed sweep must never break navigation */
+  }
 }
 
 function railOffsetsReset(): void {
@@ -930,6 +1156,37 @@ function closestSlideTrack(target: EventTarget | null): HTMLElement | null {
     return (target as Element).closest<HTMLElement>('.hero-track, .spotlight-track');
   } catch {
     return null;
+  }
+}
+
+/* -------------------------------------------------------------------------
+ * LONG-PRESS slide change (bug 7): a HELD arrow hands the key to the
+ * carousel's own keydown handler. Both carousels own ArrowLeft/Right
+ * navigation on their <section> (DiscoverPage's .hero, ExplorerPage's
+ * .spotlight) — a synthetic keydown dispatched AT the section runs their
+ * manualNav + their own preventDefault with zero shared-file edits. The
+ * guard flag stops the manager's capture listener from re-processing the
+ * synthetic event (dispatchEvent runs listeners synchronously).
+ * ----------------------------------------------------------------------- */
+
+let dispatchingHeroSlideNav = false;
+
+function dispatchHeroSlideNav(direction: 'left' | 'right'): void {
+  try {
+    if (dispatchingHeroSlideNav) return;
+    const hero = heroSection();
+    if (!hero) return;
+    dispatchingHeroSlideNav = true;
+    const synthetic = new KeyboardEvent('keydown', {
+      key: direction === 'left' ? 'ArrowLeft' : 'ArrowRight',
+      bubbles: true,
+      cancelable: true
+    });
+    hero.dispatchEvent(synthetic);
+  } catch {
+    /* the slide change is a comfort fix — never break navigation on it */
+  } finally {
+    dispatchingHeroSlideNav = false;
   }
 }
 
@@ -1052,7 +1309,7 @@ function activate(active: Element | null): boolean {
 }
 
 /** The spatial move resolution for one arrow press. */
-function moveFocus(direction: 'up' | 'down' | 'left' | 'right'): boolean {
+function moveFocus(direction: 'up' | 'down' | 'left' | 'right', repeat = false): boolean {
   const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   const candidates = collectFocusables();
   if (candidates.length === 0) return false;
@@ -1064,6 +1321,7 @@ function moveFocus(direction: 'up' | 'down' | 'left' | 'right'): boolean {
       applyFocus(seed);
       columnAnchor = rectOf(seed).cx;
       if (regionOf(seed) !== 'sidebar') lastContentFocus = seed;
+      setTvSidebarCollapsed(regionOf(seed) === 'sidebar');
       return true;
     }
     return false;
@@ -1074,38 +1332,55 @@ function moveFocus(direction: 'up' | 'down' | 'left' | 'right'): boolean {
   let target: HTMLElement | null = null;
 
   if (region === 'dialog') {
-    // Everything stays inside the open sheet.
+    // Everything stays inside the open sheet (flat list — sheets mix rows
+    // and columns; the geometric nearest-neighbour walk stays predictable).
     const peers = regionCandidates('dialog', active);
     target =
       direction === 'left' || direction === 'right'
         ? pickHorizontal(from, peers, direction)
-        : pickVertical(from, peers, direction);
+        : pickVerticalFlat(from, peers, direction);
   } else if (region === 'sidebar') {
     if (direction === 'left') {
       target = null; // no wrap, no exit to the left
     } else if (direction === 'right') {
       target = contentEntryTarget();
     } else {
-      target = pickVertical(from, regionCandidates('sidebar', active), direction);
+      target = pickVerticalFlat(from, regionCandidates('sidebar', active), direction);
     }
   } else if (region === 'hero') {
     if (direction === 'left' || direction === 'right') {
-      if (isHeroNavControl(active)) {
-        // The hero's OWN controls own Left/Right (slide change). The event
-        // is deliberately NOT consumed — the section-level handler runs and
-        // its preventDefault stops the page scroll.
-        return false;
+      if (repeat) {
+        // LONG-PRESS (bug 7): a HELD arrow hands the key to the carousel —
+        // the slide changes for every auto-repeat, while a TAP keeps
+        // walking the hero's own buttons. The synthetic keydown lands on
+        // the carousel section whose own handler runs manualNav + its own
+        // preventDefault (no shared-file edits, no duplicated nav logic).
+        dispatchHeroSlideNav(direction);
+        return true;
       }
       target = pickHorizontal(from, heroTargets(), direction);
+      if (!target && direction === 'left' && from.left <= contentLeftEdge() + 140) {
+        // Deliberate Left at the hero's left edge → the sidebar.
+        target = activeSidebarLink();
+        if (target) setTvSidebarCollapsed(false);
+      }
     } else if (direction === 'down') {
-      // Down from ANY hero control → the FIRST card (leftmost, column-
-      // aligned) of the FIRST rail below the hero (the reported "jumps to
-      // the right-most card of some far rail" bug).
-      target = firstCardOfFirstRailBelowHero();
+      // Down from ANY hero control → the NEXT ROW below the hero: the rail
+      // heading/filter row when one exists (bug 7's "Down → the rail filter
+      // row"), else the first card of the first rail below the hero.
+      target = pickVertical(from, contentCandidates(), 'down') ?? firstCardOfFirstRailBelowHero();
       if (target) {
         const rail = rowContainerOf(target);
         if (rail && rail.classList.contains('rail')) resetRailShift(rail);
       }
+    } else if (
+      direction === 'up' &&
+      Boolean(active.closest && active.closest('.hero-nav, .spotlight-nav'))
+    ) {
+      // Up from the carousel's dots/arrows cluster → the slide's action row
+      // (Play first): "Play/Details must be reachable with Up/Down".
+      const actions = heroTargets().filter((el) => !el.closest('.hero-nav, .spotlight-nav'));
+      target = actions.length ? actions[0] : null;
     } else {
       target = null; // nothing above the hero
     }
@@ -1286,6 +1561,11 @@ function handleKeydown(event: KeyboardEvent): void {
   if (!direction) return;
 
   try {
+    // The LONG-PRESS synthetic keydown (dispatched at the carousel section)
+    // passes through this capture listener on its way to the section's own
+    // handler — the manager must never re-process it.
+    if (dispatchingHeroSlideNav) return;
+
     // Watch routes: the player owns arrow semantics (future TV player work);
     // Back/Enter above already work. Do not fight the player surface.
     if (isWatchRoute()) return;
@@ -1318,7 +1598,7 @@ function handleKeydown(event: KeyboardEvent): void {
     // sometimes scrolls the page up/down" bug). moveFocus() returns false
     // ONLY when it deliberately delegates (hero nav slide change) — in that
     // case the carousel's own handler preventDefaults.
-    const consumed = moveFocus(direction);
+    const consumed = moveFocus(direction, event.repeat === true);
     if (consumed) {
       event.preventDefault();
       event.stopPropagation();
@@ -1407,6 +1687,47 @@ export function installTvFocusManager(): void {
 
   currentRouteKey = routeKeyNow();
   window.addEventListener('hashchange', onHashChange);
+  // Back/forward detection: popstate fires BEFORE hashchange for in-app
+  // history.back() — the flag tells the forward-only scroll reset apart
+  // from the root layout's own back-restore.
+  window.addEventListener(
+    'popstate',
+    () => {
+      popstateSeen = true;
+    },
+    true
+  );
+
+  // Late-mounted images (load-more appends, filtered grids, detail recs)
+  // also drop their native lazy-load attribute — the TV rails never scroll,
+  // so the engine's proximity heuristic would never fetch their posters.
+  try {
+    let eagerTimer: ReturnType<typeof setTimeout> | undefined;
+    const eagerObserver = new MutationObserver(() => {
+      if (eagerTimer) clearTimeout(eagerTimer);
+      eagerTimer = setTimeout(() => {
+        eagerTimer = undefined;
+        eagerLoadImages();
+      }, 200);
+    });
+    eagerObserver.observe(document.body, { childList: true, subtree: true });
+  } catch {
+    /* MutationObserver is a comfort fix — polling fallback below covers it */
+  }
+  // Bounded polling fallback for engines without MutationObserver.
+  try {
+    let sweeps = 0;
+    const sweep = () => {
+      sweeps += 1;
+      if (sweeps > 240) return; // ~2 min at 500ms; never poll forever
+      eagerLoadImages();
+      setTimeout(sweep, 500);
+    };
+    setTimeout(sweep, 500);
+  } catch {
+    /* cosmetic */
+  }
+  eagerLoadImages();
 
   // TV diagnostics: a retail set has no devtools — the on-screen overlays
   // cover boot failures, and this hook lets a remote-driven probe print the

@@ -128,7 +128,11 @@ export async function fetchTvExplorerPage(type: ContentType): Promise<TvExplorer
       title: 'Popular',
       items: popularItems,
       page: 1,
-      hasNextPage: popularItems.length >= 20,
+      // The discover endpoint carries no hasNextPage flag — a short page
+      // (19 items after server-side filtering) is NOT the last one. The
+      // loader governs exhaustion: a genuinely empty page N+1 flips
+      // hasNextPage off and the rail end becomes a clean hard stop.
+      hasNextPage: popularItems.length > 0,
       source: 'discover',
       feedType: type
     });

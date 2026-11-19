@@ -115,6 +115,11 @@
   let trailerContainer = $state<HTMLDivElement | null>(null);
   let trailerFullscreen = $state(false);
   let trailerToggle: HTMLElement | null = null;
+  // TV-UX pass 2 (widget build only): the trailer MODAL SHEET's close
+  // control — the default D-pad landing point inside the sheet and the
+  // element re-focused when the iframe reports load (a cross-origin embed
+  // must never own the key surface).
+  let trailerSheetCloseEl: HTMLButtonElement | undefined = $state();
   let trailerLoadTimer: ReturnType<typeof setTimeout> | undefined = undefined;
   // YouTube does not surface embed playback errors to the parent page
   // without its IFrame API, so a bounded load timeout is the honest
@@ -637,7 +642,15 @@
     trailerAttempt += 1;
     armTrailerLoadTimeout();
     haptic('light');
-    void tick().then(() => trailerContainer?.querySelector<HTMLElement>('.trailer-fs-btn')?.focus());
+    void tick().then(() => {
+      if (IS_WGT_BUILD) {
+        // TV: the sheet's Close control is the D-pad landing point (the
+        // inline fullscreen button does not exist there).
+        trailerSheetCloseEl?.focus({ preventScroll: true });
+      } else {
+        trailerContainer?.querySelector<HTMLElement>('.trailer-fs-btn')?.focus();
+      }
+    });
   }
 
   function stopTrailer() {
@@ -725,6 +738,19 @@
     // trailer keeps playing, matching platform convention).
     if (event.key === 'Escape' && !document.fullscreenElement) {
       event.preventDefault();
+      stopTrailer();
+    }
+  }
+
+  // TV-UX pass 2 (widget build only): the trailer-sheet's own keydown —
+  // the focus manager's Back path replays Escape AT the dialog (this
+  // element) and the event bubbles to the window handler above; both
+  // routes end in stopTrailer, so Back ALWAYS closes the sheet.
+  function handleTrailerSheetKeydown(event: KeyboardEvent) {
+    if (!IS_WGT_BUILD || !trailerActive) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
       stopTrailer();
     }
   }
@@ -888,12 +914,17 @@
   <div class="palette-canvas" class:active={paletteStyle !== ''} aria-hidden="true"></div>
 
   <header class="hero">
-    {#if trailerActive && hasTrailer}
+    {#if trailerActive && hasTrailer && !IS_WGT_BUILD}
       <!-- MAV-23 Fix 4 — INLINE trailer: plays INSIDE the cinematic
            backdrop area. The poster-overlap composition, title metadata
            and actions below are untouched; stopping restores the artwork
            backdrop exactly. The iframe uses the existing trailer source
-           contract (item.trailerKey → YouTube embed). -->
+           contract (item.trailerKey → YouTube embed).
+           TV-UX pass 2 (widget build only): the INLINE embed is the
+           reported FREEZE — a cross-origin iframe inside the backdrop
+           takes the engine's key/focus surface and Back/Nav die. On the
+           widget the trailer plays in the trailer-sheet MODAL instead
+           (see the sheet at the bottom of the markup). -->
       <div class="trailer-inline" bind:this={trailerContainer}>
         <button type="button" class="trailer-inline-close" onclick={stopTrailer} aria-label="Close trailer"><X size={18} aria-hidden="true" /></button>
         {#if trailerStatus !== 'error'}
@@ -1037,8 +1068,25 @@
               <!-- MAV-24 Issue 2 — icon-only Download (the visible text
                    was unnecessary; the accessible name carries the
                    semantics). Same click behavior, one aligned primary
-                   row with Play. -->
-              <button class="download-btn" type="button" onclick={openDownloadSheet} aria-haspopup="dialog" aria-expanded={downloadSheetOpen} aria-label={`Download ${item.title}`}>
+                   row with Play.
+                   TV-UX pass 2 (widget build only): the Download sheet
+                   is the reported FREEZE on the TV (the downloader
+                   config fetch + sheet focus surface cannot work from a
+                   file:// origin), so on the widget the button is a
+                   PERMANENTLY DISABLED dummy — visible, focusable-skip,
+                   no action, no crash, no navigation. The production
+                   web button is unchanged (disabled stays undefined). -->
+              <button
+                class="download-btn"
+                class:tv-disabled={IS_WGT_BUILD}
+                type="button"
+                onclick={openDownloadSheet}
+                disabled={IS_WGT_BUILD || undefined}
+                aria-disabled={IS_WGT_BUILD ? 'true' : undefined}
+                aria-haspopup={IS_WGT_BUILD ? undefined : 'dialog'}
+                aria-expanded={IS_WGT_BUILD ? undefined : downloadSheetOpen}
+                aria-label={`Download ${item.title}`}
+              >
                 <Download size={18} aria-hidden="true" />
               </button>
             {:else if showDownloadFailure}
@@ -1060,7 +1108,8 @@
             {#if hasTrailer}
               <!-- MAV-23 Fix 4 — the toggle doubles as Trailer / Trailer
                    Off. aria-pressed communicates the playing state; the
-                   adjacent fullscreen control appears only while active. -->
+                   adjacent fullscreen control appears only while active
+                   (web only — the TV trailer-sheet owns its own chrome). -->
               <button
                 class="secondary-btn trailer-toggle"
                 class:engaged={trailerActive}
@@ -1069,7 +1118,7 @@
               >
                 <Film size={15} /><span>{trailerActive ? 'Trailer Off' : 'Trailer'}</span>
               </button>
-              {#if trailerActive}
+              {#if trailerActive && !IS_WGT_BUILD}
                 <!-- MAV-24 Issue 2 — icon-only fullscreen control beside
                     Trailer Off (the word "Fullscreen" was unnecessary and
                     its width pushed the control onto its own wrapped row).
@@ -1195,7 +1244,7 @@
         seasonCount={item.seasons ?? 1}
         seasonsData={item.seasonsData}
         watchType={type === 'anime' ? 'anime' : 'series'}
-        onDownload={openEpisodeDownloadSheet}
+        onDownload={IS_WGT_BUILD ? undefined : openEpisodeDownloadSheet}
         contentSnapshot={{ title: item.title, poster: item.poster, backdrop: item.backdrop, year: item.year, runtime: typeof item.runtime === 'string' ? item.runtime : String(item.runtime), rating: item.rating, genres: item.genres, description: item.description }}
       />
     {/if}
@@ -1263,6 +1312,80 @@
   releaseYear={downloadReleaseYear}
   onClose={closeDownloadSheet}
 />
+
+{#if IS_WGT_BUILD && trailerActive && hasTrailer}
+  <!-- ============================================================
+       TV-UX pass 2 (widget build only) — the TRAILER MODAL SHEET.
+       The reported freeze: the INLINE YouTube embed in the detail
+       backdrop takes the TV engine's key/focus surface — Back and
+       navigation die until a force-exit. The trailer now plays in a
+       full-screen [role="dialog"] overlay: the focus manager's Back
+       path finds the dialog, replays Escape at it (this sheet's own
+       close semantics), and the detail page is intact underneath.
+       The close control is focused on open and RE-focused when the
+       iframe reports load — a cross-origin embed can never hold the
+       D-pad surface. Production web keeps the inline player (the
+       whole branch is compile-time dead there).
+       ============================================================ -->
+  <div
+    class="trailer-sheet"
+    role="dialog"
+    aria-modal="true"
+    aria-label={`${item.title} trailer`}
+    tabindex="-1"
+    onkeydown={handleTrailerSheetKeydown}
+  >
+    <button
+      type="button"
+      class="trailer-sheet-close"
+      bind:this={trailerSheetCloseEl}
+      onclick={stopTrailer}
+      aria-label="Close trailer"
+    >
+      <X size={16} aria-hidden="true" /> <span>Close</span>
+    </button>
+    <div class="trailer-sheet-frame">
+      {#if trailerStatus !== 'error'}
+        {#key trailerAttempt}
+          <iframe
+            src={`https://www.youtube.com/embed/${trailerKey}?autoplay=1&rel=0`}
+            title={`${item.title} trailer`}
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            allowfullscreen
+            sandbox="allow-scripts allow-same-origin allow-presentation"
+            referrerpolicy="no-referrer"
+            onload={() => {
+              clearTrailerLoadTimeout();
+              trailerStatus = 'ready';
+              // The embed must never own the D-pad surface.
+              try {
+                trailerSheetCloseEl?.focus({ preventScroll: true });
+              } catch {
+                /* cosmetic */
+              }
+            }}
+            onerror={() => {
+              clearTrailerLoadTimeout();
+              trailerStatus = 'error';
+            }}
+          ></iframe>
+        {/key}
+      {/if}
+      {#if trailerStatus === 'loading'}
+        <div class="trailer-sheet-note" role="status" aria-live="polite">
+          <LoaderCircle size={22} class="trailer-spinner" />
+          <span>Loading trailer…</span>
+        </div>
+      {:else if trailerStatus === 'error'}
+        <div class="trailer-sheet-note trailer-sheet-error" role="alert">
+          <AlertTriangle size={22} />
+          <span>Trailer is unavailable right now.</span>
+          <button type="button" class="trailer-sheet-retry" onclick={retryTrailer}>Retry</button>
+        </div>
+      {/if}
+    </div>
+  </div>
+{/if}
 
 <style>
   /* ============================================================
@@ -1807,6 +1930,65 @@
   }
   .trailer-inline-retry:hover { background: var(--dp-surface); border-color: var(--dp-accent); }
   .trailer-inline-retry:focus-visible { outline: 2px solid var(--dp-accent); outline-offset: 2px; }
+
+  /* TV-UX pass 2 (widget build only) — the TRAILER MODAL SHEET. Renders
+     ONLY inside the widget build ({#if IS_WGT_BUILD && trailerActive}) —
+     production never evaluates the branch, and Svelte strips the unused
+     scoped selectors from the production CSS output. The sheet is a
+     fixed full-screen dialog over the detail page; the frame letterboxes
+     the embed at a TV-safe size with explicit offsets (engine-proof). */
+  .trailer-sheet {
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    z-index: 80;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 14px;
+    background: rgba(3, 5, 6, .96);
+  }
+  .trailer-sheet-close {
+    display: inline-flex; align-items: center; gap: 8px;
+    min-height: 46px; padding: 8px 22px;
+    border: 1px solid rgba(255, 255, 255, .35); border-radius: 999px;
+    color: #f2fff8; background: rgba(8, 11, 13, .8);
+    font: inherit; font-size: .85rem; font-weight: 800;
+    cursor: pointer;
+  }
+  .trailer-sheet-close:hover { background: rgba(0, 0, 0, .9); border-color: rgba(255, 255, 255, .6); }
+  .trailer-sheet-frame {
+    position: relative;
+    width: min(88vw, 1180px);
+    height: min(62vh, 600px);
+    background: #000;
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 24px 64px rgba(0, 0, 0, .65);
+  }
+  .trailer-sheet-frame iframe {
+    position: absolute; top: 0; left: 0;
+    width: 100%; height: 100%;
+    border: 0;
+  }
+  .trailer-sheet-note {
+    position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 1;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+    padding: 16px; text-align: center;
+    color: var(--color-text);
+    background: rgba(5, 7, 8, 0.72);
+    font-size: 0.8rem; font-weight: 600;
+  }
+  .trailer-sheet-note :global(svg) { color: var(--dp-accent); }
+  .trailer-sheet-note :global(.trailer-spinner) { animation: spin 1s linear infinite; }
+  .trailer-sheet-error span { color: var(--color-text-muted); }
+  .trailer-sheet-retry {
+    min-height: 40px; padding: 8px 18px;
+    border: 1px solid var(--dp-accent-border); border-radius: 999px;
+    color: var(--color-text); background: var(--dp-accent-soft);
+    font: inherit; font-size: 0.72rem; font-weight: 700;
+    cursor: pointer;
+  }
+  .trailer-sheet-retry:hover { background: var(--dp-surface); border-color: var(--dp-accent); }
+  /* TV dummy Download button: visible but visibly inert (bug 10). */
+  .tv-disabled { opacity: .45; cursor: default; }
+
   /* The engaged Trailer toggle reads as "on" without shouting. */
   .trailer-toggle.engaged { background: var(--dp-accent-soft); border-color: var(--dp-accent-border); }
   /* MAV-24 Issue 2 — the fullscreen control is ICON-ONLY: a compact

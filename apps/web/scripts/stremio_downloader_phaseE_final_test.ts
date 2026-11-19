@@ -117,11 +117,14 @@ function section_downloadSheet_regression(): void {
     detailPage.includes('onRetryProviders={retryDownloadProviders}'),
     '§6: DetailPage passes onRetryProviders to DownloadSheet',
   );
-  // SeasonEpisodes onDownload callback is now ALWAYS wired (not gated on
-  // prefetch completion).
+  // SeasonEpisodes onDownload callback is now ALWAYS wired on production
+  // (not gated on prefetch completion). The TV-UX pass 2 passes `undefined`
+  // behind the compile-time IS_WGT_BUILD flag only — the widget build has no
+  // downloader sheet (the file:// origin cannot serve it), production web is
+  // unchanged.
   ok(
-    detailPage.includes('onDownload={openEpisodeDownloadSheet}'),
-    '§6: SeasonEpisodes onDownload is ALWAYS wired (decoupled from prefetch)',
+    detailPage.includes('onDownload={IS_WGT_BUILD ? undefined : openEpisodeDownloadSheet}'),
+    '§6: SeasonEpisodes onDownload is ALWAYS wired on production (TV widget build only passes undefined — compile-time dead branch)',
   );
   ok(
     !detailPage.includes('onDownload={downloadProvidersLoaded'),
