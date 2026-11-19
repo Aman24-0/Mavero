@@ -6,7 +6,7 @@
 
 <script lang="ts">
   import { onDestroy } from 'svelte';
-  import { X, ExternalLink, ChevronDown, AlertTriangle, Loader2, CalendarClock, Info, ArrowLeftRight, RotateCw } from 'lucide-svelte';
+  import { X, ExternalLink, ChevronDown, AlertTriangle, Loader2, Info, ArrowLeftRight, RotateCw } from 'lucide-svelte';
   import {
     filterProvidersByMediaType,
     getDownloadUrlCandidates,
@@ -346,16 +346,6 @@
     iframeError = false;
   }
 
-  // User-initiated swap to the Cineverse alternate year-suffixed URL.
-  // Resets the loading state so the spinner shows while the new iframe
-  // src loads.
-  function toggleAlternate() {
-    if (!alternateUrl) return;
-    useAlternate = !useAlternate;
-    iframeLoading = true;
-    iframeError = false;
-  }
-
   // Dismiss the external-sub-server info banner. The banner re-appears
   // when the provider changes (see the reactive block above) — this
   // dismissal only hides it for the current provider session.
@@ -465,6 +455,19 @@
                 </ul>
               {/if}
             </div>
+          {/if}
+
+          {#if renderedIframeUrl}
+            <a
+              class="dl-close"
+              href={renderedIframeUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Open downloader in a new tab"
+              title="Open in new tab"
+            >
+              <ExternalLink size={16} />
+            </a>
           {/if}
 
           <button type="button" class="dl-close" aria-label="Close download sheet" onclick={onClose}>
@@ -629,36 +632,6 @@
               </button>
             </div>
           {/if}
-          <!-- Always-available fallback bar. Uses the SAME resolved URL
-               that the iframe src uses (primary or alternate) — never a raw
-               template. Cross-origin iframe load errors cannot always be
-               detected; the "Open in new tab" link guarantees the user can
-               reach the downloader page directly. -->
-          <div class="dl-fallback-bar">
-            <span>
-              Can't see the downloader?
-              {#if useAlternate && alternateUrl}
-                <span class="dl-alt-tag">Showing year-suffixed URL</span>
-              {/if}
-            </span>
-            <span class="dl-fallback-actions">
-              {#if alternateUrl}
-                <button
-                  type="button"
-                  class="dl-alt-toggle"
-                  onclick={toggleAlternate}
-                  aria-pressed={useAlternate}
-                  title={useAlternate ? 'Switch back to the primary URL' : 'Try the year-suffixed URL'}
-                >
-                  <CalendarClock size={13} />
-                  {useAlternate ? 'Use primary' : 'Try with year'}
-                </button>
-              {/if}
-              <a href={renderedIframeUrl} target="_blank" rel="noopener noreferrer">
-                <ExternalLink size={13} /> Open in new tab
-              </a>
-            </span>
-          </div>
         {/if}
       </div>
 
@@ -706,8 +679,6 @@
           {/if}
         </div>
       {/if}
-
-      <div class="dl-safe-area" aria-hidden="true"></div>
     </div>
   </div>
 {/if}
@@ -1103,67 +1074,6 @@
   }
   .dl-server-banner-close:hover { color: #f5f5f5; border-color: rgba(255, 255, 255, 0.28); }
 
-  /* Fallback bar — always visible when an iframe is rendered. */
-  .dl-fallback-bar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    padding: 9px 18px;
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
-    background: #0d0d0d;
-    color: #646464;
-    font-size: 0.66rem;
-    flex: 0 0 auto;
-  }
-  .dl-fallback-bar a {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    color: #f5f5f5;
-    font-weight: 700;
-    text-decoration: none;
-  }
-  .dl-fallback-bar a:hover { text-decoration: underline; text-underline-offset: 3px; }
-
-  .dl-fallback-actions {
-    display: inline-flex;
-    align-items: center;
-    gap: 12px;
-    flex-wrap: wrap;
-  }
-  .dl-alt-toggle {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    padding: 4px 10px;
-    border: 1px solid var(--dp-accent-border, rgba(255, 255, 255, 0.14));
-    border-radius: 999px;
-    color: var(--color-text-muted, #c7c7cc);
-    background: var(--dp-surface, rgba(255, 255, 255, 0.04));
-    font: inherit;
-    font-size: 0.6rem;
-    font-weight: 700;
-    cursor: pointer;
-    transition: color 180ms ease, background 180ms ease, border-color 180ms ease;
-  }
-  .dl-alt-toggle:hover { color: var(--color-text, #f5f5f5); background: var(--dp-accent-soft, rgba(255, 255, 255, 0.1)); border-color: var(--dp-accent, rgba(255, 255, 255, 0.24)); }
-  .dl-alt-toggle[aria-pressed='true'] { color: var(--dp-deep, #0d0d0d); background: var(--dp-accent, #f5f5f5); border-color: transparent; }
-  .dl-alt-tag {
-    display: inline-block;
-    margin-left: 6px;
-    padding: 1px 7px;
-    border-radius: 999px;
-    color: #0d0d0d;
-    background: rgba(245, 245, 245, 0.85);
-    font-size: 0.5rem;
-    font-weight: 800;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }
-
-  .dl-safe-area { height: max(12px, env(safe-area-inset-bottom)); flex: 0 0 auto; }
-
   /* Desktop: center the sheet instead of bottom-anchoring, but keep the
      70vh height contract. */
   @media (min-width: 900px) {
@@ -1175,13 +1085,12 @@
   }
   @media (max-width: 640px) {
     /* Phone view: give the embedded downloader more vertical room — the
-       sheet fills 85% of the viewport (vh fallback first for older mobile
+       sheet fills 90% of the viewport (vh fallback first for older mobile
        browsers, then dvh where supported). Desktop/TV are untouched. */
-    .dl-sheet { height: 85vh; height: 85dvh; max-height: 85vh; max-height: 85dvh; }
+    .dl-sheet { height: 90vh; height: 90dvh; max-height: 90vh; max-height: 90dvh; }
     .dl-header { padding: 10px 14px; gap: 10px; }
     .dl-header h2 { font-size: 0.92rem; }
     .dl-dropdown-trigger { padding: 7px 10px; font-size: 0.68rem; max-width: 150px; }
-    .dl-fallback-bar { padding: 8px 14px; font-size: 0.62rem; flex-wrap: wrap; }
     .dl-server-banner { padding: 8px 12px; gap: 7px; }
     .dl-server-banner-copy strong { font-size: 0.62rem; }
     .dl-server-banner-copy span { font-size: 0.56rem; }
