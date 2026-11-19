@@ -1174,6 +1174,10 @@
     }
   }
   @media (max-width: 640px) {
+    /* Phone view: give the embedded downloader more vertical room — the
+       sheet fills 85% of the viewport (vh fallback first for older mobile
+       browsers, then dvh where supported). Desktop/TV are untouched. */
+    .dl-sheet { height: 85vh; height: 85dvh; max-height: 85vh; max-height: 85dvh; }
     .dl-header { padding: 10px 14px; gap: 10px; }
     .dl-header h2 { font-size: 0.92rem; }
     .dl-dropdown-trigger { padding: 7px 10px; font-size: 0.68rem; max-width: 150px; }
