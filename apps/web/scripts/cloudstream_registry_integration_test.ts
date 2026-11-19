@@ -616,6 +616,73 @@ function section_sheetContracts(): void {
     // or logic removal still fails.
     const isColorDeclaration = (line: string) =>
       /(background|border|color|box-shadow|text-shadow)[^:]*:/i.test(line) && /(#[0-9a-fA-F]{3,6}\b|rgba?\()/i.test(line);
+    // TV-UX pass 5 (user-sanctioned, 2026-11): the sheet's bottom fallback
+    // bar was REMOVED — the "Can't see the downloader?" hint, the alt-toggle
+    // "Try with year"/"Use primary" button (the toggle moved inline into the
+    // bottom-left year FAB), the "Open in new tab" link (new-tab moved to
+    // the header icon button next to the close X), and the .dl-safe-area
+    // spacer, plus their CSS. The same sanctioned passes added the year FAB
+    // overlay (the dl-year-fab button + its lifted variant), the header
+    // new-tab icon button, and the 90dvh phone height. The distinctive
+    // tokens anchor the matchers to those artifacts; the exact-string sets
+    // cover ONLY the generic inner lines those passes deleted/added
+    // verbatim — any OTHER structural change still fails the guard.
+    const pass5Token = (line: string) =>
+      line.includes('toggleAlternate')
+      || line.includes('dl-fallback-bar')
+      || line.includes('dl-fallback-actions')
+      || line.includes('dl-alt-toggle')
+      || line.includes('dl-alt-tag')
+      || line.includes('dl-safe-area')
+      || line.includes("Can't see the downloader?")
+      || line.includes('dl-year-fab')
+      || line.includes('renderedIframeUrl')
+      || line.includes('dl-close')
+      || line.includes('Open in new tab')
+      || line.includes('Open downloader in a new tab')
+      || line.includes('ExternalLink')
+      || line.includes('CalendarClock')
+      || line.includes('useAlternate')
+      || line.includes('iframeLoading = true;')
+      || line.includes('iframeError = false;')
+      || line.includes('90dvh');
+    const pass5ExactRemovals = new Set([
+      '    if (!alternateUrl) return;',
+      '            <span>',
+      '            </span>',
+      '              {#if alternateUrl}',
+      '                <button',
+      '                  type="button"',
+      '                >',
+      '                </button>',
+      '    padding: 9px 18px;',
+      '    gap: 6px;',
+      '    flex-wrap: wrap;',
+      '    padding: 4px 10px;',
+      '    transition: color 180ms ease, background 180ms ease, border-color 180ms ease;',
+      '    display: inline-block;',
+      '    margin-left: 6px;',
+      '    padding: 1px 7px;',
+    ]);
+    const pass5ExactAdditions = new Set([
+      '            <a',
+      '              target="_blank"',
+      '              rel="noopener noreferrer"',
+      '            >',
+      '            </a>',
+      '      {#if alternateUrl}',
+      '        <button',
+      '          type="button"',
+      '          onclick={() => {',
+      '          }}',
+      '        >',
+      '        </button>',
+      '    left: 14px;',
+      '    bottom: 14px;',
+      '    padding: 8px;',
+      '    font-family: inherit;',
+      '    z-index: 5;',
+    ]);
     ok(
       codeRemovals.every((line) =>
         line.includes('MAVERO_DOWNLOADER_2_PROVIDER_ID')
@@ -625,8 +692,10 @@ function section_sheetContracts(): void {
         || line.includes('justify-content: space-between')
         || line.includes('.dl-item-name { overflow: hidden;')
         || line.includes('class="dl-layer"')
-        || isColorDeclaration(line)),
-      `§C6: every removed code line belongs to the retirement/unified swap/PART-J/MAV-23-palette fix (removed ${codeRemovals.length})`,
+        || isColorDeclaration(line)
+        || pass5Token(line)
+        || pass5ExactRemovals.has(line)),
+      `§C6: every removed code line belongs to the retirement/unified swap/PART-J/MAV-23-palette fix or TV-UX pass 5 — bottom fallback bar removed, user-sanctioned; new-tab moved to the header icon button (removed ${codeRemovals.length})`,
     );
     const codeAdditions = sheetCode.filter((line) => !pristineCode.includes(line));
     ok(
@@ -654,9 +723,14 @@ function section_sheetContracts(): void {
         // provider + embedded-sheet iframes carry a sandbox attribute and
         // openEmbeddedSheet is https-only.
         || line.includes('sandbox=')
-        || line.includes('/^https:/i.test(url)')),
+        || line.includes('/^https:/i.test(url)')
+        // TV-UX pass 5 (user-sanctioned): the year FAB overlay, the header
+        // new-tab icon button and the 90dvh phone height (see the removal
+        // note above — the generic inner lines are covered by the exact set).
+        || pass5Token(line)
+        || pass5ExactAdditions.has(line)),
 
-      `§C6: every added code line is the unified swap, the retirement, or the PART J fix (added ${codeAdditions.length})`,
+      `§C6: every added code line is the unified swap, the retirement, the PART J fix, or the TV-UX pass 5 year-FAB/new-tab/90dvh evolutions (added ${codeAdditions.length})`,
     );
     // C6b hard guarantees: existing behavior lines survive verbatim.
     for (const pinned of [

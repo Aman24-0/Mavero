@@ -549,7 +549,10 @@ assert.match(detailPage, /\.play-btn \{[\s\S]*?flex: 1 1 62%;[\s\S]*?min-height:
 assert.match(detailPage, /class="secondary-actions">[\s\S]*?statusLabel\(watchlistStatus\)[\s\S]*?Share[\s\S]*?Trailer/, 'the approved secondary row: Watching · Share · Trailer');
 assert.match(detailPage, /const downloadMediaType = \$derived\(\(type === 'movie' \|\| \(item\.isAnime && item\.animeFormat === 'movie'\)\) \? 'movie' : 'tv' as DownloadMediaType\);/, 'download media-type mapping preserved (movie/anime-movie → movie)');
 assert.match(detailPage, /function openEpisodeDownloadSheet\(season: number, episode: number\) \{[\s\S]*?downloadTargetSeason = season;[\s\S]*?downloadTargetEpisode = episode;/, 'episode downloads target the EXACT clicked episode');
-assert.match(detailPage, /onDownload=\{openEpisodeDownloadSheet\}/, 'SeasonEpisodes download wiring preserved');
+// [2026-11 re-pin — TV-UX pass 2] the callback is now gated on IS_WGT_BUILD:
+// on the widget the SeasonEpisodes download action is a dummy (the downloader
+// sheet is the reported TV freeze); the production web wiring is unchanged.
+assert.match(detailPage, /onDownload=\{IS_WGT_BUILD \? undefined : openEpisodeDownloadSheet\}/, 'SeasonEpisodes download wiring preserved (WGT build dummies the callback — TV-UX pass 2)');
 assert.match(detailPage, /\{#if isSeriesLike\}[\s\S]*?<SeasonEpisodes/, 'Seasons & Episodes render for series-like titles (TV + anime series)');
 assert.match(detailPage, /watchType=\{type === 'anime' \? 'anime' : 'series'\}/, 'SeasonEpisodes watchType mapping preserved');
 // Back policy + SEO + trailer a11y (byte-preserved behaviors).

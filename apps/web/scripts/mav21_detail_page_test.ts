@@ -65,14 +65,21 @@ const movieServer = read('../src/routes/movie/[id]/+page.server.ts');
 // ============================================================
 console.log('\n1. Cinematic hero artwork');
 
-assert.match(detailPage, /const heroArtwork = \$derived\(item\.backdropHero \|\| item\.backdrop \|\| item\.poster \|\| ''\);/,
-  'hero artwork = backdropHero → backdrop → poster → empty (graceful chain)');
+// [2026-11 re-pin — TV-UX/mobile network passes] heroArtwork now routes
+// through heroArtworkOverride (the WGT tier-cascade override) ahead of the
+// documented chain; the chain itself (backdropHero → backdrop → poster →
+// empty) is unchanged. onerror now routes to the named handler, which flips
+// the failure state (web) and cascades artwork tiers (WGT build).
+assert.match(detailPage, /const heroArtwork = \$derived\(heroArtworkOverride \|\| item\.backdropHero \|\| item\.backdrop \|\| item\.poster \|\| ''\);/,
+  'hero artwork = override → backdropHero → backdrop → poster → empty (graceful chain, WGT tier-cascade override preserved)');
 assert.match(detailPage, /let heroArtworkFailed = \$state\(false\);/,
   'hero artwork failure is tracked in state');
 assert.match(detailPage, /const heroArtworkSrc = \$derived\(heroArtworkFailed \? '' : heroArtwork\);/,
   'failed artwork renders NO img (gradient surface, never a broken-image icon)');
-assert.match(detailPage, /onerror=\{\(\) => \(heroArtworkFailed = true\)\}/,
-  'img onerror flips the failure state');
+assert.match(detailPage, /function handleHeroArtworkError\(\) \{[\s\S]*?heroArtworkFailed = true;/,
+  'the artwork error handler flips the failure state (web) and cascades artwork tiers (WGT)');
+assert.match(detailPage, /onerror=\{handleHeroArtworkError\}/,
+  'img onerror routes to the failure handler');
 assert.match(detailPage, /class="hero-img"[\s\S]*?loading="eager"[\s\S]*?fetchpriority="high"/,
   'hero artwork is eager + high-priority (LCP element)');
 assert.match(detailPage, /<div class="hero-scrim" aria-hidden="true"><\/div>/,
@@ -115,8 +122,10 @@ assert.match(detailPage, /function openDownloadSheet\(\) \{[\s\S]*?downloadTarge
   'movie download opens with no season/episode');
 assert.match(detailPage, /function openEpisodeDownloadSheet\(season: number, episode: number\) \{[\s\S]*?downloadTargetSeason = season;[\s\S]*?downloadTargetEpisode = episode;/,
   'episode download targets the EXACT clicked episode');
-assert.match(detailPage, /onDownload=\{openEpisodeDownloadSheet\}/,
-  'SeasonEpisodes download events route to the episode sheet');
+// [2026-11 re-pin — TV-UX pass 2] the callback is gated on IS_WGT_BUILD (the
+// widget dummies the download action; production web wiring is unchanged).
+assert.match(detailPage, /onDownload=\{IS_WGT_BUILD \? undefined : openEpisodeDownloadSheet\}/,
+  'SeasonEpisodes download events route to the episode sheet (web; dummied on the WGT build)');
 ok('3. download: movie main button + exact-episode sheet for series');
 
 // ============================================================

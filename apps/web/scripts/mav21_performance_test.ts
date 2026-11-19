@@ -77,13 +77,16 @@ assert.match(detailPage, new RegExp(`${String(DESKTOP_MEDIA).slice(1, -1)}" srcs
 // The <img> fallback + LCP contracts preserved.
 assert.match(detailPage, /class="hero-img"[\s\S]*?width="1280"[\s\S]*?height="720"[\s\S]*?sizes="100vw"[\s\S]*?loading="eager"[\s\S]*?fetchpriority="high"/,
   'hero img: intrinsic dimensions + 100vw sizes + eager + high priority');
-assert.match(detailPage, /onerror=\{\(\) => \(heroArtworkFailed = true\)\}/,
-  'onerror failure state preserved (gradient fallback, never a broken icon)');
+// [2026-11 re-pin — TV-UX/mobile network passes] onerror routes to the
+// named handler (failure state flip on web, WGT tier cascade); the
+// single-src chain keeps its override-prefixed derivation.
+assert.match(detailPage, /onerror=\{handleHeroArtworkError\}/,
+  'onerror failure handler preserved (gradient fallback, never a broken icon)');
 assert.match(detailPage, /\{#if heroArtworkSrc\}[\s\S]*?<picture>/,
   'the whole artwork block is guarded by the failure/empty state');
 // The single-src chain remains the SSR/failure derivation.
-assert.match(detailPage, /const heroArtwork = \$derived\(item\.backdropHero \|\| item\.backdrop \|\| item\.poster \|\| ''\);/,
-  'heroArtwork derivation chain unchanged (original → w1280 → poster)');
+assert.match(detailPage, /const heroArtwork = \$derived\(heroArtworkOverride \|\| item\.backdropHero \|\| item\.backdrop \|\| item\.poster \|\| ''\);/,
+  'heroArtwork derivation chain unchanged (override → original → w1280 → poster)');
 ok('1. detail hero: three responsive tiers + preserved LCP/failure contracts');
 
 // ============================================================

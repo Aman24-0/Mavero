@@ -145,7 +145,11 @@ ok(!/trailer-modal/.test(detailPage), 'F4: the separate trailer modal is gone');
 ok(!/trailer-layer/.test(detailPage), 'F4: the fixed trailer overlay layer is gone');
 ok(/class="trailer-inline"/.test(detailPage), 'F4: the trailer renders INLINE inside the hero');
 ok(detailPage.indexOf('class="trailer-inline"') > detailPage.indexOf('<header class="hero">') && detailPage.indexOf('class="trailer-inline"') < detailPage.indexOf('</header>'), 'F4: the inline player lives INSIDE the hero (cinematic backdrop area)');
-ok(/\{#if trailerActive && hasTrailer\}[\s\S]*?\{:else\}[\s\S]*?heroArtworkSrc/.test(detailPage.slice(detailPage.indexOf('<header class="hero">'), detailPage.indexOf('</header>'))), 'F4: trailer activation swaps the backdrop artwork (and restores it on stop)');
+// [2026-11 re-pin — TV-UX pass 2] the inline branch is gated on
+// !IS_WGT_BUILD: on the widget the trailer plays in the trailer-sheet MODAL
+// instead (the inline embed is the reported TV freeze); the swap semantics
+// are unchanged — trailer in, artwork out, stop restores the artwork.
+ok(/\{#if trailerActive && hasTrailer && !IS_WGT_BUILD\}[\s\S]*?\{:else\}[\s\S]*?heroArtworkSrc/.test(detailPage.slice(detailPage.indexOf('<header class="hero">'), detailPage.indexOf('</header>'))), 'F4: trailer activation swaps the backdrop artwork (and restores it on stop; WGT plays the modal sheet instead)');
 ok(/\{trailerActive \? 'Trailer Off' : 'Trailer'\}/.test(detailPage), 'F4: the toggle label switches Trailer / Trailer Off');
 ok(/aria-pressed=\{trailerActive\}/.test(detailPage), 'F4: the toggle exposes aria-pressed');
 ok(/class="secondary-btn trailer-fs-btn"/.test(detailPage), 'F4: an accessible fullscreen control sits next to the toggle while playback is active');
@@ -153,7 +157,9 @@ ok(/class="secondary-btn trailer-fs-btn"/.test(detailPage), 'F4: an accessible f
 // its accessible label now reflects the fullscreen state (and it toggles
 // enter/exit).
 ok(/aria-label=\{trailerFullscreen \? 'Exit trailer fullscreen' : 'Show trailer fullscreen'\}/.test(detailPage), 'F4→MAV-24: the fullscreen control has a state-aware accessible label');
-ok(/\{#if trailerActive\}[\s\S]{0,1000}?<button\s+class="secondary-btn trailer-fs-btn"/.test(detailPage), 'F4→MAV-24: the fullscreen control renders ONLY while the trailer is active');
+// [2026-11 re-pin — TV-UX pass 2] the web fullscreen control is also gated on
+// !IS_WGT_BUILD (the TV trailer-sheet modal owns its own chrome there).
+ok(/\{#if trailerActive && !IS_WGT_BUILD\}[\s\S]{0,1000}?<button\s+class="secondary-btn trailer-fs-btn"/.test(detailPage), 'F4→MAV-24: the fullscreen control renders ONLY while the trailer is active (web build; WGT uses the modal sheet)');
 ok(!/<span>Fullscreen<\/span>/.test(detailPage), 'F4→MAV-24: the fullscreen control is icon-only (no visible "Fullscreen" text)');
 ok(/youtube\.com\/embed\/\$\{trailerKey\}/.test(detailPage), 'F4: the SAME YouTube embed source contract is preserved');
 ok(!/trailerKey\s*=\s*['"][a-zA-Z0-9_-]{5,}['"]/.test(detailPage), 'F4: no hardcoded trailer id in the page');
@@ -163,7 +169,10 @@ ok(/exitTrailerFullscreen|exitFullscreen/.test(detailPage), 'F4: fullscreen exit
 ok(/document\.fullscreenElement === trailerContainer/.test(detailPage), 'F4: fullscreen state is tracked on the player container');
 ok(/stopTrailer/.test(detailPage) && /trailerActive = false/.test(detailPage), 'F4: Trailer Off stops playback');
 ok(/\{#key trailerAttempt\}/.test(detailPage), 'F4: retry remounts a FRESH iframe (no stale media, no duplicate players)');
-ok((detailPage.match(/youtube\.com\/embed\//g) ?? []).length === 1, 'F4: exactly ONE iframe embed (no duplicate players)');
+// [2026-11 re-pin — TV-UX pass 2] exactly TWO embeds now: the inline player
+// (production web) + the WGT trailer-sheet modal embed (compile-time dead on
+// web, same trailerKey contract). Per build target only ONE is live.
+ok((detailPage.match(/youtube\.com\/embed\//g) ?? []).length === 2, 'F4: exactly ONE embed per build target — inline (web) + WGT modal sheet, no duplicate players');
 ok(/onload=\{\(\) => \{\s*clearTrailerLoadTimeout\(\); trailerStatus = 'ready'; \}\}/.test(detailPage), 'F4: loading state clears on iframe load');
 ok(/TRAILER_LOAD_TIMEOUT_MS/.test(detailPage), 'F4: a bounded load timeout surfaces the error state (provider cannot report embed errors)');
 ok(/Trailer is unavailable/.test(detailPage), 'F4: a graceful unavailable-trailer error state exists');

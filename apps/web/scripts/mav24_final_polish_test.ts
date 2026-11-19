@@ -76,16 +76,22 @@ ok(/class="back-btn" type="button" onclick=\{goBack\} aria-label="Go back"/.test
 ok(/class="primary-actions"/.test(detailPage) && /class="download-btn"/.test(detailPage), 'I2: Play and Download share the primary-actions row');
 ok(!/<span>Download<\/span>/.test(detailPage), 'I2: the visible "Download" text is removed');
 {
-  const dl = detailPage.match(/<button class="download-btn"[^>]*>/)![0];
+  // [2026-11 re-pin — TV-UX pass 2] the button tag is multi-line now and
+  // carries the WGT dummy-download attributes (disabled/aria-disabled on the
+  // widget, dialog popup on the web); the click + a11y contracts are
+  // unchanged. The non-greedy scan stops at the tag's closing `>`.
+  const dl = detailPage.match(/<button\s*\n\s*class="download-btn"[\s\S]*?\n\s*>/)![0];
   ok(/aria-label=\{`Download \$\{item\.title\}`\}/.test(dl), 'I2: the Download icon button keeps an accessible name');
-  ok(/onclick=\{openDownloadSheet\}/.test(dl) && /aria-haspopup="dialog"/.test(dl), 'I2: the Download click behavior is unchanged');
+  ok(/onclick=\{openDownloadSheet\}/.test(dl) && /aria-haspopup=\{IS_WGT_BUILD \? undefined : 'dialog'\}/.test(dl), 'I2: the Download click behavior is unchanged (WGT build dummies the popup — TV-UX pass 2)');
 }
 ok(/\.download-btn\s*\{[^}]*flex:\s*0 0 auto;\s*width:\s*52px;\s*min-height:\s*52px/.test(detailPage), 'I2: Download is a 52px square locked to the Play row height');
 ok(/\.play-btn\s*\{[^}]*min-height:\s*52px/.test(detailPage), 'I2: Play keeps its 52px dominant target (consistent row height)');
 ok(/\.primary-actions\s*\{[^}]*display:\s*flex;\s*align-items:\s*stretch/.test(detailPage), 'I2: the primary row stretches both buttons to one height');
 // Fullscreen: icon-only, beside Trailer Off, no separate row, state-aware.
 ok(!/<span>Fullscreen<\/span>/.test(detailPage), 'I2: the visible "Fullscreen" text is removed');
-ok(/\{#if trailerActive\}[\s\S]{0,1000}?<button\s+class="secondary-btn trailer-fs-btn"/.test(detailPage), 'I2: the fullscreen control renders ONLY while the trailer is active (beside Trailer Off in the same secondary row — no dedicated row)');
+// [2026-11 re-pin — TV-UX pass 2] gated on !IS_WGT_BUILD as well (the TV
+// trailer-sheet modal owns its own chrome on the widget).
+ok(/\{#if trailerActive && !IS_WGT_BUILD\}[\s\S]{0,1000}?<button\s+class="secondary-btn trailer-fs-btn"/.test(detailPage), 'I2: the fullscreen control renders ONLY while the trailer is active (beside Trailer Off in the same secondary row — no dedicated row; web build, WGT uses the modal sheet)');
 ok(/aria-label=\{trailerFullscreen \? 'Exit trailer fullscreen' : 'Show trailer fullscreen'\}/.test(detailPage), 'I2: the fullscreen control has a state-aware accessible label');
 ok(/aria-pressed=\{trailerFullscreen\}/.test(detailPage), 'I2: the fullscreen control announces its pressed state');
 ok(/onclick=\{\(\) => \(trailerFullscreen \? exitTrailerFullscreen\(\) : enterTrailerFullscreen\(\)\)\}/.test(detailPage), 'I2: the fullscreen control toggles enter/exit');
@@ -96,7 +102,10 @@ ok(/\.trailer-fs-btn\s*\{[^}]*min-width:\s*44px/.test(detailPage), 'I2: the icon
 ok(/bottom-left[\s\S]{0,400}cross-origin/.test(detailPage.replace(/\n\s+/g, ' ')), 'I2: the over-player placement limitation is documented in-source');
 // Trailer state contracts (unchanged from MAV-23).
 ok(/\{trailerActive \? 'Trailer Off' : 'Trailer'\}/.test(detailPage), 'I2: the Trailer / Trailer Off toggle labels are unchanged');
-ok((detailPage.match(/youtube\.com\/embed\//g) ?? []).length === 1, 'I2: exactly ONE inline YouTube embed (no duplicate players)');
+// [2026-11 re-pin — TV-UX pass 2] exactly TWO embeds now: the inline player
+// (production web) + the WGT trailer-sheet modal embed (compile-time dead on
+// web). Per build target only ONE is live — no duplicate players.
+ok((detailPage.match(/youtube\.com\/embed\//g) ?? []).length === 2, 'I2: exactly ONE live embed per build target — inline (web) + WGT modal sheet (no duplicate players)');
 ok(/autoplay=1&rel=0/.test(detailPage) && /allowfullscreen/.test(detailPage), 'I2: the embed source contract is unchanged');
 ok(/if \(trailerActive\) stopTrailer\(\)/.test(detailPage), 'I2: navigating to another title stops the trailer (stale-playback guard)');
 ok(/trailerToggle\?\.focus\(\)/.test(detailPage), 'I2: stopping the trailer restores focus to the toggle');
@@ -135,7 +144,9 @@ ok(/<div class="detail-page" style=\{paletteStyle\}>/.test(detailPage), 'R: the 
 ok(/class="palette-canvas" class:active=\{paletteStyle !== ''\}/.test(detailPage), 'R: the palette fade-in gate is untouched');
 ok(/class="trailer-inline" bind:this=\{trailerContainer\}/.test(detailPage), 'R: the inline trailer container is untouched');
 ok(/downloadSheetOpen/.test(detailPage) && /paletteStyle=\{paletteStyle\}/.test(detailPage), 'R: the Download sheet + its palette prop wiring are untouched');
-ok(/onDownload=\{openEpisodeDownloadSheet\}/.test(detailPage), 'R: episode download flow untouched');
+// [2026-11 re-pin — TV-UX pass 2] the SeasonEpisodes callback is gated on
+// IS_WGT_BUILD (dummied on the widget; production web wiring is unchanged).
+ok(/onDownload=\{IS_WGT_BUILD \? undefined : openEpisodeDownloadSheet\}/.test(detailPage), 'R: episode download flow untouched (web; dummied on the WGT build)');
 ok(/<SeasonEpisodes[\s\S]*?watchType=\{type === 'anime' \? 'anime' : 'series'\}/.test(detailPage), 'R: season/episode guide untouched');
 ok(/class="cast-rail"/.test(detailPage) && /class="recs-row"/.test(detailPage), 'R: Cast + recommendation rails untouched');
 ok(/navigateBackOr/.test(detailPage) && /appendReturnTo/.test(detailPage), 'R: back navigation + return-to contracts untouched');
