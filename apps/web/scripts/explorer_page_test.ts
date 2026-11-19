@@ -222,7 +222,7 @@ ok('5. filtered results: responsive first batch (columns × rows, bounded), infi
 // ?sort= query state). Current Airing (2026-11) renders ABOVE Popular
 // with per-card latest-episode badges — the dedicated
 // explorer_current_airing_test.ts pins the full feature contract.
-assert.match(explorerPage, /\{#each sections as section \(section\.key\)\}[\s\S]*?<ContentRail title=\{section\.title\} items=\{section\.items\} href=\{section\.showMoreHref \|\| ''\} linkLabel="Show more" episodeBadges=\{section\.episodeBadges\} \/>/, 'unfiltered sections render through the existing ContentRail with the Show-more CTA (Current Airing passes its per-card episode badges through)');
+assert.match(explorerPage, /\{#each effSections as section \(section\.key\)\}[\s\S]*?<ContentRail title=\{section\.title\} items=\{section\.items\} href=\{section\.showMoreHref \|\| ''\} linkLabel="Show more" episodeBadges=\{section\.episodeBadges\} tvLoadMore=\{IS_WGT_BUILD && \(section as unknown as TvExplorerSection\)\.source \? tvSectionLoader\(section as unknown as TvExplorerSection\) : null\} \/>/, 'unfiltered sections render through the existing ContentRail with the Show-more CTA (Current Airing passes its per-card episode badges through; TV-UX pass: effSections falls back to the TV payload, whose rails carry the widget-only trailing loader)');
 assert.match(loader, /key: 'popular'[\s\S]*?key: 'top-rated'/, 'the server composes exactly the Popular + Top Rated sections');
 assert.match(loader, /SECTION_TITLES: Record<ContentType/, 'section titles are per-type');
 assert.match(loader, /showMoreHref: `\$\{DESTINATION_ROUTES\[type\]\}\?sort=popular`/, 'Popular Show-more targets the canonical ?sort=popular route state');

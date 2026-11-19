@@ -3,6 +3,12 @@
   import { ArrowRight, ChevronLeft, ChevronRight } from 'lucide-svelte';
   import type { MediaItem } from '$lib/data/content';
   import MediaCard from '$components/MediaCard.svelte';
+  // TV-UX pass (widget build only): the rail's trailing SHOW MORE control.
+  // On the TV the rail SLIDES via transform and focus must never vanish at
+  // the row's end — Right past the last card lands on this button, which
+  // LOADS MORE items and hands focus to the first newly-added card.
+  import { IS_WGT_BUILD } from '$lib/shared/build-mode';
+  import { focusTvElement } from '$lib/tv/focus';
 
   let {
     title,
@@ -12,7 +18,8 @@
     linkLabel = 'View all',
     compact = false,
     variant = 'default',
-    episodeBadges = undefined
+    episodeBadges = undefined,
+    tvLoadMore = null
   }: {
     title: string;
     eyebrow?: string;
@@ -30,6 +37,11 @@
      *  server-side (formatLatestEpisodeBadge). Undefined on every other
      *  rail → cards render with no badge, byte-identical to before. */
     episodeBadges?: Record<string, string>;
+    /** TV-UX pass (widget build only) — async loader for the trailing
+     *  SHOW MORE control. Production callers omit it → the button never
+     *  renders → the rail markup is byte-identical on the web. The loader
+     *  returns the newly-appended items (or null when nothing/exhausted). */
+    tvLoadMore?: (() => Promise<MediaItem[] | null>) | null;
   } = $props();
 
   let railEl: HTMLElement;
@@ -86,6 +98,46 @@
     void items.length;
     updateScrollState();
   });
+
+  // ============================================================
+  // TV SHOW MORE (widget build only): loads the next batch through the
+  // caller's loader, appends it to the rail and moves TV FOCUS to the
+  // first newly-added card — the reported "focus disappears at the rail's
+  // end" contract: focus must never vanish, and it must CONTINUE into the
+  // new cards after loading. Exhausted loaders return null → the button
+  // hides (the row's end becomes a hard stop, no wrap).
+  // ============================================================
+  let tvLoadingMore = $state(false);
+  let tvExhausted = $state(false);
+  const tvShowMoreVisible = $derived(IS_WGT_BUILD && Boolean(tvLoadMore) && !tvExhausted);
+
+  async function handleTvShowMore() {
+    if (!tvLoadMore || tvLoadingMore || tvExhausted) return;
+    tvLoadingMore = true;
+    const previousCount = items.length;
+    try {
+      const appended = await tvLoadMore();
+      if (appended === null || appended.length === 0) {
+        tvExhausted = true;
+        return;
+      }
+    } finally {
+      tvLoadingMore = false;
+    }
+    // Hand TV focus to the FIRST newly-added card (the focus must continue
+    // into the new cards). The appended cards mount with the next render —
+    // wait a frame, then resolve the card at the previous boundary.
+    requestAnimationFrame(() => {
+      try {
+        const railCards = railEl?.querySelectorAll<HTMLElement>('.mc-wrap .mc-card-link');
+        if (railCards && railCards.length > previousCount) {
+          focusTvElement(railCards[previousCount]);
+        }
+      } catch {
+        /* focus handoff is best-effort */
+      }
+    });
+  }
 </script>
 
 <section
@@ -144,6 +196,20 @@
       {#each items as item (item.type + ':' + item.id)}
         <div role="listitem"><MediaCard {item} {compact} editorial={variant === 'editorial'} episodeBadge={episodeBadges?.[item.type + ':' + item.id] ?? ''} /></div>
       {/each}
+      {#if tvShowMoreVisible}
+        <!-- TV SHOW MORE (widget build only): the row-end focus stop that
+             loads more items. Styled ONLY by the injected tv-mode layer
+             (wgt_patch_shell §7) — production CSS untouched. -->
+        <div role="listitem" class="rail-tv-more-cell">
+          <button
+            type="button"
+            class="rail-tv-more"
+            disabled={tvLoadingMore}
+            aria-label={`Show more ${title}`}
+            onclick={handleTvShowMore}
+          >{tvLoadingMore ? 'Loading…' : 'Show more'}</button>
+        </div>
+      {/if}
     </div>
   </div>
 </section>

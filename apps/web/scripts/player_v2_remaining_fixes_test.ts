@@ -65,7 +65,7 @@ function ok(condition: unknown, label: string) {
 console.log('\n§1 — TMDB id resolution (prefixed production catalog ids)');
 {
   ok(/tmdbId\?: string;/.test(sharedPlayer) && /tmdbId\?: string/.test(sharedPlayer.replace(/[\s\S]*PlayerContentContext = \{/, '').split('};')[0]), '1a. PlayerContentContext carries the explicit tmdbId field');
-  ok(watchRoute.includes('$: playerContent = ({ id: item.id, tmdbId: item.externalIds?.tmdb,'), '1b. the watch route forwards item.externalIds?.tmdb as tmdbId');
+  ok(/playerContent = item\n\s*\? \(\{ id: item\.id, tmdbId: item\.externalIds\?\.tmdb,/.test(watchRoute), '1b. the watch route forwards item.externalIds?.tmdb as tmdbId (TV-UX pass: the ternary guards the widget build\u0027s async bootstrap — while `item` is undefined the placeholder carries no fake identity, and the web branch is the identical literal)');
   ok(/function resolveContentTmdbId\(\): number \| null \{/.test(shell), '1c. the shell resolves the TMDB id through ONE guarded helper');
   const helper = shell.slice(shell.indexOf('function resolveContentTmdbId'), shell.indexOf('async function loadExternalSubtitles'));
   ok(/String\(content\.tmdbId \?\? ''\)/.test(helper), '1d. authoritative source first: content.tmdbId');

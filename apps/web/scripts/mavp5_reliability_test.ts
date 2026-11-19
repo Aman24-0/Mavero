@@ -486,8 +486,8 @@ ok(manager.includes('Manual source switches (allowFallback=false) never enter th
   'RC-6: manual selections can never trigger the fallback message');
 ok(watchRouteCode.includes('?? (defaultSourceId ? [defaultSourceId] : [])'),
   'RC-6: the watch route resolves the ordered list with the legacy single-default fallback');
-ok(watchRouteCode.includes('data.streamingConfig.defaultsOrder?.adult'),
-  'RC-6: adult titles use the dedicated adult order (same override as the single default)');
+ok(watchRouteCode.includes('data.streamingConfig?.defaultsOrder?.adult'),
+  'RC-6: adult titles use the dedicated adult order (same override as the single default; TV-UX pass: the config read is optional-chained so the widget build — whose stashed server load leaves streamingConfig undefined while the TV bootstrap fetches it — can never crash on a Play press)');
 section('Issue 6 — three ordered default sources + fallback');
 
 // ---------------------------------------------------------------------------

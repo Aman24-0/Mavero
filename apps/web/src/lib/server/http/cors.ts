@@ -76,7 +76,14 @@ const TV_CORS_PATHS: readonly string[] = [
   '/api/auth/device-pairing/', // status/create/exchange/approve/cancel/lookup/info
   '/api/livetv/', // unified catalogue + guide (bounded public endpoints)
   '/api/public/channels', // legacy LiveGT catalogue path (LT-2 client)
-  '/api/public/guide/' // legacy LiveGT guide path (LT-2 client)
+  '/api/public/guide/', // legacy LiveGT guide path (LT-2 client)
+  // TV-UX pass (widget build): the Explorer pages filter IN PLACE from the
+  // widget and the watch route bootstraps its streaming config from the
+  // public endpoints. Both are public, credential-less GETs (same posture
+  // as /api/content/) — the header addition is inert for same-origin web
+  // traffic (browsers only read ACAO on cross-origin responses).
+  '/api/explorer/', // explorer/feed — in-place genre/language/sort filtering
+  '/api/streaming/' // streaming/config — the watch route's source options
 ];
 
 /** Whether a request path is in the TV CORS allowlist (exact match or prefix). */

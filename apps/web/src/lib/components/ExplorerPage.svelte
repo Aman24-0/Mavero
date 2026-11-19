@@ -43,6 +43,19 @@
   import EmptyState from '$components/EmptyState.svelte';
   import SkeletonCard from '$components/SkeletonCard.svelte';
   import ScrollToTop from '$components/ScrollToTop.svelte';
+  // TV-UX pass (widget build only): the Explorer pages rebuild their payload
+  // from the deployed production API (the stashed server loads leave the
+  // props empty on the .wgt) and their filter chips FILTER IN PLACE via
+  // /api/explorer/feed instead of navigating (?genre=… cannot be served by
+  // the widget's hash router). Compile-time no-op on production.
+  import { IS_WGT_BUILD } from '$lib/shared/build-mode';
+  import {
+    fetchTvExplorerPage,
+    fetchTvExplorerFeed,
+    tvSectionLoader,
+    type TvExplorerSection,
+    type TvExplorerFilters
+  } from '$lib/tv/explorer';
 
   // MAVERO — Explorer page (Movies / TV Shows / Anime redesign, Change 1).
   //
@@ -104,10 +117,35 @@
   const genreOptions = $derived(EXPLORER_GENRES[type]);
   const languageOptions = $derived(EXPLORER_LANGUAGES[type]);
 
-  const selectedGenre = $derived(filters.genre || '');
-  const selectedLanguage = $derived(filters.language && filters.language !== 'all' ? filters.language : '');
-  const selectedSort = $derived(filters.sort === 'popular' || filters.sort === 'top-rated' ? (filters.sort as ExplorerSort) : undefined);
+  // ============================================================
+  // TV-UX pass (widget build only) — the TV payload + in-place filter state.
+  // Production: every tv* variable stays at its neutral default and the
+  // deriveds below collapse to the server props (byte-identical web).
+  // ============================================================
+  let tvSpotlight = $state<MediaItem[]>([]);
+  let tvSections = $state<TvExplorerSection[]>([]);
+  let tvErrorMessage = $state('');
+  let tvFilters = $state<TvExplorerFilters>({});
+  let tvLoadingPage = $state(false);
+  let tvLoadingFeed = $state(false);
+
+  const selectedGenre = $derived(filters.genre || tvFilters.genre || '');
+  const selectedLanguage = $derived(
+    filters.language && filters.language !== 'all'
+      ? filters.language
+      : (tvFilters.language && tvFilters.language !== 'all' ? tvFilters.language : '')
+  );
+  const selectedSort = $derived(
+    (filters.sort === 'popular' || filters.sort === 'top-rated'
+      ? (filters.sort as ExplorerSort)
+      : (tvFilters.sort === 'popular' || tvFilters.sort === 'top-rated' ? (tvFilters.sort as ExplorerSort) : undefined))
+  );
   const filtersActive = $derived(Boolean(selectedGenre || selectedLanguage || selectedSort));
+
+  // Effective spotlight/sections: server props first (web), TV payload as
+  // the widget fallback (the props are empty there).
+  const effSpotlight = $derived(spotlight.length ? spotlight : tvSpotlight);
+  const effSections = $derived(sections.length ? sections : tvSections);
 
   // MAV-20 Phase D — the Explorer origin (page + ACTIVE FILTER STATE) the
   // spotlight hero's links carry as `from`, so detail pages opened from the
@@ -122,8 +160,50 @@
   // is carried along when the user narrows with chips, and "Clear
   // filters" clears EVERYTHING (genre + language + sort) back to the
   // default unfiltered Explorer.
+  //
+  // TV-UX pass (widget build only): the chips FILTER IN PLACE — the widget's
+  // hash router cannot serve ?genre=… navigations, so the TV branch updates
+  // local filter state and refetches the results grid from
+  // /api/explorer/feed directly. Production keeps the URL contract.
   // ============================================================
+  async function tvRefetchFeed(nextFilters: TvExplorerFilters): Promise<void> {
+    tvLoadingFeed = true;
+    try {
+      const feed = await fetchTvExplorerFeed(type, nextFilters, 1);
+      if (feed) {
+        feedItems = feed.items;
+        feedPage = feed.page;
+        feedHasNext = feed.hasNextPage;
+        feedTotalPages = feed.totalPages;
+        feedError = '';
+        feedExhausted = !feed.hasNextPage || (feed.totalPages !== undefined && feed.page >= feed.totalPages);
+        // Consume the (empty) server seed so the re-seed effect below can
+        // never clobber the in-place result while the route stays mounted.
+        lastSeed = filteredItems;
+        requestSequence += 1; // cancel any in-flight web-style appends
+        loadingMore = false;
+      } else {
+        feedItems = [];
+        feedError = 'Unable to load the filtered results right now.';
+        feedExhausted = true;
+      }
+    } finally {
+      tvLoadingFeed = false;
+    }
+  }
+
   function updateFilters(next: { genre?: string; language?: string; sort?: string }) {
+    if (IS_WGT_BUILD) {
+      // TV: in-place filtering — local state + a direct feed fetch.
+      const normalized: TvExplorerFilters = {
+        genre: next.genre && next.genre !== 'All' ? next.genre : undefined,
+        language: next.language && next.language !== 'all' ? next.language : undefined,
+        sort: next.sort === 'popular' || next.sort === 'top-rated' ? next.sort : undefined
+      };
+      tvFilters = normalized;
+      void tvRefetchFeed(normalized);
+      return;
+    }
     const params = new URLSearchParams();
     if (next.genre && next.genre !== 'All') params.set('genre', next.genre);
     if (next.language && next.language !== 'all') params.set('language', next.language);
@@ -332,6 +412,23 @@
       void topUpToResponsiveTarget();
     }
 
+    // TV-UX pass (widget build only): rebuild the Explorer payload from the
+    // production API when the stashed server load left everything empty.
+    // Never throws (all fetches are guarded); the honest empty state stays
+    // the failure fallback.
+    if (IS_WGT_BUILD && spotlight.length === 0 && sections.length === 0 && filteredItems.length === 0) {
+      tvLoadingPage = true;
+      void fetchTvExplorerPage(type)
+        .then((payload) => {
+          tvSpotlight = payload.spotlight;
+          tvSections = payload.sections;
+          tvErrorMessage = payload.errorMessage;
+        })
+        .finally(() => {
+          tvLoadingPage = false;
+        });
+    }
+
     // MAV-20 Phase D — register the feed snapshot handlers with the
     // route (which delegates its exported SvelteKit snapshot to them).
     // Capture: the accumulated infinite-scroll state. Restore: re-seed
@@ -425,14 +522,14 @@
 </svelte:head>
 
 <div class="explorer-page" data-destination={type}>
-  {#if spotlight.length > 0}
-    <SpotlightCarousel items={spotlight} ariaLabel={`${labels.plural} spotlight`} returnTo={explorerOrigin} />
+  {#if effSpotlight.length > 0}
+    <SpotlightCarousel items={effSpotlight} ariaLabel={`${labels.plural} spotlight`} returnTo={explorerOrigin} />
   {:else}
     <!-- Quiet fallback when the catalog cannot supply a spotlight lineup -->
     <section class="explorer-hero-fallback" aria-label={labels.plural}>
       <div class="fallback-eyebrow">MAVERO / {labels.plural}</div>
       <h1 class="fallback-title">{labels.plural} <em>in focus.</em></h1>
-      <p class="fallback-desc">{errorMessage ?? labels.description}</p>
+      <p class="fallback-desc">{errorMessage ?? tvErrorMessage ?? labels.description}</p>
     </section>
   {/if}
 
@@ -525,6 +622,12 @@
         <div class="explorer-grid grid-loading" aria-busy="true" aria-label={`Loading ${labels.prose}`}>
           {#each Array(skeletonCount) as _, index (index)}<SkeletonCard compact />{/each}
         </div>
+      {:else if tvLoadingFeed}
+        <!-- TV in-place filtering (widget build only): the feed fetch is in
+             flight — a matching skeleton, never a stale/blank grid. -->
+        <div class="explorer-grid grid-loading" aria-busy="true" aria-label={`Loading ${labels.prose}`}>
+          {#each Array(skeletonCount) as _, index (index)}<SkeletonCard compact />{/each}
+        </div>
       {:else if feedItems.length === 0}
         <EmptyState
           eyebrow={`MAVERO / No ${labels.singular} matches`}
@@ -577,11 +680,21 @@
       {#if errorMessage}
         <div class="catalog-warning" role="alert">{errorMessage}</div>
       {/if}
-      {#each sections as section (section.key)}
+      {#if IS_WGT_BUILD && tvLoadingPage}
+        <!-- TV payload in flight (widget build only): skeleton rails instead
+             of an empty region while the discover/feed fetches run. -->
+        <div class="explorer-grid grid-loading" aria-busy="true" aria-label={`Loading ${labels.prose}`}>
+          {#each Array(10) as _, index (index)}<SkeletonCard compact />{/each}
+        </div>
+      {/if}
+      {#each effSections as section (section.key)}
         <!-- Current Airing (server-composed) passes its per-card
              latest-episode badges through; Popular / Top Rated carry
-             none and the rail renders exactly as before. -->
-        <ContentRail title={section.title} items={section.items} href={section.showMoreHref || ''} linkLabel="Show more" episodeBadges={section.episodeBadges} />
+             none and the rail renders exactly as before.
+             TV-UX pass: the rail carries a trailing SHOW MORE loader
+             (widget build only — the button never renders on the web,
+             where the header CTA already navigates to the collection). -->
+        <ContentRail title={section.title} items={section.items} href={section.showMoreHref || ''} linkLabel="Show more" episodeBadges={section.episodeBadges} tvLoadMore={IS_WGT_BUILD && (section as unknown as TvExplorerSection).source ? tvSectionLoader(section as unknown as TvExplorerSection) : null} />
       {/each}
     </div>
   {/if}

@@ -179,8 +179,8 @@ const UUID_A = 'c935d578-1111-4111-8111-111111111111';
   const watchPage = src('src/routes/watch/[type]/[id]/+page.svelte');
   ok(/playbackMediaType: 'movie' \| 'series' = contentType === 'anime' \? 'series'/.test(watchPage),
     '2e. watch page maps the PROVIDER request mediaType (anime→series), never the public route string');
-  ok(/\{ contentType, contentId: item\.id, season, episode, episodeTitle: currentEpisode\?\.title \} satisfies PlaybackContext/.test(watchPage),
-    '2f. internal canonical identity (playbackContext) preserved for progress/history/favorites');
+  ok(/\{ contentType, contentId: item\?\.id \?\? '', season, episode, episodeTitle: currentEpisode\?\.title \} satisfies PlaybackContext/.test(watchPage),
+    '2f. internal canonical identity (playbackContext) preserved for progress/history/favorites (TV-UX pass: contentId is optional-chained — the widget build bootstraps `item` async from the TV API, so the Play press can never dereference undefined; the resolved value is the identical item.id)');
 
   // Adapter canonical key: series-like requests derive the EPISODE key
   // (exact season+episode) — the anime branch no longer returns null.

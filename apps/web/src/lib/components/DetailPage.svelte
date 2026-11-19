@@ -74,12 +74,29 @@
       let cancelled = false;
       tvItem = undefined;
       void fetchTvDetail(forType, forId).then((fetched) => {
-        if (!cancelled && fetched) tvItem = fetched;
+        if (!cancelled && fetched) tvItem = downgradeTvHeroArtwork(fetched);
       });
       return () => {
         cancelled = true;
       };
     });
+  }
+
+  // TV-UX pass (widget build only): the API's `backdropHero` points at the
+  // TMDB ORIGINAL-size image (1.3–5 MB). On TV WiFi that download lands
+  // seconds late (or never), and the detail hero fell back to its
+  // poster-only look — the reported "the POSTER fills the screen, no
+  // backdrop". The TV serves 1080p: w1280 (~210 KB) is visually equivalent,
+  // so the fetched item's hero tier is DOWNgraded to the backdrop (poster
+  // only when no backdrop exists at all). Rails/keep-everything-else
+  // unchanged; production never runs this branch.
+  function downgradeTvHeroArtwork(item: MediaItem): MediaItem {
+    try {
+      const fallback = item.backdrop || item.backdropSmall || item.poster || item.backdropHero;
+      return { ...item, backdropHero: fallback || item.backdropHero };
+    } catch {
+      return item;
+    }
   }
   let resumeEpisode = $state<{ season: number; episode: number } | undefined>(undefined);
   let hasActiveProgress = $state(false);

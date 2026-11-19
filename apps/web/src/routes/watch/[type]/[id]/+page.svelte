@@ -20,6 +20,17 @@
   import type { PlaybackContext } from '$lib/client/progress/types';
   import { PlaybackManager, type ResolutionState } from '$lib/client/player/PlaybackManager';
   import { nextEpisodeTarget } from '$lib/shared/player-state';
+  // TV PLAY CRASH FIX (widget build only — see $lib/tv/watch): the .wgt has
+  // no server load, so `data.item` / `data.streamingConfig` / `data.episodes`
+  // arrive undefined and the reactive chain below crashed with
+  // "Cannot read property 'id' of undefined" the moment PLAY opened this
+  // route. On the widget build the page bootstraps the SAME page-load shape
+  // from the TV API before the player mounts; production never evaluates the
+  // guarded branches (IS_WGT_BUILD is compile-time false) and keeps its
+  // server-provided data. Every reactive statement below is ALSO guarded so
+  // an in-flight/failed TV fetch degrades to the standby card — never a throw.
+  import { IS_WGT_BUILD } from '$lib/shared/build-mode';
+  import { fetchTvWatchData } from '$lib/tv/watch';
   // Task 6 — in-sheet season switching: the SAME eligibility contract the
   // detail page's season selector uses (unaired seasons filtered; season 0
   // specials are already excluded by extractSeasonsData upstream).
@@ -34,6 +45,34 @@
 
   export let data: PageData;
 
+  // TV bootstrap state — 'idle' on the web forever; on the widget build the
+  // onMount below flips it while the TV API payload is in flight. The
+  // template gates the player shell on `item` and renders the standby card
+  // from this state (loading / failed), so an undefined item can never reach
+  // PlayerShell or any other dereference.
+  let tvWatchState: 'idle' | 'loading' | 'ready' | 'failed' = 'idle';
+
+  // TV PLAY CRASH FIX — bootstrap the page-load shape from the TV API when
+  // the stashed server load left `data.item` empty (widget build only).
+  // On success `data` is reassigned with { item, streamingConfig, episodes }
+  // and every reactive statement below re-runs against REAL data; the
+  // standby card is replaced by the player shell. On failure the standby
+  // error card renders and Back still works — the route can never throw.
+  onMount(() => {
+    if (!IS_WGT_BUILD || data.item) return; // production / already-loaded: no-op
+    tvWatchState = 'loading';
+    const routeTypeParam = page.params.type ?? '';
+    const idParam = page.params.id ?? '';
+    void fetchTvWatchData(routeTypeParam, idParam).then((tvData) => {
+      if (tvData) {
+        data = { ...data, item: tvData.item, streamingConfig: tvData.streamingConfig, episodes: tvData.episodes } as PageData;
+        tvWatchState = 'ready';
+      } else {
+        tvWatchState = 'failed';
+      }
+    });
+  });
+
   $: item = data.item;
   // Phase 5+7 fix: derive contentType from the modern public route type
   // ('tv-show' → 'series', 'anime-series' → 'anime', 'anime-movie' → 'movie')
@@ -47,7 +86,7 @@
   // The public route type for URL construction (for goto/navigation).
   $: routeType = isPublicRouteType(page.params.type)
     ? page.params.type as ReturnType<typeof publicRouteType>
-    : publicRouteType(contentType, item.isAnime, item.animeFormat);
+    : (item ? publicRouteType(contentType, item.isAnime, item.animeFormat) : 'movie');
   // Season/episode — CANONICAL PATH params first (both route forms after
   // the loader's canonicalization redirect: /watch/tv-show/1396/5/6),
   // falling back to the legacy query params for direct query-form reads
@@ -69,8 +108,8 @@
   // contract; the parameter is opt-in, per-session and documented in the
   // Admin source editor's Player Controls Position section.
   const calibrationMode = page.url.searchParams.get('controls') === 'calibrate';
-  $: currentEpisode = season !== undefined && episode !== undefined ? data.episodes.find((candidate) => candidate.season === season && candidate.number === episode) : undefined;
-  $: playbackContext = ({ contentType, contentId: item.id, season, episode, episodeTitle: currentEpisode?.title } satisfies PlaybackContext);
+  $: currentEpisode = season !== undefined && episode !== undefined ? (data.episodes ?? []).find((candidate) => candidate.season === season && candidate.number === episode) : undefined;
+  $: playbackContext = ({ contentType, contentId: item?.id ?? '', season, episode, episodeTitle: currentEpisode?.title } satisfies PlaybackContext);
   $: playbackKey = [playbackContext.contentType, playbackContext.contentId, playbackContext.season ?? '-', playbackContext.episode ?? '-'].join(':');
   // VidRift (documented vidrift:nextup-info): Mavero's AUTHORITATIVE
   // next-episode context for the current episode — the exact next entry of
@@ -82,7 +121,7 @@
   // Mavero's episode data; never guessed at the provider side.
   $: nextEpisodeForCurrent = contentType === 'movie'
     ? undefined
-    : nextEpisodeTarget(episodes, currentEpisode ? { season: currentEpisode.season, episode: currentEpisode.number } : null, item.seasons);
+    : nextEpisodeTarget(episodes, currentEpisode ? { season: currentEpisode.season, episode: currentEpisode.number } : null, item?.seasons);
   // Source options are built directly from the public streaming config. The
   // MegaPlay-style SUB/DUB variant toggle was removed alongside the Yenime
   // anime provider — all sources are now opaque options selected by name.
@@ -101,16 +140,16 @@
   // multi-assigned sources (previously it was whichever row happened to sort
   // first in a globally-mixed ordering array).
   type SourceCategoryAssignment = { categoryId: string; categoryName: string; ordering: number };
-  $: categoryRankById = new Map<string, number>((data.streamingConfig.categories ?? []).map((category, index) => [category.id, index]));
+  $: categoryRankById = new Map<string, number>((data.streamingConfig?.categories ?? []).map((category, index) => [category.id, index]));
   $: primaryAssignmentBySourceId = (() => {
     const primary = new Map<string, SourceCategoryAssignment>();
-    for (const mapping of data.streamingConfig.sourceCategories ?? []) {
+    for (const mapping of data.streamingConfig?.sourceCategories ?? []) {
       const rank = categoryRankById.get(mapping.category_id);
       if (rank === undefined) continue; // mapping whose category is not public — not renderable
       const existing = primary.get(mapping.source_id);
       const existingRank = existing ? categoryRankById.get(existing.categoryId) : undefined;
       if (existing && existingRank !== undefined && existingRank <= rank) continue;
-      const category = (data.streamingConfig.categories ?? []).find((candidate) => candidate.id === mapping.category_id);
+      const category = (data.streamingConfig?.categories ?? []).find((candidate) => candidate.id === mapping.category_id);
       primary.set(mapping.source_id, { categoryId: mapping.category_id, categoryName: category?.name ?? 'Other', ordering: mapping.ordering });
     }
     return primary;
@@ -130,8 +169,8 @@
   // Badge/icon are presentation metadata copied straight from the public
   // config (constrained badge enum; safe icon key with render fallback).
   $: sourceOptions = (() => {
-    const options: PlayerSourceOption[] = data.streamingConfig.sources.map((source) => {
-      const provider = data.streamingConfig.providers.find((provider) => provider.id === source.provider_id);
+    const options: PlayerSourceOption[] = (data.streamingConfig?.sources ?? []).map((source) => {
+      const provider = (data.streamingConfig?.providers ?? []).find((provider) => provider.id === source.provider_id);
       const assignment = primaryAssignmentBySourceId.get(source.id);
       const option: PlayerSourceOption = {
         id: source.id,
@@ -189,8 +228,13 @@
       })
       .map((entry) => entry.option);
   })();
-  $: episodes = data.episodes.map((candidate) => ({ id: candidate.id, number: candidate.number, season: candidate.season, title: candidate.title, overview: candidate.overview, runtime: candidate.runtime, still: candidate.still })) satisfies PlayerEpisode[];
-  $: playerContent = ({ id: item.id, tmdbId: item.externalIds?.tmdb, type: contentType, title: item.title, poster: item.poster, backdrop: item.backdrop });
+  $: episodes = (data.episodes ?? []).map((candidate) => ({ id: candidate.id, number: candidate.number, season: candidate.season, title: candidate.title, overview: candidate.overview, runtime: candidate.runtime, still: candidate.still })) satisfies PlayerEpisode[];
+  // TV PLAY CRASH FIX: while the TV bootstrap is in flight (or has failed)
+  // `item` is undefined — a null-safe placeholder keeps the PlayerContentContext
+  // type satisfied; PlayerShell only renders once a REAL item exists.
+  $: playerContent = item
+    ? ({ id: item.id, tmdbId: item.externalIds?.tmdb, type: contentType, title: item.title, poster: item.poster, backdrop: item.backdrop })
+    : ({ id: '', type: contentType, title: '' });
 
   // Deep-audit Section 4: the progress/favorite SNAPSHOT carries the anime
   // classification so Continue Watching / My List can render the canonical
@@ -478,8 +522,8 @@
   // users — with Adult Mode OFF the watch route 404s adult titles and this
   // selection never executes for them. When no adult default is configured,
   // the content-type default applies exactly as before (unchanged behavior).
-  $: isAdultTitle = item.tags?.includes('Adult') === true;
-  $: defaultSourceId = (isAdultTitle ? data.streamingConfig.defaults?.adult : undefined) ?? data.streamingConfig.defaults?.[contentType];
+  $: isAdultTitle = item?.tags?.includes('Adult') === true;
+  $: defaultSourceId = (isAdultTitle ? data.streamingConfig?.defaults?.adult : undefined) ?? data.streamingConfig?.defaults?.[contentType];
   // MAVP-5 (Issue 6): the admin-configured ORDERED default sources for the
   // current content type (primary → secondary → tertiary), resolved from
   // the public config's `defaultsOrder`. Adult-tagged titles use the
@@ -489,8 +533,8 @@
   // configs that were never normalized into slots. Only used for the
   // INITIAL resolution (allowFallback=true) — manual source switches never
   // re-enter the default chain.
-  $: defaultSourceIds = (isAdultTitle ? data.streamingConfig.defaultsOrder?.adult : undefined)
-    ?? data.streamingConfig.defaultsOrder?.[contentType]
+  $: defaultSourceIds = (isAdultTitle ? data.streamingConfig?.defaultsOrder?.adult : undefined)
+    ?? data.streamingConfig?.defaultsOrder?.[contentType]
     ?? (defaultSourceId ? [defaultSourceId] : []);
   // Phase 9 fix: source selection MUST wait for progressReady before selecting.
   // The old code used `!selectedSourceId` which fired as soon as sourceOptions
@@ -523,7 +567,7 @@
     // selectedSourceId directly, bypassing this reactive block.
     const defaultValid = defaultSourceId && sourceOptions.some((s) => s.id === defaultSourceId);
     const savedValid = savedSourceId && sourceOptions.some((s) => s.id === savedSourceId);
-    selectedSourceId = defaultValid ? defaultSourceId! : (savedValid ? savedSourceId! : sourceOptions[0].id);
+    selectedSourceId = defaultValid ? defaultSourceId! : (savedValid ? savedSourceId! : (sourceOptions[0]?.id ?? ''));
     // Phase 1 Analytics Foundation — provider_selected event for the
     // initial source. Emitted once per playbackKey change (the reactive
     // block only fires when selectedSourceId is empty). umamiTrack
@@ -532,7 +576,7 @@
     // 'fallback' if the dashboard needs it. provider_id is looked up
     // from the streaming config (PlayerSourceOption does not carry it).
     if (selectedSourceId) {
-      const sourceConfig = data.streamingConfig.sources.find((s) => s.id === selectedSourceId);
+      const sourceConfig = (data.streamingConfig?.sources ?? []).find((s) => s.id === selectedSourceId);
       umamiTrack('provider_selected', {
         content_id: item.id,
         content_type: contentType,
@@ -660,6 +704,14 @@
 
   async function setupProgressContext() {
     if (!browser || !playbackKey || playbackKey === writerKey) return;
+    // TV PLAY CRASH FIX (widget build only): the writer-key effect fires at
+    // component init, BEFORE the TV bootstrap has fetched `item` — the
+    // writer creation path calls buildSnapshot() which dereferences
+    // item.title. The progress context is meaningless without a real item:
+    // no-op here and let the playbackKey change (when the TV payload lands
+    // and contentId becomes the real id) re-run this effect. Production
+    // always has item at init — this branch is inert on the web.
+    if (!item) return;
     writerKey = playbackKey;
     watchingSavedForSession = false;
     progressReady = false;
@@ -949,8 +1001,8 @@
     // is looked up from the streaming config (PlayerSourceOption does
     // not carry it).
     if (sourceId && sourceId !== selectedSourceId) {
-      const fromSourceConfig = data.streamingConfig.sources.find((s) => s.id === selectedSourceId);
-      const toSourceConfig = data.streamingConfig.sources.find((s) => s.id === sourceId);
+      const fromSourceConfig = (data.streamingConfig?.sources ?? []).find((s) => s.id === selectedSourceId);
+      const toSourceConfig = (data.streamingConfig?.sources ?? []).find((s) => s.id === sourceId);
       umamiTrack('provider_switched', {
         content_id: item.id,
         content_type: contentType,
@@ -1020,7 +1072,7 @@
     await goto(`${canonicalWatchHref(routeType, bareId, target.season, target.episode)}${forwardedQuery ? `?${forwardedQuery}` : ''}`, { replaceState: true, keepFocus: true, noScroll: true });
   }
 
-  $: sheetSeasonOptions = getEligibleSeasons(item.seasonsData).map((season) => ({ number: season.number, episodeCount: season.episodeCount }));
+  $: sheetSeasonOptions = getEligibleSeasons(item?.seasonsData).map((season) => ({ number: season.number, episodeCount: season.episodeCount }));
 
   function isDetailPath(value: string) {
     // Phase 5: recognize both legacy (/movie/, /series/, /anime/) and
@@ -1153,8 +1205,15 @@
   $: resolutionSourceName = resolutionState === 'title-unavailable' ? sourceOptions.find((option) => option.id === selectedSourceId)?.name ?? '' : '';
 </script>
 
-<svelte:head><title>Watching {item.title} — Mavero</title></svelte:head>
+<svelte:head><title>Watching {item?.title ?? ''} — Mavero</title></svelte:head>
 
+<!-- TV PLAY CRASH FIX — the player shell renders ONLY with a real item.
+     On the web the server load guarantees one (404s otherwise), so the
+     {#if item} branch is ALWAYS the one taken and the rendered markup is
+     byte-identical. On the widget build the TV bootstrap fills `data`
+     async: while it is in flight (or after a failure) the standby card
+     below renders instead — the Play press can never crash the app. -->
+{#if item}
 <!-- Player startup (MAVERO player redesign): the shell renders IMMEDIATELY —
      local progress preparation (IndexedDB + cloud sync) no longer gates the
      UI. While progressReady is false the shell shows its single lightweight
@@ -1163,3 +1222,31 @@
      starts the moment the selected source is known. The obsolete red
      full-screen loading screen and its duplicate transitions are removed. -->
 <PlayerShell source={resolvedSource} content={playerContent} initialProgress={resumeTime} sourceOptions={sourceOptions} {episodes} currentEpisode={currentEpisode ? { season: currentEpisode.season, episode: currentEpisode.number, title: currentEpisode.title } : null} resolving={resolutionState === 'resolving'} calibrationMode={calibrationMode} resolutionError={resolutionErrorForwarded} resolutionKind={resolutionState === 'unsupported' ? 'unsupported' : resolutionState === 'unavailable' ? 'unavailable' : resolutionState === 'title-unavailable' ? 'title-unavailable' : 'provider-error'} resolutionSourceName={resolutionSourceName} resolutionMessage={resolutionState === 'resolving' ? resolutionMessage : ''} onProgress={handlePlayerProgress} onSourceChange={handleSourceChange} onRetry={() => handleSourceChange(selectedSourceId)} onEpisodeChange={handleEpisodeChange} onClose={closePlayer} onDetails={openDetails} onIframeReady={(iframe) => manager.setIframe(iframe)} {embedPlaybackEvent} seasons={sheetSeasonOptions} {seasonView} onSeasonSelect={handleSeasonSelect} onSeasonRetry={handleSeasonRetry} />
+{:else if tvWatchState === 'loading'}
+  <!-- TV standby (widget build only): the TV API payload is in flight. -->
+  <div class="tv-watch-standby" role="status">Loading title…</div>
+{:else if tvWatchState === 'failed'}
+  <!-- TV failure (widget build only): the title could not be fetched —
+       honest message + Back keeps working (the focus manager's Back pops
+       the route). The app must NEVER crash on a Play press. -->
+  <div class="tv-watch-standby" role="alert">This title could not be loaded right now. Press Back to return.</div>
+{/if}
+
+<style>
+  /* TV PLAY CRASH FIX — the standby/error card for the widget build's
+     async bootstrap (see the template gates above). On the web the server
+     load always provides `data.item`, so these branches never render and
+     the styles are inert; they exist so the TV's loading/failed state is a
+     readable, centered card instead of a blank screen. */
+  .tv-watch-standby {
+    min-height: 60vh;
+    display: grid;
+    place-items: center;
+    padding: 48px 24px;
+    color: var(--color-text, #f2fff8);
+    background: transparent;
+    font-size: 1rem;
+    font-weight: 600;
+    text-align: center;
+  }
+</style>

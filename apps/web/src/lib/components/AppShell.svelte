@@ -3,6 +3,13 @@
   import { Compass, Search, UserRound, Clapperboard, Film, PanelLeftClose, PanelLeft, Sparkles, Tv, Radio } from 'lucide-svelte';
   import AccountSheet from '$components/AccountSheet.svelte';
   import { haptic } from '$lib/client/haptics';
+  // TV-UX pass (widget build only): the sidebar AUTO-EXPANDS when TV focus
+  // enters it and AUTO-COLLAPSES back to the icon rail when focus returns to
+  // content. The spatial focus manager ($lib/tv/focus) dispatches the
+  // 'mavero:tv-sidebar' CustomEvent; the widget boots COLLAPSED so content
+  // gets the full width. Compile-time no-op on production (the event is
+  // never dispatched and the stored preference applies as before).
+  import { IS_WGT_BUILD } from '$lib/shared/build-mode';
 
   let { children, currentPath = '/', user = null, isAuthenticated = false, isAdmin = false, appConfig = null }: { children: Snippet; currentPath?: string; user?: { id: string; email?: string | null; displayName?: string | null } | null; isAuthenticated?: boolean; isAdmin?: boolean; appConfig?: { telegramUrl: string | null; discordUrl: string | null } | null } = $props();
   let shell: HTMLElement;
@@ -119,10 +126,15 @@
   const STORAGE_KEY = 'mavero:sidebar-collapsed';
 
   onMount(async () => {
-    // Restore sidebar state
-    try {
-      sidebarCollapsed = localStorage.getItem(STORAGE_KEY) === 'true';
-    } catch { /* SSR / no access */ }
+    // Restore sidebar state. TV: boot COLLAPSED regardless of the stored
+    // value — the auto-expand/collapse contract owns the state from here.
+    if (IS_WGT_BUILD) {
+      sidebarCollapsed = true;
+    } else {
+      try {
+        sidebarCollapsed = localStorage.getItem(STORAGE_KEY) === 'true';
+      } catch { /* SSR / no access */ }
+    }
 
     const { gsap } = await import('gsap');
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -130,9 +142,29 @@
     gsap.fromTo(shell, { opacity: 0 }, { opacity: 1, duration: 0.4, ease: 'power2.out' });
   });
 
+  // TV auto-expand/collapse: the spatial focus manager decides when focus
+  // sits in the sidebar (expand) or in the content (icon rail).
+  $effect(() => {
+    if (!IS_WGT_BUILD || typeof window === 'undefined') return;
+    const handler = (event: Event) => {
+      try {
+        const detail = (event as CustomEvent<{ collapsed?: boolean }>).detail;
+        if (detail && typeof detail.collapsed === 'boolean') sidebarCollapsed = detail.collapsed;
+      } catch {
+        /* cosmetic */
+      }
+    };
+    window.addEventListener('mavero:tv-sidebar', handler);
+    return () => window.removeEventListener('mavero:tv-sidebar', handler);
+  });
+
   function toggleSidebar() {
     sidebarCollapsed = !sidebarCollapsed;
-    try { localStorage.setItem(STORAGE_KEY, String(sidebarCollapsed)); } catch { /* no access */ }
+    // TV: the auto-expand/collapse contract owns the state — never persist
+    // a manual toggle over it (the next focus move would override anyway).
+    if (!IS_WGT_BUILD) {
+      try { localStorage.setItem(STORAGE_KEY, String(sidebarCollapsed)); } catch { /* no access */ }
+    }
   }
 
   // Update CSS variable for sidebar width

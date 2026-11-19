@@ -40,6 +40,16 @@
  *     REAL D-PAD simulation moves DOM focus: synthetic ArrowDown (and
  *     ArrowRight) keydowns with the TV keyCodes re-target
  *     document.activeElement and the .tv-focused ring follows.
+ *   - TV-UX pass: the Samsung KEY REGISTRATION rule — the manager must
+ *     register ONLY extra media keys (arrows/Enter/Back are delivered
+ *     automatically; registering them BLOCKS their delivery). A
+ *     window.tizen.tvinputdevice recorder proves no mandatory key is
+ *     ever registered. Consumed arrows are preventDefault()-ed (rule 7),
+ *     the boot seed focus sits in the SIDEBAR (so Left/Right at open can
+ *     never change a hero slide), Right from the sidebar AUTO-COLLAPSES
+ *     it (the mavero:tv-sidebar contract), and when real rails rendered,
+ *     Right along a rail applies the CSS-transform slide (never native
+ *     scroll).
  *
  * USAGE
  * =====
@@ -171,6 +181,29 @@ const context = await browser.newContext({
 
 // Register the simulation BEFORE anything else touches the page.
 await context.addInitScript(stripTvBuiltIns);
+
+// TV-UX pass — the tvinputdevice RECORDER: captures every registerKey(Batch)
+// call so the smoke can prove the Samsung registration rule (arrows, Enter
+// and Back are platform-delivered and must NEVER be registered; only extra
+// media keys may be). The mock is installed before app.js evaluates; the
+// widget's other tizen.* surfaces stay undefined exactly as on a desktop
+// browser (the AVPlay object paths no-op there already).
+await context.addInitScript(() => {
+  try {
+    const recorded = [];
+    const record = (keys) => {
+      try {
+        for (const key of Array.isArray(keys) ? keys : [keys]) recorded.push(String(key));
+      } catch (e) {}
+    };
+    window.__tvRegisteredKeys = recorded;
+    window.tizen = window.tizen || {};
+    window.tizen.tvinputdevice = {
+      registerKey: (key) => record(key),
+      registerKeyBatch: (keys) => record(keys)
+    };
+  } catch (e) {}
+});
 
 const page = await context.newPage();
 const diagnostics = { console: [], pageErrors: [], failedRequests: [] };
@@ -333,6 +366,21 @@ console.log(
   `wgt_file_smoke: tv-mode active (body class + style layer, zoom=${String(tvModeState.zoomApplied)}) — spatial focus manager installed`
 );
 
+// TV-UX pass: the D-PAD/region simulations need a CONTENT target to walk
+// into — wait until the TV payload has rendered (rails with real cards) or
+// the honest empty state is up. The boot seed lands in the sidebar the
+// moment the shell renders; Right from there can only enter content once
+// the payload has populated it.
+try {
+  await page.waitForFunction(
+    () => document.querySelector('.mc-card-link') || document.querySelector('.empty-state'),
+    null,
+    { timeout: 45000 }
+  );
+} catch (e) {
+  await fail(page, diagnostics, 'neither catalog rails nor the empty state rendered — no D-PAD content to walk into');
+}
+
 // D-PAD simulation: TV keyCodes on window keydown. The manager listens on
 // capture; synthetic events dispatched on document.body reach it.
 const padState = await page.evaluate(async () => {
@@ -388,7 +436,140 @@ console.log(
   `wgt_file_smoke: D-PAD simulation moved focus (targets seen: ${padState.distinctTargets}, active=${padState.focusedTag}, ring applied)`
 );
 
-console.log('wgt_file_smoke: PASS — the packed widget boots over file:// on a TV-era engine (simulated built-ins deleted), polyfill fixes the Object.hasOwn crash, __mavero_wgt_app.start exposed, overlay silent, sidebar + discover body rendered, tv-mode + spatial D-PAD focus verified');
+// ---- 9. TV-UX pass — Samsung registration rule + region behaviour ----------
+// 9a. KEY REGISTRATION: arrows/Enter/Back are platform-delivered; registering
+//     them BLOCKS delivery. Only media keys may appear in the recorder.
+const registeredKeys = await page.evaluate(() => Array.from(window.__tvRegisteredKeys || []));
+if (registeredKeys.length === 0) {
+  await fail(page, diagnostics, 'tizen.tvinputdevice received NO registerKey calls — the manager skipped registration entirely (the recorder mock was not consumed)');
+}
+const mandatoryKeys = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', 'Back'];
+const forbidden = registeredKeys.filter((key) => mandatoryKeys.includes(key));
+if (forbidden.length > 0) {
+  await fail(page, diagnostics, `SAMSUNG RULE VIOLATION — mandatory keys registered via tvinputdevice (registering BLOCKS their delivery): ${forbidden.join(', ')}`);
+}
+console.log(
+  `wgt_file_smoke: Samsung registration rule held — registered keys [${registeredKeys.join(', ')}] contain no arrows/Enter/Back (media keys only)`
+);
+
+// 9b. preventDefault discipline: a consumed arrow must never scroll the page.
+//     Focus is placed DIRECTLY on the sidebar's first link (bypassing the
+//     manager) so the state is deterministic: Left has no exit there — the
+//     manager consumes it (rule 7) and focus STAYS in the sidebar.
+const pdState = await page.evaluate(async () => {
+  const link = document.querySelector('.app-sidebar .sidebar-link');
+  if (!link) return { skipped: true };
+  try { link.focus({ preventScroll: true }); } catch (e) { link.focus(); }
+  await new Promise((r) => setTimeout(r, 120));
+  const event = new KeyboardEvent('keydown', { keyCode: 37, key: 'ArrowLeft', bubbles: true, cancelable: true });
+  window.dispatchEvent(event);
+  await new Promise((r) => setTimeout(r, 120));
+  return {
+    skipped: false,
+    prevented: event.defaultPrevented === true,
+    stillSidebar: Boolean(document.activeElement && document.activeElement.closest && document.activeElement.closest('.app-sidebar'))
+  };
+});
+if (!pdState.skipped) {
+  if (!pdState.prevented) {
+    await fail(page, diagnostics, 'a consumed arrow was NOT preventDefault()-ed — the page would scroll behind the manager (the reported Left/Right scroll bug)');
+  }
+  if (!pdState.stillSidebar) {
+    await fail(page, diagnostics, 'Left from the sidebar moved focus OUT of the sidebar — the sidebar left edge must be a hard stop');
+  }
+  console.log('wgt_file_smoke: preventDefault discipline verified (consumed arrow stopped; Left from the sidebar stays put)');
+}
+
+// 9c. SIDEBAR AUTO-COLLAPSE: Right from the sidebar enters content and the
+//     manager dispatches mavero:tv-sidebar {collapsed:true} (AppShell
+//     collapses to the icon rail).
+const sidebarState = await page.evaluate(async () => {
+  const link = document.querySelector('.app-sidebar .sidebar-link');
+  if (!link) return { skipped: true };
+  try { link.focus({ preventScroll: true }); } catch (e) { link.focus(); }
+  await new Promise((r) => setTimeout(r, 120));
+  const events = [];
+  const recorder = (e) => {
+    try {
+      events.push(e.detail && e.detail.collapsed);
+    } catch (err) {}
+  };
+  window.addEventListener('mavero:tv-sidebar', recorder);
+  window.dispatchEvent(new KeyboardEvent('keydown', { keyCode: 39, key: 'ArrowRight', bubbles: true, cancelable: true }));
+  await new Promise((r) => setTimeout(r, 160));
+  window.removeEventListener('mavero:tv-sidebar', recorder);
+  const active = document.activeElement;
+  return {
+    skipped: false,
+    events,
+    leftSidebar: Boolean(active && !(active.closest && active.closest('.app-sidebar')))
+  };
+});
+if (!sidebarState.skipped) {
+  if (!sidebarState.leftSidebar) {
+    await fail(page, diagnostics, 'Right from the sidebar did not move focus into the content area');
+  }
+  if (!sidebarState.events.some((value) => value === true)) {
+    await fail(page, diagnostics, 'Right from the sidebar did not dispatch mavero:tv-sidebar {collapsed:true} — the auto-collapse contract is broken');
+  }
+  console.log('wgt_file_smoke: sidebar auto-collapse verified (Right from the sidebar → content + icon-rail event)');
+}
+
+// 9d. RAIL SLIDE (only when real rails rendered — the empty-state fallback
+//     has none): Right along a rail must SLIDE it via CSS transform and
+//     focus must never vanish, even past the last VISIBLE card.
+const railState = await page.evaluate(async () => {
+  const fire = (keyCode, key) =>
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', { keyCode, key, bubbles: true, cancelable: true })
+    );
+  const rail = document.querySelector('.rail');
+  if (!rail) return { skipped: true };
+  const cards = rail.querySelectorAll('.mc-wrap .mc-card-link');
+  if (cards.length < 3) return { skipped: true, cards: cards.length };
+  // Walk onto the rail's first VISIBLE card (Down from the content entry),
+  // then Right repeatedly — at least one press must cross the visible edge
+  // on a 200px-card rail (8+ cards render beyond the 1920px viewport).
+  const visibleCards = Array.from(cards).filter((card) => {
+    const rect = card.getBoundingClientRect();
+    return rect.right <= window.innerWidth + 4 && rect.left >= 0;
+  });
+  const startCard = visibleCards[Math.max(0, visibleCards.length - 2)] || cards[0];
+  try { startCard.focus({ preventScroll: true }); } catch (e) {}
+  let focusVanished = false;
+  for (let i = 0; i < 6; i++) {
+    fire(39, 'ArrowRight');
+    await new Promise((r) => setTimeout(r, 90));
+    const active = document.activeElement;
+    if (!active || active === document.body) {
+      focusVanished = true;
+      break;
+    }
+  }
+  const transform = getComputedStyle(rail).transform;
+  return {
+    skipped: false,
+    focusVanished,
+    slid: transform && transform !== 'none',
+    stillOnRail: Boolean(document.activeElement && document.activeElement.closest && document.activeElement.closest('.rail'))
+  };
+});
+if (!railState.skipped) {
+  if (railState.focusVanished) {
+    await fail(page, diagnostics, 'focus DISAPPEARED while moving Right along a rail — the reported rail-end bug');
+  }
+  if (!railState.slid) {
+    await fail(page, diagnostics, 'the rail never applied a CSS-transform slide while focus crossed the visible edge');
+  }
+  if (!railState.stillOnRail) {
+    await fail(page, diagnostics, 'focus left the rail while sliding Right along it');
+  }
+  console.log('wgt_file_smoke: rail slide verified (transform applied, focus retained across the visible edge)');
+} else {
+  console.log('wgt_file_smoke: rail slide skipped (no populated rails rendered — empty-state fallback)');
+}
+
+console.log('wgt_file_smoke: PASS — the packed widget boots over file:// on a TV-era engine (simulated built-ins deleted), polyfill fixes the Object.hasOwn crash, __mavero_wgt_app.start exposed, overlay silent, sidebar + discover body rendered, tv-mode + spatial D-PAD focus verified, Samsung key-registration + region rules verified');
 
 await browser.close();
 if (extractedDir) rmSync(extractedDir, { recursive: true, force: true });

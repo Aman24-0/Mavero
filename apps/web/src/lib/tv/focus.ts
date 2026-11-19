@@ -1,45 +1,44 @@
 /**
- * TV spatial focus manager — STAGE 4 D-PAD navigation (widget build only).
+ * TV spatial focus manager — TV-UX pass (widget build only).
  *
- * The Tizen remote has NO pointer: arrow keys must MOVE DOM FOCUS between
- * interactive elements by screen geometry, Enter must activate, and Back
- * must pop one screen. Nothing in the web app did any of this (the remote's
- * up/down only produced native page scrolling and left/right did nothing —
- * the exact Stage-4 TV feedback), so this module installs the missing
- * layer ONCE at client-hook boot.
+ * SAMSUNG TIZEN NAVIGATION RULES (official — implemented here):
+ *   1. ArrowLeft/Up/Right/Down, Enter and Back are MANDATORY and delivered
+ *      AUTOMATICALLY — they are NOT registered via tvinputdevice. Registering
+ *      a key BLOCKS its default delivery, which is exactly what broke the
+ *      first D-PAD pass (registered arrows ⇒ unreliable key delivery and
+ *      un-prevented page scrolls). Only EXTRA keys (media) are registered.
+ *      Back on Tizen = keyCode 10009.
+ *   2. Samsung provides NO built-in spatial navigation — the app manages
+ *      focus itself with a GRID model: rows of items; Left/Right WITHIN a
+ *      row; Up/Down to the NEIGHBOURING ROW KEEPING THE COLUMN (clamped to
+ *      that row's length — never wrapping).
+ *   3. Focus moves to the NEAREST item in the pressed direction (measured
+ *      between element MIDDLES); the column anchor is REMEMBERED so the
+ *      up/down route stays consistent while walking a page.
+ *   4. Focus does NOT loop — it stops at the first/last item. ONE element
+ *      is focused at a time with a THICK high-contrast outline.
+ *   5. Content moves ONLY at a row's edge: a rail slides with a CSS
+ *      TRANSFORM (never native rail scroll — the TV engine drops
+ *      scrollIntoView), the vertical scroller animates via
+ *      requestAnimationFrame, and the focused row rests ~40% from the top.
+ *   6. Focus NEVER lands on nothing: on render the first sensible element
+ *      is focused; entering a shorter row clamps to its last item.
+ *   7. Consumed arrows are preventDefault()-ed (otherwise the page scrolls
+ *      — the reported "Left/Right sometimes scrolls up/down" bug).
  *
- * ARCHITECTURE
- *   - ONE window keydown handler (capture phase — it must run before every
- *     component handler; handled keys are stopped so the hero carousel's own
- *     ArrowLeft/Right handler never double-fires behind us).
- *   - A Svelte writable store (`tvFocused`) exposes the focused element for
- *     observers (the CSS focus ring is applied via a `.tv-focused` class —
- *     the TV engine's programmatic focus() does not reliably match
- *     :focus-visible, and :has() does not exist on its Chromium < 88).
- *   - Focusable discovery is PER KEYPRESS (querySelectorAll): rails,
- *     chips and sheets mount/unmount constantly, so no cache and no
- *     MutationObserver can stay correct.
- *   - Back keeps ONE policy: the shared hasInAppHistoryEntry() contract.
- *     history.back() drives the SvelteKit hash router natively (snapshot +
- *     scroll restore), and a hashchange listener restores the focus that was
- *     saved for the route we land on (per-route focus map). The boot-error
- *     overlay and the TV status strip consume Back first — they sit above
- *     the app.
- *
- * SPATIAL ALGORITHM (bounding-rect geometry only — no DOM walk order):
- *   Candidates are scored per direction. In-lane candidates (whose rect
- *   overlaps the focused rect on the perpendicular axis) use the GAP along
- *   the pressed axis; diagonal candidates pay a perpendicular penalty. This
- *   makes Left/Right travel ALONG a horizontal rail (and Right past the last
- *   visible card reaches the offscreen one — scrollIntoView brings it in),
- *   while Up/Down hops BETWEEN rails picking the card most aligned with the
- *   current column. No dead zones by construction: whenever any candidate
- *   exists in the pressed direction (in-lane OR diagonal), focus moves.
+ * REGION SCOPING (the reported focus chaos):
+ *   sidebar | hero | rail/grid | filters | dialog | content are handled as
+ *   REGIONS. Content Up/Down stays in content (vertical transitions to the
+ *   hero are allowed at the top edge); only a deliberate Left at the
+ *   leftmost content COLUMN reaches the sidebar; Right from the sidebar
+ *   returns to the remembered content element. The hero's Left/Right keys
+ *   only change slides when the hero's OWN controls (dots/arrows) are
+ *   focused — a global Left/Right binding to the carousel is forbidden, and
+ *   every other hero keypress is consumed so the section-level handler can
+ *   never double-fire a slide change behind the manager.
  *
  * WIDGET BUILD ONLY — installTvFocusManager() is called from hooks.client.ts
- * behind the compile-time IS_WGT_BUILD flag; production never evaluates it
- * (dead-code eliminated in the Netlify build, which keeps its mouse/hover
- * interactions untouched).
+ * behind the compile-time IS_WGT_BUILD flag; production never evaluates it.
  */
 
 import { writable } from 'svelte/store';
@@ -50,6 +49,13 @@ import { hideTvStatus } from './status';
 declare global {
   interface Window {
     __maveroTvFocusManager?: boolean;
+    __maveroTvFocusDebug?: () => {
+      region: string | null;
+      columnAnchor: number | null;
+      lastContentFocus: string | null;
+      hasHero: boolean;
+      rails: number;
+    };
     tizen?: {
       tvinputdevice?: {
         registerKey?: (keyName: string) => void;
@@ -74,14 +80,12 @@ const KEY_RIGHT = 39;
 const KEY_ENTER = 13;
 const KEY_BACK = 10009;
 
-/** TV media keys — registered so future player wiring receives them. */
+/**
+ * SAMSUNG RULE 1 — arrows/Enter/Back are delivered AUTOMATICALLY and must
+ * NOT be registered (registration BLOCKS the key's default). Only EXTRA
+ * media/colour keys are registered.
+ */
 const TV_KEY_NAMES = [
-  'ArrowUp',
-  'ArrowDown',
-  'ArrowLeft',
-  'ArrowRight',
-  'Enter',
-  'Back',
   'MediaPlay',
   'MediaPause',
   'MediaPlayPause',
@@ -139,6 +143,60 @@ function isInteractiveTarget(el: HTMLElement): boolean {
 const FOCUS_RING_CLASS = 'tv-focused';
 
 /* -------------------------------------------------------------------------
+ * Regions — the scoping unit of every spatial move
+ * ----------------------------------------------------------------------- */
+
+type Region = 'dialog' | 'sidebar' | 'hero' | 'rail' | 'grid' | 'filters' | 'content';
+
+function regionOf(el: Element | null): Region {
+  try {
+    if (!el || typeof el.closest !== 'function') return 'content';
+    if (el.closest('[role="dialog"]')) return 'dialog';
+    if (el.closest('.app-sidebar')) return 'sidebar';
+    if (el.closest('.hero, .spotlight')) return 'hero';
+    if (el.closest('.rail')) return 'rail';
+    if (el.closest('.explorer-grid')) return 'grid';
+    if (el.closest('.explorer-filters, .filter-row, .recent-searches, .filter-bar')) return 'filters';
+    return 'content';
+  } catch {
+    return 'content';
+  }
+}
+
+/** The horizontally-scrolling row container an element belongs to. */
+function rowContainerOf(el: Element | null): HTMLElement | null {
+  try {
+    if (!el || typeof el.closest !== 'function') return null;
+    return el.closest<HTMLElement>('.rail, .explorer-grid, .chip-scroll');
+  } catch {
+    return null;
+  }
+}
+
+function isHeroNavControl(el: Element | null): boolean {
+  try {
+    return Boolean(el && typeof el.closest === 'function' && el.closest('.hero-nav, .spotlight-nav'));
+  } catch {
+    return false;
+  }
+}
+
+function isTextEntryTarget(el: Element | null): boolean {
+  try {
+    if (!el) return false;
+    const tag = el.tagName;
+    if (tag === 'TEXTAREA') return true;
+    if (tag === 'INPUT') {
+      const type = (el as HTMLInputElement).type;
+      return type === 'text' || type === 'search' || type === 'email' || type === 'url' || type === 'tel' || type === 'password' || type === 'number';
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/* -------------------------------------------------------------------------
  * Focusable discovery
  * ----------------------------------------------------------------------- */
 
@@ -172,13 +230,13 @@ function collectFocusables(): HTMLElement[] {
 }
 
 /**
- * One media card = ONE focus stop (the Stage-4 contract: "every media card"
- * is a single focusable). A card's DOM carries 3-4 anchors (poster link,
- * play circle, title link, Details link) — stepping through all of them
- * per card would make a rail feel like 4x the work and trap the spatial
- * walk in vertical micro-hops. The POSTER LINK is the stop; Enter opens
- * the detail page (where Play and everything else is reachable). My List
- * selection mode keeps its own .mc-select button as the stop.
+ * One media card = ONE focus stop (the TV contract: "every media card" is a
+ * single focusable). A card's DOM carries 3-4 anchors (poster link, play
+ * circle, title link, Details link) — stepping through all of them per card
+ * would make a rail feel like 4x the work and trap the spatial walk in
+ * vertical micro-hops. The POSTER LINK is the stop; Enter opens the detail
+ * page (where Play and everything else is reachable). My List selection mode
+ * keeps its own .mc-select button as the stop.
  */
 function isCardFocusUnit(el: HTMLElement): boolean {
   try {
@@ -193,7 +251,7 @@ function isCardFocusUnit(el: HTMLElement): boolean {
 }
 
 /* -------------------------------------------------------------------------
- * Spatial movement — bounding-rect geometry
+ * Geometry helpers
  * ----------------------------------------------------------------------- */
 
 type Rect = { left: number; top: number; right: number; bottom: number; cx: number; cy: number };
@@ -210,67 +268,212 @@ function rectOf(el: HTMLElement): Rect {
   };
 }
 
-/**
- * Distance from the perpendicular edges of `from` to the candidate rect —
- * 0 when the candidate overlaps that axis of the focused element ("in lane").
- */
-function perpendicularOverlap(from: Rect, to: Rect, axis: 'x' | 'y'): number {
-  if (axis === 'x') {
-    // vertical overlap of the two rects (for horizontal movement)
-    const overlap = Math.min(from.bottom, to.bottom) - Math.max(from.top, to.top);
-    return overlap > 0 ? 0 : Math.max(0, Math.max(from.top, to.top) - Math.min(from.bottom, to.bottom));
+/** Distance between the two rects along ONE axis (0 when they overlap). */
+function axisGap(aMin: number, aMax: number, bMin: number, bMax: number): number {
+  const overlap = Math.min(aMax, bMax) - Math.max(aMin, bMin);
+  return overlap > 0 ? 0 : Math.max(0, Math.max(aMin, bMin) - Math.min(aMax, bMax));
+}
+
+/** The content area's left edge — the deliberate-Left boundary to the sidebar. */
+function contentLeftEdge(): number {
+  try {
+    const main = document.querySelector('.app-main main') || document.querySelector('.app-main') || document.body;
+    return (main as HTMLElement).getBoundingClientRect().left;
+  } catch {
+    return 0;
   }
-  const overlap = Math.min(from.right, to.right) - Math.max(from.left, to.left);
-  return overlap > 0 ? 0 : Math.max(0, Math.max(from.left, to.left) - Math.min(from.right, to.right));
+}
+
+/** The current page zoom (body.tv-mode zooms 1.2 — scroll math must divide). */
+function zoomFactor(): number {
+  try {
+    const zoom = parseFloat(getComputedStyle(document.body).zoom || '1');
+    return Number.isFinite(zoom) && zoom > 0 ? zoom : 1;
+  } catch {
+    return 1;
+  }
+}
+
+/* -------------------------------------------------------------------------
+ * Rail sliding — content moves ONLY at a row's edge, via CSS transform
+ * (Samsung rule 5; the TV engine silently drops scrollIntoView, which is
+ * the reported "focus disappears at the rail's end" bug).
+ * ----------------------------------------------------------------------- */
+
+const railOffset = new WeakMap<HTMLElement, number>();
+
+function shiftOfRail(rail: HTMLElement): number {
+  return railOffset.get(rail) ?? 0;
+}
+
+function applyRailShift(rail: HTMLElement, shift: number): void {
+  try {
+    const maxShift = Math.max(0, rail.scrollWidth - rail.clientWidth);
+    const clamped = Math.min(Math.max(0, Math.round(shift)), maxShift);
+    railOffset.set(rail, clamped);
+    rail.style.transform = clamped > 0 ? `translateX(${-clamped}px)` : '';
+  } catch {
+    /* cosmetic — never break navigation on a failed slide */
+  }
+}
+
+function resetRailShift(rail: HTMLElement): void {
+  applyRailShift(rail, 0);
+}
+
+/** Card positions in the rail's LAYOUT coordinate space (transform-agnostic). */
+function cardLayoutRect(el: HTMLElement, shift: number): Rect {
+  const visual = rectOf(el);
+  // The rail is translated by -shift: layout = visual + shift (x axis only).
+  return { ...visual, left: visual.left + shift, right: visual.right + shift, cx: visual.cx + shift };
+}
+
+/** Is the card inside its rail's VISIBLE window (used by up/down banding)? */
+function isCardInRailWindow(el: HTMLElement): boolean {
+  try {
+    const rail = rowContainerOf(el);
+    if (!rail) return true;
+    const wrap = rail.parentElement;
+    if (!wrap) return true;
+    const shift = shiftOfRail(rail);
+    const card = cardLayoutRect(el, shift);
+    const windowLeft = wrap.getBoundingClientRect().left;
+    const windowRight = wrap.getBoundingClientRect().right;
+    return card.left >= windowLeft - 4 && card.right <= windowRight + 4;
+  } catch {
+    return true;
+  }
 }
 
 /**
- * Pick the best candidate for a direction. Positive dot-product gate (the
- * candidate must actually lie in the pressed direction), in-lane candidates
- * first (perpendicular distance 0), diagonals allowed with a penalty —
- * this is what guarantees NO dead zones between rails while keeping
- * Left/Right faithful to a rail's own row.
+ * Slide the rail so the focused card is fully inside the visible window.
+ * Called after EVERY in-rail focus move (Samsung rule 5).
  */
-function pickCandidate(
-  from: Rect,
-  fromEl: HTMLElement | null,
-  candidates: HTMLElement[],
-  direction: 'up' | 'down' | 'left' | 'right'
-): HTMLElement | null {
-  const horizontal = direction === 'left' || direction === 'right';
-  const sign = direction === 'right' || direction === 'down' ? 1 : -1;
-  let best: HTMLElement | null = null;
-  let bestScore = Infinity;
-
-  for (const el of candidates) {
-    if (el === fromEl) continue;
-    let to: Rect;
-    try {
-      to = rectOf(el);
-    } catch {
-      continue;
-    }
-    const delta = horizontal ? to.cx - from.cx : to.cy - from.cy;
-    if (delta * sign <= 0) continue; // wrong direction (or same position)
-    const perp = perpendicularOverlap(from, to, horizontal ? 'x' : 'y');
-    const primary = Math.abs(delta);
-    // In-lane candidates score by gap; diagonals add the perpendicular
-    // distance so an aligned-but-far element beats a misaligned-near one.
-    const score = primary + perp * 2.5;
-    if (score < bestScore) {
-      bestScore = score;
-      best = el;
-    }
+function ensureRailCardVisible(el: HTMLElement): void {
+  try {
+    const rail = rowContainerOf(el);
+    if (!rail || !rail.classList.contains('rail')) return; // grid rows scroll vertically, not horizontally
+    const wrap = rail.parentElement;
+    if (!wrap) return;
+    const shift = shiftOfRail(rail);
+    const card = cardLayoutRect(el, shift);
+    const wrapRect = wrap.getBoundingClientRect();
+    const style = getComputedStyle(rail);
+    const padLeft = parseFloat(style.paddingLeft || '0') || 0;
+    const padRight = parseFloat(style.paddingRight || '0') || 0;
+    const windowLeft = wrapRect.left + padLeft;
+    const windowRight = wrapRect.right - padRight;
+    const gap = 12; // peek margin so the next card's edge hints at more content
+    let next = shift;
+    if (card.right > windowRight) next = card.right - windowRight + shift + gap;
+    else if (card.left < windowLeft) next = card.left - windowLeft + shift - gap;
+    if (Math.abs(next - shift) > 1) applyRailShift(rail, next);
+  } catch {
+    /* cosmetic */
   }
-  return best;
+}
+
+/* -------------------------------------------------------------------------
+ * Vertical reveal — rAF-animated scrollTop (never native scrollIntoView),
+ * focused row rests ~40% from the top (Samsung rule 5).
+ * ----------------------------------------------------------------------- */
+
+let scrollAnimation: number | undefined;
+
+function nearestScrollableAncestor(el: HTMLElement): HTMLElement | null {
+  try {
+    let node: HTMLElement | null = el.parentElement;
+    while (node && node !== document.body) {
+      const style = getComputedStyle(node);
+      const scrollableY = style.overflowY === 'auto' || style.overflowY === 'scroll';
+      if (scrollableY && node.scrollHeight > node.clientHeight + 4) return node;
+      node = node.parentElement;
+    }
+  } catch {
+    /* fall through to window scrolling */
+  }
+  return null;
+}
+
+function animateScrollTo(scroller: HTMLElement | null, targetTop: number): void {
+  try {
+    const zoom = zoomFactor();
+    const isWindow = !scroller;
+    const current = isWindow ? window.scrollY : scroller.scrollTop;
+    // Scroll positions live in the scroller's LOCAL units; element rects are
+    // in ZOOMED root units — divide the visual target by the zoom factor.
+    const target = Math.max(0, targetTop / zoom);
+    if (Math.abs(target - current) < 2) return;
+    if (scrollAnimation) cancelAnimationFrame(scrollAnimation);
+    const start = current;
+    const delta = target - current;
+    const duration = 260;
+    let startTime: number | undefined;
+    const step = (ts: number) => {
+      if (startTime === undefined) startTime = ts;
+      const t = Math.min(1, (ts - startTime) / duration);
+      const eased = 1 - Math.pow(1 - t, 3); // ease-out cubic
+      const value = start + delta * eased;
+      if (isWindow) window.scrollTo(0, value);
+      else scroller.scrollTop = value;
+      if (t < 1) scrollAnimation = requestAnimationFrame(step);
+      else scrollAnimation = undefined;
+    };
+    scrollAnimation = requestAnimationFrame(step);
+  } catch {
+    /* scrolling is a comfort fix — never break navigation on it */
+  }
+}
+
+/** The visible band of the scroller that owns `el`, in ROOT (visual) units. */
+function bandFor(el: HTMLElement): { top: number; bottom: number } {
+  try {
+    const scroller = nearestScrollableAncestor(el);
+    if (scroller) {
+      const rect = scroller.getBoundingClientRect();
+      return { top: rect.top, bottom: rect.bottom };
+    }
+    return { top: 0, bottom: window.innerHeight };
+  } catch {
+    return { top: 0, bottom: window.innerHeight };
+  }
+}
+
+/**
+ * Reveal the focused element vertically: fully visible elements are left
+ * alone; content below the fold scrolls so the focused ROW sits ~40% from
+ * the top; content above the top edge scrolls back into view.
+ */
+function revealVertical(el: HTMLElement): void {
+  try {
+    const rect = rectOf(el);
+    const band = bandFor(el);
+    const headerClearance = 110;
+    const bottomClearance = 90;
+    const bandHeight = band.bottom - band.top;
+    let target: number | null = null;
+    const currentScroll = nearestScrollableAncestor(el) ? (nearestScrollableAncestor(el) as HTMLElement).scrollTop : window.scrollY;
+    if (rect.top < band.top + headerClearance) {
+      // Above the fold: bring the element to the top clearance line.
+      target = currentScroll + (rect.top - band.top - headerClearance);
+    } else if (rect.bottom > band.bottom - bottomClearance) {
+      // Below the fold: rest the focused row ~40% from the top of the band.
+      target = currentScroll + (rect.cy - band.top - bandHeight * 0.4);
+    }
+    if (target !== null) {
+      const scroller = nearestScrollableAncestor(el);
+      animateScrollTo(scroller, target);
+    }
+  } catch {
+    /* cosmetic */
+  }
 }
 
 /* -------------------------------------------------------------------------
  * Focus application
  * ----------------------------------------------------------------------- */
 
-function applyFocus(el: HTMLElement, options?: { scroll?: boolean }): void {
-  const scrollIntoView = options?.scroll !== false;
+function paintRing(el: HTMLElement): void {
   try {
     const previous = document.querySelectorAll('.' + FOCUS_RING_CLASS);
     for (const node of previous) {
@@ -280,56 +483,255 @@ function applyFocus(el: HTMLElement, options?: { scroll?: boolean }): void {
     /* ring cleanup is cosmetic */
   }
   try {
+    el.classList.add(FOCUS_RING_CLASS);
+  } catch {
+    /* cosmetic */
+  }
+}
+
+/** Focus + reveal WITHOUT the spatial side effects (seed / restore path). */
+function applyFocusSilent(el: HTMLElement): void {
+  try {
     el.focus({ preventScroll: true });
   } catch {
-    // Older engines ignore preventScroll — focus may scroll; the
-    // scrollIntoView below re-aligns to the nearest edge anyway.
     try {
       el.focus();
     } catch {
       return;
     }
   }
-  try {
-    el.classList.add(FOCUS_RING_CLASS);
-  } catch {
-    /* cosmetic */
-  }
+  paintRing(el);
   tvFocused.set(el);
-  if (!scrollIntoView) return; // silent seed: never move the page on boot
-  const reduced =
-    typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+/** Focus + row-edge sliding + vertical reveal (the spatial-move path). */
+function applyFocus(el: HTMLElement): void {
+  applyFocusSilent(el);
+  ensureRailCardVisible(el);
+  revealVertical(el);
+}
+
+/** Focus helper for TV-aware components (ContentRail's Show More handoff). */
+export function focusTvElement(el: HTMLElement | null): void {
+  if (!IS_WGT_BUILD) return; // production: dead branch (compile-time flag)
+  if (!el) return;
   try {
-    el.scrollIntoView({
-      block: 'nearest',
-      inline: 'nearest',
-      behavior: reduced ? 'auto' : 'smooth'
-    } as ScrollIntoViewOptions);
+    applyFocus(el);
   } catch {
-    // Engines without options support: plain scrollIntoView is instant.
-    try {
-      el.scrollIntoView(false);
-    } catch {
-      /* ignore */
-    }
+    /* never break a component on focus */
   }
 }
 
 /* -------------------------------------------------------------------------
- * Route-keyed focus restoration (Back / forward navigation)
+ * Sidebar auto-expand / auto-collapse (icon rail ↔ full navigation)
  * ----------------------------------------------------------------------- */
 
-let currentRouteKey = '#/';
-const focusByRoute = new Map<string, HTMLElement>();
-const ROUTE_MEMORY_MAX = 32;
+const SIDEBAR_EVENT = 'mavero:tv-sidebar';
 
-function routeKeyNow(): string {
+function setTvSidebarCollapsed(collapsed: boolean): void {
   try {
-    const hash = window.location.hash;
-    return hash && hash.length > 1 ? hash : '#/';
+    window.dispatchEvent(new CustomEvent(SIDEBAR_EVENT, { detail: { collapsed } }));
   } catch {
-    return '#/';
+    /* cosmetic */
   }
+}
+
+/* -------------------------------------------------------------------------
+ * Column anchor — "remember the start point so the route stays consistent"
+ * (Samsung rule 3): Up/Down keep the column of the last horizontal move.
+ * ----------------------------------------------------------------------- */
+
+let columnAnchor: number | null = null;
+let lastContentFocus: HTMLElement | null = null;
+
+function resetSpatialMemory(): void {
+  columnAnchor = null;
+  lastContentFocus = null;
+}
+
+/* -------------------------------------------------------------------------
+ * Candidate selection — the GRID model
+ * ----------------------------------------------------------------------- */
+
+/** Region candidates: all focusables inside the SAME region container. */
+function regionCandidates(region: Region, excludeEl: HTMLElement | null): HTMLElement[] {
+  const all = collectFocusables();
+  return all.filter((el) => {
+    if (el === excludeEl) return false;
+    if (region === 'rail') return rowContainerOf(el) === rowContainerOf(excludeEl);
+    if (region === 'grid') return el.closest('.explorer-grid') === (excludeEl as Element).closest?.('.explorer-grid');
+    if (region === 'hero') return el.closest('.hero, .spotlight') === (excludeEl as Element).closest?.('.hero, .spotlight');
+    if (region === 'filters') return el.closest('.explorer-filters, .filter-row, .recent-searches, .filter-bar') === (excludeEl as Element).closest?.('.explorer-filters, .filter-row, .recent-searches, .filter-bar');
+    if (region === 'sidebar') return Boolean(el.closest('.app-sidebar'));
+    if (region === 'dialog') return Boolean(el.closest('[role="dialog"]'));
+    // content: everything that is NOT a scoped region (rails/grids/filters/
+    // sidebar/hero/dialog are scoped by their own rules).
+    return regionOf(el) === 'content';
+  });
+}
+
+/** Content-region candidates for vertical moves: visible cards only. */
+function contentCandidates(): HTMLElement[] {
+  return collectFocusables().filter((el) => {
+    const region = regionOf(el);
+    if (region === 'sidebar' || region === 'dialog') return false;
+    if (region === 'rail' || region === 'grid') return isCardInRailWindow(el);
+    return true;
+  });
+}
+
+/**
+ * Horizontal pick within a row container: nearest element by MIDDLE distance
+ * in the pressed direction (Samsung rule 3), perpendicular penalty keeps the
+ * walk inside the row.
+ */
+function pickHorizontal(from: Rect, candidates: HTMLElement[], direction: 'left' | 'right'): HTMLElement | null {
+  const sign = direction === 'right' ? 1 : -1;
+  let best: HTMLElement | null = null;
+  let bestScore = Infinity;
+  for (const el of candidates) {
+    let to: Rect;
+    try {
+      to = rectOf(el);
+    } catch {
+      continue;
+    }
+    const delta = (to.cx - from.cx) * sign;
+    if (delta <= 2) continue; // wrong direction / same position
+    const perp = axisGap(from.top, from.bottom, to.top, to.bottom);
+    const score = delta + perp * 2.5;
+    if (score < bestScore) {
+      bestScore = score;
+      best = el;
+    }
+  }
+  return best;
+}
+
+/**
+ * Vertical pick: the NEAREST ROW in the pressed direction, then the element
+ * in that row whose middle is closest to the remembered COLUMN (clamped to
+ * the row's own length — Samsung rules 2+3; no wrap, no random jumps).
+ */
+function pickVertical(from: Rect, candidates: HTMLElement[], direction: 'up' | 'down'): HTMLElement | null {
+  const sign = direction === 'down' ? 1 : -1;
+  type Scored = { el: HTMLElement; rect: Rect; primary: number };
+  const scored: Scored[] = [];
+  for (const el of candidates) {
+    let to: Rect;
+    try {
+      to = rectOf(el);
+    } catch {
+      continue;
+    }
+    const primary = (to.cy - from.cy) * sign;
+    if (primary <= 4) continue; // wrong direction / same row
+    scored.push({ el, rect: to, primary });
+  }
+  if (scored.length === 0) return null;
+  scored.sort((a, b) => a.primary - b.primary);
+  // The target ROW: everything whose vertical start is within a half-card of
+  // the nearest candidate's start (rails/grids render equal-height rows, so
+  // this band is exactly "the neighbouring row").
+  const nearest = scored[0];
+  const rowTolerance = Math.max(64, (from.bottom - from.top) * 0.75);
+  const row = scored.filter((entry) => entry.primary <= nearest.primary + rowTolerance);
+  const anchor = columnAnchor ?? from.cx;
+  let best = row[0];
+  let bestOffset = Math.abs(best.rect.cx - anchor);
+  for (const entry of row) {
+    const offset = Math.abs(entry.rect.cx - anchor);
+    if (offset < bestOffset) {
+      bestOffset = offset;
+      best = entry;
+    }
+  }
+  return best.el;
+}
+
+/* -------------------------------------------------------------------------
+ * Region transitions
+ * ----------------------------------------------------------------------- */
+
+function heroSection(): HTMLElement | null {
+  try {
+    return document.querySelector<HTMLElement>('.app-main .hero, .app-main .spotlight');
+  } catch {
+    return null;
+  }
+}
+
+/** Hero controls: the ACTIVE slide's actions row + the visible nav cluster
+ *  (dots/arrows). Offscreen slides' buttons are layout-visible but must
+ *  never win a spatial pick — Enter/geometry must reference the slide the
+ *  user is actually looking at. */
+function heroTargets(): HTMLElement[] {
+  try {
+    const hero = heroSection();
+    if (!hero) return [];
+    const selector = [
+      '.hero-slide.active .hero-actions a',
+      '.hero-slide.active .hero-actions button',
+      '.spotlight-slide.active .slide-actions a',
+      '.spotlight-slide.active .slide-actions button',
+      '.hero-nav button',
+      '.spotlight-nav button'
+    ].join(', ');
+    return Array.from(hero.querySelectorAll<HTMLElement>(selector)).filter(
+      (el) => isInteractiveTarget(el) && isVisible(el) && !el.closest('[aria-hidden="true"]')
+    );
+  } catch {
+    return [];
+  }
+}
+
+/** The FIRST card (leftmost, column-aligned) of the FIRST rail below the hero. */
+function firstCardOfFirstRailBelowHero(): HTMLElement | null {
+  try {
+    const hero = heroSection();
+    const heroBottom = hero ? hero.getBoundingClientRect().bottom : window.innerHeight * 0.5;
+    const rails = Array.from(document.querySelectorAll<HTMLElement>('.rail'));
+    let targetRail: HTMLElement | null = null;
+    let targetTop = Infinity;
+    for (const rail of rails) {
+      const top = rail.getBoundingClientRect().top;
+      if (top >= heroBottom - 60 && top < targetTop) {
+        targetTop = top;
+        targetRail = rail;
+      }
+    }
+    if (!targetRail) return null;
+    const cards = Array.from(targetRail.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
+      (el) => isInteractiveTarget(el) && isCardFocusUnit(el) && isVisible(el)
+    );
+    if (cards.length === 0) return null;
+    // The first VISIBLE card in the rail's current window; when nothing is
+    // visible (fresh rail), the layout-first card.
+    const visible = cards.filter((el) => isCardInRailWindow(el));
+    const pool = visible.length ? visible : cards;
+    return pool.reduce((leftmost, el) => (rectOf(el).cx < rectOf(leftmost).cx ? el : leftmost), pool[0]);
+  } catch {
+    return null;
+  }
+}
+
+function firstSidebarLink(): HTMLElement | null {
+  try {
+    const links = Array.from(document.querySelectorAll<HTMLElement>('.app-sidebar .sidebar-link, .app-sidebar .sidebar-account'));
+    return links.find((el) => isVisible(el)) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function activeSidebarLink(): HTMLElement | null {
+  try {
+    const active = document.querySelector<HTMLElement>('.app-sidebar .sidebar-link.active');
+    if (active && isVisible(active)) return active;
+  } catch {
+    /* fall through */
+  }
+  return firstSidebarLink();
 }
 
 function firstMainFocusable(): HTMLElement | null {
@@ -354,21 +756,54 @@ function firstMainFocusable(): HTMLElement | null {
 }
 
 /**
- * Boot focus target: the first CONTENT control (a rail card / empty-state
- * action) — deliberately OUTSIDE the hero. Seeding inside the hero would
- * fire the carousel's focusin pause and freeze the 4s autoplay exactly at
- * boot (the Stage-4 TV feedback's "does NOT auto-slide" would survive the
- * timer fix). Falls back to the first sidebar link, then any main control.
+ * Content entry point for "Right from the sidebar" and general seeding: the
+ * remembered content element when it still exists, otherwise the first
+ * rail's first card, otherwise the first main control.
  */
-function seedFocusTarget(): HTMLElement | null {
-  const inMain = firstMainFocusable();
-  if (inMain) return inMain;
+function contentEntryTarget(): HTMLElement | null {
   try {
-    const sidebarLink = document.querySelector<HTMLElement>('.app-sidebar .sidebar-link');
-    if (sidebarLink && isVisible(sidebarLink)) return sidebarLink;
+    if (lastContentFocus && lastContentFocus.isConnected && isVisible(lastContentFocus)) {
+      return lastContentFocus;
+    }
   } catch {
     /* fall through */
   }
+  const firstRailCard = firstCardOfFirstRailBelowHero();
+  if (firstRailCard) return firstRailCard;
+  return firstMainFocusable();
+}
+
+/* -------------------------------------------------------------------------
+ * Route-keyed focus restoration (Back / forward navigation)
+ * ----------------------------------------------------------------------- */
+
+let currentRouteKey = '#/';
+const focusByRoute = new Map<string, HTMLElement>();
+const ROUTE_MEMORY_MAX = 32;
+
+function routeKeyNow(): string {
+  try {
+    const hash = window.location.hash;
+    return hash && hash.length > 1 ? hash : '#/';
+  } catch {
+    return '#/';
+  }
+}
+
+/**
+ * Boot focus target: the SIDEBAR'S ACTIVE ITEM (the sensible content element
+ * the TV feedback asks for — it can never trigger the hero's keydown
+ * handler, so Left/Right at app open can never change a slide), falling back
+ * to the first rail card, then the first sidebar link, then any main
+ * control. Seeded SILENTLY (no scroll — the TV boots showing the hero).
+ */
+function seedFocusTarget(): HTMLElement | null {
+  const sidebarActive = activeSidebarLink();
+  if (sidebarActive) return sidebarActive;
+  const inMain = firstMainFocusable();
+  if (inMain) return inMain;
+  const sidebarLink = firstSidebarLink();
+  if (sidebarLink) return sidebarLink;
   const any = collectFocusables();
   return any.length ? any[0] : null;
 }
@@ -378,7 +813,11 @@ function restoreRouteFocus(): void {
   const key = routeKeyNow();
   const saved = focusByRoute.get(key);
   if (saved && saved.isConnected && isVisible(saved)) {
-    applyFocus(saved);
+    applyFocusSilent(saved);
+    revealVertical(saved);
+    ensureRailCardVisible(saved);
+    columnAnchor = rectOf(saved).cx;
+    if (regionOf(saved) !== 'sidebar') lastContentFocus = saved;
     return;
   }
   // The saved element was unmounted (kit rebuilds page trees on navigation).
@@ -393,6 +832,8 @@ function restoreRouteFocus(): void {
           const match = document.querySelector<HTMLElement>(`a[href="${href.replace(/"/g, '\\"')}"]`);
           if (match && isVisible(match)) {
             applyFocus(match);
+            columnAnchor = rectOf(match).cx;
+            if (regionOf(match) !== 'sidebar') lastContentFocus = match;
             return;
           }
         }
@@ -403,6 +844,8 @@ function restoreRouteFocus(): void {
         const match = candidates.find((el) => isVisible(el));
         if (match) {
           applyFocus(match);
+          columnAnchor = rectOf(match).cx;
+          if (regionOf(match) !== 'sidebar') lastContentFocus = match;
           return;
         }
       }
@@ -411,7 +854,11 @@ function restoreRouteFocus(): void {
     }
   }
   const first = seedFocusTarget();
-  if (first) applyFocus(first);
+  if (first) {
+    applyFocusSilent(first);
+    columnAnchor = rectOf(first).cx;
+    if (regionOf(first) !== 'sidebar') lastContentFocus = first;
+  }
 }
 
 function onHashChange(): void {
@@ -419,6 +866,12 @@ function onHashChange(): void {
   const nextKey = routeKeyNow();
   if (prevKey === nextKey) return;
   currentRouteKey = nextKey;
+  resetSpatialMemory();
+  try {
+    railOffsetsReset();
+  } catch {
+    /* cosmetic */
+  }
   // The old page is still rendered when hashchange fires (kit's own
   // hashchange handler re-renders after us) — capture its focus now.
   try {
@@ -451,6 +904,14 @@ function onHashChange(): void {
   requestAnimationFrame(tick);
 }
 
+function railOffsetsReset(): void {
+  try {
+    document.querySelectorAll<HTMLElement>('.rail').forEach((rail) => resetRailShift(rail));
+  } catch {
+    /* cosmetic */
+  }
+}
+
 /* -------------------------------------------------------------------------
  * Key handling — ONE window capture listener
  * ----------------------------------------------------------------------- */
@@ -463,22 +924,6 @@ function isWatchRoute(): boolean {
   }
 }
 
-function isCarouselTrackChild(target: EventTarget | null): boolean {
-  try {
-    if (!target || typeof (target as Element).closest !== 'function') return false;
-    const el = target as Element;
-    return Boolean(
-      el.closest('.hero-track') ||
-        el.closest('.spotlight-track') ||
-        el.closest('.hero-nav') ||
-        el.closest('.spotlight-nav')
-    );
-  } catch {
-    return false;
-  }
-}
-
-/** The scroll-snap slide track an element belongs to (hero or spotlight). */
 function closestSlideTrack(target: EventTarget | null): HTMLElement | null {
   try {
     if (!target || typeof (target as Element).closest !== 'function') return null;
@@ -606,6 +1051,152 @@ function activate(active: Element | null): boolean {
   return false;
 }
 
+/** The spatial move resolution for one arrow press. */
+function moveFocus(direction: 'up' | 'down' | 'left' | 'right'): boolean {
+  const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  const candidates = collectFocusables();
+  if (candidates.length === 0) return false;
+
+  // Nothing focused yet (boot state): seed the content-first target.
+  if (!active || !isVisible(active)) {
+    const seed = seedFocusTarget();
+    if (seed) {
+      applyFocus(seed);
+      columnAnchor = rectOf(seed).cx;
+      if (regionOf(seed) !== 'sidebar') lastContentFocus = seed;
+      return true;
+    }
+    return false;
+  }
+
+  const from = rectOf(active);
+  const region = regionOf(active);
+  let target: HTMLElement | null = null;
+
+  if (region === 'dialog') {
+    // Everything stays inside the open sheet.
+    const peers = regionCandidates('dialog', active);
+    target =
+      direction === 'left' || direction === 'right'
+        ? pickHorizontal(from, peers, direction)
+        : pickVertical(from, peers, direction);
+  } else if (region === 'sidebar') {
+    if (direction === 'left') {
+      target = null; // no wrap, no exit to the left
+    } else if (direction === 'right') {
+      target = contentEntryTarget();
+    } else {
+      target = pickVertical(from, regionCandidates('sidebar', active), direction);
+    }
+  } else if (region === 'hero') {
+    if (direction === 'left' || direction === 'right') {
+      if (isHeroNavControl(active)) {
+        // The hero's OWN controls own Left/Right (slide change). The event
+        // is deliberately NOT consumed — the section-level handler runs and
+        // its preventDefault stops the page scroll.
+        return false;
+      }
+      target = pickHorizontal(from, heroTargets(), direction);
+    } else if (direction === 'down') {
+      // Down from ANY hero control → the FIRST card (leftmost, column-
+      // aligned) of the FIRST rail below the hero (the reported "jumps to
+      // the right-most card of some far rail" bug).
+      target = firstCardOfFirstRailBelowHero();
+      if (target) {
+        const rail = rowContainerOf(target);
+        if (rail && rail.classList.contains('rail')) resetRailShift(rail);
+      }
+    } else {
+      target = null; // nothing above the hero
+    }
+  } else if (region === 'rail' || region === 'grid') {
+    if (direction === 'left' || direction === 'right') {
+      const rowPeers = regionCandidates(region, active).filter((el) => rowContainerOf(el) === rowContainerOf(active));
+      target = pickHorizontal(from, rowPeers, direction);
+      if (!target && direction === 'left') {
+        // Deliberate Left at the leftmost content COLUMN → the sidebar.
+        const card = cardLayoutRect(active, shiftOfRail(rowContainerOf(active) as HTMLElement));
+        const edge = contentLeftEdge();
+        if (card.left <= edge + 140) {
+          target = activeSidebarLink();
+          if (target) setTvSidebarCollapsed(false);
+        }
+      }
+      // Right past the row's end: no wrap. A rail's trailing Show More
+      // button (when present) is a natural row peer and wins first.
+    } else {
+      target = pickVertical(from, contentCandidates(), direction);
+      if (!target && direction === 'up') {
+        // Topmost content row → the hero's controls.
+        const heroPeers = heroTargets();
+        if (heroPeers.length) {
+          const anchor = columnAnchor ?? from.cx;
+          target = heroPeers.reduce(
+            (best, el) => (Math.abs(rectOf(el).cx - anchor) < Math.abs(rectOf(best).cx - anchor) ? el : best),
+            heroPeers[0]
+          );
+        }
+      }
+    }
+  } else if (region === 'filters') {
+    if (direction === 'left' || direction === 'right') {
+      const rowPeers = regionCandidates('filters', active).filter((el) => rowContainerOf(el) === rowContainerOf(active));
+      target = pickHorizontal(from, rowPeers, direction);
+      if (!target && direction === 'left') {
+        const edge = contentLeftEdge();
+        if (from.left <= edge + 140) {
+          target = activeSidebarLink();
+          if (target) setTvSidebarCollapsed(false);
+        }
+      }
+    } else {
+      target = pickVertical(from, contentCandidates(), direction);
+      if (!target && direction === 'up') {
+        const heroPeers = heroTargets();
+        if (heroPeers.length) {
+          const anchor = columnAnchor ?? from.cx;
+          target = heroPeers.reduce(
+            (best, el) => (Math.abs(rectOf(el).cx - anchor) < Math.abs(rectOf(best).cx - anchor) ? el : best),
+            heroPeers[0]
+          );
+        }
+      }
+    }
+  } else {
+    // Generic content (detail page body, empty states, footer, recs rows).
+    const peers = contentCandidates().filter((el) => el !== active);
+    if (direction === 'left' || direction === 'right') {
+      target = pickHorizontal(from, peers, direction);
+      if (!target && direction === 'left' && from.left <= contentLeftEdge() + 140) {
+        target = activeSidebarLink();
+        if (target) setTvSidebarCollapsed(false);
+      }
+    } else {
+      target = pickVertical(from, peers, direction);
+    }
+  }
+
+  if (!target) return true; // the edge is a STOP (no loop) — but the key IS consumed
+
+  applyFocus(target);
+  columnAnchor = rectOf(target).cx;
+  const targetRegion = regionOf(target);
+  if (targetRegion === 'sidebar') {
+    setTvSidebarCollapsed(false); // auto-expand on entry
+    // Remember the CONTENT element we came FROM (the Right-hand return
+    // target). Only a genuine region transition may write it — moving
+    // WITHIN the sidebar would otherwise pollute the memory with a sidebar
+    // link and Right from the sidebar would then "return" to the sidebar.
+    if (region !== 'sidebar') lastContentFocus = active;
+  } else if (region === 'sidebar') {
+    setTvSidebarCollapsed(true); // auto-collapse back to the icon rail
+  }
+  if (targetRegion !== 'sidebar' && targetRegion !== 'hero') {
+    lastContentFocus = target;
+  }
+  return true;
+}
+
 function handleKeydown(event: KeyboardEvent): void {
   const code = typeof event.keyCode === 'number' ? event.keyCode : 0;
   const key = event.key || '';
@@ -715,37 +1306,27 @@ function handleKeydown(event: KeyboardEvent): void {
       /* fall through to spatial movement */
     }
 
-    // Carousel slides: the component's own ArrowLeft/Right handler is the
-    // slide navigation (manualNav + autoplay reset). Let it run untouched —
-    // including its preventDefault. Up/Down and all other focus contexts
-    // stay spatial.
-    if (
-      (direction === 'left' || direction === 'right') &&
-      isCarouselTrackChild(document.activeElement)
-    ) {
+    // Text entry keeps its native caret arrows (typing surface); Up/Down
+    // still move focus spatially (search input → results, never sidebar).
+    const activeEl = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    if (isTextEntryTarget(activeEl) && (direction === 'left' || direction === 'right')) {
       return;
     }
 
-    const active =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const from = active && isVisible(active) ? rectOf(active) : null;
-    const candidates = collectFocusables();
-    if (candidates.length === 0) return;
-
-    let target: HTMLElement | null = null;
-    if (from && active) {
-      target = pickCandidate(from, active, candidates, direction);
-    } else {
-      // Nothing focused yet (boot state): seed the content-first target.
-      target = seedFocusTarget();
-    }
-    if (target) {
-      applyFocus(target);
+    // Samsung rule 7: EVERY consumed arrow is preventDefault()-ed so the
+    // page can never scroll behind the manager (the reported "Left/Right
+    // sometimes scrolls the page up/down" bug). moveFocus() returns false
+    // ONLY when it deliberately delegates (hero nav slide change) — in that
+    // case the carousel's own handler preventDefaults.
+    const consumed = moveFocus(direction);
+    if (consumed) {
       event.preventDefault();
       event.stopPropagation();
     }
   } catch {
     /* navigation must never throw into the app */
+    event.preventDefault();
+    event.stopPropagation();
   }
 }
 
@@ -757,6 +1338,9 @@ function registerTvKeys(): void {
   try {
     const device = window.tizen && window.tizen.tvinputdevice;
     if (!device) return;
+    // Samsung rule 1: ONLY extra media keys are registered. Arrows, Enter
+    // and Back are MANDATORY platform keys — registering them BLOCKS their
+    // default delivery (the exact regression of the first D-PAD pass).
     if (typeof device.registerKeyBatch === 'function') {
       try {
         device.registerKeyBatch(TV_KEY_NAMES);
@@ -791,10 +1375,15 @@ function seedInitialFocus(): void {
     const first = seedFocusTarget();
     if (first) {
       // SILENT seed: focus lands without scrolling so the TV boots showing
-      // the hero at the top (scrolling to the seeded rail card would yank
-      // the page past the carousel — the boot screenshot showed exactly
-      // that). The first arrow press scrolls + reveals the ring.
-      applyFocus(first, { scroll: false });
+      // the hero at the top (scrolling to the seeded element would yank the
+      // page). The first arrow press scrolls + reveals the ring.
+      applyFocusSilent(first);
+      try {
+        columnAnchor = rectOf(first).cx;
+        if (regionOf(first) !== 'sidebar') lastContentFocus = first;
+      } catch {
+        /* cosmetic */
+      }
       return;
     }
     setTimeout(tick, 250);
@@ -819,10 +1408,33 @@ export function installTvFocusManager(): void {
   currentRouteKey = routeKeyNow();
   window.addEventListener('hashchange', onHashChange);
 
+  // TV diagnostics: a retail set has no devtools — the on-screen overlays
+  // cover boot failures, and this hook lets a remote-driven probe print the
+  // manager's view of the world (region model + spatial memory). Harmless in
+  // production builds (the whole module is compile-time wgt-only).
+  try {
+    window.__maveroTvFocusDebug = () => {
+      const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      return {
+        region: active ? regionOf(active) : null,
+        columnAnchor,
+        lastContentFocus: lastContentFocus ? String(lastContentFocus.className).slice(0, 40) : null,
+        hasHero: Boolean(heroSection()),
+        rails: document.querySelectorAll('.rail').length
+      };
+    };
+  } catch {
+    /* diagnostics are best-effort */
+  }
+
   // Capture phase: ahead of the hero carousel's own arrow handler and every
-  // component handler; handled keys are stopped so nothing double-fires.
+  // component handler; consumed keys are stopped so nothing double-fires.
   window.addEventListener('keydown', handleKeydown, true);
   window.addEventListener('scroll', onDocumentScrollCapture, true);
+
+  // The sidebar boots COLLAPSED (icon rail) on the TV — content gets the
+  // full width and focus entering the sidebar auto-expands it.
+  setTvSidebarCollapsed(true);
 
   seedInitialFocus();
 }

@@ -114,8 +114,8 @@ ok('3. legacy routes are permanent query-preserving redirects with zero page imp
 assert.match(routes.movies, /<ExplorerPage\s+type="movie"/, '/movies renders the shared ExplorerPage');
 assert.match(routes.series, /<ExplorerPage\s+type="series"/, '/tv-shows renders the shared ExplorerPage');
 assert.match(routes.anime, /<ExplorerPage\s+type="anime"/, '/anime renders the shared ExplorerPage');
-assert.match(explorerPage, /<SpotlightCarousel items=\{spotlight\}/, 'the Explorer embeds the spotlight carousel');
-assert.match(explorerPage, /<ContentRail title=\{section\.title\} items=\{section\.items\} href=\{section\.showMoreHref \|\| ''\} linkLabel="Show more" episodeBadges=\{section\.episodeBadges\} \/>/, 'unfiltered sections render through the existing ContentRail (+ the Follow-up task 2 Show-more CTA; Current Airing passes its per-card episode badges)');
+assert.match(explorerPage, /<SpotlightCarousel items=\{effSpotlight\}/, 'the Explorer embeds the spotlight carousel (TV-UX pass: effSpotlight falls back to the TV payload on the widget build — server props stay primary on the web)');
+assert.match(explorerPage, /<ContentRail title=\{section\.title\} items=\{section\.items\} href=\{section\.showMoreHref \|\| ''\} linkLabel="Show more" episodeBadges=\{section\.episodeBadges\} tvLoadMore=\{IS_WGT_BUILD && \(section as unknown as TvExplorerSection\)\.source \? tvSectionLoader\(section as unknown as TvExplorerSection\) : null\} \/>/, 'unfiltered sections render through the existing ContentRail (+ the Follow-up task 2 Show-more CTA; Current Airing passes its per-card episode badges; TV-UX pass: the trailing tvLoadMore loader is widget-build-only and null on the web)');
 // Deep-audit: the pre-Phase-5 assertion pinned the inline string
 // `/watch/${slide.type}/${slide.id}` — the codebase has routed ALL card
 // URLs through the shared route helpers since Phase 5 (single source of
