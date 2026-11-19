@@ -110,10 +110,27 @@
   // the plan; everything else lives on the /settings page.
   let accountSheetOpen = $state(false);
   const isAccountSurface = $derived(isActive('/settings'));
+  // 2026-11 pass-4 fix (bug 9 — real web bug): the sheet anchors to the
+  // control that opened it instead of parking at a detached top-right
+  // corner. Both triggers are bound; the VISIBLE one wins at open time
+  // (the hidden composition's element reports offsetParent null).
+  let sidebarAccountEl: HTMLButtonElement | undefined = $state();
+  let pillAccountEl: HTMLButtonElement | undefined = $state();
+  let accountAnchorEl = $state<HTMLElement | null>(null);
 
   function openAccountSheet() {
     if (accountSheetOpen) return;
     haptic('light');
+    try {
+      accountAnchorEl =
+        sidebarAccountEl && sidebarAccountEl.offsetParent
+          ? sidebarAccountEl
+          : pillAccountEl && pillAccountEl.offsetParent
+            ? pillAccountEl
+            : null;
+    } catch {
+      accountAnchorEl = null;
+    }
     accountSheetOpen = true;
   }
 
@@ -225,6 +242,7 @@
            reads: navigation → search → account → tagline. -->
       <button
         type="button"
+        bind:this={sidebarAccountEl}
         class:active={isAccountSurface}
         class="sidebar-account"
         aria-haspopup="dialog"
@@ -264,8 +282,9 @@
   </div>
 
   <!-- Compact Account sheet (Phase 3 + LT-1): identity + Upcoming + My
-       List + Settings -->
-  <AccountSheet open={accountSheetOpen} onClose={closeAccountSheet} {user} {isAuthenticated} telegramUrl={appConfig?.telegramUrl ?? null} discordUrl={appConfig?.discordUrl ?? null} />
+       List + Settings. Anchored above the Account control that opened it
+       (2026-11 pass-4 fix — bug 9). -->
+  <AccountSheet open={accountSheetOpen} onClose={closeAccountSheet} {user} {isAuthenticated} telegramUrl={appConfig?.telegramUrl ?? null} discordUrl={appConfig?.discordUrl ?? null} anchorEl={accountAnchorEl} />
 
   <!-- Mobile + tablet bottom nav (touch composition, ≤1024px).
        MAV-21 Workstream D — rendered UNCONDITIONALLY on every shell
@@ -289,6 +308,7 @@
         {/each}
         <button
           type="button"
+          bind:this={pillAccountEl}
           class:active={isAccountSurface}
           class="nav-account"
           aria-haspopup="dialog"

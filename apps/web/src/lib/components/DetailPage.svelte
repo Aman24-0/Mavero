@@ -256,9 +256,33 @@
   // Hero artwork: backdrop first (immersive), poster as the graceful
   // fallback when no backdrop exists. A failed image load falls back to
   // the gradient surface (never a broken-image icon over the hero).
+  //
+  // TV-UX pass 4 (bug 3 — "the backdrop AREA paints but the image is
+  // blank"): on the widget the hero artwork STEPS DOWN a tier before giving
+  // up — a w1280 decode/load failure on the TV engine retries w780, then
+  // the poster, and only then falls back to the gradient surface. Compile-
+  // time dead on production (the web keeps the exact single-failure
+  // unmount behavior).
   let heroArtworkFailed = $state(false);
-  const heroArtwork = $derived(item.backdropHero || item.backdrop || item.poster || '');
+  let heroArtworkOverride = $state('');
+  const heroArtwork = $derived(heroArtworkOverride || item.backdropHero || item.backdrop || item.poster || '');
   const heroArtworkSrc = $derived(heroArtworkFailed ? '' : heroArtwork);
+  function handleHeroArtworkError() {
+    if (!IS_WGT_BUILD) {
+      heroArtworkFailed = true;
+      return;
+    }
+    const tiers = [item.backdropHero, item.backdrop, item.backdropSmall, item.poster].filter(
+      (url): url is string => Boolean(url && url.trim())
+    );
+    const currentIndex = tiers.indexOf(heroArtworkSrc);
+    const next = tiers.slice(currentIndex + 1).find((url) => url && url !== heroArtworkSrc);
+    if (next) {
+      heroArtworkOverride = next;
+    } else {
+      heroArtworkFailed = true;
+    }
+  }
 
   // Primary action label — the dominant button communicates EXACTLY what
   // pressing it does, using the existing playback/progress logic:
@@ -417,6 +441,7 @@
     void heroArtwork;
     void posterSrc;
     heroArtworkFailed = false;
+    heroArtworkOverride = '';
     posterFailed = false;
     // MAV-23 Fix 4 — stale-playback guard: navigating to another title
     // must never keep the previous title's trailer playing. Stopping
@@ -980,7 +1005,7 @@
             loading="eager"
             fetchpriority="high"
             decoding="async"
-            onerror={() => (heroArtworkFailed = true)}
+            onerror={handleHeroArtworkError}
           />
         </picture>
       {/if}
@@ -1319,14 +1344,19 @@
        The reported freeze: the INLINE YouTube embed in the detail
        backdrop takes the TV engine's key/focus surface — Back and
        navigation die until a force-exit. The trailer now plays in a
-       full-screen [role="dialog"] overlay: the focus manager's Back
-       path finds the dialog, replays Escape at it (this sheet's own
-       close semantics), and the detail page is intact underneath.
-       The close control is focused on open and RE-focused when the
-       iframe reports load — a cross-origin embed can never hold the
-       D-pad surface. Production web keeps the inline player (the
-       whole branch is compile-time dead there).
+       MODAL dialog: the focus manager's Back path finds the dialog,
+       replays Escape at it (this sheet's own close semantics), and
+       the detail page is intact underneath.
+       TV-UX pass 4 (bug 4 — the sheet must be a REAL MODAL SHEET):
+       the sheet is now a ~70%-of-screen CENTERED PANEL over a dimmed
+       backdrop layer (not a full-screen cover) with a visible CLOSE
+       control inside the panel; focus stays on Close, the embed never
+       owns the D-pad, and a blocked/unloaded YouTube embed surfaces
+       the in-sheet "trailer unavailable" note instead of a dead
+       toggle. Production web keeps the inline player (the whole
+       branch is compile-time dead there).
        ============================================================ -->
+  <div class="trailer-sheet-backdrop" aria-hidden="true" onclick={stopTrailer}></div>
   <div
     class="trailer-sheet"
     role="dialog"
@@ -1335,15 +1365,18 @@
     tabindex="-1"
     onkeydown={handleTrailerSheetKeydown}
   >
-    <button
-      type="button"
-      class="trailer-sheet-close"
-      bind:this={trailerSheetCloseEl}
-      onclick={stopTrailer}
-      aria-label="Close trailer"
-    >
-      <X size={16} aria-hidden="true" /> <span>Close</span>
-    </button>
+    <div class="trailer-sheet-head">
+      <span class="trailer-sheet-title">{item.title} — Trailer</span>
+      <button
+        type="button"
+        class="trailer-sheet-close"
+        bind:this={trailerSheetCloseEl}
+        onclick={stopTrailer}
+        aria-label="Close trailer"
+      >
+        <X size={16} aria-hidden="true" /> <span>Close</span>
+      </button>
+    </div>
     <div class="trailer-sheet-frame">
       {#if trailerStatus !== 'error'}
         {#key trailerAttempt}
@@ -1934,17 +1967,40 @@
   /* TV-UX pass 2 (widget build only) — the TRAILER MODAL SHEET. Renders
      ONLY inside the widget build ({#if IS_WGT_BUILD && trailerActive}) —
      production never evaluates the branch, and Svelte strips the unused
-     scoped selectors from the production CSS output. The sheet is a
-     fixed full-screen dialog over the detail page; the frame letterboxes
-     the embed at a TV-safe size with explicit offsets (engine-proof). */
-  .trailer-sheet {
+     scoped selectors from the production CSS output. TV-UX pass 4 (bug 4):
+     the sheet is a ~70%-of-screen CENTERED PANEL (50%/translate centering —
+     engine-proof: percentages, vw/vh and transforms all parse on the
+     TV-era engine, unlike min()/clamp()) over a dimmed backdrop layer, so
+     the detail page stays visible around it and the CLOSE control is a
+     distinct, always-visible chrome row inside the panel. */
+  .trailer-sheet-backdrop {
     position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    z-index: 79;
+    background: rgba(3, 5, 6, .88);
+  }
+  .trailer-sheet {
+    position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
     z-index: 80;
-    display: flex; flex-direction: column; align-items: center; justify-content: center;
-    gap: 14px;
-    background: rgba(3, 5, 6, .96);
+    width: 70vw; height: 70vh;
+    max-width: 1500px; max-height: 820px;
+    display: flex; flex-direction: column;
+    gap: 12px;
+    padding: 14px 16px 16px;
+    border: 1px solid rgba(255, 255, 255, .22); border-radius: 14px;
+    background: #0a0d10;
+    box-shadow: 0 24px 64px rgba(0, 0, 0, .65);
+  }
+  .trailer-sheet-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    flex: 0 0 auto;
+  }
+  .trailer-sheet-title {
+    min-width: 0;
+    color: var(--color-text); font-size: .85rem; font-weight: 800;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .trailer-sheet-close {
+    flex: 0 0 auto;
     display: inline-flex; align-items: center; gap: 8px;
     min-height: 46px; padding: 8px 22px;
     border: 1px solid rgba(255, 255, 255, .35); border-radius: 999px;
@@ -1955,8 +2011,8 @@
   .trailer-sheet-close:hover { background: rgba(0, 0, 0, .9); border-color: rgba(255, 255, 255, .6); }
   .trailer-sheet-frame {
     position: relative;
-    width: min(88vw, 1180px);
-    height: min(62vh, 600px);
+    flex: 1 1 auto; min-height: 0;
+    width: 100%;
     background: #000;
     border-radius: 10px;
     overflow: hidden;

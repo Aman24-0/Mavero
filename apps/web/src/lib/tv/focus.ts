@@ -366,6 +366,22 @@ function isCardInRailWindow(el: HTMLElement): boolean {
  *   right edge: shift' = cardLayoutRight − windowRight + gap
  *   left edge:  shift' = cardLayoutLeft  − windowLeft  − gap
  * (both clamped to [0, maxShift] by applyRailShift).
+ *
+ * TV-UX pass 4 (bug 1 — "Right slides into EMPTY space at the row end;
+ * Left sometimes doesn't scroll the rail back"): the EDGE TRIGGERS compared
+ * the card's LAYOUT rect against the VISUAL window. With a non-zero shift
+ * that is wrong on BOTH edges:
+ *   - right trigger `layoutRight > windowRight` also fires for a card that
+ *     is ALREADY fully visible (layoutRight = visualRight + shift), so the
+ *     rail kept creeping left by the peek gap on every already-visible
+ *     focus move — at the row's end the creep added up and the window slid
+ *     past the last card into blank space;
+ *   - left trigger `layoutLeft < windowLeft` never fired for a card visually
+ *     past the LEFT edge (layoutLeft = visualLeft + shift ≥ windowLeft when
+ *     the shift is large), so Left moved focus without sliding the rail back.
+ * Both triggers now read the card's VISUAL rect (layout − shift) against the
+ * visual window; the target formulas above are unchanged (they are derived
+ * from the layout rect directly, which is correct).
  */
 function ensureRailCardVisible(el: HTMLElement): void {
   try {
@@ -375,6 +391,8 @@ function ensureRailCardVisible(el: HTMLElement): void {
     if (!wrap) return;
     const shift = shiftOfRail(rail);
     const card = cardLayoutRect(el, shift); // LAYOUT rect (transform-agnostic)
+    const cardVisualLeft = card.left - shift;
+    const cardVisualRight = card.right - shift;
     const wrapRect = wrap.getBoundingClientRect();
     const style = getComputedStyle(rail);
     const padLeft = parseFloat(style.paddingLeft || '0') || 0;
@@ -383,8 +401,8 @@ function ensureRailCardVisible(el: HTMLElement): void {
     const windowRight = wrapRect.right - padRight;
     const gap = 12; // peek margin so the next card's edge hints at more content
     let next = shift;
-    if (card.right > windowRight) next = card.right - windowRight + gap;
-    else if (card.left < windowLeft) next = card.left - windowLeft - gap;
+    if (cardVisualRight > windowRight) next = card.right - windowRight + gap;
+    else if (cardVisualLeft < windowLeft) next = card.left - windowLeft - gap;
     if (Math.abs(next - shift) > 1) applyRailShift(rail, next);
   } catch {
     /* cosmetic */
@@ -482,6 +500,40 @@ function revealVertical(el: HTMLElement): void {
       const scroller = nearestScrollableAncestor(el);
       animateScrollTo(scroller, target);
     }
+  } catch {
+    /* cosmetic */
+  }
+}
+
+/**
+ * TV-UX pass 4 (bug 6 — "sidebar → content entry still lands mid-page"):
+ * the ENTRY reveal, used ONLY by the sidebar's deliberate Right into
+ * content. The generic reveal rests a below-fold row at ~40% of the band —
+ * exactly the "vertical centre" landing the on-device pass reported. The
+ * entry reveal instead:
+ *   - a target ABOVE the top clearance line scrolls up to it (page top);
+ *   - a target BELOW the fold is top-anchored at the clearance line —
+ *     NEVER the 40% rest;
+ *   - an already-visible target (the hero Play on an unscrolled page)
+ *     leaves the scroll untouched — the entry must not yank the page.
+ */
+function revealVerticalTop(el: HTMLElement): void {
+  try {
+    const rect = rectOf(el);
+    const band = bandFor(el);
+    const headerClearance = 110;
+    const bottomClearance = 90;
+    const currentScroll = nearestScrollableAncestor(el) ? (nearestScrollableAncestor(el) as HTMLElement).scrollTop : window.scrollY;
+    if (rect.top < band.top + headerClearance) {
+      // Above the clearance line: bring the element to the top line.
+      const target = currentScroll + (rect.top - band.top - headerClearance);
+      if (target > 0 || currentScroll > 0) animateScrollTo(nearestScrollableAncestor(el), Math.max(0, target));
+    } else if (rect.bottom > band.bottom - bottomClearance) {
+      // Below the fold: TOP-anchor the element (never the ~40% rest).
+      const target = currentScroll + (rect.top - band.top - headerClearance);
+      animateScrollTo(nearestScrollableAncestor(el), Math.max(0, target));
+    }
+    // Already fully visible: the entry does not scroll.
   } catch {
     /* cosmetic */
   }
@@ -655,6 +707,15 @@ const ROW_CONTAINER_SELECTOR = [
   '.hero-nav',
   '.spotlight-nav',
   '.app-sidebar .sidebar-nav',
+  // TV-UX pass 4 (bug 10 — "Down from Play/Download skips the action row"):
+  // the detail page's primary (Play/Download) and secondary (Add/Share/
+  // Trailer) action rows sit close enough that the geometric banding merged
+  // them into ONE group — Down from Play then jumped straight past Add/
+  // Share/Trailer to the Overview/recs below. Each action row is now a
+  // structural row container of its own, so the two rows are distinct
+  // vertical stops in the contracted order.
+  '.primary-actions',
+  '.secondary-actions',
   '[role="dialog"]'
 ].join(', ');
 
@@ -855,6 +916,45 @@ function heroTargets(): HTMLElement[] {
 }
 
 /**
+ * TV-UX pass 4 (bug 2 — focus order): the hero's controls are TWO distinct
+ * rows — the ACTION row (Play / Details / Save of the active slide) and the
+ * NAV cluster (prev arrow / dots / next arrow). From the action row,
+ * Left/Right must NEVER reach the nav cluster; the cluster is reachable
+ * ONLY via Down (action row → nav row → the first rail's heading/filter
+ * row), and Up returns from the cluster to Play. Both walks stay inside
+ * their own row (no wrap, no cross-row jumps).
+ */
+function heroActionTargets(): HTMLElement[] {
+  try {
+    const hero = heroSection();
+    if (!hero) return [];
+    const selector = [
+      '.hero-slide.active .hero-actions a',
+      '.hero-slide.active .hero-actions button',
+      '.spotlight-slide.active .slide-actions a',
+      '.spotlight-slide.active .slide-actions button'
+    ].join(', ');
+    return Array.from(hero.querySelectorAll<HTMLElement>(selector)).filter(
+      (el) => isInteractiveTarget(el) && isVisible(el) && !el.closest('[aria-hidden="true"]')
+    );
+  } catch {
+    return [];
+  }
+}
+
+function heroNavTargets(): HTMLElement[] {
+  try {
+    const hero = heroSection();
+    if (!hero) return [];
+    return Array.from(hero.querySelectorAll<HTMLElement>('.hero-nav button, .spotlight-nav button')).filter(
+      (el) => isInteractiveTarget(el) && isVisible(el) && !el.closest('[aria-hidden="true"]')
+    );
+  } catch {
+    return [];
+  }
+}
+
+/**
  * The hero's ENTRY target (TV-UX pass 3, bugs 1+3): the ACTIVE slide's
  * PRIMARY control — the Play link, first in the actions row's DOM order.
  * heroTargets() also contains the nav cluster (dots/arrows), and a column
@@ -900,6 +1000,39 @@ function firstCardOfFirstRailBelowHero(): HTMLElement | null {
     const visible = cards.filter((el) => isCardInRailWindow(el));
     const pool = visible.length ? visible : cards;
     return pool.reduce((leftmost, el) => (rectOf(el).cx < rectOf(leftmost).cx ? el : leftmost), pool[0]);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The HEADING/FILTER row of the FIRST rail below the hero (TV-UX pass 4,
+ * bug 2's contracted "Down from the hero nav cluster → the FIRST rail's
+ * heading/filter row"): the topmost .section-head / .results-heading below
+ * the hero, resolved to its LEFTMOST control (the first type chip on the
+ * Discover rails, the View all link on plain rails — the h2 heading itself
+ * is not focusable). Null when the first rail has no head row.
+ */
+function firstRailHeadBelowHero(): HTMLElement | null {
+  try {
+    const hero = heroSection();
+    const heroBottom = hero ? hero.getBoundingClientRect().bottom : window.innerHeight * 0.5;
+    const heads = Array.from(document.querySelectorAll<HTMLElement>('.app-main .section-head, .app-main .results-heading'));
+    let targetHead: HTMLElement | null = null;
+    let targetTop = Infinity;
+    for (const head of heads) {
+      const top = head.getBoundingClientRect().top;
+      if (top >= heroBottom - 60 && top < targetTop) {
+        targetTop = top;
+        targetHead = head;
+      }
+    }
+    if (!targetHead) return null;
+    const controls = Array.from(targetHead.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
+      (el) => isInteractiveTarget(el) && isCardFocusUnit(el) && isVisible(el)
+    );
+    if (controls.length === 0) return null;
+    return controls.reduce((leftmost, el) => (rectOf(el).cx < rectOf(leftmost).cx ? el : leftmost), controls[0]);
   } catch {
     return null;
   }
@@ -1381,6 +1514,11 @@ function moveFocus(direction: 'up' | 'down' | 'left' | 'right', repeat = false):
   const candidates = collectFocusables();
   if (candidates.length === 0) return false;
 
+  // TV-UX pass 4 (bug 6): the SIDEBAR's deliberate Right into content anchors
+  // the landing element at the TOP clearance line (revealVerticalTop) instead
+  // of the generic ~40% rest — the entry reads as the top of the page.
+  let entryTopAnchor = false;
+
   // Nothing focused yet (boot state): seed the content-first target.
   if (!active || !isVisible(active)) {
     const seed = seedFocusTarget();
@@ -1414,12 +1552,22 @@ function moveFocus(direction: 'up' | 'down' | 'left' | 'right', repeat = false):
       // (hero Play / top-most rail heading) — open the destination at the
       // very top of both scrollers first, so the entry reads as "the top of
       // the page", never the vertical centre of a scrolled page.
+      // PASS 4 (bug 6): the reveal is ALSO top-anchored (the generic reveal
+      // rests the row at ~40% of the band — the reported mid-page landing).
       resetPageScroll();
+      entryTopAnchor = true;
       target = contentEntryTarget();
     } else {
       target = pickVerticalFlat(from, regionCandidates('sidebar', active), direction);
     }
   } else if (region === 'hero') {
+    // TV-UX pass 4 (bug 2): the hero's controls are TWO rows — the active
+    // slide's ACTION row (Play/Details/Save) and the NAV cluster (prev
+    // arrow, dots, next arrow, bottom-right). Left/Right walk INSIDE the
+    // current row only (the action row can never reach the cluster, the
+    // cluster can never reach the action row); Down crosses action → nav →
+    // the first rail's heading/filter row; Up returns nav → Play.
+    const inHeroNav = Boolean(active.closest && active.closest('.hero-nav, .spotlight-nav'));
     if (direction === 'left' || direction === 'right') {
       if (repeat) {
         // LONG-PRESS (bug 7): a HELD arrow hands the key to the carousel —
@@ -1430,31 +1578,47 @@ function moveFocus(direction: 'up' | 'down' | 'left' | 'right', repeat = false):
         dispatchHeroSlideNav(direction);
         return true;
       }
-      target = pickHorizontal(from, heroTargets(), direction);
-      if (!target && direction === 'left' && from.left <= contentLeftEdge() + 140) {
+      // Stay within the CURRENT sub-row: actions ↔ actions, nav ↔ nav.
+      const rowPeers = inHeroNav ? heroNavTargets() : heroActionTargets();
+      target = pickHorizontal(from, rowPeers, direction);
+      if (!target && direction === 'left' && !inHeroNav && from.left <= contentLeftEdge() + 140) {
         // Deliberate Left at the hero's left edge → the sidebar.
         target = activeSidebarLink();
         if (target) setTvSidebarCollapsed(false);
       }
     } else if (direction === 'down') {
-      // Down from ANY hero control → the NEXT ROW below the hero: the rail
-      // heading/filter row when one exists (bug 7's "Down → the rail filter
-      // row"), else the first card of the first rail below the hero.
-      target = pickVertical(from, contentCandidates(), 'down') ?? firstCardOfFirstRailBelowHero();
+      if (inHeroNav) {
+        // Down from the nav cluster → the FIRST rail's heading/filter row
+        // (the contracted two-step: action row → nav row → first rail head),
+        // else the first card of the first rail below the hero.
+        target = firstRailHeadBelowHero() ?? firstCardOfFirstRailBelowHero();
+      } else {
+        // Down from the action row → the NAV CLUSTER (bug 2's contract: the
+        // dots/arrows are reachable ONLY via Down — never sideways), landing
+        // on the member nearest the current column.
+        const nav = heroNavTargets();
+        if (nav.length) {
+          const anchor = columnAnchor ?? from.cx;
+          target = nav.reduce(
+            (best, el) => (Math.abs(rectOf(el).cx - anchor) < Math.abs(rectOf(best).cx - anchor) ? el : best),
+            nav[0]
+          );
+        } else {
+          // No nav cluster (single-slide hero): the next row below the hero.
+          target = pickVertical(from, contentCandidates(), 'down') ?? firstCardOfFirstRailBelowHero();
+        }
+      }
       if (target) {
         const rail = rowContainerOf(target);
         if (rail && rail.classList.contains('rail')) resetRailShift(rail);
       }
-    } else if (
-      direction === 'up' &&
-      Boolean(active.closest && active.closest('.hero-nav, .spotlight-nav'))
-    ) {
+    } else if (direction === 'up' && inHeroNav) {
       // Up from the carousel's dots/arrows cluster → the slide's action row
       // (Play first): "Play/Details must be reachable with Up/Down".
-      const actions = heroTargets().filter((el) => !el.closest('.hero-nav, .spotlight-nav'));
+      const actions = heroActionTargets();
       target = actions.length ? actions[0] : null;
     } else {
-      target = null; // nothing above the hero
+      target = null; // nothing above the hero action row
     }
   } else if (region === 'rail' || region === 'grid') {
     if (direction === 'left' || direction === 'right') {
@@ -1554,6 +1718,12 @@ function moveFocus(direction: 'up' | 'down' | 'left' | 'right', repeat = false):
 
   applyFocus(target);
   columnAnchor = rectOf(target).cx;
+  if (entryTopAnchor) {
+    // Bug 6: the sidebar → content entry anchors the landing element at the
+    // top clearance line — never the ~40% rest position.
+    revealVerticalTop(target);
+    entryTopAnchor = false;
+  }
   const targetRegion = regionOf(target);
   if (targetRegion === 'sidebar') {
     setTvSidebarCollapsed(false); // auto-expand on entry
@@ -1890,6 +2060,34 @@ export function installTvFocusManager(): void {
   // component handler; consumed keys are stopped so nothing double-fires.
   window.addEventListener('keydown', handleKeydown, true);
   window.addEventListener('scroll', onDocumentScrollCapture, true);
+
+  // TV-UX pass 4 (bug 5 — "auto-collapse STILL unreliable"): the sidebar
+  // state is now derived DETERMINISTICALLY from where focus IS, not only
+  // from the handful of moveFocus branches. Every programmatic focus() the
+  // manager performs (spatial moves, seeds, restores, activation focus
+  // changes, sheet close re-focuses) fires focusin; a capture-phase listener
+  // re-derives collapsed from the element's region on EVERY focus change:
+  // focus in the sidebar → expand; focus anywhere else (content, dialog,
+  // hero) → collapse. Idempotent with the explicit setTvSidebarCollapsed
+  // calls in the spatial branches (same value dispatched twice is a no-op),
+  // and it covers every path the branch list could not enumerate.
+  try {
+    document.addEventListener(
+      'focusin',
+      (event) => {
+        try {
+          const target = event.target instanceof HTMLElement ? event.target : null;
+          if (!target) return;
+          setTvSidebarCollapsed(regionOf(target) !== 'sidebar');
+        } catch {
+          /* cosmetic */
+        }
+      },
+      true
+    );
+  } catch {
+    /* the deterministic layer is a comfort fix — the branch events remain */
+  }
 
   // The sidebar boots COLLAPSED (icon rail) on the TV — content gets the
   // full width and focus entering the sidebar auto-expands it.

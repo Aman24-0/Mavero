@@ -24,10 +24,20 @@
   //                 restored to the trigger on close (the trigger is
   //                 refocused by AppShell's onClose via the saved
   //                 previously-focused element).
-  //   POSITION    — mobile (≤640px): bottom sheet above the nav pill
+  //   POSITION — mobile (≤640px): bottom sheet above the nav pill
   //                 with safe-area bottom padding; larger viewports:
-  //                 popover anchored under the header account control
-  //                 (top-right).
+  //                 anchored ABOVE/NEAR the Account control that opened it
+  //                 (the sidebar chip on desktop, the bottom-pill entry on
+  //                 tablet). 2026-11 pass-4 fix (real web bug, visible on
+  //                 laptop AND TV browser): the sheet used to park at a
+  //                 fixed top-right corner on every viewport ≥641px —
+  //                 disconnected from the control that opened it. The sheet
+  //                 now measures its own height after mount and anchors
+  //                 above the trigger (falls below it near the screen top,
+  //                 centres when neither fits). When no visible anchor is
+  //                 provided it centres — never the detached top-right
+  //                 corner. Engine-safe positioning: computed px only, no
+  //                 transform/centering shorthand.
   //   MOTION      — one subtle entry animation, disabled entirely under
   //                 prefers-reduced-motion.
   //
@@ -49,7 +59,8 @@
     user = null,
     isAuthenticated = false,
     telegramUrl = null,
-    discordUrl = null
+    discordUrl = null,
+    anchorEl = null
   }: {
     open?: boolean;
     onClose: () => void;
@@ -57,12 +68,24 @@
     isAuthenticated?: boolean;
     telegramUrl?: string | null;
     discordUrl?: string | null;
+    /** The control that opened the sheet (sidebar chip / bottom-pill
+     *  Account button). The sheet anchors ABOVE this control on viewports
+     *  ≥641px; omitted/hidden anchors fall back to a centred popover. */
+    anchorEl?: HTMLElement | null;
   } = $props();
 
   let sheetElement: HTMLElement | undefined = $state();
   let closeButton: HTMLButtonElement | undefined = $state();
   let previouslyFocused: HTMLElement | null = null;
   let syncStatus = $state<SyncStatus>('pending');
+  // 2026-11 pass-4 fix (bug 9): computed anchor placement. sheetLeft/Top are
+  // inline px (engine-safe); sheetPlaced gates visibility so the sheet never
+  // flashes at the old top-right corner before the measurement lands.
+  let sheetLeft = $state<number | null>(null);
+  let sheetTop = $state<number | null>(null);
+  let sheetPlaced = $state(false);
+  const SHEET_WIDTH = 304;
+  const SHEET_MARGIN = 12;
 
   const accountName = $derived(user?.displayName ?? (user?.email ? user.email.split('@')[0] : 'Guest'));
   const initials = $derived((() => {
@@ -90,8 +113,65 @@
       document.documentElement.setAttribute('data-account-sheet-open', '');
       // Move focus into the sheet after it mounts.
       requestAnimationFrame(() => closeButton?.focus());
+      // ---- anchored placement (bug 9) ----
+      // ALL rects are read in VISUAL px (getBoundingClientRect). Under the
+      // TV build's body zoom the engine scales CSS lengths at render time,
+      // so a visual target must be divided by the zoom factor to get the
+      // CSS px the inline style needs (zoom = 1 on the web — identity).
+      sheetLeft = null;
+      sheetTop = null;
+      sheetPlaced = false;
+      try {
+        const bodyStyle = getComputedStyle(document.body);
+        const zoomRaw = parseFloat(bodyStyle.zoom || '1');
+        const zoom = Number.isFinite(zoomRaw) && zoomRaw > 0 ? zoomRaw : 1;
+        const vw = window.innerWidth;
+        const trigger = anchorEl && anchorEl.offsetParent ? anchorEl : null;
+        const anchored = Boolean(trigger) && vw >= 641; // ≤640px keeps the bottom sheet
+        const widthVisual = Math.min(SHEET_WIDTH * zoom, vw - SHEET_MARGIN * 2);
+        if (vw >= 641) {
+          if (trigger) {
+            const t = trigger.getBoundingClientRect();
+            const leftVisual = Math.min(
+              Math.max(SHEET_MARGIN, t.left + t.width / 2 - widthVisual / 2),
+              Math.max(SHEET_MARGIN, vw - SHEET_MARGIN - widthVisual)
+            );
+            sheetLeft = Math.round(leftVisual / zoom);
+          } else {
+            sheetLeft = Math.round(Math.max(SHEET_MARGIN, (vw - widthVisual) / 2) / zoom);
+          }
+        }
+        requestAnimationFrame(() => {
+          if (!sheetElement) {
+            sheetPlaced = true;
+            return;
+          }
+          const heightVisual = sheetElement.getBoundingClientRect().height;
+          const vh = window.innerHeight;
+          let topVisual: number;
+          if (anchored && trigger) {
+            const t = trigger.getBoundingClientRect();
+            const above = t.top - 10 - heightVisual;
+            if (above >= SHEET_MARGIN) {
+              topVisual = above; // the preferred spot: anchored ABOVE the control
+            } else {
+              const below = t.bottom + 10;
+              topVisual = below + heightVisual <= vh - SHEET_MARGIN ? below : Math.max(SHEET_MARGIN, (vh - heightVisual) / 2 - 24);
+            }
+          } else {
+            topVisual = Math.max(64, (vh - heightVisual) / 2 - 24);
+          }
+          sheetTop = Math.round(Math.max(SHEET_MARGIN, Math.min(topVisual, Math.max(SHEET_MARGIN, vh - heightVisual - SHEET_MARGIN))) / zoom);
+          sheetPlaced = true;
+        });
+      } catch {
+        sheetPlaced = true; // measurement failure → the CSS default position
+      }
     } else {
       document.documentElement.removeAttribute('data-account-sheet-open');
+      sheetLeft = null;
+      sheetTop = null;
+      sheetPlaced = false;
     }
   });
 
@@ -160,6 +240,7 @@
     aria-modal="true"
     aria-label="Account"
     tabindex="-1"
+    style={sheetLeft !== null ? `left:${sheetLeft}px;right:auto;top:${sheetTop ?? 'auto'}px;visibility:${sheetPlaced ? 'visible' : 'hidden'};` : ''}
     onkeydown={handleKeydown}
   >
     <button class="sheet-close" type="button" bind:this={closeButton} onclick={close} aria-label="Close account sheet">

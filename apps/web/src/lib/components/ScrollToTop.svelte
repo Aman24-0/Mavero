@@ -1,6 +1,13 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { ArrowUp } from 'lucide-svelte';
+  // TV-UX pass 4 (bug 7, widget build only): on the TV the FAB is reachable
+  // ONLY when the page is scrolled to the TRUE BOTTOM — while walking down
+  // the page the button must not exist at all, so the spatial walk can never
+  // drop focus onto it (the reported "Down steals focus onto scroll-to-top
+  // while a lower section is not yet in the viewport"). Compile-time dead on
+  // production: the web keeps the exact fade-in-after-240px behavior.
+  import { IS_WGT_BUILD } from '$lib/shared/build-mode';
 
   // Reusable scroll-to-top FAB with a circular scroll-progress ring.
   // Behavior:
@@ -25,6 +32,27 @@
 
   function readScroll() {
     rafId = undefined;
+    // TV-UX pass 4 (bug 7, widget build only): render ONLY at the true
+    // bottom of the ACTIVE scroll surface (the engine may scroll the window
+    // or .app-main — height:100dvh does not parse on the TV-era engine, so
+    // the window is usually the scroller there). Ratio ~1 = last element
+    // reached; the FAB mounts at that moment and is otherwise absent from
+    // the focusable set. Production never evaluates this branch.
+    if (IS_WGT_BUILD) {
+      try {
+        const main = document.querySelector<HTMLElement>('.app-main');
+        const mainScrolls = Boolean(main && main.scrollHeight > main.clientHeight + 4);
+        const scroller = mainScrolls && main ? main : document.documentElement;
+        const max = scroller.scrollHeight - scroller.clientHeight;
+        const top = mainScrolls && main ? main.scrollTop : window.scrollY || document.documentElement.scrollTop || 0;
+        const ratio = max > 0 ? Math.min(1, Math.max(0, top / max)) : 1;
+        progress = ratio;
+        visible = ratio >= 0.985;
+      } catch {
+        visible = false;
+      }
+      return;
+    }
     const doc = document.documentElement;
     const max = doc.scrollHeight - doc.clientHeight;
     const top = window.scrollY || doc.scrollTop || 0;
@@ -62,10 +90,22 @@
   onMount(() => {
     window.addEventListener('scroll', onScroll, { passive: true });
     window.addEventListener('resize', onScroll, { passive: true });
+    // TV-UX pass 4 (bug 7, widget build only): the active scroll surface may
+    // be .app-main on engines where the 100dvh main height DOES parse —
+    // mirror its scroll events into the same reader so the bottom-gated
+    // visibility stays accurate on both scroll surfaces.
+    let mainScroller: HTMLElement | null = null;
+    if (IS_WGT_BUILD) {
+      try {
+        mainScroller = document.querySelector('.app-main');
+        mainScroller?.addEventListener('scroll', onScroll, { passive: true });
+      } catch { /* cosmetic */ }
+    }
     readScroll();
     return () => {
       window.removeEventListener('scroll', onScroll);
       window.removeEventListener('resize', onScroll);
+      if (mainScroller) mainScroller.removeEventListener('scroll', onScroll);
       if (rafId !== undefined) cancelAnimationFrame(rafId);
     };
   });

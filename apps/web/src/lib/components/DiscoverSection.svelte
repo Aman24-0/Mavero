@@ -454,13 +454,21 @@
       hasNextPage = Boolean(payload.hasNextPage);
       // TV-UX pass 3 (bug 8c, widget build only): focus CONTINUES into the
       // new cards — two frames past the Svelte flush, then the card at the
-      // pre-fetch boundary. Production never evaluates this branch.
-      if (tvFocusHandoff && items.length > tvFocusBoundary) {
+      // pre-fetch boundary. TV-UX pass 4 (bug 1): EXHAUSTED pagination
+      // unmounts the endcap while it holds focus — hand focus to the LAST
+      // card so the row end stays a walkable hard stop (focus never falls
+      // to body). Production never evaluates this branch.
+      if (tvFocusHandoff) {
         requestAnimationFrame(() => {
           requestAnimationFrame(() => {
             try {
-              const cards = railEl?.querySelectorAll<HTMLElement>('.mc-wrap .mc-card-link');
-              if (cards && cards.length > tvFocusBoundary) focusTvElement(cards[tvFocusBoundary]);
+              if (!hasNextPage) {
+                const cards = railEl?.querySelectorAll<HTMLElement>('.mc-wrap .mc-card-link');
+                if (cards && cards.length) focusTvElement(cards[cards.length - 1]);
+              } else if (items.length > tvFocusBoundary) {
+                const cards = railEl?.querySelectorAll<HTMLElement>('.mc-wrap .mc-card-link');
+                if (cards && cards.length > tvFocusBoundary) focusTvElement(cards[tvFocusBoundary]);
+              }
             } catch {
               /* focus handoff is best-effort */
             }
