@@ -115,7 +115,14 @@ assert.match(appShell, /import \{[^}]*Film[^}]*\} from 'lucide-svelte'/, 'Film i
 assert.match(appShell, /import \{[^}]*\bTv\b[^}]*\} from 'lucide-svelte'/, 'Tv imported from lucide-svelte');
 assert.match(appShell, /import \{[^}]*Sparkles[^}]*\} from 'lucide-svelte'/, 'Sparkles imported from lucide-svelte');
 assert.match(appShell, /import \{[^}]*\bRadio\b[^}]*\} from 'lucide-svelte'/, 'Radio imported from lucide-svelte (Live TV icon)');
-assert.doesNotMatch(appShell, /Bookmark/, 'Bookmark icon no longer referenced by AppShell (My List left the primary nav)');
+// TV-UX pass 5 (test pass 5, bug 9): Bookmark + CalendarClock + Settings
+// return to AppShell — they are the icons for the inline Account section's
+// sub-links (My List / Upcoming / Settings) that render INSIDE the sidebar
+// below Search on the WGT build. They are NOT primary nav entries (the
+// primaryLinks array is still just Discover/Movies/TV Shows/Anime/Live TV).
+assert.doesNotMatch(linksBlock![1], /Bookmark/, 'Bookmark is not a primaryLinks icon (My List is a sub-link of the inline Account section, not a primary nav entry)');
+assert.doesNotMatch(linksBlock![1], /CalendarClock/, 'CalendarClock is not a primaryLinks icon (Upcoming is a sub-link of the inline Account section)');
+assert.doesNotMatch(linksBlock![1], /Settings/, 'Settings is not a primaryLinks icon (Settings is a sub-link of the inline Account section)');
 ok('3. lucide icons wired: Discover=Compass, Movies=Film, TV Shows=Tv, Anime=Sparkles, Live TV=Radio, Search=Search');
 
 // ============================================================

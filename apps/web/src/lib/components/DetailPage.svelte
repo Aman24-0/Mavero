@@ -10,7 +10,7 @@
   // REMOVED — playback must open in the device's existing orientation; the
   // manual Landscape control in the player remains the only orientation
   // entry point (no automatic rotation from any playback path).
-  import { ArrowLeft, Heart, Play, Share2, Star, ListPlus, Film, Download, AlertCircle, LoaderCircle, AlertTriangle, Maximize, Minimize, Clock, X } from 'lucide-svelte';
+  import { ArrowLeft, Heart, Play, Share2, Star, ListPlus, Film, Download, AlertCircle, LoaderCircle, AlertTriangle, Maximize, Minimize, Clock, X, ExternalLink } from 'lucide-svelte';
   import SelectionSheet from '$components/SelectionSheet.svelte';
   import DownloadSheet from '$components/DownloadSheet.svelte';
   import type { ContentType } from '$data/content';
@@ -279,7 +279,12 @@
   // unmount behavior).
   let heroArtworkFailed = $state(false);
   let heroArtworkOverride = $state('');
-  const heroArtwork = $derived(heroArtworkOverride || item.backdropHero || item.backdrop || item.poster || '');
+  // TV-UX pass 5 (test pass 5, bug 3): include item.backdropSmall in the
+  // fallback chain so the WGT <img> cascade (w1280 → w780 → w500 → poster)
+  // matches the <picture>/<source> srcset the web build uses. The plain
+  // <img> on the WGT build reads this derived value as its src, so the
+  // onerror-driven cascade actually swaps the painted image.
+  const heroArtwork = $derived(heroArtworkOverride || item.backdropHero || item.backdrop || item.backdropSmall || item.poster || '');
   const heroArtworkSrc = $derived(heroArtworkFailed ? '' : heroArtwork);
   function handleHeroArtworkError() {
     if (!IS_WGT_BUILD) {
@@ -681,6 +686,11 @@
     trailerAttempt += 1;
     armTrailerLoadTimeout();
     haptic('light');
+    // TV-UX pass 5 (test pass 5, bug 4 — SCROLL LOCK): lock the page while
+    // the sheet is open so Up/Down never scrolls the detail page behind it.
+    if (IS_WGT_BUILD) {
+      try { document.documentElement.setAttribute('data-trailer-sheet-open', ''); } catch { /* cosmetic */ }
+    }
     void tick().then(() => {
       if (IS_WGT_BUILD) {
         // TV: the sheet's Close control is the D-pad landing point (the
@@ -698,6 +708,10 @@
     if (trailerFullscreen) void exitTrailerFullscreen();
     trailerActive = false;
     trailerStatus = 'loading';
+    // TV-UX pass 5 (test pass 5, bug 4 — SCROLL LOCK): release the page lock.
+    if (IS_WGT_BUILD) {
+      try { document.documentElement.removeAttribute('data-trailer-sheet-open'); } catch { /* cosmetic */ }
+    }
     // Focus returns to the toggle (it is the same button — label flips
     // back to "Trailer").
     trailerToggle?.focus();
@@ -785,12 +799,68 @@
   // the focus manager's Back path replays Escape AT the dialog (this
   // element) and the event bubbles to the window handler above; both
   // routes end in stopTrailer, so Back ALWAYS closes the sheet.
+  // TV-UX pass 5 (test pass 5, bug 4 — "TRAILER SHEET IS BROKEN"):
+  // (a) FOCUS TRAP: on open, focus the Close button; the iframe has
+  //     tabindex="-1" so it can never steal D-pad focus. Arrows + Tab
+  //     stay inside the sheet.
+  // (b) SCROLL LOCK: the page is locked while the sheet is open (see
+  //     openTrailer/stopTrailer + the data-trailer-sheet-open attribute
+  //     on documentElement that hides overflow on body).
+  // (c) ARROWS + BACK are consumed here with preventDefault — the page
+  //     must NEVER scroll behind the sheet.
+  // (d) Back (10009) AND Escape close the sheet and return focus to the
+  //     Detail page (trailerToggle is refocused by stopTrailer).
   function handleTrailerSheetKeydown(event: KeyboardEvent) {
     if (!IS_WGT_BUILD || !trailerActive) return;
-    if (event.key === 'Escape') {
+    const code = typeof event.keyCode === 'number' ? event.keyCode : 0;
+    const key = event.key || '';
+    // Back (Tizen keyCode 10009) OR Escape closes the sheet.
+    if (key === 'Escape' || code === 10009) {
       event.preventDefault();
       event.stopPropagation();
       stopTrailer();
+      return;
+    }
+    // Arrow keys + Tab: keep focus INSIDE the sheet (focus trap) and
+    // consume them so the page never scrolls behind. The global handler
+    // also preventDefaults arrows, but we stop propagation here too so
+    // the sheet's own focus order wins over any sibling handler.
+    if (code === 38 || code === 40 || code === 37 || code === 39 || key.startsWith('Arrow') || key === 'Tab') {
+      event.preventDefault();
+      event.stopPropagation();
+      // Manually walk the sheet's focusables so the D-pad stays inside
+      // even when the global manager has trouble resolving the dialog
+      // region (e.g., when the only focusable is the Close button).
+      try {
+        const sheet = document.querySelector<HTMLElement>('.trailer-sheet');
+        if (sheet) {
+          const focusables = Array.from(sheet.querySelectorAll<HTMLElement>('button, a[href], [tabindex="0"]')).filter(
+            (el) => el.offsetParent !== null && !el.hasAttribute('disabled')
+          );
+          if (focusables.length > 0) {
+            const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+            const currentIndex = active ? focusables.indexOf(active) : -1;
+            let nextIndex = currentIndex;
+            if (key === 'Tab') {
+              nextIndex = event.shiftKey
+                ? (currentIndex <= 0 ? focusables.length - 1 : currentIndex - 1)
+                : (currentIndex + 1) % focusables.length;
+            } else if (code === 39 || key === 'ArrowRight' || code === 40 || key === 'ArrowDown') {
+              nextIndex = Math.min(focusables.length - 1, currentIndex + 1);
+            } else if (code === 37 || key === 'ArrowLeft' || code === 38 || key === 'ArrowUp') {
+              nextIndex = Math.max(0, currentIndex - 1);
+            }
+            if (nextIndex !== currentIndex && focusables[nextIndex]) {
+              focusables[nextIndex].focus({ preventScroll: true });
+            } else if (currentIndex === -1) {
+              focusables[0].focus({ preventScroll: true });
+            }
+          }
+        }
+      } catch {
+        /* focus trap is best-effort — never break the sheet */
+      }
+      return;
     }
   }
 
@@ -1096,10 +1166,21 @@
              back through the chain; a missing srcset makes that <source>
              inert, and the <img> fallback (w1280 backdrop, poster when no
              backdrop exists) still renders. -->
-        <picture>
-          <source media="(max-width: 640px) and (-webkit-min-device-pixel-ratio: 2), (max-width: 640px) and (min-resolution: 192dpi)" srcset={item.backdrop || item.backdropSmall || item.poster} />
-          <source media="(max-width: 640px)" srcset={item.backdropSmall || item.backdrop || item.poster} />
-          <source media="(min-width: 641px)" srcset={item.backdropHero || item.backdrop || item.backdropSmall || item.poster} />
+        {#if IS_WGT_BUILD}
+          <!-- TV-UX pass 5 (test pass 5, bug 3 — "DETAIL BACKDROP STILL NOT
+               VISIBLE"): on the WGT build, render a PLAIN <img> instead of
+               <picture>/<source>. The <source> elements override the <img>'s
+               src when their media query matches (which it always does on
+               the TV's 1920px viewport — the (min-width: 641px) source
+               wins). When that source's URL fails to load, the <img>'s
+               onerror fires BUT updating heroArtworkOverride does NOT
+               change the displayed image — the browser keeps using the
+               matching <source>'s srcset. The w1280→w780→poster cascade
+               therefore never actually swaps the painted image, and the
+               backdrop stays blank. A plain <img> with the cascade lets
+               the onerror-driven src swap work as intended. The TV's
+               fixed 1920x1080 viewport also makes responsive <source>
+               selection pointless. --->
           <img
             src={heroArtworkSrc}
             alt=""
@@ -1112,7 +1193,25 @@
             decoding="async"
             onerror={handleHeroArtworkError}
           />
-        </picture>
+        {:else}
+          <picture>
+            <source media="(max-width: 640px) and (-webkit-min-device-pixel-ratio: 2), (max-width: 640px) and (min-resolution: 192dpi)" srcset={item.backdrop || item.backdropSmall || item.poster} />
+            <source media="(max-width: 640px)" srcset={item.backdropSmall || item.backdrop || item.poster} />
+            <source media="(min-width: 641px)" srcset={item.backdropHero || item.backdrop || item.backdropSmall || item.poster} />
+            <img
+              src={heroArtworkSrc}
+              alt=""
+              class="hero-img"
+              width="1280"
+              height="720"
+              sizes="100vw"
+              loading="eager"
+              fetchpriority="high"
+              decoding="async"
+              onerror={handleHeroArtworkError}
+            />
+          </picture>
+        {/if}
       {/if}
       <div class="hero-scrim" aria-hidden="true"></div>
     {/if}
@@ -1498,6 +1597,7 @@
             allowfullscreen
             sandbox="allow-scripts allow-same-origin allow-presentation"
             referrerpolicy="origin"
+            tabindex="-1"
             onload={() => {
               clearTrailerLoadTimeout();
               trailerStatus = 'ready';
@@ -1521,9 +1621,24 @@
           <span>Loading trailer…</span>
         </div>
       {:else if trailerStatus === 'error'}
+        <!-- TV-UX pass 5 (test pass 5, bug 4 — "if the YouTube embed fails
+             to load (blocked), show the in-sheet 'Trailer unavailable —
+             Watch on YouTube' fallback with a working link"): YouTube is
+             blocked inside the wgt's file:// origin. Instead of a blank
+             frame, surface a working https://www.youtube.com link so the
+             user can watch the trailer in the TV's browser. -->
         <div class="trailer-sheet-note trailer-sheet-error" role="alert">
           <AlertTriangle size={22} />
-          <span>Trailer is unavailable right now.</span>
+          <span>Trailer unavailable — YouTube is blocked on this device.</span>
+          <a
+            class="trailer-sheet-retry trailer-sheet-youtube-link"
+            href={`https://www.youtube.com/watch?v=${trailerKey}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label={`Watch ${item.title} trailer on YouTube`}
+          >
+            <ExternalLink size={14} aria-hidden="true" /> Watch on YouTube
+          </a>
           <button type="button" class="trailer-sheet-retry" onclick={retryTrailer}>Retry</button>
         </div>
       {/if}
@@ -2158,6 +2273,17 @@
     cursor: pointer;
   }
   .trailer-sheet-retry:hover { background: var(--dp-surface); border-color: var(--dp-accent); }
+  /* TV-UX pass 5 (test pass 5, bug 4): the "Watch on YouTube" fallback link
+     shares the retry button's chip style so it reads as an actionable target. */
+  .trailer-sheet-youtube-link {
+    display: inline-flex; align-items: center; gap: 6px;
+    text-decoration: none; min-height: 40px; padding: 8px 18px;
+    border: 1px solid var(--dp-accent-border); border-radius: 999px;
+    color: var(--color-text); background: var(--dp-accent-soft);
+    font: inherit; font-size: 0.72rem; font-weight: 700; cursor: pointer;
+  }
+  .trailer-sheet-youtube-link:hover { background: var(--dp-surface); border-color: var(--dp-accent); }
+  .trailer-sheet-youtube-link:focus-visible { outline: 2px solid var(--dp-accent); outline-offset: 2px; }
   /* TV dummy Download button: visible but visibly inert (bug 10). */
   .tv-disabled { opacity: .45; cursor: default; }
 

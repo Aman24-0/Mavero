@@ -322,11 +322,15 @@ function resetRailShift(rail: HTMLElement): void {
   applyRailShift(rail, 0);
 }
 
-/** Card positions in the rail's LAYOUT coordinate space (transform-agnostic). */
+/** Card positions in the rail's LAYOUT coordinate space (transform-agnostic).
+ *  TV-UX pass 5: the rail's transform is `translateX(-shift_css)` (CSS px).
+ *  Under body.tv-mode zoom the visual offset is `shift_css * zoom` CLIENT px,
+ *  so the layout rect (client px) = visual + shift * zoom — NOT visual + shift. */
 function cardLayoutRect(el: HTMLElement, shift: number): Rect {
   const visual = rectOf(el);
-  // The rail is translated by -shift: layout = visual + shift (x axis only).
-  return { ...visual, left: visual.left + shift, right: visual.right + shift, cx: visual.cx + shift };
+  const zoom = zoomFactor() || 1;
+  const dx = shift * zoom;
+  return { ...visual, left: visual.left + dx, right: visual.right + dx, cx: visual.cx + dx };
 }
 
 /**
@@ -389,21 +393,47 @@ function ensureRailCardVisible(el: HTMLElement): void {
     if (!rail || !rail.classList.contains('rail')) return; // grid rows scroll vertically, not horizontally
     const wrap = rail.parentElement;
     if (!wrap) return;
-    const shift = shiftOfRail(rail);
-    const card = cardLayoutRect(el, shift); // LAYOUT rect (transform-agnostic)
-    const cardVisualLeft = card.left - shift;
-    const cardVisualRight = card.right - shift;
+    const zoom = zoomFactor() || 1;
+    // TV-UX pass 5 (test pass 5, bug 1 — "focused cards EXIST but are NOT
+    // PAINTED"): the previous math derived the slide target from the
+    // card's LAYOUT rect (visual + shift) — but under body.tv-mode's
+    // `zoom: 1.2` the layout rect was computed in MIXED units (visual is
+    // CLIENT px, the stored shift is CSS px, and translateX consumes CSS
+    // px). The wrong unit algebra BOTH under- and over-slid the rail
+    // depending on the current shift, so the focused card stayed outside
+    // the .rail-wrap's clip window and painted blank. The fix reads the
+    // ACTUAL visual rects (client px, transform- and zoom-aware) of the
+    // focused card vs the wrap's visible window, computes the deficit in
+    // CLIENT px, then divides by the zoom factor to convert to the CSS px
+    // that translateX expects. Both directions slide by EXACTLY the deficit.
+    const cardVisual = rectOf(el);
     const wrapRect = wrap.getBoundingClientRect();
     const style = getComputedStyle(rail);
-    const padLeft = parseFloat(style.paddingLeft || '0') || 0;
-    const padRight = parseFloat(style.paddingRight || '0') || 0;
+    // Computed style returns CSS px (the resolved unit BEFORE zoom). To
+    // compare against the wrap's client-px rect we must scale padding by
+    // the same zoom factor the body applies at render time.
+    const padLeft = (parseFloat(style.paddingLeft || '0') || 0) * zoom;
+    const padRight = (parseFloat(style.paddingRight || '0') || 0) * zoom;
     const windowLeft = wrapRect.left + padLeft;
     const windowRight = wrapRect.right - padRight;
-    const gap = 12; // peek margin so the next card's edge hints at more content
-    let next = shift;
-    if (cardVisualRight > windowRight) next = card.right - windowRight + gap;
-    else if (cardVisualLeft < windowLeft) next = card.left - windowLeft - gap;
-    if (Math.abs(next - shift) > 1) applyRailShift(rail, next);
+    const gap = 12; // peek margin (client px) so the next card's edge hints at more content
+    const currentShift = shiftOfRail(rail); // CSS px (the value translateX consumes)
+    let nextShift = currentShift;
+    if (cardVisual.right > windowRight - gap) {
+      // Card spills RIGHT: deficit (client px) = how far the card's right
+      // edge is past the window's right edge (minus the peek gap).
+      const deficit = cardVisual.right - (windowRight - gap);
+      // Slide the rail LEFT by `deficit` client px = `deficit / zoom` CSS px.
+      nextShift = currentShift + deficit / zoom;
+    } else if (cardVisual.left < windowLeft + gap) {
+      // Card spills LEFT: deficit (client px) = how far the card's left
+      // edge is past the window's left edge (plus the peek gap).
+      const deficit = (windowLeft + gap) - cardVisual.left;
+      // Slide the rail RIGHT by `deficit` client px = `deficit / zoom` CSS px
+      // (i.e., DECREASE the shift).
+      nextShift = currentShift - deficit / zoom;
+    }
+    if (Math.abs(nextShift - currentShift) > 1) applyRailShift(rail, nextShift);
   } catch {
     /* cosmetic */
   }
@@ -488,16 +518,39 @@ function revealVertical(el: HTMLElement): void {
     const bottomClearance = 90;
     const bandHeight = band.bottom - band.top;
     let target: number | null = null;
-    const currentScroll = nearestScrollableAncestor(el) ? (nearestScrollableAncestor(el) as HTMLElement).scrollTop : window.scrollY;
-    if (rect.top < band.top + headerClearance) {
+    const scroller = nearestScrollableAncestor(el);
+    const currentScroll = scroller ? scroller.scrollTop : window.scrollY;
+    // TV-UX pass 5 (test pass 5, bug 6 — "scroll-up doesn't reveal the full
+    // hero"): when the focused element is in the HERO region, the scroll
+    // target must reveal the ENTIRE hero (the hero's top at the band's top),
+    // not just bring the focused action to the headerClearance line. The
+    // previous logic landed the focused Play button at ~110px from the top,
+    // leaving the hero's top half cut off above the viewport. Now: if the
+    // hero's top is above the band's top, scroll up so it lands at the
+    // band's top; otherwise leave the scroll untouched (the hero is already
+    // fully visible or scrolled past).
+    if (regionOf(el) === 'hero') {
+      const hero = heroSection();
+      if (hero) {
+        const heroRect = hero.getBoundingClientRect();
+        if (heroRect.top < band.top - 2) {
+          target = Math.max(0, currentScroll + (heroRect.top - band.top));
+        } else if (heroRect.top > band.top + 2) {
+          // Hero is below the band's top — scroll down so the hero's top
+          // aligns with the band's top (rare: focus entered the hero from
+          // below; the hero should still be fully revealed).
+          target = currentScroll + (heroRect.top - band.top);
+        }
+      }
+    }
+    if (target === null && rect.top < band.top + headerClearance) {
       // Above the fold: bring the element to the top clearance line.
       target = currentScroll + (rect.top - band.top - headerClearance);
-    } else if (rect.bottom > band.bottom - bottomClearance) {
+    } else if (target === null && rect.bottom > band.bottom - bottomClearance) {
       // Below the fold: rest the focused row ~40% from the top of the band.
       target = currentScroll + (rect.cy - band.top - bandHeight * 0.4);
     }
     if (target !== null) {
-      const scroller = nearestScrollableAncestor(el);
       animateScrollTo(scroller, target);
     }
   } catch {
@@ -928,14 +981,30 @@ function heroActionTargets(): HTMLElement[] {
   try {
     const hero = heroSection();
     if (!hero) return [];
+    // TV-UX pass 5 (test pass 5, bugs 2 + 13): the DETAIL page hero
+    // (`<header class="hero">` inside `.detail-page`) is a single-slide
+    // hero with no `.hero-slide` / `.hero-actions` carousel wrapper. Its
+    // action row is `.primary-actions` (Play + Download) and
+    // `.secondary-actions` (My List + Share + Trailer). These selectors
+    // are now included so the detail page's actions join the hero
+    // region's spatial model, and the seed (bug 13) lands on Play
+    // instead of the bottom-right recs card.
     const selector = [
       '.hero-slide.active .hero-actions a',
       '.hero-slide.active .hero-actions button',
       '.spotlight-slide.active .slide-actions a',
-      '.spotlight-slide.active .slide-actions button'
+      '.spotlight-slide.active .slide-actions button',
+      '.detail-page .hero .primary-actions a',
+      '.detail-page .hero .primary-actions button',
+      '.detail-page .hero .secondary-actions a',
+      '.detail-page .hero .secondary-actions button'
     ].join(', ');
     return Array.from(hero.querySelectorAll<HTMLElement>(selector)).filter(
-      (el) => isInteractiveTarget(el) && isVisible(el) && !el.closest('[aria-hidden="true"]')
+      (el) =>
+        isInteractiveTarget(el) &&
+        isVisible(el) &&
+        !el.closest('[aria-hidden="true"]') &&
+        !(el.tagName === 'BUTTON' && (el as HTMLButtonElement).disabled)
     );
   } catch {
     return [];
@@ -966,6 +1035,17 @@ function heroNavTargets(): HTMLElement[] {
  */
 function heroPrimaryTarget(): HTMLElement | null {
   try {
+    // TV-UX pass 5 (test pass 5, bug 13 — "Detail page seed focus lands on
+    // the bottom-right card"): the DETAIL page hero has no carousel — its
+    // PRIMARY action is the .play-btn inside .primary-actions. Seed on it
+    // explicitly so opening a detail page lands focus on Play, not on a
+    // recs card at the bottom of the page.
+    const detailPlay = document.querySelector<HTMLElement>('.detail-page .hero .play-btn');
+    if (detailPlay && isVisible(detailPlay) && !detailPlay.closest('[aria-hidden="true"]')) {
+      // Skip the upcoming variant — it is aria-disabled and not actionable.
+      const ariaDisabled = detailPlay.getAttribute('aria-disabled');
+      if (ariaDisabled !== 'true') return detailPlay;
+    }
     const actions = heroTargets().filter((el) => !el.closest('.hero-nav, .spotlight-nav'));
     if (actions.length) return actions[0];
     const peers = heroTargets();
@@ -1445,6 +1525,84 @@ function onDocumentScrollCapture(event: Event): void {
   }
 }
 
+/**
+ * TV-UX pass 5 (test pass 5, bug 11 — "FAST SCROLL LOSES FOCUS + ARROWS
+ * SCROLL THE PAGE"): after a fast page scroll settles, re-sync focus to a
+ * STABLE element near the new scroll position. The reported failure: the
+ * user scrolls fast, the .tv-focused ring ends up on an element scrolled
+ * out of view (or on document.body), then arrow keys land on no target
+ * and — before this pass — the browser's default arrow behavior scrolled
+ * the page. Now arrows ALWAYS preventDefault (see handleKeydown), and this
+ * listener re-seeds focus after scroll so moveFocus always has a sane
+ * `active` to resolve from. Idempotent: if focus is still on a visible
+ * element, nothing happens.
+ */
+let scrollResyncTimer: ReturnType<typeof setTimeout> | undefined;
+
+function isInViewport(el: HTMLElement): boolean {
+  try {
+    const rect = el.getBoundingClientRect();
+    const band = bandFor(el);
+    // Element is "in viewport" if it overlaps the scroll container's
+    // visible band (with a small tolerance so a card just off-screen at
+    // the band's edge still counts).
+    return rect.bottom > band.top - 8 && rect.top < band.bottom + 8;
+  } catch {
+    return false;
+  }
+}
+
+function resyncFocusAfterScroll(): void {
+  try {
+    const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    if (active && active !== document.body && isVisible(active) && isInViewport(active)) {
+      return; // focus is still on a visible element — nothing to do
+    }
+    // Focus disappeared (scrolled out of view or landed on body). Re-seed
+    // to a stable element near the current scroll position: prefer the
+    // remembered lastContentFocus if it is still visible, else the
+    // contentEntryTarget (hero Play / top-most rail heading), else the
+    // generic seedFocusTarget.
+    let seed: HTMLElement | null = null;
+    if (lastContentFocus && lastContentFocus.isConnected && isVisible(lastContentFocus) && isInViewport(lastContentFocus)) {
+      seed = lastContentFocus;
+    }
+    if (!seed) {
+      const entry = contentEntryTarget();
+      if (entry && isInViewport(entry)) seed = entry;
+    }
+    if (!seed) {
+      const fallback = seedFocusTarget();
+      if (fallback && isInViewport(fallback)) seed = fallback;
+    }
+    if (seed) {
+      applyFocusSilent(seed);
+      try {
+        columnAnchor = rectOf(seed).cx;
+      } catch {
+        /* cosmetic */
+      }
+    }
+  } catch {
+    /* focus re-sync is a comfort fix — never break on it */
+  }
+}
+
+function onPageScrollCapture(event: Event): void {
+  try {
+    // Skip hero track scrolls (handled by onDocumentScrollCapture above).
+    if (closestSlideTrack(event.target)) return;
+    if (scrollResyncTimer) clearTimeout(scrollResyncTimer);
+    // Debounce so a fast fling only fires one re-sync after it settles.
+    scrollResyncTimer = setTimeout(() => {
+      scrollResyncTimer = undefined;
+      resyncFocusAfterScroll();
+    }, 220);
+  } catch {
+    /* cosmetic */
+  }
+}
+
 function bootOverlayVisible(): boolean {
   try {
     const el = document.getElementById('mavero-wgt-boot-overlay');
@@ -1581,8 +1739,18 @@ function moveFocus(direction: 'up' | 'down' | 'left' | 'right', repeat = false):
       // Stay within the CURRENT sub-row: actions ↔ actions, nav ↔ nav.
       const rowPeers = inHeroNav ? heroNavTargets() : heroActionTargets();
       target = pickHorizontal(from, rowPeers, direction);
-      if (!target && direction === 'left' && !inHeroNav && from.left <= contentLeftEdge() + 140) {
-        // Deliberate Left at the hero's left edge → the sidebar.
+      if (!target && direction === 'left' && !inHeroNav) {
+        // TV-UX pass 5 (test pass 5, bug 2 — "HERO → LEFT must reach the
+        // SIDEBAR"): the hero's leftmost action (no left peer found by
+        // pickHorizontal) ALWAYS reaches the sidebar — same rule as rails.
+        // The previous position check (from.left <= contentLeftEdge() +
+        // 140) failed under body.tv-mode zoom because the hero's content
+        // padding (40px 56px 56px) scaled by zoom 1.2 plus the action
+        // row's own padding pushed the Play button's visual left past
+        // 140 client px from the content edge, so the check never fired
+        // and Left from the hero did nothing. pickHorizontal returning
+        // null is the authoritative signal that the focused element IS
+        // the leftmost — going to the sidebar is correct in that case.
         target = activeSidebarLink();
         if (target) setTvSidebarCollapsed(false);
       }
@@ -1873,11 +2041,15 @@ function handleKeydown(event: KeyboardEvent): void {
     // sometimes scrolls the page up/down" bug). moveFocus() returns false
     // ONLY when it deliberately delegates (hero nav slide change) — in that
     // case the carousel's own handler preventDefaults.
-    const consumed = moveFocus(direction, event.repeat === true);
-    if (consumed) {
-      event.preventDefault();
-      event.stopPropagation();
-    }
+    // TV-UX pass 5 (test pass 5, bug 11 — "FAST SCROLL LOSES FOCUS + ARROWS
+    // SCROLL THE PAGE"): the page must NEVER scroll on arrow keys — only
+    // focus moves (rows slide instead). ALWAYS preventDefault on arrows the
+    // manager handles, even if moveFocus returned false (no candidates found
+    // mid/fast scroll) — the browser's default arrow behavior is page
+    // scroll, which is never what the TV user wants.
+    moveFocus(direction, event.repeat === true);
+    event.preventDefault();
+    event.stopPropagation();
   } catch {
     /* navigation must never throw into the app */
     event.preventDefault();
@@ -2060,6 +2232,9 @@ export function installTvFocusManager(): void {
   // component handler; consumed keys are stopped so nothing double-fires.
   window.addEventListener('keydown', handleKeydown, true);
   window.addEventListener('scroll', onDocumentScrollCapture, true);
+  // TV-UX pass 5 (test pass 5, bug 11): re-sync focus after fast page
+  // scroll so arrow keys always have a stable `active` to resolve from.
+  window.addEventListener('scroll', onPageScrollCapture, true);
 
   // TV-UX pass 4 (bug 5 — "auto-collapse STILL unreliable"): the sidebar
   // state is now derived DETERMINISTICALLY from where focus IS, not only

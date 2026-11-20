@@ -119,15 +119,28 @@
   // eligibility helpers are PURE functions of (season, now) — the
   // filtering is deterministic and tested in isolation by
   // scripts/mav_focused_issue4_eligibility_test.ts.
+  // TV-UX pass 5 (test pass 5, bug 12 — "The TV season identifier is
+  // invalid"): SANITIZE the eligible list to only contain positive
+  // integers. A malformed TV payload (or a stale cache entry) could carry
+  // season entries with number: 0 / NaN / undefined / negative — those
+  // would propagate to loadSeason and throw at the TMDB adapter gate. The
+  // sanitized list guarantees loadSeason always receives a valid season
+  // number, and the fallback to [1] ensures an empty/malformed list still
+  // shows season 1 (never throws, never leaves the episode list blank).
   $: eligibleSeasonNumbers = (() => {
     if (seasonsData && seasonsData.length > 0) {
       const eligible = getEligibleSeasons(seasonsData as EligibleSeason[]);
-      if (eligible.length > 0) return eligible.map((s) => s.number).sort((a, b) => a - b);
-      // seasonsData was supplied but no season has started airing yet.
-      // Fall back to season 1 so the user still sees SOMETHING — but
-      // only if seasonCount says there is at least one season. (This
-      // is the conservative path: a brand-new series with all seasons
-      // in the future shows S1's empty state, not a hidden selector.)
+      const sanitized = eligible
+        .map((s) => s.number)
+        .filter((n): n is number => typeof n === 'number' && Number.isInteger(n) && n > 0)
+        .sort((a, b) => a - b);
+      if (sanitized.length > 0) return sanitized;
+      // seasonsData was supplied but no season has started airing yet, OR
+      // every season number was invalid. Fall back to season 1 so the user
+      // still sees SOMETHING — but only if seasonCount says there is at
+      // least one season. (This is the conservative path: a brand-new
+      // series with all seasons in the future shows S1's empty state, not
+      // a hidden selector.)
       return seasonCount > 0 ? [1] : [];
     }
     // No seasonsData — fall back to the existing count-based behavior.
@@ -135,10 +148,15 @@
   })();
 
   async function loadSeason(number: number) {
-    selectedSeason = number;
+    // TV-UX pass 5 (test pass 5, bug 12 — "The TV season identifier is
+    // invalid"): guard the season number BEFORE the fetch. A NaN / undefined
+    // / non-positive value would reach the API and throw. Fall back to
+    // season 1 (the contracted "never throw, show season 1" behavior).
+    const safeNumber = (typeof number === 'number' && Number.isInteger(number) && number > 0) ? number : 1;
+    selectedSeason = safeNumber;
     // Cache hit — render synchronously: no spinner flash, no HTTP
     // roundtrip, no race window at all.
-    const cached = readCachedSeason(id, number);
+    const cached = readCachedSeason(id, safeNumber);
     if (cached) {
       requestSequence += 1;
       season = cached;
@@ -150,7 +168,7 @@
     loading = true;
     errorMessage = '';
     try {
-      const response = await fetch(`/api/content/series/${encodeURIComponent(id)}/season/${number}`);
+      const response = await fetch(`/api/content/series/${encodeURIComponent(id)}/season/${safeNumber}`);
       const payload = await response.json();
       // Stale response — a newer season selection superseded this
       // request while it was in flight. Drop it entirely: no render, no
@@ -159,10 +177,33 @@
       if (sequence !== requestSequence) return;
       if (!response.ok || !payload.ok) throw new Error(payload.error?.message || 'Episodes are temporarily unavailable.');
       season = payload.season as Season;
-      writeCachedSeason(id, number, season);
+      writeCachedSeason(id, safeNumber, season);
     } catch (error) {
       if (sequence !== requestSequence) return;
-      errorMessage = error instanceof Error ? error.message : 'Episodes are temporarily unavailable.';
+      // TV-UX pass 5 (test pass 5, bug 12 — "The TV season identifier is
+      // invalid"): if the requested season failed (e.g., the TMDB adapter
+      // threw NOT_FOUND for an invalid season), fall back to SEASON 1
+      // instead of showing an error — the contract is "show the episode
+      // list for season 1, never throw". Only retry with season 1 if we
+      // weren't already trying season 1 (avoids an infinite loop).
+      const message = error instanceof Error ? error.message : 'Episodes are temporarily unavailable.';
+      if (safeNumber !== 1) {
+        try {
+          const fallback = await fetch(`/api/content/series/${encodeURIComponent(id)}/season/1`);
+          const fallbackPayload = await fallback.json();
+          if (sequence !== requestSequence) return;
+          if (fallback.ok && fallbackPayload.ok) {
+            season = fallbackPayload.season as Season;
+            writeCachedSeason(id, 1, season);
+            selectedSeason = 1;
+            errorMessage = '';
+            return;
+          }
+        } catch {
+          /* fall through to the error display */
+        }
+      }
+      errorMessage = message;
       season = undefined;
     } finally {
       if (sequence === requestSequence) loading = false;

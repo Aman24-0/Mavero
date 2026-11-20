@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, type Snippet } from 'svelte';
-  import { Compass, Search, UserRound, Clapperboard, Film, PanelLeftClose, PanelLeft, Sparkles, Tv, Radio } from 'lucide-svelte';
+  import { Compass, Search, UserRound, Clapperboard, Film, PanelLeftClose, PanelLeft, Sparkles, Tv, Radio, Bookmark, CalendarClock, Settings, ChevronDown, ChevronRight } from 'lucide-svelte';
   import AccountSheet from '$components/AccountSheet.svelte';
   import { haptic } from '$lib/client/haptics';
   // TV-UX pass (widget build only): the sidebar AUTO-EXPANDS when TV focus
@@ -184,6 +184,22 @@
     }
   }
 
+  // TV-UX pass 5 (test pass 5, bugs 5 + 9 — "remove the manual toggle button
+  // (the auto expand/collapse owns it now)" + "render Account options INSIDE
+  // the sidebar, BELOW the Search item"): on the TV/widget build the sidebar
+  // shows an INLINE Account section below Search — a focusable button carrying
+  // the guest/logged user's name that expands IN THE SIDEBAR to reveal
+  // Upcoming / My List / Settings (the same options the AccountSheet shows on
+  // phone/tablet). The bottom Account chip is removed on TV; the inline
+  // section owns the Account surface there. D-pad reachable via the focus
+  // manager (sidebar region).
+  let accountInlineExpanded = $state(false);
+  const accountDisplayName = $derived(user?.displayName ?? (user?.email ? user.email.split('@')[0] : 'Guest'));
+  function toggleAccountInline() {
+    accountInlineExpanded = !accountInlineExpanded;
+    haptic('light');
+  }
+
   // Update CSS variable for sidebar width
   $effect(() => {
     if (typeof document !== 'undefined') {
@@ -200,16 +216,23 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" />
 </svelte:head>
 
-<div class="page-shell" bind:this={shell}>
+<div class="page-shell" class:sidebar-collapsed={sidebarCollapsed} bind:this={shell}>
   <!-- Desktop sidebar (fixed, 1025px+) -->
   <aside class="app-sidebar" aria-label="Primary navigation">
     <a class="brand-lockup" href="/discover" aria-label="MAVERO home">
       <span class="brand-symbol"><Clapperboard size={17} strokeWidth={2.1} /></span>
       {#if !sidebarCollapsed}<span class="brand-word">MAVERO</span>{/if}
     </a>
-    <button class="sidebar-toggle" type="button" onclick={toggleSidebar} aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}>
-      {#if sidebarCollapsed}<PanelLeft size={16} />{:else}<PanelLeftClose size={16} />{/if}
-    </button>
+    {#if !IS_WGT_BUILD}
+      <!-- TV-UX pass 5 (test pass 5, bug 5 — "REMOVE the manual expand/collapse
+           toggle button (the auto expand/collapse owns it now)"): the toggle
+           is hidden on the widget build — the focus manager's auto
+           expand/collapse contract owns the sidebar state there. Production web
+           keeps the manual toggle (the auto contract never fires there). -->
+      <button class="sidebar-toggle" type="button" onclick={toggleSidebar} aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}>
+        {#if sidebarCollapsed}<PanelLeft size={16} />{:else}<PanelLeftClose size={16} />{/if}
+      </button>
+    {/if}
     <nav class="sidebar-nav">
       {#if !sidebarCollapsed}<div class="sidebar-section-label" aria-hidden="true">Browse</div>{/if}
       {#each primaryLinks as link}
@@ -233,27 +256,78 @@
         <span class="sidebar-icon"><Search size={19} strokeWidth={isActive('/search') ? 2.3 : 1.8} /></span>
         {#if !sidebarCollapsed}<span class="sidebar-label">Search</span>{/if}
       </a>
+      {#if IS_WGT_BUILD}
+        <!-- TV-UX pass 5 (test pass 5, bug 9 — "render Account options INSIDE
+             the sidebar, BELOW the Search item, with the guest/logged user
+             name as a sidebar button (focusable, opens the same options
+             inline/in the sidebar)"): on the widget build the Account surface
+             is an INLINE expandable section below Search. The user's name
+             (or "Guest") is a focusable button; clicking it expands to reveal
+             Upcoming / My List / Settings as nested sidebar links. D-pad
+             reachable via the focus manager (sidebar region). Production web
+             keeps the bottom Account chip + AccountSheet (phone/tablet
+             behavior unchanged). -->
+        <div class="sidebar-account-inline" class:expanded={accountInlineExpanded}>
+          <button
+            type="button"
+            class="sidebar-link sidebar-account-toggle"
+            aria-expanded={accountInlineExpanded}
+            aria-label={`Account: ${accountDisplayName}`}
+            onclick={toggleAccountInline}
+            title={sidebarCollapsed ? accountDisplayName : undefined}
+          >
+            <span class="sidebar-icon"><UserRound size={19} strokeWidth={isAccountSurface ? 2.3 : 1.8} /></span>
+            {#if !sidebarCollapsed}
+              <span class="sidebar-label">{accountDisplayName}</span>
+              <span class="sidebar-account-chevron" aria-hidden="true">
+                {#if accountInlineExpanded}<ChevronDown size={14} />{:else}<ChevronRight size={14} />{/if}
+              </span>
+            {/if}
+          </button>
+          {#if accountInlineExpanded && !sidebarCollapsed}
+            <div class="sidebar-account-options">
+              <a class="sidebar-link sidebar-sublink" href="/upcoming" aria-current={isActive('/upcoming') ? 'page' : undefined}>
+                <span class="sidebar-icon"><CalendarClock size={17} /></span>
+                <span class="sidebar-label">Upcoming</span>
+              </a>
+              <a class="sidebar-link sidebar-sublink" href="/my-list" aria-current={isActive('/my-list') ? 'page' : undefined}>
+                <span class="sidebar-icon"><Bookmark size={17} /></span>
+                <span class="sidebar-label">My List</span>
+              </a>
+              <a class="sidebar-link sidebar-sublink" href="/settings" aria-current={isActive('/settings') ? 'page' : undefined}>
+                <span class="sidebar-icon"><Settings size={17} /></span>
+                <span class="sidebar-label">Settings</span>
+              </a>
+            </div>
+          {/if}
+        </div>
+      {/if}
     </nav>
     <div class="sidebar-bottom">
-      <!-- 2026-11 desktop-UX fix: the Account chip lives in the desktop
-           sidebar (it was MISSING entirely on desktop before — the mobile
-           pill's Account entry had no desktop counterpart). Opens the SAME
-           compact AccountSheet. Sits above the bottom rule so the sidebar
-           reads: navigation → search → account → tagline. -->
-      <button
-        type="button"
-        bind:this={sidebarAccountEl}
-        class:active={isAccountSurface}
-        class="sidebar-account"
-        aria-haspopup="dialog"
-        aria-expanded={accountSheetOpen}
-        aria-label="Account"
-        onclick={openAccountSheet}
-        title={sidebarCollapsed ? 'Account' : undefined}
-      >
-        <span class="sidebar-icon"><UserRound size={19} strokeWidth={isAccountSurface ? 2.3 : 1.8} /></span>
-        {#if !sidebarCollapsed}<span class="sidebar-label">Account</span>{/if}
-      </button>
+      {#if !IS_WGT_BUILD}
+        <!-- 2026-11 desktop-UX fix: the Account chip lives in the desktop
+             sidebar (it was MISSING entirely on desktop before — the mobile
+             pill's Account entry had no desktop counterpart). Opens the SAME
+             compact AccountSheet. Sits above the bottom rule so the sidebar
+             reads: navigation → search → account → tagline.
+             TV-UX pass 5 (test pass 5, bug 9): on the WGT build this chip is
+             REMOVED — the inline Account section above owns the Account
+             surface on TV. -->
+        <button
+          type="button"
+          bind:this={sidebarAccountEl}
+          class:active={isAccountSurface}
+          class="sidebar-account"
+          aria-haspopup="dialog"
+          aria-expanded={accountSheetOpen}
+          aria-label="Account"
+          onclick={openAccountSheet}
+          title={sidebarCollapsed ? 'Account' : undefined}
+        >
+          <span class="sidebar-icon"><UserRound size={19} strokeWidth={isAccountSurface ? 2.3 : 1.8} /></span>
+          {#if !sidebarCollapsed}<span class="sidebar-label">Account</span>{/if}
+        </button>
+      {/if}
       <div class="sidebar-rule"></div>
       {#if !sidebarCollapsed}<span class="sidebar-caption">Your screen. Your story.</span>{/if}
     </div>
@@ -418,14 +492,41 @@
     color: var(--color-text-deep); font-size: .68rem; font-weight: 500; line-height: 1.4;
   }
 
-  /* Collapsed sidebar — icon only. The Account chip centers with the links
-     (the :has() probe keys on the LINKS' missing labels; collapsed mode
-     hides every label in the rail together). */
-  :global(.page-shell:has(.app-sidebar .sidebar-link:not(:has(.sidebar-label)))) .sidebar-link {
+  /* Collapsed sidebar — icon only. TV-UX pass 5 (test pass 5, bug 5 —
+     "Collapsed-state icons are not on one vertical axis"): the previous
+     `:has()` probe (`.page-shell:has(.app-sidebar .sidebar-link:not(:has(.sidebar-label)))`)
+     does NOT work on the TV engine (Chromium < 88 has no `:has()` support),
+     so the collapsed icons never centered. The page-shell now carries an
+     explicit `.sidebar-collapsed` class (bound to the sidebarCollapsed
+     state) — engine-proof, identical behavior on every browser. Every
+     icon (search, nav, account, footer) centers on the same vertical axis. */
+  .sidebar-collapsed .sidebar-link {
     justify-content: center; padding: 0;
   }
-  :global(.page-shell:has(.app-sidebar .sidebar-link:not(:has(.sidebar-label)))) .sidebar-account {
+  .sidebar-collapsed .sidebar-account {
     justify-content: center; padding: 0;
+  }
+  .sidebar-collapsed .sidebar-account-toggle {
+    justify-content: center; padding: 0;
+  }
+
+  /* TV-UX pass 5 (test pass 5, bug 9): the inline Account section below Search.
+     The toggle button reuses .sidebar-link styling; the chevron hints at
+     expandability. The nested options indent slightly so they read as a
+     sub-section of the Account toggle. */
+  .sidebar-account-inline { display: contents; }
+  .sidebar-account-toggle { position: relative; }
+  .sidebar-account-chevron {
+    display: inline-flex; align-items: center;
+    margin-left: auto; padding-left: 8px;
+    color: var(--color-text-deep);
+  }
+  .sidebar-account-options {
+    display: grid; gap: 2px;
+    padding-left: 24px;
+  }
+  .sidebar-sublink {
+    min-height: 40px; font-size: .78rem; opacity: .92;
   }
 
   /* ---- Mobile topbar (≤1024px) ---- */

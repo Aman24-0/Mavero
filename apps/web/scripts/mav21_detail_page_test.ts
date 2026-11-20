@@ -70,8 +70,11 @@ console.log('\n1. Cinematic hero artwork');
 // documented chain; the chain itself (backdropHero → backdrop → poster →
 // empty) is unchanged. onerror now routes to the named handler, which flips
 // the failure state (web) and cascades artwork tiers (WGT build).
-assert.match(detailPage, /const heroArtwork = \$derived\(heroArtworkOverride \|\| item\.backdropHero \|\| item\.backdrop \|\| item\.poster \|\| ''\);/,
-  'hero artwork = override → backdropHero → backdrop → poster → empty (graceful chain, WGT tier-cascade override preserved)');
+// [TV-UX pass 5 re-pin] backdropSmall joins the chain so the WGT <img>
+// cascade (w1280 → w780 → w500 → poster) matches the <picture>/<source>
+// srcset the web build uses.
+assert.match(detailPage, /const heroArtwork = \$derived\(heroArtworkOverride \|\| item\.backdropHero \|\| item\.backdrop \|\| item\.backdropSmall \|\| item\.poster \|\| ''\);/,
+  'hero artwork = override → backdropHero → backdrop → backdropSmall → poster → empty (graceful chain, WGT tier-cascade override preserved)');
 assert.match(detailPage, /let heroArtworkFailed = \$state\(false\);/,
   'hero artwork failure is tracked in state');
 assert.match(detailPage, /const heroArtworkSrc = \$derived\(heroArtworkFailed \? '' : heroArtwork\);/,
