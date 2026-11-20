@@ -85,8 +85,11 @@ assert.match(detailPage, /onerror=\{handleHeroArtworkError\}/,
 assert.match(detailPage, /\{#if heroArtworkSrc\}[\s\S]*?<picture>/,
   'the whole artwork block is guarded by the failure/empty state');
 // The single-src chain remains the SSR/failure derivation.
-assert.match(detailPage, /const heroArtwork = \$derived\(heroArtworkOverride \|\| item\.backdropHero \|\| item\.backdrop \|\| item\.poster \|\| ''\);/,
-  'heroArtwork derivation chain unchanged (override → original → w1280 → poster)');
+// [TV-UX pass 5 re-pin] backdropSmall joins the chain so the WGT <img>
+// cascade (w1280 → w780 → w500 → poster) matches the <picture>/<source>
+// srcset the web build uses.
+assert.match(detailPage, /const heroArtwork = \$derived\(heroArtworkOverride \|\| item\.backdropHero \|\| item\.backdrop \|\| item\.backdropSmall \|\| item\.poster \|\| ''\);/,
+  'heroArtwork derivation chain (override → original → w1280 → w780 → poster)');
 ok('1. detail hero: three responsive tiers + preserved LCP/failure contracts');
 
 // ============================================================
@@ -119,9 +122,12 @@ assert.match(seasonEpisodes, /if \(Date\.now\(\) - entry\.cachedAt > SEASON_CACH
   'expired entries are evicted on read (never served)');
 assert.match(seasonEpisodes, /if \(seasonCache\.size >= SEASON_CACHE_MAX_ENTRIES\) \{[\s\S]*?for \(const \[k, v\] of seasonCache\) \{[\s\S]*?if \(now - v\.cachedAt > SEASON_CACHE_TTL_MS\) seasonCache\.delete\(k\);[\s\S]*?\}[\s\S]*?while \(seasonCache\.size >= SEASON_CACHE_MAX_ENTRIES\)/,
   'bounded eviction: expired first, then oldest FIFO (the server-cache pattern)');
-assert.match(seasonEpisodes, /const cached = readCachedSeason\(id, number\);\s*\n\s*if \(cached\) \{[\s\S]*?season = cached;[\s\S]*?loading = false;[\s\S]*?return;/,
+// [TV-UX pass 5 re-pin] loadSeason now guards the season number before
+// the fetch (safeNumber), so the cache read + fetch + writeCachedSeason
+// calls reference safeNumber instead of the raw number parameter.
+assert.match(seasonEpisodes, /const cached = readCachedSeason\(id, safeNumber\);\s*\n\s*if \(cached\) \{[\s\S]*?season = cached;[\s\S]*?loading = false;[\s\S]*?return;/,
   'cache hit renders synchronously (no roundtrip, no spinner flash)');
-assert.match(seasonEpisodes, /season = payload\.season as Season;\s*\n\s*writeCachedSeason\(id, number, season\);/,
+assert.match(seasonEpisodes, /season = payload\.season as Season;\s*\n\s*writeCachedSeason\(id, safeNumber, season\);/,
   'successful fetches populate the cache');
 ok('3. season cache: TTL-bounded, per-series+season, synchronous cache hits');
 
