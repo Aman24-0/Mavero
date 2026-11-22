@@ -390,24 +390,32 @@ jobs:
           # tag, with the kit payload/env global installed inline first.
           # ------------------------------------------------------------------
           SHELL_HTML=$(unzip -p MaveroTV.wgt index.html)
+          # Write the shell HTML to a temp file so every grep check reads
+          # from the FILE (not a pipe). With set -o pipefail, `echo "$SHELL_HTML"
+          # | grep -q` races: grep -q exits early on first match, echo gets
+          # SIGPIPE, and the pipeline returns non-zero (a FALSE failure).
+          # Reading from a file eliminates the pipe entirely. Do NOT weaken
+          # the verify — every check is identical, just pipe-free.
+          SHELL_FILE="${RUNNER_TEMP}/mavero-shell.html"
+          printf '%s' "$SHELL_HTML" > "$SHELL_FILE"
           # HOP 3 — from the packed wgt: print the stylesheet count + the
           # actual tag so CI logs show exactly what survived into the wgt.
           echo "=== HOP 3: from the packed wgt (MaveroTV.wgt index.html) ==="
-          echo "stylesheet count: $(echo "$SHELL_HTML" | grep -c 'rel="stylesheet"')"
-          echo "$SHELL_HTML" | grep -o '<link rel="stylesheet"[^>]*>' || echo "(no stylesheet tag found)"
+          echo "stylesheet count: $(grep -c 'rel="stylesheet"' "$SHELL_FILE")"
+          grep -o '<link rel="stylesheet"[^>]*>' "$SHELL_FILE" || echo "(no stylesheet tag found)"
           # Also check the CSS FILE itself is in the wgt (the <link> tag is
           # useless if the .css file is missing from the zip).
           CSS_IN_WGT=$(unzip -Z1 MaveroTV.wgt | grep -c '_app/immutable/assets/.*\.css$' || true)
           echo "CSS files in wgt: $CSS_IN_WGT"
           unzip -Z1 MaveroTV.wgt | grep '_app/immutable/assets/.*\.css$' || echo "(no CSS files in wgt)"
           # … the classic boot tag is present …
-          echo "$SHELL_HTML" | grep -q 'src="./app.js" defer' || {
+          grep -q 'src="./app.js" defer' "$SHELL_FILE" || {
             echo 'packed shell has no classic <script src="./app.js" defer> boot tag; aborting'; exit 1; }
           # … the polyfill loads as a CLASSIC SYNC script BEFORE the bundle
           # (byte-offset ordering — every polyfilled global must exist before
           # the IIFE evaluates, the exact point where the TV crashed).
-          POLY_OFFSET=$(echo "$SHELL_HTML" | grep -bo 'src="./polyfill.js"' | head -1 | cut -d: -f1)
-          APP_OFFSET=$(echo "$SHELL_HTML" | grep -bo 'src="./app.js" defer' | head -1 | cut -d: -f1)
+          POLY_OFFSET=$(grep -bo 'src="./polyfill.js"' "$SHELL_FILE" | head -1 | cut -d: -f1)
+          APP_OFFSET=$(grep -bo 'src="./app.js" defer' "$SHELL_FILE" | head -1 | cut -d: -f1)
           test -n "$POLY_OFFSET" || {
             echo 'packed shell has no <script src="./polyfill.js"> tag — the polyfill would never load; aborting'; exit 1; }
           test -n "$APP_OFFSET" || {
@@ -418,23 +426,23 @@ jobs:
           fi
           echo "polyfill loads before the bundle: offset $POLY_OFFSET < $APP_OFFSET OK"
           # … the kit payload/env global is installed by the classic boot script …
-          echo "$SHELL_HTML" | grep -q 'window.__sveltekit_' || {
+          grep -q 'window.__sveltekit_' "$SHELL_FILE" || {
             echo 'packed shell does not install the window.__sveltekit_<hash> env global; aborting'; exit 1; }
           # … the boot script calls the bundle through the IIFE global …
-          echo "$SHELL_HTML" | grep -q '__mavero_wgt_app' || {
+          grep -q '__mavero_wgt_app' "$SHELL_FILE" || {
             echo 'packed shell boot script does not call the bundle via the __mavero_wgt_app IIFE global; aborting'; exit 1; }
           # … a relative stylesheet link exists (cssCodeSplit is off; the
           # merged asset must be linked explicitly) …
-          echo "$SHELL_HTML" | grep -q 'href="./_app/immutable/assets/.*\.css"' || {
+          grep -q 'href="./_app/immutable/assets/.*\.css"' "$SHELL_FILE" || {
             echo 'packed shell has no relative stylesheet link (./_app/immutable/assets/*.css) — the TV would boot unstyled; aborting'; exit 1; }
           # … and NOTHING module-flavoured survives in the shell.
-          if echo "$SHELL_HTML" | grep -qi 'type="module"'; then
+          if grep -qi 'type="module"' "$SHELL_FILE"; then
             echo 'a type="module" script is still present in the packed shell — ES modules are blocked on the TV (file:// origin); aborting'; exit 1
           fi
-          if echo "$SHELL_HTML" | grep -Fq 'import(' ; then
+          if grep -Fq 'import(' "$SHELL_FILE"; then
             echo 'a dynamic import( is still present in the packed shell — blocked on the TV (file:// origin); aborting'; exit 1
           fi
-          if echo "$SHELL_HTML" | grep -q 'modulepreload'; then
+          if grep -q 'modulepreload' "$SHELL_FILE"; then
             echo 'a modulepreload link is still present in the packed shell — refused on the TV (file:// origin); aborting'; exit 1
           fi
           # The classic bundle itself must be free of module syntax.
@@ -448,28 +456,28 @@ jobs:
           # Analytics must never ship to the TV: the Umami loader SyntaxErrors
           # on the Tizen 6.0 engine (TV-verified via the boot overlay) and a
           # null-origin widget cannot beacon anything anyway.
-          if echo "$SHELL_HTML" | grep -Fq 'cloud.umami.is'; then
+          if grep -Fq 'cloud.umami.is' "$SHELL_FILE"; then
             echo 'the Umami Cloud loader survived in the packed shell — it SyntaxErrors on the TV engine; aborting'; exit 1
           fi
           # Relative asset references present …
-          echo "$SHELL_HTML" | grep -q 'href="./_app/' || {
+          grep -q 'href="./_app/' "$SHELL_FILE" || {
             echo 'packed shell has no relative href="./_app/…" — absolute asset paths would 404 on the TV (file:// origin); aborting'; exit 1; }
           # … and NO absolute "/_app/ (or '/_app/) references survive.
-          if echo "$SHELL_HTML" | grep -Fq '"/_app/'; then
+          if grep -Fq '"/_app/' "$SHELL_FILE"; then
             echo 'absolute "/_app/ reference still present in the packed shell — blank grey screen on the TV; aborting'; exit 1
           fi
-          if echo "$SHELL_HTML" | grep -Fq "'/_app/"; then
+          if grep -Fq "'/_app/" "$SHELL_FILE"; then
             echo "absolute '/_app/ reference still present in the packed shell — blank grey screen on the TV; aborting"; exit 1
           fi
           # No root-relative href/src attribute left (favicon, manifest, icons…).
           # -P (PCRE) needed for the (?!/) negative lookahead (grep -E has none).
-          if echo "$SHELL_HTML" | grep -Pq '(href|src)="/((?!/).)'; then
+          if grep -Pq '(href|src)="/((?!/).)' "$SHELL_FILE"; then
             echo 'root-relative href="/…" or src="/…" attribute still present in the packed shell; aborting'; exit 1
           fi
           # On-screen boot diagnostics (retail TV: no devtools, no sdb logs).
-          echo "$SHELL_HTML" | grep -q 'mavero-wgt-boot-overlay' || {
+          grep -q 'mavero-wgt-boot-overlay' "$SHELL_FILE" || {
             echo 'boot-error overlay missing from the packed shell — aborting'; exit 1; }
-          echo "$SHELL_HTML" | grep -q 'mavero-wgt-boot-banner' || {
+          grep -q 'mavero-wgt-boot-banner' "$SHELL_FILE" || {
             echo 'boot banner ("Mavero booting…") missing from the packed shell — aborting'; exit 1; }
           echo "file:// boot safety checks: OK"
           ls -la MaveroTV.wgt
