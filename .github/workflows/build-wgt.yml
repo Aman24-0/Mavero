@@ -282,25 +282,22 @@ jobs:
           rm -rf Debug .result
           # Schema-validates config.xml (profile tv) and builds the app.
           "$TZ_BIN" build .
-          # GUARD: tz build copies the project into Debug/. The patched
-          # index.html (with the relative stylesheet link) MUST survive the
-          # copy. If tz build overwrites or regenerates index.html, this
-          # guard catches it BEFORE pack — the earliest possible point.
-          # If Debug/index.html doesn't exist at all, tz build itself failed
-          # (not a CSS-link issue — a build tooling issue).
-          test -f Debug/index.html || {
-            echo "GUARD FAILED: Debug/index.html does not exist after tz build — tz build itself failed (no output produced)"; exit 1; }
-          echo "=== HOP 2b: after tz build (Debug/index.html) ==="
-          echo "stylesheet count: $(grep -c 'rel="stylesheet"' Debug/index.html)"
-          grep -o '<link rel="stylesheet"[^>]*>' Debug/index.html || echo "(no stylesheet tag found)"
-          grep -q 'rel="stylesheet" href="./_app/immutable/assets/.*\.css"' Debug/index.html || {
-            echo "GUARD FAILED: Debug/index.html (after tz build) has no relative stylesheet link — tz build stripped it"; exit 1; }
-          echo "GUARD: Debug/index.html has the relative stylesheet link — OK"
           # Packs the build result and signs it with the SDK dummy certs
           # (Apps2Samsung re-signs with the real Samsung certificate).
           "$TZ_BIN" pack .
           WGT=$(find Debug -maxdepth 1 -name '*.wgt' | head -1)
           test -n "$WGT" || { echo "no .wgt produced by tz pack"; exit 1; }
+          # HOP 2b — after tz pack: extract index.html from the freshly-packed
+          # wgt and verify the CSS link survived. tz pack creates Debug/ and
+          # the wgt; tz build is a no-op on this project (just a warning). This
+          # guard catches CSS-link loss at the EARLIEST post-pack point.
+          echo "=== HOP 2b: after tz pack (from the fresh wgt) ==="
+          WGT_HTML=$(unzip -p "$WGT" index.html)
+          echo "stylesheet count: $(echo "$WGT_HTML" | grep -c 'rel="stylesheet"')"
+          echo "$WGT_HTML" | grep -o '<link rel="stylesheet"[^>]*>' || echo "(no stylesheet tag found)"
+          echo "$WGT_HTML" | grep -q 'rel="stylesheet" href="./_app/immutable/assets/.*\.css"' || {
+            echo "GUARD FAILED: the fresh wgt's index.html has no relative stylesheet link — tz pack stripped it"; exit 1; }
+          echo "GUARD: the fresh wgt's index.html has the relative stylesheet link — OK"
           mv "$WGT" "$GITHUB_WORKSPACE/MaveroTV.wgt"
 
       # ---------------- PoC path (workflow_dispatch pack=poc) ----------------
