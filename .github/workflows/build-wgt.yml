@@ -192,6 +192,12 @@ jobs:
           # the package root before the SvelteKit router boots (pack-time
           # injection ONLY — the production HTML is never touched).
           node scripts/wgt_patch_shell.mjs build/index.html
+          # HOP 1 — after patch: the stylesheet link MUST be present in the
+          # patched build/index.html. Print the count + the actual tag so CI
+          # logs show exactly what the patcher injected.
+          echo "=== HOP 1: after patch (build/index.html) ==="
+          echo "stylesheet count: $(grep -c 'rel="stylesheet"' build/index.html)"
+          grep -o '<link rel="stylesheet"[^>]*>' build/index.html || echo "(no stylesheet tag found)"
 
       - name: Stage the widget tree (SPA output + working manifest)
         if: github.event.inputs.pack != 'poc'
@@ -205,11 +211,32 @@ jobs:
           cp -a apps/web/build/. "$STAGE"/
           # The working, TV-accepted manifest + icon — UNTOUCHED.
           cp apps/tizen-wgt/config.xml apps/tizen-wgt/icon.png "$STAGE"/
+          # HOP 2 — after stage copy: the stylesheet link MUST survive the
+          # cp -a. Print the count + the actual tag so CI logs show exactly
+          # what landed in the stage tree.
+          echo "=== HOP 2: after stage copy ($STAGE/index.html) ==="
+          echo "stylesheet count: $(grep -c 'rel="stylesheet"' "$STAGE"/index.html)"
+          grep -o '<link rel="stylesheet"[^>]*>' "$STAGE"/index.html || echo "(no stylesheet tag found)"
+          # HARD GUARD: the staged index.html MUST contain a relative
+          # stylesheet link pointing at ./_app/immutable/assets/*.css.
+          # This catches the CSS-link-loss bug at the EARLIEST hop (before
+          # tz build/pack), not at the final verify step. Do NOT weaken.
+          grep -q 'rel="stylesheet" href="./_app/immutable/assets/.*\.css"' "$STAGE"/index.html || {
+            echo "HARD GUARD FAILED: staged index.html has no relative stylesheet link (./_app/immutable/assets/*.css) — aborting before pack"; exit 1; }
+          echo "HARD GUARD: staged index.html has the relative stylesheet link — OK"
           # Packaging manifest for tizen-core: enumerate every file of the
           # built SPA (relative paths) so the pack includes the full bundle,
           # and carry the battle-tested excludes — tz build copies the
           # project into Debug/ while it runs, so Debug/* MUST stay
           # excluded or the copy recurses into its own output.
+          #
+          # FIX (build-wgt CSS-link-loss): the Python previously ran at the
+          # REPO ROOT (the step's default working-directory), so
+          # tizen_web_project.yaml was written to the repo root (NOT $STAGE)
+          # and os.walk('.') walked the ENTIRE repo. Now we cd into $STAGE
+          # first so the manifest enumerates ONLY the staged SPA files and
+          # is written to $STAGE where tz build/pack can find it.
+          cd "$STAGE"
           python3 - <<'PY'
           import os
           SKIP_DIRS = {'Debug', '.result', 'Build', 'Release', '.Build'}
@@ -255,6 +282,16 @@ jobs:
           rm -rf Debug .result
           # Schema-validates config.xml (profile tv) and builds the app.
           "$TZ_BIN" build .
+          # GUARD: tz build copies the project into Debug/. The patched
+          # index.html (with the relative stylesheet link) MUST survive the
+          # copy. If tz build overwrites or regenerates index.html, this
+          # guard catches it BEFORE pack — the earliest possible point.
+          echo "=== HOP 2b: after tz build (Debug/index.html) ==="
+          echo "stylesheet count: $(grep -c 'rel="stylesheet"' Debug/index.html)"
+          grep -o '<link rel="stylesheet"[^>]*>' Debug/index.html || echo "(no stylesheet tag found)"
+          grep -q 'rel="stylesheet" href="./_app/immutable/assets/.*\.css"' Debug/index.html || {
+            echo "GUARD FAILED: Debug/index.html (after tz build) has no relative stylesheet link — tz build stripped it"; exit 1; }
+          echo "GUARD: Debug/index.html has the relative stylesheet link — OK"
           # Packs the build result and signs it with the SDK dummy certs
           # (Apps2Samsung re-signs with the real Samsung certificate).
           "$TZ_BIN" pack .
@@ -352,6 +389,11 @@ jobs:
           # tag, with the kit payload/env global installed inline first.
           # ------------------------------------------------------------------
           SHELL_HTML=$(unzip -p MaveroTV.wgt index.html)
+          # HOP 3 — from the packed wgt: print the stylesheet count + the
+          # actual tag so CI logs show exactly what survived into the wgt.
+          echo "=== HOP 3: from the packed wgt (MaveroTV.wgt index.html) ==="
+          echo "stylesheet count: $(echo "$SHELL_HTML" | grep -c 'rel="stylesheet"')"
+          echo "$SHELL_HTML" | grep -o '<link rel="stylesheet"[^>]*>' || echo "(no stylesheet tag found)"
           # … the classic boot tag is present …
           echo "$SHELL_HTML" | grep -q 'src="./app.js" defer' || {
             echo 'packed shell has no classic <script src="./app.js" defer> boot tag; aborting'; exit 1; }
