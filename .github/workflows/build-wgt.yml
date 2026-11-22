@@ -230,13 +230,13 @@ jobs:
           # project into Debug/ while it runs, so Debug/* MUST stay
           # excluded or the copy recurses into its own output.
           #
-          # FIX (build-wgt CSS-link-loss): the Python previously ran at the
-          # REPO ROOT (the step's default working-directory), so
-          # tizen_web_project.yaml was written to the repo root (NOT $STAGE)
-          # and os.walk('.') walked the ENTIRE repo. Now we cd into $STAGE
-          # first so the manifest enumerates ONLY the staged SPA files and
-          # is written to $STAGE where tz build/pack can find it.
-          cd "$STAGE"
+          # NOTE: the Python runs at the REPO ROOT (this step's default
+          # working-directory). tizen_web_project.yaml is written to the
+          # repo root — NOT $STAGE. This is INTENTIONAL: tz build/pack run
+          # in $STAGE and must NOT find tizen_web_project.yaml there (tz
+          # uses its default copy-all behavior without it, which is what
+          # produces Debug/ correctly). The yaml's file list is only used
+          # by the PoC pack path; the SPA path relies on tz's defaults.
           python3 - <<'PY'
           import os
           SKIP_DIRS = {'Debug', '.result', 'Build', 'Release', '.Build'}
@@ -286,6 +286,10 @@ jobs:
           # index.html (with the relative stylesheet link) MUST survive the
           # copy. If tz build overwrites or regenerates index.html, this
           # guard catches it BEFORE pack — the earliest possible point.
+          # If Debug/index.html doesn't exist at all, tz build itself failed
+          # (not a CSS-link issue — a build tooling issue).
+          test -f Debug/index.html || {
+            echo "GUARD FAILED: Debug/index.html does not exist after tz build — tz build itself failed (no output produced)"; exit 1; }
           echo "=== HOP 2b: after tz build (Debug/index.html) ==="
           echo "stylesheet count: $(grep -c 'rel="stylesheet"' Debug/index.html)"
           grep -o '<link rel="stylesheet"[^>]*>' Debug/index.html || echo "(no stylesheet tag found)"
@@ -394,6 +398,11 @@ jobs:
           echo "=== HOP 3: from the packed wgt (MaveroTV.wgt index.html) ==="
           echo "stylesheet count: $(echo "$SHELL_HTML" | grep -c 'rel="stylesheet"')"
           echo "$SHELL_HTML" | grep -o '<link rel="stylesheet"[^>]*>' || echo "(no stylesheet tag found)"
+          # Also check the CSS FILE itself is in the wgt (the <link> tag is
+          # useless if the .css file is missing from the zip).
+          CSS_IN_WGT=$(unzip -Z1 MaveroTV.wgt | grep -c '_app/immutable/assets/.*\.css$' || true)
+          echo "CSS files in wgt: $CSS_IN_WGT"
+          unzip -Z1 MaveroTV.wgt | grep '_app/immutable/assets/.*\.css$' || echo "(no CSS files in wgt)"
           # … the classic boot tag is present …
           echo "$SHELL_HTML" | grep -q 'src="./app.js" defer' || {
             echo 'packed shell has no classic <script src="./app.js" defer> boot tag; aborting'; exit 1; }
