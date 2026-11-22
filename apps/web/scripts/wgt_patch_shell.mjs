@@ -757,13 +757,54 @@ html = html.replace(/<link\b[^>]*\brel="modulepreload"[^>]*>/gi, '');
 // lands in _app/immutable/assets/. Nothing references them in the fallback
 // shell (Vite emits the asset without a chunk linkage), so inject a relative
 // <link rel="stylesheet"> for each one.
+//
+// Performance pass fix (build-wgt verify failure): the CSS discovery was
+// fragile — it only checked _app/immutable/assets/. If Vite/adapter-static
+// ever changes the output path (e.g. emits CSS at _app/ or a nested dir),
+// the patcher would find zero CSS files, inject no <link>, and the verify
+// step (which checks for href="./_app/) would fail. The fix: search the
+// ENTIRE _app/ tree for .css files (breadth-first) so any output location
+// is covered. The <link> path is made relative to the shell dir so it
+// always resolves correctly on the TV's file:// origin.
 const assetsDir = path.join(shellDir, '_app', 'immutable', 'assets');
 let cssLinks = '';
 let cssCount = 0;
-if (existsSync(assetsDir)) {
-  const cssFiles = readdirSync(assetsDir).filter((f) => f.endsWith('.css')).sort();
+
+/** Recursively find every .css file under `dir`, returning paths relative to `shellDir`. */
+function findCssFiles(dir) {
+  const results = [];
+  try {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        results.push(...findCssFiles(full));
+      } else if (entry.isFile() && entry.name.endsWith('.css')) {
+        results.push(path.relative(shellDir, full).replace(/\\/g, '/'));
+      }
+    }
+  } catch {
+    /* dir may not exist — return empty */
+  }
+  return results;
+}
+
+// Primary: _app/immutable/assets/ (the documented Vite output path).
+// Fallback: the entire _app/ tree (covers any output-path change).
+let cssFiles = findCssFiles(assetsDir);
+if (cssFiles.length === 0) {
+  const appDir = path.join(shellDir, '_app');
+  if (existsSync(appDir)) {
+    cssFiles = findCssFiles(appDir);
+    if (cssFiles.length > 0) {
+      console.log(`wgt_patch_shell: note — CSS found outside _app/immutable/assets/ (fallback discovery): ${cssFiles.join(', ')}`);
+    }
+  }
+}
+
+if (cssFiles.length > 0) {
   cssLinks = cssFiles
-    .map((f) => `<link rel="stylesheet" href="./_app/immutable/assets/${f}" />`)
+    .sort()
+    .map((rel) => `<link rel="stylesheet" href="./${rel}" />`)
     .join('\n    ');
   cssCount = cssFiles.length;
 }
@@ -970,11 +1011,25 @@ if (!html.includes(`window.__sveltekit_${kitHash} =`)) {
 if (!html.includes('__mavero_wgt_app')) {
   problems.push('the boot script does not reference the IIFE global __mavero_wgt_app');
 }
-if (cssCount > 0 && !/href="\.\/_app\/immutable\/assets\/[^"]+\.css"/.test(html)) {
+if (cssCount > 0 && !/href="\.\/_app\/[^"]+\.css"/.test(html)) {
   problems.push('emitted stylesheet asset(s) are not linked from the shell — the TV would boot unstyled');
 }
 if (cssCount === 0) {
-  problems.push('no stylesheet asset found under _app/immutable/assets — the TV would boot unstyled');
+  // Diagnostic: list what IS under _app/ so CI logs show the actual
+  // output structure when CSS discovery fails (the verify step would
+  // catch this anyway, but the diagnostic makes the root cause obvious).
+  const appDir = path.join(shellDir, '_app');
+  if (existsSync(appDir)) {
+    try {
+      const allEntries = findCssFiles(appDir);
+      console.error(`wgt_patch_shell: CSS discovery found 0 .css files. _app/ recursive scan found ${allEntries.length} .css file(s): ${allEntries.length > 0 ? allEntries.join(', ') : '(none)'}`);
+    } catch {
+      /* best-effort diagnostic */
+    }
+  } else {
+    console.error('wgt_patch_shell: CSS discovery found 0 .css files — _app/ directory does not exist');
+  }
+  problems.push('no stylesheet asset found under _app/ (recursive scan) — the TV would boot unstyled');
 }
 if (html.includes('cloud.umami.is')) {
   problems.push('the Umami Cloud loader survived — it SyntaxErrors on the TV engine and is useless on TV');
