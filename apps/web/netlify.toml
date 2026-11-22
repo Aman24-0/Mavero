@@ -167,3 +167,51 @@
   for = "/icons/*"
   [headers.values]
     cache-control = "public, max-age=31536000, immutable"
+
+# Performance pass (Phase 1.2): edge cache rules for the public list page HTML.
+# These pages are user-state-free (no per-user data, no Adult Mode dimension).
+# The page server loads set `Cache-Control: public, max-age=30, s-maxage=240,
+# stale-while-revalidate=600` (PUBLIC_CATALOG_CACHE) — these netlify.toml rules
+# are a belt-and-suspenders layer for the HTML responses SvelteKit emits
+# (the function's setHeaders() already sets the header; this catches any path
+# the function doesn't cover, e.g. the prerendered /_app/ assets). The
+# /api/discover/* and /api/content/* JSON endpoints already set their own
+# cache-control headers in the +server.ts handlers.
+#
+# NEVER add /api/account/*, /api/playback/*, /api/downloader/mavero/*,
+# /api/admin/*, /api/settings/adult-mode, /api/content/search, or
+# /api/content/adult-discover here — those carry per-user/per-request state
+# and MUST stay no-store (enforced in each +server.ts handler).
+[[headers]]
+  for = "/discover"
+  [headers.values]
+    cache-control = "public, max-age=30, s-maxage=240, stale-while-revalidate=600"
+
+[[headers]]
+  for = "/movies"
+  [headers.values]
+    cache-control = "public, max-age=30, s-maxage=240, stale-while-revalidate=600"
+
+[[headers]]
+  for = "/tv-shows"
+  [headers.values]
+    cache-control = "public, max-age=30, s-maxage=240, stale-while-revalidate=600"
+
+[[headers]]
+  for = "/anime"
+  [headers.values]
+    cache-control = "public, max-age=30, s-maxage=240, stale-while-revalidate=600"
+
+[[headers]]
+  for = "/upcoming"
+  [headers.values]
+    cache-control = "public, max-age=30, s-maxage=240, stale-while-revalidate=600"
+
+# The SvelteKit immutable build assets (_app/immutable/*) are content-hashed —
+# they never change, so they can be cached for a year at the edge. This is
+# SvelteKit's default behavior on other adapters; netlify.toml makes it
+# explicit so the edge CDN honors it.
+[[headers]]
+  for = "/_app/immutable/*"
+  [headers.values]
+    cache-control = "public, max-age=31536000, immutable"

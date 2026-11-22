@@ -2,10 +2,17 @@ import { search } from '$lib/server/content/service';
 import { toMediaItem } from '$lib/server/content/presenter';
 import { ContentServiceError, isContentType, type ContentType } from '$lib/server/content/types';
 import { canAccessAdultContent } from '$lib/server/content/adult-policy';
+import { PRIVATE_SHORT_CACHE } from '$lib/server/http/cache-headers';
 import type { MediaItem } from '$data/content';
 import type { PageServerLoad } from './$types';
 
-export const load: PageServerLoad = async ({ url, locals, cookies }) => {
+export const load: PageServerLoad = async ({ url, locals, cookies, setHeaders }) => {
+  // Performance pass (Phase 1.2): the Search page evaluates per-request
+  // adult policy (canAccessAdultContent), so the response varies by user.
+  // PRIVATE_SHORT_CACHE lets the browser cache the result for a short
+  // window (Back navigation is instant) without leaking user-scoped
+  // results into a shared CDN cache.
+  setHeaders({ 'cache-control': PRIVATE_SHORT_CACHE });
   const query = url.searchParams.get('q')?.trim() ?? '';
   const typeValue = url.searchParams.get('type');
   const type = isContentType(typeValue) ? typeValue : undefined;

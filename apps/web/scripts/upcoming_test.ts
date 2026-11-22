@@ -1159,6 +1159,13 @@ assert.match(navigationSrc, /if \(!returnTo\.startsWith\('\/'\) \|\| returnTo\.s
   // episodes and drop the candidate BEFORE any provider lookup.
   seriesEpisodes.set(330, { firstInMonth: '2026-09-05', count: 3 });
   seriesEpisodes.set(380, { firstInMonth: '2026-10-10', count: 2 });
+  // Performance pass (Phase 1.3): fetchJson now retries on 5xx. The News/Talk
+  // candidates (381/382) need seriesEpisodes entries so tvDetailPayload doesn't
+  // throw (a thrown mock → 502 → retry → 2 calls instead of 1). These entries
+  // are never used for season lookups (the candidates are dropped at detail
+  // curation) but the payload builder needs them to not throw.
+  seriesEpisodes.set(381, { firstInMonth: '2026-10-10', count: 2 });
+  seriesEpisodes.set(382, { firstInMonth: '2026-10-10', count: 2 });
   seriesEpisodes.set(401, { firstInMonth: '2026-10-04', count: 3 });
   seriesEpisodes.set(402, { firstInMonth: '2026-10-05', count: 2 });
 
@@ -1296,7 +1303,10 @@ assert.match(navigationSrc, /if \(!returnTo\.startsWith\('\/'\) \|\| returnTo\.s
   assert.ok(m160, 'THE enrichment-outage regression: a FAILED /movie/{id}/release_dates lookup does NOT remove a discover-qualified movie');
   assert.equal(m160.date, '2026-10-16', 'the enrichment-outage movie keeps its discover release_date');
   assert.equal(m160.releaseKinds, undefined, 'the enrichment-outage movie renders without kind badges');
-  assert.equal(callsFor('/movie/160/release_dates').length, 1, 'the failed enrichment lookup was a real upstream call (absorbed, never fabricated)');
+  // Performance pass (Phase 1.3): fetchJson now retries ONCE on 5xx, so the
+  // failed enrichment lookup is 2 calls (1 original + 1 retry) — both
+  // absorbed, the movie survives without kind badges.
+  assert.equal(callsFor('/movie/160/release_dates').length, 2, 'the failed enrichment lookup was a real upstream call + 1 retry on 5xx (absorbed, never fabricated)');
   const m105 = october.items.find((i) => i.id === 'movie-105')!;
   assert.ok(m105, 'THE zero-vote regression: a movie with vote_count 0 is NOT removed (no vote_count.gte floor exists)');
   assert.equal(m105.date, '2026-10-24', 'the zero-vote movie keeps its discover release_date');
@@ -1442,7 +1452,7 @@ assert.match(navigationSrc, /if \(!returnTo\.startsWith\('\/'\) \|\| returnTo\.s
   const providerOutage = await loadUpcoming({ startDate: '2026-10-01', type: 'series', language: 'pa' });
   assert.deepEqual(providerOutage.items, [], 'provider-lookup FAILURE emits no series (availability never fabricated)');
   assert.equal(providerOutage.errors.length, 1, 'an all-candidates provider outage surfaces as a section error (failed candidates, not a silent empty month)');
-  assert.equal(callsFor('/tv/371/season/1/watch/providers').length, 1, 'the season-provider outage was a real upstream call (failed candidate)');
+  assert.equal(callsFor('/tv/371/season/1/watch/providers').length, 2, 'the season-provider outage was a real upstream call + 1 retry on 5xx (failed candidate)');
 
   // Future months for non-English series (season-level gate on each).
   clearCache();

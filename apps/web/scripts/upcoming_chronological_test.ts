@@ -199,7 +199,13 @@ const mockFetch: typeof fetch = (async (input: RequestInfo | URL) => {
     return jsonResponse({ page: 1, total_pages: 1, total_results: rows.length, results: rows });
   }
   if (path === '/discover/tv') {
-    if (failDiscoverTv > 0) {
+    // Performance pass (Phase 1.3): only fail NON-ANIME /discover/tv calls
+    // (anime calls carry with_genres=16 + with_original_language=ja). This
+    // isolates the failure to the Series source so the partial-failure test
+    // sees exactly 1 error (Series), not 2 (Series + Anime). The retry logic
+    // means each failed call consumes 2 from failDiscoverTv (original + retry).
+    const isAnimeCall = params.with_genres === '16' && params.with_original_language === 'ja';
+    if (failDiscoverTv > 0 && !isAnimeCall) {
       failDiscoverTv -= 1;
       return jsonResponse({ status_message: 'discover outage' }, 500);
     }
@@ -567,8 +573,11 @@ console.log('\n7. Upstream failure: structured 503, cursor stays retryable, no f
   const cursorAtPage1 = first.body.cursor;
   // Simulate a total upstream outage for the next materialization:
   // the cache expires and /discover/tv fails for every attempt.
+  // Performance pass (Phase 1.3): fetchJson now retries ONCE on 5xx, so
+  // we need 2 failures (original + retry) to exhaust the retry and
+  // surface a 503 to the caller.
   clearCache();
-  failDiscoverTv = 1; // exactly ONE failed upstream attempt
+  failDiscoverTv = 2; // original + retry both fail
   const failed = await callApi({ ...filters, page: '2', cursor: cursorAtPage1 });
   assert.equal(failed.status, 503, 'a total upstream failure answers 503');
   assert.equal(failed.body.ok, false, 'upstream failure answers ok:false (never a silently empty page)');
@@ -586,8 +595,12 @@ console.log('\n7. Upstream failure: structured 503, cursor stays retryable, no f
   assertChronologicalPages([{ items: first.body.items }, { items: retried.body.items }]);
   // Partial failure semantics (type=all): one failed source never
   // kills the merged page — the errors array surfaces it.
+  // Performance pass (Phase 1.3): fetchJson retries ONCE on 5xx, so
+  // we need 2 failures for the Series source (original + retry). The
+  // mock now only fails NON-ANIME /discover/tv calls, so the Anime
+  // source is unaffected.
   clearCache();
-  failDiscoverTv = 1;
+  failDiscoverTv = 2;
   const partial = await callApi({ startDate: '2027-05-01', type: 'all', language: 'all', page: '1' });
   assert.equal(partial.status, 200, 'a partial source failure still answers 200');
   assert.equal(partial.body.ok, true, 'partial failure answers ok:true with the surviving sources');

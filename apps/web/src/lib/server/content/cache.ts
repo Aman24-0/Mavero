@@ -78,6 +78,15 @@ function backgroundRefresh<T>(refreshPromise: Promise<T>): void {
 const entries = new Map<string, CacheEntry<unknown>>();
 const inFlight = new Map<string, Promise<unknown>>();
 
+// Performance pass (Phase 1.3): last-good fallback store. When the loader
+// fails AND the TTL/stale window has expired (cold miss with upstream
+// failure), the cache serves the LAST SUCCESSFUL value from here instead
+// of throwing "No titles available right now". Entries are written on
+// every successful refresh and never expire — they're evicted only by the
+// LRU bound. This is the "serve last-good instead of blank" contract.
+// The lastGood store is bounded to the same cap as the main cache.
+const lastGood = new Map<string, unknown>();
+
 // Amortized sweep bookkeeping.
 let lastSweepAt = 0;
 let evictionCount = 0;
@@ -99,7 +108,8 @@ export function cacheStats() {
     sweeps: sweepCount,
     expiredReaped: expiredReapedCount,
     lastSweepAt,
-    maxEntries: DEFAULT_MAX_ENTRIES
+    maxEntries: DEFAULT_MAX_ENTRIES,
+    lastGoodEntries: lastGood.size
   };
 }
 
@@ -178,7 +188,26 @@ export async function getOrSet<T>(key: string, policy: CachePolicy, loader: () =
     return { value: cached.value, stale: true };
   }
 
-  return { value: await refresh(key, policy, loader), stale: false };
+  try {
+    return { value: await refresh(key, policy, loader), stale: false };
+  } catch (error) {
+    // Performance pass (Phase 1.3): serve last-good on upstream failure.
+    // If the TTL + stale window has expired AND the loader fails, serve
+    // the last successful value instead of throwing — the "serve
+    // last-good instead of blank" contract. Never throws on a cache hit.
+    const good = lastGood.get(key) as T | undefined;
+    if (good !== undefined) {
+      try {
+        logger.warn('content cache serving last-good after upstream failure', {
+          errorCode: error instanceof Error ? error.name : 'unknown'
+        });
+      } catch {
+        /* logging is best-effort */
+      }
+      return { value: good, stale: true };
+    }
+    throw error;
+  }
 }
 
 /**
@@ -234,8 +263,24 @@ export async function getOrSetValidated<T>(
 
   // Miss — compute via loader. The refresh only writes to cache if
   // isValid returns true.
-  const value = await refreshValidated(key, policy, isValid, loader);
-  return { value, stale: false, fromCache: false };
+  try {
+    const value = await refreshValidated(key, policy, isValid, loader);
+    return { value, stale: false, fromCache: false };
+  } catch (error) {
+    // Performance pass (Phase 1.3): serve last-good on upstream failure.
+    const good = lastGood.get(key) as T | undefined;
+    if (good !== undefined && isValid(good)) {
+      try {
+        logger.warn('content cache serving last-good (validated) after upstream failure', {
+          errorCode: error instanceof Error ? error.name : 'unknown'
+        });
+      } catch {
+        /* logging is best-effort */
+      }
+      return { value: good, stale: true, fromCache: false };
+    }
+    throw error;
+  }
 }
 
 async function refresh<T>(key: string, policy: CachePolicy, loader: () => Promise<T>): Promise<T> {
@@ -246,6 +291,9 @@ async function refresh<T>(key: string, policy: CachePolicy, loader: () => Promis
     .then((value) => {
       const now = Date.now();
       writeEntry(key, value, policy, now);
+      // Performance pass (Phase 1.3): write to lastGood so future cold-miss
+      // failures can serve this value instead of throwing.
+      writeLastGood(key, value);
       return value;
     })
     .finally(() => inFlight.delete(key));
@@ -272,6 +320,9 @@ async function refreshValidated<T>(
       if (isValid(value)) {
         const now = Date.now();
         writeEntry(key, value, policy, now);
+        // Performance pass (Phase 1.3): write to lastGood so future
+        // cold-miss failures can serve this value instead of throwing.
+        writeLastGood(key, value);
       }
       return value;
     })
@@ -279,6 +330,21 @@ async function refreshValidated<T>(
 
   inFlight.set(key, request);
   return request;
+}
+
+/**
+ * Write to the lastGood store with LRU eviction. Entries never expire —
+ * they're evicted only by the bound. This is the "serve last-good instead
+ * of blank" fallback layer (Phase 1.3).
+ */
+function writeLastGood<T>(key: string, value: T): void {
+  lastGood.delete(key);
+  lastGood.set(key, value);
+  while (lastGood.size > DEFAULT_MAX_ENTRIES) {
+    const oldestKey = lastGood.keys().next().value;
+    if (oldestKey === undefined) break;
+    lastGood.delete(oldestKey);
+  }
 }
 
 export function invalidate(prefix?: string) {
@@ -300,6 +366,7 @@ export function invalidate(prefix?: string) {
 export function clearCache() {
   entries.clear();
   inFlight.clear();
+  lastGood.clear();
   // Reset bookkeeping so tests start from a clean slate.
   evictionCount = 0;
   sweepCount = 0;

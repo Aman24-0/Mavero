@@ -422,10 +422,18 @@ export async function loadExplorerData(type: ContentType, url: URL) {
   const filters = parseExplorerFilters(url, type);
   const filtered = hasExplorerFilters(filters);
 
-  const spotlight = await loadExplorerSpotlight(type);
-
+  // Performance pass (Phase 2.4): parallelize spotlight + sections/feed.
+  // The spotlight and the sections/feed are INDEPENDENT — the previous
+  // code awaited spotlight first, then sections/feed, adding ~1 round-trip
+  // of latency. Promise.all runs both concurrently; one round-trip where
+  // possible. The spotlight's cached (24h daily bucket) so on a warm
+  // cache this is near-instant, but on a cold cache the parallelism cuts
+  // the cold-load time in half.
   if (filtered) {
-    const feed = await explorerFeed(type, filters, page);
+    const [spotlight, feed] = await Promise.all([
+      loadExplorerSpotlight(type),
+      explorerFeed(type, filters, page)
+    ]);
     return {
       type,
       spotlight,
@@ -439,16 +447,19 @@ export async function loadExplorerData(type: ContentType, url: URL) {
     };
   }
 
-  const { sections, errorMessage } = await loadExplorerSections(type);
+  const [spotlight, sectionsResult] = await Promise.all([
+    loadExplorerSpotlight(type),
+    loadExplorerSections(type)
+  ]);
   return {
     type,
     spotlight,
-    sections,
+    sections: sectionsResult.sections,
     filters,
     page,
     hasNextPage: false,
     totalPages: undefined as number | undefined,
     filteredItems: [] as MediaItem[],
-    errorMessage
+    errorMessage: sectionsResult.errorMessage
   };
 }

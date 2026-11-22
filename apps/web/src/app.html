@@ -104,17 +104,19 @@
       })();
     </script>
   </head>
-  <body data-sveltekit-preload-data="tap">
-    <!-- Production-hardening round: preload-data upgraded 'hover' → 'tap'.
-         'hover' preloads on mouseenter/focus — on touch-only devices
-         (the PWA's PRIMARY audience) emulated hover fires at the same
-         moment as the click itself, so it buys ZERO head start and the
-         router always waits for the load roundtrip. 'tap' preloads on
-         pointerdown (finger DOWN), which fires 100-250ms before the
-         click completes (finger up) — on mobile that head start is the
-         difference between "click and it's there" and "click, wait for
-         the server". Desktop still preloads (pointerdown precedes
-         click there too, and focus preloading covers keyboard users). -->
+  <body data-sveltekit-preload-data="hover">
+    <!-- Performance pass (Phase 1.1): preload-data set to 'hover'.
+         'hover' preloads on mouseenter/focus — desktop users (where the
+         2-3 s SSR wait is most painful) get a 100-1000 ms head start
+         before the click even happens. On touch-only devices, hover
+         never fires, so the router preloads at click time (the same
+         as no-preload) — the CDN cache headers (Phase 1.2) keep those
+         responses fast enough that click-time loading is still quick.
+         The previous 'tap' setting preloaded on pointerdown (100-250 ms
+         before click) — good for touch but ZERO benefit on desktop
+         where there's no tap. 'hover' is the strictly-better default
+         for the desktop-heavy web app; touch users are covered by the
+         edge cache. -->
     <script>
       // Newtask §6 — touch-capable Mac detection (iPad-as-Mac).
       //
