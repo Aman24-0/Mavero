@@ -515,7 +515,6 @@ function revealVertical(el: HTMLElement): void {
     const rect = rectOf(el);
     const band = bandFor(el);
     const headerClearance = 110;
-    const bottomClearance = 90;
     const bandHeight = band.bottom - band.top;
     let target: number | null = null;
     const scroller = nearestScrollableAncestor(el);
@@ -543,12 +542,30 @@ function revealVertical(el: HTMLElement): void {
         }
       }
     }
-    if (target === null && rect.top < band.top + headerClearance) {
-      // Above the fold: bring the element to the top clearance line.
-      target = currentScroll + (rect.top - band.top - headerClearance);
-    } else if (target === null && rect.bottom > band.bottom - bottomClearance) {
-      // Below the fold: rest the focused row ~40% from the top of the band.
-      target = currentScroll + (rect.cy - band.top - bandHeight * 0.4);
+    // TV-UX pass 6 (test pass 6, bug 11 — "FOCUS MOVES BUT THE PAGE DOESN'T
+    // SCROLL"): after ~50% page scroll, Down moves focus to an element below
+    // the fold but the page does NOT scroll → focus is off-screen. The
+    // previous logic only scrolled if the element was ABOVE the header
+    // clearance OR below the bottom clearance minus 90px. An element whose
+    // top was inside the band but whose bottom dipped below the band's
+    // bottom (partially clipped) was NOT scrolled to — focus stayed
+    // off-screen. The fix: if the element is NOT FULLY inside the visible
+    // band (with a margin), scroll the active scroller so the element is
+    // inside the visible band. This handles BOTH the page scroller and rail
+    // scrollers (bandFor resolves the nearest scrollable ancestor).
+    if (target === null) {
+      const fullyVisible = rect.top >= band.top + 8 && rect.bottom <= band.bottom - 8;
+      if (!fullyVisible) {
+        if (rect.top < band.top + headerClearance) {
+          // Above the fold: bring the element to the top clearance line.
+          target = currentScroll + (rect.top - band.top - headerClearance);
+        } else {
+          // Below the fold (or partially clipped at the bottom): rest the
+          // focused row ~40% from the top of the band so it reads as a
+          // natural scroll-into-view (never flush with the bottom edge).
+          target = currentScroll + (rect.cy - band.top - bandHeight * 0.4);
+        }
+      }
     }
     if (target !== null) {
       animateScrollTo(scroller, target);

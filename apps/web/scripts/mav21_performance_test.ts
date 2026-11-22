@@ -172,8 +172,16 @@ assert.match(discoverPage, /media="\(min-width: 641px\)" srcset=\{slide\.item\.b
 // MediaCard — responsive posters + lazy loading stay.
 assert.match(mediaCard, /\$:\s*posterSrcset = item\.posterSmall \? `\$\{item\.posterSmall\} 342w, \$\{item\.poster\} 500w` : undefined;/,
   'MediaCard poster srcset (342w/500w) preserved');
-assert.match(mediaCard, /loading="lazy" decoding="async" width="342" height="513"/,
-  'MediaCard posters stay lazy + intrinsic-dimensioned');
+// [TV-UX pass 6 re-pin] posterLoading is now a derived const
+// (`const posterLoading: 'eager' | 'lazy' = IS_WGT_BUILD ? 'eager' : 'lazy';`)
+// so the WGT build forces eager loading (cards clipped by the rail's
+// overflow-x: hidden never intersect the IO → native lazy never fires →
+// blank cards). The web build keeps `loading="lazy"`. The intrinsic
+// dimensions + decoding="async" are unchanged.
+assert.match(mediaCard, /const posterLoading: 'eager' \| 'lazy' = IS_WGT_BUILD \? 'eager' : 'lazy';/,
+  'MediaCard posterLoading const (eager on WGT, lazy on web)');
+assert.match(mediaCard, /loading=\{posterLoading\} decoding="async" width="342" height="513"/,
+  'MediaCard posters use posterLoading + intrinsic-dimensioned (lazy on web, eager on WGT)');
 
 // SeasonEpisodes stills stay lazy.
 assert.match(seasonEpisodes, /<img src=\{episode\.still\} alt=\{`\$\{episode\.title\} still`\} loading="lazy" width="320" height="180" \/>/,

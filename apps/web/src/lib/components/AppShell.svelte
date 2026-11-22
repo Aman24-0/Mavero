@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, type Snippet } from 'svelte';
-  import { Compass, Search, UserRound, Clapperboard, Film, PanelLeftClose, PanelLeft, Sparkles, Tv, Radio, Bookmark, CalendarClock, Settings, ChevronDown, ChevronRight } from 'lucide-svelte';
+  import { Compass, Search, UserRound, Clapperboard, Film, PanelLeftClose, PanelLeft, Sparkles, Tv, Radio, Bookmark, CalendarClock, Settings } from 'lucide-svelte';
   import AccountSheet from '$components/AccountSheet.svelte';
   import { haptic } from '$lib/client/haptics';
   // TV-UX pass (widget build only): the sidebar AUTO-EXPANDS when TV focus
@@ -184,21 +184,12 @@
     }
   }
 
-  // TV-UX pass 5 (test pass 5, bugs 5 + 9 — "remove the manual toggle button
-  // (the auto expand/collapse owns it now)" + "render Account options INSIDE
-  // the sidebar, BELOW the Search item"): on the TV/widget build the sidebar
-  // shows an INLINE Account section below Search — a focusable button carrying
-  // the guest/logged user's name that expands IN THE SIDEBAR to reveal
-  // Upcoming / My List / Settings (the same options the AccountSheet shows on
-  // phone/tablet). The bottom Account chip is removed on TV; the inline
-  // section owns the Account surface there. D-pad reachable via the focus
-  // manager (sidebar region).
-  let accountInlineExpanded = $state(false);
+  // TV-UX pass 6 (test pass 6, bug 9 — "SIDEBAR ACCOUNT LAYOUT"): the three
+  // account OPTIONS (Upcoming / My List / Settings) are now regular sidebar
+  // nav links below Search (not a separate expandable block). The guest/
+  // logged USER NAME renders as a footer chip in .sidebar-bottom. The
+  // inline-expand state + toggle from pass 5 are no longer needed.
   const accountDisplayName = $derived(user?.displayName ?? (user?.email ? user.email.split('@')[0] : 'Guest'));
-  function toggleAccountInline() {
-    accountInlineExpanded = !accountInlineExpanded;
-    haptic('light');
-  }
 
   // Update CSS variable for sidebar width
   $effect(() => {
@@ -257,50 +248,27 @@
         {#if !sidebarCollapsed}<span class="sidebar-label">Search</span>{/if}
       </a>
       {#if IS_WGT_BUILD}
-        <!-- TV-UX pass 5 (test pass 5, bug 9 — "render Account options INSIDE
-             the sidebar, BELOW the Search item, with the guest/logged user
-             name as a sidebar button (focusable, opens the same options
-             inline/in the sidebar)"): on the widget build the Account surface
-             is an INLINE expandable section below Search. The user's name
-             (or "Guest") is a focusable button; clicking it expands to reveal
-             Upcoming / My List / Settings as nested sidebar links. D-pad
-             reachable via the focus manager (sidebar region). Production web
-             keeps the bottom Account chip + AccountSheet (phone/tablet
-             behavior unchanged). -->
-        <div class="sidebar-account-inline" class:expanded={accountInlineExpanded}>
-          <button
-            type="button"
-            class="sidebar-link sidebar-account-toggle"
-            aria-expanded={accountInlineExpanded}
-            aria-label={`Account: ${accountDisplayName}`}
-            onclick={toggleAccountInline}
-            title={sidebarCollapsed ? accountDisplayName : undefined}
-          >
-            <span class="sidebar-icon"><UserRound size={19} strokeWidth={isAccountSurface ? 2.3 : 1.8} /></span>
-            {#if !sidebarCollapsed}
-              <span class="sidebar-label">{accountDisplayName}</span>
-              <span class="sidebar-account-chevron" aria-hidden="true">
-                {#if accountInlineExpanded}<ChevronDown size={14} />{:else}<ChevronRight size={14} />{/if}
-              </span>
-            {/if}
-          </button>
-          {#if accountInlineExpanded && !sidebarCollapsed}
-            <div class="sidebar-account-options">
-              <a class="sidebar-link sidebar-sublink" href="/upcoming" aria-current={isActive('/upcoming') ? 'page' : undefined}>
-                <span class="sidebar-icon"><CalendarClock size={17} /></span>
-                <span class="sidebar-label">Upcoming</span>
-              </a>
-              <a class="sidebar-link sidebar-sublink" href="/my-list" aria-current={isActive('/my-list') ? 'page' : undefined}>
-                <span class="sidebar-icon"><Bookmark size={17} /></span>
-                <span class="sidebar-label">My List</span>
-              </a>
-              <a class="sidebar-link sidebar-sublink" href="/settings" aria-current={isActive('/settings') ? 'page' : undefined}>
-                <span class="sidebar-icon"><Settings size={17} /></span>
-                <span class="sidebar-label">Settings</span>
-              </a>
-            </div>
-          {/if}
-        </div>
+        <!-- TV-UX pass 6 (test pass 6, bug 9 — "SIDEBAR ACCOUNT LAYOUT"):
+             the three account OPTIONS (Upcoming / My List / Settings)
+             render BELOW the Search item, styled like the other sidebar
+             nav buttons (not a separate block at the bottom). The guest/
+             logged USER NAME element sits at the BOTTOM of the sidebar
+             (footer area) — see .sidebar-bottom below. D-pad reachable via
+             the focus manager (sidebar region). Production web keeps the
+             bottom Account chip + AccountSheet (phone/tablet behavior
+             unchanged). -->
+        <a class:active={isActive('/upcoming')} class="sidebar-link" href="/upcoming" aria-current={isActive('/upcoming') ? 'page' : undefined} title={sidebarCollapsed ? 'Upcoming' : undefined}>
+          <span class="sidebar-icon"><CalendarClock size={19} strokeWidth={isActive('/upcoming') ? 2.3 : 1.8} /></span>
+          {#if !sidebarCollapsed}<span class="sidebar-label">Upcoming</span>{/if}
+        </a>
+        <a class:active={isActive('/my-list')} class="sidebar-link" href="/my-list" aria-current={isActive('/my-list') ? 'page' : undefined} title={sidebarCollapsed ? 'My List' : undefined}>
+          <span class="sidebar-icon"><Bookmark size={19} strokeWidth={isActive('/my-list') ? 2.3 : 1.8} /></span>
+          {#if !sidebarCollapsed}<span class="sidebar-label">My List</span>{/if}
+        </a>
+        <a class:active={isActive('/settings')} class="sidebar-link" href="/settings" aria-current={isActive('/settings') ? 'page' : undefined} title={sidebarCollapsed ? 'Settings' : undefined}>
+          <span class="sidebar-icon"><Settings size={19} strokeWidth={isActive('/settings') ? 2.3 : 1.8} /></span>
+          {#if !sidebarCollapsed}<span class="sidebar-label">Settings</span>{/if}
+        </a>
       {/if}
     </nav>
     <div class="sidebar-bottom">
@@ -312,7 +280,10 @@
              reads: navigation → search → account → tagline.
              TV-UX pass 5 (test pass 5, bug 9): on the WGT build this chip is
              REMOVED — the inline Account section above owns the Account
-             surface on TV. -->
+             surface on TV.
+             TV-UX pass 6 (test pass 6, bug 9): the WGT build moves the
+             USER NAME to the footer (below) — the three account OPTIONS
+             are now nav links above (under Search). -->
         <button
           type="button"
           bind:this={sidebarAccountEl}
@@ -327,6 +298,17 @@
           <span class="sidebar-icon"><UserRound size={19} strokeWidth={isAccountSurface ? 2.3 : 1.8} /></span>
           {#if !sidebarCollapsed}<span class="sidebar-label">Account</span>{/if}
         </button>
+      {:else}
+        <!-- TV-UX pass 6 (test pass 6, bug 9 — "the guest/logged USER NAME
+             element must sit at the BOTTOM of the sidebar (footer area)"):
+             on the WGT build the user name renders as a non-interactive
+             footer chip (the account OPTIONS are nav links above). The chip
+             shows the avatar icon + the display name (or "Guest"); when
+             collapsed it shows only the icon, centered on the panel's axis. -->
+        <div class="sidebar-account-name" title={accountDisplayName} aria-label={`Signed in as ${accountDisplayName}`}>
+          <span class="sidebar-icon"><UserRound size={19} strokeWidth={1.8} /></span>
+          {#if !sidebarCollapsed}<span class="sidebar-label">{accountDisplayName}</span>{/if}
+        </div>
       {/if}
       <div class="sidebar-rule"></div>
       {#if !sidebarCollapsed}<span class="sidebar-caption">Your screen. Your story.</span>{/if}
@@ -506,27 +488,23 @@
   .sidebar-collapsed .sidebar-account {
     justify-content: center; padding: 0;
   }
-  .sidebar-collapsed .sidebar-account-toggle {
+  .sidebar-collapsed .sidebar-account-name {
     justify-content: center; padding: 0;
   }
 
-  /* TV-UX pass 5 (test pass 5, bug 9): the inline Account section below Search.
-     The toggle button reuses .sidebar-link styling; the chevron hints at
-     expandability. The nested options indent slightly so they read as a
-     sub-section of the Account toggle. */
-  .sidebar-account-inline { display: contents; }
-  .sidebar-account-toggle { position: relative; }
-  .sidebar-account-chevron {
-    display: inline-flex; align-items: center;
-    margin-left: auto; padding-left: 8px;
-    color: var(--color-text-deep);
+  /* TV-UX pass 6 (test pass 6, bug 9): the USER NAME footer chip. The three
+     account OPTIONS are now regular .sidebar-link entries (Upcoming / My
+     List / Settings under Search) — no separate styling needed. The user
+     name renders as a non-interactive footer chip styled like a sidebar
+     link (icon + label) but without hover/active states (it's informational,
+     not a navigation target). */
+  .sidebar-account-name {
+    display: flex; align-items: center; gap: 13px; min-height: 44px; padding: 0 12px;
+    color: var(--color-text-muted); font-size: .82rem; font-weight: 600;
+    opacity: .85;
   }
-  .sidebar-account-options {
-    display: grid; gap: 2px;
-    padding-left: 24px;
-  }
-  .sidebar-sublink {
-    min-height: 40px; font-size: .78rem; opacity: .92;
+  .sidebar-account-name .sidebar-label {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
 
   /* ---- Mobile topbar (≤1024px) ---- */

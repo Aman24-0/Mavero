@@ -5,6 +5,7 @@
   import { appendReturnTo } from '$lib/shared/navigation';
   import { detailHref as detailPath, watchHref as watchPath } from '$lib/shared/routes';
   import { haptic } from '$lib/client/haptics';
+  import { IS_WGT_BUILD } from '$lib/shared/build-mode';
   // MAVP-3 Issue 1: the MAVP-2 click-time landscape-first presentation was
   // REMOVED — card playback opens in the device's existing orientation; the
   // manual Landscape control in the player remains the only rotation entry.
@@ -155,6 +156,17 @@
 
   let posterElement: HTMLElement;
   onMount(() => {
+    // TV-UX pass 6 (test pass 6, bug 1 — "RAIL CARDS STILL BLANK"): on the
+    // WGT build, cards CLIPPED by the rail's `overflow-x: hidden` never
+    // intersect the viewport (the IO rootMargin is in viewport units, but
+    // the rail's clip window is narrower than the viewport), so the
+    // observer never fires and native lazy-load never triggers → the
+    // poster never loads → the card is BLANK. On the WGT build we SKIP the
+    // IO gate entirely (the img's `loading` attribute is forced to "eager"
+    // in the markup below, so the browser fetches immediately — no IO
+    // needed). The IO preload-ahead is still useful on the web build where
+    // native lazy-load + the IO's wide rootMargin work together.
+    if (IS_WGT_BUILD) return;
     if (typeof window === 'undefined' || !('IntersectionObserver' in window) || !posterElement) return;
     const observer = new IntersectionObserver((entries) => {
       if (!entries.some((entry) => entry.isIntersecting)) return;
@@ -169,6 +181,11 @@
     observer.observe(posterElement);
     return () => observer.disconnect();
   });
+
+  // TV-UX pass 6 (test pass 6, bug 1): on the WGT build, force the poster
+  // <img> to load eagerly — native `loading="lazy"` never fires for cards
+  // clipped by the rail's overflow-x: hidden (the IO never intersects).
+  const posterLoading: 'eager' | 'lazy' = IS_WGT_BUILD ? 'eager' : 'lazy';
 
   $: if (item.poster) imageFailed = false;
   $: returnTo = `${page.url.pathname}${page.url.search}${page.url.hash}`;
@@ -210,7 +227,7 @@
         {#if imageFailed}
           <div class="mc-fallback" aria-label={`${item.title} image unavailable`}><span>{item.title.slice(0, 1).toUpperCase()}</span></div>
         {:else}
-          <img src={item.poster} srcset={posterSrcset} sizes={posterSizes} alt={`${item.title} poster`} loading="lazy" decoding="async" width="342" height="513" onerror={() => { imageFailed = true; }} />
+          <img src={item.poster} srcset={posterSrcset} sizes={posterSizes} alt={`${item.title} poster`} loading={posterLoading} decoding="async" width="342" height="513" onerror={() => { imageFailed = true; }} />
         {/if}
       </a>
       <button
@@ -229,7 +246,7 @@
         {#if imageFailed}
           <div class="mc-fallback" aria-label={`${item.title} image unavailable`}><span>{item.title.slice(0, 1).toUpperCase()}</span></div>
         {:else}
-          <img src={item.poster} srcset={posterSrcset} sizes={posterSizes} alt={`${item.title} poster`} loading="lazy" decoding="async" width="342" height="513" onerror={() => { imageFailed = true; }} />
+          <img src={item.poster} srcset={posterSrcset} sizes={posterSizes} alt={`${item.title} poster`} loading={posterLoading} decoding="async" width="342" height="513" onerror={() => { imageFailed = true; }} />
         {/if}
       </a>
       <span class="mc-type">{badges.primary}</span>

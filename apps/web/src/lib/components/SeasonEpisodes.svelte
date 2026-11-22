@@ -218,11 +218,29 @@
   // for a currently-airing show the user typically wants the latest
   // season. We still LOAD S1's data first if no seasonsData is present
   // (preserving the existing behavior for backward compatibility).
+  // TV-UX pass 6 (test pass 6, bug 12 — "TV SERIES — FIRST LOAD STILL
+  // ERRORS"): the episode list errors on FIRST open ("The TV season
+  // identifier is invalid") because the seasons aren't present in the
+  // initial TV detail payload (the TV detail fetch is async and may
+  // arrive after SeasonEpisodes mounts). The fix: auto-retry ONCE
+  // silently after a short delay if the first load errors — so the
+  // episode list loads on first open without a manual "Try again".
+  let firstLoadRetried = false;
   onMount(() => {
     const initialSeason = (eligibleSeasonNumbers.length > 0)
       ? eligibleSeasonNumbers[eligibleSeasonNumbers.length - 1]
       : 1;
-    void loadSeason(initialSeason);
+    void loadSeason(initialSeason).then(() => {
+      // Auto-retry once if the first load errored (the seasons may not
+      // have been present in the initial payload — a second fetch after
+      // the detail payload lands usually succeeds).
+      if (errorMessage && !firstLoadRetried) {
+        firstLoadRetried = true;
+        setTimeout(() => {
+          void loadSeason(initialSeason);
+        }, 600);
+      }
+    });
   });
 
   // MAV-FOCUSED Issue 4 (2026-10): episode release-eligibility check.

@@ -682,14 +682,21 @@
     if (!hasTrailer || trailerActive) return;
     trailerToggle = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     trailerActive = true;
-    trailerStatus = 'loading';
     trailerAttempt += 1;
-    armTrailerLoadTimeout();
     haptic('light');
-    // TV-UX pass 5 (test pass 5, bug 4 — SCROLL LOCK): lock the page while
-    // the sheet is open so Up/Down never scrolls the detail page behind it.
+    // TV-UX pass 6 (test pass 6, bug 4): on the WGT build, do NOT mount
+    // the YouTube iframe (it stays blank — no valid origin/DRM in a
+    // file:// widget). Skip the loading/iframe status; the sheet body
+    // shows the Watch-on-YouTube panel directly. The focus lands on the
+    // Close button (focus trap preserved).
     if (IS_WGT_BUILD) {
+      trailerStatus = 'ready';
       try { document.documentElement.setAttribute('data-trailer-sheet-open', ''); } catch { /* cosmetic */ }
+    } else {
+      trailerStatus = 'loading';
+      armTrailerLoadTimeout();
+      // TV-UX pass 5 (test pass 5, bug 4 — SCROLL LOCK): lock the page while
+      // the sheet is open so Up/Down never scrolls the detail page behind it.
     }
     void tick().then(() => {
       if (IS_WGT_BUILD) {
@@ -738,6 +745,39 @@
     trailerAttempt += 1;
     armTrailerLoadTimeout();
   }
+
+  // TV-UX pass 6 (test pass 6, bug 4 — "YouTube CANNOT play inside the
+  // Tizen widget"): on the WGT build, do NOT mount the YouTube iframe at
+  // all — it stays blank (no valid origin/DRM in a file:// widget). The
+  // sheet body shows a clear panel with the trailer thumbnail + title +
+  // a big "Watch trailer on YouTube" button that opens the trailer URL
+  // externally (tizen.application.launch / window.open fallback). The
+  // focus trap, scroll lock, Back/Escape close (already working) are
+  // preserved. On the WEB build the iframe is kept exactly as-is.
+  function openTrailerExternally() {
+    const url = `https://www.youtube.com/watch?v=${trailerKey}`;
+    haptic('light');
+    try {
+      // Tizen: launch the YouTube URL via the application framework if
+      // available (the browser app handles https:// URLs).
+      const tizen = (window as unknown as { tizen?: { application?: { launch?: (app: { id: string; uri: string }) => void } } }).tizen;
+      if (tizen?.application?.launch) {
+        tizen.application.launch({ id: 'org.tizen.browser', uri: url });
+        return;
+      }
+    } catch {
+      /* fall through to window.open */
+    }
+    try {
+      window.open(url, '_blank');
+    } catch {
+      /* final fallback — the href on the <a> still works as a link */
+    }
+  }
+
+  // The trailer thumbnail URL (YouTube's hqdefault). Used as the panel's
+  // visual anchor on the WGT build (the iframe is never mounted).
+  const trailerThumbnail = $derived(trailerKey ? `https://i.ytimg.com/vi/${trailerKey}/hqdefault.jpg` : '');
 
   async function enterTrailerFullscreen() {
     const el = trailerContainer;
@@ -1573,12 +1613,15 @@
       <span class="trailer-sheet-title">{item.title} — Trailer</span>
     </div>
     <div class="trailer-sheet-frame">
-      <!-- TV-UX pass 5: the close X moved INTO the player frame (bottom-right,
-           just above YouTube's own fullscreen control — 64px clears the
-           embed's bottom control bar at 16:9). Same circular translucent
-           style as the inline player's close; the D-pad contract is
-           unchanged: focus still lands here on load (trailerSheetCloseEl)
-           and Back still closes via the sheet's keydown/dialog semantics. -->
+      <!-- TV-UX pass 6 (test pass 6, bug 4 — "YouTube CANNOT play inside the
+           Tizen widget"): on the WGT build, do NOT mount the YouTube iframe
+           (it stays blank — no valid origin/DRM in a file:// widget). The
+           sheet body shows a clear panel with the trailer thumbnail + title
+           + a big "Watch trailer on YouTube" button that opens the trailer
+           URL externally (tizen.application.launch / window.open fallback).
+           The focus trap, scroll lock, Back/Escape close (already working)
+           are preserved. On the WEB build the iframe is kept exactly
+           as-is (it works there). -->
       <button
         type="button"
         class="trailer-sheet-close"
@@ -1588,7 +1631,35 @@
       >
         <X size={18} aria-hidden="true" />
       </button>
-      {#if trailerStatus !== 'error'}
+      {#if IS_WGT_BUILD}
+        <!-- WGT build: the Watch-on-YouTube panel (no iframe). -->
+        <div class="trailer-sheet-panel">
+          {#if trailerThumbnail}
+            <div class="trailer-sheet-thumb" style={`background-image: url('${trailerThumbnail}')`} aria-hidden="true">
+              <span class="trailer-sheet-play-icon" aria-hidden="true"><Play size={48} fill="currentColor" strokeWidth={0} /></span>
+            </div>
+          {/if}
+          <div class="trailer-sheet-panel-body">
+            <span class="trailer-sheet-panel-title">{item.title}</span>
+            <span class="trailer-sheet-panel-sub">Trailer · YouTube</span>
+            <button
+              type="button"
+              class="trailer-sheet-watch-btn"
+              onclick={openTrailerExternally}
+              aria-label={`Watch ${item.title} trailer on YouTube`}
+            >
+              <ExternalLink size={18} aria-hidden="true" />
+              <span>Watch trailer on YouTube</span>
+            </button>
+            <a
+              class="trailer-sheet-panel-link"
+              href={`https://www.youtube.com/watch?v=${trailerKey}`}
+              target="_blank"
+              rel="noopener noreferrer"
+            >https://www.youtube.com/watch?v={trailerKey}</a>
+          </div>
+        </div>
+      {:else if trailerStatus !== 'error'}
         {#key trailerAttempt}
           <iframe
             src={`https://www.youtube.com/embed/${trailerKey}?autoplay=1&rel=0&playsinline=1&enablejsapi=1${trailerOrigin ? `&origin=${encodeURIComponent(trailerOrigin)}` : ''}`}
@@ -1615,12 +1686,12 @@
           ></iframe>
         {/key}
       {/if}
-      {#if trailerStatus === 'loading'}
+      {#if !IS_WGT_BUILD && trailerStatus === 'loading'}
         <div class="trailer-sheet-note" role="status" aria-live="polite">
           <LoaderCircle size={22} class="trailer-spinner" />
           <span>Loading trailer…</span>
         </div>
-      {:else if trailerStatus === 'error'}
+      {:else if !IS_WGT_BUILD && trailerStatus === 'error'}
         <!-- TV-UX pass 5 (test pass 5, bug 4 — "if the YouTube embed fails
              to load (blocked), show the in-sheet 'Trailer unavailable —
              Watch on YouTube' fallback with a working link"): YouTube is
@@ -2284,6 +2355,66 @@
   }
   .trailer-sheet-youtube-link:hover { background: var(--dp-surface); border-color: var(--dp-accent); }
   .trailer-sheet-youtube-link:focus-visible { outline: 2px solid var(--dp-accent); outline-offset: 2px; }
+
+  /* TV-UX pass 6 (test pass 6, bug 4): the Watch-on-YouTube panel shown
+     on the WGT build instead of the (blank) YouTube iframe. A thumbnail
+     fills the frame; the title + a big "Watch trailer on YouTube" button
+     overlay the thumbnail. The Close button (separate) sits above the
+     frame's bottom-right. */
+  .trailer-sheet-panel {
+    position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 16px; padding: 24px; text-align: center;
+    background: #0a0d10;
+  }
+  .trailer-sheet-thumb {
+    position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+    background-size: cover; background-position: center;
+    opacity: .55;
+    z-index: 0;
+  }
+  .trailer-sheet-play-icon {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    display: grid; place-items: center;
+    width: 96px; height: 96px; border-radius: 50%;
+    background: rgba(255, 0, 0, .85);
+    color: #fff;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, .5);
+  }
+  .trailer-sheet-panel-body {
+    position: relative; z-index: 1;
+    display: flex; flex-direction: column; align-items: center; gap: 8px;
+    max-width: 760px;
+    padding: 24px;
+    border-radius: 14px;
+    background: rgba(8, 11, 13, .82);
+    backdrop-filter: blur(10px);
+  }
+  .trailer-sheet-panel-title {
+    color: var(--color-text); font-size: 1.4rem; font-weight: 800; line-height: 1.2;
+    text-shadow: 0 2px 8px rgba(0, 0, 0, .6);
+  }
+  .trailer-sheet-panel-sub {
+    color: var(--color-text-muted); font-size: .82rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+  }
+  .trailer-sheet-watch-btn {
+    display: inline-flex; align-items: center; gap: 10px;
+    min-height: 56px; padding: 0 32px; margin-top: 8px;
+    border: 0; border-radius: 999px;
+    color: #fff; background: #ff0000;
+    font: inherit; font-size: 1rem; font-weight: 800;
+    cursor: pointer;
+    box-shadow: 0 8px 24px rgba(255, 0, 0, .35);
+    transition: transform var(--motion-fast) var(--ease-out), filter var(--motion-fast) var(--ease-out);
+  }
+  .trailer-sheet-watch-btn:hover { transform: translateY(-1px); filter: brightness(1.08); }
+  .trailer-sheet-watch-btn:focus-visible { outline: 3px solid var(--dp-accent); outline-offset: 3px; }
+  .trailer-sheet-panel-link {
+    color: var(--color-text-muted); font-size: .72rem; text-decoration: underline;
+    word-break: break-all;
+    max-width: 100%;
+  }
+  .trailer-sheet-panel-link:hover { color: var(--color-text); }
   /* TV dummy Download button: visible but visibly inert (bug 10). */
   .tv-disabled { opacity: .45; cursor: default; }
 
