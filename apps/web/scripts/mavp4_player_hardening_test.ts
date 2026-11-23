@@ -238,8 +238,8 @@ function rawRegionCode(source: string, startMarker: string, endMarker: string): 
     const landscape = controlsPreviewMarkerStyle(defaultPosition, 'landscape', orientation);
     ok(back.includes('left:') && back.includes('top:'), `3.2a ${orientation}: the Back marker is explicitly positioned at the default top-left`);
     ok(landscape.includes('right:') && landscape.includes('bottom:'), `3.2b ${orientation}: the Landscape marker is explicitly positioned at the default bottom-right`);
-    ok(back.includes(`calc(${BACK_CONTROL_DEFAULT_SIZE_PX} / `) && back.includes('100cqw)'), `3.2c ${orientation}: the Back marker renders the DEFAULT size scaled (44px → cqw)`);
-    ok(landscape.includes(`calc(${LANDSCAPE_CONTROL_DEFAULT_SIZE_PX} / `) && landscape.includes('100cqw)'), `3.2d ${orientation}: the Landscape marker renders the DEFAULT size scaled (48px → cqw)`);
+    ok(back.includes(`calc(${BACK_CONTROL_DEFAULT_SIZE_PX} / `) && back.includes('100cqw)'), `3.2c ${orientation}: the Back marker renders the DEFAULT size scaled (37px → cqw)`);
+    ok(landscape.includes(`calc(${LANDSCAPE_CONTROL_DEFAULT_SIZE_PX} / `) && landscape.includes('100cqw)'), `3.2d ${orientation}: the Landscape marker renders the DEFAULT size scaled (37px → cqw)`);
   }
   // Default corners are scaled, not raw runtime pixels.
   const portraitBack = controlsPreviewMarkerStyle(defaultPosition, 'back', 'portrait');

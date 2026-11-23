@@ -309,8 +309,8 @@ ok(parsePlayerControlsPosition({ mode: 'custom', sizes: { episodes: 999 } }) ===
 ok(controlsPreviewMarkerStyle(null, 'back', 'portrait').includes('left:')
   && controlsPreviewMarkerStyle(null, 'landscape', 'portrait').includes('right:'),
   'RC-4 (superseded by MAVP-6): the Back/Landscape preview markers render through the shared resolver unchanged');
-ok(BACK_CONTROL_DEFAULT_SIZE_PX === 44 && LANDSCAPE_CONTROL_DEFAULT_SIZE_PX === 48,
-  'RC-4 (superseded by MAVP-6): the Back/Landscape default sizes are unchanged');
+ok(BACK_CONTROL_DEFAULT_SIZE_PX === 37 && LANDSCAPE_CONTROL_DEFAULT_SIZE_PX === 37,
+  'RC-4 (superseded by MAVP-6): the Back/Landscape default sizes are 37px (user-tuned)');
 // The episode sheet opens from the LEFT at every viewport.
 ok(/\.episode-sheet\s*\{[^}]*top:\s*0;\s*bottom:\s*0;\s*left:\s*0;/.test(shellCode),
   'RC-4: the episode sheet is a full-height LEFT drawer');
