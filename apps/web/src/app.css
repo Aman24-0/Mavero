@@ -1,4 +1,11 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@500;600&display=swap');
+/* Performance pass (A1): the Google Fonts @import was REMOVED from here
+   and moved to app.html <head> as <link rel="stylesheet">. A CSS @import
+   is render-blocking and serialises behind app.css (the browser must
+   fetch + parse app.css before it even discovers the font @import, then
+   makes a SECOND round-trip to fonts.googleapis.com). The <link> in
+   <head> is discovered by the preload scanner immediately and fetched
+   in parallel with app.css — no serialisation, no extra round-trip.
+   display=swap is preserved so text is visible immediately. */
 @import 'tailwindcss';
 
 /* ============================================================

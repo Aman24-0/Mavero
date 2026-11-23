@@ -197,7 +197,15 @@
   // bare first-play watch route when no resume target exists.
   // Phase 5: use shared route helper for the fallback watch URL.
   $: watchHref = appendReturnTo(item.resumeHref ?? watchPath(item.id, item.type, item.isAnime, item.animeFormat), returnTo);
-  $: posterSrcset = item.posterSmall ? `${item.posterSmall} 342w, ${item.poster} 500w` : undefined;
+  // Performance pass (A3): add the w185 tier for small cards so phones
+  // don't download a 342px poster when a 185px one suffices. The sizes
+  // attribute is unchanged — the browser picks the smallest source that
+  // covers the rendered size.
+  $: posterSrcset = item.posterTiny && item.posterSmall
+    ? `${item.posterTiny} 185w, ${item.posterSmall} 342w, ${item.poster} 500w`
+    : item.posterSmall
+      ? `${item.posterSmall} 342w, ${item.poster} 500w`
+      : undefined;
   $: posterSizes = compact ? '(max-width: 640px) calc((100vw - 38px) / 2), 150px' : '(max-width: 640px) 40vw, 178px';
   // Phase 7F+ (anime routing): dual-badge layout. Anime-flagged titles
   // (TMDB-tagged Demon Slayer movie, Attack on Titan series) render

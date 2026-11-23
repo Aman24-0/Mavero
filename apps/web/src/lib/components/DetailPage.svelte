@@ -12,7 +12,16 @@
   // entry point (no automatic rotation from any playback path).
   import { ArrowLeft, Heart, Play, Share2, Star, ListPlus, Film, Download, AlertCircle, LoaderCircle, AlertTriangle, Maximize, Minimize, Clock, X, ExternalLink } from 'lucide-svelte';
   import SelectionSheet from '$components/SelectionSheet.svelte';
-  import DownloadSheet from '$components/DownloadSheet.svelte';
+  // Performance pass (A2): DownloadSheet is lazy-loaded — it's a heavy
+  // below-the-fold sheet (download providers list, sheet chrome, provider
+  // icons) that only mounts when the user clicks Download. Converting the
+  // static import to a dynamic import moves it OUT of the initial bundle.
+  // The component is imported on first open and cached so subsequent opens
+  // are instant (no re-import). The sheet stays mounted after first open
+  // so the close animation plays correctly (open=false → unmount).
+  import type DownloadSheetType from '$components/DownloadSheet.svelte';
+  let DownloadSheetLazy: typeof DownloadSheetType | null = $state(null);
+  let downloadSheetLoaded = $state(false);
   import type { ContentType } from '$data/content';
   import { getMedia, type MediaItem } from '$data/content';
   import SkeletonCard from '$components/SkeletonCard.svelte';
@@ -1081,6 +1090,14 @@
   // uses the movie URL template. The target state stays undefined.
   function openDownloadSheet() {
     haptic('light');
+    // Performance pass (A2): lazy-load the DownloadSheet component on
+    // first open so it leaves the initial bundle.
+    if (!downloadSheetLoaded) {
+      downloadSheetLoaded = true;
+      void import('$components/DownloadSheet.svelte').then((mod) => {
+        DownloadSheetLazy = mod.default;
+      });
+    }
     if (!downloadProvidersLoaded && !downloadProvidersLoading) {
       void loadDownloadProviders();
     }
@@ -1092,6 +1109,12 @@
   // Open the sheet for an EPISODE download — the EXACT clicked episode.
   function openEpisodeDownloadSheet(season: number, episode: number) {
     haptic('light');
+    if (!downloadSheetLoaded) {
+      downloadSheetLoaded = true;
+      void import('$components/DownloadSheet.svelte').then((mod) => {
+        DownloadSheetLazy = mod.default;
+      });
+    }
     if (!downloadProvidersLoaded && !downloadProvidersLoading) {
       void loadDownloadProviders();
     }
@@ -1562,25 +1585,31 @@
 <!-- MAV-23 Fix 5 — the download sheet receives the ACTIVE title palette
      (the same inline --dp-* custom-property string the page root uses).
      The sheet applies it scoped to its own layer; closing the sheet or
-     navigating to another title updates/discards it automatically. -->
-<DownloadSheet
-  open={downloadSheetOpen}
-  paletteStyle={paletteStyle}
-  title={item.title}
-  providers={visibleDownloadProviders}
-  providersLoading={downloadProvidersLoading}
-  providersFailed={downloadProvidersFailed}
-  onRetryProviders={retryDownloadProviders}
-  selectedProviderId={null}
-  mediaType={downloadMediaType}
-  tmdbId={downloadTmdbId}
-  contentId={item.id}
-  contentType={type}
-  season={downloadMediaType === 'tv' ? downloadTargetSeason : undefined}
-  episode={downloadMediaType === 'tv' ? downloadTargetEpisode : undefined}
-  releaseYear={downloadReleaseYear}
-  onClose={closeDownloadSheet}
-/>
+     navigating to another title updates/discards it automatically.
+     Performance pass (A2): the DownloadSheet component is lazy-loaded
+     on first open — it's only mounted after the user clicks Download,
+     so it's NOT in the initial page bundle. downloadSheetLoaded stays
+     true after first open so the close animation (open=false) plays. -->
+{#if downloadSheetLoaded && DownloadSheetLazy}
+  <DownloadSheetLazy
+    open={downloadSheetOpen}
+    paletteStyle={paletteStyle}
+    title={item.title}
+    providers={visibleDownloadProviders}
+    providersLoading={downloadProvidersLoading}
+    providersFailed={downloadProvidersFailed}
+    onRetryProviders={retryDownloadProviders}
+    selectedProviderId={null}
+    mediaType={downloadMediaType}
+    tmdbId={downloadTmdbId}
+    contentId={item.id}
+    contentType={type}
+    season={downloadMediaType === 'tv' ? downloadTargetSeason : undefined}
+    episode={downloadMediaType === 'tv' ? downloadTargetEpisode : undefined}
+    releaseYear={downloadReleaseYear}
+    onClose={closeDownloadSheet}
+  />
+{/if}
 
 {#if IS_WGT_BUILD && trailerActive && hasTrailer}
   <!-- ============================================================

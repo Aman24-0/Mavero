@@ -47,6 +47,14 @@
          loads are no-cors, so a crossorigin preconnect would open a
          connection the images never use. -->
     <link rel="preconnect" href="https://image.tmdb.org" />
+    <!-- Performance pass (A1+A4): Google Fonts — moved from app.css @import
+         (render-blocking, serialised behind app.css) to <link> in <head>
+         (discovered by the preload scanner, fetched in parallel).
+         preconnect to both font origins (gstatic needs crossorigin for
+         the woff2 fetch); display=swap keeps text visible immediately. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@500;600&display=swap" />
     %sveltekit.head%
     <!-- Umami Cloud analytics (Phase 1 — Setup & Script Installation;
          production-hardening round: /admin exclusion).

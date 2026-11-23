@@ -101,6 +101,7 @@ export type NormalizedMediaItem = {
   description: string;
   poster: string;
   posterSmall?: string;
+  posterTiny?: string;
   backdrop: string;
   backdropSmall?: string;
   backdropHero?: string;

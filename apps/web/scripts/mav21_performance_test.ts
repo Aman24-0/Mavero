@@ -101,8 +101,14 @@ assert.match(appHtml, /<link rel="preconnect" href="https:\/\/image\.tmdb\.org" 
   'app.html preconnects to the TMDB image CDN');
 assert.ok(appHtml.indexOf('rel="preconnect"') < appHtml.indexOf('%sveltekit.head%'),
   'the preconnect sits in the static head (parsed before page-specific head content)');
-assert.doesNotMatch(appHtml, /<link rel="preconnect"[^>]*crossorigin[^>]*>/,
-  'the image preconnect has NO crossorigin (img loads are no-cors — a crossorigin preconnect would open an unused connection)');
+// [Performance pass re-pin] the image preconnect (image.tmdb.org) must
+// have NO crossorigin (img loads are no-cors). The font preconnect
+// (fonts.gstatic.com) DOES need crossorigin (the woff2 fetch is a CORS
+// request). Scope the assertion to image.tmdb.org only.
+assert.doesNotMatch(appHtml, /<link rel="preconnect"[^>]*image\.tmdb\.org[^>]*crossorigin[^>]*>/,
+  'the image.tmdb.org preconnect has NO crossorigin (img loads are no-cors — a crossorigin preconnect would open an unused connection)');
+assert.match(appHtml, /<link rel="preconnect" href="https:\/\/fonts\.gstatic\.com" crossorigin\s*\/>/,
+  'the fonts.gstatic.com preconnect HAS crossorigin (woff2 font fetches are CORS requests — without crossorigin the preconnect opens a connection the font fetch never uses)');
 ok('2. preconnect to image.tmdb.org present, early, no-cors');
 
 // ============================================================
@@ -170,8 +176,13 @@ assert.match(discoverPage, /media="\(min-width: 641px\)" srcset=\{slide\.item\.b
   'DiscoverPage desktop tier unchanged');
 
 // MediaCard — responsive posters + lazy loading stay.
-assert.match(mediaCard, /\$:\s*posterSrcset = item\.posterSmall \? `\$\{item\.posterSmall\} 342w, \$\{item\.poster\} 500w` : undefined;/,
-  'MediaCard poster srcset (342w/500w) preserved');
+// [Performance pass re-pin] posterSrcset now includes a w185 tier
+// (posterTiny) for small cards so phones don't download 342px. The
+// srcset falls back to the 342w/500w pair when posterTiny is absent.
+assert.match(mediaCard, /posterTiny && item\.posterSmall/,
+  'MediaCard posterSrcset checks posterTiny (w185 tier) first');
+assert.match(mediaCard, /posterTiny} 185w.*posterSmall} 342w.*poster} 500w/,
+  'MediaCard poster srcset emits 185w/342w/500w tiers when posterTiny exists');
 // [TV-UX pass 6 re-pin] posterLoading is now a derived const
 // (`const posterLoading: 'eager' | 'lazy' = IS_WGT_BUILD ? 'eager' : 'lazy';`)
 // so the WGT build forces eager loading (cards clipped by the rail's
