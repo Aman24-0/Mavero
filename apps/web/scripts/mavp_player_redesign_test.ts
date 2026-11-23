@@ -126,7 +126,7 @@ section_ok('§B controls');
 // placement (top-left, safe-area aware) is unchanged for unset profiles.
 ok(/<button class="back-fab"[^>]*aria-label="Close player"/.test(shell), 'B1. Back FAB — compact circular, top-left');
 ok(/\.back-fab \{[^}]*top: max\(12px, env\(safe-area-inset-top\)\)/.test(shell), 'B2. Back FAB respects safe-area insets');
-ok(/\.back-fab \{[^}]*width: 44px/.test(shell), 'B3. Back FAB ~44px touch target');
+ok(/\.back-fab \{[^}]*width: 37px/.test(shell), 'B3. Back FAB 37px (user-tuned size)');
 ok(/onclick=\{onClose\}/.test(shell), 'B4. Back FAB preserves existing return navigation');
 
 // MAVP-2 Phase 7 supersession: the placement style lives ONLY on the
@@ -134,7 +134,7 @@ ok(/onclick=\{onClose\}/.test(shell), 'B4. Back FAB preserves existing return na
 // button double-applied the center-anchor transform.
 ok(/<div class="control-fab-group" class:visible=\{controlsVisible\} style=\{landscapeControlStyle\}>/.test(shell), 'B5. dedicated Landscape FAB group at bottom-right with per-source placement style');
 ok(/<button class="control-fab landscape-fab"[^>]*type="button"/.test(shell) && !/<button class="control-fab landscape-fab"[^>]*style=/.test(shell), 'B5b. inner landscape FAB carries NO duplicate placement style (center-anchor transform applies once; MAVP-3 adds only the size class directive)');
-ok(/\.control-fab \{[^}]*width: 48px/.test(shell), 'B6. Landscape FAB 44-48px touch target (48px)');
+ok(/\.control-fab \{[^}]*width: 37px/.test(shell), 'B6. Landscape FAB 37px (user-tuned size)');
 ok(/aria-label=\{landscapeMode \? 'Exit landscape player' : 'Enter landscape player'\}/.test(shell) && /aria-pressed=\{landscapeMode\}/.test(shell), 'B7. Landscape FAB has distinct orientation states');
 ok(/onclick=\{\(\) => \{ void toggleLandscape\(\); \}\}/.test(shell), 'B8. Landscape FAB reuses the existing orientation controller');
 

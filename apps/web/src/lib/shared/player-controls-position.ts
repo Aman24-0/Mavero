@@ -87,8 +87,8 @@ export const PLAYER_CONTROLS_POSITION_CAPABILITY_KEY = 'player_controls_position
 // .control-fab 48px) so a source without custom sizing renders identically
 // to the pre-MAVP-3 design. Bounds keep controls visible, usable and never
 // viewport-dominating (documented safe range; enforced server-side too).
-export const BACK_CONTROL_DEFAULT_SIZE_PX = 44;
-export const LANDSCAPE_CONTROL_DEFAULT_SIZE_PX = 48;
+export const BACK_CONTROL_DEFAULT_SIZE_PX = 37;
+export const LANDSCAPE_CONTROL_DEFAULT_SIZE_PX = 37;
 export const CONTROLS_SIZE_MIN_PX = 28;
 export const CONTROLS_SIZE_MAX_PX = 96;
 

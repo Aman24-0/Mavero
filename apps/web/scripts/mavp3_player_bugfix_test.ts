@@ -377,13 +377,13 @@ ok(/GRID_CELL_LABELS/.test(adminPage), '5.5j the grid labels its cells');
 //     untouched for sources without custom sizing.
 ok(/controlsSizeInlineStyle\(activeSourceOption\?\.controlsPosition \?\? null, 'back', '--back-fab-size'\)/.test(shellCode) && /controlsSizeInlineStyle\(activeSourceOption\?\.controlsPosition \?\? null, 'landscape', '--landscape-fab-size'\)/.test(shellCode), '5.6a both controls resolve their size from the ACTIVE source (per-source isolation)');
 ok(/class:custom-size=\{backSizePx !== null\}/.test(shell) && /class:custom-size=\{landscapeSizePx !== null\}/.test(shell), '5.6b the custom-size class applies ONLY when a size is configured (defaults byte-identical otherwise)');
-ok(/\.back-fab\.custom-size \{ width: var\(--back-fab-size, 44px\); height: var\(--back-fab-size, 44px\); \}/.test(shell), '5.6c the Back FAB scales from its CSS var with the shipped default fallback');
-ok(/\.control-fab\.custom-size \{ width: var\(--landscape-fab-size, 48px\); height: var\(--landscape-fab-size, 48px\); \}/.test(shell), '5.6d the Landscape FAB scales from its CSS var with the shipped default fallback');
-ok(/\.back-fab\.custom-size :global\(svg\) \{ width: calc\(var\(--back-fab-size, 44px\) \* 0\.4545\);/.test(shell) && /\.control-fab\.custom-size :global\(svg\) \{ width: calc\(var\(--landscape-fab-size, 48px\) \* 0\.4583\);/.test(shell), '5.6e icons scale proportionally (shipped ratios preserved)');
-ok(/\.back-fab \{ position: absolute; z-index: 12; top: max\(12px, env\(safe-area-inset-top\)\); left: max\(12px, env\(safe-area-inset-left\)\); display: grid; place-items: center; width: 44px; height: 44px;/.test(shell), '5.6f the Back FAB stylesheet default (44px, safe-area top-left) is unchanged');
-ok(/\.control-fab \{ display: grid; place-items: center; width: 48px; height: 48px;/.test(shell), '5.6g the Landscape FAB stylesheet default (48px) is unchanged');
-okEq(BACK_CONTROL_DEFAULT_SIZE_PX, 44, '5.6h the documented Back default matches the stylesheet');
-okEq(LANDSCAPE_CONTROL_DEFAULT_SIZE_PX, 48, '5.6i the documented Landscape default matches the stylesheet');
+ok(/\.back-fab\.custom-size \{ width: var\(--back-fab-size, 37px\); height: var\(--back-fab-size, 37px\); \}/.test(shell), '5.6c the Back FAB scales from its CSS var with the shipped default fallback (37px)');
+ok(/\.control-fab\.custom-size \{ width: var\(--landscape-fab-size, 37px\); height: var\(--landscape-fab-size, 37px\); \}/.test(shell), '5.6d the Landscape FAB scales from its CSS var with the shipped default fallback (37px)');
+ok(/\.back-fab\.custom-size :global\(svg\) \{ width: calc\(var\(--back-fab-size, 37px\) \* 0\.4545\);/.test(shell) && /\.control-fab\.custom-size :global\(svg\) \{ width: calc\(var\(--landscape-fab-size, 37px\) \* 0\.4583\);/.test(shell), '5.6e icons scale proportionally (shipped ratios preserved, 37px defaults)');
+ok(/\.back-fab \{ position: absolute; z-index: 12; top: max\(12px, env\(safe-area-inset-top\)\); left: max\(12px, env\(safe-area-inset-left\)\); display: grid; place-items: center; width: 37px; height: 37px;/.test(shell), '5.6f the Back FAB stylesheet default (37px, safe-area top-left) is unchanged');
+ok(/\.control-fab \{ display: grid; place-items: center; width: 37px; height: 37px;/.test(shell), '5.6g the Landscape FAB stylesheet default (37px) is unchanged');
+okEq(BACK_CONTROL_DEFAULT_SIZE_PX, 37, '5.6h the documented Back default matches the stylesheet (37px)');
+okEq(LANDSCAPE_CONTROL_DEFAULT_SIZE_PX, 37, '5.6i the documented Landscape default matches the stylesheet (37px)');
 okEq(CONTROLS_SIZE_MIN_PX, 28, '5.6j the documented minimum matches the server gate');
 okEq(CONTROLS_SIZE_MAX_PX, 96, '5.6k the documented maximum matches the server gate');
 

@@ -163,7 +163,7 @@ assert.match(shell, /\.sheet-option \{[^}]*min-height: 52px/, 'sheet-option min-
 // MAVP-5 Issue 4 supersession: the fab-item pill was replaced by the episode
 // chip — the chip keeps the same >=44px touch target (min-width 44px).
 assert.match(shell, /\.episode-chip \{[^}]*min-width: 44px/, 'episode chip keeps the >=44px touch target (MAVP-5)');
-assert.match(shell, /\.back-fab \{[^}]*width: 44px; height: 44px/, 'back FAB is 44×44px');
+assert.match(shell, /\.back-fab \{[^}]*width: 37px; height: 37px/, 'back FAB is 37×37px');
 
 // ============================================================
 // 9. Close button remains inside the drawer
