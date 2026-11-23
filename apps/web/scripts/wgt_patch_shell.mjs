@@ -169,6 +169,17 @@ html = html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, (block) => {
   return block;
 });
 
+// Performance pass: strip Google Fonts <link> tags and preconnects from the
+// TV shell. The TV's Tizen 6.0 engine (Chromium 69-76) may not support the
+// fonts.googleapis.com CSS, and the external font fetch is render-blocking
+// on a file:// origin. The app.css font-family stack ('Inter',
+// ui-sans-serif, system-ui, ...) falls back to the system font gracefully.
+let fontsLinksRemoved = 0;
+html = html.replace(/<link\b[^>]*(?:fonts\.googleapis\.com|fonts\.gstatic\.com)[^>]*>/gi, () => {
+  fontsLinksRemoved += 1;
+  return '';
+});
+
 // ---------------------------------------------------------------------------
 // §7 — TV MODE: the Stage-4 layout layer. Injected ONLY into the packed
 // widget shell (this script never touches the production web build). Every
@@ -1102,7 +1113,7 @@ console.log(
     `boot (env global __sveltekit_${kitHash} + <script src="./polyfill.js"> + <script src="./app.js" defer>), ` +
     `polyfill.js written to the widget root (${polyfillWrittenBytes} bytes), ` +
     `${modulePreloadCount} modulepreload link(s) stripped, ${umamiRemoved} Umami loader ` +
-    `block(s) removed, ${cssCount} stylesheet link(s) injected, absolute asset paths rewritten ` +
+    `block(s) removed, ${fontsLinksRemoved} Google Fonts link(s) stripped, ${cssCount} stylesheet link(s) injected, absolute asset paths rewritten ` +
     `(/_app/ strings + ${attrCount} href/src attributes), boot URL normalizer + on-screen ` +
     `boot diagnostics injected, Stage-4 tv-mode layout layer injected (body class + ` +
     `${Math.round(tvModeCss.length / 1024)}KB CSS)`

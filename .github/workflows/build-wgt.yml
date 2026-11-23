@@ -291,11 +291,14 @@ jobs:
           # wgt and verify the CSS link survived. tz pack creates Debug/ and
           # the wgt; tz build is a no-op on this project (just a warning). This
           # guard catches CSS-link loss at the EARLIEST post-pack point.
+          # NOTE: write to a temp file and grep the FILE (not a pipe) — same
+          # SIGPIPE fix as the verify step.
           echo "=== HOP 2b: after tz pack (from the fresh wgt) ==="
-          WGT_HTML=$(unzip -p "$WGT" index.html)
-          echo "stylesheet count: $(echo "$WGT_HTML" | grep -c 'rel="stylesheet"')"
-          echo "$WGT_HTML" | grep -o '<link rel="stylesheet"[^>]*>' || echo "(no stylesheet tag found)"
-          echo "$WGT_HTML" | grep -q 'rel="stylesheet" href="./_app/immutable/assets/.*\.css"' || {
+          WGT_FILE="${RUNNER_TEMP}/mavero-wgt-shell.html"
+          unzip -p "$WGT" index.html > "$WGT_FILE"
+          echo "stylesheet count: $(grep -c 'rel="stylesheet"' "$WGT_FILE")"
+          grep -o '<link rel="stylesheet"[^>]*>' "$WGT_FILE" || echo "(no stylesheet tag found)"
+          grep -q 'rel="stylesheet" href="./_app/immutable/assets/.*\.css"' "$WGT_FILE" || {
             echo "GUARD FAILED: the fresh wgt's index.html has no relative stylesheet link — tz pack stripped it"; exit 1; }
           echo "GUARD: the fresh wgt's index.html has the relative stylesheet link — OK"
           mv "$WGT" "$GITHUB_WORKSPACE/MaveroTV.wgt"
