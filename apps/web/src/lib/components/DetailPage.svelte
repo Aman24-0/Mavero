@@ -2251,11 +2251,10 @@
     background: #000;
   }
   .trailer-inline-close {
-    /* TV-UX pass 5: the close X sits BOTTOM-RIGHT, just above YouTube's own
-       fullscreen control (the engine-owned ⤢ in the embed's bottom control
-       bar — 64px clears that bar at 16:9 without covering it). z-index
+    /* The close X sits BOTTOM-RIGHT, just above YouTube's own fullscreen
+       control. User-tuned in DevTools — right: 27px; bottom: 78px. z-index
        above the iframe keeps the button clickable. */
-    position: absolute; right: 12px; bottom: 64px; z-index: 6;
+    position: absolute; right: 27px; bottom: 78px; z-index: 6;
     display: grid; place-items: center; width: 38px; height: 38px;
     border: 1px solid rgba(255,255,255,.35); border-radius: 50%;
     background: rgba(0,0,0,.6); color: #fff; cursor: pointer;
@@ -2329,11 +2328,11 @@
     color: var(--color-text); font-size: .85rem; font-weight: 800;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  /* TV-UX pass 5: the close X lives INSIDE the player frame now (bottom-right,
-     above YouTube's fullscreen control) — circular translucent, same style
-     as the inline player's close (34–40px spec). */
+  /* The close X lives INSIDE the player frame (bottom-right, above
+     YouTube's fullscreen control) — circular translucent, same style
+     as the inline player's close. User-tuned: right: 27px; bottom: 78px. */
   .trailer-sheet-close {
-    position: absolute; right: 12px; bottom: 64px; z-index: 6;
+    position: absolute; right: 27px; bottom: 78px; z-index: 6;
     display: grid; place-items: center; width: 38px; height: 38px;
     border: 1px solid rgba(255, 255, 255, .35); border-radius: 50%;
     background: rgba(8, 11, 13, .8); color: #f2fff8; cursor: pointer;

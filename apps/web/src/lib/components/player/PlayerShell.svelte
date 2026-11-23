@@ -2897,7 +2897,7 @@
        top-left default. While touch-locked the FAB stays reachable
        (essential navigation is never blocked). -->
   <button class="back-fab" class:custom-position={Boolean(backControlStyle)} class:custom-size={backSizePx !== null} type="button" aria-label="Close player" style={backControlStyle} onclick={onClose}>
-    <ArrowLeft size={20} />
+    <ArrowLeft size={17} />
   </button>
 
   <!-- Immersive redesign: Direct source playback controls as an overlay (auto-hiding).
@@ -2931,7 +2931,7 @@
          position contract. The group now carries only the Landscape FAB,
          whose per-source positioning/sizing is byte-unchanged. -->
     <button class="control-fab landscape-fab" class:custom-size={landscapeSizePx !== null} type="button" aria-label={landscapeMode ? 'Exit landscape player' : 'Enter landscape player'} aria-pressed={landscapeMode} onclick={() => { void toggleLandscape(); }}>
-      {#if landscapeMode}<Minimize2 size={22} />{:else}<Maximize2 size={22} />{/if}
+      {#if landscapeMode}<Minimize2 size={17} />{:else}<Maximize2 size={17} />{/if}
     </button>
   </div>
   {/if}
@@ -3101,7 +3101,7 @@
      overrides the top/left/bottom/right defaults below; the DEFAULTS (and
      every source without a custom profile) keep the safe-area-aware
      top-left placement exactly as shipped. */
-  .back-fab { position: absolute; z-index: 12; top: max(12px, env(safe-area-inset-top)); left: max(12px, env(safe-area-inset-left)); display: grid; place-items: center; width: 44px; height: 44px; border: 1px solid var(--line-strong); border-radius: 50%; color: #fff; background: rgba(0,0,0,.55); cursor: pointer; backdrop-filter: blur(12px); visibility: visible; transition: opacity var(--motion-normal) var(--ease-out), transform var(--motion-normal) var(--ease-out), background var(--motion-fast) var(--ease-out), visibility 0s linear 0s; }
+  .back-fab { position: absolute; z-index: 12; top: max(12px, env(safe-area-inset-top)); left: max(12px, env(safe-area-inset-left)); display: grid; place-items: center; width: 37px; height: 37px; border: 1px solid var(--line-strong); border-radius: 50%; color: #fff; background: rgba(0,0,0,.55); cursor: pointer; backdrop-filter: blur(12px); visibility: visible; transition: opacity var(--motion-normal) var(--ease-out), transform var(--motion-normal) var(--ease-out), background var(--motion-fast) var(--ease-out), visibility 0s linear 0s; }
   .back-fab:hover, .back-fab:focus-visible { background: rgba(0,0,0,.75); border-color: var(--accent); }
   .back-fab:active { transform: scale(.94); }
   /* MAVP-3 Issue 5: per-source Back-button SIZE (Admin "Player Controls
@@ -3110,8 +3110,8 @@
      the stylesheet defaults byte-identically (including the compact
      landscape-phone media query below). The icon scales proportionally
      (20/44 = the shipped default ratio). */
-  .back-fab.custom-size { width: var(--back-fab-size, 44px); height: var(--back-fab-size, 44px); }
-  .back-fab.custom-size :global(svg) { width: calc(var(--back-fab-size, 44px) * 0.4545); height: calc(var(--back-fab-size, 44px) * 0.4545); }
+  .back-fab.custom-size { width: var(--back-fab-size, 37px); height: var(--back-fab-size, 37px); }
+  .back-fab.custom-size :global(svg) { width: calc(var(--back-fab-size, 37px) * 0.4545); height: calc(var(--back-fab-size, 37px) * 0.4545); }
   /* FAB auto-hide: hidden state is opacity:0 + visibility:hidden + pointer-events:none.
      The visibility transition has a delay matching the opacity fade so the FAB
      stays visible during the fade-out, then becomes invisible + non-interactive
@@ -3140,14 +3140,14 @@
      target, spec range 44–48). Distinct orientation states: Maximize2 when
      entering landscape, Minimize2 when returning to portrait; the fullscreen
      state itself is browser-synced via the fullscreenchange listener. */
-  .control-fab { display: grid; place-items: center; width: 48px; height: 48px; border: 1px solid var(--line-strong); border-radius: 50%; color: #fff; background: #0d0d0d; cursor: pointer; backdrop-filter: blur(12px); box-shadow: 0 4px 16px rgba(0,0,0,.4); transition: background var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
+  .control-fab { display: grid; place-items: center; width: 37px; height: 37px; border: 1px solid var(--line-strong); border-radius: 50%; color: #fff; background: #0d0d0d; cursor: pointer; backdrop-filter: blur(12px); box-shadow: 0 4px 16px rgba(0,0,0,.4); transition: background var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
   .control-fab:hover, .control-fab:focus-visible { background: #1a1a1a; border-color: var(--accent); }
   .control-fab:active { transform: scale(.93); }
   /* MAVP-3 Issue 5: per-source Landscape-button SIZE (px). Same pattern as
      the Back FAB — applied only when configured (22/48 = the shipped icon
      ratio); the Episodes pill in the same group is never resized. */
-  .control-fab.custom-size { width: var(--landscape-fab-size, 48px); height: var(--landscape-fab-size, 48px); }
-  .control-fab.custom-size :global(svg) { width: calc(var(--landscape-fab-size, 48px) * 0.4583); height: calc(var(--landscape-fab-size, 48px) * 0.4583); }
+  .control-fab.custom-size { width: var(--landscape-fab-size, 37px); height: var(--landscape-fab-size, 37px); }
+  .control-fab.custom-size :global(svg) { width: calc(var(--landscape-fab-size, 37px) * 0.4583); height: calc(var(--landscape-fab-size, 37px) * 0.4583); }
 
   /* Source chip — slim vertical control attached to the right edge around the
      vertical centre (Rivestream reference). MAVP-2 Phase 2: the CLOSED chip
@@ -3462,8 +3462,8 @@
      placement is untouched; per-source Admin overrides (inline styles)
      keep winning over both defaults. */
   @media (orientation: landscape) and (max-height: 500px) {
-    .back-fab { width: 40px; height: 40px; top: max(6px, env(safe-area-inset-top)); left: max(6px, env(safe-area-inset-left)); }
-    .control-fab { width: 46px; height: 46px; }
+    .back-fab { width: 37px; height: 37px; top: max(6px, env(safe-area-inset-top)); left: max(6px, env(safe-area-inset-left)); }
+    .control-fab { width: 37px; height: 37px; }
     .source-chip { min-height: 56px; }
     .source-chip-bar { height: 48px; }
     .episode-chip { min-height: 56px; }
