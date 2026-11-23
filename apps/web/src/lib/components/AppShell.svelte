@@ -592,7 +592,7 @@
       display: grid; place-items: center; gap: 2px; flex: 1 1 0;
       min-width: 0; min-height: 44px; padding: 6px 2px;
       border-radius: 999px;
-      color: var(--color-text-deep);
+      color: var(--color-text-muted);
       font-size: .58rem; font-weight: 700; letter-spacing: .02em;
       text-decoration: none;
       transition: color 180ms ease, background 180ms ease;
@@ -601,13 +601,18 @@
       display: grid; place-items: center; gap: 2px; flex: 1 1 0;
       min-width: 0; min-height: 44px; padding: 6px 2px;
       border: 0; background: transparent; border-radius: 999px; cursor: pointer;
-      color: var(--color-text-deep);
+      color: var(--color-text-muted);
       font-size: .58rem; font-weight: 700; letter-spacing: .02em;
       transition: color 180ms ease, background 180ms ease;
     }
     .mobile-nav button.nav-account.active { color: var(--color-text); background: var(--color-surface-raised); }
     .mobile-nav .nav-icon { display: grid; place-items: center; }
-    .mobile-nav .nav-label { white-space: nowrap; opacity: .9; }
+    /* A11y #1 (Lighthouse color-contrast): the nav-label was using
+       --color-text-deep (#60686c, ~3.1:1 contrast) + opacity:.9 (even
+       lower). Bumped to --color-text-muted (#9da3a8, ~5.8:1) and removed
+       the opacity reduction so the label passes WCAG AA (≥4.5:1) on the
+       rgba(8,11,13,.85) backdrop-blur surface. */
+    .mobile-nav .nav-label { white-space: nowrap; }
     .mobile-nav a:hover { color: var(--color-text-muted); }
     .mobile-nav a.active {
       color: var(--color-primary);

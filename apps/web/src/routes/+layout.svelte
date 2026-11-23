@@ -13,6 +13,7 @@
   import { syncAuthenticatedState } from '$lib/client/progress/cloud';
   import { syncDevtoolProtection } from '$lib/client/devtool-protection';
   import { IS_WGT_BUILD } from '$lib/shared/build-mode';
+  import { canonicalHref } from '$lib/shared/seo';
   import { isLibraryAwareRoute } from '$lib/shared/route-policy';
   import { recordInAppNavigation } from '$lib/shared/navigation';
   import { umamiTrack, consumePendingUmamiAuthEvent } from '$lib/client/analytics/umami';
@@ -265,6 +266,12 @@
   <meta property="og:title" content={title} />
   <meta property="og:description" content="A fast, modern home for your next watch." />
   <meta name="twitter:card" content="summary_large_image" />
+  <!-- SEO #5 (Lighthouse canonical): a per-route canonical link. Pages
+       that set their OWN canonical (DiscoverPage, DetailPage, ExplorerPage,
+       search, live-tv) override this via SvelteKit's head deduplication
+       (last write wins). This is a DEFENSIVE default for routes without
+       a per-page canonical (/upcoming, /settings, /my-list, etc.). -->
+  <link rel="canonical" href={canonicalHref(page.url.pathname)} />
 </svelte:head>
 
 {#if page.url.pathname.startsWith('/watch/') || /^\/(movie|series|anime|tv-show|anime-series|anime-movie)\/[^/]+/.test(page.url.pathname) || page.url.pathname.startsWith('/auth/') || page.url.pathname.startsWith('/admin') || page.url.pathname.startsWith('/tv-login') || page.url.pathname.startsWith('/authorize') || page.url.pathname.startsWith('/settings/scan-tv')}

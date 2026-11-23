@@ -269,7 +269,12 @@
      The rail-wrap clips overflow so cards can extend slightly past the
      viewport edge without causing page-wide horizontal scroll. The
      rail itself scrolls horizontally inside this wrapper. */
-  .rail-wrap { position: relative; overflow: hidden; }
+  /* CLS #8: reserve a min-height for the rail row so the page doesn't
+     shift when cards hydrate client-side. The poster aspect ratio is 2:3,
+     so a 200px card is ~300px tall + 36px title/meta = ~336px. On mobile a
+     140px card is ~210px + 36px = ~246px. This min-height is only a floor —
+     once cards render the actual height takes over. */
+  .rail-wrap { position: relative; overflow: hidden; min-height: 250px; }
   .rail {
     display: grid; grid-auto-flow: column;
     /* Density: clamp(MIN, VW-BASED, MAX) per breakpoint. Mobile shows

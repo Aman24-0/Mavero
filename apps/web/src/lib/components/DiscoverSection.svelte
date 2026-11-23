@@ -652,7 +652,7 @@
         />
       {/if}
       {#if viewAllHref}
-        <a class="section-link" href={viewAllHref}>View all <ArrowRight size={14} /></a>
+        <a class="section-link" href={viewAllHref} aria-label={`${title}: View all`}>View all <ArrowRight size={14} /></a>
       {/if}
     </div>
   </div>

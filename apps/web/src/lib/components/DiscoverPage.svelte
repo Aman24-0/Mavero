@@ -836,7 +836,7 @@
                        the hardcoded /discover fallback and replaced the history
                        entry — losing the origin page entirely. -->
                   <a class="hero-play" href={appendReturnTo(watchPath(slide.item.id, slide.item.type, slide.item.isAnime, slide.item.animeFormat), heroOrigin)}><Play size={15} fill="currentColor" strokeWidth={0} /> Play</a>
-                  <a class="hero-btn" href={appendReturnTo(detailPath(slide.item.id, slide.item.type, slide.item.isAnime, slide.item.animeFormat), heroOrigin)} aria-label={`Details for ${slide.item.title}`}><Info size={14} /> See More</a>
+                  <a class="hero-btn" href={appendReturnTo(detailPath(slide.item.id, slide.item.type, slide.item.isAnime, slide.item.animeFormat), heroOrigin)} aria-label={`See More: ${slide.item.title} details`}><Info size={14} /> See More</a>
                   <button class="hero-btn icon-only" type="button" aria-label={isHeroFavorite ? `Remove ${slide.item.title} from My List` : `Add ${slide.item.title} to My List`} onclick={toggleHeroFavorite}>
                     <ListPlus size={14} />
                   </button>
@@ -980,7 +980,9 @@
 
   .hero-slide {
     position: relative; flex: 0 0 100%; scroll-snap-align: start; scroll-snap-stop: always;
-    min-height: min(78vh, 680px); overflow: hidden;
+    /* CLS #8: use dvh instead of vh so the hero height doesn't reflow when
+       the mobile URL bar shows/hides. The min() cap stays for large screens. */
+    min-height: min(78dvh, 680px); overflow: hidden;
   }
   .hero-media { position: absolute; inset: 0; overflow: hidden; }
   .hero-image { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center 18%; }
@@ -1048,8 +1050,11 @@
   }
   .hero-nav-btn:hover { border-color: var(--color-primary-border); color: var(--color-text); background: rgba(5,7,8,.75); }
   .hero-nav-btn:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
-  .hero-dots { display: flex; align-items: center; gap: 4px; }
-  .hero-dot { width: 18px; height: 18px; padding: 0; border: 0; background: transparent; cursor: pointer; }
+  .hero-dots { display: flex; align-items: center; gap: 2px; }
+  /* A11y #3 (Lighthouse target-size): the dot hit area was 18×18px — below
+     the 44×44px minimum for touch targets. The visible pip (::after) stays
+     5px/16px; only the button hit area grows to 44×44 with the pip centred. */
+  .hero-dot { width: 44px; height: 44px; padding: 0; border: 0; background: transparent; cursor: pointer; display: grid; place-items: center; }
   .hero-dot::after { content: ''; display: block; width: 5px; height: 5px; border-radius: 50%; background: rgba(242,255,248,.25); transition: all var(--motion-fast) var(--ease-out); }
   .hero-dot:hover::after { background: rgba(242,255,248,.5); }
   .hero-dot:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px; border-radius: 50%; }
@@ -1063,17 +1068,17 @@
 
   /* Tablet hero — slightly shorter than desktop, more compact copy. */
   @media (max-width: 900px) {
-    .hero-slide { min-height: min(68vh, 540px); }
-    .hero-content { min-height: min(68vh, 540px); padding-top: 70px; padding-bottom: 56px; }
+    .hero-slide { min-height: min(68dvh, 540px); }
+    .hero-content { min-height: min(68dvh, 540px); padding-top: 70px; padding-bottom: 56px; }
   }
 
   /* Mobile hero — shorter height, larger gradient to keep title readable
      over the artwork, Play becomes full-width. */
   @media (max-width: 640px) {
-    .hero-slide { min-height: 66vh; }
+    .hero-slide { min-height: 66dvh; }
     .hero-image { object-position: center 12%; }
     .hero-scrim { background: linear-gradient(to bottom, transparent 25%, rgba(5,7,8,.4) 55%, var(--color-bg) 100%); }
-    .hero-content { align-items: flex-end; min-height: 66vh; padding: 56px var(--d-gutter) 50px; }
+    .hero-content { align-items: flex-end; min-height: 66dvh; padding: 56px var(--d-gutter) 50px; }
     .hero-copy { max-width: none; }
     .hero-copy h1 { font-size: clamp(1.6rem, 7vw, 2.4rem); font-weight: 880; }
     .hero-copy p { font-size: .76rem; -webkit-line-clamp: 2; line-clamp: 2; }
@@ -1100,8 +1105,8 @@
      larger hero actions. The hero stays bounded so 4K doesn't look
      like an enlarged 1080p layout. */
   @media (min-width: 1900px) {
-    .hero-slide { min-height: min(82vh, 760px); }
-    .hero-content { min-height: min(82vh, 760px); padding: 120px clamp(48px, 6vw, 96px) 90px; }
+    .hero-slide { min-height: min(82dvh, 760px); }
+    .hero-content { min-height: min(82dvh, 760px); padding: 120px clamp(48px, 6vw, 96px) 90px; }
     .hero-copy { max-width: 680px; }
     .hero-copy h1 { font-size: clamp(3rem, 4.4vw, 4.4rem); }
     .hero-copy p { max-width: 540px; font-size: .88rem; }

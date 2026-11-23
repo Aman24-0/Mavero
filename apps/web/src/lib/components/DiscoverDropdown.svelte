@@ -132,7 +132,7 @@
     bind:this={triggerEl}
     aria-haspopup="listbox"
     aria-expanded={open}
-    aria-label={ariaLabel}
+    aria-label={`${ariaLabel}: ${selectedLabel}`}
     onclick={toggle}
     onkeydown={handleTriggerKeydown}
   >

@@ -303,7 +303,7 @@
     {#if episodeBadge}<div class="mc-episode-badge" title="Latest aired episode">{episodeBadge}</div>{/if}
     {#if item.progressLabel}<div class="mc-progress-label">{item.progressLabel}</div>{/if}
   </div>
-  {#if !selectable && item.resumeHref}<a class="mc-detail" href={detailHref} aria-label={`Open details for ${item.title}`}>Details</a>{/if}
+  {#if !selectable && item.resumeHref}<a class="mc-detail" href={detailHref} aria-label={`Details for ${item.title}`}>Details</a>{/if}
 </div>
 
 <style>
