@@ -145,7 +145,6 @@
         { id: 'api-sources', label: 'API & Sources', href: '/admin/system/api-sources', icon: Settings, matchPrefix: '/admin/system/api-sources' },
         { id: 'feature-control', label: 'Feature Control', href: '/admin/system/feature-control', icon: Layers, matchPrefix: '/admin/system/feature-control' },
         { id: 'livetv', label: 'Live TV', href: '/admin/system/livetv', icon: Tv, matchPrefix: '/admin/system/livetv' },
-        { id: 'direct-stream', label: 'DirectStream', href: '/admin/system/direct-stream', icon: Radar, matchPrefix: '/admin/system/direct-stream' },
         { id: 'downloads', label: 'Downloads', href: '/admin/system/downloads', icon: Download, matchPrefix: '/admin/system/downloads' },
         { id: 'integrations', label: 'Add-ons & Extensions', href: '/admin/system/integrations', icon: Puzzle, matchPrefix: '/admin/system/integrations' },
       ]

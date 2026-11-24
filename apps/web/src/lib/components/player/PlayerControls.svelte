@@ -173,7 +173,7 @@
   // Server selector (round 32): REAL resolver-exposed servers only — the
   // control renders ONLY when the active source carries more than one
   // server. Labels are the resolver-provided names verbatim.
-  $: serverMode = servers.length > 1 ? 'menu' : 'none';
+  $: serverMode = servers.length >= 1 ? 'menu' : 'none';
   $: serverButtonLabel = (selectedServer && servers.find((server) => server.url === selectedServer)?.label) || 'Server';
   // Round 36 — group servers by server name (Vidsrc | Vidstream) for the
   // two-pane server sheet. The active group filter defaults to the first

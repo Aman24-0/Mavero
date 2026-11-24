@@ -293,6 +293,11 @@ export const vidsrcScrapeProviderAdapter: ProviderAdapter = {
       }
     }
 
+    // Round 36 A4 — temporary diagnostic: log the server count + group breakdown.
+    const vidsrcCount = servers.filter((s) => (s.server || 'Vidsrc') === 'Vidsrc').length;
+    const vidstreamCount = servers.filter((s) => s.server === 'Vidstream').length;
+    console.warn('[direct-stream] resolve complete — servers:', servers.length, '(Vidsrc:', vidsrcCount, 'Vidstream:', vidstreamCount, ')');
+
     // Round 36 — determine the primary URL. If Vidsrc is available, use its
     // first source. If only Vidstream is available, use the first Vidstream
     // server's URL.

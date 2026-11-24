@@ -395,6 +395,11 @@
   // checkbox submits icon_remove=true → the server stores null. Offered
   // ONLY when an icon is actually saved.
   let iconRemoveChecked = $state(false);
+  // Round 36 C — DirectStream per-source settings (shown in the source edit sheet
+  // when the source slug starts with 'direct-stream').
+  let dsVidsrcEnabled = $state(true);
+  let dsVidstreamEnabled = $state(true);
+  let dsDefaultServer = $state('vidstream');
   const storedSourceIconExists = $derived(Boolean(typeof editingSource?.icon === 'string' && editingSource.icon.trim()));
 
   // Issue 5 (2026-10-16 round): UNIFIED BULK REPOSITION for the GLOBAL source
@@ -1149,6 +1154,27 @@
         </div>
         <label class="a2-field"><span>Enabled</span><input type="checkbox" name="enabled" value="true" checked={editingSource ? editingSource.enabled : true} /></label>
       </AdminFormSection>
+      {#if editingSource?.slug?.startsWith('direct-stream')}
+        <AdminFormSection heading="DirectStream Settings">
+          <p class="a2-field-hint">Per-source toggles and default server for the DirectStream provider.</p>
+          <input type="hidden" name="ds_settings" value="true" />
+          <label class="a2-field">
+            <span>Vidsrc Enabled</span>
+            <input type="checkbox" name="ds_vidsrc_enabled" value="true" checked={dsVidsrcEnabled} onchange={() => dsVidsrcEnabled = !dsVidsrcEnabled} />
+          </label>
+          <label class="a2-field">
+            <span>Vidstream Enabled</span>
+            <input type="checkbox" name="ds_vidstream_enabled" value="true" checked={dsVidstreamEnabled} onchange={() => dsVidstreamEnabled = !dsVidstreamEnabled} />
+          </label>
+          <label class="a2-field">
+            <span>Default Server</span>
+            <select name="ds_default_server" bind:value={dsDefaultServer}>
+              <option value="vidstream">Vidstream (Rivestream API)</option>
+              <option value="vidsrc">Vidsrc (vidsrc.party scrape)</option>
+            </select>
+          </label>
+        </AdminFormSection>
+      {/if}
       <AdminFormSection heading="Templates">
         <label class="a2-field"><span>Movie Template</span><input name="movie_template" value={editingSource?.movie_template ?? ''} /></label>
         <label class="a2-field"><span>Series Template</span><input name="series_template" value={editingSource?.series_template ?? ''} /></label>

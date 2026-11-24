@@ -14,7 +14,6 @@
  */
 
 import type { ProviderAdapter, AdapterResult, ResolverContext } from './types';
-import { ContentServiceError } from '$lib/server/content/types';
 
 export const RIVESTREAM_ADAPTER_ID = 'rivestream';
 
@@ -106,20 +105,32 @@ export const rivestreamAdapter: ProviderAdapter = {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 10_000);
       try {
-        const response = await fetch(apiUrl.toString(), {
+        // Route through the Worker proxy so the API call is not blocked
+        // by Netlify's egress (same class of failure as vidsrc). The
+        // Worker proxies the request and returns the JSON response.
+        let fetchUrl = apiUrl.toString();
+        if (workerProxyUrl) {
+          const encoded = encodeBase64Url(apiUrl.toString());
+          const base = workerProxyUrl.endsWith('/') ? workerProxyUrl.slice(0, -1) : workerProxyUrl;
+          fetchUrl = `${base}/?e=${encoded}`;
+        }
+        const response = await fetch(fetchUrl, {
           signal: controller.signal,
           headers: { accept: 'application/json' },
         });
         if (!response.ok) {
-          throw new ContentServiceError('Rivestream API error', { code: 'UPSTREAM_ERROR', status: 502 });
+          console.warn('[rivestream] API resolve failed — HTTP', response.status);
+          return null;
         }
         data = (await response.json()) as RivestreamResponse;
       } finally {
         clearTimeout(timeout);
       }
-    } catch {
+    } catch (error) {
       // If the resolve fails / returns nothing → omit the Vidstream group
-      // entirely (never block Vidsrc).
+      // entirely (never block Vidsrc). Log the failure so it's visible.
+      const msg = error instanceof Error ? error.message : String(error);
+      console.warn('[rivestream] API resolve failed —', msg);
       return null;
     }
 
