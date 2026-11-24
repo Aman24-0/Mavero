@@ -515,9 +515,11 @@ if (!sidebarState.skipped) {
   console.log('wgt_file_smoke: sidebar auto-collapse verified (Right from the sidebar → content + icon-rail event)');
 }
 
-// 9d. RAIL SLIDE (only when real rails rendered — the empty-state fallback
-//     has none): Right along a rail must SLIDE it via CSS transform and
+// 9d. RAIL SCROLL (only when real rails rendered — the empty-state fallback
+//     has none): Right along a rail must SCROLL it via native scrollLeft and
 //     focus must never vanish, even past the last VISIBLE card.
+//     TV pass 7: switched from CSS transform to native scroll — the TV engine
+//     (Chromium 69-76) does not repaint transform-slid overflow-hidden regions.
 const railState = await page.evaluate(async () => {
   const fire = (keyCode, key) =>
     window.dispatchEvent(
@@ -546,11 +548,11 @@ const railState = await page.evaluate(async () => {
       break;
     }
   }
-  const transform = getComputedStyle(rail).transform;
+  // TV pass 7: check native scrollLeft (not CSS transform)
   return {
     skipped: false,
     focusVanished,
-    slid: transform && transform !== 'none',
+    slid: rail.scrollLeft > 0,
     stillOnRail: Boolean(document.activeElement && document.activeElement.closest && document.activeElement.closest('.rail'))
   };
 });
@@ -559,14 +561,14 @@ if (!railState.skipped) {
     await fail(page, diagnostics, 'focus DISAPPEARED while moving Right along a rail — the reported rail-end bug');
   }
   if (!railState.slid) {
-    await fail(page, diagnostics, 'the rail never applied a CSS-transform slide while focus crossed the visible edge');
+    await fail(page, diagnostics, 'the rail never scrolled (scrollLeft stayed 0) while focus crossed the visible edge');
   }
   if (!railState.stillOnRail) {
     await fail(page, diagnostics, 'focus left the rail while sliding Right along it');
   }
-  console.log('wgt_file_smoke: rail slide verified (transform applied, focus retained across the visible edge)');
+  console.log('wgt_file_smoke: rail scroll verified (native scrollLeft applied, focus retained across the visible edge)');
 } else {
-  console.log('wgt_file_smoke: rail slide skipped (no populated rails rendered — empty-state fallback)');
+  console.log('wgt_file_smoke: rail scroll skipped (no populated rails rendered — empty-state fallback)');
 }
 
 console.log('wgt_file_smoke: PASS — the packed widget boots over file:// on a TV-era engine (simulated built-ins deleted), polyfill fixes the Object.hasOwn crash, __mavero_wgt_app.start exposed, overlay silent, sidebar + discover body rendered, tv-mode + spatial D-PAD focus verified, Samsung key-registration + region rules verified');
