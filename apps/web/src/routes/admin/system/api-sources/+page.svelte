@@ -397,10 +397,20 @@
   let iconRemoveChecked = $state(false);
   // Round 36 C / Round 37 — DirectStream per-source settings (shown in the
   // source edit sheet when the source slug starts with 'direct-stream').
-  let dsVidsrcEnabled = $state(true);
-  let dsVidstreamEnabled = $state(true);
-  let dsVidplayEnabled = $state(true);
-  let dsDefaultServer = $state('vidstream');
+  // Initialised from data.dsConfig (returned by the server load) so the
+  // sheet shows the real stored state, not hardcoded defaults. The ignore
+  // directives below are intentional: we want the INITIAL server-loaded
+  // value (the user then toggles via onchange handlers); a $derived would
+  // reset the checkbox every time `data` changes (e.g. after a save
+  // redirect), wiping the user's in-flight edits.
+  // svelte-ignore state_referenced_locally
+  let dsVidsrcEnabled = $state(data.dsConfig?.vidsrcEnabled ?? true);
+  // svelte-ignore state_referenced_locally
+  let dsVidstreamEnabled = $state(data.dsConfig?.vidstreamEnabled ?? true);
+  // svelte-ignore state_referenced_locally
+  let dsVidplayEnabled = $state(data.dsConfig?.vidplayEnabled ?? true);
+  // svelte-ignore state_referenced_locally
+  let dsDefaultServer = $state(data.dsConfig?.defaultServer ?? 'vidstream');
   const storedSourceIconExists = $derived(Boolean(typeof editingSource?.icon === 'string' && editingSource.icon.trim()));
 
   // Issue 5 (2026-10-16 round): UNIFIED BULK REPOSITION for the GLOBAL source

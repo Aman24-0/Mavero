@@ -33,6 +33,7 @@ import {
 } from '$lib/server/streaming/admin-service';
 import { classifyAdminMutationError } from '$lib/server/streaming/mutation-result';
 import { lookupProviderCapabilities } from '$lib/shared/player-capabilities';
+import { createSupabaseAdminClient } from '$lib/server/supabase/admin';
 import {
   parseProviderForm, parseSourceForm, parseId, parseBulkOrderings,
   parseCategoryForm, parseSourceAssignmentForm, parseCategoryReorderForm,
@@ -103,6 +104,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     defaultSlots,
     categories,
     sourceCategories,
+    dsConfig,
     notice: url.searchParams.get('notice'),
   };
 };
@@ -235,6 +237,43 @@ export const actions: Actions = {
       // `Record<string, unknown>` directly (excess property checking).
       const { capabilities: _ignoredCaps, ...input } = parsed;
       await updateSource(locals.supabase, id, { ...input, capabilities: mergedCapabilities as never });
+
+      // Round 36 C / Round 37 — persist DirectStream per-source toggles +
+      // default server to app_config id=1. The form submits ds_settings=true
+      // (a hidden input) ONLY when the DirectStream settings section is
+      // rendered (source slug starts with 'direct-stream'). Checkbox
+      // present = true, absent = false (HTML forms don't submit unchecked
+      // checkboxes). Validate default_server ∈ {vidsrc, vidstream, vidplay}.
+      // Uses the service-role admin client because the user-bound SSR client
+      // may lack RLS write permissions on app_config.
+      if (form.get('ds_settings') === 'true') {
+        const vidsrc = form.get('ds_vidsrc_enabled') === 'true';
+        const vidstream = form.get('ds_vidstream_enabled') === 'true';
+        const vidplay = form.get('ds_vidplay_enabled') === 'true';
+        let defaultServer = String(form.get('ds_default_server') ?? 'vidstream');
+        if (defaultServer !== 'vidsrc' && defaultServer !== 'vidstream' && defaultServer !== 'vidplay') {
+          defaultServer = 'vidstream';
+        }
+        try {
+          const adminClient = createSupabaseAdminClient();
+          const { error: dsError } = await adminClient
+            .from('app_config')
+            .update({
+              direct_stream_vidsrc_enabled: vidsrc,
+              direct_stream_vidstream_enabled: vidstream,
+              direct_stream_vidplay_enabled: vidplay,
+              direct_stream_default_server: defaultServer,
+              updated_at: new Date().toISOString(),
+            } as Record<string, unknown> as never)
+            .eq('id', 1);
+          if (dsError) {
+            console.error('[api-sources] dsConfig update failed', { code: dsError.code, message: dsError.message });
+          }
+        } catch (dsErr) {
+          console.error('[api-sources] dsConfig update threw', dsErr instanceof Error ? dsErr.message : String(dsErr));
+        }
+      }
+
       throw redirect(303, `/admin/system/api-sources?tab=sources&notice=Source%20updated.`);
     } catch (error) {
       if (isRedirect(error)) throw error;
