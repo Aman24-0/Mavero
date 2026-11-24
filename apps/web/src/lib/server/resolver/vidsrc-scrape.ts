@@ -176,11 +176,21 @@ export const vidsrcScrapeProviderAdapter: ProviderAdapter = {
     // any read error — the scraper is always usable.
     let config = DEFAULT_SCRAPER_CONFIG;
     let enabled = false;
+    // Round 36 — per-source toggles. Read from app_config.
+    let vidsrcEnabled = true;
+    let vidstreamEnabled = true;
     try {
       const client = createSupabaseAdminClient();
       const scraperState = await getScraperConfig(client);
       config = scraperState.config;
       enabled = scraperState.enabled;
+      // Read per-source toggles from the same client.
+      const { data: cfgRow } = await client.from('app_config').select('*').eq('id', 1).single();
+      const cfgAny = cfgRow as Record<string, unknown> | null;
+      if (cfgAny) {
+        if (typeof cfgAny.direct_stream_vidsrc_enabled === 'boolean') vidsrcEnabled = cfgAny.direct_stream_vidsrc_enabled;
+        if (typeof cfgAny.direct_stream_vidstream_enabled === 'boolean') vidstreamEnabled = cfgAny.direct_stream_vidstream_enabled;
+      }
     } catch {
       // Config read failed — stay disabled (fail closed).
     }
@@ -192,30 +202,38 @@ export const vidsrcScrapeProviderAdapter: ProviderAdapter = {
     }
 
     // Scrape.
-    // 2026-10 round 30 — route by SOURCE SLUG (not variant). The source slug
-    // is on the config.source (the streaming_sources row).
-    //   'direct-stream-vidsrc' → scrapeVidsrc() (DirectStream / vidsrc.party)
-    //   (VidCore/multi-stream was REMOVED in round 36 — the source row is deleted.)
+    // Round 36 — per-source toggles gate the scrape + merge.
     const sourceSlug = context.config.source.slug ?? '';
-    let result;
-    try {
-      result = await scrapeVidsrc(
+    let result: Awaited<ReturnType<typeof scrapeVidsrc>> | null = null;
+    let firstSource: { url: string; quality?: string; server?: string; language?: string } | null = null;
+    let resultReferer = '';
+
+    if (vidsrcEnabled) {
+      try {
+        result = await scrapeVidsrc(
             tmdbId,
             context.request.mediaType === 'movie' ? 'movie' : 'tv',
             season,
             episode,
             config
           );
-    } catch (error) {
-      if (error instanceof ScraperError) throw mapScraperError(error);
-      throw new ResolverError('RESOLUTION_UNAVAILABLE', error);
+        if (result && result.sources.length > 0) {
+          firstSource = result.sources[0]!;
+          resultReferer = result.referer ?? '';
+        }
+      } catch (error) {
+        if (!vidstreamEnabled) {
+          // Vidsrc failed and Vidstream is disabled — propagate the error.
+          if (error instanceof ScraperError) throw mapScraperError(error);
+          throw new ResolverError('RESOLUTION_UNAVAILABLE', error);
+        }
+        // Vidsrc failed but Vidstream is enabled — continue to Vidstream.
+      }
     }
 
-    if (result.sources.length === 0) {
+    if (!firstSource && !vidstreamEnabled) {
       throw new ResolverError('RESOLUTION_UNAVAILABLE');
     }
-
-    const firstSource = result.sources[0]!;
 
     // 2026-10 round 32/33 — MULTI-SERVER WIRE: every scraped source becomes a
     // playback candidate. `url` stays the FIRST source (validated below —
@@ -227,57 +245,61 @@ export const vidsrcScrapeProviderAdapter: ProviderAdapter = {
     // that fails validation is dropped, never coerced. The label composes
     // the server name with its audio language ("Tethys (English)",
     // "Enceladus (Hindi)") — the celestial roster's per-server language.
-    const servers: Array<{ url: string; label: string }> = [];
-    for (const scraped of result.sources) {
-      if (servers.length >= 28) break; // bounded wire — covers the full celestial roster
-      const candidateUrl = buildPlaybackUrl(scraped.url, result.referer);
-      try {
-        validatePlaybackUrl(candidateUrl, 'direct');
-      } catch {
-        continue;
-      }
-      const serverName = typeof scraped.server === 'string' && scraped.server.trim() ? scraped.server.trim() : '';
-      const language = typeof scraped.language === 'string' ? scraped.language.trim() : '';
-      const label = serverName
-        ? (language && !serverName.toLowerCase().includes(language.toLowerCase()) ? `${serverName} (${language})` : serverName)
-        : scraped.quality || 'Server';
-      servers.push({ url: candidateUrl, label });
-    }
-
-    // Round 36 — ALSO call the Rivestream adapter and merge its servers
-    // into the same grouped server list. If Rivestream fails, omit its
-    // entries entirely (never block Vidsrc).
-    let rivestreamSubtitles: Array<{ url: string; language?: string; label?: string }> | undefined;
-    try {
-      const rivestreamResult = await rivestreamAdapter.resolve(context);
-      if (rivestreamResult?.metadata?.servers) {
-        for (const srv of rivestreamResult.metadata.servers) {
-          if (servers.length >= 28) break;
-          servers.push({
-            url: srv.url,
-            label: srv.label,
-            server: srv.server,
-            language: srv.language,
-            qualities: srv.qualities,
-          } as { url: string; label: string; server?: string; language?: string; qualities?: Array<{ label: string; url: string }> });
+    const servers: Array<{ url: string; label: string; server?: string; language?: string; qualities?: Array<{ label: string; url: string }> }> = [];
+    if (vidsrcEnabled && result && result.sources) {
+      for (const scraped of result.sources) {
+        if (servers.length >= 28) break;
+        const candidateUrl = buildPlaybackUrl(scraped.url, resultReferer);
+        try {
+          validatePlaybackUrl(candidateUrl, 'direct');
+        } catch {
+          continue;
         }
-        rivestreamSubtitles = rivestreamResult.subtitles;
+        const serverName = typeof scraped.server === 'string' && scraped.server.trim() ? scraped.server.trim() : '';
+        const language = typeof scraped.language === 'string' ? scraped.language.trim() : '';
+        const label = serverName
+          ? (language && !serverName.toLowerCase().includes(language.toLowerCase()) ? `${serverName} (${language})` : serverName)
+          : scraped.quality || 'Server';
+        servers.push({ url: candidateUrl, label, server: 'Vidsrc' });
       }
-    } catch {
-      // Rivestream failure is non-blocking — Vidsrc servers are already built.
     }
 
-    // 2026-10 round 19 — build the playback URL. When the Worker is
-    // configured, wrap the manifest URL server-side (the Worker adds CORS
-    // + Referer). When it's NOT configured, return the raw vidsrc.party URL
-    // — the client-side wireHlsEngine will route it through the in-app proxy
-    // via the isLivetvProxyUrl() check (same as Live TV).
-    const playbackUrl = buildPlaybackUrl(firstSource.url, result.referer);
+    // Round 36 — call the Rivestream adapter (gated by vidstreamEnabled).
+    // If Rivestream fails, omit its entries entirely (never block Vidsrc).
+    let rivestreamSubtitles: Array<{ url: string; language?: string; label?: string }> | undefined;
+    if (vidstreamEnabled) {
+      try {
+        const rivestreamResult = await rivestreamAdapter.resolve(context);
+        if (rivestreamResult?.metadata?.servers) {
+          for (const srv of rivestreamResult.metadata.servers) {
+            if (servers.length >= 28) break;
+            servers.push({
+              url: srv.url,
+              label: srv.label,
+              server: srv.server,
+              language: srv.language,
+              qualities: srv.qualities,
+            });
+          }
+          rivestreamSubtitles = rivestreamResult.subtitles;
+        }
+      } catch {
+        // Rivestream failure is non-blocking.
+      }
+    }
 
-    // Validate the playback URL. The Worker URL is https and not a private
-    // host, so this passes. The raw vidsrc.party URL is also https and passes.
-    // Both are absolute https URLs — validatePlaybackUrl('direct') accepts them.
-    const safeUrl = validatePlaybackUrl(playbackUrl, 'direct');
+    // Round 36 — determine the primary URL. If Vidsrc is available, use its
+    // first source. If only Vidstream is available, use the first Vidstream
+    // server's URL.
+    let primaryUrl: string;
+    if (firstSource) {
+      primaryUrl = buildPlaybackUrl(firstSource.url, resultReferer);
+    } else if (servers.length > 0) {
+      primaryUrl = servers[0].url;
+    } else {
+      throw new ResolverError('RESOLUTION_UNAVAILABLE');
+    }
+    const safeUrl = validatePlaybackUrl(primaryUrl, 'direct');
 
     // Direct HLS result — the existing HLS engine owns playback, quality
     // levels and audio-track discovery from the manifest. protocol: 'hls'
@@ -291,6 +313,9 @@ export const vidsrcScrapeProviderAdapter: ProviderAdapter = {
         providerName: context.config.provider.name,
         sourceName: context.config.source.name,
         protocol: 'hls',
+        // Round 36 — the default server setting from app_config (vidstream | vidsrc).
+        // The player reads this to preselect the initial server.
+        defaultServer: vidstreamEnabled ? 'vidstream' : 'vidsrc',
         // Round 32/33 — ALL VidCore celestial servers (Earth / Tethys /
         // Enceladus / … with their per-server audio language on the label).
         // servers[0].url is the same proxied URL as `url` — the player's

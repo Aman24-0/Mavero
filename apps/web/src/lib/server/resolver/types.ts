@@ -124,6 +124,8 @@ export type SafeSourceMetadata = {
     language?: string;
     qualities?: Array<{ label: string; url: string }>;
   }>;
+  /** Round 36 — default server ('vidstream' | 'vidsrc') for player preselection. */
+  defaultServer?: string;
 };
 
 export type ResolverErrorCode =

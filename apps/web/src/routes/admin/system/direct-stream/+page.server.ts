@@ -33,6 +33,8 @@ export const load: PageServerLoad = async ({ locals }) => {
   // use a raw select with a type cast so the query compiles before the
   // migration is applied.
   let defaultServer = 'vidstream';
+  let vidsrcEnabled = true;
+  let vidstreamEnabled = true;
   try {
     const { data: cfg } = await locals.supabase
       .from('app_config')
@@ -43,7 +45,9 @@ export const load: PageServerLoad = async ({ locals }) => {
     if (cfgAny?.direct_stream_default_server && typeof cfgAny.direct_stream_default_server === 'string') {
       defaultServer = cfgAny.direct_stream_default_server;
     }
-  } catch { /* table may not have the column yet — use default */ }
+    if (typeof cfgAny?.direct_stream_vidsrc_enabled === 'boolean') vidsrcEnabled = cfgAny.direct_stream_vidsrc_enabled;
+    if (typeof cfgAny?.direct_stream_vidstream_enabled === 'boolean') vidstreamEnabled = cfgAny.direct_stream_vidstream_enabled;
+  } catch { /* table may not have the columns yet — use defaults */ }
   return {
     embedDomain: config.embedDomain,
     cdnDomains: config.cdnDomains.join(', '),
@@ -51,6 +55,8 @@ export const load: PageServerLoad = async ({ locals }) => {
     defaultEmbedDomain: DEFAULT_SCRAPER_CONFIG.embedDomain,
     defaultCdnDomains: DEFAULT_SCRAPER_CONFIG.cdnDomains.join(', '),
     defaultServer,
+    vidsrcEnabled,
+    vidstreamEnabled,
   };
 };
 
@@ -104,27 +110,31 @@ export const actions: Actions = {
     }
     return { notice: 'Scraper config saved.' };
   },
-  // Round 36 — save the default server setting (vidstream | vidsrc).
+  // Round 36 — save the default server + per-source toggles.
   saveDefaultServer: async ({ request, locals }) => {
     await requireAdmin(locals, { redirectTo: '/admin/system/direct-stream' });
     const form = await request.formData();
     const server = String(form.get('default_server') ?? 'vidstream').trim();
+    const vidsrc = form.get('vidsrc_enabled') === 'on';
+    const vidstream = form.get('vidstream_enabled') === 'on';
     if (server !== 'vidstream' && server !== 'vidsrc') {
       return fail(400, { message: 'Default server must be "vidstream" or "vidsrc".' });
     }
-    // The direct_stream_default_server column is added by migration
-    // 20261126000000_rivestream_source.sql. Use the service-role admin
-    // client to set it (the typed client doesn't know the column yet).
     try {
       const adminClient = (await import('$lib/server/supabase/admin')).createSupabaseAdminClient();
       const { error } = await adminClient
         .from('app_config')
-        .update({ direct_stream_default_server: server, updated_at: new Date().toISOString() } as Record<string, unknown> as never)
+        .update({
+          direct_stream_default_server: server,
+          direct_stream_vidsrc_enabled: vidsrc,
+          direct_stream_vidstream_enabled: vidstream,
+          updated_at: new Date().toISOString(),
+        } as Record<string, unknown> as never)
         .eq('id', 1);
       if (error) throw error;
     } catch {
-      return fail(500, { message: 'Could not save the default server setting (ensure the migration is applied).' });
+      return fail(500, { message: 'Could not save the direct stream settings (ensure the migration is applied).' });
     }
-    return { notice: `Default server set to ${server}.` };
+    return { notice: 'Direct stream settings saved.' };
   },
 };

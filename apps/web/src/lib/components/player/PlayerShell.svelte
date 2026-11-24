@@ -212,6 +212,9 @@
   // records the servers a fatal error already fell back through (reset on
   // 'playing' and on source change) so the fallback walk is finite.
   let selectedServer = '';
+  // Round 36 D — per-server-entry qualities (for Vidstream language entries)
+  let selectedServerEntry: { url: string; label: string; server?: string; language?: string; qualities?: Array<{ label: string; url: string }> } | undefined;
+  let serverQualities: Array<{ label: string; url: string }> = [];
   let serverFallbackTried: string[] = [];
   let selectedSubtitle = '';
   // Focused fixes (Issues 1+2): subtitle appearance + sync preferences.
@@ -425,7 +428,7 @@
   type WakeLockNavigator = Navigator & { wakeLock?: { request: (type: 'screen') => Promise<WakeLockSentinelHandle> } };
   type MediaSessionNavigator = Navigator & { mediaSession?: { playbackState?: string; metadata?: MediaMetadata | null; setActionHandler?: (action: string, handler: (() => void) | null) => void; setPositionState?: (state: { duration?: number; playbackRate?: number; position?: number }) => void } };
 
-  $: qualities = source?.qualities ?? [];
+  $: qualities = serverQualities.length > 0 ? serverQualities.map((q) => ({ url: q.url, label: q.label })) : (source?.qualities ?? []);
   // Round 32: servers live on the source metadata (direct sources only).
   $: servers = source?.type === 'direct' ? source?.metadata?.servers ?? [] : [];
   $: subtitles = source?.subtitles ?? [];
@@ -436,6 +439,8 @@
   // Round 32: an explicitly selected SERVER wins over the default chain —
   // switching servers re-prepares the stream without a re-resolve.
   $: mediaUrl = selectedServer || selectedQualityOption?.url || source?.url || null;
+  // Round 36 D — when switching quality within a server entry, the quality
+  // URL overrides the server URL (no re-resolve).
   // statusNote (Phase 10 GOAL 14) removed with the duplicate viewport status
   // label — see PlayerViewport. The shell surfaces loading/errors via its
   // single loading/error card.
