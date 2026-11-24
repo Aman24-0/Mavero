@@ -108,7 +108,7 @@ console.log('\nISSUE 1 — portrait secondary row');
   // "Off" must stay the FIRST entry of the subtitle sheet's track list; the
   // honest notice renders as a separate non-selectable status row only when
   // there are no tracks (Issue 3 contract: the sheet replaced the <option>s).
-  ok(/class="track-row" class:selected=\{selectedSubtitle === ''\}[\s\S]{0,240}<strong>Off<\/strong>/.test(subtitleSheet) && subtitleSheet.indexOf("selectedSubtitle === ''") < subtitleSheet.indexOf('{#each tracks'), '1j. Off remains the FIRST entry of the subtitle sheet; the notice is a separate status row');
+  ok(/class="track-row" class:selected=\{selectedSubtitle === ''\}[\s\S]{0,400}<strong>Off<\/strong>/.test(subtitleSheet) && subtitleSheet.indexOf("selectedSubtitle === ''") < subtitleSheet.indexOf('{#each filteredTracks'), '1j. Off remains the FIRST entry of the subtitle sheet; the notice is a separate status row');
   ok(/\{#if !tracks\.length && notice\}[\s\S]{0,120}class="notice-row"/.test(subtitleSheet), '1j2. the honest notice renders ONLY when no tracks exist (never obscuring Off)');
   // Hit targets unchanged.
   ok(/\.control-button \{ display: inline-grid; place-items: center; min-width: 40px; min-height: 40px;/.test(controls), '1k. control hit targets keep the 40px floor');
