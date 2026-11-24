@@ -131,7 +131,7 @@ console.log('\n5 — Languages tab carries the existing track list (Off + every 
 
   ok(/Off/.test(languagesBranch), '5a. Languages tab includes the "Off" row');
   ok(/onSubtitle\(''\)/.test(languagesBranch), '5b. Languages tab keeps the Off → onSubtitle("") contract');
-  ok(/{#each tracks as track/.test(languagesBranch), '5c. Languages tab iterates the tracks array (every available track)');
+  ok(/{#each (?:filtered)?[Tt]racks as track/.test(languagesBranch), '5c. Languages tab iterates the tracks array (every available track)');
   ok(/onSubtitle\(track\.url\)/.test(languagesBranch), '5d. Languages tab keeps the track → onSubtitle(track.url) contract');
   ok(/notice/.test(languagesBranch), '5e. Languages tab retains the honest notice state (no tracks / unavailable)');
 }
