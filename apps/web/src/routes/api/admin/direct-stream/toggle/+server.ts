@@ -24,7 +24,7 @@ const NO_STORE = { 'cache-control': 'no-store' } as const;
 
 export const PUT: RequestHandler = async ({ request, locals }) => {
         try {
-                await requireAdmin(locals, { redirectTo: '/admin/system/direct-stream' });
+                await requireAdmin(locals, { redirectTo: '/admin/system/api-sources' });
         } catch {
                 return json({ ok: false, error: { message: 'Admin access is required.' } }, { status: 403, headers: NO_STORE });
         }

@@ -130,8 +130,8 @@ export function createDefaultAdapterIds(): Record<string, ProviderAdapter> {
     // source proxied through the Cloudflare Worker (the Worker adds the
     // required Referer server-side — the browser cannot set Referer). The
     // embed + CDN domains are config-driven (app_config) and editable at
-    // /admin/system/direct-stream. Seeded DISABLED + experimental — the
-    // admin enables it from the DirectStream page after verifying the
+    // /admin/system/api-sources. Seeded DISABLED + experimental — the
+    // admin enables it from the Sources admin page after verifying the
     // scraper domains.
     [VIDSRC_SCRAPE_ADAPTER_ID]: vidsrcScrapeProviderAdapter,
   };

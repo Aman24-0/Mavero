@@ -8,7 +8,7 @@
  *
  * The adapter:
  *   1. Reads the scraper config from `app_config` (admin-editable at
- *      /admin/system/direct-stream — the embed domain + CDN domains are
+ *      /admin/system/api-sources — the embed domain + CDN domains are
  *      config-driven so domain rotations don't need a code change).
  *   2. Calls `scrapeVidsrc()` to extract the real `.m3u8` URL from vidsrc's
  *      3-hop embed chain.

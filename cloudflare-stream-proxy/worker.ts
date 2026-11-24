@@ -56,7 +56,7 @@
 // 2026-11 round 36 — Rivestream (Vidstream) CDN hosts: the HLS + VTT
 // origins the Rivestream API hands out (observed: hscow.com, fcxmb.com,
 // fodcyy.com, fhxod.com — the sub-domains rotate, the suffixes don't).
-const ALLOWED_HOST_SUFFIXES = ['hotstar.com', 'slivcdn.com', 'jio.com', 'jiocinema.com', 'premiumplugx.com', 'catbox.moe', 'cloudnestra.com', 'stellarconductornexus.com', 'vidsrc.party', 'cookiebakers23blog.xyz', 'cno.to', 'vidcore.org', 'hscow.com', 'fcxmb.com', 'fodcyy.com', 'fhxod.com'];
+const ALLOWED_HOST_SUFFIXES = ['hotstar.com', 'slivcdn.com', 'jio.com', 'jiocinema.com', 'premiumplugx.com', 'catbox.moe', 'cloudnestra.com', 'stellarconductornexus.com', 'vidsrc.party', 'cookiebakers23blog.xyz', 'cno.to', 'vidcore.org', 'hscow.com', 'fcxmb.com', 'fodcyy.com', 'fhxod.com', 'rivestream.app'];
 
 const REFERER_BY_HOST: ReadonlyArray<{ suffix: string; referer: string }> = [
         { suffix: 'slivcdn.com', referer: 'https://www.sonyliv.com/' },

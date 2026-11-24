@@ -15,7 +15,7 @@
 // Worker URL (permissive CORS). No playback URLs or tokens are logged.
 //
 // The config (embed domain, CDN domains) is read from app_config — the admin
-// can update domains at runtime via /admin/system/direct-stream without a
+// can update domains at runtime via /admin/system/api-sources without a
 // code change or redeploy.
 // ============================================================================
 
@@ -25,7 +25,6 @@ import { env as publicEnv } from '$env/dynamic/public';
 import { createSupabaseAdminClient } from '$lib/server/supabase/admin';
 import { getScraperConfig } from '$lib/server/app-config';
 import { scrapeVidsrc, ScraperError, DEFAULT_SCRAPER_CONFIG, type ScraperSource } from '$lib/server/vod/vidsrc-scraper';
-import { scrapeVidCore } from '$lib/server/vod/vidcore-scraper';
 import {
         checkRateLimit,
         clientIdentity,
@@ -106,19 +105,24 @@ export const GET: RequestHandler = async ({ request, url, locals }) => {
         // The global enable gate. The admin can disable the scraper from the
         // DirectStream admin page without touching the streaming_sources row.
         if (!enabled) {
-                return fail(503, 'SCRAPER_DISABLED', 'The DirectStream scraper is disabled. Enable it in /admin/system/direct-stream.');
+                return fail(503, 'SCRAPER_DISABLED', 'The DirectStream scraper is disabled. Enable it in /admin/system/api-sources.');
         }
 
-        // --- Parse the source parameter (vidsrc = Direct 1, vidcore = Direct 2) ---
+        // --- Parse the source parameter (kept for backward compat — only
+        //     vidsrc is supported now; the vidcore branch was removed when
+        //     the multi-stream scraper was deleted) ---
         const source = url.searchParams.get('source') ?? 'vidsrc';
 
         // --- Scrape ---
         try {
-                // 2026-10 round 26 — route to the correct scraper based on ?source=.
-                // vidsrc (default) = Direct 1 (vidsrc.party), vidcore = Direct 2 (vidcore.org).
-                const result = source === 'vidcore'
-                        ? await scrapeVidCore(tmdbId, type, season, episode)
-                        : await scrapeVidsrc(tmdbId, type, season, episode, config);
+                // 2026-10 round 26 — originally routed to scrapeVidCore when
+                // ?source=vidcore. The vidcore scraper was removed (round 37);
+                // the endpoint now keeps only the vidsrc path. The route itself
+                // is preserved so existing clients don't 404.
+                if (source !== 'vidsrc' && source !== '') {
+                        return fail(400, 'INVALID_PARAMS', 'Only the vidsrc source is supported.');
+                }
+                const result = await scrapeVidsrc(tmdbId, type, season, episode, config);
 
                 // Build the playback URL. When the Worker is configured, wrap
                 // server-side. When not, return the raw URL (the client-side
