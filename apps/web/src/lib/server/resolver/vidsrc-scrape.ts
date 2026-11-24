@@ -288,8 +288,11 @@ export const vidsrcScrapeProviderAdapter: ProviderAdapter = {
           }
           rivestreamSubtitles = rivestreamResult.subtitles;
         }
-      } catch {
-        // Rivestream failure is non-blocking.
+      } catch (error) {
+        // Rivestream failure is non-blocking, but log it so any pre-fetch
+        // throw (bad context field, missing env, etc.) is visible in the
+        // Netlify log instead of being silently swallowed.
+        console.warn('[direct-stream] rivestream merge failed —', error instanceof Error ? error.message : String(error));
       }
     }
 

@@ -14,6 +14,7 @@
  */
 
 import type { ProviderAdapter, AdapterResult, ResolverContext } from './types';
+import { env as publicEnv } from '$env/dynamic/public';
 
 export const RIVESTREAM_ADAPTER_ID = 'rivestream';
 
@@ -83,8 +84,23 @@ export const rivestreamAdapter: ProviderAdapter = {
   adapterId: RIVESTREAM_ADAPTER_ID,
 
   async resolve(context: ResolverContext): Promise<AdapterResult | null> {
-    const env = (import.meta as unknown as { env?: Record<string, string | undefined> }).env ?? {};
-    const workerProxyUrl = env.PUBLIC_STREAM_PROXY_URL;
+    // IMPORTANT: Vite does NOT replace a dynamic `import.meta.env` OBJECT access
+    // in the SSR bundle (only literal `import.meta.env.PUBLIC_FOO` lookups are
+    // statically replaced). The previous `(import.meta as ...).env?.PUBLIC_STREAM_PROXY_URL`
+    // pattern therefore always evaluated to `undefined` in the Netlify SSR
+    // bundle, the API was fetched directly, Cloudflare blocked it, and the
+    // Vidstream group silently disappeared. The `$env/dynamic/public` module
+    // is the documented SvelteKit pattern for reading public env at runtime
+    // and is what every other adapter in this folder uses.
+    const workerProxyUrl = (publicEnv.PUBLIC_STREAM_PROXY_URL ?? '').replace(/\/+$/, '');
+    if (!workerProxyUrl) {
+      // Without the Worker the API call would go straight from Netlify to
+      // scrapper.rivestream.app, which Cloudflare blocks — fail closed and
+      // surface the misconfiguration so it shows up in the Netlify log.
+      console.warn('[rivestream] PUBLIC_STREAM_PROXY_URL missing — API call would be blocked');
+      return null;
+    }
+
     // NormalizedMediaItem.id is the content ID (e.g. "movie-278" → strip prefix).
     const rawId = context.content.id.replace(/^(movie|series|anime)-/, '');
     const mediaType = context.content.type;
@@ -108,12 +124,8 @@ export const rivestreamAdapter: ProviderAdapter = {
         // Route through the Worker proxy so the API call is not blocked
         // by Netlify's egress (same class of failure as vidsrc). The
         // Worker proxies the request and returns the JSON response.
-        let fetchUrl = apiUrl.toString();
-        if (workerProxyUrl) {
-          const encoded = encodeBase64Url(apiUrl.toString());
-          const base = workerProxyUrl.endsWith('/') ? workerProxyUrl.slice(0, -1) : workerProxyUrl;
-          fetchUrl = `${base}/?e=${encoded}`;
-        }
+        const encoded = encodeBase64Url(apiUrl.toString());
+        const fetchUrl = `${workerProxyUrl}/?e=${encoded}`;
         const response = await fetch(fetchUrl, {
           signal: controller.signal,
           headers: { accept: 'application/json' },
