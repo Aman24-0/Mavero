@@ -53,18 +53,9 @@
 // manifest). The Referer for vidsrc.party is itself; for the CDNs it's
 // vidsrc.party (the segment proxy runs on vidsrc.party, but if the Worker
 // ever fetches a raw CDN URL, it sends vidsrc.party as the Referer).
-// Round 36 — decode a base64url-encoded string to UTF-8. Used for the
-// ?e= parameter so the real CDN URL never appears in plain text client-side.
-function decodeBase64Url(input: string): string {
-        // Convert base64url → base64, pad to length multiple of 4.
-        const b64 = input.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(input.length / 4) * 4, '=');
-        // Use atob + Uint8Array for binary-safe decode, then TextDecoder for UTF-8.
-        const binary = atob(b64);
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-        return new TextDecoder().decode(bytes);
-}
-
+// 2026-11 round 36 — Rivestream (Vidstream) CDN hosts: the HLS + VTT
+// origins the Rivestream API hands out (observed: hscow.com, fcxmb.com,
+// fodcyy.com, fhxod.com — the sub-domains rotate, the suffixes don't).
 const ALLOWED_HOST_SUFFIXES = ['hotstar.com', 'slivcdn.com', 'jio.com', 'jiocinema.com', 'premiumplugx.com', 'catbox.moe', 'cloudnestra.com', 'stellarconductornexus.com', 'vidsrc.party', 'cookiebakers23blog.xyz', 'cno.to', 'vidcore.org', 'hscow.com', 'fcxmb.com', 'fodcyy.com', 'fhxod.com'];
 
 const REFERER_BY_HOST: ReadonlyArray<{ suffix: string; referer: string }> = [
@@ -186,6 +177,21 @@ function guessContentType(pathname: string): string {
         return 'application/octet-stream';
 }
 
+/**
+ * 2026-11 round 36 — decode the opaque ?e= target (base64url, padding optional).
+ * Returns '' on any malformed input so the caller's existing validation path
+ * produces the same INVALID_REQUEST response as a missing ?u=.
+ */
+function decodeBase64Url(value: string): string {
+        try {
+                const b64 = value.replace(/-/g, '+').replace(/_/g, '/');
+                const padded = b64 + '='.repeat((4 - (b64.length % 4)) % 4);
+                return atob(padded);
+        } catch {
+                return '';
+        }
+}
+
 function jsonError(status: number, code: string, message: string): Response {
         return new Response(JSON.stringify({ ok: false, error: { code, message } }), {
                 status,
@@ -277,11 +283,11 @@ export default {
                 const isHead = request.method === 'HEAD';
 
                 const url = new URL(request.url);
-                // Round 36 — accept ?e=<base64url(url)> as an opaque encoded
-                // parameter (the real CDN URL must never appear in plain text
-                // client-side). Falls back to ?u= for backward compat.
-                const encoded = url.searchParams.get('e') ?? '';
-                const raw = encoded ? decodeBase64Url(encoded) : (url.searchParams.get('u') ?? '');
+                // 2026-11 round 36 — opaque target param: ?e=<base64url(url)>
+                // keeps the real upstream URL out of plain sight in DevTools
+                // (Rivestream/CDN URLs). ?u= (plain) is unchanged.
+                const encodedTarget = url.searchParams.get('e') ?? '';
+                const raw = url.searchParams.get('u') ?? (encodedTarget ? decodeBase64Url(encodedTarget) : '');
                 if (!raw || raw.length > MAX_URL_LENGTH) {
                         return jsonError(400, 'INVALID_REQUEST', 'A valid media URL is required.');
                 }

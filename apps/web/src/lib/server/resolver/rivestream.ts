@@ -49,12 +49,11 @@ interface ServerEntry {
   qualities: Array<{ label: string; url: string }>;
 }
 
-/** Base64url-encode a UTF-8 string (for the ?e= Worker param). */
+/** Base64url-encode a UTF-8 string (for the ?e= Worker param).
+ *  Matches the Worker's decodeBase64Url: base64 → replace + with -,
+ *  / with _, strip = padding. Uses Node.js Buffer (server-side only). */
 function encodeBase64Url(input: string): string {
-  const bytes = new TextEncoder().encode(input);
-  let binary = '';
-  for (const b of bytes) binary += String.fromCharCode(b);
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return Buffer.from(input, 'utf8').toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
 /** Wrap a CDN URL through the Worker proxy using the opaque ?e= param. */
