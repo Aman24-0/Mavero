@@ -467,15 +467,14 @@
     selectedServer = '';
     serverFallbackTried = [];
   }
-  // Round 36 C / Round 37 — preselect the default server on first resolve.
-  // When the source metadata carries a defaultServer hint
-  // ('vidstream' | 'vidsrc' | 'vidplay'), find the first server entry whose
-  // `server` field matches (case-insensitive) and preselect it. Fall back to
-  // servers[0] when no match.
+  // Round 36 C — preselect the default server on first resolve. When the
+  // source metadata carries a defaultServer hint ('vidstream' | 'vidsrc'),
+  // find the first server entry whose `server` field matches (case-
+  // insensitive) and preselect it. Fall back to servers[0] when no match.
   $: if (source && source.sourceId === sourceIdentity && !selectedServer && servers.length > 1) {
     const hint = source.metadata?.defaultServer;
     if (hint) {
-      const target = hint === 'vidstream' ? 'Vidstream' : hint === 'vidplay' ? 'VidPlay' : 'Vidsrc';
+      const target = hint === 'vidstream' ? 'Vidstream' : 'Vidsrc';
       const match = servers.find((s) => (s.server || 'Vidsrc').toLowerCase() === target.toLowerCase());
       if (match) {
         selectedServer = match.url;

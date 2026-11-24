@@ -80,9 +80,9 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     }
   }
 
-  // Round 36 C / Round 37 — read DirectStream per-source settings from app_config.
-  let dsConfig: { vidsrcEnabled: boolean; vidstreamEnabled: boolean; vidplayEnabled: boolean; defaultServer: string } = {
-    vidsrcEnabled: true, vidstreamEnabled: true, vidplayEnabled: true, defaultServer: 'vidstream'
+  // Round 36 C — read DirectStream per-source settings from app_config.
+  let dsConfig: { vidsrcEnabled: boolean; vidstreamEnabled: boolean; defaultServer: string } = {
+    vidsrcEnabled: true, vidstreamEnabled: true, defaultServer: 'vidstream'
   };
   try {
     const { data: cfg } = await locals.supabase.from('app_config').select('*').eq('id', 1).single();
@@ -90,7 +90,6 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     if (cfgAny) {
       if (typeof cfgAny.direct_stream_vidsrc_enabled === 'boolean') dsConfig.vidsrcEnabled = cfgAny.direct_stream_vidsrc_enabled;
       if (typeof cfgAny.direct_stream_vidstream_enabled === 'boolean') dsConfig.vidstreamEnabled = cfgAny.direct_stream_vidstream_enabled;
-      if (typeof cfgAny.direct_stream_vidplay_enabled === 'boolean') dsConfig.vidplayEnabled = cfgAny.direct_stream_vidplay_enabled;
       if (typeof cfgAny.direct_stream_default_server === 'string') dsConfig.defaultServer = cfgAny.direct_stream_default_server;
     }
   } catch { /* columns may not exist yet */ }
@@ -238,20 +237,19 @@ export const actions: Actions = {
       const { capabilities: _ignoredCaps, ...input } = parsed;
       await updateSource(locals.supabase, id, { ...input, capabilities: mergedCapabilities as never });
 
-      // Round 36 C / Round 37 — persist DirectStream per-source toggles +
+      // Round 36 C — persist DirectStream per-source toggles +
       // default server to app_config id=1. The form submits ds_settings=true
       // (a hidden input) ONLY when the DirectStream settings section is
       // rendered (source slug starts with 'direct-stream'). Checkbox
       // present = true, absent = false (HTML forms don't submit unchecked
-      // checkboxes). Validate default_server ∈ {vidsrc, vidstream, vidplay}.
+      // checkboxes). Validate default_server ∈ {vidsrc, vidstream}.
       // Uses the service-role admin client because the user-bound SSR client
       // may lack RLS write permissions on app_config.
       if (form.get('ds_settings') === 'true') {
         const vidsrc = form.get('ds_vidsrc_enabled') === 'true';
         const vidstream = form.get('ds_vidstream_enabled') === 'true';
-        const vidplay = form.get('ds_vidplay_enabled') === 'true';
         let defaultServer = String(form.get('ds_default_server') ?? 'vidstream');
-        if (defaultServer !== 'vidsrc' && defaultServer !== 'vidstream' && defaultServer !== 'vidplay') {
+        if (defaultServer !== 'vidsrc' && defaultServer !== 'vidstream') {
           defaultServer = 'vidstream';
         }
         try {
@@ -261,7 +259,6 @@ export const actions: Actions = {
             .update({
               direct_stream_vidsrc_enabled: vidsrc,
               direct_stream_vidstream_enabled: vidstream,
-              direct_stream_vidplay_enabled: vidplay,
               direct_stream_default_server: defaultServer,
               updated_at: new Date().toISOString(),
             } as Record<string, unknown> as never)

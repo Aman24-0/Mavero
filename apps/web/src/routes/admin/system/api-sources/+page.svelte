@@ -395,20 +395,18 @@
   // checkbox submits icon_remove=true → the server stores null. Offered
   // ONLY when an icon is actually saved.
   let iconRemoveChecked = $state(false);
-  // Round 36 C / Round 37 — DirectStream per-source settings (shown in the
-  // source edit sheet when the source slug starts with 'direct-stream').
-  // Initialised from data.dsConfig (returned by the server load) so the
-  // sheet shows the real stored state, not hardcoded defaults. The ignore
-  // directives below are intentional: we want the INITIAL server-loaded
-  // value (the user then toggles via onchange handlers); a $derived would
-  // reset the checkbox every time `data` changes (e.g. after a save
-  // redirect), wiping the user's in-flight edits.
+  // Round 36 C — DirectStream per-source settings (shown in the source edit
+  // sheet when the source slug starts with 'direct-stream'). Initialised from
+  // data.dsConfig (returned by the server load) so the sheet shows the real
+  // stored state, not hardcoded defaults. The ignore directives below are
+  // intentional: we want the INITIAL server-loaded value (the user then
+  // toggles via onchange handlers); a $derived would reset the checkbox every
+  // time `data` changes (e.g. after a save redirect), wiping the user's
+  // in-flight edits.
   // svelte-ignore state_referenced_locally
   let dsVidsrcEnabled = $state(data.dsConfig?.vidsrcEnabled ?? true);
   // svelte-ignore state_referenced_locally
   let dsVidstreamEnabled = $state(data.dsConfig?.vidstreamEnabled ?? true);
-  // svelte-ignore state_referenced_locally
-  let dsVidplayEnabled = $state(data.dsConfig?.vidplayEnabled ?? true);
   // svelte-ignore state_referenced_locally
   let dsDefaultServer = $state(data.dsConfig?.defaultServer ?? 'vidstream');
   const storedSourceIconExists = $derived(Boolean(typeof editingSource?.icon === 'string' && editingSource.icon.trim()));
@@ -1178,14 +1176,9 @@
             <input type="checkbox" name="ds_vidstream_enabled" value="true" checked={dsVidstreamEnabled} onchange={() => dsVidstreamEnabled = !dsVidstreamEnabled} />
           </label>
           <label class="a2-field">
-            <span>VidPlay Enabled</span>
-            <input type="checkbox" name="ds_vidplay_enabled" value="true" checked={dsVidplayEnabled} onchange={() => dsVidplayEnabled = !dsVidplayEnabled} />
-          </label>
-          <label class="a2-field">
             <span>Default Server</span>
             <select name="ds_default_server" bind:value={dsDefaultServer}>
               <option value="vidstream">Vidstream (Rivestream API)</option>
-              <option value="vidplay">VidPlay (NovaHD)</option>
               <option value="vidsrc">Vidsrc (vidsrc.party scrape)</option>
             </select>
           </label>

@@ -56,11 +56,11 @@
 // 2026-11 round 36 — Rivestream (Vidstream) CDN hosts: the HLS + VTT
 // origins the Rivestream API hands out (observed: hscow.com, fcxmb.com,
 // fodcyy.com, fhxod.com — the sub-domains rotate, the suffixes don't).
-// 2026-11 round 37 — VidPlay (NovaHD) hosts: the NovaHD API + HLS CDNs
-// (novahd.cc is the API origin; workers.dev + hakunaymatata.com are CDN
-// suffixes observed in the manifest segment URLs). The deployed Worker
-// is already v22 with these — this commit just brings the repo in sync.
-const ALLOWED_HOST_SUFFIXES = ['hotstar.com', 'slivcdn.com', 'jio.com', 'jiocinema.com', 'premiumplugx.com', 'catbox.moe', 'cloudnestra.com', 'stellarconductornexus.com', 'vidsrc.party', 'cookiebakers23blog.xyz', 'cno.to', 'vidcore.org', 'hscow.com', 'fcxmb.com', 'fodcyy.com', 'fhxod.com', 'rivestream.app', 'novahd.cc', 'workers.dev', 'hakunaymatata.com'];
+// 2026-11 round 37 — VidPlay (NovaHD) REMOVED: the NovaHD API is behind
+// Cloudflare's JS challenge and returns 403 server-side; the NovaHD
+// allowlist entries are dropped (the deployed Worker will be rolled back
+// to match by the user).
+const ALLOWED_HOST_SUFFIXES = ['hotstar.com', 'slivcdn.com', 'jio.com', 'jiocinema.com', 'premiumplugx.com', 'catbox.moe', 'cloudnestra.com', 'stellarconductornexus.com', 'vidsrc.party', 'cookiebakers23blog.xyz', 'cno.to', 'vidcore.org', 'hscow.com', 'fcxmb.com', 'fodcyy.com', 'fhxod.com', 'rivestream.app'];
 
 const REFERER_BY_HOST: ReadonlyArray<{ suffix: string; referer: string }> = [
         { suffix: 'slivcdn.com', referer: 'https://www.sonyliv.com/' },
@@ -77,12 +77,7 @@ const REFERER_BY_HOST: ReadonlyArray<{ suffix: string; referer: string }> = [
         { suffix: 'vidsrc.party', referer: 'https://vidsrc.party/' },
         { suffix: 'cookiebakers23blog.xyz', referer: 'https://vidsrc.party/' },
         { suffix: 'cno.to', referer: 'https://vidsrc.party/' },
-        { suffix: 'vidcore.org', referer: 'https://vidcore.org/' },
-        // 2026-11 round 37 — VidPlay (NovaHD): the API + HLS CDNs all expect
-        // the novahd.cc Referer (the site's own player origin).
-        { suffix: 'novahd.cc', referer: 'https://novahd.cc/' },
-        { suffix: 'workers.dev', referer: 'https://novahd.cc/' },
-        { suffix: 'hakunaymatata.com', referer: 'https://novahd.cc/' }
+        { suffix: 'vidcore.org', referer: 'https://vidcore.org/' }
 ];
 
 /**
@@ -93,13 +88,7 @@ const REFERER_BY_HOST: ReadonlyArray<{ suffix: string; referer: string }> = [
  * behaviour (Origin = Referer minus the trailing slash).
  */
 const ORIGIN_BY_HOST: ReadonlyArray<{ suffix: string; origin: string }> = [
-        { suffix: 'jio.com', origin: 'https://jioplus2plugx.lovable.app' },
-        // 2026-11 round 37 — VidPlay (NovaHD): the API checks the Origin
-        // header against the novahd.cc origin (no trailing slash). Without
-        // this the API returns a DECOY playlist.
-        { suffix: 'novahd.cc', origin: 'https://novahd.cc' },
-        { suffix: 'workers.dev', origin: 'https://novahd.cc' },
-        { suffix: 'hakunaymatata.com', origin: 'https://novahd.cc' }
+        { suffix: 'jio.com', origin: 'https://jioplus2plugx.lovable.app' }
 ];
 
 /**
