@@ -6,8 +6,10 @@
  * Cloudflare Worker as ?e=<base64url(url)> so the real CDN URL never appears
  * in plain text client-side.
  *
- * Response: data.sources[] = { quality: "720p | Hindi", url, source, format }
- *           data.captions[] = { file, label, language, type: "vtt" }
+ * Response (NESTED, the shape actually observed in production):
+ *           { data: { sources: [{ quality, url, source, format }],
+ *                     captions: [{ file, label, language, type: "vtt" }] } }
+ *           A FLAT `{ sources, captions }` shape is also tolerated.
  *
  * Sources are grouped by language (parsed from the quality field after "|").
  * Each language group carries its qualities [{label:"720p",url},{label:"480p",url}].
@@ -36,7 +38,20 @@ interface RivestreamCaption {
   type?: string;
 }
 
-interface RivestreamResponse {
+/**
+ * The Rivestream scrapper API has been observed returning TWO response
+ * shapes — the same endpoint sometimes returns a NESTED payload
+ * `{ data: { sources, captions } }` and sometimes a FLAT payload
+ * `{ sources, captions }`. The previous code only parsed the flat shape,
+ * so whenever the API returned the nested shape both `sources` and
+ * `captions` were `undefined`, the adapter hit the silent
+ * `rawSources.length === 0` return, and the Vidstream group was always 0.
+ *
+ * `RivestreamPayload` types BOTH shapes; `body = payload.data ?? payload`
+ * unwraps whichever one the API returned this time.
+ */
+interface RivestreamPayload {
+  data?: { sources?: RivestreamSource[]; captions?: RivestreamCaption[] };
   sources?: RivestreamSource[];
   captions?: RivestreamCaption[];
 }
@@ -116,7 +131,7 @@ export const rivestreamAdapter: ProviderAdapter = {
       apiUrl.searchParams.set('episode', String(episode));
     }
 
-    let data: RivestreamResponse;
+    let payload: RivestreamPayload;
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 10_000);
@@ -134,7 +149,7 @@ export const rivestreamAdapter: ProviderAdapter = {
           console.warn('[rivestream] API resolve failed — HTTP', response.status);
           return null;
         }
-        data = (await response.json()) as RivestreamResponse;
+        payload = (await response.json()) as RivestreamPayload;
       } finally {
         clearTimeout(timeout);
       }
@@ -146,8 +161,19 @@ export const rivestreamAdapter: ProviderAdapter = {
       return null;
     }
 
-    const rawSources = data.sources ?? [];
-    if (rawSources.length === 0) return null;
+    // The API has been observed returning both a NESTED
+    // `{ data: { sources, captions } }` and a FLAT `{ sources, captions }`.
+    // Unwrap either shape; never fail silently on an empty result.
+    const body = payload.data ?? payload;
+    const rawSources = body.sources ?? [];
+    const rawCaptions = body.captions ?? [];
+    if (rawSources.length === 0) {
+      console.warn('[rivestream] API returned no sources', {
+        keys: Object.keys(payload ?? {}),
+        bodyKeys: Object.keys(body ?? {}),
+      });
+      return null;
+    }
 
     // Group by language: one entry per language.
     const langMap = new Map<string, { qualities: Array<{ label: string; url: string }> }>();
@@ -182,7 +208,7 @@ export const rivestreamAdapter: ProviderAdapter = {
 
     // Map captions to SubtitleSource — tagged with origin: 'vidstream'
     // so the subtitle menu can group them under a "Vidstream" source.
-    const subtitles = (data.captions ?? [])
+    const subtitles = rawCaptions
       .filter((c) => c.file && c.type === 'vtt')
       .map((c) => ({
         url: c.file!,
