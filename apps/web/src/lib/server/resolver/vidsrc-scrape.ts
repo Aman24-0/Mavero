@@ -276,6 +276,12 @@ export const vidsrcScrapeProviderAdapter: ProviderAdapter = {
       try {
         const rivestreamResult = await rivestreamAdapter.resolve(context);
         if (rivestreamResult?.metadata?.servers) {
+          // TEMPORARY DIAGNOSTIC (one deploy) — log the incoming Vidstream
+          // server count so we can compare it with the [rivestream] sources
+          // line. If this is 1 but [rivestream] sources says N>1, the merge
+          // loop is dropping entries; if this is 0 but [rivestream] sources
+          // says N>0, the adapter returned no servers.
+          console.info('[direct-stream] rivestream entries', rivestreamResult.metadata.servers.length);
           for (const srv of rivestreamResult.metadata.servers) {
             if (servers.length >= 28) break;
             servers.push({

@@ -431,6 +431,14 @@
   $: qualities = serverQualities.length > 0 ? serverQualities.map((q) => ({ url: q.url, label: q.label })) : (source?.qualities ?? []);
   // Round 32: servers live on the source metadata (direct sources only).
   $: servers = source?.type === 'direct' ? source?.metadata?.servers ?? [] : [];
+  // Round 36 D — derive the selected server entry + its per-language qualities
+  // from `selectedServer` + `servers`. Without this, `serverQualities` stayed
+  // at its empty initial value forever and the quality menu could never show
+  // a Vidstream language's qualities (720p + 480p for Korean, only 720p for
+  // Hindi, etc.). Selecting a quality loads that quality's URL via the
+  // existing `mediaUrl` derivation below — no re-resolve.
+  $: selectedServerEntry = servers.find((s) => s.url === selectedServer) ?? undefined;
+  $: serverQualities = selectedServerEntry?.qualities ?? [];
   $: subtitles = source?.subtitles ?? [];
   $: selectedQualityOption = qualities.find((quality) => quality.url === selectedQuality) as PlayerQualityOption | undefined;
   // Phase 10: compat override — when a compatibility session succeeds, the

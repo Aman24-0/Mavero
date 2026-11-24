@@ -130,6 +130,11 @@ export const rivestreamAdapter: ProviderAdapter = {
       apiUrl.searchParams.set('season', String(season));
       apiUrl.searchParams.set('episode', String(episode));
     }
+    // TEMPORARY DIAGNOSTIC (one deploy) — log the REAL API URL (not the
+    // proxied one) so it can be compared with the browser request that
+    // returned 3 sources. Confirms the adapter builds exactly:
+    //   https://scrapper.rivestream.app/api/provider?provider=citadel&id=<tmdbId>&season=<n>&episode=<m>
+    console.info('[rivestream] API URL', apiUrl.toString());
 
     let payload: RivestreamPayload;
     try {
@@ -203,6 +208,16 @@ export const rivestreamAdapter: ProviderAdapter = {
       });
       if (servers.length >= MAX_SOURCES) break;
     }
+
+    // TEMPORARY DIAGNOSTIC (one deploy) — pin down why only one Vidstream
+    // entry appears (Hindi missing). Logs the raw source count, how each
+    // source's `quality` string parsed into a language, the final langMap
+    // keys, and the resulting server count. If Hindi is in rawSources but
+    // not in langMap, the parseLanguage regex is the culprit; if it's in
+    // langMap but not in servers, the build loop or MAX_SOURCES is.
+    console.info('[rivestream] sources', rawSources.length,
+      'parsed', rawSources.map((s) => `${s.quality} → ${parseLanguage(s.quality)}`),
+      'langs', [...langMap.keys()], 'servers', servers.length);
 
     if (servers.length === 0) return null;
 
