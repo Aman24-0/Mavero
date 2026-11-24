@@ -79,9 +79,9 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     }
   }
 
-  // Round 36 C — read DirectStream per-source settings from app_config.
-  let dsConfig: { vidsrcEnabled: boolean; vidstreamEnabled: boolean; defaultServer: string } = {
-    vidsrcEnabled: true, vidstreamEnabled: true, defaultServer: 'vidstream'
+  // Round 36 C / Round 37 — read DirectStream per-source settings from app_config.
+  let dsConfig: { vidsrcEnabled: boolean; vidstreamEnabled: boolean; vidplayEnabled: boolean; defaultServer: string } = {
+    vidsrcEnabled: true, vidstreamEnabled: true, vidplayEnabled: true, defaultServer: 'vidstream'
   };
   try {
     const { data: cfg } = await locals.supabase.from('app_config').select('*').eq('id', 1).single();
@@ -89,6 +89,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     if (cfgAny) {
       if (typeof cfgAny.direct_stream_vidsrc_enabled === 'boolean') dsConfig.vidsrcEnabled = cfgAny.direct_stream_vidsrc_enabled;
       if (typeof cfgAny.direct_stream_vidstream_enabled === 'boolean') dsConfig.vidstreamEnabled = cfgAny.direct_stream_vidstream_enabled;
+      if (typeof cfgAny.direct_stream_vidplay_enabled === 'boolean') dsConfig.vidplayEnabled = cfgAny.direct_stream_vidplay_enabled;
       if (typeof cfgAny.direct_stream_default_server === 'string') dsConfig.defaultServer = cfgAny.direct_stream_default_server;
     }
   } catch { /* columns may not exist yet */ }

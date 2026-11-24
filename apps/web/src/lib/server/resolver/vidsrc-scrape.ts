@@ -54,7 +54,9 @@ import { scrapeVidsrc, ScraperError, DEFAULT_SCRAPER_CONFIG } from '$lib/server/
 // was deleted from Supabase; the scraper and all references are purged.
 // Round 36 — the rivestream adapter is called in-adapter to merge both
 // sources into one grouped server list.
+// Round 37 — the nova (VidPlay / NovaHD) adapter is called the same way.
 import { rivestreamAdapter } from './rivestream';
+import { novaAdapter } from './nova';
 
 export const VIDSRC_SCRAPE_ADAPTER_ID = 'vidsrc-scrape' as const;
 
@@ -177,8 +179,10 @@ export const vidsrcScrapeProviderAdapter: ProviderAdapter = {
     let config = DEFAULT_SCRAPER_CONFIG;
     let enabled = false;
     // Round 36 — per-source toggles + default server. Read from app_config.
+    // Round 37 — added direct_stream_vidplay_enabled + 'vidplay' default server.
     let vidsrcEnabled = true;
     let vidstreamEnabled = true;
+    let vidplayEnabled = true;
     let defaultServerPref = 'vidstream';
     try {
       const client = createSupabaseAdminClient();
@@ -191,9 +195,10 @@ export const vidsrcScrapeProviderAdapter: ProviderAdapter = {
       if (cfgAny) {
         if (typeof cfgAny.direct_stream_vidsrc_enabled === 'boolean') vidsrcEnabled = cfgAny.direct_stream_vidsrc_enabled;
         if (typeof cfgAny.direct_stream_vidstream_enabled === 'boolean') vidstreamEnabled = cfgAny.direct_stream_vidstream_enabled;
+        if (typeof cfgAny.direct_stream_vidplay_enabled === 'boolean') vidplayEnabled = cfgAny.direct_stream_vidplay_enabled;
         if (typeof cfgAny.direct_stream_default_server === 'string') {
           const val = cfgAny.direct_stream_default_server;
-          if (val === 'vidstream' || val === 'vidsrc') defaultServerPref = val;
+          if (val === 'vidstream' || val === 'vidsrc' || val === 'vidplay') defaultServerPref = val;
         }
       }
     } catch {
@@ -302,10 +307,35 @@ export const vidsrcScrapeProviderAdapter: ProviderAdapter = {
       }
     }
 
-    // Round 36 A4 — temporary diagnostic: log the server count + group breakdown.
+    // Round 37 — call the Nova (VidPlay) adapter (gated by vidplayEnabled).
+    // Same pattern as the Rivestream merge: never block Vidsrc/Vidstream.
+    if (vidplayEnabled) {
+      try {
+        const novaResult = await novaAdapter.resolve(context);
+        if (novaResult?.metadata?.servers) {
+          console.info('[direct-stream] vidplay entries', novaResult.metadata.servers.length);
+          for (const srv of novaResult.metadata.servers) {
+            if (servers.length >= 28) break;
+            servers.push({
+              url: srv.url,
+              label: srv.label,
+              server: srv.server,
+              language: srv.language,
+              qualities: srv.qualities,
+            });
+          }
+        }
+      } catch (error) {
+        console.warn('[direct-stream] vidplay merge failed —', error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    // Round 36 A4 / Round 37 — temporary diagnostic: log the server count +
+    // group breakdown (now three groups).
     const vidsrcCount = servers.filter((s) => (s.server || 'Vidsrc') === 'Vidsrc').length;
     const vidstreamCount = servers.filter((s) => s.server === 'Vidstream').length;
-    console.warn('[direct-stream] resolve complete — servers:', servers.length, '(Vidsrc:', vidsrcCount, 'Vidstream:', vidstreamCount, ')');
+    const vidplayCount = servers.filter((s) => s.server === 'VidPlay').length;
+    console.warn('[direct-stream] resolve complete — servers:', servers.length, '(Vidsrc:', vidsrcCount, 'Vidstream:', vidstreamCount, 'VidPlay:', vidplayCount, ')');
 
     // Round 36 — determine the primary URL. If Vidsrc is available, use its
     // first source. If only Vidstream is available, use the first Vidstream
@@ -332,14 +362,18 @@ export const vidsrcScrapeProviderAdapter: ProviderAdapter = {
         providerName: context.config.provider.name,
         sourceName: context.config.source.name,
         protocol: 'hls',
-        // Round 36 C — the default server from app_config, clamped to an
-        // enabled source: if the configured default is disabled, use the
-        // other enabled one. Both disabled can't happen (gate above).
+        // Round 36 C / Round 37 — the default server from app_config, clamped
+        // to an enabled source: if the configured default is disabled, fall
+        // back to the first enabled source in priority order
+        // (vidstream → vidplay → vidsrc).
         defaultServer: (() => {
           if (defaultServerPref === 'vidstream' && vidstreamEnabled) return 'vidstream';
+          if (defaultServerPref === 'vidplay' && vidplayEnabled) return 'vidplay';
           if (defaultServerPref === 'vidsrc' && vidsrcEnabled) return 'vidsrc';
-          // Configured default is disabled — fall back to the other enabled one.
-          return vidstreamEnabled ? 'vidstream' : 'vidsrc';
+          // Configured default is disabled — fall back to the first enabled one.
+          if (vidstreamEnabled) return 'vidstream';
+          if (vidplayEnabled) return 'vidplay';
+          return 'vidsrc';
         })(),
         // Round 32/33 — ALL VidCore celestial servers (Earth / Tethys /
         // Enceladus / … with their per-server audio language on the label).
