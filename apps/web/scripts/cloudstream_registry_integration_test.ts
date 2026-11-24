@@ -341,7 +341,7 @@ function section_registry(): void {
   const unifiedSql = read(`supabase/migrations/${unifiedMigration}`);
   const unifiedSqlNoComments = unifiedSql.replace(/--[^\n]*/g, '');
   ok(
-    added.length === 30
+    added.length === 31
       && added.includes(migrationName)
       && added.includes(phase2Migration)
       && added.includes(phase3Migration)
@@ -385,11 +385,12 @@ function section_registry(): void {
       // since vidsrc.party returns a direct HLS manifest, never an embed).
       // 2026-10 round 30: Multi Stream (VidCore) source migration.
       && added.includes('20261101000000_multi_stream_vidcore_source.sql')
+      && added.includes('20261126000000_rivestream_source.sql')
       // 2026-10 round 18: DirectStream vidsrc.party migration.
       && added.includes('20261031000000_direct_stream_vidsrc_party.sql')
       // 2026-11: Vidly provider migration (insert-only registry row).
       && added.includes('20261126000000_vidly_provider.sql'),
-    `§A10: exactly the CS-5 + Phase 2 + Phase 3 + FINAL TASK + build-lifecycle + LT-5-analytics + LT-15-fallback-event + VidRift-provider + MAVP-4-icon-badge + MAVP-5-default-slots + MAVP-7-unique-assignment + BlueVelvet-provider + Vixolity/TGVID/ZXCStream-provider + VidStuck-cc-origins + Supabase-remediation + Supabase-final-audit + Livetv-source-registry + Livetv-EPG-guide-data + Livetv-refresh-history + App-config-social-links + App-config-admin-write-rls + Livetv-indian-proxy + DirectStream-scraper + DirectStream-domain-fix + DirectStream-vidsrc-party + Multi-Stream-vidcore migrations were added (${added.join(', ') || 'none'})`,
+    `§A10: exactly the CS-5 + Phase 2 + Phase 3 + FINAL TASK + build-lifecycle + LT-5-analytics + LT-15-fallback-event + VidRift-provider + MAVP-4-icon-badge + MAVP-5-default-slots + MAVP-7-unique-assignment + BlueVelvet-provider + Vixolity/TGVID/ZXCStream-provider + VidStuck-cc-origins + Supabase-remediation + Supabase-final-audit + Livetv-source-registry + Livetv-EPG-guide-data + Livetv-refresh-history + App-config-social-links + App-config-admin-write-rls + Livetv-indian-proxy + DirectStream-scraper + DirectStream-domain-fix + DirectStream-vidsrc-party + Multi-Stream-vidcore + Rivestream-source migrations were added (${added.join(', ') || 'none'})`,
   );
   // VIDRIFT (sanctioned): insert-only registration — no destructive verbs,
   // no download_providers / registry-table references.
