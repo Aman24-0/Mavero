@@ -9,6 +9,8 @@ export type PlayerSubtitleTrack = {
   url: string;
   language?: string;
   label?: string;
+  /** Round 36 E — origin tag ('vidstream' for Rivestream captions). */
+  origin?: string;
 };
 
 export type PlayerQualityOption = {
@@ -177,6 +179,8 @@ export type PlayerSource = {
       language?: string;
       qualities?: Array<{ label: string; url: string }>;
     }>;
+    /** Round 36 — default server ('vidstream' | 'vidsrc') for preselection. */
+    defaultServer?: string;
   };
   error?: {
     code: string;

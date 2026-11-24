@@ -64,6 +64,8 @@ export type SubtitleSource = {
   url: string;
   language?: string;
   label?: string;
+  /** Round 36 E — origin tag ('vidstream' for Rivestream captions). */
+  origin?: string;
 };
 
 export type QualitySource = {

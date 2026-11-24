@@ -157,13 +157,15 @@ export const rivestreamAdapter: ProviderAdapter = {
 
     if (servers.length === 0) return null;
 
-    // Map captions to SubtitleSource.
+    // Map captions to SubtitleSource — tagged with origin: 'vidstream'
+    // so the subtitle menu can group them under a "Vidstream" source.
     const subtitles = (data.captions ?? [])
       .filter((c) => c.file && c.type === 'vtt')
       .map((c) => ({
         url: c.file!,
         language: c.language ?? c.label ?? 'Unknown',
         label: c.label ?? c.language ?? 'Unknown',
+        origin: 'vidstream',
       }));
 
     return {

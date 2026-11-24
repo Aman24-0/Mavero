@@ -176,20 +176,25 @@ export const vidsrcScrapeProviderAdapter: ProviderAdapter = {
     // any read error — the scraper is always usable.
     let config = DEFAULT_SCRAPER_CONFIG;
     let enabled = false;
-    // Round 36 — per-source toggles. Read from app_config.
+    // Round 36 — per-source toggles + default server. Read from app_config.
     let vidsrcEnabled = true;
     let vidstreamEnabled = true;
+    let defaultServerPref = 'vidstream';
     try {
       const client = createSupabaseAdminClient();
       const scraperState = await getScraperConfig(client);
       config = scraperState.config;
       enabled = scraperState.enabled;
-      // Read per-source toggles from the same client.
+      // Read per-source toggles + default server from the same client.
       const { data: cfgRow } = await client.from('app_config').select('*').eq('id', 1).single();
       const cfgAny = cfgRow as Record<string, unknown> | null;
       if (cfgAny) {
         if (typeof cfgAny.direct_stream_vidsrc_enabled === 'boolean') vidsrcEnabled = cfgAny.direct_stream_vidsrc_enabled;
         if (typeof cfgAny.direct_stream_vidstream_enabled === 'boolean') vidstreamEnabled = cfgAny.direct_stream_vidstream_enabled;
+        if (typeof cfgAny.direct_stream_default_server === 'string') {
+          const val = cfgAny.direct_stream_default_server;
+          if (val === 'vidstream' || val === 'vidsrc') defaultServerPref = val;
+        }
       }
     } catch {
       // Config read failed — stay disabled (fail closed).
@@ -313,9 +318,15 @@ export const vidsrcScrapeProviderAdapter: ProviderAdapter = {
         providerName: context.config.provider.name,
         sourceName: context.config.source.name,
         protocol: 'hls',
-        // Round 36 — the default server setting from app_config (vidstream | vidsrc).
-        // The player reads this to preselect the initial server.
-        defaultServer: vidstreamEnabled ? 'vidstream' : 'vidsrc',
+        // Round 36 C — the default server from app_config, clamped to an
+        // enabled source: if the configured default is disabled, use the
+        // other enabled one. Both disabled can't happen (gate above).
+        defaultServer: (() => {
+          if (defaultServerPref === 'vidstream' && vidstreamEnabled) return 'vidstream';
+          if (defaultServerPref === 'vidsrc' && vidsrcEnabled) return 'vidsrc';
+          // Configured default is disabled — fall back to the other enabled one.
+          return vidstreamEnabled ? 'vidstream' : 'vidsrc';
+        })(),
         // Round 32/33 — ALL VidCore celestial servers (Earth / Tethys /
         // Enceladus / … with their per-server audio language on the label).
         // servers[0].url is the same proxied URL as `url` — the player's

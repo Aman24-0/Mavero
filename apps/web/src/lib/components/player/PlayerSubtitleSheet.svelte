@@ -54,6 +54,15 @@
   type SubtitleTab = 'languages' | 'settings';
   let activeTab: SubtitleTab = 'languages';
 
+  // Round 36 E — subtitle source selector. Tracks with origin: 'vidstream'
+  // are grouped under the "Vidstream" source; everything else is "Default".
+  // The source selector filters the visible track list.
+  $: subtitleSources = [...new Set(tracks.map((t) => t.origin ?? 'default'))];
+  let activeSubtitleSource = 'all';
+  $: filteredTracks = activeSubtitleSource === 'all'
+    ? tracks
+    : tracks.filter((t) => (t.origin ?? 'default') === activeSubtitleSource);
+
   function trackLabel(track: PlayerSubtitleTrack, index: number): string {
     return track.label ?? track.language ?? `Track ${index + 1}`;
   }
@@ -114,13 +123,23 @@
 
   {#if activeTab === 'languages'}
     <div id="mav-sub-tab-languages" role="tabpanel" aria-labelledby="mav-sub-tabbtn-languages" class="tab-panel">
+      <!-- Round 36 E — subtitle source selector. Shows when tracks from
+           multiple origins are present (e.g. Default + Vidstream). -->
+      {#if subtitleSources.length > 1}
+        <div class="source-tabs" role="tablist" aria-label="Subtitle source">
+          <button class="source-tab" class:active={activeSubtitleSource === 'all'} type="button" onclick={() => (activeSubtitleSource = 'all')}>All</button>
+          {#each subtitleSources as src (src)}
+            <button class="source-tab" class:active={activeSubtitleSource === src} type="button" onclick={() => (activeSubtitleSource = src)}>{src === 'vidstream' ? 'Vidstream' : 'Default'}</button>
+          {/each}
+        </div>
+      {/if}
       <div class="section-label" id="mav-sub-track-label">Subtitles</div>
       <div class="track-list" role="group" aria-labelledby="mav-sub-track-label">
         <button class="track-row" class:selected={selectedSubtitle === ''} type="button" onclick={() => onSubtitle('')}>
           <span class="row-mark">{#if selectedSubtitle === ''}<Check size={15} />{/if}</span>
           <span class="row-copy"><strong>Off</strong></span>
         </button>
-        {#each tracks as track, index}
+        {#each filteredTracks as track, index}
           <button class="track-row" class:selected={selectedSubtitle === track.url} type="button" onclick={() => onSubtitle(track.url)}>
             <span class="row-mark">{#if selectedSubtitle === track.url}<Check size={15} />{/if}</span>
             <span class="row-copy"><strong>{trackLabel(track, index)}</strong>{#if track.language}<small>{track.language}</small>{/if}</span>
@@ -279,4 +298,9 @@
   .segment.selected { border-color: var(--accent); background: var(--accent-soft); color: var(--ink); }
   .reset-all { display: inline-flex; align-items: center; gap: 7px; min-height: 42px; margin: 14px 6px 2px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); padding: 0 14px; color: var(--ink); background: rgba(255, 255, 255, 0.04); cursor: pointer; font: inherit; font-size: 0.62rem; font-weight: 600; }
   .reset-all:hover, .reset-all:focus-visible { border-color: var(--accent); background: var(--accent-soft); }
+  /* Round 36 E — subtitle source tabs */
+  .source-tabs { display: flex; gap: 4px; padding: 4px; margin-bottom: 8px; border-bottom: 1px solid var(--line-soft); }
+  .source-tab { flex: 1 1 auto; min-height: 36px; padding: 6px 12px; border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--ink-soft); background: transparent; font: inherit; font-size: .72rem; font-weight: 700; cursor: pointer; text-align: center; }
+  .source-tab:hover, .source-tab:focus-visible { border-color: var(--line-strong); background: var(--accent-soft); }
+  .source-tab.active { color: var(--ink); border-color: var(--accent); background: var(--accent-soft); }
 </style>
