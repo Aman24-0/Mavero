@@ -50,7 +50,11 @@ import { env as publicEnv } from '$env/dynamic/public';
 import { createSupabaseAdminClient } from '$lib/server/supabase/admin';
 import { getScraperConfig } from '$lib/server/app-config';
 import { scrapeVidsrc, ScraperError, DEFAULT_SCRAPER_CONFIG } from '$lib/server/vod/vidsrc-scraper';
-import { scrapeVidCore } from '$lib/server/vod/vidcore-scraper';
+// VidCore/multi-stream REMOVED (round 36) — the multi-stream-vidcore source row
+// was deleted from Supabase; the scraper and all references are purged.
+// Round 36 — the rivestream adapter is called in-adapter to merge both
+// sources into one grouped server list.
+import { rivestreamAdapter } from './rivestream';
 
 export const VIDSRC_SCRAPE_ADAPTER_ID = 'vidsrc-scrape' as const;
 
@@ -189,23 +193,13 @@ export const vidsrcScrapeProviderAdapter: ProviderAdapter = {
 
     // Scrape.
     // 2026-10 round 30 — route by SOURCE SLUG (not variant). The source slug
-    // is on the config.source (the streaming_sources row). Two sources share
-    // the same adapter:
+    // is on the config.source (the streaming_sources row).
     //   'direct-stream-vidsrc' → scrapeVidsrc() (DirectStream / vidsrc.party)
-    //   'multi-stream-vidcore' → scrapeVidCore() (Multi Stream / vidcore.org)
-    // Also check the variant for backward compat (old scraper sheet used variant).
+    //   (VidCore/multi-stream was REMOVED in round 36 — the source row is deleted.)
     const sourceSlug = context.config.source.slug ?? '';
-    const useVidCore = sourceSlug === 'multi-stream-vidcore' || context.request.variant === 'vidcore';
     let result;
     try {
-      result = useVidCore
-        ? await scrapeVidCore(
-            tmdbId,
-            context.request.mediaType === 'movie' ? 'movie' : 'tv',
-            season,
-            episode
-          )
-        : await scrapeVidsrc(
+      result = await scrapeVidsrc(
             tmdbId,
             context.request.mediaType === 'movie' ? 'movie' : 'tv',
             season,
@@ -250,6 +244,29 @@ export const vidsrcScrapeProviderAdapter: ProviderAdapter = {
       servers.push({ url: candidateUrl, label });
     }
 
+    // Round 36 — ALSO call the Rivestream adapter and merge its servers
+    // into the same grouped server list. If Rivestream fails, omit its
+    // entries entirely (never block Vidsrc).
+    let rivestreamSubtitles: Array<{ url: string; language?: string; label?: string }> | undefined;
+    try {
+      const rivestreamResult = await rivestreamAdapter.resolve(context);
+      if (rivestreamResult?.metadata?.servers) {
+        for (const srv of rivestreamResult.metadata.servers) {
+          if (servers.length >= 28) break;
+          servers.push({
+            url: srv.url,
+            label: srv.label,
+            server: srv.server,
+            language: srv.language,
+            qualities: srv.qualities,
+          } as { url: string; label: string; server?: string; language?: string; qualities?: Array<{ label: string; url: string }> });
+        }
+        rivestreamSubtitles = rivestreamResult.subtitles;
+      }
+    } catch {
+      // Rivestream failure is non-blocking — Vidsrc servers are already built.
+    }
+
     // 2026-10 round 19 — build the playback URL. When the Worker is
     // configured, wrap the manifest URL server-side (the Worker adds CORS
     // + Referer). When it's NOT configured, return the raw vidsrc.party URL
@@ -278,8 +295,12 @@ export const vidsrcScrapeProviderAdapter: ProviderAdapter = {
         // Enceladus / … with their per-server audio language on the label).
         // servers[0].url is the same proxied URL as `url` — the player's
         // Server menu uses it as the highlighted default row.
+        // Round 36 — Vidstream (Rivestream) entries are appended with
+        // server: 'Vidstream', label = language name, qualities = per-lang.
         ...(servers.length > 0 ? { servers } : {}),
       },
+      // Round 36 — Rivestream captions (VTT) merged into subtitles.
+      ...(rivestreamSubtitles && rivestreamSubtitles.length > 0 ? { subtitles: rivestreamSubtitles } : {}),
     };
   },
 };

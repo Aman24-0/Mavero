@@ -175,6 +175,14 @@
   // server. Labels are the resolver-provided names verbatim.
   $: serverMode = servers.length > 1 ? 'menu' : 'none';
   $: serverButtonLabel = (selectedServer && servers.find((server) => server.url === selectedServer)?.label) || 'Server';
+  // Round 36 — group servers by server name (Vidsrc | Vidstream) for the
+  // two-pane server sheet. The active group filter defaults to the first
+  // server's group (or 'all' if no server field is set).
+  $: serverGroups = [...new Set(servers.map((s) => s.server || 'Vidsrc'))];
+  let activeServerGroup = 'all';
+  $: filteredServers = activeServerGroup === 'all'
+    ? servers
+    : servers.filter((s) => (s.server || 'Vidsrc') === activeServerGroup);
   function chooseServer(url: string) {
     if (url !== selectedServer) onServer(url);
     closeMenu();
@@ -346,11 +354,25 @@
   {/if}
   {#if openSheet === 'servers'}
     <PlayerOptionSheet title="Server" onClose={closeMenu}>
+      <!-- Round 36 — two-pane: server group tabs (Vidsrc | Vidstream) +
+           that group's source rows. Selecting a group filters the right
+           pane; clicking a source starts that stream. -->
+      {#if serverGroups.length > 1}
+        <div class="server-group-tabs" role="tablist">
+          <button class="server-group-tab" class:active={activeServerGroup === 'all'} type="button" onclick={() => (activeServerGroup = 'all')}>All</button>
+          {#each serverGroups as group (group)}
+            <button class="server-group-tab" class:active={activeServerGroup === group} type="button" onclick={() => (activeServerGroup = group)}>{group}</button>
+          {/each}
+        </div>
+      {/if}
       <div class="option-list" role="group" aria-label="Playback server">
-        {#each servers as server (server.url)}
+        {#each filteredServers as server (server.url)}
           <button class="option-row" class:selected={server.url === selectedServer} type="button" onclick={() => chooseServer(server.url)}>
             <span class="row-mark">{#if server.url === selectedServer}<Check size={15} />{/if}</span>
-            <span class="row-copy"><strong>{server.label}</strong></span>
+            <span class="row-copy">
+              <strong>{server.label}</strong>
+              {#if server.server}<small>{server.server}</small>{/if}
+            </span>
           </button>
         {/each}
       </div>
@@ -452,6 +474,11 @@
   .option-row.selected { color: var(--ink); }
   .row-mark { display: grid; flex: 0 0 22px; place-items: center; width: 22px; height: 22px; color: var(--muted); }
   .option-row.selected .row-mark { border: 1px solid var(--line-strong); border-radius: 50%; color: var(--accent); }
+  /* Round 36 — server group tabs (Vidsrc | Vidstream) */
+  .server-group-tabs { display: flex; gap: 4px; padding: 4px; margin-bottom: 8px; border-bottom: 1px solid var(--line-soft); }
+  .server-group-tab { flex: 1 1 auto; min-height: 36px; padding: 6px 12px; border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--ink-soft); background: transparent; font: inherit; font-size: .72rem; font-weight: 700; cursor: pointer; text-align: center; }
+  .server-group-tab:hover, .server-group-tab:focus-visible { border-color: var(--line-strong); background: var(--accent-soft); }
+  .server-group-tab.active { color: var(--ink); border-color: var(--accent); background: var(--accent-soft); }
   .row-copy { min-width: 0; }
   .row-copy strong { display: block; color: var(--ink); font-size: .72rem; overflow-wrap: anywhere; }
   .row-copy small { display: block; margin-top: 2px; color: var(--muted); font-size: .55rem; }

@@ -53,7 +53,19 @@
 // manifest). The Referer for vidsrc.party is itself; for the CDNs it's
 // vidsrc.party (the segment proxy runs on vidsrc.party, but if the Worker
 // ever fetches a raw CDN URL, it sends vidsrc.party as the Referer).
-const ALLOWED_HOST_SUFFIXES = ['hotstar.com', 'slivcdn.com', 'jio.com', 'jiocinema.com', 'premiumplugx.com', 'catbox.moe', 'cloudnestra.com', 'stellarconductornexus.com', 'vidsrc.party', 'cookiebakers23blog.xyz', 'cno.to', 'vidcore.org'];
+// Round 36 — decode a base64url-encoded string to UTF-8. Used for the
+// ?e= parameter so the real CDN URL never appears in plain text client-side.
+function decodeBase64Url(input: string): string {
+        // Convert base64url → base64, pad to length multiple of 4.
+        const b64 = input.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(input.length / 4) * 4, '=');
+        // Use atob + Uint8Array for binary-safe decode, then TextDecoder for UTF-8.
+        const binary = atob(b64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        return new TextDecoder().decode(bytes);
+}
+
+const ALLOWED_HOST_SUFFIXES = ['hotstar.com', 'slivcdn.com', 'jio.com', 'jiocinema.com', 'premiumplugx.com', 'catbox.moe', 'cloudnestra.com', 'stellarconductornexus.com', 'vidsrc.party', 'cookiebakers23blog.xyz', 'cno.to', 'vidcore.org', 'hscow.com', 'fcxmb.com', 'fodcyy.com', 'fhxod.com'];
 
 const REFERER_BY_HOST: ReadonlyArray<{ suffix: string; referer: string }> = [
         { suffix: 'slivcdn.com', referer: 'https://www.sonyliv.com/' },
@@ -265,7 +277,11 @@ export default {
                 const isHead = request.method === 'HEAD';
 
                 const url = new URL(request.url);
-                const raw = url.searchParams.get('u') ?? '';
+                // Round 36 — accept ?e=<base64url(url)> as an opaque encoded
+                // parameter (the real CDN URL must never appear in plain text
+                // client-side). Falls back to ?u= for backward compat.
+                const encoded = url.searchParams.get('e') ?? '';
+                const raw = encoded ? decodeBase64Url(encoded) : (url.searchParams.get('u') ?? '');
                 if (!raw || raw.length > MAX_URL_LENGTH) {
                         return jsonError(400, 'INVALID_REQUEST', 'A valid media URL is required.');
                 }

@@ -112,7 +112,18 @@ export type SafeSourceMetadata = {
    * renders the Server menu from this list and auto-falls-back to the next
    * entry when the active server dies. Absent for single-stream adapters.
    */
-  servers?: Array<{ url: string; label: string }>;
+  /**
+   * Round 36 — extended server entry. Backward-compatible: the old shape
+   * { url, label } still works; the new optional fields add server name,
+   * language, and per-quality URLs for the Vidstream grouped server list.
+   */
+  servers?: Array<{
+    url: string;
+    label: string;
+    server?: string;
+    language?: string;
+    qualities?: Array<{ label: string; url: string }>;
+  }>;
 };
 
 export type ResolverErrorCode =

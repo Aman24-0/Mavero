@@ -93,6 +93,9 @@ export type PlayerAudioTrackOption = {
 export type PlayerServerOption = {
   url: string;
   label: string;
+  server?: string;
+  language?: string;
+  qualities?: Array<{ label: string; url: string }>;
 };
 
 /**
@@ -167,7 +170,13 @@ export type PlayerSource = {
      * menu from this list, switches between servers without re-resolving,
      * and auto-falls-back to the next entry when the active server dies.
      */
-    servers?: Array<{ url: string; label: string }>;
+    servers?: Array<{
+      url: string;
+      label: string;
+      server?: string;
+      language?: string;
+      qualities?: Array<{ label: string; url: string }>;
+    }>;
   };
   error?: {
     code: string;

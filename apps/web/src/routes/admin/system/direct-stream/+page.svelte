@@ -164,6 +164,28 @@
     </section>
 
     <!-- ============================================================
+         Default server setting (Round 36 — Vidstream vs Vidsrc)
+         ============================================================ -->
+    <section class="a2-feature-section">
+      <h3 class="a2-feature-section-title"><Server size={14} /> Default Server</h3>
+      <p class="a2-feature-hint">Controls which server the player selects by default when both Vidstream and Vidsrc are available.</p>
+      <form class="a2-links-form" method="POST" action="?/saveDefaultServer" use:enhance={() => {
+        return async ({ update }) => { await update({ reset: false }); };
+      }}>
+        <label class="a2-link-field">
+          <span class="a2-link-label">Default Server</span>
+          <select name="default_server" class="a2-select">
+            <option value="vidstream" selected={data.defaultServer === 'vidstream'}>Vidstream (Rivestream API)</option>
+            <option value="vidsrc" selected={data.defaultServer === 'vidsrc'}>Vidsrc (vidsrc.party scrape)</option>
+          </select>
+        </label>
+        <div class="a2-form-actions">
+          <button type="submit" class="a2-btn-primary">Save default server</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- ============================================================
          How it works (info card)
          ============================================================ -->
     <section class="a2-feature-section">
