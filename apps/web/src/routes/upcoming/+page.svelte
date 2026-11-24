@@ -8,6 +8,8 @@
   import { appendReturnTo } from '$lib/shared/navigation';
   import { upcomingDetailPath, UPCOMING_LANGUAGE_OPTIONS, todayUtcDate } from '$lib/shared/upcoming-policy';
   import type { PageData } from './$types';
+  import { IS_WGT_BUILD } from '$lib/shared/build-mode';
+  import { onMount } from 'svelte';
   import type { UpcomingItem, UpcomingType } from '$lib/server/content/upcoming-types';
 
   let { data }: { data: PageData } = $props();
@@ -106,6 +108,36 @@
   let selectedType = $state<'all' | UpcomingType>(data.filters?.type);
   // svelte-ignore state_referenced_locally -- intentional initial-value capture, same pattern as the three lines above
   let selectedLanguage = $state(String(data.filters?.language ?? 'all'));
+
+
+  // P1-J (TV pass 7): on the WGT build the server load is stashed, so
+  // the page has no SSR data. Fetch the first page from the production
+  // API so the TV shows real upcoming releases (not "No releases found").
+  let tvLoading = $state(false);
+  onMount(() => {
+    if (!IS_WGT_BUILD) return;
+    tvLoading = true;
+    const startDate = selectedStartDate || todayUtcDate();
+    const typeParam = selectedType || 'all';
+    const langParam = selectedLanguage || 'all';
+    const params = new URLSearchParams({ startDate, type: typeParam, language: langParam, page: '1' });
+    fetch(`/api/upcoming?${params.toString()}`)
+      .then((r) => r.json())
+      .then((payload) => {
+        if (payload.ok) {
+          allItems = payload.items || [];
+          currentPage = payload.page || 1;
+          hasNextPage = payload.hasNextPage || false;
+          nextCursor = payload.cursor || '';
+          pageWarnings = Array.isArray(payload.errors) ? [...payload.errors] : [];
+          pageError = payload.errorMessage || null;
+        } else {
+          pageError = payload.error?.message || 'Unable to load upcoming releases.';
+        }
+      })
+      .catch(() => { pageError = 'Unable to load upcoming releases.'; })
+      .finally(() => { tvLoading = false; });
+  });
 
   // Filter-navigation failure — a rejected goto() is NEVER silently
   // swallowed: the optimistic selection is rolled back to the last

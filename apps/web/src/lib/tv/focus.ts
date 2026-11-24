@@ -296,50 +296,26 @@ function zoomFactor(): number {
 }
 
 /* -------------------------------------------------------------------------
- * Rail sliding — content moves ONLY at a row's edge, via CSS transform
- * (Samsung rule 5; the TV engine silently drops scrollIntoView, which is
- * the reported "focus disappears at the rail's end" bug).
+ * Rail scrolling — P0-B (TV pass 7): switched from CSS transform to NATIVE
+ * scroll. The TV engine (Chromium 69–76) does not repaint newly-revealed
+ * regions of a transform-slid, overflow-hidden container. Native scroll
+ * uses the engine's own scroll/paint path — the region that scrolls in WILL
+ * be painted. The rail CSS changed from `overflow-x: hidden` to
+ * `overflow-x: auto` (scrollbar hidden via CSS).
  * ----------------------------------------------------------------------- */
 
-const railOffset = new WeakMap<HTMLElement, number>();
-
-function shiftOfRail(rail: HTMLElement): number {
-  return railOffset.get(rail) ?? 0;
-}
-
-function applyRailShift(rail: HTMLElement, shift: number): void {
+function resetRailScroll(rail: HTMLElement): void {
   try {
-    const maxShift = Math.max(0, rail.scrollWidth - rail.clientWidth);
-    const clamped = Math.min(Math.max(0, Math.round(shift)), maxShift);
-    railOffset.set(rail, clamped);
-    rail.style.transform = clamped > 0 ? `translateX(${-clamped}px)` : '';
+    rail.scrollLeft = 0;
   } catch {
-    /* cosmetic — never break navigation on a failed slide */
+    /* cosmetic */
   }
-}
-
-function resetRailShift(rail: HTMLElement): void {
-  applyRailShift(rail, 0);
-}
-
-/** Card positions in the rail's LAYOUT coordinate space (transform-agnostic).
- *  TV-UX pass 5: the rail's transform is `translateX(-shift_css)` (CSS px).
- *  Under body.tv-mode zoom the visual offset is `shift_css * zoom` CLIENT px,
- *  so the layout rect (client px) = visual + shift * zoom — NOT visual + shift. */
-function cardLayoutRect(el: HTMLElement, shift: number): Rect {
-  const visual = rectOf(el);
-  const zoom = zoomFactor() || 1;
-  const dx = shift * zoom;
-  return { ...visual, left: visual.left + dx, right: visual.right + dx, cx: visual.cx + dx };
 }
 
 /**
  * Is the card inside its rail's VISIBLE window (used by up/down banding)?
- * TV-UX pass 3 (bug 8): the check reads the card's VISUAL rect (the CSS
- * transform already applied) against the untransformed wrapper — after a
- * rail has slid, the layout-coordinate version mis-counted both edges
- * (cards visually off-screen counted as visible, and vice versa), so
- * vertical walks and the "first visible card" resolution drifted.
+ * With native scroll, getBoundingClientRect already reflects the scroll
+ * position — no transform offset to undo.
  */
 function isCardInRailWindow(el: HTMLElement): boolean {
   try {
@@ -347,7 +323,7 @@ function isCardInRailWindow(el: HTMLElement): boolean {
     if (!rail) return true;
     const wrap = rail.parentElement;
     if (!wrap) return true;
-    const card = rectOf(el); // VISUAL rect — includes the applied transform
+    const card = rectOf(el);
     const windowLeft = wrap.getBoundingClientRect().left;
     const windowRight = wrap.getBoundingClientRect().right;
     return card.left >= windowLeft - 4 && card.right <= windowRight + 4;
@@ -357,83 +333,31 @@ function isCardInRailWindow(el: HTMLElement): boolean {
 }
 
 /**
- * Slide the rail so the focused card is fully inside the visible window.
- * Called after EVERY in-rail focus move (Samsung rule 5).
- *
- * TV-UX pass 3 (bug 8 — "Right scrolls but no new cards; Left never slides
- * back"): the previous math added the CURRENT shift to the target a second
- * time (card.left here is the LAYOUT coordinate = visual + shift, so the
- * target shift must be derived from it DIRECTLY). Every slide-after-first
- * over-shot by exactly the current shift — Right saturated at the rail's
- * max shift (past the real cards) and Left moved the rail the WRONG WAY
- * (deeper left instead of back). The corrected targets:
- *   right edge: shift' = cardLayoutRight − windowRight + gap
- *   left edge:  shift' = cardLayoutLeft  − windowLeft  − gap
- * (both clamped to [0, maxShift] by applyRailShift).
- *
- * TV-UX pass 4 (bug 1 — "Right slides into EMPTY space at the row end;
- * Left sometimes doesn't scroll the rail back"): the EDGE TRIGGERS compared
- * the card's LAYOUT rect against the VISUAL window. With a non-zero shift
- * that is wrong on BOTH edges:
- *   - right trigger `layoutRight > windowRight` also fires for a card that
- *     is ALREADY fully visible (layoutRight = visualRight + shift), so the
- *     rail kept creeping left by the peek gap on every already-visible
- *     focus move — at the row's end the creep added up and the window slid
- *     past the last card into blank space;
- *   - left trigger `layoutLeft < windowLeft` never fired for a card visually
- *     past the LEFT edge (layoutLeft = visualLeft + shift ≥ windowLeft when
- *     the shift is large), so Left moved focus without sliding the rail back.
- * Both triggers now read the card's VISUAL rect (layout − shift) against the
- * visual window; the target formulas above are unchanged (they are derived
- * from the layout rect directly, which is correct).
+ * Scroll the rail (via native scrollLeft) so the focused card is fully
+ * inside the visible window. Called after EVERY in-rail focus move.
+ * Uses the card's VISUAL rect vs the wrap's visible window — the deficit
+ * is converted from client px to CSS px by dividing by the body zoom
+ * factor (scrollLeft is in CSS px).
  */
 function ensureRailCardVisible(el: HTMLElement): void {
   try {
     const rail = rowContainerOf(el);
-    if (!rail || !rail.classList.contains('rail')) return; // grid rows scroll vertically, not horizontally
+    if (!rail || !rail.classList.contains('rail')) return;
     const wrap = rail.parentElement;
     if (!wrap) return;
     const zoom = zoomFactor() || 1;
-    // TV-UX pass 5 (test pass 5, bug 1 — "focused cards EXIST but are NOT
-    // PAINTED"): the previous math derived the slide target from the
-    // card's LAYOUT rect (visual + shift) — but under body.tv-mode's
-    // `zoom: 1.2` the layout rect was computed in MIXED units (visual is
-    // CLIENT px, the stored shift is CSS px, and translateX consumes CSS
-    // px). The wrong unit algebra BOTH under- and over-slid the rail
-    // depending on the current shift, so the focused card stayed outside
-    // the .rail-wrap's clip window and painted blank. The fix reads the
-    // ACTUAL visual rects (client px, transform- and zoom-aware) of the
-    // focused card vs the wrap's visible window, computes the deficit in
-    // CLIENT px, then divides by the zoom factor to convert to the CSS px
-    // that translateX expects. Both directions slide by EXACTLY the deficit.
-    const cardVisual = rectOf(el);
+    const cardRect = el.getBoundingClientRect();
     const wrapRect = wrap.getBoundingClientRect();
-    const style = getComputedStyle(rail);
-    // Computed style returns CSS px (the resolved unit BEFORE zoom). To
-    // compare against the wrap's client-px rect we must scale padding by
-    // the same zoom factor the body applies at render time.
-    const padLeft = (parseFloat(style.paddingLeft || '0') || 0) * zoom;
-    const padRight = (parseFloat(style.paddingRight || '0') || 0) * zoom;
-    const windowLeft = wrapRect.left + padLeft;
-    const windowRight = wrapRect.right - padRight;
-    const gap = 12; // peek margin (client px) so the next card's edge hints at more content
-    const currentShift = shiftOfRail(rail); // CSS px (the value translateX consumes)
-    let nextShift = currentShift;
-    if (cardVisual.right > windowRight - gap) {
-      // Card spills RIGHT: deficit (client px) = how far the card's right
-      // edge is past the window's right edge (minus the peek gap).
-      const deficit = cardVisual.right - (windowRight - gap);
-      // Slide the rail LEFT by `deficit` client px = `deficit / zoom` CSS px.
-      nextShift = currentShift + deficit / zoom;
-    } else if (cardVisual.left < windowLeft + gap) {
-      // Card spills LEFT: deficit (client px) = how far the card's left
-      // edge is past the window's left edge (plus the peek gap).
-      const deficit = (windowLeft + gap) - cardVisual.left;
-      // Slide the rail RIGHT by `deficit` client px = `deficit / zoom` CSS px
-      // (i.e., DECREASE the shift).
-      nextShift = currentShift - deficit / zoom;
+    const gap = 12;
+    let scrollAdjust = 0;
+    if (cardRect.right > wrapRect.right - gap) {
+      scrollAdjust = (cardRect.right - (wrapRect.right - gap)) / zoom;
+    } else if (cardRect.left < wrapRect.left + gap) {
+      scrollAdjust = -((wrapRect.left + gap) - cardRect.left) / zoom;
     }
-    if (Math.abs(nextShift - currentShift) > 1) applyRailShift(rail, nextShift);
+    if (Math.abs(scrollAdjust) > 1) {
+      rail.scrollLeft += Math.round(scrollAdjust);
+    }
   } catch {
     /* cosmetic */
   }
@@ -568,7 +492,21 @@ function revealVertical(el: HTMLElement): void {
       }
     }
     if (target !== null) {
-      animateScrollTo(scroller, target);
+      // P0-C (TV pass 7): use SYNCHRONOUS scrollTop (not rAF-animated).
+      // The rAF animation was too slow to keep up with fast D-pad moves,
+      // causing focus to run ahead of the scroll. Synchronous set ensures
+      // the focused element is visible immediately after the focus move.
+      const zoom = zoomFactor() || 1;
+      const targetScroll = Math.max(0, target / zoom);
+      try {
+        if (scroller) {
+          scroller.scrollTop = targetScroll;
+        } else {
+          window.scrollTo(0, targetScroll);
+        }
+      } catch {
+        /* cosmetic */
+      }
     }
   } catch {
     /* cosmetic */
@@ -1225,6 +1163,10 @@ function contentEntryTarget(): HTMLElement | null {
  * Route-keyed focus restoration (Back / forward navigation)
  * ----------------------------------------------------------------------- */
 
+// P0-A (TV pass 7): route history stack for safe Back navigation.
+// Pushed in onHashChange, popped in the KEY_BACK handler. NEVER lets
+// Back leave the hash route (which caused the 403 error).
+const routeHistory: string[] = [];
 let currentRouteKey = '#/';
 const focusByRoute = new Map<string, HTMLElement>();
 const ROUTE_MEMORY_MAX = 32;
@@ -1342,6 +1284,11 @@ function onHashChange(): void {
   if (prevKey === nextKey) return;
   const wasBackNavigation = popstateSeen;
   popstateSeen = false;
+  // P0-A: push the previous route onto the history stack (bounded).
+  if (prevKey && prevKey !== '#/') {
+    routeHistory.push(prevKey);
+    while (routeHistory.length > 50) routeHistory.shift();
+  }
   currentRouteKey = nextKey;
   resetSpatialMemory();
   try {
@@ -1429,7 +1376,7 @@ function eagerLoadImages(): void {
 
 function railOffsetsReset(): void {
   try {
-    document.querySelectorAll<HTMLElement>('.rail').forEach((rail) => resetRailShift(rail));
+    document.querySelectorAll<HTMLElement>('.rail').forEach((rail) => resetRailScroll(rail));
   } catch {
     /* cosmetic */
   }
@@ -1605,19 +1552,13 @@ function resyncFocusAfterScroll(): void {
   }
 }
 
-function onPageScrollCapture(event: Event): void {
-  try {
-    // Skip hero track scrolls (handled by onDocumentScrollCapture above).
-    if (closestSlideTrack(event.target)) return;
-    if (scrollResyncTimer) clearTimeout(scrollResyncTimer);
-    // Debounce so a fast fling only fires one re-sync after it settles.
-    scrollResyncTimer = setTimeout(() => {
-      scrollResyncTimer = undefined;
-      resyncFocusAfterScroll();
-    }, 220);
-  } catch {
-    /* cosmetic */
-  }
+// P0-C (TV pass 7): the scroll-event-based focus re-seed was REMOVED.
+// It caused focus to "jitter between two positions" — the scroll event
+// fired re-seed → focus moved → scroll moved → scroll event fired again →
+// feedback loop. Focus is now driven ONLY by arrow-key moves (which
+// synchronously set scrollTop), never by scroll events.
+function onPageScrollCapture(_event: Event): void {
+  // no-op — intentionally disabled to prevent the focus jitter loop.
 }
 
 function bootOverlayVisible(): boolean {
@@ -1795,7 +1736,7 @@ function moveFocus(direction: 'up' | 'down' | 'left' | 'right', repeat = false):
       }
       if (target) {
         const rail = rowContainerOf(target);
-        if (rail && rail.classList.contains('rail')) resetRailShift(rail);
+        if (rail && rail.classList.contains('rail')) resetRailScroll(rail);
       }
     } else if (direction === 'up' && inHeroNav) {
       // Up from the carousel's dots/arrows cluster → the slide's action row
@@ -1811,7 +1752,7 @@ function moveFocus(direction: 'up' | 'down' | 'left' | 'right', repeat = false):
       target = pickHorizontal(from, rowPeers, direction);
       if (!target && direction === 'left') {
         // Deliberate Left at the leftmost content COLUMN → the sidebar.
-        const card = cardLayoutRect(active, shiftOfRail(rowContainerOf(active) as HTMLElement));
+        const card = rectOf(active);
         const edge = contentLeftEdge();
         if (card.left <= edge + 140) {
           target = activeSidebarLink();
@@ -1860,14 +1801,37 @@ function moveFocus(direction: 'up' | 'down' | 'left' | 'right', repeat = false):
           if (target) setTvSidebarCollapsed(false);
         }
       }
-    } else {
-      // Up from the filter row: the hero group is excluded (see the rail
-      // branch — the entry contract is Play, never the dots cluster).
-      const above = direction === 'up'
-        ? contentCandidates().filter((el) => regionOf(el) !== 'hero')
-        : contentCandidates();
-      target = pickVertical(from, above, direction);
-      if (!target && direction === 'up') {
+    } else if (direction === 'down') {
+      // P1-I (TV pass 7): Down from a rail's filter/chips row goes to
+      // THAT rail's cards, not the nearest row group below. Find the
+      // section-head's parent section, then its first card.
+      const headEl = active.closest('.section-head, .results-heading');
+      if (headEl) {
+        const section = headEl.parentElement;
+        if (section) {
+          const rail = section.querySelector<HTMLElement>('.rail');
+          if (rail) {
+            const cards = Array.from(rail.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
+              (el) => isInteractiveTarget(el) && isCardFocusUnit(el) && isVisible(el)
+            );
+            if (cards.length > 0) {
+              const visible = cards.filter((el) => isCardInRailWindow(el));
+              const pool = visible.length ? visible : cards;
+              target = pool.reduce((leftmost, el) => (rectOf(el).cx < rectOf(leftmost).cx ? el : leftmost), pool[0]);
+            }
+          }
+        }
+      }
+      if (!target) {
+        // Fallback: the old geometric pick if no same-section rail found.
+        target = pickVertical(from, contentCandidates(), 'down');
+      }
+    } else if (direction === 'up') {
+      // Up from the filter row: the hero group is excluded (the entry
+      // contract is Play, never the dots cluster).
+      const above = contentCandidates().filter((el) => regionOf(el) !== 'hero');
+      target = pickVertical(from, above, 'up');
+      if (!target) {
         // Filters → hero (bug 3): the active slide's Play is the entry
         // control; the dots are never the default landing.
         const heroPrimary = heroPrimaryTarget();
@@ -1970,14 +1934,33 @@ function handleKeydown(event: KeyboardEvent): void {
         event.stopPropagation();
         return;
       }
-      if (hasInAppHistoryEntry()) {
-        window.history.back();
+      // P0-A (TV pass 7): NEVER call raw history.back() — it can leave the
+      // hash route and navigate to a non-#/ URL (the widget's file:// entry
+      // point), causing a 403 error. Instead, use the route history stack:
+      // if there's a previous in-app route, navigate to it via hash; if not,
+      // go to the home route (#/).
+      if (routeHistory.length > 0) {
+        const prevRoute = routeHistory.pop()!;
+        try {
+          window.location.hash = prevRoute;
+        } catch {
+          window.location.hash = '#/';
+        }
         event.preventDefault();
         event.stopPropagation();
         return;
       }
-      // Deep-linked first entry: nothing in-app to pop. The event keeps its
-      // default (the platform may exit the widget — correct for a root Back).
+      // No previous route — go home (never exit the widget on Back).
+      try {
+        if (routeKeyNow() !== '#/') {
+          window.location.hash = '#/';
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
+      } catch {
+        /* stay on the current route */
+      }
     } catch {
       /* never break on Back */
     }

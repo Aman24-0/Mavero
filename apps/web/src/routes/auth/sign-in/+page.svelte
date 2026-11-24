@@ -4,6 +4,7 @@
   import AuthShell from '$components/AuthShell.svelte';
   import GoogleOAuthButton from '$components/auth/GoogleOAuthButton.svelte';
   import { isBigScreen } from '$lib/shared/device-class';
+  import { IS_WGT_BUILD } from '$lib/shared/build-mode';
   import { markPendingUmamiAuthEvent } from '$lib/client/analytics/umami';
 
   type AuthForm = { message?: string; email?: string; success?: boolean };
@@ -24,7 +25,9 @@
   // / authorization side of the pairing flow, so they never see this
   // CTA. The class comes from the server layout projection (same
   // parser as the device_sessions registry) — not a CSS media query.
-  const showQrLogin = $derived(isBigScreen(data?.deviceType));
+  // P1-K (TV pass 7): on the WGT build, deviceType is null (no SSR data).
+  // Show the QR login on TV so the user can pair with their phone.
+  const showQrLogin = $derived(IS_WGT_BUILD || isBigScreen(data?.deviceType));
 
   let showPassword = $state(false);
   // svelte-ignore state_referenced_locally -- intentional initial-value capture; form is a server snapshot
