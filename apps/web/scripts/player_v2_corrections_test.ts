@@ -395,7 +395,7 @@ ok(/introStatus: 'waiting-duration' \| 'loading' \| 'available' \| 'no-data' \| 
 ok(/errorKind: 'api' \| 'timeout' \| 'invalid' \| 'network' \| null;/.test(introClient), '4. the intro lookup exposes the TYPED failure kind (no-data ≠ failed)');
 ok(/error instanceof TheIntroDbApiError\s*\?\s*'api'/.test(introClient), '4. API errors (incl. rate limits / Cloudflare blocks) are typed as api');
 ok(/error instanceof Error && error\.name === 'AbortError'\s*\?\s*'timeout'/.test(introClient), '4. timeouts are typed as timeout');
-ok(/\{#if activeSkipSegment && source\?\.type === 'direct' && !touchLocked && !castConnected\}/.test(shell), '4. Skip Intro renders ONLY with a verified in-segment playhead (never a fake button)');
+ok(/\{#if activeSkipSegment && source\?\.type === 'direct' && !touchLocked && !castConnected && !sourceMenuOpen && !episodeMenuOpen && !controlsSheetsOpen\}/.test(shell), '4. Skip Intro renders ONLY with a verified in-segment playhead (never a fake button, and hidden when any sheet is open)');
 
 // Behavioral: typed error kinds through the REAL lookup with mocked fetch.
 function introFetch(raw: unknown, opts?: { status?: number; fail?: boolean }) {

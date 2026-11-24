@@ -230,13 +230,34 @@
 </script>
 
 <div class="controls" class:casting={castActive} aria-label="Playback controls">
-  <!-- TOP-RIGHT utility zone: Source, Display Mode, Lock, PiP, Cast.
-       2026-10 round 24 — Display Mode moved here from the bottom bar (it
-       was creating a new row in portrait). Source button added for future
-       scraper provider switching. -->
+  <!-- TOP-RIGHT utility zone: Display Mode, Subtitles, Quality, Server, Cast, PiP, Lock.
+       Round 37 B — Subtitles/Quality/Server moved here from the bottom row so
+       the bottom row fits a 360–430 px portrait width without wrapping. -->
   <div class="utility-zone">
-    <!-- 2026-10 round 24 — Display Mode moved here from the bottom bar. -->
     <button class="control-button" type="button" aria-label={`Display mode: ${displayMode}`} aria-haspopup="dialog" onclick={() => openMenu('display')}><Expand size={17} strokeWidth={1.5} /></button>
+    {#if !castActive}
+      <button class="select-control subtitles sheet-trigger" type="button" aria-label={`Subtitles: ${subtitleButtonLabel}${subtitleNotice ? ` (${subtitleNotice})` : ''}`} aria-haspopup="dialog" title={subtitleNotice || undefined} onclick={() => openMenu('subtitles')}>
+        <Captions size={17} strokeWidth={1.5} aria-hidden="true" />
+        <span class="control-label">{subtitleButtonLabel}</span>
+      </button>
+      {#if qualityMode !== 'none'}
+        <button class="select-control quality sheet-trigger" type="button" aria-label={`Playback quality: ${qualityButtonLabel}`} aria-haspopup="dialog" onclick={() => openMenu('quality')}>
+          <Settings2 size={16} strokeWidth={1.5} aria-hidden="true" />
+          <span class="control-label">{qualityButtonLabel}</span>
+        </button>
+      {:else if singleQualityLabel}
+        <button class="select-control quality sheet-trigger" type="button" disabled aria-disabled="true" title={`Quality ${singleQualityLabel} (no other qualities available)`} aria-label={`Playback quality: ${singleQualityLabel} (single available quality)`}>
+          <Settings2 size={16} strokeWidth={1.5} aria-hidden="true" />
+          <span class="control-label">{singleQualityLabel}</span>
+        </button>
+      {/if}
+      {#if serverMode === 'menu'}
+        <button class="select-control server sheet-trigger" type="button" aria-label={`Server: ${serverButtonLabel}`} aria-haspopup="dialog" onclick={() => openMenu('servers')}>
+          <Server size={16} strokeWidth={1.5} aria-hidden="true" />
+          <span class="control-label">{serverButtonLabel}</span>
+        </button>
+      {/if}
+    {/if}
     {#if castAvailable}
       <button class="control-button cast-button" class:casting={castActive} type="button" aria-label={castActive ? 'Disconnect cast session' : 'Cast to a device'} aria-pressed={castActive} onclick={onCast}><Cast size={17} strokeWidth={1.5} /></button>
     {/if}
@@ -247,9 +268,8 @@
   </div>
 
   <!-- BOTTOM zone: time + timeline, then the control row.
-       2026-10 round 24 — the control row is split into LEFT (Play/Pause, ±10s)
-       and RIGHT (Volume, Subtitles, Quality, Audio, Speed, Fullscreen) groups
-       using justify-content: space-between. -->
+       Round 37 B — the bottom row keeps only Play/Pause, ±10s, Volume, Speed,
+       Fullscreen. Subtitles/Quality/Server moved to the top utility zone. -->
   <div class="bottom-zone">
     <div class="timeline-row">
       <span class="time-label" aria-live="off">{formatPlayerTime(currentTime)}</span>
@@ -276,7 +296,7 @@
           <RotateCwSquare size={18} strokeWidth={1.5} aria-hidden="true" />
         </button>
       </div>
-      <!-- RIGHT group: Volume, Subtitles, Quality, Audio, Speed, Fullscreen. -->
+      <!-- RIGHT group: Volume, Audio, Speed, Fullscreen. -->
       <div class="right-controls">
         {#if !castActive}
           <div class="volume-control">
@@ -285,31 +305,10 @@
             </button>
             <input class="volume-input" type="range" min="0" max="1" step="0.05" value={muted ? 0 : volume} oninput={handleVolume} aria-label="Volume" />
           </div>
-          <button class="select-control subtitles sheet-trigger" type="button" aria-label={`Subtitles: ${subtitleButtonLabel}${subtitleNotice ? ` (${subtitleNotice})` : ''}`} aria-haspopup="dialog" title={subtitleNotice || undefined} onclick={() => openMenu('subtitles')}>
-            <Captions size={17} strokeWidth={1.5} aria-hidden="true" />
-            <span class="control-label">{subtitleButtonLabel}</span>
-          </button>
-          {#if qualityMode !== 'none'}
-            <button class="select-control quality sheet-trigger" type="button" aria-label={`Playback quality: ${qualityButtonLabel}`} aria-haspopup="dialog" onclick={() => openMenu('quality')}>
-              <Settings2 size={16} strokeWidth={1.5} aria-hidden="true" />
-              <span class="control-label">{qualityButtonLabel}</span>
-            </button>
-          {:else if singleQualityLabel}
-            <button class="select-control quality sheet-trigger" type="button" disabled aria-disabled="true" title={`Quality ${singleQualityLabel} (no other qualities available)`} aria-label={`Playback quality: ${singleQualityLabel} (single available quality)`}>
-              <Settings2 size={16} strokeWidth={1.5} aria-hidden="true" />
-              <span class="control-label">{singleQualityLabel}</span>
-            </button>
-          {/if}
           {#if audioMode === 'menu'}
             <button class="select-control audio sheet-trigger" type="button" aria-label={`Audio track: ${audioButtonLabel}`} aria-haspopup="dialog" onclick={() => openMenu('audio')}>
               <AudioLines size={16} strokeWidth={1.5} aria-hidden="true" />
               <span class="control-label">{audioButtonLabel}</span>
-            </button>
-          {/if}
-          {#if serverMode === 'menu'}
-            <button class="select-control server sheet-trigger" type="button" aria-label={`Server: ${serverButtonLabel}`} aria-haspopup="dialog" onclick={() => openMenu('servers')}>
-              <Server size={16} strokeWidth={1.5} aria-hidden="true" />
-              <span class="control-label">{serverButtonLabel}</span>
             </button>
           {/if}
           <button class="select-control speed sheet-trigger" type="button" aria-label={`Playback speed: ${playbackRate}×`} aria-haspopup="dialog" onclick={() => openMenu('speed')}>
@@ -409,8 +408,12 @@
      that miss every control reach the video surface (gestures/reveal). */
   .controls { position: absolute; inset: 0; z-index: 10; pointer-events: none; color: var(--ink); }
 
-  /* ---- Top-right utility zone ---- */
-  .utility-zone { position: absolute; z-index: 2; top: max(12px, env(safe-area-inset-top)); right: max(12px, env(safe-area-inset-right)); display: flex; align-items: center; gap: 8px; pointer-events: auto; }
+  /* ---- Top-right utility zone ----
+     Round 37 B — now holds Display Mode, Subtitles, Quality, Server, Cast,
+     PiP, Lock. In portrait these must fit one row (360–430 px); the zone
+     uses flex-wrap: nowrap and shrinks button size/gap. The select-control
+     labels truncate so the row never overflows. */
+  .utility-zone { position: absolute; z-index: 2; top: max(12px, env(safe-area-inset-top)); right: max(12px, env(safe-area-inset-right)); display: flex; align-items: center; flex-wrap: nowrap; gap: 8px; pointer-events: auto; max-width: calc(100vw - 24px); }
 
   /* 2026-10 round 20 — the center cluster + cluster-button CSS is REMOVED.
      Play/Pause moved to the bottom secondary row as .control-button.play-inline.
@@ -492,15 +495,23 @@
   @media (max-width: 840px) {
     .volume-input { display: none; }
   }
+  /* Round 37 B — portrait (360–430 px): shrink the utility-zone + bottom-row
+     buttons so both rows stay on ONE line. The select-control labels truncate
+     (overflow: hidden + text-overflow: ellipsis) so long names never expand
+     the row. Touch targets stay 32px+ minimum. */
   @media (max-width: 640px) {
     .bottom-zone { padding: 8px 8px calc(10px + env(safe-area-inset-bottom)); }
     .secondary-row { gap: 6px; }
     .left-controls { gap: 6px; }
     .right-controls { gap: 4px; }
+    .utility-zone { gap: 4px; max-width: calc(100vw - 16px); }
     .time-label { font-size: .56rem; }
-    .select-control { padding: 0 4px; min-height: 36px; }
-    .select-control.subtitles { min-width: 40px; max-width: 80px; }
-    .control-button { min-width: 36px; min-height: 36px; }
+    .select-control { padding: 0 4px; min-height: 32px; }
+    .select-control.subtitles { min-width: 36px; max-width: 64px; }
+    .select-control.quality { max-width: 52px; }
+    .select-control.server { max-width: 52px; }
+    .select-control.audio { max-width: 52px; }
+    .control-button { min-width: 32px; min-height: 32px; }
     .control-label { font-size: .55rem; }
   }
   /* Landscape phone (Player V2 remaining fixes, 2026-10): the secondary row

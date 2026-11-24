@@ -10,13 +10,17 @@
  *   movie : https://novahd.cc/api/sources?type=movie&tmdbId=<id>
  *   series: https://novahd.cc/api/sources?type=show&tmdbId=<id>&season=<n>&episode=<m>
  *
- * Headers (mandatory — without them the API returns a DECOY playlist):
- *   accept: 'application/json, text/plain, [all media types]'
- *   origin: 'https://novahd.cc'
- *   referer: 'https://novahd.cc/watch/movie/<id>'
- *            (series: 'https://novahd.cc/watch/tv/<id>' — if the decoy comes
- *             back on the movie referer, one retry with the tv referer)
- *   user-agent: desktop Chrome UA
+ * The API sits behind Cloudflare. The browser request that works sends
+ * document-navigation headers plus a cf_clearance cookie. We try 3 strategies
+ * in order (each logged), using the first that yields a parseable `sources`
+ * array with >=1 entry:
+ *   a) direct fetch with document-navigation headers (accept text/html,
+ *      sec-fetch-dest: document, sec-fetch-mode: navigate, referer = the API
+ *      URL itself)
+ *   b) same URL through the Worker (?e=<base64url>) — the Worker pins
+ *      Referer/Origin to https://novahd.cc/ and is on Cloudflare edge IPs
+ *   c) the /watch/movie/<id> vs /watch/tv/<id> referer variant (series)
+ * Accept: application/json is used ONLY on attempts b/c, not the first.
  *
  * Rate limit: 30 requests / ~293 s → do NOT retry aggressively (max 1 retry).
  *
@@ -163,33 +167,65 @@ async function mapWithConcurrency<T, R>(
 }
 
 /**
- * Fetch the NovaHD API through the Worker. Returns the raw response text or
- * null on failure. The `referer` is one of '/watch/movie/<id>' or '/watch/tv/<id>'.
+ * Fetch the NovaHD API with a given header set + URL. Returns the raw
+ * response text + metadata (status, content-type, content-length) or null
+ * on network failure. Logs the response truth so one deploy tells us the
+ * cause of "no body".
  */
-async function fetchNovaApi(
-  apiUrl: string,
-  referer: string,
-  workerProxyUrl: string
-): Promise<string | null> {
+interface FetchAttempt {
+  label: string;
+  status: number;
+  contentType: string;
+  contentLength: string;
+  head: string;
+  body: string | null;
+}
+
+async function fetchNovaAttempt(
+  fetchUrl: string,
+  headers: Record<string, string>,
+  label: string
+): Promise<FetchAttempt> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
   try {
-    const fetchUrl = proxyUrl(apiUrl, workerProxyUrl);
     const response = await fetch(fetchUrl, {
       signal: controller.signal,
-      headers: {
-        accept: 'application/json, text/plain, */*',
-        origin: 'https://novahd.cc',
-        referer,
-        'user-agent': DESKTOP_UA,
-      },
+      headers,
     });
-    if (!response.ok) return null;
-    return await response.text();
-  } catch {
-    return null;
+    const contentType = response.headers.get('content-type') ?? '';
+    const contentLength = response.headers.get('content-length') ?? '';
+    let body: string | null = null;
+    try {
+      body = await response.text();
+    } catch {
+      body = null;
+    }
+    const head = body ? body.slice(0, 200).replace(/\n/g, ' ') : '';
+    console.info(`[vidplay] response ${label} status=${response.status} ct=${contentType} len=${contentLength} head=${head}`);
+    return { label, status: response.status, contentType, contentLength, head, body };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.info(`[vidplay] response ${label} status=ERR ct=- len=- head=${msg}`);
+    return { label, status: 0, contentType: '', contentLength: '', head: msg, body: null };
   } finally {
     clearTimeout(timeout);
+  }
+}
+
+/** Parse a fetch attempt's body into a NovaPayload, or null if not parseable. */
+function parseAttempt(attempt: FetchAttempt): NovaPayload | null {
+  if (!attempt.body || attempt.status === 0 || attempt.status >= 400) return null;
+  if (isDecoy(attempt.body)) {
+    console.warn(`[vidplay] ${attempt.label} — decoy detected, skipping`);
+    return null;
+  }
+  try {
+    const payload = JSON.parse(attempt.body) as NovaPayload;
+    if (!Array.isArray(payload.sources) || payload.sources.length === 0) return null;
+    return payload;
+  } catch {
+    return null;
   }
 }
 
@@ -235,38 +271,66 @@ export const novaAdapter: ProviderAdapter = {
       apiUrl.searchParams.set('season', String(season));
       apiUrl.searchParams.set('episode', String(episode));
     }
+    const apiUrlStr = apiUrl.toString();
 
-    // The API requires a Referer that looks like the site's own watch page.
-    // Movie referer first; if the decoy comes back, retry once with the TV
-    // referer (max 1 retry — the rate limit is 30 req / ~293 s).
+    // The NovaHD API sits behind Cloudflare. The browser request that works
+    // sends document-navigation headers plus a cf_clearance cookie. We try 3
+    // strategies in order; each attempt is logged so one deploy tells us the
+    // cause of "no body". Use the first attempt that yields a parseable
+    // `sources` array with ≥1 entry.
+
+    // Document-navigation headers (match the working browser capture).
+    const docHeaders: Record<string, string> = {
+      accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'accept-language': 'en-US,en;q=0.5',
+      referer: apiUrlStr,
+      origin: 'https://novahd.cc',
+      'sec-fetch-dest': 'document',
+      'sec-fetch-mode': 'navigate',
+      'sec-fetch-site': 'same-origin',
+      'upgrade-insecure-requests': '1',
+      'user-agent': DESKTOP_UA,
+    };
+    // JSON accept headers (second attempt only).
+    const jsonHeaders = (referer: string): Record<string, string> => ({
+      accept: 'application/json, text/plain, */*',
+      origin: 'https://novahd.cc',
+      referer,
+      'user-agent': DESKTOP_UA,
+    });
+
+    const proxiedApiUrl = proxyUrl(apiUrlStr, workerProxyUrl);
     const refererMovie = `https://novahd.cc/watch/movie/${rawId}`;
     const refererTv = `https://novahd.cc/watch/tv/${rawId}`;
     const primaryReferer = mediaType === 'series' ? refererTv : refererMovie;
     const fallbackReferer = mediaType === 'series' ? refererMovie : refererTv;
 
-    let bodyText = await fetchNovaApi(apiUrl.toString(), primaryReferer, workerProxyUrl);
-    if ((!bodyText || isDecoy(bodyText)) && bodyText !== null) {
-      // Decoy on the primary referer — retry once with the fallback referer.
-      console.warn('[vidplay] decoy on primary referer — retrying with fallback');
-      bodyText = await fetchNovaApi(apiUrl.toString(), fallbackReferer, workerProxyUrl);
+    // a) direct fetch with document headers
+    const attemptA = await fetchNovaAttempt(apiUrlStr, docHeaders, 'a-direct-doc');
+    let payload = parseAttempt(attemptA);
+
+    // b) same URL through the Worker (?e=<base64url>) — the Worker pins
+    //    Referer/Origin to https://novahd.cc/ and is on Cloudflare edge IPs
+    if (!payload) {
+      const attemptB = await fetchNovaAttempt(proxiedApiUrl, jsonHeaders(apiUrlStr), 'b-worker-json');
+      payload = parseAttempt(attemptB);
     }
 
-    if (!bodyText) {
-      console.warn('[vidplay] API returned no body');
-      cache.set(cacheKey, { servers: [], expiresAt: Date.now() + CACHE_TTL_MS });
-      return null;
+    // c) the /watch/movie/<id> vs /watch/tv/<id> referer variant (series)
+    if (!payload) {
+      const attemptC = await fetchNovaAttempt(proxiedApiUrl, jsonHeaders(primaryReferer), `c-worker-${mediaType === 'series' ? 'tv' : 'movie'}-referer`);
+      payload = parseAttempt(attemptC);
     }
-    if (isDecoy(bodyText)) {
-      console.warn('[vidplay] decoy or empty response — skipping');
-      cache.set(cacheKey, { servers: [], expiresAt: Date.now() + CACHE_TTL_MS });
-      return null;
+    // c2) the opposite referer variant as a last resort
+    if (!payload) {
+      const attemptC2 = await fetchNovaAttempt(proxiedApiUrl, jsonHeaders(fallbackReferer), `c2-worker-${mediaType === 'series' ? 'movie' : 'tv'}-referer`);
+      payload = parseAttempt(attemptC2);
     }
 
-    let payload: NovaPayload;
-    try {
-      payload = JSON.parse(bodyText) as NovaPayload;
-    } catch {
-      console.warn('[vidplay] non-JSON response — skipping');
+    if (!payload) {
+      console.warn('[vidplay] all attempts failed — statuses:',
+        `a=${attemptA.status}`,
+        '(b/c/c2 logged above)');
       cache.set(cacheKey, { servers: [], expiresAt: Date.now() + CACHE_TTL_MS });
       return null;
     }

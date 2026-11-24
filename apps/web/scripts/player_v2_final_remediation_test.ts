@@ -78,24 +78,27 @@ console.log('\nISSUE 1 — portrait secondary row');
   // top-right utility zone — .select-control.display-mode no longer exists.
   // Round 32 added the Server control with the same compact width contract.
   ok(/\.select-control\.quality \.control-label \{ max-width: 64px; \}/.test(controls) && /\.select-control\.server \.control-label \{ max-width: 64px; \}/.test(controls) && /\.select-control\.speed \.control-label \{ max-width: 44px; \}/.test(controls) && !/\.select-control\.display-mode\s*[.{]/.test(controls), '1e. explicit compact label widths for the fixed controls (quality/server/speed); the display-mode select RULES are GONE (round 24 utility-zone move)');
-  // Deliberate narrow-phone fallback (round 25 values): tighter paddings +
-  // 36px targets, subtitle floor lowered with an explicit 80px cap.
-  ok(/@media \(max-width: 640px\) \{[\s\S]*?\.select-control\.subtitles \{ min-width: 40px; max-width: 80px; \}/.test(controls), '1f. ≤640px fallback lowers the subtitle floor (deliberate compact treatment)');
-  ok(/@media \(max-width: 640px\) \{[\s\S]*?\.select-control \{ padding: 0 4px; min-height: 36px; \}/.test(controls), '1g. ≤640px fallback tightens the control paddings (compact treatment; label widths are fluid since the sheet contract)');
+  // Round 37 B — portrait (≤640px) fallback: tighter paddings + 32px targets,
+  // subtitle floor lowered with an explicit 64px cap. Subtitles/Quality/Server
+  // moved to the top utility zone so the bottom row fits 360–430 px portrait.
+  ok(/@media \(max-width: 640px\) \{[\s\S]*?\.select-control\.subtitles \{ min-width: 36px; max-width: 64px; \}/.test(controls), '1f. ≤640px fallback lowers the subtitle floor (deliberate compact treatment)');
+  ok(/@media \(max-width: 640px\) \{[\s\S]*?\.select-control \{ padding: 0 4px; min-height: 32px; \}/.test(controls), '1g. ≤640px fallback tightens the control paddings (compact treatment; label widths are fluid since the sheet contract)');
   // Round 24: the display-mode select is gone from the bottom row entirely
   // (moved to the top-right utility zone) — there is no in-row icon to fold.
   ok(!/\.select-control\.display-mode\s*[.{]/.test(controls) && /aria-label=\{`Display mode: \$\{displayMode\}`\}/.test(controls), '1g2. the display-mode control lives in the utility zone (round 24) — no in-row display select rules remain');
-  // Round 24/25/32 order: Volume · Subtitles · Quality · (Audio) · (Server) ·
-  // Speed · Fullscreen — the display mode moved to the utility zone and the
-  // audio/server controls render conditionally. The utility zone MUST carry
-  // the display-mode button.
+  // Round 24/25/32/37 order: the bottom secondary row keeps Volume · (Audio) ·
+  // Speed · Fullscreen. Subtitles/Quality/Server moved to the top utility zone
+  // (round 37 B) so the bottom row fits 360–430 px portrait without wrapping.
   const utilityStart = controls.indexOf('class="utility-zone"');
   const utility = controls.slice(utilityStart, controls.indexOf('class="bottom-zone"', utilityStart));
   ok(utility.includes('aria-label={`Display mode: ${displayMode}`}'), '1h-pre. the display-mode control is in the top-right utility zone (round 24)');
+  ok(utility.includes('aria-label={`Subtitles:'), '1h-pre2. the subtitles control moved to the utility zone (round 37 B)');
+  ok(utility.includes('select-control quality'), '1h-pre3. the quality control moved to the utility zone (round 37 B)');
+  ok(utility.includes('select-control server'), '1h-pre4. the server control moved to the utility zone (round 37 B)');
   const secondaryStart = controls.indexOf('class="secondary-row"');
   const secondaryEnd = controls.indexOf('<!-- In-player selection sheets', secondaryStart);
   const secondary = controls.slice(secondaryStart, secondaryEnd > secondaryStart ? secondaryEnd : undefined);
-  const order = ['volume-control', 'aria-label={`Subtitles:', 'select-control quality', 'aria-label={`Playback speed', "'Enter fullscreen'"];
+  const order = ['volume-control', 'aria-label={`Playback speed', "'Enter fullscreen'"];
   let cursor = 0;
   let orderOk = true;
   for (const marker of order) {
@@ -103,7 +106,7 @@ console.log('\nISSUE 1 — portrait secondary row');
     if (at < 0) { orderOk = false; break; }
     cursor = at;
   }
-  ok(orderOk, '1h. target order Volume · Subtitles · Quality · Speed · Fullscreen (display mode lives in the utility zone; fullscreen INSIDE the group)');
+  ok(orderOk, '1h. target order Volume · Speed · Fullscreen (round 37 B: Subtitles/Quality/Server moved to the utility zone; display mode already there)');
   ok((secondary.match(/'Exit fullscreen' : 'Enter fullscreen'/g) ?? []).length === 1, '1i. exactly one fullscreen button in the secondary row');
   // "Off" must stay the FIRST entry of the subtitle sheet's track list; the
   // honest notice renders as a separate non-selectable status row only when
