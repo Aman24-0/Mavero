@@ -97,7 +97,7 @@ const authorize = read('src/routes/authorize/+page.svelte');
 
   // 37/38. desktop + TV see "Login with QR" on the sign-in page.
   ok(signIn.includes('Login with QR'), 'G37a: sign-in page has the "Login with QR" CTA');
-  ok(signIn.includes("const showQrLogin = $derived(isBigScreen(data?.deviceType))"), 'G37b: QR CTA gated by server-derived big-screen class');
+  ok(signIn.includes("const showQrLogin = $derived(IS_WGT_BUILD || isBigScreen(data?.deviceType))"), 'G37b: QR CTA gated by IS_WGT_BUILD || server-derived big-screen class (TV pass 7: IS_WGT_BUILD added so TV widget shows QR login without SSR data)');
   ok(signIn.includes('href="/tv-login"'), 'G37c: CTA navigates to the canonical big-screen QR route');
 
   // 39/40. phone/tablet do NOT see the QR-display CTA.
