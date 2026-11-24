@@ -6,7 +6,7 @@
   // REMOVED — episode playback opens in the device's existing orientation;
   // the manual Landscape control in the player remains the only rotation
   // entry point.
-  import { AlertTriangle, ChevronRight, Download, LoaderCircle, Play } from 'lucide-svelte';
+  import { AlertTriangle, ChevronDown, Download, LoaderCircle, Play } from 'lucide-svelte';
   import { appendReturnTo } from '$lib/shared/navigation';
   import { watchHref as watchPath } from '$lib/shared/routes';
   import { markEpisodeAsResumeTarget } from '$lib/client/progress/service';
@@ -262,6 +262,29 @@
   function handleEpisodeDownload(episode: Episode) {
     onDownload?.(selectedSeason, episode.number);
   }
+
+  // Season dropdown state (TV pass 7: replaced the tab row with a single
+  // "Season N ▾" dropdown button that opens a focusable list).
+  let seasonDropdownOpen = false;
+  let seasonDropdownEl: HTMLElement | undefined;
+
+  function toggleSeasonDropdown() {
+    seasonDropdownOpen = !seasonDropdownOpen;
+  }
+
+  function selectSeason(seasonNumber: number) {
+    seasonDropdownOpen = false;
+    void loadSeason(seasonNumber);
+  }
+
+  function handleSeasonDropdownKeydown(event: KeyboardEvent) {
+    if (event.key === 'Escape' || event.key === 'Back') {
+      event.preventDefault();
+      event.stopPropagation();
+      seasonDropdownOpen = false;
+      seasonDropdownEl?.focus();
+    }
+  }
 </script>
 
 <section class="ep-section" aria-labelledby="ep-heading">
@@ -271,10 +294,41 @@
       <h2 class="ep-title" id="ep-heading">Episodes</h2>
     </div>
     {#if eligibleSeasonNumbers.length > 1}
-      <div class="season-tabs" role="group" aria-label="Select season">
-        {#each eligibleSeasonNumbers as seasonNumber}
-          <button class:active={selectedSeason === seasonNumber} aria-pressed={selectedSeason === seasonNumber} onclick={() => loadSeason(seasonNumber)}>S{seasonNumber}</button>
-        {/each}
+      <!-- TV pass 7: replaced the season-tabs row with a single dropdown
+           button. A "Season N ▾" chip (≥44px, accent focus ring) opens a
+           focusable list of seasons. Selecting one loads that season.
+           Closes on select/Back/Escape. -->
+      <div class="season-dropdown">
+        <button
+          type="button"
+          class="season-dropdown-trigger"
+          class:open={seasonDropdownOpen}
+          bind:this={seasonDropdownEl}
+          aria-haspopup="listbox"
+          aria-expanded={seasonDropdownOpen}
+          onclick={toggleSeasonDropdown}
+          onkeydown={handleSeasonDropdownKeydown}
+        >
+          <span>Season {selectedSeason}</span>
+          <ChevronDown size={16} aria-hidden="true" />
+        </button>
+        {#if seasonDropdownOpen}
+          <!-- svelte-ignore a11y_no_noninteractive_element_interactions a11y_no_noninteractive_tabindex -->
+          <ul class="season-dropdown-list" role="listbox" tabindex="0" onkeydown={handleSeasonDropdownKeydown}>
+            {#each eligibleSeasonNumbers as seasonNumber (seasonNumber)}
+              <li>
+                <button
+                  type="button"
+                  class="season-dropdown-option"
+                  class:active={selectedSeason === seasonNumber}
+                  role="option"
+                  aria-selected={selectedSeason === seasonNumber}
+                  onclick={() => selectSeason(seasonNumber)}
+                >Season {seasonNumber}</button>
+              </li>
+            {/each}
+          </ul>
+        {/if}
       </div>
     {/if}
   </div>
@@ -389,34 +443,52 @@
     margin: 4px 0 0;
   }
 
-  .season-tabs {
-    display: flex; gap: 4px;
-    max-width: 58%; overflow-x: auto;
-    padding: 4px;
-    border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm);
-    background: var(--dp-surface, rgba(255, 255, 255, .03));
-    scrollbar-width: none;
-  }
-  .season-tabs::-webkit-scrollbar { display: none; }
-  .season-tabs button {
-    flex: 0 0 auto;
-    border: 0; border-radius: 4px;
-    padding: 6px 12px;
-    color: var(--color-text-muted);
-    background: transparent;
-    font: inherit; font-size: .6rem; font-weight: 700;
+  /* TV pass 7: season dropdown (replaced the tab row). A single
+     "Season N ▾" button that opens a focusable list. */
+  .season-dropdown { position: relative; }
+  .season-dropdown-trigger {
+    display: inline-flex; align-items: center; gap: 8px;
+    min-height: 44px; padding: 8px 18px;
+    border: 1px solid var(--color-border-strong); border-radius: 999px;
+    color: var(--color-text); background: var(--dp-surface, #1a2128);
+    font: inherit; font-size: .82rem; font-weight: 700;
     cursor: pointer;
-    transition: color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out);
+    transition: background var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out);
   }
-  .season-tabs button.active {
+  .season-dropdown-trigger:hover, .season-dropdown-trigger:focus-visible {
+    border-color: var(--dp-accent, #00d9a3);
+    outline: 2px solid var(--dp-accent, #00d9a3); outline-offset: 2px;
+  }
+  .season-dropdown-trigger :global(svg) { transition: transform var(--motion-fast) var(--ease-out); }
+  .season-dropdown-trigger.open :global(svg) { transform: rotate(180deg); }
+  .season-dropdown-list {
+    position: absolute; top: calc(100% + 8px); right: 0; z-index: 10;
+    display: flex; flex-direction: column; gap: 2px;
+    min-width: 180px; padding: 6px;
+    list-style: none; margin: 0;
+    border: 1px solid var(--color-border-strong); border-radius: var(--radius-md);
+    background: #0d0f12;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, .6);
+  }
+  .season-dropdown-option {
+    display: flex; align-items: center; width: 100%;
+    min-height: 44px; padding: 8px 14px;
+    border: 0; border-radius: var(--radius-sm);
+    color: var(--color-text-muted); background: transparent;
+    font: inherit; font-size: .82rem; font-weight: 600; text-align: left;
+    cursor: pointer;
+    transition: background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
+  }
+  .season-dropdown-option:hover, .season-dropdown-option:focus-visible {
+    background: var(--dp-accent-soft, rgba(255, 255, 255, .08));
+    color: var(--color-text);
+    outline: 2px solid var(--dp-accent, #00d9a3); outline-offset: -2px;
+  }
+  .season-dropdown-option.active {
     color: #050708;
-    background: var(--dp-accent, var(--color-primary));
-    box-shadow: 0 0 18px var(--dp-glow, rgba(255, 255, 255, .25));
+    background: var(--dp-accent, #00d9a3);
+    font-weight: 700;
   }
-  .season-tabs button:hover:not(.active) {
-    color: var(--color-text); background: var(--dp-accent-soft, rgba(255, 255, 255, .08));
-  }
-  .season-tabs button:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 
   .ep-loading, .ep-error, .ep-empty {
     display: flex; align-items: center; gap: 9px;
@@ -600,7 +672,7 @@
      thumbnail so the row stays single-tap-target-friendly. */
   @media (max-width: 640px) {
     .ep-head { flex-direction: column; align-items: start; gap: 12px; }
-    .season-tabs { max-width: 100%; width: 100%; }
+    .season-dropdown { width: 100%; }
     .ep-list { padding-top: 4px; }
     .ep-row {
       grid-template-columns: 96px minmax(0, 1fr) auto;
@@ -624,7 +696,7 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .ep-row, .ep-play, .ep-download, .season-tabs button, .ep-thumb-wrap img { transition: none; }
+    .ep-row, .ep-play, .ep-download, .season-dropdown-trigger, .season-dropdown-option, .ep-thumb-wrap img { transition: none; }
     .ep-row:hover .ep-thumb-wrap img { transform: none; }
   }
 </style>

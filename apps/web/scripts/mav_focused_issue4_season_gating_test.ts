@@ -77,7 +77,7 @@ console.log('\n5 — SeasonEpisodes: season tabs use the eligibility-filtered li
   ok(/eligibleSeasonNumbers = \(\(\) => \{/.test(component), '5c. an eligibleSeasonNumbers reactive declaration exists');
   ok(/getEligibleSeasons\(seasonsData as EligibleSeason\[\]\)/.test(component), '5d. getEligibleSeasons is called on the seasonsData prop');
   // The season tabs render from eligibleSeasonNumbers, NOT from Array(seasonCount).
-  ok(/\{#each eligibleSeasonNumbers as seasonNumber\}/.test(component), '5e. season tabs iterate eligibleSeasonNumbers (NOT the previous Array(seasonCount))');
+  ok(/\{#each eligibleSeasonNumbers as seasonNumber/.test(component), '5e. season dropdown iterates eligibleSeasonNumbers (NOT the previous Array(seasonCount))');
   ok(!/\{#each Array\(Math\.max\(seasonCount, 1\)\) as _, index\}/.test(component), '5f. the previous Array(seasonCount) loop is GONE');
   // Fallback when seasonsData is absent — preserves backward compatibility.
   ok(/Array\.from\(\{ length: Math\.max\(seasonCount, 1\) \}, \(_, i\) => i \+ 1\)/.test(component), '5g. the count-based fallback is retained for callers without seasonsData (backward compatible)');
