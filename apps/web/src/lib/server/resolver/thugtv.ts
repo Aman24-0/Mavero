@@ -14,6 +14,20 @@
  * `{ data: { sources } }` shape is also tolerated (same defensive unwrap
  * as rivestream.ts).
  *
+ * RELIABILITY — intermittent upstream 403 (2026-11, verified from Worker
+ * telemetry): api.thugtv.online INTERMITTENTLY returns HTTP 403 to the
+ * Cloudflare Worker — movie/1291608 got 403 at 17:33:38Z and 17:34:00Z,
+ * movie/969681 at 17:56:25Z, and the SAME URLs through the SAME deployed
+ * Worker returned HTTP 200 minutes later (not a hard block, not
+ * title-specific). A single 403 must not drop the whole VidPlay group, so
+ * the resolve runs a BOUNDED retry loop: up to 3 attempts (backoff 500ms
+ * after attempt 1, 1200ms after attempt 2, a fresh 10s AbortController
+ * per attempt). Retried: a thrown fetch (network error / an abort that is
+ * NOT our own timeout), HTTP 403/408/425/429/500/502/503/504, and
+ * pending:true / empty sources. NOT retried: 404 and any other 4xx, our
+ * own timeout abort (a hung upstream must not hold the composite resolve
+ * for 3 × 10s), or a 200 whose body is not JSON (logged, then omitted).
+ *
  * The payload carries ~12 sources, but EXACTLY ONE is a playable direct
  * stream: the "castle" entry (id 'server-direct-castle' on movies,
  * 'server-direct-castle-tv' on episodes) with qualityVariants[] +
@@ -44,9 +58,14 @@ export const THUGTV_ADAPTER_ID = 'thugtv';
 
 const THUGTV_API = 'https://api.thugtv.online/api/stream';
 const API_TIMEOUT_MS = 10_000;
-/** The API sometimes answers `pending: true` (or an empty list) on the first hit — wait ~1.2s and refetch once. */
-const PENDING_RETRY_DELAY_MS = 1_200;
-const MAX_ATTEMPTS = 2;
+/** Bounded retry — the upstream 403s intermittently (see header) and
+ *  answers `pending: true` / empty sources on first hits. */
+const MAX_ATTEMPTS = 3;
+/** Backoff BETWEEN attempts: 500ms after attempt 1, 1200ms after attempt 2. */
+const RETRY_BACKOFF_MS = [500, 1_200] as const;
+/** Retriable statuses — the verified intermittent 403 plus the usual
+ *  timeout / rate-limit / server classes. 404 and other 4xx are NOT retried. */
+const RETRYABLE_STATUSES = new Set([403, 408, 425, 429, 500, 502, 503, 504]);
 /** Ambiguous multi-audio rows take the castle server's own name. */
 const AMBIGUOUS_LABEL = 'Citadel';
 const MAX_ROWS = 8;
@@ -172,16 +191,26 @@ export const thugtvAdapter: ProviderAdapter = {
     }
     console.info('[thugtv] API URL', apiUrl.toString());
 
-    // Fetch through the Worker proxy (max 2 attempts). The API has been
-    // observed answering `pending: true` or an empty `sources` list on
-    // the first hit — wait ~1.2s and refetch once.
+    // Fetch through the Worker proxy — BOUNDED retry loop (see header).
+    // api.thugtv.online intermittently answers 403 to the Worker, and
+    // first hits can answer `pending: true` or an empty `sources` list;
+    // both classes are retried with backoff. 404 and other 4xx are not.
     let payload: ThugTVPayload | null = null;
     let lastStatus = 0;
     let lastContentType = '';
     let lastBodyHead = '';
+    let attemptsMade = 0;
+    let succeeded = false;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      attemptsMade = attempt;
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+      let timedOut = false;
+      const timeout = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, API_TIMEOUT_MS);
+      // How this attempt ended — decides retry vs give up.
+      let outcome: 'ok' | 'retry' | 'fatal' = 'ok';
       try {
         const encoded = encodeBase64Url(apiUrl.toString());
         const fetchUrl = `${workerProxyUrl}/?e=${encoded}`;
@@ -192,45 +221,71 @@ export const thugtvAdapter: ProviderAdapter = {
         lastStatus = response.status;
         lastContentType = response.headers.get('content-type') ?? '';
         if (!response.ok) {
-          console.warn('[thugtv] API resolve failed — HTTP', response.status);
-          return null;
-        }
-        const text = await response.text();
-        lastBodyHead = text.slice(0, 200);
-        try {
-          payload = JSON.parse(text) as ThugTVPayload;
-        } catch {
-          // Never fail silently — surface enough of the body to identify
-          // an HTML challenge page / contract change in the Netlify log.
-          console.warn('[thugtv] non-JSON response — HTTP', lastStatus, 'type', lastContentType, 'body', JSON.stringify(lastBodyHead));
-          return null;
+          // Read the body ONCE, truncated to 200 chars — enough to
+          // identify a Cloudflare challenge page in the Netlify log.
+          const text = await response.text();
+          lastBodyHead = text.slice(0, 200);
+          console.warn('[thugtv] attempt', attempt, 'HTTP', response.status, 'body', lastBodyHead);
+          outcome = RETRYABLE_STATUSES.has(response.status) ? 'retry' : 'fatal';
+        } else {
+          const text = await response.text();
+          lastBodyHead = text.slice(0, 200);
+          try {
+            payload = JSON.parse(text) as ThugTVPayload;
+          } catch {
+            // Never fail silently — surface enough of the body to identify
+            // an HTML challenge page / contract change in the Netlify log.
+            console.warn('[thugtv] non-JSON response — HTTP', lastStatus, 'type', lastContentType, 'body', JSON.stringify(lastBodyHead));
+            return null;
+          }
         }
       } catch (error) {
-        console.warn('[thugtv] API resolve failed —', error instanceof Error ? error.message : String(error));
-        return null;
+        if (timedOut && (error as { name?: string } | null | undefined)?.name === 'AbortError') {
+          // Our OWN 10s timeout — NOT retried: a hung upstream must not
+          // hold the composite resolve for MAX_ATTEMPTS × 10s.
+          console.warn('[thugtv] attempt', attempt, 'timed out after', API_TIMEOUT_MS, 'ms —', error instanceof Error ? error.message : String(error));
+          outcome = 'fatal';
+        } else {
+          // Network error / an abort that is not our timeout — retryable.
+          console.warn('[thugtv] attempt', attempt, 'fetch failed —', error instanceof Error ? error.message : String(error));
+          outcome = 'retry';
+        }
       } finally {
         clearTimeout(timeout);
       }
+      if (outcome === 'fatal') break;
+      if (outcome === 'retry') {
+        if (attempt < MAX_ATTEMPTS) {
+          await new Promise((resolve) => setTimeout(resolve, RETRY_BACKOFF_MS[attempt - 1]!));
+        }
+        continue;
+      }
+      // outcome === 'ok': a parsed JSON body. Retry while the upstream is
+      // still pending or delivered no sources (first-hit behaviour).
       const probe = payload?.data ?? payload;
       const gotSources = Array.isArray(probe?.sources) && (probe?.sources?.length ?? 0) > 0;
       const isPending = probe?.pending === true || payload?.pending === true;
       if (gotSources && !isPending) {
         if (attempt > 1) console.info('[thugtv] sources arrived on attempt', attempt);
+        succeeded = true;
         break;
       }
       if (attempt < MAX_ATTEMPTS) {
-        await new Promise((resolve) => setTimeout(resolve, PENDING_RETRY_DELAY_MS));
+        await new Promise((resolve) => setTimeout(resolve, RETRY_BACKOFF_MS[attempt - 1]!));
       }
     }
 
+    if (!succeeded) {
+      // Bounded give-up — exactly one summary line, then omit the VidPlay
+      // group (never block the other groups, never throw).
+      console.warn('[thugtv] API resolve failed after', attemptsMade, 'attempts — HTTP', lastStatus);
+      return null;
+    }
+
     // The API has been observed returning both a NESTED
-    // `{ data: { sources } }` and a FLAT `{ sources }`. Unwrap either
-    // shape; never fail silently on an empty result.
+    // `{ data: { sources } }` and a FLAT `{ sources }`. Unwrap either shape.
     const body = payload?.data ?? payload;
     const sources = body?.sources ?? [];
-    if (sources.length === 0) {
-      console.warn('[thugtv] API returned no sources — HTTP', lastStatus, 'type', lastContentType, 'body', JSON.stringify(lastBodyHead));
-    }
 
     // TAKE EXACTLY ONE SERVER: the castle direct-HLS entry (movie payloads
     // use id 'server-direct-castle', episode payloads append '-tv'). Every
