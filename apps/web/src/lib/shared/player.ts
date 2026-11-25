@@ -179,7 +179,7 @@ export type PlayerSource = {
       language?: string;
       qualities?: Array<{ label: string; url: string }>;
     }>;
-    /** Round 36/38 — default server ('vidstream' | 'vidsrc' | 'vidplay') for preselection. */
+    /** Round 36/38/41 — default server ('vidstream' | 'vidsrc' | 'vidplay' | 'vidstart') for preselection. */
     defaultServer?: string;
   };
   error?: {

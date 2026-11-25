@@ -63,7 +63,10 @@
 // 2026-11 round 38 — VidPlay (ThugTV): api.thugtv.online is the VidPlay API (called
 // server-side through this proxy, like scrapper.rivestream.app). Media/subtitle CDNs are
 // the same four Rivestream hosts. aapanel.devcorp.me serves the movie's non-English VTTs.
-const ALLOWED_HOST_SUFFIXES = ['hotstar.com', 'slivcdn.com', 'jio.com', 'jiocinema.com', 'premiumplugx.com', 'catbox.moe', 'cloudnestra.com', 'stellarconductornexus.com', 'vidsrc.party', 'cookiebakers23blog.xyz', 'cno.to', 'vidcore.org', 'hscow.com', 'fcxmb.com', 'fodcyy.com', 'fhxod.com', 'rivestream.app', 'api.thugtv.online', 'aapanel.devcorp.me'];
+// 2026-11 round 40 — VidStart (ThugTV media API): media.thugtv.st serves both the JSON source
+// endpoint and the single multi-quality / multi-audio HLS master. The manifest rewriter already
+// handles master playlists (EXT-X-STREAM-INF + EXT-X-MEDIA URIs).
+const ALLOWED_HOST_SUFFIXES = ['hotstar.com', 'slivcdn.com', 'jio.com', 'jiocinema.com', 'premiumplugx.com', 'catbox.moe', 'cloudnestra.com', 'stellarconductornexus.com', 'vidsrc.party', 'cookiebakers23blog.xyz', 'cno.to', 'vidcore.org', 'hscow.com', 'fcxmb.com', 'fodcyy.com', 'fhxod.com', 'rivestream.app', 'api.thugtv.online', 'aapanel.devcorp.me', 'media.thugtv.st'];
 
 const REFERER_BY_HOST: ReadonlyArray<{ suffix: string; referer: string }> = [
         { suffix: 'slivcdn.com', referer: 'https://www.sonyliv.com/' },

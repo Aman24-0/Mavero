@@ -62,9 +62,15 @@ import { scrapeVidsrc, ScraperError, DEFAULT_SCRAPER_CONFIG } from '$lib/server/
 // Round 40 — the Rivestream + VidPlay resolves run CONCURRENTLY
 // (Promise.allSettled): a slow or failing ThugTV retry no longer adds its
 // full backoff+attempt time to every resolve (observed 8.2s end-to-end).
-// Merge order is unchanged: Vidstream first, then VidPlay.
+// Round 41 — VidStart (ThugTV media API): the vidstart adapter joins the
+// SAME concurrent merge (three adapters now). Merge order is the FIXED
+// sequence Vidstream first, then VidPlay, then VidStart. VidStart exposes
+// a single multi-quality / multi-audio HLS master (one server entry, no
+// qualities/language — hls.js reads the levels from the manifest) and
+// contributes no subtitles.
 import { rivestreamAdapter } from './rivestream';
 import { thugtvAdapter } from './thugtv';
+import { vidstartAdapter } from './vidstart';
 
 export const VIDSRC_SCRAPE_ADAPTER_ID = 'vidsrc-scrape' as const;
 
@@ -191,6 +197,8 @@ export const vidsrcScrapeProviderAdapter: ProviderAdapter = {
     let vidstreamEnabled = true;
     // Round 38 — VidPlay (ThugTV) toggle + 'vidplay' default server.
     let thugtvEnabled = true;
+    // Round 41 — VidStart (ThugTV media) toggle + 'vidstart' default server.
+    let vidstartEnabled = true;
     let defaultServerPref = 'vidstream';
     try {
       const client = createSupabaseAdminClient();
@@ -204,9 +212,10 @@ export const vidsrcScrapeProviderAdapter: ProviderAdapter = {
         if (typeof cfgAny.direct_stream_vidsrc_enabled === 'boolean') vidsrcEnabled = cfgAny.direct_stream_vidsrc_enabled;
         if (typeof cfgAny.direct_stream_vidstream_enabled === 'boolean') vidstreamEnabled = cfgAny.direct_stream_vidstream_enabled;
         if (typeof cfgAny.direct_stream_thugtv_enabled === 'boolean') thugtvEnabled = cfgAny.direct_stream_thugtv_enabled;
+        if (typeof cfgAny.direct_stream_vidstart_enabled === 'boolean') vidstartEnabled = cfgAny.direct_stream_vidstart_enabled;
         if (typeof cfgAny.direct_stream_default_server === 'string') {
           const val = cfgAny.direct_stream_default_server;
-          if (val === 'vidstream' || val === 'vidsrc' || val === 'vidplay') defaultServerPref = val;
+          if (val === 'vidstream' || val === 'vidsrc' || val === 'vidplay' || val === 'vidstart') defaultServerPref = val;
         }
       }
     } catch {
@@ -282,18 +291,20 @@ export const vidsrcScrapeProviderAdapter: ProviderAdapter = {
       }
     }
 
-    // Round 40 — PARALLEL FETCH: the Rivestream and VidPlay (ThugTV)
-    // resolves used to run SEQUENTIALLY, so a failing ThugTV retry added
-    // its full backoff+attempt time to every resolve (observed 8.2s
-    // end-to-end). Both groups now resolve CONCURRENTLY; a rejected
-    // promise logs the same warn line as before and never blocks the
-    // other group. Entries are still appended in the FIXED order
-    // Vidstream first, then VidPlay — byte-identical server list.
+    // Round 40/41 — PARALLEL FETCH: the Rivestream, VidPlay (ThugTV) and
+    // VidStart (ThugTV media) resolves run CONCURRENTLY
+    // (Promise.allSettled) — the old sequential form let a failing ThugTV
+    // retry add its full backoff+attempt time to every resolve (observed
+    // 8.2s end-to-end). A rejected promise logs the same warn line as
+    // before and never blocks the other groups. Entries are still
+    // appended in the FIXED order Vidstream first, then VidPlay, then
+    // VidStart.
     let rivestreamSubtitles: Array<{ url: string; language?: string; label?: string }> | undefined;
     let thugtvSubtitles: Array<{ url: string; language?: string; label?: string }> | undefined;
-    const [rivOut, thuOut] = await Promise.allSettled([
+    const [rivOut, thuOut, vidOut] = await Promise.allSettled([
       vidstreamEnabled ? rivestreamAdapter.resolve(context) : Promise.resolve(null),
       thugtvEnabled ? thugtvAdapter.resolve(context) : Promise.resolve(null),
+      vidstartEnabled ? vidstartAdapter.resolve(context) : Promise.resolve(null),
     ]);
 
     // Vidstream (Rivestream) first — same merge as round 36. If
@@ -348,12 +359,36 @@ export const vidsrcScrapeProviderAdapter: ProviderAdapter = {
       console.warn('[direct-stream] thugtv merge failed —', thuOut.reason instanceof Error ? thuOut.reason.message : String(thuOut.reason));
     }
 
-    // Round 36 A4 / Round 38 — temporary diagnostic: log the server count +
-    // group breakdown (now three groups).
+    // VidStart (ThugTV media) third — round 41. If VidStart failed, omit
+    // its entry entirely (never block Vidsrc/Vidstream/VidPlay). The entry
+    // carries NO qualities/language: the single HLS master already carries
+    // the quality variants + audio renditions, and hls.js builds the
+    // Quality/Audio menus from the manifest.
+    const vidstartResult = vidOut.status === 'fulfilled' ? vidOut.value : null;
+    if (vidstartResult?.metadata?.servers) {
+      for (const srv of vidstartResult.metadata.servers) {
+        if (servers.length >= 28) break;
+        servers.push({
+          url: srv.url,
+          label: srv.label,
+          server: srv.server,
+        });
+      }
+    }
+    if (vidOut.status === 'rejected') {
+      // VidStart failure is non-blocking, but log it so any pre-fetch
+      // throw is visible in the Netlify log instead of being silently
+      // swallowed.
+      console.warn('[direct-stream] vidstart merge failed —', vidOut.reason instanceof Error ? vidOut.reason.message : String(vidOut.reason));
+    }
+
+    // Round 36 A4 / Round 38/41 — temporary diagnostic: log the server count +
+    // group breakdown (now four groups).
     const vidsrcCount = servers.filter((s) => (s.server || 'Vidsrc') === 'Vidsrc').length;
     const vidstreamCount = servers.filter((s) => s.server === 'Vidstream').length;
     const vidplayCount = servers.filter((s) => s.server === 'VidPlay').length;
-    console.warn('[direct-stream] resolve complete — servers:', servers.length, '(Vidsrc:', vidsrcCount, 'Vidstream:', vidstreamCount, 'VidPlay:', vidplayCount, ')');
+    const vidstartCount = servers.filter((s) => s.server === 'VidStart').length;
+    console.warn('[direct-stream] resolve complete — servers:', servers.length, '(Vidsrc:', vidsrcCount, 'Vidstream:', vidstreamCount, 'VidPlay:', vidplayCount, 'VidStart:', vidstartCount, ')');
 
     // Round 36 — determine the primary URL. If Vidsrc is available, use its
     // first source. If only Vidstream is available, use the first Vidstream
@@ -385,10 +420,12 @@ export const vidsrcScrapeProviderAdapter: ProviderAdapter = {
         providerName: context.config.provider.name,
         sourceName: context.config.source.name,
         protocol: 'hls',
-        // Round 36 C / Round 38 — the default server from app_config, clamped
+        // Round 36 C / Round 38/41 — the default server from app_config, clamped
         // to an enabled source: if the configured default is disabled, fall
-        // back to the other enabled one. Both disabled can't happen (gate above).
+        // back to the other enabled one. Clamp order: vidstart → vidplay →
+        // vidstream → vidsrc; the final fallback is unchanged.
         defaultServer: (() => {
+          if (defaultServerPref === 'vidstart' && vidstartEnabled) return 'vidstart';
           if (defaultServerPref === 'vidplay' && thugtvEnabled) return 'vidplay';
           if (defaultServerPref === 'vidstream' && vidstreamEnabled) return 'vidstream';
           if (defaultServerPref === 'vidsrc' && vidsrcEnabled) return 'vidsrc';

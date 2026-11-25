@@ -80,9 +80,9 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     }
   }
 
-  // Round 36 C / Round 38 — read DirectStream per-source settings from app_config.
-  let dsConfig: { vidsrcEnabled: boolean; vidstreamEnabled: boolean; thugtvEnabled: boolean; defaultServer: string } = {
-    vidsrcEnabled: true, vidstreamEnabled: true, thugtvEnabled: true, defaultServer: 'vidstream'
+  // Round 36 C / Round 38/41 — read DirectStream per-source settings from app_config.
+  let dsConfig: { vidsrcEnabled: boolean; vidstreamEnabled: boolean; thugtvEnabled: boolean; vidstartEnabled: boolean; defaultServer: string } = {
+    vidsrcEnabled: true, vidstreamEnabled: true, thugtvEnabled: true, vidstartEnabled: true, defaultServer: 'vidstream'
   };
   try {
     const { data: cfg } = await locals.supabase.from('app_config').select('*').eq('id', 1).single();
@@ -91,6 +91,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
       if (typeof cfgAny.direct_stream_vidsrc_enabled === 'boolean') dsConfig.vidsrcEnabled = cfgAny.direct_stream_vidsrc_enabled;
       if (typeof cfgAny.direct_stream_vidstream_enabled === 'boolean') dsConfig.vidstreamEnabled = cfgAny.direct_stream_vidstream_enabled;
       if (typeof cfgAny.direct_stream_thugtv_enabled === 'boolean') dsConfig.thugtvEnabled = cfgAny.direct_stream_thugtv_enabled;
+      if (typeof cfgAny.direct_stream_vidstart_enabled === 'boolean') dsConfig.vidstartEnabled = cfgAny.direct_stream_vidstart_enabled;
       if (typeof cfgAny.direct_stream_default_server === 'string') dsConfig.defaultServer = cfgAny.direct_stream_default_server;
     }
   } catch { /* columns may not exist yet */ }
@@ -243,16 +244,18 @@ export const actions: Actions = {
       // (a hidden input) ONLY when the DirectStream settings section is
       // rendered (source slug starts with 'direct-stream'). Checkbox
       // present = true, absent = false (HTML forms don't submit unchecked
-      // checkboxes). Round 38 — added the VidPlay (ThugTV) toggle; validate
-      // default_server ∈ {vidsrc, vidstream, vidplay}.
+      // checkboxes). Round 38 — added the VidPlay (ThugTV) toggle; Round 41
+      // — added the VidStart (ThugTV media) toggle; validate
+      // default_server ∈ {vidsrc, vidstream, vidplay, vidstart}.
       // Uses the service-role admin client because the user-bound SSR client
       // may lack RLS write permissions on app_config.
       if (form.get('ds_settings') === 'true') {
         const vidsrc = form.get('ds_vidsrc_enabled') === 'true';
         const vidstream = form.get('ds_vidstream_enabled') === 'true';
         const thugtv = form.get('ds_thugtv_enabled') === 'true';
+        const vidstart = form.get('ds_vidstart_enabled') === 'true';
         let defaultServer = String(form.get('ds_default_server') ?? 'vidstream');
-        if (defaultServer !== 'vidsrc' && defaultServer !== 'vidstream' && defaultServer !== 'vidplay') {
+        if (defaultServer !== 'vidsrc' && defaultServer !== 'vidstream' && defaultServer !== 'vidplay' && defaultServer !== 'vidstart') {
           defaultServer = 'vidstream';
         }
         try {
@@ -263,6 +266,7 @@ export const actions: Actions = {
               direct_stream_vidsrc_enabled: vidsrc,
               direct_stream_vidstream_enabled: vidstream,
               direct_stream_thugtv_enabled: thugtv,
+              direct_stream_vidstart_enabled: vidstart,
               direct_stream_default_server: defaultServer,
               updated_at: new Date().toISOString(),
             } as Record<string, unknown> as never)
