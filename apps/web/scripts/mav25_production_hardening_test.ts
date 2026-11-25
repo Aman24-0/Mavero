@@ -208,8 +208,8 @@ const scrolledOf = (el: unknown) => (el as { __scrolled: () => { left: number; b
 
   // The shared module exists and both sections consume it (ONE shared
   // behaviour — no conflicting duplicate abstraction).
-  ok(shared.includes('export function railEdgeState') && shared.includes('export function scrollRailByCards'),
-    'C1a. the shared navigation helpers exist');
+  ok(shared.includes('export function railEdgeState') && shared.includes('export function railEdgeStateFromCached') && shared.includes('export function scrollRailByCards'),
+    'C1a. the shared navigation helpers exist (railEdgeState for one-shot reads, railEdgeStateFromCached for scroll-handler use, scrollRailByCards for arrow clicks)');
   ok(section.includes("from '$lib/shared/rail-navigation'") && adult.includes("from '$lib/shared/rail-navigation'"),
     'C1b. both Discover sections import the shared helpers');
   ok(section.includes("from '$lib/shared/rail-row-fill'") && adult.includes("from '$lib/shared/rail-row-fill'"),
@@ -224,8 +224,8 @@ const scrolledOf = (el: unknown) => (el as { __scrolled: () => { left: number; b
       `C2c. ${name} arrows carry accessible labels`);
     ok(src.includes('disabled={atStart}') && src.includes('disabled={atEnd}'),
       `C2d. ${name} arrows disable at the ACTUAL scroll edges`);
-    ok(src.includes('onscroll={updateRailState}') && src.includes('bind:this={railEl}'),
-      `C2e. ${name} re-syncs edge state from the rail's own scroll events`);
+    ok(src.includes('onscroll={onRailScroll}') && src.includes('bind:this={railEl}'),
+      `C2e. ${name} re-syncs edge state from the rail's own scroll events (via the cheap rAF-throttled onRailScroll that reads only scrollLeft)`);
     ok(src.includes('new ResizeObserver'), `C2f. ${name} observes container resizes`);
     ok(src.includes('resizeObserver?.disconnect') || src.includes('.disconnect()'),
       `C2g. ${name} cleans the observer up (no stale listeners)`);

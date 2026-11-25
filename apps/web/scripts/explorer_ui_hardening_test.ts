@@ -171,8 +171,11 @@ assert.doesNotMatch(railNavBaseRule, /opacity: 0;/, 'the base rail-nav rule no l
 // Edge state: disabled at the actual scroll ends.
 assert.match(contentRail, /disabled=\{atStart\}/, 'the prev arrow disables at the scroll start');
 assert.match(contentRail, /disabled=\{atEnd\}/, 'the next arrow disables at the scroll end');
-assert.match(contentRail, /function updateScrollState\(\)/, 'the edge state is derived from the real scroll position');
-assert.match(contentRail, /onscroll=\{updateScrollState\}/, 'scroll events update the edge state');
+assert.match(contentRail, /function updateScrollState\(\)/, 'the edge state is derived from the real scroll position (full refresh — used on mount / ResizeObserver / items-length effect)');
+assert.match(contentRail, /function onRailScroll\(\)/, 'a cheap rAF-throttled scroll handler exists (reads only scrollLeft against the cached max)');
+assert.match(contentRail, /onscroll=\{onRailScroll\}/, 'scroll events are handled by the cheap rAF-throttled onRailScroll (not the layout-triggering updateScrollState)');
+assert.match(contentRail, /cachedMaxScroll/, 'a cached max-scroll value avoids re-reading scrollWidth + clientWidth on every scroll event');
+assert.match(contentRail, /window\.matchMedia\('\(max-width: 640px\)'\)\.matches/, 'the scroll handler is skipped on mobile (≤640px) where the rail-nav arrows are display:none');
 assert.match(contentRail, /\.rail-nav:disabled \{\s*opacity: \.22;/, 'a disabled arrow is visibly off but keeps its layout slot (no jumpiness)');
 assert.match(contentRail, /aria-label=\{`Scroll \$\{title\} left`\}/, 'rail arrows keep their accessible names');
 // Scroll step stays ~2 cards.
