@@ -66,20 +66,28 @@ const testChain = testGateText();
 }
 
 // ============================================================
-// §2 VOD boundary lock — VOD DASH remains UNSUPPORTED
+// §2 VOD boundary lock — the compatibility classifier still maps
+//    VOD DASH to UNSUPPORTED
 // ============================================================
 {
+  // 2026-11 round 42 — the DIRECT DirectStream path now plays .mpd
+  // sources through the VOD DASH engine (PlayerViewport routes
+  // protocol 'dash' to it). media-compat is the separate COMPAT
+  // GATEWAY classifier (remux/transcode tiering) and keeps refusing
+  // DASH there — the pinned line below is unchanged, only its scope
+  // is now "the compat gateway", not "the whole VOD player".
   const mediaCompat = read('../src/lib/shared/media-compat.ts');
   assert.match(
     mediaCompat,
     /if \(protocol === 'dash'\) return \{ tier: 'UNSUPPORTED', action: 'none', reason: 'dash-unsupported' \};/,
     'media-compat still maps VOD DASH to UNSUPPORTED'
   );
-  ok('VOD boundary: the VOD player still refuses DASH (Live TV owns the only DASH path)');
+  ok('VOD boundary: the compat gateway classifier still refuses DASH (round 42: direct .mpd sources play through the VOD DASH engine instead)');
 }
 
 // ============================================================
-// §3 Shaka isolation — 'shaka' only inside Live TV paths
+// §3 Shaka isolation — 'shaka' only inside Live TV paths + the
+//    round-42 VOD DASH engine surface
 // ============================================================
 {
   // Prefixes RELATIVE TO src/ (the walk computes src-relative paths).
@@ -88,6 +96,19 @@ const testChain = testGateText();
   // registry module only DOCUMENTS the engine routing (endpoint kind →
   // engine) — it contains no engine code and VOD paths remain guarded.
   const LIVE_TV_DIRS = ['lib/client/live-tv', 'lib/components/live-tv', 'routes/live-tv', 'lib/server/livetv'];
+  // 2026-11 round 42 — the VOD DASH engine (VidFlix .mpd sources) is a
+  // SANCTIONED second shaka consumer: the engine file itself plus the ONE
+  // component that imports/instantiates it (PlayerViewport, the owner of
+  // the <video> element, routes 'dash' sources to it — the same 5.2.12
+  // build the Live TV engine loads, through the shared memoized
+  // browser-guarded loader). Every OTHER file stays shaka-free: the
+  // resolver, the shell, the shared types and the subtitle proxy describe
+  // the feature as "the VOD DASH engine", so a stray shaka reference
+  // anywhere else is still drift this audit catches.
+  const VOD_DASH_SHAKA_FILES = new Set([
+    'lib/client/player/shaka-vod-engine.ts',
+    'lib/components/player/PlayerViewport.svelte'
+  ]);
   const SRC_ROOT = new URL('../src', import.meta.url).pathname;
   const files: string[] = [];
   const collect = (dir: string): void => {
@@ -102,10 +123,11 @@ const testChain = testGateText();
   for (const file of files) {
     const rel = relative(SRC_ROOT, file).replaceAll('\\', '/');
     if (LIVE_TV_DIRS.some((d) => rel.startsWith(d + '/'))) continue;
+    if (VOD_DASH_SHAKA_FILES.has(rel)) continue;
     if (readFileSync(file, 'utf8').toLowerCase().includes('shaka')) offenders.push(rel);
   }
-  assert.deepEqual(offenders, [], 'no file outside Live TV paths mentions Shaka');
-  ok('Shaka isolation: zero shaka references outside Live TV (VOD/HLS/server untouched)');
+  assert.deepEqual(offenders, [], 'no file outside Live TV paths + the round-42 VOD DASH engine surface mentions Shaka');
+  ok('Shaka isolation: zero shaka references outside Live TV + the VOD DASH engine (server/resolver/shell untouched)');
 }
 
 // ============================================================

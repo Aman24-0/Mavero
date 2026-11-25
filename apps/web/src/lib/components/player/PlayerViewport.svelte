@@ -5,6 +5,11 @@
   import { iframeSandboxAttribute, type SandboxPolicy } from '$lib/shared/sandbox-policy';
   import { urlPathIsM3u8 } from '$lib/shared/hls-detect';
   import { HlsPlaybackEngine, resolveDirectPlaybackMode, type HlsAudioTrackLike } from '$lib/client/player/hls-engine';
+  // Round 42 — DASH (VidFlix .mpd) playback through shaka-player 5.2.12,
+  // the SAME build the Live TV path imports. The engine mirrors the hls
+  // engine's public surface exactly, so the shell/controls keep consuming
+  // the same `enginequality` contract regardless of which engine is live.
+  import { ShakaVodEngine } from '$lib/client/player/shaka-vod-engine';
   import { markPlayerMilestone } from '$lib/client/player/player-timing';
   // Production-hardening round — instant embed-iframe teardown: this
   // component OWNS the heavy cross-origin provider <iframe>, so it also
@@ -209,16 +214,31 @@
   // When true the engine owns the media resource and the template must NOT
   // bind `src` (the binding would fight hls.js' MediaSource objectURL).
   let hlsEngineActive = false;
+  // Round 42 — the DASH engine state, mirroring the hls engine state 1:1.
+  // At most ONE of the two engines is ever active on the video element
+  // (wirePlaybackEngine tears the other down before wiring one).
+  let shakaEngine: ShakaVodEngine | null = null;
+  let shakaEngineUrl: string | null = null;
+  let shakaEngineActive = false;
   // Phase 6: signature of the last dispatched internal-quality payload. The
-  // hls.js level events can fire frequently (every ABR switch); the
+  // engine level events can fire frequently (every ABR switch); the
   // signature guard keeps the dispatch meaningful — the UI is only notified
   // when the options or the selected MODE actually changed.
   let engineQualitySignature: string | null = null;
 
+  /** The engine that currently owns playback (null while engine-free). Both
+   *  engines expose the identical quality/audio surface, so the controller
+   *  below never branches on the engine type. */
+  function activePlaybackEngine(): HlsPlaybackEngine | ShakaVodEngine | null {
+    if (shakaEngineActive && shakaEngine) return shakaEngine;
+    if (hlsEngineActive && hlsEngine) return hlsEngine;
+    return null;
+  }
+
   /** Build + dispatch the engine's current generic quality state (Phase 6). */
   function dispatchEngineQuality() {
-    const engine = hlsEngine;
-    if (!engine || !hlsEngineActive) return;
+    const engine = activePlaybackEngine();
+    if (!engine) return;
     // Phase 10 (GOAL 18): audio tracks ride the same signature-guarded payload — the UI may offer track selection ONLY when the manifest actually carries more than one audio rendition.
     const payload = { options: engine.getQualityOptions(), selected: engine.getQualitySelection(), audioTracks: engine.getAudioTracks(), selectedAudioTrack: engine.getSelectedAudioTrack() };
     const signature = JSON.stringify(payload);
@@ -335,7 +355,120 @@
     }
   }
 
-  $: void wireHlsEngine(effectiveMediaUrl, source, videoElement);
+  /** Round 42 — tear down the DASH engine (mirror of teardownHlsEngine). */
+  function teardownShakaEngine() {
+    const hadEngine = shakaEngineActive;
+    if (shakaEngine) {
+      shakaEngine.destroy();
+      shakaEngine = null;
+    }
+    shakaEngineUrl = null;
+    shakaEngineActive = false;
+    // Same enginequality reset contract as the hls engine: a torn-down
+    // engine has no internal quality state — the shell's quality UI falls
+    // back to the stream list.
+    if (hadEngine && engineQualitySignature !== null) {
+      engineQualitySignature = null;
+      dispatch('enginequality', { options: [], selected: null, audioTracks: [], selectedAudioTrack: null });
+    } else {
+      engineQualitySignature = null;
+    }
+  }
+
+  /**
+   * Round 42 — wire the DASH (shaka) engine to the video element for one
+   * .mpd source. Same structure as wireHlsEngine: the shaka instance is
+   * created, attached and destroyed by the engine (ONE owner), the src
+   * binding is released while the engine owns playback, and stale engines
+   * never surface errors or quality state. The <video> element keeps
+   * firing its own loadedmetadata/timeupdate/… events (shaka feeds it
+   * through MediaSource), so the shell's pendingSeek position restore,
+   * progress reporting and Media Session keep working unchanged.
+   */
+  async function wireShakaEngine(url: string | null, currentSource: PlayerSource | null, video: HTMLVideoElement | undefined) {
+    // SSR / embed / no video element → plain teardown (shaka never loads).
+    if (!url || !video || currentSource?.type !== 'direct') {
+      teardownShakaEngine();
+      return;
+    }
+    // Already wired to this exact URL (reactive re-runs must not re-attach
+    // and must not create duplicate shaka instances).
+    if (shakaEngineActive && shakaEngineUrl === url) return;
+    teardownShakaEngine();
+    // If a native (or hls.js) resource may still be attached from the
+    // previous session, reset the element so the stale load cannot race the
+    // shaka MediaSource attach.
+    try {
+      video.removeAttribute('src');
+      video.load();
+    } catch { /* element already reset */ }
+    const engine = new ShakaVodEngine();
+    shakaEngine = engine;
+    shakaEngineUrl = url;
+    shakaEngineActive = true;
+    try {
+      await engine.attach(video, url, {
+        onFatalError: () => {
+          // Stale engines (a newer source took over) never surface errors.
+          if (shakaEngine !== engine) return;
+          dispatch('error');
+        },
+        // The same signature-guarded dispatcher as the hls path — the
+        // manifest's real MPD levels become the Quality menu.
+        onQualityLevels: () => {
+          if (shakaEngine !== engine) return;
+          dispatchEngineQuality();
+        },
+        onQualitySelection: () => {
+          if (shakaEngine !== engine) return;
+          dispatchEngineQuality();
+        },
+      });
+      if (shakaEngine === engine) dispatchEngineQuality();
+    } catch {
+      if (shakaEngine === engine) {
+        teardownShakaEngine();
+        dispatch('error');
+      }
+    }
+  }
+
+  /**
+   * Round 42 — protocol router. The viewport owns the <video> element, so
+   * it also owns picking THE engine for the current source:
+   *
+   *   DASH (.mpd, metadata.protocol === 'dash') → shaka engine (VidFlix)
+   *   everything else                           → the EXISTING hls wiring
+   *                                              (wireHlsEngine decides
+   *                                              native vs hls.js exactly
+   *                                              as before — unchanged)
+   *
+   * Exactly ONE engine is ever live: the router tears the other one down
+   * BEFORE wiring the winner, so an hls → dash (or dash → hls) server
+   * switch swaps the engine on the SAME <video> element and the shell's
+   * pendingSeek mechanism restores the captured position on the next
+   * loadedmetadata.
+   */
+  async function wirePlaybackEngine(url: string | null, currentSource: PlayerSource | null, video: HTMLVideoElement | undefined) {
+    // SSR / embed / no video element → tear both engines down.
+    if (!url || !video || currentSource?.type !== 'direct') {
+      teardownHlsEngine();
+      teardownShakaEngine();
+      return;
+    }
+    if (currentSource?.metadata?.protocol === 'dash') {
+      // DASH → shaka owns the element; the hls engine must not coexist.
+      teardownHlsEngine();
+      await wireShakaEngine(url, currentSource, video);
+      return;
+    }
+    // HLS / MP4 / unknown → the existing hls-engine path (byte-for-byte
+    // unchanged). The shaka engine must not coexist.
+    teardownShakaEngine();
+    await wireHlsEngine(url, currentSource, video);
+  }
+
+  $: void wirePlaybackEngine(effectiveMediaUrl, source, videoElement);
 
   // Player startup instrumentation: embed iframe enters the DOM. Svelte 5
   // supports onload/on:load equivalently; the milestone fires per mount
@@ -367,43 +500,45 @@
   onDestroy(() => {
     handleEmbedIframeBinding(undefined);
     teardownHlsEngine();
+    teardownShakaEngine();
   });
 
   // ----- Phase 6: generic internal-quality controller (spec §31) -----
   //
   // PlayerShell reaches the engine's quality surface ONLY through these
   // exported functions + the `enginequality` event — the shell never imports
-  // hls.js, never sees `Hls.Level`/`Hls.Events`, and the engine is never
-  // recreated for an internal level change (seamless `nextLevel` switch).
+  // hls.js or shaka, never sees engine-library types, and the engine is never
+  // recreated for an internal level change (seamless switch). Round 42: the
+  // controller routes to whichever engine currently owns playback.
 
   /** Current internal quality options (empty when not engine-driven). */
   export function engineQualityOptions(): PlayerInternalQualityOption[] {
-    return hlsEngine?.getQualityOptions() ?? [];
+    return activePlaybackEngine()?.getQualityOptions() ?? [];
   }
 
   /** Phase 10 (GOAL 18): the ACTIVE stream's audio tracks (safe display). */
   export function engineAudioTracks(): HlsAudioTrackLike[] {
-    return hlsEngine?.getAudioTracks() ?? [];
+    return activePlaybackEngine()?.getAudioTracks() ?? [];
   }
 
   /** Phase 10 (GOAL 18): select one audio track by engine index. */
   export function selectEngineAudioTrack(index: number) {
-    hlsEngine?.selectAudioTrack(index);
+    activePlaybackEngine()?.selectAudioTrack(index);
     dispatchEngineQuality();
   }
 
   /** Current generic selection id (AUTO id or level index string). */
   export function engineQualitySelected(): string | null {
-    return hlsEngine?.getQualitySelection() ?? null;
+    return activePlaybackEngine()?.getQualitySelection() ?? null;
   }
 
   /**
    * Select AUTO or one level index by generic id. Echoes the requested
    * mode to the shell immediately (the engine's own events confirm the
-   * actual switch as hls.js completes it).
+   * actual switch as the engine completes it).
    */
   export function selectEngineQuality(id: string) {
-    const engine = hlsEngine;
+    const engine = activePlaybackEngine();
     if (!engine) return;
     if (id === PLAYER_AUTO_QUALITY_ID) engine.setAutoQualityLevel();
     else {
@@ -421,7 +556,7 @@
       bind:this={videoElement}
       class:display-fill={displayMode === 'fill'}
       class:display-stretch={displayMode === 'stretch'}
-      src={hlsEngineActive ? undefined : effectiveMediaUrl}
+      src={(hlsEngineActive || shakaEngineActive) ? undefined : effectiveMediaUrl}
       poster={poster || undefined}
       preload="metadata"
       playsinline
