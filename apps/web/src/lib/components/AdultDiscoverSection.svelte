@@ -53,7 +53,7 @@
   // §11 contract) + the WS2 visible-row fill math. The Adult surface
   // deliberately mirrors DiscoverSection's visual language — the same
   // arrows, the same fill semantics, ONE shared implementation.
-  import { railEdgeState, scrollRailByCards } from '$lib/shared/rail-navigation';
+  import { railEdgeStateFromCached, scrollRailByCards } from '$lib/shared/rail-navigation';
   import { rowFillTarget, ROW_FILL_ITEM_CAP, ROW_FILL_FETCH_BUDGET } from '$lib/shared/rail-row-fill';
   // TV-UX pass 4 (bug 1c, widget build only): the same row-end TV contract
   // DiscoverSection ships — Show More hands focus to the first NEW card.
@@ -89,15 +89,42 @@
 
   // MAV-25 WS1 — rail navigation arrows (the ContentRail §11 contract,
   // shared with DiscoverSection via $lib/shared/rail-navigation).
+  //
+  // LAYOUT-READ FIX (perf pass): scrollWidth + clientWidth are
+  // layout-triggering. The old `updateRailState` ran on every scroll
+  // event and re-read both. The fix caches max-scroll (refreshed on
+  // mount, ResizeObserver entry, items-length effect) and the scroll
+  // handler reads ONLY scrollLeft. rAF-throttled and skipped on mobile
+  // (≤640px) where the rail-nav arrows are display:none.
   let railEl: HTMLElement | undefined = $state();
   let atStart = $state(true);
   let atEnd = $state(false);
+  let cachedMaxScroll = 0;
+  let scrollRafId: number | undefined;
+
+  function refreshMaxScroll(): void {
+    if (!railEl) { cachedMaxScroll = 0; return; }
+    cachedMaxScroll = railEl.scrollWidth - railEl.clientWidth;
+  }
 
   function updateRailState(): void {
     if (!railEl) return;
-    const edge = railEdgeState(railEl);
+    refreshMaxScroll();
+    const edge = railEdgeStateFromCached(railEl, cachedMaxScroll);
     atStart = edge.atStart;
     atEnd = edge.atEnd;
+  }
+
+  function onRailScroll(): void {
+    if (scrollRafId !== undefined) return;
+    if (typeof window !== 'undefined' && window.matchMedia('(max-width: 640px)').matches) return;
+    scrollRafId = requestAnimationFrame(() => {
+      scrollRafId = undefined;
+      if (!railEl) return;
+      const edge = railEdgeStateFromCached(railEl, cachedMaxScroll);
+      atStart = edge.atStart;
+      atEnd = edge.atEnd;
+    });
   }
 
   function scrollByCard(direction: 1 | -1): void {
@@ -328,6 +355,7 @@
       requestSequence += 1;
       requestController?.abort();
       fillToken += 1;
+      if (scrollRafId !== undefined) cancelAnimationFrame(scrollRafId);
     };
   });
 
@@ -444,7 +472,7 @@
           <div
             class="rail"
             bind:this={railEl}
-            onscroll={updateRailState}
+            onscroll={onRailScroll}
           >
             {#each items as item (item.type + ':' + item.id)}
               <MediaCard {item} />

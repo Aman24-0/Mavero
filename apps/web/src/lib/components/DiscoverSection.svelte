@@ -58,7 +58,7 @@
   // MAV-25 WS1 — the ESTABLISHED carousel navigation behaviour (the same
   // edge-state + stepped-scroll contract ContentRail ships) as ONE shared
   // helper — no conflicting duplicate abstraction.
-  import { railEdgeState, scrollRailByCards } from '$lib/shared/rail-navigation';
+  import { railEdgeStateFromCached, scrollRailByCards } from '$lib/shared/rail-navigation';
   // MAV-25 WS2 — the pure visible-row fill math (card-pitch → slot target)
   // and its bounded-fetch budgets.
   import { rowFillTarget, ROW_FILL_ITEM_CAP, ROW_FILL_FETCH_BUDGET } from '$lib/shared/rail-row-fill';
@@ -205,16 +205,46 @@
   // every scroll event + after the item set, container or viewport
   // changes (ResizeObserver on the rail). Arrows scroll ONLY this
   // section's rail — never the page, never another rail.
+  //
+  // LAYOUT-READ FIX (perf pass): scrollWidth + clientWidth are
+  // layout-triggering. The old `updateRailState` ran on every scroll
+  // event and re-read both. The fix caches max-scroll (refreshed on
+  // mount, ResizeObserver entry, items-length effect) and the scroll
+  // handler reads ONLY scrollLeft. rAF-throttled and skipped on mobile
+  // (≤640px) where the rail-nav arrows are display:none.
   // ============================================================
   let railEl: HTMLElement | undefined = $state();
   let atStart = $state(true);
   let atEnd = $state(false);
+  let cachedMaxScroll = 0;
+  let scrollRafId: number | undefined;
+
+  function refreshMaxScroll(): void {
+    if (!railEl) { cachedMaxScroll = 0; return; }
+    cachedMaxScroll = railEl.scrollWidth - railEl.clientWidth;
+  }
 
   function updateRailState(): void {
     if (!railEl) return;
-    const edge = railEdgeState(railEl);
+    refreshMaxScroll();
+    const edge = railEdgeStateFromCached(railEl, cachedMaxScroll);
     atStart = edge.atStart;
     atEnd = edge.atEnd;
+  }
+
+  // Cheap scroll handler: reads only scrollLeft (NOT layout-triggering)
+  // against a cached max-scroll value. rAF-throttled. Skipped on mobile
+  // (≤640px) where the rail-nav arrows are display:none.
+  function onRailScroll(): void {
+    if (scrollRafId !== undefined) return;
+    if (typeof window !== 'undefined' && window.matchMedia('(max-width: 640px)').matches) return;
+    scrollRafId = requestAnimationFrame(() => {
+      scrollRafId = undefined;
+      if (!railEl) return;
+      const edge = railEdgeStateFromCached(railEl, cachedMaxScroll);
+      atStart = edge.atStart;
+      atEnd = edge.atEnd;
+    });
   }
 
   function scrollByCard(direction: 1 | -1): void {
@@ -539,6 +569,7 @@
       requestSequence += 1;
       requestController?.abort();
       fillToken += 1;
+      if (scrollRafId !== undefined) cancelAnimationFrame(scrollRafId);
     };
   });
 
@@ -713,7 +744,7 @@
         <div
           class="rail"
           bind:this={railEl}
-          onscroll={updateRailState}
+          onscroll={onRailScroll}
         >
           {#each items as item (item.type + ':' + item.id)}
             <MediaCard {item} />

@@ -36,11 +36,42 @@ export type RailEdgeState = { atStart: boolean; atEnd: boolean };
  * Edge state for a horizontal scroll container, from its live metrics.
  * Pure DOM math — no side effects; safe to call from scroll handlers,
  * observers and effects.
+ *
+ * PERF NOTE: this reads `scrollWidth` + `clientWidth`, both of which
+ * force layout if the layout is dirty. Calling it on every scroll event
+ * can therefore cause layout thrash. For scroll handlers prefer
+ * `railEdgeStateFromCached` with a `maxScroll` value refreshed only on
+ * mount / resize / items-change (the values don't change during a
+ * horizontal swipe — only `scrollLeft` does).
  */
 export function railEdgeState(el: HTMLElement): RailEdgeState {
   const max = el.scrollWidth - el.clientWidth;
   const current = el.scrollLeft;
   return { atStart: current <= 1, atEnd: max - current <= 1 };
+}
+
+/**
+ * Edge state from a CACHED max-scroll value. Reads ONLY `scrollLeft`
+ * (NOT a layout-triggering property) — safe to call inside a scroll
+ * handler without forcing layout. The caller is responsible for
+ * keeping `maxScroll` fresh: refresh on mount, on ResizeObserver
+ * entries, and whenever the rail's item set changes (more/fewer cards
+ * → different scrollWidth). See ContentRail.svelte / DiscoverSection
+ * for the canonical cache lifecycle.
+ */
+export function railEdgeStateFromCached(el: HTMLElement, maxScroll: number): RailEdgeState {
+  const current = el.scrollLeft;
+  return { atStart: current <= 1, atEnd: maxScroll - current <= 1 };
+}
+
+/**
+ * Compute the rail's max horizontal scroll (scrollWidth - clientWidth).
+ * Layout-triggering: callers should call this OUTSIDE the scroll handler
+ * (on mount, on resize, on items-change) and cache the result for the
+ * scroll handler to read via `railEdgeStateFromCached`.
+ */
+export function railMaxScroll(el: HTMLElement): number {
+  return el.scrollWidth - el.clientWidth;
 }
 
 /**

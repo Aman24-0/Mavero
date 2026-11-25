@@ -54,21 +54,54 @@
   // The arrows are no longer hover-only: on desktop/tablet/TV pointer
   // surfaces they render at full opacity so horizontal scrolling is
   // discoverable, and they DISABLE (not just dim) at the actual scroll
-  // ends so a dead arrow is never offered as clickable. The state is
-  // derived from the rail's own scrollLeft/scrollWidth on every scroll
-  // event (passive) + after the item set or viewport changes (Resize
-  // entry on the rail). No layout measurement on scroll — scrollLeft
-  // and scrollWidth are already computed values the browser maintains.
+  // ends so a dead arrow is never offered as clickable.
+  //
+  // LAYOUT-READ FIX (perf pass): scrollWidth + clientWidth are
+  // layout-triggering properties (force layout if dirty). The old
+  // implementation read them on EVERY scroll event — during a
+  // horizontal swipe that's 60+ layout reads/sec per rail. The fix
+  // caches max-scroll (refreshed only by ResizeObserver + items-length
+  // effect) and reads ONLY scrollLeft on the scroll handler. The
+  // handler is also rAF-throttled and skipped on viewports where the
+  // rail-nav arrows are hidden by CSS (mobile ≤640px — there's no
+  // edge state to maintain because the arrows are display:none).
   // ============================================================
   let atStart = $state(true);
   let atEnd = $state(false);
+  // Cached max-scroll value (scrollWidth - clientWidth). Refreshed by
+  // refreshMaxScroll() — only called when layout may have changed
+  // (mount, ResizeObserver entry, items.length effect). The scroll
+  // handler reads ONLY scrollLeft against this cached value.
+  let cachedMaxScroll = 0;
+  let scrollRafId: number | undefined;
+
+  function refreshMaxScroll() {
+    if (!railEl) { cachedMaxScroll = 0; return; }
+    cachedMaxScroll = railEl.scrollWidth - railEl.clientWidth;
+  }
 
   function updateScrollState() {
     if (!railEl) return;
-    const max = railEl.scrollWidth - railEl.clientWidth;
+    refreshMaxScroll();
     const current = railEl.scrollLeft;
     atStart = current <= 1;
-    atEnd = max - current <= 1;
+    atEnd = cachedMaxScroll - current <= 1;
+  }
+
+  // Cheap scroll handler: reads only scrollLeft (NOT layout-triggering)
+  // against a cached max-scroll value. rAF-throttled so at most one
+  // update per frame. Skipped entirely when the rail-nav arrows are
+  // display:none (mobile ≤640px) — no edge state to maintain.
+  function onRailScroll() {
+    if (scrollRafId !== undefined) return;
+    if (typeof window !== 'undefined' && window.matchMedia('(max-width: 640px)').matches) return;
+    scrollRafId = requestAnimationFrame(() => {
+      scrollRafId = undefined;
+      if (!railEl) return;
+      const current = railEl.scrollLeft;
+      atStart = current <= 1;
+      atEnd = cachedMaxScroll - current <= 1;
+    });
   }
 
   function scrollByCard(direction: 1 | -1) {
@@ -89,7 +122,10 @@
     const rail = railEl;
     const resize = new ResizeObserver(() => updateScrollState());
     resize.observe(rail);
-    return () => resize.disconnect();
+    return () => {
+      resize.disconnect();
+      if (scrollRafId !== undefined) cancelAnimationFrame(scrollRafId);
+    };
   });
 
   // Re-sync the edge state whenever the item set changes (a rail whose
@@ -204,7 +240,7 @@
       bind:this={railEl}
       role="list"
       aria-label={title}
-      onscroll={updateScrollState}
+      onscroll={onRailScroll}
     >
       {#each items as item (item.type + ':' + item.id)}
         <div role="listitem"><MediaCard {item} {compact} editorial={variant === 'editorial'} episodeBadge={episodeBadges?.[item.type + ':' + item.id] ?? ''} /></div>
