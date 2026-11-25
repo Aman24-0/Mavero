@@ -1,5 +1,5 @@
 /**
- * VidPlay (ThugTV) resolver adapter — round 38.
+ * VidPlay (ThugTV) resolver adapter — round 38 (reliability rounds 39-40).
  *
  * Calls the ThugTV API SERVER-SIDE ONLY (the API URL is never exposed to
  * the browser). Each returned stream URL is wrapped through the Cloudflare
@@ -14,19 +14,29 @@
  * `{ data: { sources } }` shape is also tolerated (same defensive unwrap
  * as rivestream.ts).
  *
- * RELIABILITY — intermittent upstream 403 (2026-11, verified from Worker
- * telemetry): api.thugtv.online INTERMITTENTLY returns HTTP 403 to the
- * Cloudflare Worker — movie/1291608 got 403 at 17:33:38Z and 17:34:00Z,
- * movie/969681 at 17:56:25Z, and the SAME URLs through the SAME deployed
- * Worker returned HTTP 200 minutes later (not a hard block, not
- * title-specific). A single 403 must not drop the whole VidPlay group, so
- * the resolve runs a BOUNDED retry loop: up to 3 attempts (backoff 500ms
- * after attempt 1, 1200ms after attempt 2, a fresh 10s AbortController
- * per attempt). Retried: a thrown fetch (network error / an abort that is
- * NOT our own timeout), HTTP 403/408/425/429/500/502/503/504, and
- * pending:true / empty sources. NOT retried: 404 and any other 4xx, our
- * own timeout abort (a hung upstream must not hold the composite resolve
- * for 3 × 10s), or a 200 whose body is not JSON (logged, then omitted).
+ * RELIABILITY — the upstream sits behind a Cloudflare MANAGED CHALLENGE
+ * ("Just a moment..." + cf_clearance): api.thugtv.online intermittently
+ * answers HTTP 403 to the Cloudflare Worker (verified 2026-11 from Worker
+ * telemetry — movie/1291608 got 403 at 17:33:38Z and 17:34:00Z,
+ * movie/969681 at 17:56:25Z; the SAME URLs through the SAME deployed
+ * Worker returned HTTP 200 minutes later, so it is not a hard block and
+ * not title-specific). This adapter is therefore OPPORTUNISTIC: it
+ * succeeds when the challenge does not fire. NO BYPASS OF THE CHALLENGE
+ * IS ATTEMPTED, BY DESIGN — the only permanent fix is an upstream key /
+ * allowlisted host. What this file does instead is make the failure CHEAP
+ * and the success STICKY:
+ *   1. BOUNDED retry loop — up to 2 attempts (backoff 500ms after
+ *      attempt 1, a fresh 10s AbortController per attempt). Retried: a
+ *      thrown fetch (network error / an abort that is NOT our own
+ *      timeout), HTTP 403/408/425/429/500/502/503/504, and pending:true /
+ *      empty sources. NOT retried: 404 and any other 4xx, our own
+ *      timeout abort (a hung upstream must not hold the composite
+ *      resolve for 2 × 10s), or a 200 whose body is not JSON (logged,
+ *      then omitted).
+ *   2. SHORT-LIVED SUCCESS CACHE — a payload that yields at least one
+ *      row is cached for 60s, so a follow-up resolve of the same title /
+ *      episode skips the network entirely. The API's signed URLs live
+ *      ~2h, so a 60s window is safe. Failures are never cached.
  *
  * The payload carries ~12 sources, but EXACTLY ONE is a playable direct
  * stream: the "castle" entry (id 'server-direct-castle' on movies,
@@ -58,11 +68,21 @@ export const THUGTV_ADAPTER_ID = 'thugtv';
 
 const THUGTV_API = 'https://api.thugtv.online/api/stream';
 const API_TIMEOUT_MS = 10_000;
-/** Bounded retry — the upstream 403s intermittently (see header) and
- *  answers `pending: true` / empty sources on first hits. */
-const MAX_ATTEMPTS = 3;
-/** Backoff BETWEEN attempts: 500ms after attempt 1, 1200ms after attempt 2. */
-const RETRY_BACKOFF_MS = [500, 1_200] as const;
+/** Bounded retry — the upstream sits behind a Cloudflare managed
+ *  challenge (see header), 403s intermittently, and answers
+ *  `pending: true` / empty sources on first hits. 2 attempts keep the
+ *  worst-case failure cost low (one retry + 500ms backoff). */
+const MAX_ATTEMPTS = 2;
+/** Backoff BETWEEN attempts: 500ms after attempt 1. */
+const RETRY_BACKOFF_MS = [500] as const;
+/** Short-lived SUCCESS cache — only payloads that yield at least one row
+ *  are cached, for 60s: the API's signed URLs live ~2h, so a 60s window
+ *  is safe (the cached URLs stay playable). Failures are NEVER cached. */
+const CACHE_TTL_MS = 60_000;
+/** Cache cap — on write, entries older than the TTL are evicted first,
+ *  then the OLDEST entries are dropped so the Map never exceeds this. */
+const CACHE_MAX_ENTRIES = 50;
+const payloadCache = new Map<string, { at: number; payload: ThugTVPayload }>();
 /** Retriable statuses — the verified intermittent 403 plus the usual
  *  timeout / rate-limit / server classes. 404 and other 4xx are NOT retried. */
 const RETRYABLE_STATUSES = new Set([403, 408, 425, 429, 500, 502, 503, 504]);
@@ -191,6 +211,16 @@ export const thugtvAdapter: ProviderAdapter = {
     }
     console.info('[thugtv] API URL', apiUrl.toString());
 
+    // Short-lived SUCCESS cache (60s TTL — see CACHE_TTL_MS): a fresh hit
+    // skips the network ENTIRELY. Only the fetch is short-circuited — the
+    // cached payload still flows through the SAME castle filter / dedupe /
+    // labels / caps / subtitles pipeline below, so the returned shape,
+    // labels, dedupe, caps and subtitles are unchanged. The entry is NOT
+    // refreshed on a hit: the TTL runs from the NETWORK success, keeping
+    // the served URLs well inside the ~2h signed-URL lifetime.
+    const cacheKey = `${mediaType}:${rawId}:${season ?? ''}:${episode ?? ''}`;
+    const cached = payloadCache.get(cacheKey);
+
     // Fetch through the Worker proxy — BOUNDED retry loop (see header).
     // api.thugtv.online intermittently answers 403 to the Worker, and
     // first hits can answer `pending: true` or an empty `sources` list;
@@ -201,77 +231,85 @@ export const thugtvAdapter: ProviderAdapter = {
     let lastBodyHead = '';
     let attemptsMade = 0;
     let succeeded = false;
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-      attemptsMade = attempt;
-      const controller = new AbortController();
-      let timedOut = false;
-      const timeout = setTimeout(() => {
-        timedOut = true;
-        controller.abort();
-      }, API_TIMEOUT_MS);
-      // How this attempt ended — decides retry vs give up.
-      let outcome: 'ok' | 'retry' | 'fatal' = 'ok';
-      try {
-        const encoded = encodeBase64Url(apiUrl.toString());
-        const fetchUrl = `${workerProxyUrl}/?e=${encoded}`;
-        const response = await fetch(fetchUrl, {
-          signal: controller.signal,
-          headers: { accept: 'application/json' },
-        });
-        lastStatus = response.status;
-        lastContentType = response.headers.get('content-type') ?? '';
-        if (!response.ok) {
-          // Read the body ONCE, truncated to 200 chars — enough to
-          // identify a Cloudflare challenge page in the Netlify log.
-          const text = await response.text();
-          lastBodyHead = text.slice(0, 200);
-          console.warn('[thugtv] attempt', attempt, 'HTTP', response.status, 'body', lastBodyHead);
-          outcome = RETRYABLE_STATUSES.has(response.status) ? 'retry' : 'fatal';
-        } else {
-          const text = await response.text();
-          lastBodyHead = text.slice(0, 200);
-          try {
-            payload = JSON.parse(text) as ThugTVPayload;
-          } catch {
-            // Never fail silently — surface enough of the body to identify
-            // an HTML challenge page / contract change in the Netlify log.
-            console.warn('[thugtv] non-JSON response — HTTP', lastStatus, 'type', lastContentType, 'body', JSON.stringify(lastBodyHead));
-            return null;
+    let servedFromCache = false;
+    if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
+      console.info('[thugtv] cache hit', cacheKey);
+      payload = cached.payload;
+      succeeded = true;
+      servedFromCache = true;
+    } else {
+      for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        attemptsMade = attempt;
+        const controller = new AbortController();
+        let timedOut = false;
+        const timeout = setTimeout(() => {
+          timedOut = true;
+          controller.abort();
+        }, API_TIMEOUT_MS);
+        // How this attempt ended — decides retry vs give up.
+        let outcome: 'ok' | 'retry' | 'fatal' = 'ok';
+        try {
+          const encoded = encodeBase64Url(apiUrl.toString());
+          const fetchUrl = `${workerProxyUrl}/?e=${encoded}`;
+          const response = await fetch(fetchUrl, {
+            signal: controller.signal,
+            headers: { accept: 'application/json' },
+          });
+          lastStatus = response.status;
+          lastContentType = response.headers.get('content-type') ?? '';
+          if (!response.ok) {
+            // Read the body ONCE, truncated to 200 chars — enough to
+            // identify a Cloudflare challenge page in the Netlify log.
+            const text = await response.text();
+            lastBodyHead = text.slice(0, 200);
+            console.warn('[thugtv] attempt', attempt, 'HTTP', response.status, 'body', lastBodyHead);
+            outcome = RETRYABLE_STATUSES.has(response.status) ? 'retry' : 'fatal';
+          } else {
+            const text = await response.text();
+            lastBodyHead = text.slice(0, 200);
+            try {
+              payload = JSON.parse(text) as ThugTVPayload;
+            } catch {
+              // Never fail silently — surface enough of the body to identify
+              // an HTML challenge page / contract change in the Netlify log.
+              console.warn('[thugtv] non-JSON response — HTTP', lastStatus, 'type', lastContentType, 'body', JSON.stringify(lastBodyHead));
+              return null;
+            }
           }
+        } catch (error) {
+          if (timedOut && (error as { name?: string } | null | undefined)?.name === 'AbortError') {
+            // Our OWN 10s timeout — NOT retried: a hung upstream must not
+            // hold the composite resolve for MAX_ATTEMPTS × 10s.
+            console.warn('[thugtv] attempt', attempt, 'timed out after', API_TIMEOUT_MS, 'ms —', error instanceof Error ? error.message : String(error));
+            outcome = 'fatal';
+          } else {
+            // Network error / an abort that is not our timeout — retryable.
+            console.warn('[thugtv] attempt', attempt, 'fetch failed —', error instanceof Error ? error.message : String(error));
+            outcome = 'retry';
+          }
+        } finally {
+          clearTimeout(timeout);
         }
-      } catch (error) {
-        if (timedOut && (error as { name?: string } | null | undefined)?.name === 'AbortError') {
-          // Our OWN 10s timeout — NOT retried: a hung upstream must not
-          // hold the composite resolve for MAX_ATTEMPTS × 10s.
-          console.warn('[thugtv] attempt', attempt, 'timed out after', API_TIMEOUT_MS, 'ms —', error instanceof Error ? error.message : String(error));
-          outcome = 'fatal';
-        } else {
-          // Network error / an abort that is not our timeout — retryable.
-          console.warn('[thugtv] attempt', attempt, 'fetch failed —', error instanceof Error ? error.message : String(error));
-          outcome = 'retry';
+        if (outcome === 'fatal') break;
+        if (outcome === 'retry') {
+          if (attempt < MAX_ATTEMPTS) {
+            await new Promise((resolve) => setTimeout(resolve, RETRY_BACKOFF_MS[attempt - 1]!));
+          }
+          continue;
         }
-      } finally {
-        clearTimeout(timeout);
-      }
-      if (outcome === 'fatal') break;
-      if (outcome === 'retry') {
+        // outcome === 'ok': a parsed JSON body. Retry while the upstream is
+        // still pending or delivered no sources (first-hit behaviour).
+        const probe = payload?.data ?? payload;
+        const gotSources = Array.isArray(probe?.sources) && (probe?.sources?.length ?? 0) > 0;
+        const isPending = probe?.pending === true || payload?.pending === true;
+        if (gotSources && !isPending) {
+          if (attempt > 1) console.info('[thugtv] sources arrived on attempt', attempt);
+          succeeded = true;
+          break;
+        }
         if (attempt < MAX_ATTEMPTS) {
           await new Promise((resolve) => setTimeout(resolve, RETRY_BACKOFF_MS[attempt - 1]!));
         }
-        continue;
-      }
-      // outcome === 'ok': a parsed JSON body. Retry while the upstream is
-      // still pending or delivered no sources (first-hit behaviour).
-      const probe = payload?.data ?? payload;
-      const gotSources = Array.isArray(probe?.sources) && (probe?.sources?.length ?? 0) > 0;
-      const isPending = probe?.pending === true || payload?.pending === true;
-      if (gotSources && !isPending) {
-        if (attempt > 1) console.info('[thugtv] sources arrived on attempt', attempt);
-        succeeded = true;
-        break;
-      }
-      if (attempt < MAX_ATTEMPTS) {
-        await new Promise((resolve) => setTimeout(resolve, RETRY_BACKOFF_MS[attempt - 1]!));
       }
     }
 
@@ -385,6 +423,24 @@ export const thugtvAdapter: ProviderAdapter = {
     // No rows survived → omit the VidPlay group entirely (never block the
     // other groups).
     if (rows.length === 0) return null;
+
+    // Success → store in the short-lived cache. Failures never reach this
+    // point (they return above), so they are never cached. Evict entries
+    // older than the TTL, then enforce the cap by dropping the OLDEST
+    // inserted entries (Map iteration order). A cache hit does NOT rewrite
+    // the entry — `at` always marks the network success.
+    if (!servedFromCache && payload) {
+      const now = Date.now();
+      for (const [staleKey, entry] of payloadCache) {
+        if (now - entry.at >= CACHE_TTL_MS) payloadCache.delete(staleKey);
+      }
+      while (payloadCache.size >= CACHE_MAX_ENTRIES) {
+        const oldestKey = payloadCache.keys().next().value;
+        if (oldestKey === undefined) break;
+        payloadCache.delete(oldestKey);
+      }
+      payloadCache.set(cacheKey, { at: now, payload });
+    }
 
     return {
       type: 'direct',

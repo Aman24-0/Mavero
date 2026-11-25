@@ -59,6 +59,10 @@ import { scrapeVidsrc, ScraperError, DEFAULT_SCRAPER_CONFIG } from '$lib/server/
 // Round 38 — VidPlay (ThugTV): the thugtv adapter is called the same way
 // (in-adapter merge — no new streaming_providers row, the new upstream
 // lives INSIDE this vidsrc-scrape adapter like Rivestream/Vidstream).
+// Round 40 — the Rivestream + VidPlay resolves run CONCURRENTLY
+// (Promise.allSettled): a slow or failing ThugTV retry no longer adds its
+// full backoff+attempt time to every resolve (observed 8.2s end-to-end).
+// Merge order is unchanged: Vidstream first, then VidPlay.
 import { rivestreamAdapter } from './rivestream';
 import { thugtvAdapter } from './thugtv';
 
@@ -278,65 +282,70 @@ export const vidsrcScrapeProviderAdapter: ProviderAdapter = {
       }
     }
 
-    // Round 36 — call the Rivestream adapter (gated by vidstreamEnabled).
-    // If Rivestream fails, omit its entries entirely (never block Vidsrc).
+    // Round 40 — PARALLEL FETCH: the Rivestream and VidPlay (ThugTV)
+    // resolves used to run SEQUENTIALLY, so a failing ThugTV retry added
+    // its full backoff+attempt time to every resolve (observed 8.2s
+    // end-to-end). Both groups now resolve CONCURRENTLY; a rejected
+    // promise logs the same warn line as before and never blocks the
+    // other group. Entries are still appended in the FIXED order
+    // Vidstream first, then VidPlay — byte-identical server list.
     let rivestreamSubtitles: Array<{ url: string; language?: string; label?: string }> | undefined;
-    if (vidstreamEnabled) {
-      try {
-        const rivestreamResult = await rivestreamAdapter.resolve(context);
-        if (rivestreamResult?.metadata?.servers) {
-          // TEMPORARY DIAGNOSTIC (one deploy) — log the incoming Vidstream
-          // server count so we can compare it with the [rivestream] sources
-          // line. If this is 1 but [rivestream] sources says N>1, the merge
-          // loop is dropping entries; if this is 0 but [rivestream] sources
-          // says N>0, the adapter returned no servers.
-          console.info('[direct-stream] rivestream entries', rivestreamResult.metadata.servers.length);
-          for (const srv of rivestreamResult.metadata.servers) {
-            if (servers.length >= 28) break;
-            servers.push({
-              url: srv.url,
-              label: srv.label,
-              server: srv.server,
-              language: srv.language,
-              qualities: srv.qualities,
-            });
-          }
-          rivestreamSubtitles = rivestreamResult.subtitles;
-        }
-      } catch (error) {
-        // Rivestream failure is non-blocking, but log it so any pre-fetch
-        // throw (bad context field, missing env, etc.) is visible in the
-        // Netlify log instead of being silently swallowed.
-        console.warn('[direct-stream] rivestream merge failed —', error instanceof Error ? error.message : String(error));
+    let thugtvSubtitles: Array<{ url: string; language?: string; label?: string }> | undefined;
+    const [rivOut, thuOut] = await Promise.allSettled([
+      vidstreamEnabled ? rivestreamAdapter.resolve(context) : Promise.resolve(null),
+      thugtvEnabled ? thugtvAdapter.resolve(context) : Promise.resolve(null),
+    ]);
+
+    // Vidstream (Rivestream) first — same merge as round 36. If
+    // Rivestream failed, omit its entries entirely (never block Vidsrc).
+    const rivestreamResult = rivOut.status === 'fulfilled' ? rivOut.value : null;
+    if (rivestreamResult?.metadata?.servers) {
+      // TEMPORARY DIAGNOSTIC (one deploy) — log the incoming Vidstream
+      // server count so we can compare it with the [rivestream] sources
+      // line. If this is 1 but [rivestream] sources says N>1, the merge
+      // loop is dropping entries; if this is 0 but [rivestream] sources
+      // says N>0, the adapter returned no servers.
+      console.info('[direct-stream] rivestream entries', rivestreamResult.metadata.servers.length);
+      for (const srv of rivestreamResult.metadata.servers) {
+        if (servers.length >= 28) break;
+        servers.push({
+          url: srv.url,
+          label: srv.label,
+          server: srv.server,
+          language: srv.language,
+          qualities: srv.qualities,
+        });
       }
+      rivestreamSubtitles = rivestreamResult.subtitles;
+    }
+    if (rivOut.status === 'rejected') {
+      // Rivestream failure is non-blocking, but log it so any pre-fetch
+      // throw (bad context field, missing env, etc.) is visible in the
+      // Netlify log instead of being silently swallowed.
+      console.warn('[direct-stream] rivestream merge failed —', rivOut.reason instanceof Error ? rivOut.reason.message : String(rivOut.reason));
     }
 
-    // Round 38 — call the VidPlay (ThugTV) adapter (gated by thugtvEnabled).
-    // Same pattern as the Rivestream merge: if ThugTV fails, omit its
-    // entries entirely (never block Vidsrc/Vidstream).
-    let thugtvSubtitles: Array<{ url: string; language?: string; label?: string }> | undefined;
-    if (thugtvEnabled) {
-      try {
-        const thugtvResult = await thugtvAdapter.resolve(context);
-        if (thugtvResult?.metadata?.servers) {
-          for (const srv of thugtvResult.metadata.servers) {
-            if (servers.length >= 28) break;
-            servers.push({
-              url: srv.url,
-              label: srv.label,
-              server: srv.server,
-              language: srv.language,
-              qualities: srv.qualities,
-            });
-          }
-          thugtvSubtitles = thugtvResult.subtitles;
-        }
-      } catch (error) {
-        // ThugTV failure is non-blocking, but log it so any pre-fetch
-        // throw is visible in the Netlify log instead of being silently
-        // swallowed.
-        console.warn('[direct-stream] thugtv merge failed —', error instanceof Error ? error.message : String(error));
+    // VidPlay (ThugTV) second — same merge as round 38. If ThugTV failed,
+    // omit its entries entirely (never block Vidsrc/Vidstream).
+    const thugtvResult = thuOut.status === 'fulfilled' ? thuOut.value : null;
+    if (thugtvResult?.metadata?.servers) {
+      for (const srv of thugtvResult.metadata.servers) {
+        if (servers.length >= 28) break;
+        servers.push({
+          url: srv.url,
+          label: srv.label,
+          server: srv.server,
+          language: srv.language,
+          qualities: srv.qualities,
+        });
       }
+      thugtvSubtitles = thugtvResult.subtitles;
+    }
+    if (thuOut.status === 'rejected') {
+      // ThugTV failure is non-blocking, but log it so any pre-fetch
+      // throw is visible in the Netlify log instead of being silently
+      // swallowed.
+      console.warn('[direct-stream] thugtv merge failed —', thuOut.reason instanceof Error ? thuOut.reason.message : String(thuOut.reason));
     }
 
     // Round 36 A4 / Round 38 — temporary diagnostic: log the server count +
