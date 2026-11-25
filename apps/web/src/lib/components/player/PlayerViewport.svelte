@@ -99,6 +99,12 @@
   // third-party iframe's internal video element, so the control is not even
   // rendered for them (honest unavailability).
   export let displayMode: 'fit' | 'fill' | 'stretch' = 'fit';
+  // Round 42 — the playback protocol of the CURRENT mediaUrl, threaded by
+  // the shell from the SELECTED server entry's protocol (falling back to
+  // the source's metadata.protocol). 'dash' → the shaka VOD engine;
+  // 'hls'/null → the existing hls wiring (null = derive from the source
+  // metadata as before — the default for every non-DirectStream caller).
+  export let mediaProtocol: 'hls' | 'dash' | null = null;
   // Phase 11 (GOAL D): the iframe sandbox attribute is rendered from the
   // EFFECTIVE policy — never from a client-side guess. The shell passes the
   // server-resolved policy (`sandboxRuntime.effectiveSandboxPolicy`, falling
@@ -449,26 +455,39 @@
    * pendingSeek mechanism restores the captured position on the next
    * loadedmetadata.
    */
-  async function wirePlaybackEngine(url: string | null, currentSource: PlayerSource | null, video: HTMLVideoElement | undefined) {
+  async function wirePlaybackEngine(url: string | null, currentSource: PlayerSource | null, video: HTMLVideoElement | undefined, protocol: 'hls' | 'dash' | null) {
     // SSR / embed / no video element → tear both engines down.
     if (!url || !video || currentSource?.type !== 'direct') {
       teardownHlsEngine();
       teardownShakaEngine();
       return;
     }
-    if (currentSource?.metadata?.protocol === 'dash') {
+    // Round 42 — the SELECTED entry's protocol wins ('hls' when absent);
+    // with no explicit protocol, fall back to the source's metadata
+    // protocol (the primary URL's group).
+    const dash = protocol === 'dash' || (protocol === null && currentSource?.metadata?.protocol === 'dash');
+    if (dash) {
       // DASH → shaka owns the element; the hls engine must not coexist.
       teardownHlsEngine();
       await wireShakaEngine(url, currentSource, video);
       return;
     }
     // HLS / MP4 / unknown → the existing hls-engine path (byte-for-byte
-    // unchanged). The shaka engine must not coexist.
+    // unchanged). The shaka engine must not coexist. The selected server
+    // row's protocol is AUTHORITATIVE for the current mediaUrl: when an
+    // hls row is selected while the source's PRIMARY is dash (VidFlix
+    // first), the source-level metadata.protocol describes the primary —
+    // not the selected row — so the hls row still takes the hls.js path
+    // (the shallow clone ONLY rewrites that one field; wireHlsEngine
+    // itself stays untouched).
     teardownShakaEngine();
-    await wireHlsEngine(url, currentSource, video);
+    const sourceForHls = protocol === 'hls' && currentSource?.metadata?.protocol === 'dash'
+      ? { ...currentSource, metadata: { ...currentSource.metadata, protocol: 'hls' as const } }
+      : currentSource;
+    await wireHlsEngine(url, sourceForHls, video);
   }
 
-  $: void wirePlaybackEngine(effectiveMediaUrl, source, videoElement);
+  $: void wirePlaybackEngine(effectiveMediaUrl, source, videoElement, mediaProtocol);
 
   // Player startup instrumentation: embed iframe enters the DOM. Svelte 5
   // supports onload/on:load equivalently; the milestone fires per mount

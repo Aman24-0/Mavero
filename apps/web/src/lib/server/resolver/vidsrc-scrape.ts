@@ -68,9 +68,17 @@ import { scrapeVidsrc, ScraperError, DEFAULT_SCRAPER_CONFIG } from '$lib/server/
 // a single multi-quality / multi-audio HLS master (one server entry, no
 // qualities/language — hls.js reads the levels from the manifest) and
 // contributes no subtitles.
+// Round 42 — VidFlix (stream.hls.lol mbox API): the vidflix adapter joins
+// the SAME concurrent merge (four adapters now), appended in the FIXED
+// order Vidstream, VidPlay, VidStart, VidFlix. Each VidFlix track is its
+// own DASH (.mpd) manifest with its own audio — one server row per audio
+// language (protocol 'dash', no qualities — the VOD DASH engine reads
+// the MPD's real levels), plus .srt subtitles converted to VTT through
+// the same-origin /api/content/subtitles/vtt/proxy endpoint.
 import { rivestreamAdapter } from './rivestream';
 import { thugtvAdapter } from './thugtv';
 import { vidstartAdapter } from './vidstart';
+import { vidflixAdapter } from './vidflix';
 
 export const VIDSRC_SCRAPE_ADAPTER_ID = 'vidsrc-scrape' as const;
 
@@ -199,6 +207,8 @@ export const vidsrcScrapeProviderAdapter: ProviderAdapter = {
     let thugtvEnabled = true;
     // Round 41 — VidStart (ThugTV media) toggle + 'vidstart' default server.
     let vidstartEnabled = true;
+    // Round 42 — VidFlix (stream.hls.lol DASH) toggle + 'vidflix' default server.
+    let vidflixEnabled = true;
     let defaultServerPref = 'vidstream';
     try {
       const client = createSupabaseAdminClient();
@@ -213,9 +223,10 @@ export const vidsrcScrapeProviderAdapter: ProviderAdapter = {
         if (typeof cfgAny.direct_stream_vidstream_enabled === 'boolean') vidstreamEnabled = cfgAny.direct_stream_vidstream_enabled;
         if (typeof cfgAny.direct_stream_thugtv_enabled === 'boolean') thugtvEnabled = cfgAny.direct_stream_thugtv_enabled;
         if (typeof cfgAny.direct_stream_vidstart_enabled === 'boolean') vidstartEnabled = cfgAny.direct_stream_vidstart_enabled;
+        if (typeof cfgAny.direct_stream_vidflix_enabled === 'boolean') vidflixEnabled = cfgAny.direct_stream_vidflix_enabled;
         if (typeof cfgAny.direct_stream_default_server === 'string') {
           const val = cfgAny.direct_stream_default_server;
-          if (val === 'vidstream' || val === 'vidsrc' || val === 'vidplay' || val === 'vidstart') defaultServerPref = val;
+          if (val === 'vidstream' || val === 'vidsrc' || val === 'vidplay' || val === 'vidstart' || val === 'vidflix') defaultServerPref = val;
         }
       }
     } catch {
@@ -272,7 +283,7 @@ export const vidsrcScrapeProviderAdapter: ProviderAdapter = {
     // that fails validation is dropped, never coerced. The label composes
     // the server name with its audio language ("Tethys (English)",
     // "Enceladus (Hindi)") — the celestial roster's per-server language.
-    const servers: Array<{ url: string; label: string; server?: string; language?: string; qualities?: Array<{ label: string; url: string }> }> = [];
+    const servers: Array<{ url: string; label: string; server?: string; language?: string; qualities?: Array<{ label: string; url: string }>; protocol?: 'hls' | 'dash' }> = [];
     if (vidsrcEnabled && result && result.sources) {
       for (const scraped of result.sources) {
         if (servers.length >= 28) break;
@@ -291,20 +302,22 @@ export const vidsrcScrapeProviderAdapter: ProviderAdapter = {
       }
     }
 
-    // Round 40/41 — PARALLEL FETCH: the Rivestream, VidPlay (ThugTV) and
-    // VidStart (ThugTV media) resolves run CONCURRENTLY
-    // (Promise.allSettled) — the old sequential form let a failing ThugTV
-    // retry add its full backoff+attempt time to every resolve (observed
-    // 8.2s end-to-end). A rejected promise logs the same warn line as
-    // before and never blocks the other groups. Entries are still
-    // appended in the FIXED order Vidstream first, then VidPlay, then
-    // VidStart.
+    // Round 40/41/42 — PARALLEL FETCH: the Rivestream, VidPlay (ThugTV),
+    // VidStart (ThugTV media) and VidFlix (stream.hls.lol DASH) resolves
+    // run CONCURRENTLY (Promise.allSettled) — the old sequential form let a
+    // failing ThugTV retry add its full backoff+attempt time to every
+    // resolve (observed 8.2s end-to-end). A rejected promise logs the same
+    // warn line as before and never blocks the other groups. Entries are
+    // still appended in the FIXED order Vidstream first, then VidPlay,
+    // then VidStart, then VidFlix.
     let rivestreamSubtitles: Array<{ url: string; language?: string; label?: string }> | undefined;
     let thugtvSubtitles: Array<{ url: string; language?: string; label?: string }> | undefined;
-    const [rivOut, thuOut, vidOut] = await Promise.allSettled([
+    let vidflixSubtitles: Array<{ url: string; language?: string; label?: string }> | undefined;
+    const [rivOut, thuOut, vidOut, flxOut] = await Promise.allSettled([
       vidstreamEnabled ? rivestreamAdapter.resolve(context) : Promise.resolve(null),
       thugtvEnabled ? thugtvAdapter.resolve(context) : Promise.resolve(null),
       vidstartEnabled ? vidstartAdapter.resolve(context) : Promise.resolve(null),
+      vidflixEnabled ? vidflixAdapter.resolve(context) : Promise.resolve(null),
     ]);
 
     // Vidstream (Rivestream) first — same merge as round 36. If
@@ -382,22 +395,54 @@ export const vidsrcScrapeProviderAdapter: ProviderAdapter = {
       console.warn('[direct-stream] vidstart merge failed —', vidOut.reason instanceof Error ? vidOut.reason.message : String(vidOut.reason));
     }
 
-    // Round 36 A4 / Round 38/41 — temporary diagnostic: log the server count +
-    // group breakdown (now four groups).
+    // VidFlix (stream.hls.lol DASH) fourth — round 42. If VidFlix failed,
+    // omit its rows entirely (never block the other groups). Each row is
+    // ONE DASH (.mpd) manifest for one audio language (protocol 'dash',
+    // no qualities — the VOD DASH engine reads the MPD's real levels);
+    // its .srt subtitles ride the same-origin VTT-converting proxy.
+    const vidflixResult = flxOut.status === 'fulfilled' ? flxOut.value : null;
+    if (vidflixResult?.metadata?.servers) {
+      for (const srv of vidflixResult.metadata.servers) {
+        if (servers.length >= 28) break;
+        servers.push({
+          url: srv.url,
+          label: srv.label,
+          server: srv.server,
+          protocol: srv.protocol,
+        });
+      }
+      vidflixSubtitles = vidflixResult.subtitles;
+    }
+    if (flxOut.status === 'rejected') {
+      // VidFlix failure is non-blocking, but log it so any pre-fetch
+      // throw is visible in the Netlify log instead of being silently
+      // swallowed.
+      console.warn('[direct-stream] vidflix merge failed —', flxOut.reason instanceof Error ? flxOut.reason.message : String(flxOut.reason));
+    }
+
+    // Round 36 A4 / Round 38/41/42 — temporary diagnostic: log the server count +
+    // group breakdown (now five groups).
     const vidsrcCount = servers.filter((s) => (s.server || 'Vidsrc') === 'Vidsrc').length;
     const vidstreamCount = servers.filter((s) => s.server === 'Vidstream').length;
     const vidplayCount = servers.filter((s) => s.server === 'VidPlay').length;
     const vidstartCount = servers.filter((s) => s.server === 'VidStart').length;
-    console.warn('[direct-stream] resolve complete — servers:', servers.length, '(Vidsrc:', vidsrcCount, 'Vidstream:', vidstreamCount, 'VidPlay:', vidplayCount, 'VidStart:', vidstartCount, ')');
+    const vidflixCount = servers.filter((s) => s.server === 'VidFlix').length;
+    console.warn('[direct-stream] resolve complete — servers:', servers.length, '(Vidsrc:', vidsrcCount, 'Vidstream:', vidstreamCount, 'VidPlay:', vidplayCount, 'VidStart:', vidstartCount, 'VidFlix:', vidflixCount, ')');
 
     // Round 36 — determine the primary URL. If Vidsrc is available, use its
     // first source. If only Vidstream is available, use the first Vidstream
     // server's URL.
+    // Round 42 — the primary's PROTOCOL follows its group: 'dash' when the
+    // primary URL comes from the VidFlix group (servers[0] is a VidFlix
+    // row), else 'hls' as before — never hardcoded, because a server
+    // switch (hls ↔ dash) honours the selected entry's own protocol.
     let primaryUrl: string;
+    let primaryProtocol: 'hls' | 'dash' = 'hls';
     if (firstSource) {
       primaryUrl = buildPlaybackUrl(firstSource.url, resultReferer);
     } else if (servers.length > 0) {
       primaryUrl = servers[0].url;
+      if (servers[0].server === 'VidFlix') primaryProtocol = 'dash';
     } else {
       throw new ResolverError('RESOLUTION_UNAVAILABLE');
     }
@@ -405,26 +450,31 @@ export const vidsrcScrapeProviderAdapter: ProviderAdapter = {
 
     // Round 38 — Rivestream + VidPlay (ThugTV) captions, concatenated in
     // group order (Vidstream first, VidPlay second); included only when
-    // at least one group produced tracks.
-    const mergedSubtitles = [...(rivestreamSubtitles ?? []), ...(thugtvSubtitles ?? [])];
+    // at least one group produced tracks. Round 42 — VidFlix's proxied
+    // .srt→VTT tracks are concatenated in the SAME group order.
+    const mergedSubtitles = [...(rivestreamSubtitles ?? []), ...(thugtvSubtitles ?? []), ...(vidflixSubtitles ?? [])];
 
-    // Direct HLS result — the existing HLS engine owns playback, quality
-    // levels and audio-track discovery from the manifest. protocol: 'hls'
-    // is set explicitly because the Worker URL has no .m3u8 extension (the
-    // engine's extension sniff would return undefined).
+    // Direct result — the HLS engine owns playback for hls sources and
+    // the VOD DASH engine for dash (VidFlix) sources; quality levels and
+    // audio-track discovery always come from the manifest. protocol is
+    // set explicitly (primaryProtocol — 'dash' exactly when the primary
+    // URL comes from the VidFlix group) because the Worker URL has no
+    // .m3u8/.mpd extension (the engine's extension sniff would return
+    // undefined).
     return {
       type: 'direct',
       url: safeUrl,
-      protocol: 'hls',
+      protocol: primaryProtocol,
       metadata: {
         providerName: context.config.provider.name,
         sourceName: context.config.source.name,
-        protocol: 'hls',
-        // Round 36 C / Round 38/41 — the default server from app_config, clamped
+        protocol: primaryProtocol,
+        // Round 36 C / Round 38/41/42 — the default server from app_config, clamped
         // to an enabled source: if the configured default is disabled, fall
-        // back to the other enabled one. Clamp order: vidstart → vidplay →
-        // vidstream → vidsrc; the final fallback is unchanged.
+        // back to the other enabled one. Clamp order: vidflix → vidstart →
+        // vidplay → vidstream → vidsrc; the final fallback is unchanged.
         defaultServer: (() => {
+          if (defaultServerPref === 'vidflix' && vidflixEnabled) return 'vidflix';
           if (defaultServerPref === 'vidstart' && vidstartEnabled) return 'vidstart';
           if (defaultServerPref === 'vidplay' && thugtvEnabled) return 'vidplay';
           if (defaultServerPref === 'vidstream' && vidstreamEnabled) return 'vidstream';
@@ -438,9 +488,12 @@ export const vidsrcScrapeProviderAdapter: ProviderAdapter = {
         // Server menu uses it as the highlighted default row.
         // Round 36 — Vidstream (Rivestream) entries are appended with
         // server: 'Vidstream', label = language name, qualities = per-lang.
+        // Round 42 — VidFlix entries carry protocol: 'dash' (one row per
+        // audio language, each its own .mpd).
         ...(servers.length > 0 ? { servers } : {}),
       },
-      // Round 36/38 — Rivestream + VidPlay captions (VTT) merged into subtitles.
+      // Round 36/38/42 — Rivestream + VidPlay captions (VTT) merged with
+      // VidFlix's proxied SRT→VTT tracks into subtitles.
       ...(mergedSubtitles.length > 0 ? { subtitles: mergedSubtitles } : {}),
     };
   },

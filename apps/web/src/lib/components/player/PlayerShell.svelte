@@ -212,8 +212,10 @@
   // records the servers a fatal error already fell back through (reset on
   // 'playing' and on source change) so the fallback walk is finite.
   let selectedServer = '';
-  // Round 36 D — per-server-entry qualities (for Vidstream language entries)
-  let selectedServerEntry: { url: string; label: string; server?: string; language?: string; qualities?: Array<{ label: string; url: string }> } | undefined;
+  // Round 36 D — per-server-entry qualities (for Vidstream language entries).
+  // Round 42 — optional per-entry protocol: 'dash' for VidFlix rows, absent
+  // ('hls') for every pre-existing group.
+  let selectedServerEntry: { url: string; label: string; server?: string; language?: string; qualities?: Array<{ label: string; url: string }>; protocol?: 'hls' | 'dash' } | undefined;
   let serverQualities: Array<{ label: string; url: string }> = [];
   let serverFallbackTried: string[] = [];
   let selectedSubtitle = '';
@@ -439,6 +441,17 @@
   // existing `mediaUrl` derivation below — no re-resolve.
   $: selectedServerEntry = servers.find((s) => s.url === selectedServer) ?? undefined;
   $: serverQualities = selectedServerEntry?.qualities ?? [];
+  // Round 42 — the playback protocol of the CURRENT mediaUrl, threaded into
+  // the viewport so an hls → dash (or dash → hls) SERVER SWITCH swaps the
+  // engine (VOD DASH vs hls.js) and seeks to the captured position:
+  //   * a server row is selected → the row's own protocol wins ('hls' when
+  //     the entry carries none — every pre-existing group);
+  //   * no row selected → the source-level metadata.protocol (the primary
+  //     URL's group), forwarded ONLY for hls/dash so MP4/file/unknown keep
+  //     the viewport's existing derivation (native path, unchanged).
+  $: playerMediaProtocol = selectedServer
+    ? (selectedServerEntry?.protocol === 'dash' ? 'dash' : 'hls')
+    : (source?.metadata?.protocol === 'hls' || source?.metadata?.protocol === 'dash' ? source.metadata.protocol : null);
   $: subtitles = source?.subtitles ?? [];
   $: selectedQualityOption = qualities.find((quality) => quality.url === selectedQuality) as PlayerQualityOption | undefined;
   // Phase 10: compat override — when a compatibility session succeeds, the
@@ -467,12 +480,12 @@
     selectedServer = '';
     serverFallbackTried = [];
   }
-  // Round 36 C / Round 38/41 — preselect the default server on first resolve.
+  // Round 36 C / Round 38/41/42 — preselect the default server on first resolve.
   // When the source metadata carries a defaultServer hint
-  // ('vidstream' | 'vidsrc' | 'vidplay' | 'vidstart'), find the first server
+  // ('vidstream' | 'vidsrc' | 'vidplay' | 'vidstart' | 'vidflix'), find the first server
   // entry whose `server` field matches (case-insensitive) and preselect it.
   // Fall back to servers[0] when no match.
-  const defaultServerLabels: Record<string, string> = { vidstream: 'Vidstream', vidplay: 'VidPlay', vidstart: 'VidStart', vidsrc: 'Vidsrc' };
+  const defaultServerLabels: Record<string, string> = { vidstream: 'Vidstream', vidplay: 'VidPlay', vidstart: 'VidStart', vidflix: 'VidFlix', vidsrc: 'Vidsrc' };
   $: if (source && source.sourceId === sourceIdentity && !selectedServer && servers.length > 1) {
     const hint = source.metadata?.defaultServer;
     if (hint) {
@@ -2821,7 +2834,7 @@
 
   <!-- Immersive redesign: stage fills the ENTIRE viewport — no header/footer consuming space. -->
   <section class="stage-wrap" aria-label="Player viewport">
-    <PlayerViewport bind:this={viewport} bind:videoElement bind:iframeElement {source} {mediaUrl} sandboxEnabled={effectiveSandboxEnabled} sandboxPolicy={effectiveSandboxPolicy} poster={content.backdrop ?? content.poster ?? ''} title={content.title} state={effectiveState} subtitles={mergedSubtitles} {displayMode} selectedSubtitleUrl={selectedSubtitle} subtitlePrefs={subtitlePrefs} {subtitleOverlaySuppressed} on:loadedmetadata={handleLoadedMetadata} on:timeupdate={handleTimeUpdate} on:play={handlePlay} on:pause={handlePause} on:waiting={handleWaiting} on:playing={handlePlaying} on:seeking={handleSeeking} on:seeked={handleSeeked} on:ended={handleEnded} on:error={handleMediaError} on:embedload={handleEmbedLoad} on:enginequality={handleEngineQuality} on:durationchange={handleSeekOpportunity} on:loadeddata={handleSeekOpportunity} on:canplay={handleSeekOpportunity} on:progress={handleSeekOpportunity} />
+    <PlayerViewport bind:this={viewport} bind:videoElement bind:iframeElement {source} {mediaUrl} mediaProtocol={playerMediaProtocol} sandboxEnabled={effectiveSandboxEnabled} sandboxPolicy={effectiveSandboxPolicy} poster={content.backdrop ?? content.poster ?? ''} title={content.title} state={effectiveState} subtitles={mergedSubtitles} {displayMode} selectedSubtitleUrl={selectedSubtitle} subtitlePrefs={subtitlePrefs} {subtitleOverlaySuppressed} on:loadedmetadata={handleLoadedMetadata} on:timeupdate={handleTimeUpdate} on:play={handlePlay} on:pause={handlePause} on:waiting={handleWaiting} on:playing={handlePlaying} on:seeking={handleSeeking} on:seeked={handleSeeked} on:ended={handleEnded} on:error={handleMediaError} on:embedload={handleEmbedLoad} on:enginequality={handleEngineQuality} on:durationchange={handleSeekOpportunity} on:loadeddata={handleSeekOpportunity} on:canplay={handleSeekOpportunity} on:progress={handleSeekOpportunity} />
 
     <!-- MAVP-4 Issue 1: embed presentation veil. While the provider iframe is
          mounted but not yet presenting, this opaque layer covers the stage

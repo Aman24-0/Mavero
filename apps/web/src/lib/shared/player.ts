@@ -98,6 +98,12 @@ export type PlayerServerOption = {
   server?: string;
   language?: string;
   qualities?: Array<{ label: string; url: string }>;
+  /**
+   * Round 42 — the entry's playback protocol. 'dash' for VidFlix rows
+   * (one DASH .mpd per audio language — the VOD DASH engine); absent
+   * means 'hls' (every pre-existing group — hls.js engine).
+   */
+  protocol?: 'hls' | 'dash';
 };
 
 /**
@@ -178,8 +184,10 @@ export type PlayerSource = {
       server?: string;
       language?: string;
       qualities?: Array<{ label: string; url: string }>;
+      /** Round 42 — per-entry protocol ('hls' | 'dash'); absent = 'hls'. */
+      protocol?: 'hls' | 'dash';
     }>;
-    /** Round 36/38/41 — default server ('vidstream' | 'vidsrc' | 'vidplay' | 'vidstart') for preselection. */
+    /** Round 36/38/41/42 — default server ('vidstream' | 'vidsrc' | 'vidplay' | 'vidstart' | 'vidflix') for preselection. */
     defaultServer?: string;
   };
   error?: {

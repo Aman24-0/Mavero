@@ -118,6 +118,8 @@ export type SafeSourceMetadata = {
    * Round 36 — extended server entry. Backward-compatible: the old shape
    * { url, label } still works; the new optional fields add server name,
    * language, and per-quality URLs for the Vidstream grouped server list.
+   * Round 42 — optional `protocol` ('hls' | 'dash'): VidFlix rows are DASH
+   * (.mpd) manifests; absent means 'hls' (every pre-existing group).
    */
   servers?: Array<{
     url: string;
@@ -125,8 +127,9 @@ export type SafeSourceMetadata = {
     server?: string;
     language?: string;
     qualities?: Array<{ label: string; url: string }>;
+    protocol?: 'hls' | 'dash';
   }>;
-  /** Round 36/38/41 — default server ('vidstream' | 'vidsrc' | 'vidplay' | 'vidstart') for player preselection. */
+  /** Round 36/38/41/42 — default server ('vidstream' | 'vidsrc' | 'vidplay' | 'vidstart' | 'vidflix') for player preselection. */
   defaultServer?: string;
 };
 

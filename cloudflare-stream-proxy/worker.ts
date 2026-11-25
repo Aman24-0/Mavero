@@ -66,7 +66,11 @@
 // 2026-11 round 40 — VidStart (ThugTV media API): media.thugtv.st serves both the JSON source
 // endpoint and the single multi-quality / multi-audio HLS master. The manifest rewriter already
 // handles master playlists (EXT-X-STREAM-INF + EXT-X-MEDIA URIs).
-const ALLOWED_HOST_SUFFIXES = ['hotstar.com', 'slivcdn.com', 'jio.com', 'jiocinema.com', 'premiumplugx.com', 'catbox.moe', 'cloudnestra.com', 'stellarconductornexus.com', 'vidsrc.party', 'cookiebakers23blog.xyz', 'cno.to', 'vidcore.org', 'hscow.com', 'fcxmb.com', 'fodcyy.com', 'fhxod.com', 'rivestream.app', 'api.thugtv.online', 'aapanel.devcorp.me', 'media.thugtv.st'];
+// 2026-11 round 42 — VidFlix (stream.hls.lol DASH): stream.hls.lol serves the JSON mbox API;
+// sacdn.hakunaymatata.com + cacdn.hakunaymatata.com serve the per-language DASH MPDs and their
+// segments (cacdn also serves the .srt subtitles, fetched by the same-origin converting proxy).
+// The manifest rewriter already rewrites DASH (.mpd) manifests (BaseURL + segment URLs proxied).
+const ALLOWED_HOST_SUFFIXES = ['hotstar.com', 'slivcdn.com', 'jio.com', 'jiocinema.com', 'premiumplugx.com', 'catbox.moe', 'cloudnestra.com', 'stellarconductornexus.com', 'vidsrc.party', 'cookiebakers23blog.xyz', 'cno.to', 'vidcore.org', 'hscow.com', 'fcxmb.com', 'fodcyy.com', 'fhxod.com', 'rivestream.app', 'api.thugtv.online', 'aapanel.devcorp.me', 'media.thugtv.st', 'stream.hls.lol', 'sacdn.hakunaymatata.com', 'cacdn.hakunaymatata.com'];
 
 const REFERER_BY_HOST: ReadonlyArray<{ suffix: string; referer: string }> = [
         { suffix: 'slivcdn.com', referer: 'https://www.sonyliv.com/' },
