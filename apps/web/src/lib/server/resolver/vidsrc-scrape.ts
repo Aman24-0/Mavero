@@ -56,7 +56,11 @@ import { scrapeVidsrc, ScraperError, DEFAULT_SCRAPER_CONFIG } from '$lib/server/
 // sources into one grouped server list.
 // Round 37 — VidPlay (NovaHD) REMOVED: the NovaHD API is behind Cloudflare's
 // JS challenge and returns 403 server-side; the adapter + merge are purged.
+// Round 38 — VidPlay (ThugTV): the thugtv adapter is called the same way
+// (in-adapter merge — no new streaming_providers row, the new upstream
+// lives INSIDE this vidsrc-scrape adapter like Rivestream/Vidstream).
 import { rivestreamAdapter } from './rivestream';
+import { thugtvAdapter } from './thugtv';
 
 export const VIDSRC_SCRAPE_ADAPTER_ID = 'vidsrc-scrape' as const;
 
@@ -181,6 +185,8 @@ export const vidsrcScrapeProviderAdapter: ProviderAdapter = {
     // Round 36 — per-source toggles + default server. Read from app_config.
     let vidsrcEnabled = true;
     let vidstreamEnabled = true;
+    // Round 38 — VidPlay (ThugTV) toggle + 'vidplay' default server.
+    let thugtvEnabled = true;
     let defaultServerPref = 'vidstream';
     try {
       const client = createSupabaseAdminClient();
@@ -193,9 +199,10 @@ export const vidsrcScrapeProviderAdapter: ProviderAdapter = {
       if (cfgAny) {
         if (typeof cfgAny.direct_stream_vidsrc_enabled === 'boolean') vidsrcEnabled = cfgAny.direct_stream_vidsrc_enabled;
         if (typeof cfgAny.direct_stream_vidstream_enabled === 'boolean') vidstreamEnabled = cfgAny.direct_stream_vidstream_enabled;
+        if (typeof cfgAny.direct_stream_thugtv_enabled === 'boolean') thugtvEnabled = cfgAny.direct_stream_thugtv_enabled;
         if (typeof cfgAny.direct_stream_default_server === 'string') {
           const val = cfgAny.direct_stream_default_server;
-          if (val === 'vidstream' || val === 'vidsrc') defaultServerPref = val;
+          if (val === 'vidstream' || val === 'vidsrc' || val === 'vidplay') defaultServerPref = val;
         }
       }
     } catch {
@@ -304,10 +311,40 @@ export const vidsrcScrapeProviderAdapter: ProviderAdapter = {
       }
     }
 
-    // Round 36 A4 — temporary diagnostic: log the server count + group breakdown.
+    // Round 38 — call the VidPlay (ThugTV) adapter (gated by thugtvEnabled).
+    // Same pattern as the Rivestream merge: if ThugTV fails, omit its
+    // entries entirely (never block Vidsrc/Vidstream).
+    let thugtvSubtitles: Array<{ url: string; language?: string; label?: string }> | undefined;
+    if (thugtvEnabled) {
+      try {
+        const thugtvResult = await thugtvAdapter.resolve(context);
+        if (thugtvResult?.metadata?.servers) {
+          for (const srv of thugtvResult.metadata.servers) {
+            if (servers.length >= 28) break;
+            servers.push({
+              url: srv.url,
+              label: srv.label,
+              server: srv.server,
+              language: srv.language,
+              qualities: srv.qualities,
+            });
+          }
+          thugtvSubtitles = thugtvResult.subtitles;
+        }
+      } catch (error) {
+        // ThugTV failure is non-blocking, but log it so any pre-fetch
+        // throw is visible in the Netlify log instead of being silently
+        // swallowed.
+        console.warn('[direct-stream] thugtv merge failed —', error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    // Round 36 A4 / Round 38 — temporary diagnostic: log the server count +
+    // group breakdown (now three groups).
     const vidsrcCount = servers.filter((s) => (s.server || 'Vidsrc') === 'Vidsrc').length;
     const vidstreamCount = servers.filter((s) => s.server === 'Vidstream').length;
-    console.warn('[direct-stream] resolve complete — servers:', servers.length, '(Vidsrc:', vidsrcCount, 'Vidstream:', vidstreamCount, ')');
+    const vidplayCount = servers.filter((s) => s.server === 'VidPlay').length;
+    console.warn('[direct-stream] resolve complete — servers:', servers.length, '(Vidsrc:', vidsrcCount, 'Vidstream:', vidstreamCount, 'VidPlay:', vidplayCount, ')');
 
     // Round 36 — determine the primary URL. If Vidsrc is available, use its
     // first source. If only Vidstream is available, use the first Vidstream
@@ -322,6 +359,11 @@ export const vidsrcScrapeProviderAdapter: ProviderAdapter = {
     }
     const safeUrl = validatePlaybackUrl(primaryUrl, 'direct');
 
+    // Round 38 — Rivestream + VidPlay (ThugTV) captions, concatenated in
+    // group order (Vidstream first, VidPlay second); included only when
+    // at least one group produced tracks.
+    const mergedSubtitles = [...(rivestreamSubtitles ?? []), ...(thugtvSubtitles ?? [])];
+
     // Direct HLS result — the existing HLS engine owns playback, quality
     // levels and audio-track discovery from the manifest. protocol: 'hls'
     // is set explicitly because the Worker URL has no .m3u8 extension (the
@@ -334,10 +376,11 @@ export const vidsrcScrapeProviderAdapter: ProviderAdapter = {
         providerName: context.config.provider.name,
         sourceName: context.config.source.name,
         protocol: 'hls',
-        // Round 36 C — the default server from app_config, clamped to an
-        // enabled source: if the configured default is disabled, use the
-        // other enabled one. Both disabled can't happen (gate above).
+        // Round 36 C / Round 38 — the default server from app_config, clamped
+        // to an enabled source: if the configured default is disabled, fall
+        // back to the other enabled one. Both disabled can't happen (gate above).
         defaultServer: (() => {
+          if (defaultServerPref === 'vidplay' && thugtvEnabled) return 'vidplay';
           if (defaultServerPref === 'vidstream' && vidstreamEnabled) return 'vidstream';
           if (defaultServerPref === 'vidsrc' && vidsrcEnabled) return 'vidsrc';
           // Configured default is disabled — fall back to the other enabled one.
@@ -351,8 +394,8 @@ export const vidsrcScrapeProviderAdapter: ProviderAdapter = {
         // server: 'Vidstream', label = language name, qualities = per-lang.
         ...(servers.length > 0 ? { servers } : {}),
       },
-      // Round 36 — Rivestream captions (VTT) merged into subtitles.
-      ...(rivestreamSubtitles && rivestreamSubtitles.length > 0 ? { subtitles: rivestreamSubtitles } : {}),
+      // Round 36/38 — Rivestream + VidPlay captions (VTT) merged into subtitles.
+      ...(mergedSubtitles.length > 0 ? { subtitles: mergedSubtitles } : {}),
     };
   },
 };

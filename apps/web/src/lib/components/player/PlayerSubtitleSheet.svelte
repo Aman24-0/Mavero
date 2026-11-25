@@ -54,9 +54,11 @@
   type SubtitleTab = 'languages' | 'settings';
   let activeTab: SubtitleTab = 'languages';
 
-  // Round 36 E — subtitle source selector. Tracks with origin: 'vidstream'
-  // are grouped under the "Vidstream" source; everything else is "Default".
-  // The source selector filters the visible track list.
+  // Round 36 E / Round 38 — subtitle source selector. Tracks with origin:
+  // 'vidstream' are grouped under the "Vidstream" source, tracks with
+  // origin 'vidplay' (VidPlay / ThugTV) under "VidPlay"; everything else
+  // is "Default". The source selector filters the visible track list.
+  const subtitleSourceLabels: Record<string, string> = { vidstream: 'Vidstream', vidplay: 'VidPlay' };
   $: subtitleSources = [...new Set(tracks.map((t) => t.origin ?? 'default'))];
   let activeSubtitleSource = 'all';
   $: filteredTracks = activeSubtitleSource === 'all'
@@ -129,7 +131,7 @@
         <div class="source-tabs" role="tablist" aria-label="Subtitle source">
           <button class="source-tab" class:active={activeSubtitleSource === 'all'} type="button" onclick={() => (activeSubtitleSource = 'all')}>All</button>
           {#each subtitleSources as src (src)}
-            <button class="source-tab" class:active={activeSubtitleSource === src} type="button" onclick={() => (activeSubtitleSource = src)}>{src === 'vidstream' ? 'Vidstream' : 'Default'}</button>
+            <button class="source-tab" class:active={activeSubtitleSource === src} type="button" onclick={() => (activeSubtitleSource = src)}>{subtitleSourceLabels[src] ?? 'Default'}</button>
           {/each}
         </div>
       {/if}

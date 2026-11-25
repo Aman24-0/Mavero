@@ -126,7 +126,7 @@ export type SafeSourceMetadata = {
     language?: string;
     qualities?: Array<{ label: string; url: string }>;
   }>;
-  /** Round 36 — default server ('vidstream' | 'vidsrc') for player preselection. */
+  /** Round 36/38 — default server ('vidstream' | 'vidsrc' | 'vidplay') for player preselection. */
   defaultServer?: string;
 };
 

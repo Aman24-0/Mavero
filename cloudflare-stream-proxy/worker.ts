@@ -60,7 +60,10 @@
 // Cloudflare's JS challenge and returns 403 server-side; the NovaHD
 // allowlist entries are dropped (the deployed Worker will be rolled back
 // to match by the user).
-const ALLOWED_HOST_SUFFIXES = ['hotstar.com', 'slivcdn.com', 'jio.com', 'jiocinema.com', 'premiumplugx.com', 'catbox.moe', 'cloudnestra.com', 'stellarconductornexus.com', 'vidsrc.party', 'cookiebakers23blog.xyz', 'cno.to', 'vidcore.org', 'hscow.com', 'fcxmb.com', 'fodcyy.com', 'fhxod.com', 'rivestream.app'];
+// 2026-11 round 38 — VidPlay (ThugTV): api.thugtv.online is the VidPlay API (called
+// server-side through this proxy, like scrapper.rivestream.app). Media/subtitle CDNs are
+// the same four Rivestream hosts. aapanel.devcorp.me serves the movie's non-English VTTs.
+const ALLOWED_HOST_SUFFIXES = ['hotstar.com', 'slivcdn.com', 'jio.com', 'jiocinema.com', 'premiumplugx.com', 'catbox.moe', 'cloudnestra.com', 'stellarconductornexus.com', 'vidsrc.party', 'cookiebakers23blog.xyz', 'cno.to', 'vidcore.org', 'hscow.com', 'fcxmb.com', 'fodcyy.com', 'fhxod.com', 'rivestream.app', 'api.thugtv.online', 'aapanel.devcorp.me'];
 
 const REFERER_BY_HOST: ReadonlyArray<{ suffix: string; referer: string }> = [
         { suffix: 'slivcdn.com', referer: 'https://www.sonyliv.com/' },

@@ -408,6 +408,8 @@
   // svelte-ignore state_referenced_locally
   let dsVidstreamEnabled = $state(data.dsConfig?.vidstreamEnabled ?? true);
   // svelte-ignore state_referenced_locally
+  let dsThugtvEnabled = $state(data.dsConfig?.thugtvEnabled ?? true);
+  // svelte-ignore state_referenced_locally
   let dsDefaultServer = $state(data.dsConfig?.defaultServer ?? 'vidstream');
   const storedSourceIconExists = $derived(Boolean(typeof editingSource?.icon === 'string' && editingSource.icon.trim()));
 
@@ -1176,9 +1178,14 @@
             <input type="checkbox" name="ds_vidstream_enabled" value="true" checked={dsVidstreamEnabled} onchange={() => dsVidstreamEnabled = !dsVidstreamEnabled} />
           </label>
           <label class="a2-field">
+            <span>VidPlay (ThugTV)</span>
+            <input type="checkbox" name="ds_thugtv_enabled" value="true" checked={dsThugtvEnabled} onchange={() => dsThugtvEnabled = !dsThugtvEnabled} />
+          </label>
+          <label class="a2-field">
             <span>Default Server</span>
             <select name="ds_default_server" bind:value={dsDefaultServer}>
               <option value="vidstream">Vidstream (Rivestream API)</option>
+              <option value="vidplay">VidPlay (ThugTV API)</option>
               <option value="vidsrc">Vidsrc (vidsrc.party scrape)</option>
             </select>
           </label>
