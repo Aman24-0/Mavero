@@ -183,6 +183,11 @@
 # /api/content/adult-discover here — those carry per-user/per-request state
 # and MUST stay no-store (enforced in each +server.ts handler).
 [[headers]]
+  for = "/"
+  [headers.values]
+    cache-control = "public, max-age=30, s-maxage=240, stale-while-revalidate=600"
+
+[[headers]]
   for = "/discover"
   [headers.values]
     cache-control = "public, max-age=30, s-maxage=240, stale-while-revalidate=600"
