@@ -80,9 +80,13 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     }
   }
 
-  // Round 36 C / Round 38/41/42 — read DirectStream per-source settings from app_config.
-  let dsConfig: { vidsrcEnabled: boolean; vidstreamEnabled: boolean; thugtvEnabled: boolean; vidstartEnabled: boolean; vidflixEnabled: boolean; defaultServer: string } = {
-    vidsrcEnabled: true, vidstreamEnabled: true, thugtvEnabled: true, vidstartEnabled: true, vidflixEnabled: true, defaultServer: 'vidstream'
+  // Round 36 C / Round 41/42/45 — read DirectStream per-source settings from
+  // app_config. Round 45 — the VidPlay (thugtv) toggle is REMOVED (adapter
+  // deleted; the unused DB column direct_stream_thugtv_enabled stays — no
+  // migration, harmless). The stored 'vidflix' key IS the VidBox group
+  // (display-only rename in round 45).
+  let dsConfig: { vidsrcEnabled: boolean; vidstreamEnabled: boolean; vidstartEnabled: boolean; vidflixEnabled: boolean; defaultServer: string } = {
+    vidsrcEnabled: true, vidstreamEnabled: true, vidstartEnabled: true, vidflixEnabled: true, defaultServer: 'vidstream'
   };
   try {
     const { data: cfg } = await locals.supabase.from('app_config').select('*').eq('id', 1).single();
@@ -90,7 +94,6 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     if (cfgAny) {
       if (typeof cfgAny.direct_stream_vidsrc_enabled === 'boolean') dsConfig.vidsrcEnabled = cfgAny.direct_stream_vidsrc_enabled;
       if (typeof cfgAny.direct_stream_vidstream_enabled === 'boolean') dsConfig.vidstreamEnabled = cfgAny.direct_stream_vidstream_enabled;
-      if (typeof cfgAny.direct_stream_thugtv_enabled === 'boolean') dsConfig.thugtvEnabled = cfgAny.direct_stream_thugtv_enabled;
       if (typeof cfgAny.direct_stream_vidstart_enabled === 'boolean') dsConfig.vidstartEnabled = cfgAny.direct_stream_vidstart_enabled;
       if (typeof cfgAny.direct_stream_vidflix_enabled === 'boolean') dsConfig.vidflixEnabled = cfgAny.direct_stream_vidflix_enabled;
       if (typeof cfgAny.direct_stream_default_server === 'string') dsConfig.defaultServer = cfgAny.direct_stream_default_server;
@@ -245,20 +248,21 @@ export const actions: Actions = {
       // (a hidden input) ONLY when the DirectStream settings section is
       // rendered (source slug starts with 'direct-stream'). Checkbox
       // present = true, absent = false (HTML forms don't submit unchecked
-      // checkboxes). Round 38 — added the VidBox (ThugTV) toggle; Round 41
-      // — added the VidVelvet (ThugTV media) toggle; Round 42 — added the
-      // VidFlix (stream.hls.lol DASH) toggle; validate default_server ∈
-      // {vidsrc, vidstream, vidplay, vidstart, vidflix}.
+      // checkboxes). Round 41 — added the VidVelvet (ThugTV media) toggle;
+      // Round 42 — added the VidBox (stream.hls.lol DASH; display-renamed
+      // from VidFlix in round 45) toggle; validate default_server ∈
+      // {vidsrc, vidstream, vidstart, vidflix} (the stored 'vidflix' key IS
+      // the VidBox group; the vidplay option was removed with the adapter
+      // in round 45 — the unused DB column stays, no migration).
       // Uses the service-role admin client because the user-bound SSR client
       // may lack RLS write permissions on app_config.
       if (form.get('ds_settings') === 'true') {
         const vidsrc = form.get('ds_vidsrc_enabled') === 'true';
         const vidstream = form.get('ds_vidstream_enabled') === 'true';
-        const thugtv = form.get('ds_thugtv_enabled') === 'true';
         const vidstart = form.get('ds_vidstart_enabled') === 'true';
         const vidflix = form.get('ds_vidflix_enabled') === 'true';
         let defaultServer = String(form.get('ds_default_server') ?? 'vidstream');
-        if (defaultServer !== 'vidsrc' && defaultServer !== 'vidstream' && defaultServer !== 'vidplay' && defaultServer !== 'vidstart' && defaultServer !== 'vidflix') {
+        if (defaultServer !== 'vidsrc' && defaultServer !== 'vidstream' && defaultServer !== 'vidstart' && defaultServer !== 'vidflix') {
           defaultServer = 'vidstream';
         }
         try {
@@ -268,7 +272,6 @@ export const actions: Actions = {
             .update({
               direct_stream_vidsrc_enabled: vidsrc,
               direct_stream_vidstream_enabled: vidstream,
-              direct_stream_thugtv_enabled: thugtv,
               direct_stream_vidstart_enabled: vidstart,
               direct_stream_vidflix_enabled: vidflix,
               direct_stream_default_server: defaultServer,

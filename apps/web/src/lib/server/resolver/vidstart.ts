@@ -4,8 +4,9 @@
  * display label fallback and every comment use the VidVelvet name;
  * internal keys/identifiers stay 'vidstart').
  *
- * FOURTH DirectStream server group (after Vidsrc, Vidstream/Rivestream and
- * VidBox/ThugTV). Calls the ThugTV MEDIA host SERVER-SIDE ONLY — the API
+ * FOURTH DirectStream server group (after Vidsrc and Vidstream/Rivestream —
+ * the former VidPlay/ThugTV group was deleted in round 45). Calls the ThugTV
+ * MEDIA host SERVER-SIDE ONLY — the API
  * URL is never exposed to the browser — and wraps the returned stream URL
  * through the Cloudflare Worker as ?e=<base64url(url)> so the real CDN URL
  * never appears in plain text client-side.
@@ -29,7 +30,8 @@
  *
  * This API returns NO subtitles — the field is omitted entirely.
  *
- * RELIABILITY — same conventions as thugtv.ts (rounds 39-40):
+ * RELIABILITY — same conventions as the other DirectStream adapters
+ * (rounds 39-40):
  *   1. BOUNDED retry loop — up to 2 attempts (backoff 500ms after
  *      attempt 1, a fresh 10s AbortController per attempt). Retried: a
  *      thrown fetch (network error / an abort that is NOT our own
@@ -52,7 +54,7 @@ export const VIDSTART_ADAPTER_ID = 'vidstart';
 const VIDSTART_API = 'https://media.thugtv.st/api/stream/source';
 const API_TIMEOUT_MS = 10_000;
 /** Bounded retry — 2 attempts keep the worst-case failure cost low
- *  (one retry + 500ms backoff), same tuning as thugtv.ts round 40. */
+ *  (one retry + 500ms backoff), same tuning as the other adapters (round 40). */
 const MAX_ATTEMPTS = 2;
 /** Backoff BETWEEN attempts: 500ms after attempt 1. */
 const RETRY_BACKOFF_MS = [500] as const;
@@ -82,28 +84,28 @@ interface VidStartPayload {
   status?: string;
   catalogueUpdatedAt?: string;
   source?: VidStartSource;
-  /** Defensive nested unwrap — same convention as thugtv.ts/rivestream.ts. */
+  /** Defensive nested unwrap — same convention as rivestream.ts. */
   data?: { status?: string; catalogueUpdatedAt?: string; source?: VidStartSource };
 }
 
 /** Base64url-encode a UTF-8 string (for the ?e= Worker param).
  *  Matches the Worker's decodeBase64Url: base64 → replace + with -,
  *  / with _, strip = padding. Uses Node.js Buffer (server-side only).
- *  Local copy of the thugtv.ts helper — kept local on purpose. */
+ *  Local helper — kept local on purpose. */
 function encodeBase64Url(input: string): string {
   return Buffer.from(input, 'utf8').toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
 /** Wrap a CDN URL through the Worker proxy using the opaque ?e= param.
- *  Local copy of the thugtv.ts helper — kept local on purpose. */
+ *  Local helper — kept local on purpose. */
 function proxyUrl(rawUrl: string, workerProxyUrl: string): string {
   const encoded = encodeBase64Url(rawUrl);
   return `${workerProxyUrl}/?e=${encoded}`;
 }
 
 /** Normalise an API-provided URL: trim, and unescape &amp; → & (same
- *  defensive normalisation as thugtv.ts — an escaped query string breaks
- *  CDN signatures). */
+ *  defensive normalisation as the other adapters — an escaped query string
+ *  breaks CDN signatures). */
 function normalizeUrl(raw: unknown): string {
   return typeof raw === 'string' ? raw.trim().replace(/&amp;/g, '&') : '';
 }

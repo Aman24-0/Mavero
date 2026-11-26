@@ -63,6 +63,9 @@
 // 2026-11 round 38 — VidPlay (ThugTV): api.thugtv.online is the VidPlay API (called
 // server-side through this proxy, like scrapper.rivestream.app). Media/subtitle CDNs are
 // the same four Rivestream hosts. aapanel.devcorp.me serves the movie's non-English VTTs.
+// 2026-11 round 45 — api.thugtv.online REMOVED from the allowlist: the VidPlay API is
+// permanently behind a Cloudflare challenge (the adapter is deleted); aapanel.devcorp.me
+// and media.thugtv.st stay (the VidVelvet media/subtitle hosts).
 // 2026-11 round 40 — VidStart (ThugTV media API): media.thugtv.st serves both the JSON source
 // endpoint and the single multi-quality / multi-audio HLS master. The manifest rewriter already
 // handles master playlists (EXT-X-STREAM-INF + EXT-X-MEDIA URIs).
@@ -70,7 +73,7 @@
 // sacdn.hakunaymatata.com + cacdn.hakunaymatata.com serve the per-language DASH MPDs and their
 // segments (cacdn also serves the .srt subtitles, fetched by the same-origin converting proxy).
 // The manifest rewriter already rewrites DASH (.mpd) manifests (BaseURL + segment URLs proxied).
-const ALLOWED_HOST_SUFFIXES = ['hotstar.com', 'slivcdn.com', 'jio.com', 'jiocinema.com', 'premiumplugx.com', 'catbox.moe', 'cloudnestra.com', 'stellarconductornexus.com', 'vidsrc.party', 'cookiebakers23blog.xyz', 'cno.to', 'vidcore.org', 'hscow.com', 'fcxmb.com', 'fodcyy.com', 'fhxod.com', 'rivestream.app', 'api.thugtv.online', 'aapanel.devcorp.me', 'media.thugtv.st', 'stream.hls.lol', 'sacdn.hakunaymatata.com', 'cacdn.hakunaymatata.com'];
+const ALLOWED_HOST_SUFFIXES = ['hotstar.com', 'slivcdn.com', 'jio.com', 'jiocinema.com', 'premiumplugx.com', 'catbox.moe', 'cloudnestra.com', 'stellarconductornexus.com', 'vidsrc.party', 'cookiebakers23blog.xyz', 'cno.to', 'vidcore.org', 'hscow.com', 'fcxmb.com', 'fodcyy.com', 'fhxod.com', 'rivestream.app', 'aapanel.devcorp.me', 'media.thugtv.st', 'stream.hls.lol', 'sacdn.hakunaymatata.com', 'cacdn.hakunaymatata.com'];
 
 const REFERER_BY_HOST: ReadonlyArray<{ suffix: string; referer: string }> = [
         { suffix: 'slivcdn.com', referer: 'https://www.sonyliv.com/' },
@@ -247,33 +250,70 @@ function rewriteManifest(body: string, baseUrl: string, workerOrigin: string, re
 
 /**
  * 2026-10 round 6 — Task 2: DASH (.mpd) manifest rewriter.
+ * 2026-11 round 45 — synced with the deployed Worker v30 (the VidBox
+ * playback fix). Rewrites <BaseURL>, <SegmentTemplate media="...">,
+ * <SegmentTemplate initialization="...">, and <SegmentList media="..."> /
+ * <SegmentURL sourceURL="..."> URLs so they route through this Worker.
+ * DASH manifests are XML; we use regex (not a DOM parser) because the
+ * Worker runtime has no DOM API and the MPD format is well-structured
+ * enough for targeted regex replacement.
  *
- * Rewrites <BaseURL>, <SegmentTemplate media="...">, <SegmentTemplate
- * initialization="...">, and <SegmentList media="..."> URLs so they
- * route through this Worker. DASH manifests are XML; we use regex
- * (not a DOM parser) because the Worker runtime has no DOM API and
- * the MPD format is well-structured enough for targeted regex
- * replacement.
+ * THREE BUGS fixed by the v30 rewriter (observed on the VidBox MPDs):
+ *   1. BaseURL RESOLUTION — the rewriter resolved every segment URL
+ *      against the MANIFEST URL. A <BaseURL> element changes the base:
+ *      the segment URLs are relative to the RESOLVED BaseURL, not to the
+ *      manifest. The rewriter now resolves the (possibly relative)
+ *      <BaseURL> against the manifest URL first, and resolves everything
+ *      else against that content base.
+ *   2. &amp; DECODING — the MPD XML-escapes its URLs (& → &amp;, plus
+ *      &lt;/&gt;/&quot;/&apos;). Encoding the ESCAPED form double-encoded
+ *      them into garbage (&amp; → %26amp%3B), breaking CDN signatures.
+ *      URLs are entity-decoded BEFORE resolution and re-encoding.
+ *   3. TEMPLATE-TOKEN PRESERVATION — SegmentTemplate URLs carry DASH
+ *      identifier templates like $RepresentationID$ / $Number$ / $Time$.
+ *      encodeURIComponent escaped the $ pairs (%24RepresentationID%24),
+ *      so the player could not expand them. The rewriter now splits the
+ *      URL on $...$ template tokens and percent-encodes ONLY the literal
+ *      parts, leaving the tokens intact.
  */
 function rewriteDashManifest(body: string, baseUrl: string, workerOrigin: string, referer: string | null): string {
-        const base = new URL(baseUrl);
+        const manifestUrl = new URL(baseUrl);
         const suffix = referer ? `&r=${encodeURIComponent(referer)}` : '';
-        const proxify = (absUrl: string): string => `${workerOrigin}/?u=${encodeURIComponent(absUrl)}${suffix}`;
+        const decodeEntities = (value: string): string =>
+                value
+                        .replace(/&amp;/g, '&')
+                        .replace(/&lt;/g, '<')
+                        .replace(/&gt;/g, '>')
+                        .replace(/&quot;/g, '"')
+                        .replace(/&apos;/g, "'");
+        const baseMatch = body.match(/<BaseURL>\s*([^<]+?)\s*<\/BaseURL>/);
+        let contentBase = manifestUrl;
+        if (baseMatch) {
+                try {
+                        contentBase = new URL(decodeEntities(baseMatch[1].trim()), manifestUrl);
+                } catch {
+                        contentBase = manifestUrl;
+                }
+        }
+        const encodePreservingTemplates = (value: string): string =>
+                value
+                        .split(/(\$[^$]*\$)/g)
+                        .map((part) => (part.length > 2 && part.startsWith('$') && part.endsWith('$') ? part : encodeURIComponent(part)))
+                        .join('');
+        const proxify = (absUrl: string): string =>
+                `${workerOrigin}/?u=${encodePreservingTemplates(absUrl)}${suffix}`;
 
-        // Rewrite <BaseURL>...</BaseURL>
         let result = body.replace(/<BaseURL>([^<]+)<\/BaseURL>/g, (match, url: string) => {
                 try {
-                        return `<BaseURL>${proxify(new URL(url.trim(), base).toString())}</BaseURL>`;
+                        return `<BaseURL>${proxify(new URL(decodeEntities(url.trim()), contentBase).toString())}</BaseURL>`;
                 } catch {
                         return match;
                 }
         });
 
-        // Rewrite media="..." and initialization="..." attributes in
-        // <SegmentTemplate> and <SegmentList> elements.
         result = result.replace(/\b(media|initialization|sourceURL)="([^"]+)"/g, (match, attr: string, url: string) => {
                 try {
-                        return `${attr}="${proxify(new URL(url.trim(), base).toString())}"`;
+                        return `${attr}="${proxify(new URL(decodeEntities(url.trim()), contentBase).toString())}"`;
                 } catch {
                         return match;
                 }

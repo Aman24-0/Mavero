@@ -175,8 +175,8 @@
   // server. Labels are the resolver-provided names verbatim.
   $: serverMode = servers.length >= 1 ? 'menu' : 'none';
   $: serverButtonLabel = (selectedServer && servers.find((server) => server.url === selectedServer)?.label) || 'Server';
-  // Round 36/38/44 — group servers by server name (Vidsrc | Vidstream |
-  // VidBox | VidVelvet | VidFlix)
+  // Round 36/38/45 — group servers by server name (Vidsrc | Vidstream |
+  // VidVelvet | VidBox)
   // for the two-pane server sheet. The active group filter defaults to 'all'.
   $: serverGroups = [...new Set(servers.map((s) => s.server || 'Vidsrc'))];
   let activeServerGroup = 'all';

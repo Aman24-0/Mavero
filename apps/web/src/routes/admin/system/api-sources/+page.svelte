@@ -407,14 +407,14 @@
   let dsVidsrcEnabled = $state(data.dsConfig?.vidsrcEnabled ?? true);
   // svelte-ignore state_referenced_locally
   let dsVidstreamEnabled = $state(data.dsConfig?.vidstreamEnabled ?? true);
-  // svelte-ignore state_referenced_locally
-  let dsThugtvEnabled = $state(data.dsConfig?.thugtvEnabled ?? true);
+  // Round 45 — the VidPlay (thugtv) toggle is REMOVED (adapter deleted; the
+  // unused DB column stays — no migration, harmless).
   // Round 41 — VidVelvet (ThugTV media) toggle, same pattern as the other
-  // three DirectStream toggles.
+  // DirectStream toggles.
   // svelte-ignore state_referenced_locally
   let dsVidstartEnabled = $state(data.dsConfig?.vidstartEnabled ?? true);
-  // Round 42 — VidFlix (stream.hls.lol DASH) toggle, same pattern as the
-  // other four DirectStream toggles.
+  // Round 42 — VidBox (stream.hls.lol DASH; display-renamed from VidFlix in
+  // round 45) toggle, same pattern as the other DirectStream toggles.
   // svelte-ignore state_referenced_locally
   let dsVidflixEnabled = $state(data.dsConfig?.vidflixEnabled ?? true);
   // svelte-ignore state_referenced_locally
@@ -1186,24 +1186,19 @@
             <input type="checkbox" name="ds_vidstream_enabled" value="true" checked={dsVidstreamEnabled} onchange={() => dsVidstreamEnabled = !dsVidstreamEnabled} />
           </label>
           <label class="a2-field">
-            <span>VidBox (ThugTV)</span>
-            <input type="checkbox" name="ds_thugtv_enabled" value="true" checked={dsThugtvEnabled} onchange={() => dsThugtvEnabled = !dsThugtvEnabled} />
-          </label>
-          <label class="a2-field">
             <span>VidVelvet (ThugTV media)</span>
             <input type="checkbox" name="ds_vidstart_enabled" value="true" checked={dsVidstartEnabled} onchange={() => dsVidstartEnabled = !dsVidstartEnabled} />
           </label>
           <label class="a2-field">
-            <span>VidFlix (ThugTV DASH)</span>
+            <span>VidBox (stream.hls.lol DASH)</span>
             <input type="checkbox" name="ds_vidflix_enabled" value="true" checked={dsVidflixEnabled} onchange={() => dsVidflixEnabled = !dsVidflixEnabled} />
           </label>
           <label class="a2-field">
             <span>Default Server</span>
             <select name="ds_default_server" bind:value={dsDefaultServer}>
               <option value="vidstream">Vidstream (Rivestream API)</option>
-              <option value="vidplay">VidBox (ThugTV API)</option>
               <option value="vidstart">VidVelvet (ThugTV media API)</option>
-              <option value="vidflix">VidFlix (ThugTV DASH)</option>
+              <option value="vidflix">VidBox (stream.hls.lol DASH)</option>
               <option value="vidsrc">Vidsrc (vidsrc.party scrape)</option>
             </select>
           </label>

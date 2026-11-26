@@ -54,15 +54,14 @@
   type SubtitleTab = 'languages' | 'settings';
   let activeTab: SubtitleTab = 'languages';
 
-  // Round 36 E / Round 38/42/44 — subtitle source selector. Tracks with
+  // Round 36 E / Round 42/45 — subtitle source selector. Tracks with
   // origin: 'vidstream' are grouped under the "Vidstream" source, tracks
-  // with origin 'vidplay' (VidBox / ThugTV — the origin key stays the
-  // internal 'vidplay', only the display name changed in round 44) under
-  // "VidBox", tracks with origin 'vidflix' (VidFlix / stream.hls.lol,
-  // served through the same-origin SRT→VTT proxy) under "VidFlix";
-  // everything else is "Default". The source selector filters the visible
-  // track list.
-  const subtitleSourceLabels: Record<string, string> = { vidstream: 'Vidstream', vidplay: 'VidBox', vidflix: 'VidFlix' };
+  // with origin 'vidflix' (VidBox / stream.hls.lol, served through the
+  // same-origin SRT→VTT proxy — the origin key stays the internal
+  // 'vidflix', only the display name changed in round 45) under
+  // "VidBox"; everything else is "Default". The source selector filters
+  // the visible track list.
+  const subtitleSourceLabels: Record<string, string> = { vidstream: 'Vidstream', vidflix: 'VidBox' };
   $: subtitleSources = [...new Set(tracks.map((t) => t.origin ?? 'default'))];
   let activeSubtitleSource = 'all';
   $: filteredTracks = activeSubtitleSource === 'all'

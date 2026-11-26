@@ -213,11 +213,24 @@
   // 'playing' and on source change) so the fallback walk is finite.
   let selectedServer = '';
   // Round 36 D — per-server-entry qualities (for Vidstream language entries).
-  // Round 42 — optional per-entry protocol: 'dash' for VidFlix rows, absent
+  // Round 42 — optional per-entry protocol: 'dash' for VidBox rows, absent
   // ('hls') for every pre-existing group.
   let selectedServerEntry: { url: string; label: string; server?: string; language?: string; qualities?: Array<{ label: string; url: string }>; protocol?: 'hls' | 'dash' } | undefined;
   let serverQualities: Array<{ label: string; url: string }> = [];
   let serverFallbackTried: string[] = [];
+  // Round 45 — has the CURRENT prepare session reached real playback? Set by
+  // the first media arrival (loadedmetadata / play / playing) after a
+  // server/quality/source switch; reset by every switch that re-prepares the
+  // stream (setServer / setQuality / chooseSource / a new source session / a
+  // cleared source). A viewport error BEFORE any playback (a failed switch —
+  // e.g. a VidBox row whose MPD never starts, reported by the 12s DASH
+  // watchdog) goes STRAIGHT to the terminal error card instead of entering
+  // the server-fallback / auto-retry walk, which kept the switching overlay
+  // up for minutes across a DASH-heavy server list (and forever when a wired
+  // URL delivered no events at all). Mid-playback failures (playback
+  // established) keep the existing fallback/auto-retry walk — the hls engine
+  // path is unchanged.
+  let playbackEstablished = false;
   let selectedSubtitle = '';
   // Focused fixes (Issues 1+2): subtitle appearance + sync preferences.
   // Loaded once on mount from the versioned local store; every change is
@@ -480,14 +493,15 @@
     selectedServer = '';
     serverFallbackTried = [];
   }
-  // Round 36 C / Round 38/41/42/44 — preselect the default server on first resolve.
+  // Round 36 C / Round 41/42/45 — preselect the default server on first resolve.
   // When the source metadata carries a defaultServer hint
-  // ('vidstream' | 'vidsrc' | 'vidplay' | 'vidstart' | 'vidflix'), find the first server
+  // ('vidstream' | 'vidsrc' | 'vidstart' | 'vidflix'), find the first server
   // entry whose `server` field matches (case-insensitive) and preselect it.
-  // Fall back to servers[0] when no match. Round 44 — the stored keys stay
-  // 'vidplay'/'vidstart' (internal); the LABELS are the display names the
-  // resolver stamps on the server tags (VidBox / VidVelvet).
-  const defaultServerLabels: Record<string, string> = { vidstream: 'Vidstream', vidplay: 'VidBox', vidstart: 'VidVelvet', vidflix: 'VidFlix', vidsrc: 'Vidsrc' };
+  // Fall back to servers[0] when no match. Round 45 — the stored keys stay
+  // 'vidstart'/'vidflix' (internal; VidPlay/'vidplay' was deleted in round 45);
+  // the LABELS are the display names the resolver stamps on the server tags
+  // (VidVelvet / VidBox).
+  const defaultServerLabels: Record<string, string> = { vidstream: 'Vidstream', vidstart: 'VidVelvet', vidflix: 'VidBox', vidsrc: 'Vidsrc' };
   $: if (source && source.sourceId === sourceIdentity && !selectedServer && servers.length > 1) {
     const hint = source.metadata?.defaultServer;
     if (hint) {
@@ -663,6 +677,8 @@
     capturePendingSeek(pendingSeekState, currentTime, Date.now());
     errorMessage = '';
     playing = false;
+    // Round 45 — a new source session has no established playback yet.
+    playbackEstablished = false;
     state = source.type === 'embed' ? 'embed-loading' : 'preparing';
     // Phase 10: any pending compatibility override belongs to the previous
     // source session — the new session starts direct.
@@ -710,6 +726,11 @@
     // The `browser` import from $app/environment is the canonical guard.
     if (browser && document.pictureInPictureElement === videoElement) exitPipQuietly();
   }
+  // Round 45 — a cleared source (the parent nulls resolvedSource on an
+  // episode switch before the re-resolve lands) also ends the session's
+  // established-playback state — the next source's failures are switch
+  // failures, not mid-playback ones.
+  $: if (!source) playbackEstablished = false;
   // MAVP-4 Issue 1: same-source URL change (episode switch — the resolver
   // rebuilds the embed URL for the new episode while sourceId stays equal).
   // The sourceId watcher above does NOT fire in this case, but the iframe
@@ -1660,6 +1681,9 @@
     videoElement.muted = muted;
     videoElement.playbackRate = playbackRate;
     state = 'paused';
+    // Round 45 — the media genuinely arrived: this prepare session has
+    // playback, so a LATER failure may use the fallback/auto-retry walk.
+    playbackEstablished = true;
     // Phase 9: attempt the pending seek, but NEVER discard it here. For streaming
     // VOD the seekable range/duration may not be final at loadedmetadata —
     // the controller retains the target until a range actually covers it,
@@ -1727,6 +1751,7 @@
   function handlePlay() {
     playing = true;
     state = 'playing';
+    playbackEstablished = true;
     errorMessage = '';
     revealControls();
     // Phase 6: acquire wake lock when playback starts. Safe for both direct
@@ -1749,7 +1774,7 @@
   }
 
   function handleWaiting() { state = 'buffering'; }
-  function handlePlaying() { state = 'playing'; errorMessage = ''; hlsAutoRetryCount = 0; serverFallbackTried = []; }
+  function handlePlaying() { state = 'playing'; errorMessage = ''; playbackEstablished = true; hlsAutoRetryCount = 0; serverFallbackTried = []; }
   function handleSeeking() { state = 'seeking'; }
   function handleSeeked() { state = playing ? 'playing' : 'paused'; }
   function handleEnded() {
@@ -1786,6 +1811,24 @@
   }
 
   function handleMediaError() {
+    // Round 45 — a failed SWITCH never enters the fallback/auto-retry walk:
+    // the viewport reported an error while the overlay still holds the
+    // loading/switching card and NO playback was established in this
+    // prepare session. Show the terminal error card NOW (with the
+    // viewport's detail message when present) — never leave the overlay
+    // spinning on a source that already failed.
+    if (!playbackEstablished) {
+      console.error('[PlayerShell] playback failed before it started — showing error');
+      hlsAutoRetryCount = 0; // reset for the next manual retry
+      playing = false;
+      state = 'error';
+      errorMessage = viewportErrorDetailMessage || 'Playback could not be started. Try again or choose another source.';
+      viewportErrorDetailMessage = '';
+      revealControls();
+      releaseWakeLock();
+      syncMediaSessionPlaybackState('paused');
+      return;
+    }
     // Round 32 (VidCore Multi Stream) — SERVER fallback FIRST: when the
     // resolver exposed more than one server, a dead server must never cost
     // a full re-resolve while alternates remain. Walk the remaining servers
@@ -2042,6 +2085,8 @@
     selectedQuality = url;
     state = 'preparing';
     playing = false;
+    // Round 45 — the re-prepared stream has no established playback yet.
+    playbackEstablished = false;
   }
 
   /**
@@ -2061,6 +2106,9 @@
     serverFallbackTried = [];
     state = 'preparing';
     playing = false;
+    // Round 45 — the re-prepared server has no established playback yet: a
+    // failure of THIS switch must show the error card, not walk the list.
+    playbackEstablished = false;
   }
 
   // ----- Phase 6: engine internal-quality selection -----
@@ -2189,6 +2237,8 @@
     if (sourceChanged || variantChanged) {
       state = 'switching-source';
       errorMessage = '';
+      // Round 45 — the next source's prepare session starts unestablished.
+      playbackEstablished = false;
       onSourceChange(sourceId, variant);
     }
   }
@@ -2431,6 +2481,12 @@
   // (sourceId, mediaUrl) prepare session, with the SAME captured-key guard
   // — a stale timer from a previous source/stream can never error the
   // current one, and a ready/error arrival always disarms it first.
+  // Round 45 — the switching state is bounded SEPARATELY: a failed switch
+  // never sits in the fallback/auto-retry walk anymore (handleMediaError
+  // shows the terminal error card when no playback was established), and
+  // the mid-playback walk always wires hls.js/the DASH engine, which
+  // surface their failures through the viewport error path — so the
+  // switching overlay can no longer hang on a silent URL.
   const DIRECT_LOAD_TIMEOUT_MS = 20000;
   let directLoadTimer: ReturnType<typeof setTimeout> | undefined;
   let directLoadKey = '';

@@ -187,7 +187,7 @@ export type PlayerSource = {
       /** Round 42 — per-entry protocol ('hls' | 'dash'); absent = 'hls'. */
       protocol?: 'hls' | 'dash';
     }>;
-    /** Round 36/38/41/42 — default server ('vidstream' | 'vidsrc' | 'vidplay' | 'vidstart' | 'vidflix') for preselection. */
+    /** Round 36/41/42/45 — default server ('vidstream' | 'vidsrc' | 'vidstart' | 'vidflix') for preselection. */
     defaultServer?: string;
   };
   error?: {

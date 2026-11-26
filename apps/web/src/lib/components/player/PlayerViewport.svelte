@@ -5,7 +5,7 @@
   import { iframeSandboxAttribute, type SandboxPolicy } from '$lib/shared/sandbox-policy';
   import { urlPathIsM3u8 } from '$lib/shared/hls-detect';
   import { HlsPlaybackEngine, resolveDirectPlaybackMode, type HlsAudioTrackLike } from '$lib/client/player/hls-engine';
-  // Round 42 — DASH (VidFlix .mpd) playback through shaka-player 5.2.12,
+  // Round 42 — DASH (VidBox .mpd) playback through shaka-player 5.2.12,
   // the SAME build the Live TV path imports. The engine mirrors the hls
   // engine's public surface exactly, so the shell/controls keep consuming
   // the same `enginequality` contract regardless of which engine is live.
@@ -230,7 +230,7 @@
   let shakaEngine: ShakaVodEngine | null = null;
   let shakaEngineUrl: string | null = null;
   let shakaEngineActive = false;
-  // Round 43/44 — DASH startup watchdog. A VidFlix .mpd that never
+  // Round 43/44 — DASH startup watchdog. A VidBox .mpd that never
   // reaches real playback (manifest fetch hung behind the Worker, dead
   // segments, an attach that neither resolves nor errors) must NEVER
   // leave the UI in an endless source-preparation state: 12s after the
@@ -589,7 +589,7 @@
    * Round 42 — protocol router. The viewport owns the <video> element, so
    * it also owns picking THE engine for the current source:
    *
-   *   DASH (.mpd, metadata.protocol === 'dash') → shaka engine (VidFlix)
+   *   DASH (.mpd, metadata.protocol === 'dash') → shaka engine (VidBox)
    *   everything else                           → the EXISTING hls wiring
    *                                              (wireHlsEngine decides
    *                                              native vs hls.js exactly
@@ -621,7 +621,7 @@
     // HLS / MP4 / unknown → the existing hls-engine path (byte-for-byte
     // unchanged). The shaka engine must not coexist. The selected server
     // row's protocol is AUTHORITATIVE for the current mediaUrl: when an
-    // hls row is selected while the source's PRIMARY is dash (VidFlix
+    // hls row is selected while the source's PRIMARY is dash (VidBox
     // first), the source-level metadata.protocol describes the primary —
     // not the selected row — so the hls row still takes the hls.js path
     // (the shallow clone ONLY rewrites that one field; wireHlsEngine

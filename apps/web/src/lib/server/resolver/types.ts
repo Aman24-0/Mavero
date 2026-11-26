@@ -129,7 +129,7 @@ export type SafeSourceMetadata = {
     qualities?: Array<{ label: string; url: string }>;
     protocol?: 'hls' | 'dash';
   }>;
-  /** Round 36/38/41/42 — default server ('vidstream' | 'vidsrc' | 'vidplay' | 'vidstart' | 'vidflix') for player preselection. */
+  /** Round 36/41/42/45 — default server ('vidstream' | 'vidsrc' | 'vidstart' | 'vidflix') for player preselection. */
   defaultServer?: string;
 };
 

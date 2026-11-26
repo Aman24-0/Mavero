@@ -20,7 +20,7 @@ import {
 } from '$lib/client/live-tv/player';
 
 /**
- * Shaka VOD playback engine — round 42 (2026-11), VidFlix (DASH/.mpd).
+ * Shaka VOD playback engine — round 42 (2026-11), VidBox (DASH/.mpd).
  *
  * A SMALL adapter for the EXISTING direct `<video>` path, mirroring the
  * PUBLIC SURFACE of the hls engine (`hls-engine.ts`) EXACTLY — same
@@ -68,7 +68,7 @@ import {
  *     recreates the engine.
  *
  * NO subtitle pipeline here — the existing PlayerShell <track> path stays
- * (VidFlix SRTs are converted to VTT server-side by
+ * (VidBox SRTs are converted to VTT server-side by
  * /api/content/subtitles/vtt/proxy).
  *
  * SSR BOUNDARY: this module is CLIENT-ONLY. It contains no top-level
