@@ -85,7 +85,10 @@ import {
  * errors are left to shaka's internal handling; LOAD_INTERRUPTED /
  * OPERATION_ABORTED are teardown races (silent); everything else destroys
  * the instance and surfaces a generic player error through the SAME
- * `onFatalError` callback the hls engine uses. No retry loops.
+ * `onFatalError` callback the hls engine uses (round 43: the RAW shaka
+ * error rides along as `detail` so the player wiring logs the single
+ * '[player] dash error' line with the real code + message — this engine
+ * itself stays log-free). No retry loops.
  */
 
 /** One engine-agnostic quality level (mirrors HlsEngineLevel). */
@@ -129,8 +132,12 @@ export type ShakaVodPlayerLike = Omit<ShakaPlayerLike, 'addEventListener' | 'rem
 /** Engine callbacks — the same contract the hls engine exposes. */
 export type ShakaVodEngineCallbacks = {
   onState?: (state: 'loading' | 'manifest-loaded' | 'error') => void;
-  /** Unrecoverable failure — the video cannot play this source. */
-  onFatalError?: (message: string) => void;
+  /** Unrecoverable failure — the video cannot play this source. Round 43:
+   *  the RAW shaka error (code/message) rides along as `detail` when there
+   *  is one, so the player wiring can log ONE '[player] dash error' line
+   *  with the real code — the engine itself no longer logs (the callback
+   *  is the single error surface). */
+  onFatalError?: (message: string, detail?: ShakaErrorLike & { message?: unknown }) => void;
   /** The manifest's quality levels became known (once per attach + on
    *  'trackschanged'). */
   onQualityLevels?: (levels: ShakaVodEngineLevel[]) => void;
@@ -434,13 +441,10 @@ export class ShakaVodEngine {
       if (this.instance !== player) return;
       const detail = event?.detail ?? null;
       if (!detail || isSilentShakaFailure(detail)) return;
-      console.error('[shaka-vod] fatal error:', {
-        severity: (detail as ShakaErrorLike).severity,
-        category: (detail as ShakaErrorLike).category,
-        code: (detail as ShakaErrorLike).code,
-        statusCode: (detail as ShakaErrorLike).statusCode,
-      });
-      this.fail(callbacks, SHAKA_VOD_UNRECOVERABLE_MESSAGE);
+      // Round 43 — no local log: the raw detail rides the fatal-error
+      // callback and the player wiring logs the single
+      // '[player] dash error' line (code + message).
+      this.fail(callbacks, SHAKA_VOD_UNRECOVERABLE_MESSAGE, detail);
     };
     // Late track changes (manifest updates) refresh the quality surface —
     // generation-guarded like every other listener.
@@ -465,13 +469,10 @@ export class ShakaVodEngine {
     } catch (error) {
       if (this.destroyed || generation !== this.generation || this.instance !== player) return;
       if (isSilentShakaFailure(error)) return; // teardown race / shaka-internal abort
-      console.error('[shaka-vod] load failed:', {
-        severity: (error as ShakaErrorLike)?.severity,
-        category: (error as ShakaErrorLike)?.category,
-        code: (error as ShakaErrorLike)?.code,
-        message: error instanceof Error ? error.message : String(error),
-      });
-      this.fail(callbacks, SHAKA_VOD_UNRECOVERABLE_MESSAGE);
+      // Round 43 — no local log: the raw error rides the fatal-error
+      // callback and the player wiring logs the single
+      // '[player] dash error' line (code + message).
+      this.fail(callbacks, SHAKA_VOD_UNRECOVERABLE_MESSAGE, error as ShakaErrorLike & { message?: unknown });
       return;
     }
 
@@ -509,11 +510,13 @@ export class ShakaVodEngine {
     }
   }
 
-  /** Stop all recovery, destroy the instance and surface a generic error. */
-  private fail(callbacks: ShakaVodEngineCallbacks, message: string): void {
+  /** Stop all recovery, destroy the instance and surface a generic error.
+   *  Round 43: `detail` (when the failure came from a shaka error object)
+   *  is forwarded so the caller can log the real code/message. */
+  private fail(callbacks: ShakaVodEngineCallbacks, message: string, detail?: ShakaErrorLike & { message?: unknown }): void {
     this.destroyInstance();
     this.active = false;
     callbacks.onState?.('error');
-    callbacks.onFatalError?.(message);
+    callbacks.onFatalError?.(message, detail);
   }
 }

@@ -226,6 +226,18 @@
   let shakaEngine: ShakaVodEngine | null = null;
   let shakaEngineUrl: string | null = null;
   let shakaEngineActive = false;
+  // Round 43 — DASH startup watchdog. A VidFlix .mpd that never reaches
+  // loadedmetadata/playing (manifest fetch hung behind the Worker, dead
+  // segments, an attach that neither resolves nor errors) must NEVER leave
+  // the UI spinning on "Switching source… / Preparing playback…": 12s
+  // after the shaka attach begins, the engine is destroyed and the SAME
+  // generic 'error' event the hls engine's fatal path dispatches is sent —
+  // the shell's existing error handling (auto-retry budget, error card)
+  // takes over. The watchdog lives in the shaka wiring ONLY: the hls path
+  // never arms it and is untouched.
+  const DASH_STARTUP_TIMEOUT_MS = 12_000;
+  let dashStartupTimer: ReturnType<typeof setTimeout> | null = null;
+  let dashWatchdogVideo: HTMLVideoElement | null = null;
   // Phase 6: signature of the last dispatched internal-quality payload. The
   // engine level events can fire frequently (every ABR switch); the
   // signature guard keeps the dispatch meaningful — the UI is only notified
@@ -361,8 +373,56 @@
     }
   }
 
-  /** Round 42 — tear down the DASH engine (mirror of teardownHlsEngine). */
+  /** Round 43 — first media event (loadedmetadata/playing) on the watched
+   *  element: the DASH startup succeeded, disarm the watchdog. Registered
+   *  only while the shaka engine owns the element — the hls path never
+   *  arms it. */
+  function onDashMediaReady() {
+    clearDashWatchdog();
+  }
+
+  /** Round 43 — disarm the DASH startup watchdog (media ready, teardown,
+   *  unmount). Safe to call when not armed. */
+  function clearDashWatchdog() {
+    if (dashStartupTimer !== null) {
+      clearTimeout(dashStartupTimer);
+      dashStartupTimer = null;
+    }
+    if (dashWatchdogVideo) {
+      dashWatchdogVideo.removeEventListener('loadedmetadata', onDashMediaReady);
+      dashWatchdogVideo.removeEventListener('playing', onDashMediaReady);
+      dashWatchdogVideo = null;
+    }
+  }
+
+  /** Round 43 — arm the 12s startup ceiling for one shaka attach: if no
+   *  loadedmetadata/playing event fires on the element in that window,
+   *  destroy the engine and dispatch the generic 'error' event (never an
+   *  endless "Switching source…"). */
+  function armDashWatchdog(video: HTMLVideoElement, engine: ShakaVodEngine) {
+    clearDashWatchdog();
+    dashWatchdogVideo = video;
+    video.addEventListener('loadedmetadata', onDashMediaReady);
+    video.addEventListener('playing', onDashMediaReady);
+    dashStartupTimer = setTimeout(() => {
+      dashStartupTimer = null;
+      // A newer source took over (its wiring already disarmed this
+      // watchdog) — never error the current session for a stale one.
+      if (shakaEngine !== engine) return;
+      console.warn('[player] dash timeout');
+      // Destroy the engine, then the SAME generic error the hls engine's
+      // fatal path dispatches — the shell's auto-retry budget / error
+      // card takes over instead of an infinite spinner.
+      teardownShakaEngine();
+      dispatch('error');
+    }, DASH_STARTUP_TIMEOUT_MS);
+  }
+
+  /** Round 42 — tear down the DASH engine (mirror of teardownHlsEngine).
+   *  Round 43 — teardown also disarms the DASH startup watchdog: the
+   *  timer must never outlive the engine it guards. */
   function teardownShakaEngine() {
+    clearDashWatchdog();
     const hadEngine = shakaEngineActive;
     if (shakaEngine) {
       shakaEngine.destroy();
@@ -390,6 +450,14 @@
    * firing its own loadedmetadata/timeupdate/… events (shaka feeds it
    * through MediaSource), so the shell's pendingSeek position restore,
    * progress reporting and Media Session keep working unchanged.
+   *
+   * Round 43 — failures are ALWAYS visible and bounded: a 12s startup
+   * watchdog (armDashWatchdog) destroys the engine and dispatches the
+   * generic 'error' event when no loadedmetadata/playing arrives; a fatal
+   * shaka error (manifest load included) logs ONE '[player] dash error'
+   * line with the real code + message and ALSO drops the viewport's
+   * engine references — without that, a retry of the SAME URL would trip
+   * the "already wired" guard against a dead engine and spin forever.
    */
   async function wireShakaEngine(url: string | null, currentSource: PlayerSource | null, video: HTMLVideoElement | undefined) {
     // SSR / embed / no video element → plain teardown (shaka never loads).
@@ -412,11 +480,22 @@
     shakaEngine = engine;
     shakaEngineUrl = url;
     shakaEngineActive = true;
+    // Round 43 — arm the 12s startup ceiling the moment the attach begins:
+    // a manifest that never reaches loadedmetadata/playing fails FAST
+    // with the generic error event instead of an endless spinner.
+    armDashWatchdog(video, engine);
     try {
       await engine.attach(video, url, {
-        onFatalError: () => {
+        onFatalError: (message, detail) => {
           // Stale engines (a newer source took over) never surface errors.
           if (shakaEngine !== engine) return;
+          // Round 43 — ONE line with the real shaka code/message, then the
+          // SAME generic error path the hls engine's fatal errors take.
+          // The engine already destroyed its shaka instance (fail()); the
+          // viewport ALSO drops its own references so a retry of the SAME
+          // URL genuinely re-wires instead of hanging forever.
+          console.warn('[player] dash error', detail?.code, detail?.message ?? message);
+          teardownShakaEngine();
           dispatch('error');
         },
         // The same signature-guarded dispatcher as the hls path — the
@@ -431,8 +510,11 @@
         },
       });
       if (shakaEngine === engine) dispatchEngineQuality();
-    } catch {
+    } catch (error) {
       if (shakaEngine === engine) {
+        // Round 43 — an unexpected attach failure is never swallowed:
+        // log it, tear down, and surface the generic error.
+        console.warn('[player] dash error', (error as { code?: unknown } | null | undefined)?.code, error instanceof Error ? error.message : String(error));
         teardownShakaEngine();
         dispatch('error');
       }

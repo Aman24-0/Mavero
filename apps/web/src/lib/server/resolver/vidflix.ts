@@ -15,12 +15,19 @@
  * Response: { expiresAt, server, subtitles: [{url, lang, label}],
  *             tracks: [{ id, url, kind: "dash", quality, lang, mode }] }
  *
- * DESIGN (round 42):
+ * DESIGN (round 42, row-dedupe fix round 43):
  *   * Each `tracks[]` entry is a SEPARATE DASH (.mpd) manifest carrying its
  *     own audio. ONE ROW PER TRACK is exposed inside the VidFlix tab of the
  *     server sheet; the row label is the track's audio language
- *     (lang || mode || quality). Rows are deduped by that label (keep the
- *     first) and capped at 8. server = 'VidFlix', protocol = 'dash'.
+ *     (lang || mode || quality). Rows are DEDUPED BY NORMALISED TRACK URL —
+ *     every distinct https URL yields exactly one row (round 43: several
+ *     tracks can share one audio label such as "Original" while carrying
+ *     DIFFERENT MPDs, so the old label dedupe dropped every track after
+ *     the first). Duplicate labels are DISAMBIGUATED, never dropped: the
+ *     first keeps the plain label, later ones become
+ *     "<label> · <quality | id | 1-based row index>" — a language name is
+ *     never invented. Capped at 12 rows. server = 'VidFlix',
+ *     protocol = 'dash'.
  *   * The Quality menu ALWAYS comes from the MPD's real levels — NO
  *     `qualities` array is ever set (the VOD DASH engine (round 42) reads
  *     getVariantTracks() from the manifest). The .mpd tracks are NEVER
@@ -66,8 +73,8 @@ const CACHE_TTL_MS = 60_000;
 /** Cache cap — on write, entries older than the TTL are evicted first,
  *  then the OLDEST entries are dropped so the Map never exceeds this. */
 const CACHE_MAX_ENTRIES = 50;
-/** Server rows cap (one row per audio language). */
-const MAX_ROWS = 8;
+/** Server rows cap — one row per DISTINCT track URL (round 43: 8 → 12). */
+const MAX_ROWS = 12;
 /** Subtitle tracks cap. */
 const MAX_SUBTITLES = 40;
 const payloadCache = new Map<string, { at: number; payload: VidFlixPayload }>();
@@ -262,10 +269,12 @@ export const vidflixAdapter: ProviderAdapter = {
     const body = payload?.data ?? payload;
     const tracks = Array.isArray(body?.tracks) ? body!.tracks! : [];
 
-    // ONE ROW PER TRACK (deduped by the audio-language label, keep the
-    // first), capped at MAX_ROWS. Each row carries its own MPD URL
-    // (Worker-proxied), protocol 'dash' and NO qualities — the VOD DASH
-    // engine reads the MPD's real levels for the Quality menu.
+    // ONE ROW PER DISTINCT TRACK URL (round 43), capped at MAX_ROWS. Each
+    // row carries its own MPD URL (Worker-proxied), protocol 'dash' and NO
+    // qualities — the VOD DASH engine reads the MPD's real levels for the
+    // Quality menu. Rows are DEDUPED BY URL (never by label — the API can
+    // return several tracks that all say "Original"); duplicate labels
+    // are DISAMBIGUATED with a suffix instead of dropping the row.
     const rows: Array<{
       url: string;
       label: string;
@@ -273,19 +282,42 @@ export const vidflixAdapter: ProviderAdapter = {
       protocol: 'dash';
       qualities: undefined; // the VOD DASH engine reads the MPD levels — never a hand-built list
     }> = [];
-    const seenLabels = new Set<string>();
+    const seenUrls = new Set<string>();
+    const takenLabels = new Set<string>();
     let usableTracks = 0;
     for (const track of tracks) {
       if (rows.length >= MAX_ROWS) break;
       const trackUrl = normalizeUrl(track?.url);
       if (!trackUrl || !trackUrl.startsWith('https://')) continue; // never invented
+      // Round 43 — dedupe by the NORMALISED TRACK URL: every distinct
+      // https URL must produce exactly one row (the same MPD listed twice
+      // is one row; two DIFFERENT MPDs sharing a label are TWO rows).
+      if (seenUrls.has(trackUrl)) continue;
+      seenUrls.add(trackUrl);
       usableTracks += 1;
-      const label = (typeof track?.lang === 'string' && track.lang.trim())
+      const baseLabel = (typeof track?.lang === 'string' && track.lang.trim())
         || (typeof track?.mode === 'string' && track.mode.trim())
         || (typeof track?.quality === 'string' && track.quality.trim())
         || 'VidFlix';
-      if (seenLabels.has(label)) continue; // one row per audio language
-      seenLabels.add(label);
+      // Round 43 — a label already taken by an earlier row is
+      // DISAMBIGUATED, never dropped: "Original", "Original · 1080p", …
+      // A language name is NEVER invented — the suffix is the track's own
+      // quality, else its id, else the 1-based row index.
+      let label = baseLabel;
+      if (takenLabels.has(baseLabel)) {
+        const qualityText = typeof track?.quality === 'string' ? track.quality.trim() : '';
+        const idText = track?.id !== undefined && track?.id !== null ? String(track.id).trim() : '';
+        const suffix = qualityText || idText || String(rows.length + 1);
+        label = `${baseLabel} · ${suffix}`;
+        // Pathological collision (same base label AND same suffix twice):
+        // keep appending until unique — a distinct URL is never dropped.
+        let bump = 2;
+        while (takenLabels.has(label)) {
+          label = `${baseLabel} · ${suffix} · ${bump}`;
+          bump += 1;
+        }
+      }
+      takenLabels.add(label);
       rows.push({
         url: proxyUrl(trackUrl, workerProxyUrl),
         label,
@@ -320,6 +352,11 @@ export const vidflixAdapter: ProviderAdapter = {
         origin: 'vidflix',
       });
     }
+    // Round 43 — subtitle diagnostics: the API can omit `subtitles`
+    // entirely (or serve non-https URLs that get filtered out). Log the
+    // API-side count next to the MAPPED count so the Netlify log tells
+    // "the API provided none" apart from "none survived the mapping".
+    console.info('[vidflix] subtitles api', body?.subtitles?.length ?? 0, 'mapped', subs.length);
 
     // Success → store in the short-lived cache. Failures never reach this
     // point (they return above), so they are never cached. Evict entries
