@@ -42,6 +42,27 @@
  *     3 passes total, 400ms apart) and the track lists are MERGED by
  *     normalised URL (union, first-seen order preserved) — one pass is
  *     not enough to see the full audio roster.
+ *   * Round 49 — PREFER A NON-DECOY CDN VARIANT: stream.hls.lol hands out
+ *     tracks whose MPD lives on one of two CDNs — sacdn/cacdn.
+ *     hakunaymatata.com (REAL) or schooling.cfd/edge-<id>/hm-decoy/... (a
+ *     DECOY that plays an "atlantic.bz / disable Cloudflare Warp VPN"
+ *     video instead of the movie — the CDN serves it to traffic it
+ *     classifies as VPN, and the Worker's egress qualifies). After each
+ *     successful pass the FIRST track of that pass's FRESH batch is
+ *     PROBED through the same ?e= Worker proxy the player uses (XML/DASH
+ *     accept header; 8s timeout; at most 4 KB of the body read): DECOY
+ *     when the head carries 'hm-decoy' or '/decoy/' or the <BaseURL>
+ *     host (the ?u=-decoded original behind the Worker's rewrite) is
+ *     not sacdn/cacdn; a probe failure (timeout / non-200) is UNKNOWN
+ *     and treated as REAL — never drop on doubt. A DECOY probe triggers
+ *     one more API re-fetch (same budget: max 3 API calls total, 400ms
+ *     apart; the union is kept across attempts so no track is lost)
+ *     because the API hands out a DIFFERENT track/CDN set per call.
+ *     Rows are then ordered probed REAL/UNKNOWN first, unprobed next,
+ *     probed DECOY last, so rows[0] (the default playback URL) is a REAL
+ *     variant whenever one was found. A decoy-ONLY outcome is still
+ *     served (the group is never failed) and is cached for 15s at most
+ *     so a later request retries sooner.
  *   * Subtitles are .srt (not VTT). Each {url, lang, label} is mapped to
  *     the SAME-ORIGIN converting proxy /api/content/subtitles/vtt/proxy
  *     (strict cacdn.hakunaymatata.com host allowlist, SRT→VTT conversion,
@@ -63,10 +84,11 @@
  *      the "thin subset" case, and a title with genuinely no tracks simply
  *      has no VidBox group.
  *   2. SHORT-LIVED SUCCESS CACHE — a payload that yields at least one row
- *      is cached for 60s (the upstream mints per-request URLs with an
- *      expiresAt, so a 60s window is safe). The cached payload carries
- *      the MERGED track union, so a cache hit replays the SAME roster.
- *      Failures are never cached.
+ *      is cached for 60s (a decoy-ONLY outcome for 15s at most — round 49;
+ *      the upstream mints per-request URLs with an expiresAt, so a 60s
+ *      window is safe). The cached payload carries the MERGED track union
+ *      in the PREFERRED (non-decoy-first) order, so a cache hit replays the
+ *      SAME roster. Failures are never cached.
  */
 
 import type { ProviderAdapter, AdapterResult, ResolverContext } from './types';
@@ -92,6 +114,11 @@ const VARIETY_PASS_DELAY_MS = 400;
  *  expiresAt, so a 60s window is safe (the cached URLs stay playable).
  *  Failures are NEVER cached. */
 const CACHE_TTL_MS = 60_000;
+/** Round 49 — a DECOY-ONLY outcome (every probed attempt came back DECOY)
+ *  is cached for 15s at most, so a later request retries the API sooner —
+ *  the next call may hand out the sacdn REAL variant. Normal outcomes keep
+ *  the 60s TTL above. */
+const DECOY_CACHE_TTL_MS = 15_000;
 /** Cache cap — on write, entries older than the TTL are evicted first,
  *  then the OLDEST entries are dropped so the Map never exceeds this. */
 const CACHE_MAX_ENTRIES = 50;
@@ -99,10 +126,21 @@ const CACHE_MAX_ENTRIES = 50;
 const MAX_ROWS = 12;
 /** Subtitle tracks cap. */
 const MAX_SUBTITLES = 40;
-const payloadCache = new Map<string, { at: number; payload: VidBoxPayload }>();
+const payloadCache = new Map<string, { at: number; ttl?: number; payload: VidBoxPayload }>();
 /** Retriable statuses — the usual timeout / rate-limit / server classes.
  *  404 and other 4xx are NOT retried. */
 const RETRYABLE_STATUSES = new Set([403, 408, 425, 429, 500, 502, 503, 504]);
+/** Round 49 — probe: the FIRST candidate track's MPD is probed through the
+ *  SAME ?e= Worker proxy the player uses, with a fresh 8s AbortController
+ *  and an XML/DASH accept header. */
+const PROBE_TIMEOUT_MS = 8_000;
+/** Round 49 — probe body read cap: 4 KB. The <BaseURL> the classifier needs
+ *  sits at the top of the manifest — the whole MPD is never pulled. */
+const PROBE_READ_LIMIT_BYTES = 4_096;
+/** Round 49 — the hosts that serve REAL VidBox content. Everything else —
+ *  notably schooling.cfd/edge-<id>/hm-decoy/... — is the decoy video the CDN
+ *  serves traffic it classifies as VPN (the Worker's egress qualifies). */
+const REAL_BASE_HOSTS = new Set(['sacdn.hakunaymatata.com', 'cacdn.hakunaymatata.com']);
 
 interface VidBoxTrack {
   id?: string | number;
@@ -166,6 +204,88 @@ function trackBaseLabel(track: VidBoxTrack): string {
  *  NESTED `{ data: … }` and a FLAT shape. */
 function payloadBody(payload: VidBoxPayload | null): Partial<VidBoxPayload> {
   return (payload?.data ?? payload) ?? {};
+}
+
+/** Round 49 — probe classification: REAL (sacdn/cacdn BaseURL host, no
+ *  decoy marker), DECOY ('hm-decoy' / '/decoy/' marker or an off-allowlist
+ *  BaseURL host) or UNKNOWN (probe failure — treated as REAL, never drop
+ *  on doubt). */
+type ProbeClass = 'REAL' | 'DECOY' | 'UNKNOWN';
+interface ProbeOutcome {
+  cls: ProbeClass;
+  /** The <BaseURL> host of the probed manifest ('n/a' when unknown). */
+  host: string;
+}
+
+/** Round 49 — read at most `limitBytes` of a response body (the Worker may
+ *  serve a large manifest; the classifier only needs its head). */
+async function readBodyHead(response: Response, limitBytes: number): Promise<string> {
+  if (!response.body) return '';
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  try {
+    while (received < limitBytes) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      chunks.push(value);
+      received += value.length;
+    }
+  } finally {
+    try {
+      await reader.cancel();
+    } catch {
+      /* already closed */
+    }
+  }
+  let head = '';
+  for (const chunk of chunks) head += decoder.decode(chunk, { stream: true });
+  head += decoder.decode();
+  return head.slice(0, limitBytes);
+}
+
+/** Round 49 — classify a (possibly Worker-REWRITTEN) MPD head. The Worker
+ *  rewrites <BaseURL> back through itself as ?u=<encoded original>, so the
+ *  ORIGINAL segment host is recovered by decoding the u param; a raw
+ *  (unrewritten) absolute BaseURL is used as-is. DECOY when the head
+ *  carries a decoy marker ('hm-decoy' or '/decoy/') or the BaseURL host is
+ *  not sacdn/cacdn.hakunaymatata.com; otherwise REAL. */
+function classifyManifestHead(head: string): ProbeOutcome {
+  const baseMatch = head.match(/<BaseURL>\s*([^<]+?)\s*<\/BaseURL>/);
+  let host = 'n/a';
+  if (baseMatch?.[1]) {
+    try {
+      const parsed = new URL(baseMatch[1].trim());
+      const inner = parsed.searchParams.get('u');
+      host = new URL(inner ?? parsed.toString()).hostname;
+    } catch {
+      host = 'n/a';
+    }
+  }
+  const isDecoy = /hm-decoy/i.test(head) || head.includes('/decoy/') || !REAL_BASE_HOSTS.has(host);
+  return { cls: isDecoy ? 'DECOY' : 'REAL', host };
+}
+
+/** Round 49 — probe ONE candidate MPD through the SAME ?e= Worker proxy
+ *  the player uses. A timeout, a network error or a non-200 is UNKNOWN —
+ *  treated as REAL (never drop on doubt). Never throws. */
+async function probeManifest(trackUrl: string, workerProxyUrl: string): Promise<ProbeOutcome> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
+  try {
+    const response = await fetch(proxyUrl(trackUrl, workerProxyUrl), {
+      signal: controller.signal,
+      headers: { accept: 'application/xml, application/dash+xml, */*' }
+    });
+    if (!response.ok) return { cls: 'UNKNOWN', host: 'n/a' };
+    return classifyManifestHead(await readBodyHead(response, PROBE_READ_LIMIT_BYTES));
+  } catch {
+    return { cls: 'UNKNOWN', host: 'n/a' };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export const vidboxAdapter: ProviderAdapter = {
@@ -317,13 +437,38 @@ export const vidboxAdapter: ProviderAdapter = {
       return null;
     };
 
-    // PRIMARY pass + the round 45 variety re-fetches. The LAST successful
-    // payload owns the subtitles/expiresAt; the TRACK lists of every
-    // successful pass are merged into the union above.
+    // PRIMARY pass + the round 45 variety re-fetches + the round 49 decoy
+    // re-fetches. The LAST successful payload owns the subtitles/expiresAt;
+    // the TRACK lists of every successful pass are merged into the union
+    // above (kept across attempts so no track is lost).
     let payload: VidBoxPayload | null = null;
     let succeeded = false;
     let servedFromCache = false;
-    if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
+    // Round 49 — probe bookkeeping: the classification per normalised track
+    // URL (a repeated URL is reused, not re-fetched), the per-attempt probe
+    // classes and the LATEST attempt's class (drives the decoy re-fetch).
+    const probeByTrackUrl = new Map<string, ProbeOutcome>();
+    const attemptProbes: ProbeClass[] = [];
+    let lastProbeCls: ProbeClass | null = null;
+    // Round 49 — probe the FIRST track of THIS pass's FRESH batch (the API
+    // hands out a DIFFERENT track/CDN set per call — the current batch is
+    // the variant a re-fetch is trying to replace). One probe per attempt,
+    // logged as one line. Nothing to probe (empty batch / no https URL)
+    // leaves the previous attempt's classification standing.
+    const probeFirstCandidate = async (batch: unknown, pass: number): Promise<void> => {
+      const first = Array.isArray(batch) ? ((batch as VidBoxTrack[])[0] ?? null) : null;
+      const trackUrl = normalizeUrl(first?.url);
+      if (!trackUrl || !trackUrl.startsWith('https://')) return; // nothing to probe
+      let outcome = probeByTrackUrl.get(trackUrl);
+      if (!outcome) {
+        outcome = await probeManifest(trackUrl, workerProxyUrl);
+        probeByTrackUrl.set(trackUrl, outcome);
+      }
+      console.info('[vidbox] attempt', pass, 'probe', outcome.cls, 'host', outcome.host || 'n/a');
+      lastProbeCls = outcome.cls;
+      attemptProbes.push(outcome.cls);
+    };
+    if (cached && Date.now() - cached.at < (cached.ttl ?? CACHE_TTL_MS)) {
       console.info('[vidbox] cache hit', cacheKey);
       payload = cached.payload;
       succeeded = true;
@@ -333,14 +478,18 @@ export const vidboxAdapter: ProviderAdapter = {
       payload = await fetchPass();
       if (payload) {
         succeeded = true;
-        ingestTracks(payloadBody(payload).tracks);
+        const firstBody = payloadBody(payload);
+        ingestTracks(firstBody.tracks);
+        await probeFirstCandidate(firstBody.tracks, 1);
         // Round 45 — a successful pass whose union still shows fewer than
         // 2 distinct URLs or fewer than 2 distinct audio labels is a THIN
-        // SUBSET: re-fetch (max MAX_VARIETY_PASSES total, 400ms apart) and
-        // merge. A failed re-fetch is NON-FATAL — the union collected so
-        // far keeps the group alive.
+        // SUBSET, and round 49 adds: a pass whose LAST probe came back DECOY
+        // is a decoy variant. Either way re-fetch (max MAX_VARIETY_PASSES
+        // total, 400ms apart) and merge. A failed re-fetch is NON-FATAL —
+        // the union collected so far keeps the group alive. A probe UNKNOWN
+        // never triggers a re-fetch (treated as REAL — never drop on doubt).
         for (let pass = 2; pass <= MAX_VARIETY_PASSES; pass++) {
-          if (unionHasEnoughVariety()) break;
+          if (unionHasEnoughVariety() && lastProbeCls !== 'DECOY') break;
           await new Promise((resolve) => setTimeout(resolve, VARIETY_PASS_DELAY_MS));
           const next = await fetchPass();
           if (!next) {
@@ -348,7 +497,9 @@ export const vidboxAdapter: ProviderAdapter = {
             break;
           }
           payload = next;
-          ingestTracks(payloadBody(next).tracks);
+          const nextBody = payloadBody(next);
+          ingestTracks(nextBody.tracks);
+          await probeFirstCandidate(nextBody.tracks, pass);
         }
       }
     }
@@ -365,6 +516,27 @@ export const vidboxAdapter: ProviderAdapter = {
     // what the API handed out across the passes.
     console.info('[vidbox] tracks', tracks.length, tracks.map(t => `${t.id}/${t.quality}/${t.lang}/${t.mode}`));
 
+    // Round 49 — every probed attempt came back DECOY: serve the rows
+    // anyway (the group is NEVER failed on a decoy), but say so in the log
+    // and keep the cache entry short (15s — see the write below) so a later
+    // request retries the API sooner.
+    const decoyOnly = attemptProbes.length > 0 && attemptProbes.every((cls) => cls === 'DECOY');
+    if (decoyOnly) {
+      console.warn('[vidbox] all variants are decoy — serving anyway');
+    }
+
+    // Round 49 — PREFER THE NON-DECOY VARIANT: rows are ordered probed
+    // REAL/UNKNOWN first, unprobed next, probed DECOY last (a stable sort —
+    // first-seen order is kept inside each tier), so rows[0] (the DEFAULT
+    // playback URL) is a REAL variant whenever one was found. NO row is
+    // dropped — a decoy-only roster is served (see above), just last.
+    const trackTier = (track: VidBoxTrack): number => {
+      const cls = probeByTrackUrl.get(normalizeUrl(track?.url))?.cls;
+      if (cls === 'REAL' || cls === 'UNKNOWN') return 0;
+      return cls === 'DECOY' ? 2 : 1;
+    };
+    const orderedTracks = [...tracks].sort((a, b) => trackTier(a) - trackTier(b));
+
     // ONE ROW PER DISTINCT TRACK URL (round 43), capped at MAX_ROWS. Each
     // row carries its own MPD URL (Worker-proxied), protocol 'dash' and NO
     // qualities — the VOD DASH engine reads the MPD's real levels for the
@@ -380,7 +552,7 @@ export const vidboxAdapter: ProviderAdapter = {
       qualities: undefined; // the VOD DASH engine reads the MPD levels — never a hand-built list
     }> = [];
     const takenLabels = new Set<string>();
-    for (const track of tracks) {
+    for (const track of orderedTracks) {
       if (rows.length >= MAX_ROWS) break;
       const trackUrl = normalizeUrl(track?.url);
       if (!trackUrl || !trackUrl.startsWith('https://')) continue; // never invented
@@ -447,26 +619,35 @@ export const vidboxAdapter: ProviderAdapter = {
     // "the API provided none" apart from "none survived the mapping".
     console.info('[vidbox] subtitles api', body?.subtitles?.length ?? 0, 'mapped', subs.length);
 
-    // Success → store in the short-lived cache, WITH the merged track
-    // union (a cache hit replays the SAME roster). Failures never reach
-    // this point (they return above), so they are never cached. Evict
-    // entries older than the TTL, then enforce the cap by dropping the
-    // OLDEST inserted entries (Map iteration order). A cache hit does NOT
-    // rewrite the entry — `at` always marks the network success.
+    // Success → store in the short-lived cache, WITH the merged track union
+    // in the PREFERRED (non-decoy-first) order (a cache hit replays the SAME
+    // roster in the same order). Failures never reach this point (they
+    // return above), so they are never cached. Evict entries older than
+    // their own TTL (a decoy-only entry lives 15s), then enforce the cap by
+    // dropping the OLDEST inserted entries (Map iteration order). A cache
+    // hit does NOT rewrite the entry — `at` always marks the network
+    // success.
     if (!servedFromCache && payload) {
       const mergedPayload = payload.data
-        ? { ...payload, data: { ...payload.data, tracks } }
-        : { ...payload, tracks };
+        ? { ...payload, data: { ...payload.data, tracks: orderedTracks } }
+        : { ...payload, tracks: orderedTracks };
       const now = Date.now();
       for (const [staleKey, entry] of payloadCache) {
-        if (now - entry.at >= CACHE_TTL_MS) payloadCache.delete(staleKey);
+        if (now - entry.at >= (entry.ttl ?? CACHE_TTL_MS)) payloadCache.delete(staleKey);
       }
       while (payloadCache.size >= CACHE_MAX_ENTRIES) {
         const oldestKey = payloadCache.keys().next().value;
         if (oldestKey === undefined) break;
         payloadCache.delete(oldestKey);
       }
-      payloadCache.set(cacheKey, { at: now, payload: mergedPayload });
+      // Round 49 — a decoy-ONLY outcome is cached for 15s at most so a later
+      // request retries the API sooner (the next call may hand out the
+      // sacdn REAL variant); every other outcome keeps the usual 60s TTL.
+      payloadCache.set(cacheKey, {
+        at: now,
+        payload: mergedPayload,
+        ...(decoyOnly ? { ttl: DECOY_CACHE_TTL_MS } : {})
+      });
     }
 
     console.info('[vidbox] rows', rows.length, 'subs', subs.length);
