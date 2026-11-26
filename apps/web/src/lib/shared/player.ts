@@ -311,6 +311,16 @@ export type PlayerContentContext = {
    * routing/progress identity; this field carries the external identity.
    */
   tmdbId?: string;
+  /**
+   * Round 50 (approved-concept paused metadata card): optional catalog
+   * metadata the watch page ALREADY has loaded — plumbed through so the
+   * player can render the paused title card WITHOUT new data fetching.
+   * Every field is optional; nothing is ever invented.
+   */
+  year?: number | string;
+  genres?: string[];
+  runtime?: string;
+  overview?: string;
 };
 
 export type PlayerProgressEvent = {

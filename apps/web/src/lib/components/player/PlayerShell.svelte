@@ -9,7 +9,7 @@
   import PlayerControls from './PlayerControls.svelte';
   import PlayerViewport from './PlayerViewport.svelte';
   import type { PlayerContentContext, PlayerEpisode, PlayerEpisodeTarget, PlayerInternalQualityOption, PlayerPlaybackState, PlayerProgressEvent, PlayerQualityOption, PlayerSeasonOption, PlayerSeasonView, PlayerSource, PlayerSourceOption } from '$lib/shared/player';
-  import { PLAYER_AUTO_QUALITY_ID } from '$lib/shared/player';
+  import { PLAYER_AUTO_QUALITY_ID, formatPlayerTime } from '$lib/shared/player';
   import { sourceIsExpired, isEmbedOriginAllowed, isPlayablePlayerSource } from '$lib/shared/player-guards';
   import { adjacentEpisode, adjacentSource, clampSeek } from '$lib/shared/player-state';
   // Phase 9: robust pending-seek state machine (streaming VOD seeking) — pure,
@@ -244,6 +244,19 @@
   let controlsSheetsOpen = false;
   let controlsVisible = true;
   let hideTimer: ReturnType<typeof setTimeout> | undefined;
+  // Round 50 (approved concept) — header + paused metadata card: the meta
+  // line joins ONLY the parts of the ALREADY-AVAILABLE content metadata
+  // (year · genres · runtime) — nothing is invented, no new fetching. The
+  // Resume label carries the LIVE position; the pill itself reuses the
+  // EXISTING resume path (togglePlay resumes from the playhead, which the
+  // shell's existing auto-resume machinery already drove to the saved
+  // position — in an error state togglePlay retries, the existing semantics).
+  $: playerMetaLine = [
+    content.year ? String(content.year) : '',
+    Array.isArray(content.genres) ? content.genres.filter((genre) => typeof genre === 'string' && genre.trim()).join(' · ') : '',
+    typeof content.runtime === 'string' ? content.runtime.trim() : ''
+  ].filter(Boolean).join(' · ');
+  $: playerResumeLabel = currentTime > 1 ? `Resume ${formatPlayerTime(currentTime)}` : 'Resume';
   // Player UI V2 (Part 1, Phase 2C): touch lock. When locked, taps and swipes
   // are ignored (the gesture controller's enabled() gate + the reveal gate
   // below), the control row stays hidden, and ONE persistent unlock FAB stays
@@ -3028,7 +3041,7 @@
        Subtitle menu receives native + external tracks. -->
   {#if source?.type === 'direct'}
     <div class="direct-controls-overlay" class:visible={controlsVisible}>
-      <PlayerControls playing={playing} {muted} {volume} {currentTime} {duration} {buffered} {playbackRate} {pictureInPictureSupported} {pictureInPicture} fullscreenActive={fullscreen} onFullscreen={() => { void toggleFullscreen(); }} locked={touchLocked} onToggleLock={toggleTouchLock} subtitles={mergedSubtitles} selectedSubtitle={selectedSubtitle} subtitleNotice={externalSubtitleNotice} subtitlePrefs={subtitlePrefs} onSubtitlePreferences={setSubtitlePreferences} onMenuOpenChange={(open) => { controlsSheetsOpen = open; }} qualities={qualities} selectedQuality={selectedQuality} internalQualities={engineQuality?.options ?? []} selectedInternalQuality={engineQuality?.selected ?? PLAYER_AUTO_QUALITY_ID} audioTracks={engineQuality?.audioTracks ?? []} selectedAudioTrack={engineQuality?.selectedAudioTrack ?? null} onAudioTrack={setAudioTrack} {servers} {selectedServer} onServer={setServer} {displayMode} onDisplayMode={setDisplayMode} castAvailable={castReady && Boolean(castEligibility?.eligible)} castActive={castConnected} onCast={() => { void handleCastAction(); }} onTogglePlay={togglePlay} onSeek={seek} onVolume={setVolume} onToggleMute={toggleMute} onPlaybackRate={setPlaybackRate} onSubtitle={setSubtitle} onQuality={setQuality} onInternalQuality={setInternalQuality} onPictureInPicture={togglePictureInPicture} onStep={seekBy} />
+      <PlayerControls playing={playing} {muted} {volume} {currentTime} {duration} {buffered} {playbackRate} {pictureInPictureSupported} {pictureInPicture} fullscreenActive={fullscreen} onFullscreen={() => { void toggleFullscreen(); }} locked={touchLocked} onToggleLock={toggleTouchLock} subtitles={mergedSubtitles} selectedSubtitle={selectedSubtitle} subtitleNotice={externalSubtitleNotice} subtitlePrefs={subtitlePrefs} onSubtitlePreferences={setSubtitlePreferences} onMenuOpenChange={(open) => { controlsSheetsOpen = open; }} qualities={qualities} selectedQuality={selectedQuality} internalQualities={engineQuality?.options ?? []} selectedInternalQuality={engineQuality?.selected ?? PLAYER_AUTO_QUALITY_ID} audioTracks={engineQuality?.audioTracks ?? []} selectedAudioTrack={engineQuality?.selectedAudioTrack ?? null} onAudioTrack={setAudioTrack} {servers} {selectedServer} onServer={setServer} {displayMode} onDisplayMode={setDisplayMode} castAvailable={castReady && Boolean(castEligibility?.eligible)} castActive={castConnected} onCast={() => { void handleCastAction(); }} onTogglePlay={togglePlay} onSeek={seek} onVolume={setVolume} onToggleMute={toggleMute} onPlaybackRate={setPlaybackRate} onSubtitle={setSubtitle} onQuality={setQuality} onInternalQuality={setInternalQuality} onPictureInPicture={togglePictureInPicture} onStep={seekBy} title={content.title} metaLine={playerMetaLine} overview={content.overview ?? ''} resumeLabel={playerResumeLabel} onResume={() => { void togglePlay(); }} />
     </div>
   {/if}
 

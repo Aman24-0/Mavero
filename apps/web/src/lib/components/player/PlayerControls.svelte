@@ -111,6 +111,20 @@
   export let castAvailable = false;
   export let castActive = false;
   export let onCast: () => void = () => {};
+  // Round 50 (approved concept) — header + paused metadata card. All
+  // display-only, all optional; the shell passes what it has and nothing is
+  // invented. `onResume` reuses the EXISTING resume path (the shell's
+  // togglePlay) — when absent the Resume pill simply hides.
+  /** Title shown in the top-left header while the chrome is visible. */
+  export let title = '';
+  /** Meta line (year · genres · runtime) under the header title. */
+  export let metaLine = '';
+  /** One-line overview for the paused metadata card. */
+  export let overview = '';
+  /** Paused-card Resume pill label (e.g. “Resume 42:15”). */
+  export let resumeLabel = '';
+  /** The existing resume path (the shell's togglePlay). Absent → no pill. */
+  export let onResume: (() => void) | null = null;
 
   // ----- Sheet state (Issue 3) -----
   // Exactly ONE sheet open at a time. openMenu/closeMenu are the SINGLE
@@ -263,6 +277,18 @@
 </script>
 
 <div class="controls" class:casting={castActive} aria-label="Playback controls">
+  <!-- Round 50 — header (approved concept): title + meta line, TOP-LEFT of
+       the utility-zone strip, before the right-aligned chips. The Back FAB
+       keeps its own top-left spot: below 1024px the header sits just under
+       the FAB line so it can never collide with the right-aligned chip row
+       (the round 37 B one-line top row is untouched); ≥1024px it shares the
+       FAB's line. Renders nothing when both strings are empty. -->
+  {#if title || metaLine}
+    <div class="header-zone" aria-hidden="true">
+      {#if title}<div class="header-title">{title}</div>{/if}
+      {#if metaLine}<div class="header-meta">{metaLine}</div>{/if}
+    </div>
+  {/if}
   <!-- TOP-RIGHT utility zone: Display Mode, Subtitles, Quality, Server, Cast, PiP, Lock.
        Round 37 B — Subtitles/Quality/Server moved here from the bottom row so
        the bottom row fits a 360–430 px portrait width without wrapping. -->
@@ -308,6 +334,28 @@
        Round 37 B — the bottom row keeps only Play/Pause, ±10s, Volume, Speed,
        Fullscreen. Subtitles/Quality/Server moved to the top utility zone. -->
   <div class="bottom-zone">
+    <!-- Round 50 — paused metadata card (approved concept): bottom-left,
+         anchored to the bottom zone's TOP edge so it sits directly above
+         the timeline row at every size. Renders only while PAUSED (and the
+         chrome layer is visible — this component lives inside the chrome
+         overlay, which owns the show/hide), with no sheet open and not
+         locked; `safeDuration > 0` keeps it out of the initial load flash.
+         The 4px white accent rule + title/meta/overview come straight from
+         the shell's already-available metadata; the Resume pill reuses the
+         EXISTING resume path (onResume) and hides when it is absent. -->
+    {#if !playing && openSheet === null && !locked && safeDuration > 0 && (title || metaLine || overview)}
+      <div class="paused-card">
+        {#if title}<div class="paused-title">{title}</div>{/if}
+        {#if metaLine}<div class="paused-meta">{metaLine}</div>{/if}
+        {#if overview}<p class="paused-overview">{overview}</p>{/if}
+        {#if onResume}
+          <button class="resume-pill" type="button" aria-label={resumeLabel || 'Resume'} onclick={onResume}>
+            <Play size={14} fill="currentColor" aria-hidden="true" />
+            <span>{resumeLabel || 'Resume'}</span>
+          </button>
+        {/if}
+      </div>
+    {/if}
     <div class="timeline-row">
       <span class="time-label" aria-live="off">{formatPlayerTime(currentTime)}</span>
       <div class="timeline-wrap">
@@ -472,6 +520,51 @@
 
   /* ---- Bottom zone ---- */
   .bottom-zone { position: absolute; z-index: 2; bottom: 0; left: 0; right: 0; display: grid; gap: 4px; padding: 10px 14px calc(12px + env(safe-area-inset-bottom)); pointer-events: auto; background: linear-gradient(0deg, rgba(0,0,0,.62), rgba(0,0,0,.28) 62%, transparent); }
+
+  /* Round 50 — header (approved concept, see markup comment above). */
+  .header-zone {
+    position: absolute;
+    z-index: 2;
+    top: calc(max(12px, env(safe-area-inset-top)) + 50px);
+    left: max(16px, env(safe-area-inset-left));
+    max-width: min(480px, calc(100vw - 32px));
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    pointer-events: none;
+  }
+  .header-title { font-size: 20px; font-weight: 650; letter-spacing: -0.2px; line-height: 1.15; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-shadow: 0 2px 12px rgba(0,0,0,0.5); }
+  .header-meta { font-size: 12.5px; color: var(--pl-ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-shadow: 0 1px 8px rgba(0,0,0,0.5); }
+  @media (min-width: 1024px) {
+    .header-zone { top: max(14px, env(safe-area-inset-top)); left: calc(max(12px, env(safe-area-inset-left)) + 47px); max-width: min(460px, 38vw); }
+  }
+
+  /* Round 50 — paused metadata card (approved concept): bottom-left over
+     the video, directly above the timeline row, fading in with the chrome.
+     Background-less (text + the 4px white accent rule on the bottom scrim)
+     so the video stays visible — same chrome language as the rest. */
+  .paused-card {
+    position: absolute;
+    left: 4px;
+    bottom: calc(100% + 10px);
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-width: 520px;
+    padding: 6px 16px 6px 14px;
+    border-left: 4px solid #fff;
+    animation: paused-card-in 140ms var(--pl-ease);
+    pointer-events: auto;
+  }
+  .paused-title { font-size: 30px; font-weight: 650; letter-spacing: -0.3px; line-height: 1.12; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-shadow: 0 2px 14px rgba(0,0,0,0.5); }
+  .paused-meta { font-size: 13px; color: var(--pl-ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-shadow: 0 1px 8px rgba(0,0,0,0.5); }
+  .paused-overview { margin: 0; font-size: 13px; line-height: 1.45; color: rgba(255,255,255,0.62); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-shadow: 0 1px 8px rgba(0,0,0,0.5); }
+  .resume-pill { display: inline-flex; align-items: center; gap: 7px; align-self: flex-start; height: 38px; margin-top: 6px; padding: 0 18px; border: 0; border-radius: 999px; color: #101013; background: #fff; font: inherit; font-size: 13px; font-weight: 650; cursor: pointer; box-shadow: 0 6px 22px rgba(0,0,0,0.4); transition: transform var(--motion-fast) var(--pl-ease), box-shadow var(--motion-fast) var(--pl-ease); }
+  .resume-pill:hover, .resume-pill:focus-visible { transform: scale(1.02); box-shadow: 0 8px 26px rgba(0,0,0,0.5); }
+  .resume-pill:active { transform: scale(.98); }
+  @keyframes paused-card-in { from { opacity: 0; } to { opacity: 1; } }
+
   .timeline-row { display: flex; align-items: center; gap: 10px; }
   /* Round 50 — tabular 12px time labels: secondary ink left (position),
      tertiary ink right (duration — the row's last label, no markup change). */
@@ -590,7 +683,12 @@
     .select-control.audio { max-width: 72px; }
     .control-button { min-width: 32px; min-height: 32px; }
     .utility-zone .control-button { width: 32px; min-width: 32px; height: 32px; }
+    /* Round 50 — the paused card spans 82vw on mobile (still directly above
+       the timeline row). */
+    .paused-card { max-width: 82vw; padding: 4px 10px 4px 10px; }
+    .paused-title { font-size: 24px; }
   }
+  @media (prefers-reduced-motion: reduce) { .control-button { transition: none; } .select-control { transition: none; } .paused-card { animation: none; } }
   /* Landscape phone (Player V2 remaining fixes, 2026-10): the secondary row
      is ONE RIGHT-aligned compact group — the user's approved landscape
      layout puts the secondary controls on the RIGHT edge (the center cluster
@@ -610,5 +708,4 @@
   @media (orientation: landscape) and (max-height: 500px) {
     .bottom-zone { padding: 6px 12px calc(8px + env(safe-area-inset-bottom)); }
   }
-  @media (prefers-reduced-motion: reduce) { .control-button { transition: none; } .select-control { transition: none; } }
 </style>

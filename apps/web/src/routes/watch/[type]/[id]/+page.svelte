@@ -232,8 +232,11 @@
   // TV PLAY CRASH FIX: while the TV bootstrap is in flight (or has failed)
   // `item` is undefined — a null-safe placeholder keeps the PlayerContentContext
   // type satisfied; PlayerShell only renders once a REAL item exists.
+  // Round 50 (paused metadata card): the catalog fields the watch page has
+  // ALREADY loaded pass straight through the content context (no new fetch);
+  // the shell joins them into the player's metaLine (year · genres · runtime).
   $: playerContent = item
-    ? ({ id: item.id, tmdbId: item.externalIds?.tmdb, type: contentType, title: item.title, poster: item.poster, backdrop: item.backdrop })
+    ? ({ id: item.id, tmdbId: item.externalIds?.tmdb, type: contentType, title: item.title, poster: item.poster, backdrop: item.backdrop, year: item.year, genres: item.genres, runtime: item.runtime, overview: item.description })
     : ({ id: '', type: contentType, title: '' });
 
   // Deep-audit Section 4: the progress/favorite SNAPSHOT carries the anime
