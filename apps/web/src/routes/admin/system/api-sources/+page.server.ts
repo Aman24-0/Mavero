@@ -245,8 +245,8 @@ export const actions: Actions = {
       // (a hidden input) ONLY when the DirectStream settings section is
       // rendered (source slug starts with 'direct-stream'). Checkbox
       // present = true, absent = false (HTML forms don't submit unchecked
-      // checkboxes). Round 38 — added the VidPlay (ThugTV) toggle; Round 41
-      // — added the VidStart (ThugTV media) toggle; Round 42 — added the
+      // checkboxes). Round 38 — added the VidBox (ThugTV) toggle; Round 41
+      // — added the VidVelvet (ThugTV media) toggle; Round 42 — added the
       // VidFlix (stream.hls.lol DASH) toggle; validate default_server ∈
       // {vidsrc, vidstream, vidplay, vidstart, vidflix}.
       // Uses the service-role admin client because the user-bound SSR client

@@ -480,12 +480,14 @@
     selectedServer = '';
     serverFallbackTried = [];
   }
-  // Round 36 C / Round 38/41/42 — preselect the default server on first resolve.
+  // Round 36 C / Round 38/41/42/44 — preselect the default server on first resolve.
   // When the source metadata carries a defaultServer hint
   // ('vidstream' | 'vidsrc' | 'vidplay' | 'vidstart' | 'vidflix'), find the first server
   // entry whose `server` field matches (case-insensitive) and preselect it.
-  // Fall back to servers[0] when no match.
-  const defaultServerLabels: Record<string, string> = { vidstream: 'Vidstream', vidplay: 'VidPlay', vidstart: 'VidStart', vidflix: 'VidFlix', vidsrc: 'Vidsrc' };
+  // Fall back to servers[0] when no match. Round 44 — the stored keys stay
+  // 'vidplay'/'vidstart' (internal); the LABELS are the display names the
+  // resolver stamps on the server tags (VidBox / VidVelvet).
+  const defaultServerLabels: Record<string, string> = { vidstream: 'Vidstream', vidplay: 'VidBox', vidstart: 'VidVelvet', vidflix: 'VidFlix', vidsrc: 'Vidsrc' };
   $: if (source && source.sourceId === sourceIdentity && !selectedServer && servers.length > 1) {
     const hint = source.metadata?.defaultServer;
     if (hint) {
@@ -1769,6 +1771,20 @@
   const HLS_AUTO_RETRY_MAX = 5;
   const HLS_AUTO_RETRY_DELAY_MS = 1500;
 
+  // Round 44 — the viewport's generic 'error' event may carry a short
+  // detail message (the DASH failure paths attach one: the engine's error
+  // code and, when present, the offending request URL). The wrapper
+  // captures it BEFORE delegating to the SAME zero-argument handler, so
+  // the terminal error card can show WHICH request failed instead of the
+  // generic message. The plain media-element / hls fatal dispatches carry
+  // no detail and keep the generic message.
+  let viewportErrorDetailMessage = '';
+  function handleViewportError(event: CustomEvent<{ message?: string } | void>) {
+    const detail = event?.detail;
+    viewportErrorDetailMessage = detail && typeof detail === 'object' && typeof detail.message === 'string' && detail.message.trim() ? detail.message.trim() : '';
+    handleMediaError();
+  }
+
   function handleMediaError() {
     // Round 32 (VidCore Multi Stream) — SERVER fallback FIRST: when the
     // resolver exposed more than one server, a dead server must never cost
@@ -1816,7 +1832,11 @@
     hlsAutoRetryCount = 0; // reset for the next manual retry
     playing = false;
     state = 'error';
-    errorMessage = 'Playback could not be started. Try again or choose another source.';
+    // Round 44 — prefer the viewport's detail message (DASH failures name
+    // the failing request) over the generic copy; consume it either way so
+    // a later unrelated failure never shows a stale one.
+    errorMessage = viewportErrorDetailMessage || 'Playback could not be started. Try again or choose another source.';
+    viewportErrorDetailMessage = '';
     revealControls();
     releaseWakeLock();
     syncMediaSessionPlaybackState('paused');
@@ -2834,7 +2854,7 @@
 
   <!-- Immersive redesign: stage fills the ENTIRE viewport — no header/footer consuming space. -->
   <section class="stage-wrap" aria-label="Player viewport">
-    <PlayerViewport bind:this={viewport} bind:videoElement bind:iframeElement {source} {mediaUrl} mediaProtocol={playerMediaProtocol} sandboxEnabled={effectiveSandboxEnabled} sandboxPolicy={effectiveSandboxPolicy} poster={content.backdrop ?? content.poster ?? ''} title={content.title} state={effectiveState} subtitles={mergedSubtitles} {displayMode} selectedSubtitleUrl={selectedSubtitle} subtitlePrefs={subtitlePrefs} {subtitleOverlaySuppressed} on:loadedmetadata={handleLoadedMetadata} on:timeupdate={handleTimeUpdate} on:play={handlePlay} on:pause={handlePause} on:waiting={handleWaiting} on:playing={handlePlaying} on:seeking={handleSeeking} on:seeked={handleSeeked} on:ended={handleEnded} on:error={handleMediaError} on:embedload={handleEmbedLoad} on:enginequality={handleEngineQuality} on:durationchange={handleSeekOpportunity} on:loadeddata={handleSeekOpportunity} on:canplay={handleSeekOpportunity} on:progress={handleSeekOpportunity} />
+    <PlayerViewport bind:this={viewport} bind:videoElement bind:iframeElement {source} {mediaUrl} mediaProtocol={playerMediaProtocol} sandboxEnabled={effectiveSandboxEnabled} sandboxPolicy={effectiveSandboxPolicy} poster={content.backdrop ?? content.poster ?? ''} title={content.title} state={effectiveState} subtitles={mergedSubtitles} {displayMode} selectedSubtitleUrl={selectedSubtitle} subtitlePrefs={subtitlePrefs} {subtitleOverlaySuppressed} on:loadedmetadata={handleLoadedMetadata} on:timeupdate={handleTimeUpdate} on:play={handlePlay} on:pause={handlePause} on:waiting={handleWaiting} on:playing={handlePlaying} on:seeking={handleSeeking} on:seeked={handleSeeked} on:ended={handleEnded} on:error={handleViewportError} on:embedload={handleEmbedLoad} on:enginequality={handleEngineQuality} on:durationchange={handleSeekOpportunity} on:loadeddata={handleSeekOpportunity} on:canplay={handleSeekOpportunity} on:progress={handleSeekOpportunity} />
 
     <!-- MAVP-4 Issue 1: embed presentation veil. While the provider iframe is
          mounted but not yet presenting, this opaque layer covers the stage

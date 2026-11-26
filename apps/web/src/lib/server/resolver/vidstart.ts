@@ -1,8 +1,11 @@
 /**
- * VidStart (ThugTV media API) resolver adapter — round 41 (2026-11).
+ * VidVelvet (ThugTV media API) resolver adapter — round 41 (2026-11;
+ * round 44 DISPLAY RENAME VidStart → VidVelvet — the server tag, the
+ * display label fallback and every comment use the VidVelvet name;
+ * internal keys/identifiers stay 'vidstart').
  *
  * FOURTH DirectStream server group (after Vidsrc, Vidstream/Rivestream and
- * VidPlay/ThugTV). Calls the ThugTV MEDIA host SERVER-SIDE ONLY — the API
+ * VidBox/ThugTV). Calls the ThugTV MEDIA host SERVER-SIDE ONLY — the API
  * URL is never exposed to the browser — and wraps the returned stream URL
  * through the Cloudflare Worker as ?e=<base64url(url)> so the real CDN URL
  * never appears in plain text client-side.
@@ -145,7 +148,7 @@ export const vidstartAdapter: ProviderAdapter = {
       apiUrl = new URL(`${VIDSTART_API}/tv/${rawId}/${season}/${episode}`);
     } else {
       // TV without season/episode has nothing to resolve — omit the
-      // VidStart group (never block the other groups).
+      // VidVelvet group (never block the other groups).
       console.warn('[vidstart] tv resolve without season/episode — skipping', rawId);
       return null;
     }
@@ -253,7 +256,7 @@ export const vidstartAdapter: ProviderAdapter = {
       // 200 that never reached 'ready' falls through to the not-ready
       // check below (it carries the upstream's own status); anything else
       // is a network/HTTP failure — bounded give-up, exactly one summary
-      // line, then omit the VidStart group (never block the other groups,
+      // line, then omit the VidVelvet group (never block the other groups,
       // never throw).
       if (!(payload && lastStatus === 200)) {
         console.warn('[vidstart] API resolve failed after', attemptsMade, 'attempts — HTTP', lastStatus);
@@ -283,7 +286,7 @@ export const vidstartAdapter: ProviderAdapter = {
     }
 
     const sourceId = body?.source?.id;
-    const label = body?.source?.name || body?.source?.label || 'VidStart';
+    const label = body?.source?.name || body?.source?.label || 'VidVelvet';
 
     // Success → store in the short-lived cache. Failures never reach this
     // point (they return above), so they are never cached. Evict entries
@@ -314,7 +317,7 @@ export const vidstartAdapter: ProviderAdapter = {
     const entry = {
       url: proxyUrl(sourceUrl, workerProxyUrl),
       label,
-      server: 'VidStart',
+      server: 'VidVelvet',
     };
 
     // This API returns NO subtitles — the field is omitted entirely.

@@ -2,11 +2,11 @@
  * VidFlix (stream.hls.lol mbox API) resolver adapter — round 42 (2026-11).
  *
  * FIFTH DirectStream server group (after Vidsrc, Vidstream/Rivestream,
- * VidPlay/ThugTV and VidStart/ThugTV media). Calls the mbox API
- * SERVER-SIDE ONLY through the Cloudflare Worker as ?e=<base64url(url)> —
- * the API URL is never exposed to the browser, and the per-track MPD URLs
- * are wrapped through the SAME Worker so the browser only ever talks to
- * the Worker origin.
+ * VidBox/ThugTV and VidVelvet/ThugTV media — the round 44 display names).
+ * Calls the mbox API SERVER-SIDE ONLY through the Cloudflare Worker as
+ * ?e=<base64url(url)> — the API URL is never exposed to the browser, and
+ * the per-track MPD URLs are wrapped through the SAME Worker so the
+ * browser only ever talks to the Worker origin.
  *
  * API (server-side only, stream.hls.lol):
  *   movie: https://stream.hls.lol/mbox?tmdbId=<id>&type=movie
@@ -36,7 +36,7 @@
  *     the SAME-ORIGIN converting proxy /api/content/subtitles/vtt/proxy
  *     (strict cacdn.hakunaymatata.com host allowlist, SRT→VTT conversion,
  *     bounded fetch — see that route). Capped at 40 tracks.
- *   * No NEW audio-selector UI: VidStart's single-URL-multi-audio behaviour
+ *   * No NEW audio-selector UI: VidVelvet's single-URL-multi-audio behaviour
  *     is untouched; for VidFlix the language choice IS the row choice.
  *
  * RELIABILITY — same conventions as thugtv.ts/vidstart.ts (rounds 39-41):

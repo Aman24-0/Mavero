@@ -1,5 +1,7 @@
 /**
- * VidPlay (ThugTV) resolver adapter — round 38 (reliability rounds 39-40).
+ * VidBox (ThugTV) resolver adapter — round 38 (reliability rounds 39-40;
+ * round 44 DISPLAY RENAME VidPlay → VidBox — the server tag and every
+ * comment use the VidBox name; internal keys/origins stay 'vidplay').
  *
  * Calls the ThugTV API SERVER-SIDE ONLY (the API URL is never exposed to
  * the browser). Each returned stream URL is wrapped through the Cloudflare
@@ -205,7 +207,7 @@ export const thugtvAdapter: ProviderAdapter = {
       apiUrl = new URL(`${THUGTV_API}/tv/${rawId}/${season}/${episode}`);
     } else {
       // TV without season/episode has nothing to resolve — omit the
-      // VidPlay group (never block the other groups).
+      // VidBox group (never block the other groups).
       console.warn('[thugtv] tv resolve without season/episode — skipping', rawId);
       return null;
     }
@@ -314,7 +316,7 @@ export const thugtvAdapter: ProviderAdapter = {
     }
 
     if (!succeeded) {
-      // Bounded give-up — exactly one summary line, then omit the VidPlay
+      // Bounded give-up — exactly one summary line, then omit the VidBox
       // group (never block the other groups, never throw).
       console.warn('[thugtv] API resolve failed after', attemptsMade, 'attempts — HTTP', lastStatus);
       return null;
@@ -400,7 +402,7 @@ export const thugtvAdapter: ProviderAdapter = {
         rows.push({
           url: proxyUrl(capped[0]!.url, workerProxyUrl),
           label,
-          server: 'VidPlay',
+          server: 'VidBox',
           language: label === AMBIGUOUS_LABEL ? undefined : label,
           qualities: capped.map((q) => ({ label: q.label, url: proxyUrl(q.url, workerProxyUrl) })),
         });
@@ -420,7 +422,7 @@ export const thugtvAdapter: ProviderAdapter = {
 
     console.info('[thugtv] sources', sources.length, 'castle', Boolean(castle), 'rows', rows.length, 'subs', subtitles.length);
 
-    // No rows survived → omit the VidPlay group entirely (never block the
+    // No rows survived → omit the VidBox group entirely (never block the
     // other groups).
     if (rows.length === 0) return null;
 

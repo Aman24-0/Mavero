@@ -409,7 +409,7 @@
   let dsVidstreamEnabled = $state(data.dsConfig?.vidstreamEnabled ?? true);
   // svelte-ignore state_referenced_locally
   let dsThugtvEnabled = $state(data.dsConfig?.thugtvEnabled ?? true);
-  // Round 41 — VidStart (ThugTV media) toggle, same pattern as the other
+  // Round 41 — VidVelvet (ThugTV media) toggle, same pattern as the other
   // three DirectStream toggles.
   // svelte-ignore state_referenced_locally
   let dsVidstartEnabled = $state(data.dsConfig?.vidstartEnabled ?? true);
@@ -1186,11 +1186,11 @@
             <input type="checkbox" name="ds_vidstream_enabled" value="true" checked={dsVidstreamEnabled} onchange={() => dsVidstreamEnabled = !dsVidstreamEnabled} />
           </label>
           <label class="a2-field">
-            <span>VidPlay (ThugTV)</span>
+            <span>VidBox (ThugTV)</span>
             <input type="checkbox" name="ds_thugtv_enabled" value="true" checked={dsThugtvEnabled} onchange={() => dsThugtvEnabled = !dsThugtvEnabled} />
           </label>
           <label class="a2-field">
-            <span>VidStart (ThugTV media)</span>
+            <span>VidVelvet (ThugTV media)</span>
             <input type="checkbox" name="ds_vidstart_enabled" value="true" checked={dsVidstartEnabled} onchange={() => dsVidstartEnabled = !dsVidstartEnabled} />
           </label>
           <label class="a2-field">
@@ -1201,8 +1201,8 @@
             <span>Default Server</span>
             <select name="ds_default_server" bind:value={dsDefaultServer}>
               <option value="vidstream">Vidstream (Rivestream API)</option>
-              <option value="vidplay">VidPlay (ThugTV API)</option>
-              <option value="vidstart">VidStart (ThugTV media API)</option>
+              <option value="vidplay">VidBox (ThugTV API)</option>
+              <option value="vidstart">VidVelvet (ThugTV media API)</option>
               <option value="vidflix">VidFlix (ThugTV DASH)</option>
               <option value="vidsrc">Vidsrc (vidsrc.party scrape)</option>
             </select>

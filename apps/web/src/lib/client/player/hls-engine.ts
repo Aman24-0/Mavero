@@ -415,6 +415,8 @@ class VideoJsHlsFacade implements HlsLike {
       case 'hlsManifestParsed': return this.events.MANIFEST_PARSED ?? null;
       case 'hlsLevelLoaded': return this.events.LEVEL_LOADED ?? null;
       case 'hlsLevelSwitched': return this.events.LEVEL_SWITCHED ?? null;
+      case 'hlsAudioTracksUpdated': return this.events.AUDIO_TRACKS_UPDATED ?? null;
+      case 'hlsAudioTrackSwitched': return this.events.AUDIO_TRACK_SWITCHED ?? null;
       // 'hlsError' is delivered through the ADAPTER's error events instead.
       default: return null;
     }
@@ -558,6 +560,17 @@ export type HlsEngineCallbacks = {
   /** Unrecoverable failure — the video cannot play this source. */
   onFatalError?: (message: string) => void;
   /**
+   * Round 44: the manifest's audio-track set changed — hls.js populated
+   * `audioTracks` (AUDIO_TRACKS_UPDATED) or the active audio rendition
+   * switched (AUDIO_TRACK_SWITCHED). Fired so the player wiring can
+   * refresh the quality/audio payload WITHOUT waiting for a level event:
+   * on a multi-audio master with quality on AUTO, hls.js populates the
+   * audio tracks slightly AFTER the level callbacks, which previously
+   * kept the Audio selector hidden until the user manually picked a
+   * quality.
+   */
+  onAudioTracksUpdated?: () => void;
+  /**
    * Phase 6: the manifest's quality levels became known. Fired once per
    * attach when the manifest is parsed (single-level manifests yield a
    * one-entry list — the UI stays hidden for those).
@@ -587,6 +600,8 @@ export const HLS_ENGINE_EVENTS = {
   manifestParsed: 'hlsManifestParsed',
   levelLoaded: 'hlsLevelLoaded',
   levelSwitched: 'hlsLevelSwitched',
+  audioTracksUpdated: 'hlsAudioTracksUpdated',
+  audioTrackSwitched: 'hlsAudioTrackSwitched',
   error: 'hlsError',
 } as const;
 
@@ -840,6 +855,21 @@ export class HlsPlaybackEngine {
       if (generation !== this.generation || this.destroyed) return;
       if (this.instance !== instance) return;
       callbacks.onQualitySelection?.(this.getQualitySelection() ?? PLAYER_AUTO_QUALITY_ID, this.getQualityLevels());
+    });
+    // Round 44 — audio-track set changes ride the SAME payload: hls.js
+    // populates `audioTracks` slightly after the level events, so the
+    // Audio selector would stay hidden on a multi-audio master (quality
+    // on AUTO) until a manual quality pick. Generation- and
+    // instance-guarded like every other listener.
+    instance.on(HLS_ENGINE_EVENTS.audioTracksUpdated, () => {
+      if (generation !== this.generation || this.destroyed) return;
+      if (this.instance !== instance) return;
+      callbacks.onAudioTracksUpdated?.();
+    });
+    instance.on(HLS_ENGINE_EVENTS.audioTrackSwitched, () => {
+      if (generation !== this.generation || this.destroyed) return;
+      if (this.instance !== instance) return;
+      callbacks.onAudioTracksUpdated?.();
     });
 
     instance.attachMedia(video);
