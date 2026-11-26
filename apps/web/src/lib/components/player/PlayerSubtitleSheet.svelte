@@ -39,10 +39,21 @@
     type SubtitlePreferences,
   } from '$lib/client/player/subtitles/subtitle-preferences';
 
+  // Player redesign (approved concept, round 50): the sheet is an ANCHORED
+  // POPOVER — the `anchor` prop is the trigger chip, the placement and the
+  // surface come from the shared PlayerOptionSheet shell (popoverAnchor
+  // action + the single-blur-layer frosted surface), and `closing` rides the
+  // parent's 90ms exit animation. The tabs, source selector and every
+  // control below are unchanged — restyled only (hairline dividers,
+  // small-caps labels).
   export let tracks: PlayerSubtitleTrack[] = [];
   export let selectedSubtitle = '';
   /** Honest feature-state text ('Checking subtitles…' / 'No subtitles available' / 'Subtitles unavailable'). */
   export let notice = '';
+  /** The trigger chip the popover anchors to (round 50). */
+  export let anchor: HTMLElement | null = null;
+  /** True while the parent runs the 90ms exit animation (round 50). */
+  export let closing = false;
   export let prefs: SubtitlePreferences = DEFAULT_SUBTITLE_PREFERENCES;
   export let onSubtitle: (url: string) => void = () => {};
   export let onPrefs: (next: SubtitlePreferences) => void = () => {};
@@ -92,7 +103,7 @@
   $: sizeAtMax = prefs.sizeScale >= SUBTITLE_SIZE_SCALE.max;
 </script>
 
-<PlayerOptionSheet title="Subtitles" {onClose}>
+<PlayerOptionSheet title="Subtitles" {anchor} {closing} {onClose}>
   <!-- Issue 2: two-tab header — Languages (default) + Settings. The tabs sit
        beneath the eyebrow title and above the active tab body. They are
        pure presentational state — switching tabs does not call onSubtitle
@@ -223,7 +234,7 @@
     display: flex;
     gap: 4px;
     padding: 6px 6px 10px;
-    border-bottom: 1px solid var(--line);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.10);
     margin-bottom: 4px;
   }
   .tab {
@@ -266,7 +277,7 @@
     flex-direction: column;
     min-height: 0;
   }
-  .section-label { color: var(--muted); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: 0.54rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; padding: 12px 6px 6px; border-top: 1px solid var(--line); margin-top: 8px; }
+  .section-label { color: rgba(255, 255, 255, 0.50); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: 0.56rem; font-weight: 700; letter-spacing: 1.4px; text-transform: uppercase; padding: 12px 6px 6px; border-top: 1px solid rgba(255, 255, 255, 0.10); margin-top: 8px; }
   .section-label:first-child { border-top: 0; margin-top: 0; padding-top: 4px; }
   .track-list { display: grid; gap: 3px; }
   .track-row { display: flex; align-items: center; gap: 11px; min-height: 46px; border: 1px solid transparent; border-radius: var(--radius-sm); padding: 7px 12px; color: var(--ink-soft); background: transparent; cursor: pointer; text-align: left; font: inherit; }
@@ -304,7 +315,7 @@
   .reset-all { display: inline-flex; align-items: center; gap: 7px; min-height: 42px; margin: 14px 6px 2px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); padding: 0 14px; color: var(--ink); background: rgba(255, 255, 255, 0.04); cursor: pointer; font: inherit; font-size: 0.62rem; font-weight: 600; }
   .reset-all:hover, .reset-all:focus-visible { border-color: var(--accent); background: var(--accent-soft); }
   /* Round 36 E — subtitle source tabs */
-  .source-tabs { display: flex; gap: 4px; padding: 4px; margin-bottom: 8px; border-bottom: 1px solid var(--line-soft); }
+  .source-tabs { display: flex; gap: 4px; padding: 4px; margin-bottom: 8px; border-bottom: 1px solid rgba(255, 255, 255, 0.10); }
   .source-tab { flex: 1 1 auto; min-height: 36px; padding: 6px 12px; border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--ink-soft); background: transparent; font: inherit; font-size: .72rem; font-weight: 700; cursor: pointer; text-align: center; }
   .source-tab:hover, .source-tab:focus-visible { border-color: var(--line-strong); background: var(--accent-soft); }
   .source-tab.active { color: var(--ink); border-color: var(--accent); background: var(--accent-soft); }

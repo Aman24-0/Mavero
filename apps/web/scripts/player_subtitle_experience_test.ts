@@ -166,7 +166,10 @@ console.log('\n§3 — component source contracts');
   ok(/class="select-control quality sheet-trigger" type="button" disabled/.test(controls) || (/disabled[\s\S]{0,200}singleQualityLabel/.test(controls)), '3f. the single-level quality state stays an honest DISABLED control with the REAL label');
 
   // Sheet chrome contracts.
-  ok(/role="dialog" aria-modal="true"/.test(optionSheet), '3g. the sheet is a modal dialog');
+  // Round 50 (approved concept): the sheet is an ANCHORED, NON-MODAL popover —
+  // dialog semantics stay; aria-modal is GONE (the transparent overlay keeps
+  // the video visible; it reads as a context menu, not a modal).
+  ok(/role="dialog"/.test(optionSheet) && !/aria-modal/.test(optionSheet), '3g. the popover keeps dialog semantics but is non-modal (round 50)');
   ok(/event\.stopImmediatePropagation\(\)/.test(optionSheet) && /onClose\(\)/.test(optionSheet), '3h. Escape dismisses the sheet and keeps the shell handler out');
   ok(/class="option-sheet-overlay"[^>]*onclick=\{onClose\}/.test(optionSheet), '3i. outside tap dismisses');
   ok(/previousFocus[\s\S]*target\.focus\(\)/.test(optionSheet), '3j. focus restores to the trigger on close');

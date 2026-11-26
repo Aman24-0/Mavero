@@ -117,20 +117,52 @@
   // writers of the shell's open flag (deterministic — no mount/destroy
   // ordering dependence).
   let openSheet: 'subtitles' | 'quality' | 'audio' | 'servers' | 'speed' | 'display' | null = null;
+  // Round 50 — the trigger chip each popover anchors to (bind:this below,
+  // passed to the matching sheet's `anchor` prop → popoverAnchor action).
+  let displayAnchor: HTMLButtonElement | undefined = undefined;
+  let subtitlesAnchor: HTMLButtonElement | undefined = undefined;
+  let qualityAnchor: HTMLButtonElement | undefined = undefined;
+  let serverAnchor: HTMLButtonElement | undefined = undefined;
+  let audioAnchor: HTMLButtonElement | undefined = undefined;
+  let speedAnchor: HTMLButtonElement | undefined = undefined;
+  // Round 50 — the 90ms EXIT animation: closeMenu() keeps the sheet mounted
+  // (closing=true → fade-only exit) and unmounts it after the exit so the
+  // popover never blinks out; the shell's open flag flips with the actual
+  // unmount so gestures/shortcuts stand down exactly while it is on screen.
+  // Reduced motion → instant close. openMenu() always cancels a pending
+  // close so a rapid chip switch mounts the next popover fresh.
+  let sheetClosing = false;
+  let sheetCloseTimer: ReturnType<typeof setTimeout> | undefined = undefined;
   function openMenu(kind: 'subtitles' | 'quality' | 'audio' | 'servers' | 'speed' | 'display') {
+    if (sheetCloseTimer) {
+      clearTimeout(sheetCloseTimer);
+      sheetCloseTimer = undefined;
+    }
+    sheetClosing = false;
     openSheet = kind;
     onMenuOpenChange(true);
   }
   function closeMenu() {
-    if (openSheet === null) return;
-    openSheet = null;
-    onMenuOpenChange(false);
+    if (openSheet === null || sheetClosing) return;
+    if (sheetCloseTimer) clearTimeout(sheetCloseTimer);
+    sheetClosing = true;
+    const reduced = typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    sheetCloseTimer = setTimeout(() => {
+      sheetCloseTimer = undefined;
+      openSheet = null;
+      sheetClosing = false;
+      onMenuOpenChange(false);
+    }, reduced ? 0 : 90);
   }
 
   $: safeDuration = Number.isFinite(duration) && duration > 0 ? duration : 0;
   $: progressPercent = safeDuration ? Math.min(100, Math.max(0, (currentTime / safeDuration) * 100)) : 0;
   $: bufferedPercent = safeDuration ? Math.min(100, Math.max(0, (buffered / safeDuration) * 100)) : 0;
   $: volumeIcon = muted || volume === 0 ? 'muted' : volume < 0.5 ? 'low' : 'high';
+  // Round 50 — the volume slider's white filled portion (webkit has no
+  // ::-range-progress, so the track is a hard colour stop at this percent).
+  $: volumeFillPercent = muted || volume <= 0 ? 0 : Math.round(Math.min(1, Math.max(0, volume)) * 100);
 
   function handleSeek(event: Event) {
     const input = event.currentTarget as HTMLInputElement;
@@ -235,27 +267,31 @@
        Round 37 B — Subtitles/Quality/Server moved here from the bottom row so
        the bottom row fits a 360–430 px portrait width without wrapping. -->
   <div class="utility-zone">
-    <button class="control-button" type="button" aria-label={`Display mode: ${displayMode}`} aria-haspopup="dialog" onclick={() => openMenu('display')}><Expand size={17} strokeWidth={1.5} /></button>
+    <button bind:this={displayAnchor} class="control-button" type="button" aria-label={`Display mode: ${displayMode}`} aria-haspopup="dialog" onclick={() => openMenu('display')}><Expand size={17} strokeWidth={1.5} /></button>
     {#if !castActive}
-      <button class="select-control subtitles sheet-trigger" type="button" aria-label={`Subtitles: ${subtitleButtonLabel}${subtitleNotice ? ` (${subtitleNotice})` : ''}`} aria-haspopup="dialog" title={subtitleNotice || undefined} onclick={() => openMenu('subtitles')}>
-        <Captions size={17} strokeWidth={1.5} aria-hidden="true" />
-        <span class="control-label">{subtitleButtonLabel}</span>
+      <button bind:this={subtitlesAnchor} class="select-control subtitles sheet-trigger" class:open={openSheet === 'subtitles'} type="button" aria-label={`Subtitles: ${subtitleButtonLabel}${subtitleNotice ? ` (${subtitleNotice})` : ''}`} aria-haspopup="dialog" title={subtitleNotice || undefined} onclick={() => openMenu('subtitles')}>
+        <Captions size={16} strokeWidth={1.5} aria-hidden="true" />
+        <span class="chip-label">Subtitles</span>
+        <span class="chip-value">{subtitleButtonLabel}</span>
       </button>
       {#if qualityMode !== 'none'}
-        <button class="select-control quality sheet-trigger" type="button" aria-label={`Playback quality: ${qualityButtonLabel}`} aria-haspopup="dialog" onclick={() => openMenu('quality')}>
+        <button bind:this={qualityAnchor} class="select-control quality sheet-trigger" class:open={openSheet === 'quality'} type="button" aria-label={`Playback quality: ${qualityButtonLabel}`} aria-haspopup="dialog" onclick={() => openMenu('quality')}>
           <Settings2 size={16} strokeWidth={1.5} aria-hidden="true" />
-          <span class="control-label">{qualityButtonLabel}</span>
+          <span class="chip-label">Quality</span>
+          <span class="chip-value">{qualityButtonLabel}</span>
         </button>
       {:else if singleQualityLabel}
         <button class="select-control quality sheet-trigger" type="button" disabled aria-disabled="true" title={`Quality ${singleQualityLabel} (no other qualities available)`} aria-label={`Playback quality: ${singleQualityLabel} (single available quality)`}>
           <Settings2 size={16} strokeWidth={1.5} aria-hidden="true" />
-          <span class="control-label">{singleQualityLabel}</span>
+          <span class="chip-label">Quality</span>
+          <span class="chip-value">{singleQualityLabel}</span>
         </button>
       {/if}
       {#if serverMode === 'menu'}
-        <button class="select-control server sheet-trigger" type="button" aria-label={`Server: ${serverButtonLabel}`} aria-haspopup="dialog" onclick={() => openMenu('servers')}>
+        <button bind:this={serverAnchor} class="select-control server sheet-trigger" class:open={openSheet === 'servers'} type="button" aria-label={`Server: ${serverButtonLabel}`} aria-haspopup="dialog" onclick={() => openMenu('servers')}>
           <Server size={16} strokeWidth={1.5} aria-hidden="true" />
-          <span class="control-label">{serverButtonLabel}</span>
+          <span class="chip-label">Server</span>
+          <span class="chip-value">{serverButtonLabel}</span>
         </button>
       {/if}
     {/if}
@@ -304,17 +340,18 @@
             <button class="control-button" type="button" aria-label={muted ? 'Unmute' : 'Mute'} onclick={onToggleMute}>
               {#if volumeIcon === 'muted'}<VolumeX size={18} strokeWidth={1.5} />{:else if volumeIcon === 'low'}<Volume1 size={18} strokeWidth={1.5} />{:else}<Volume2 size={18} strokeWidth={1.5} />{/if}
             </button>
-            <input class="volume-input" type="range" min="0" max="1" step="0.05" value={muted ? 0 : volume} oninput={handleVolume} aria-label="Volume" />
+            <input class="volume-input" type="range" min="0" max="1" step="0.05" value={muted ? 0 : volume} oninput={handleVolume} aria-label="Volume" style={`--volume-fill: ${volumeFillPercent}%;`} />
           </div>
           {#if audioMode === 'menu'}
-            <button class="select-control audio sheet-trigger" type="button" aria-label={`Audio track: ${audioButtonLabel}`} aria-haspopup="dialog" onclick={() => openMenu('audio')}>
+            <button bind:this={audioAnchor} class="select-control audio sheet-trigger" class:open={openSheet === 'audio'} type="button" aria-label={`Audio track: ${audioButtonLabel}`} aria-haspopup="dialog" onclick={() => openMenu('audio')}>
               <AudioLines size={16} strokeWidth={1.5} aria-hidden="true" />
-              <span class="control-label">{audioButtonLabel}</span>
+              <span class="chip-label">Audio</span>
+              <span class="chip-value">{audioButtonLabel}</span>
             </button>
           {/if}
-          <button class="select-control speed sheet-trigger" type="button" aria-label={`Playback speed: ${playbackRate}×`} aria-haspopup="dialog" onclick={() => openMenu('speed')}>
+          <button bind:this={speedAnchor} class="select-control speed sheet-trigger" class:open={openSheet === 'speed'} type="button" aria-label={`Playback speed: ${playbackRate}×`} aria-haspopup="dialog" onclick={() => openMenu('speed')}>
             <Gauge size={16} strokeWidth={1.5} aria-hidden="true" />
-            <span class="control-label">{playbackRate}×</span>
+            <span class="chip-label">{playbackRate}×</span>
           </button>
         {/if}
         <button class="control-button" type="button" aria-label={fullscreenActive ? 'Exit fullscreen' : 'Enter fullscreen'} aria-pressed={fullscreenActive} onclick={onFullscreen}>{#if fullscreenActive}<Minimize2 size={18} strokeWidth={1.5} />{:else}<Maximize2 size={18} strokeWidth={1.5} />{/if}</button>
@@ -325,10 +362,10 @@
   <!-- In-player selection sheets (Issue 3): Mavero surfaces, rendered inside
        the control layer so they inherit its geometry (full-shell overlay). -->
   {#if openSheet === 'subtitles'}
-    <PlayerSubtitleSheet tracks={subtitles} {selectedSubtitle} notice={subtitleNotice} prefs={subtitlePrefs} onSubtitle={(url) => { onSubtitle(url); closeMenu(); }} onPrefs={onSubtitlePreferences} onClose={closeMenu} />
+    <PlayerSubtitleSheet tracks={subtitles} {selectedSubtitle} notice={subtitleNotice} prefs={subtitlePrefs} anchor={subtitlesAnchor ?? null} closing={sheetClosing} onSubtitle={(url) => { onSubtitle(url); closeMenu(); }} onPrefs={onSubtitlePreferences} onClose={closeMenu} />
   {/if}
   {#if openSheet === 'quality'}
-    <PlayerOptionSheet title="Quality" onClose={closeMenu}>
+    <PlayerOptionSheet title="Quality" anchor={qualityAnchor ?? null} closing={sheetClosing} onClose={closeMenu}>
       <div class="option-list" role="group" aria-label="Playback quality">
         {#each qualityOptions as option (option.id)}
           <button class="option-row" class:selected={option.selected} type="button" onclick={() => chooseQuality(option.id)}>
@@ -340,7 +377,7 @@
     </PlayerOptionSheet>
   {/if}
   {#if openSheet === 'audio'}
-    <PlayerOptionSheet title="Audio" onClose={closeMenu}>
+    <PlayerOptionSheet title="Audio" anchor={audioAnchor ?? null} closing={sheetClosing} onClose={closeMenu}>
       <div class="option-list" role="group" aria-label="Audio track">
         {#each audioTracks as track (track.id)}
           <button class="option-row" class:selected={track.id === selectedAudioTrack} type="button" onclick={() => chooseAudioTrack(track.id)}>
@@ -352,7 +389,7 @@
     </PlayerOptionSheet>
   {/if}
   {#if openSheet === 'servers'}
-    <PlayerOptionSheet title="Server" onClose={closeMenu}>
+    <PlayerOptionSheet title="Server" anchor={serverAnchor ?? null} closing={sheetClosing} onClose={closeMenu}>
       <!-- Round 36 — two-pane: server group tabs (Vidsrc | Vidstream) +
            that group's source rows. Selecting a group filters the right
            pane; clicking a source starts that stream. -->
@@ -378,7 +415,7 @@
     </PlayerOptionSheet>
   {/if}
   {#if openSheet === 'display'}
-    <PlayerOptionSheet title="Display mode" onClose={closeMenu}>
+    <PlayerOptionSheet title="Display mode" anchor={displayAnchor ?? null} closing={sheetClosing} onClose={closeMenu}>
       <div class="option-list" role="group" aria-label="Display mode">
         {#each displayOptions as option (option.id)}
           <button class="option-row" class:selected={displayMode === option.id} type="button" onclick={() => chooseDisplay(option.id)}>
@@ -390,7 +427,7 @@
     </PlayerOptionSheet>
   {/if}
   {#if openSheet === 'speed'}
-    <PlayerOptionSheet title="Playback speed" onClose={closeMenu}>
+    <PlayerOptionSheet title="Playback speed" anchor={speedAnchor ?? null} closing={sheetClosing} onClose={closeMenu}>
       <div class="option-list" role="group" aria-label="Playback speed">
         {#each speedOptions as option (option.id)}
           <button class="option-row" class:selected={option.selected} type="button" onclick={() => chooseSpeed(option.id)}>
@@ -406,8 +443,21 @@
 <style>
   /* The control surface is a full-shell, pointer-transparent overlay; each
      zone re-enables pointer events for its own interactive children. Taps
-     that miss every control reach the video surface (gestures/reveal). */
-  .controls { position: absolute; inset: 0; z-index: 10; pointer-events: none; color: var(--ink); }
+     that miss every control reach the video surface (gestures/reveal).
+     Round 50 — player-scope surface tokens (approved concept: white-only
+     accent): s1/s2 surfaces, hairline, secondary/tertiary ink, radii, ease.
+     Children (chips, buttons, sheets) inherit them. */
+  .controls {
+    position: absolute; inset: 0; z-index: 10; pointer-events: none; color: var(--ink);
+    --pl-s1: rgba(255, 255, 255, 0.055);
+    --pl-s2: rgba(255, 255, 255, 0.10);
+    --pl-line: rgba(255, 255, 255, 0.12);
+    --pl-ink-2: rgba(255, 255, 255, 0.72);
+    --pl-ink-3: rgba(255, 255, 255, 0.50);
+    --pl-r1: 12px;
+    --pl-r2: 16px;
+    --pl-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
 
   /* ---- Top-right utility zone ----
      Round 37 B — now holds Display Mode, Subtitles, Quality, Server, Cast,
@@ -423,17 +473,20 @@
   /* ---- Bottom zone ---- */
   .bottom-zone { position: absolute; z-index: 2; bottom: 0; left: 0; right: 0; display: grid; gap: 4px; padding: 10px 14px calc(12px + env(safe-area-inset-bottom)); pointer-events: auto; background: linear-gradient(0deg, rgba(0,0,0,.62), rgba(0,0,0,.28) 62%, transparent); }
   .timeline-row { display: flex; align-items: center; gap: 10px; }
-  .time-label { color: var(--ink-soft); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .62rem; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  /* Round 50 — tabular 12px time labels: secondary ink left (position),
+     tertiary ink right (duration — the row's last label, no markup change). */
+  .time-label { color: var(--pl-ink-2); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .timeline-row .time-label:last-child { color: var(--pl-ink-3); }
   .timeline-wrap { position: relative; flex: 1; min-width: 0; height: 22px; display: grid; align-items: center; }
-  .timeline-track { position: absolute; right: 0; left: 0; height: 4px; overflow: hidden; border-radius: 999px; background: rgba(255,255,255,.15); pointer-events: none; }
+  .timeline-track { position: absolute; right: 0; left: 0; height: 4px; overflow: hidden; border-radius: 2px; background: rgba(255,255,255,0.18); pointer-events: none; }
   .timeline-buffered, .timeline-progress { position: absolute; inset: 0 auto 0 0; border-radius: inherit; }
-  .timeline-buffered { background: rgba(255,255,255,.25); }
-  .timeline-progress { background: var(--accent); box-shadow: 0 0 12px rgba(255,255,255,.25); }
-  .timeline-input { position: relative; z-index: 2; width: 100%; height: 22px; margin: 0; appearance: none; cursor: pointer; background: transparent; accent-color: var(--accent); }
+  .timeline-buffered { background: rgba(255,255,255,0.34); }
+  .timeline-progress { background: #fff; }
+  .timeline-input { position: relative; z-index: 2; width: 100%; height: 22px; margin: 0; appearance: none; cursor: pointer; background: transparent; }
   .timeline-input::-webkit-slider-runnable-track { height: 4px; background: transparent; }
-  .timeline-input::-webkit-slider-thumb { width: 13px; height: 13px; margin-top: -4px; appearance: none; border: 2px solid var(--ink); border-radius: 50%; background: var(--accent); box-shadow: 0 2px 10px rgba(0,0,0,.4); }
+  .timeline-input::-webkit-slider-thumb { width: 14px; height: 14px; margin-top: -5px; appearance: none; border: 0; border-radius: 50%; background: #fff; box-shadow: 0 0 0 3px rgba(0,0,0,0.35), 0 0 12px rgba(255,255,255,0.35); }
   .timeline-input::-moz-range-track { height: 4px; background: transparent; }
-  .timeline-input::-moz-range-thumb { width: 11px; height: 11px; border: 2px solid var(--ink); border-radius: 50%; background: var(--accent); }
+  .timeline-input::-moz-range-thumb { width: 14px; height: 14px; border: 0; border-radius: 50%; background: #fff; box-shadow: 0 0 0 3px rgba(0,0,0,0.35), 0 0 12px rgba(255,255,255,0.35); }
 
   /* Secondary row: LEFT group (Play/Pause, ±10s) + RIGHT group (Volume,
      Subtitles, Quality, Audio, Speed, Fullscreen) using space-between.
@@ -443,30 +496,43 @@
   .secondary-row { display: flex; align-items: center; flex-wrap: nowrap; justify-content: space-between; gap: 8px; }
   .left-controls { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
   .right-controls { display: flex; align-items: center; flex-wrap: nowrap; gap: 8px; justify-content: flex-end; min-width: 0; }
-  .control-button { display: inline-grid; place-items: center; min-width: 40px; min-height: 40px; border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--ink-soft); background: rgba(0,0,0,.5); cursor: pointer; transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
-  .control-button:hover, .control-button:focus-visible { border-color: var(--line-strong); background: var(--accent-soft); }
+  /* Round 50 — bottom-row buttons: 40px hit area, radius 12, transparent
+     until hover (then the s1 surface); no per-button blur (the popover
+     surface carries the single blur layer). */
+  .control-button { display: inline-grid; place-items: center; min-width: 40px; min-height: 40px; border: 1px solid transparent; border-radius: var(--pl-r1); color: rgba(255,255,255,0.88); background: transparent; cursor: pointer; transition: background var(--motion-fast) var(--pl-ease), color var(--motion-fast) var(--pl-ease), transform var(--motion-fast) var(--pl-ease); }
+  .control-button:hover, .control-button:focus-visible { background: var(--pl-s1); color: #fff; }
   .control-button:active { transform: scale(.97); }
+  /* Round 50 — icon-only utility buttons (display, cast, PiP, lock): 40px
+     rounded squares on the chip surface tokens, icon 17px. */
+  .utility-zone .control-button { width: 40px; min-width: 40px; height: 40px; border-color: var(--pl-line); background: var(--pl-s1); }
+  .utility-zone .control-button:hover, .utility-zone .control-button:focus-visible { background: var(--pl-s2); border-color: rgba(255,255,255,0.2); color: #fff; }
   /* 2026-10 round 19 — inline ±10 s seek buttons in the secondary row. */
   .control-button.seek-inline { color: var(--ink-soft); }
   /* 2026-10 round 20 — inline Play/Pause button in the secondary row. */
   .control-button.play-inline { color: var(--ink-soft); }
   .volume-control { display: flex; align-items: center; gap: 4px; }
-  .volume-input { width: 78px; accent-color: var(--accent); }
-  /* Issue 3: the former native select popups are now BUTTONS that open
-     Mavero sheets. Same compact footprint; the label truncates with an
-     ellipsis so long track names can never expand the row. */
-  .select-control { display: inline-flex; align-items: center; gap: 4px; min-height: 40px; padding: 0 7px; border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--ink-soft); background: rgba(0,0,0,.5); font-size: .62rem; cursor: pointer; font: inherit; font-size: .62rem; }
-  .select-control:hover:not(:disabled), .select-control:focus-visible { border-color: var(--line-strong); background: var(--accent-soft); }
+  /* Round 50 — volume slider: 4px hairline track with a white filled portion
+     and a 5.5px white thumb (the existing input, styled per-engine). */
+  .volume-input { width: 78px; height: 22px; margin: 0; appearance: none; background: transparent; cursor: pointer; }
+  .volume-input::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: linear-gradient(90deg, #fff var(--volume-fill, 100%), rgba(255,255,255,0.18) var(--volume-fill, 100%)); }
+  .volume-input::-webkit-slider-thumb { width: 5.5px; height: 5.5px; margin-top: -0.75px; appearance: none; border: 0; border-radius: 50%; background: #fff; }
+  .volume-input::-moz-range-track { height: 4px; border-radius: 2px; background: rgba(255,255,255,0.18); }
+  .volume-input::-moz-range-progress { height: 4px; border-radius: 2px; background: #fff; }
+  .volume-input::-moz-range-thumb { width: 5.5px; height: 5.5px; border: 0; border-radius: 50%; background: #fff; }
+  /* Round 50 — CHIPS: every select-control is a chip (s1 surface, hairline
+     border, 13px/600 label + 12.5px tertiary value). The label/value text
+     derives from the EXISTING aria-label text — nothing is invented. Speed
+     has no separate value (single “1×” label). Truncation keeps the top and
+     bottom rows ONE line at every width (round 37 B). */
+  .select-control { display: inline-flex; align-items: center; gap: 8px; height: 40px; max-width: 180px; padding: 0 14px; border: 1px solid var(--pl-line); border-radius: 13px; color: #fff; background: var(--pl-s1); cursor: pointer; font: inherit; transition: background var(--motion-fast) var(--pl-ease), border-color var(--motion-fast) var(--pl-ease); }
+  .select-control:hover:not(:disabled), .select-control:focus-visible, .select-control.open { background: var(--pl-s2); border-color: rgba(255,255,255,0.2); }
   .select-control:disabled { opacity: .6; cursor: default; }
-  .select-control .control-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .select-control.subtitles { flex: 1 1 56px; min-width: 56px; max-width: 110px; }
-  .select-control.subtitles .control-label { flex: 1 1 auto; text-align: left; }
-  .select-control.quality .control-label { max-width: 64px; }
-  /* 2026-10 round 32 — the Server label truncates like the quality label so
-     long server names ("Andromeda 1080p HD") can never expand the row. */
-  .select-control.server .control-label { max-width: 64px; }
-  /* 2026-10 round 24 — .select-control.display-mode removed (moved to top-right). */
-  .select-control.speed .control-label { max-width: 44px; }
+  .select-control .chip-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600; }
+  .select-control .chip-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; color: var(--pl-ink-3); }
+  .select-control .chip-label, .select-control .chip-value { flex: 0 1 auto; }
+  .select-control.quality .chip-value { max-width: 64px; }
+  .select-control.server .chip-value { max-width: 64px; }
+  .select-control.speed .chip-label { max-width: 44px; }
 
   /* In-player selection sheet option rows (shared shape across quality /
      display / speed sheets; the subtitle sheet carries its own richer
@@ -496,24 +562,34 @@
   @media (max-width: 840px) {
     .volume-input { display: none; }
   }
+  /* Round 50 — ≥900px chips/utility squares grow to 44px (comfortable
+     desktop/TV hit area). */
+  @media (min-width: 900px) {
+    .select-control { height: 44px; }
+    .utility-zone .control-button { width: 44px; min-width: 44px; height: 44px; }
+  }
   /* Round 37 B — portrait (360–430 px): shrink the utility-zone + bottom-row
-     buttons so both rows stay on ONE line. The select-control labels truncate
-     (overflow: hidden + text-overflow: ellipsis) so long names never expand
-     the row. Touch targets stay 32px+ minimum. */
+     buttons so both rows stay on ONE line. Round 50 — the chips keep the new
+     chip surface but DROP the chip LABEL (the icon + value carry exactly the
+     state text the old control-label carried, so the row fits portrait
+     exactly as before); the values keep truncating so long names never
+     expand the row. Touch targets stay 32px+ minimum. */
   @media (max-width: 640px) {
     .bottom-zone { padding: 8px 8px calc(10px + env(safe-area-inset-bottom)); }
     .secondary-row { gap: 6px; }
     .left-controls { gap: 6px; }
     .right-controls { gap: 4px; }
     .utility-zone { gap: 4px; max-width: calc(100vw - 16px); }
-    .time-label { font-size: .56rem; }
-    .select-control { padding: 0 4px; min-height: 32px; }
-    .select-control.subtitles { min-width: 36px; max-width: 64px; }
-    .select-control.quality { max-width: 52px; }
-    .select-control.server { max-width: 52px; }
-    .select-control.audio { max-width: 52px; }
+    .time-label { font-size: 11px; }
+    .select-control { height: 36px; padding: 0 10px; gap: 6px; }
+    .select-control .chip-label { display: none; }
+    .select-control .chip-value { font-size: 12px; }
+    .select-control.subtitles { max-width: 80px; }
+    .select-control.quality { max-width: 72px; }
+    .select-control.server { max-width: 72px; }
+    .select-control.audio { max-width: 72px; }
     .control-button { min-width: 32px; min-height: 32px; }
-    .control-label { font-size: .55rem; }
+    .utility-zone .control-button { width: 32px; min-width: 32px; height: 32px; }
   }
   /* Landscape phone (Player V2 remaining fixes, 2026-10): the secondary row
      is ONE RIGHT-aligned compact group — the user's approved landscape
@@ -534,5 +610,5 @@
   @media (orientation: landscape) and (max-height: 500px) {
     .bottom-zone { padding: 6px 12px calc(8px + env(safe-area-inset-bottom)); }
   }
-  @media (prefers-reduced-motion: reduce) { .control-button { transition: none; } }
+  @media (prefers-reduced-motion: reduce) { .control-button { transition: none; } .select-control { transition: none; } }
 </style>

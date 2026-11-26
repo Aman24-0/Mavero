@@ -144,7 +144,7 @@ console.log('\n6 — sheet chrome is reused (no second modal, no browser-default
   // The PlayerOptionSheet provides dialog semantics, focus trap, Escape, outside-tap,
   // safe-area — all preserved because we render through it.
   const optionSheet = readCode('src/lib/components/player/PlayerOptionSheet.svelte');
-  ok(optionSheet.includes('role="dialog"') && optionSheet.includes('aria-modal="true"'), '6d. PlayerOptionSheet retains dialog semantics');
+  ok(optionSheet.includes('role="dialog"') && !optionSheet.includes('aria-modal'), '6d. PlayerOptionSheet retains dialog semantics (non-modal popover — round 50)');
   ok(optionSheet.includes('aria-label={title}'), '6e. PlayerOptionSheet carries the accessible dialog label');
   ok(/Escape/.test(optionSheet), '6f. PlayerOptionSheet retains Escape handling');
 }
@@ -159,7 +159,9 @@ console.log('\n7 — tab styling respects Mavero dark/cinematic surface + safe-a
   const optionSheet = readCode('src/lib/components/player/PlayerOptionSheet.svelte');
   ok(optionSheet.includes('env(safe-area-inset-bottom)'), '7d. PlayerOptionSheet retains safe-area-inset-bottom');
   ok(optionSheet.includes('overflow-y: auto'), '7e. PlayerOptionSheet retains independent scroll within the sheet');
-  ok(/max-height:\s*min\(62dvh,\s*560px\)/.test(optionSheet), '7f. PlayerOptionSheet retains its bounded height so both tabs are usable on mobile');
+  // Round 50 (anchored popover): the bounded height grew to 70dvh so both tabs
+  // stay usable on mobile — still viewport-bounded, body still scrolls.
+  ok(/max-height:\s*min\(70dvh,\s*560px\)/.test(optionSheet), '7f. PlayerOptionSheet retains its bounded height so both tabs are usable on mobile');
 }
 
 console.log(`\nmav_focused_issue2_subtitle_tabs_test: ${passed} passed, ${failed} failed`);

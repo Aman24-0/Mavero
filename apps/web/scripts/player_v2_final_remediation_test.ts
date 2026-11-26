@@ -65,24 +65,25 @@ const viewport = read('src/lib/components/player/PlayerViewport.svelte');
 console.log('\nISSUE 1 — portrait secondary row');
 {
   ok(!controls.includes('secondary-spacer'), '1a. the flexible spacer element/CSS is REMOVED from PlayerControls');
-  // The subtitle select is the flexible member: absorbs leftover width for
-  // its own label, bounded, with an explicit floor + ellipsis.
-  ok(/\.select-control\.subtitles \{ flex: 1 1 56px; min-width: 56px; max-width: 110px; \}/.test(controls), '1b. the subtitle selector flexes (floor 56px, cap 110px) instead of reserving blank space');
-  // CONTRACT CHANGE (focused fixes, Issue 3 — native <select> popups replaced
-  // with Mavero selection sheets): the compactness guarantees moved from the
-  // old `select` element rules to the new BUTTON + `.control-label` rules —
-  // same intent (labels truncate; nothing sizes to its longest option).
-  ok(/\.select-control\.subtitles \.control-label \{ flex: 1 1 auto; text-align: left; \}/.test(controls), '1c. the subtitle control’s label fills the flexible control (button contract)');
-  ok(/\.select-control \.control-label \{ min-width: 0;[\s\S]*?text-overflow: ellipsis; white-space: nowrap; \}/.test(controls), '1d. every sheet-trigger label carries min-width:0 + ellipsis (long track names can never expand the row)');
+  // Round 50 (approved concept): the select-controls are CHIPS — a bounded
+  // surface (40/44px, capped max-width, truncating label + value) so nothing
+  // sizes to its longest option and the top row stays one line.
+  ok(/\.select-control \{[^}]*max-width: 180px;[^}]*\}/.test(controls), '1b. chips are bounded (180px cap) instead of reserving blank space (round 50 chip contract)');
+  // CONTRACT CHANGE (round 50 — chip surface): the old control-label rules
+  // became the chip-label/chip-value pair — same intent (labels truncate;
+  // nothing sizes to its longest option).
+  ok(/\.select-control \.chip-label, \.select-control \.chip-value \{ flex: 0 1 auto; \}/.test(controls), '1c. the chip label and value shrink inside the bounded chip (round 50 chip contract)');
+  ok(/\.select-control \.chip-label \{ min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;/.test(controls) && /\.select-control \.chip-value \{ min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;/.test(controls), '1d. every chip label/value carries min-width:0 + ellipsis (long track names can never expand the row)');
   // CONTRACT CHANGE (2026-10 round 24): the display-mode SELECT moved to the
   // top-right utility zone — .select-control.display-mode no longer exists.
-  // Round 32 added the Server control with the same compact width contract.
-  ok(/\.select-control\.quality \.control-label \{ max-width: 64px; \}/.test(controls) && /\.select-control\.server \.control-label \{ max-width: 64px; \}/.test(controls) && /\.select-control\.speed \.control-label \{ max-width: 44px; \}/.test(controls) && !/\.select-control\.display-mode\s*[.{]/.test(controls), '1e. explicit compact label widths for the fixed controls (quality/server/speed); the display-mode select RULES are GONE (round 24 utility-zone move)');
-  // Round 37 B — portrait (≤640px) fallback: tighter paddings + 32px targets,
-  // subtitle floor lowered with an explicit 64px cap. Subtitles/Quality/Server
-  // moved to the top utility zone so the bottom row fits 360–430 px portrait.
-  ok(/@media \(max-width: 640px\) \{[\s\S]*?\.select-control\.subtitles \{ min-width: 36px; max-width: 64px; \}/.test(controls), '1f. ≤640px fallback lowers the subtitle floor (deliberate compact treatment)');
-  ok(/@media \(max-width: 640px\) \{[\s\S]*?\.select-control \{ padding: 0 4px; min-height: 32px; \}/.test(controls), '1g. ≤640px fallback tightens the control paddings (compact treatment; label widths are fluid since the sheet contract)');
+  // Round 32 added the Server control with the same compact width contract;
+  // round 50 moved the caps onto the chip VALUE spans.
+  ok(/\.select-control\.quality \.chip-value \{ max-width: 64px; \}/.test(controls) && /\.select-control\.server \.chip-value \{ max-width: 64px; \}/.test(controls) && /\.select-control\.speed \.chip-label \{ max-width: 44px; \}/.test(controls) && !/\.select-control\.display-mode\s*[.{]/.test(controls), '1e. explicit compact value widths for the fixed chips (quality/server/speed); the display-mode select RULES are GONE (round 24 utility-zone move)');
+  // Round 37 B — portrait (≤640px) fallback: the chip LABEL drops (the icon +
+  // value carry exactly the state text the old label carried) and every chip
+  // gets an explicit cap so the top row stays ONE line on 360–430 px phones.
+  ok(/@media \(max-width: 640px\) \{[\s\S]*?\.select-control\.subtitles \{ max-width: 80px; \}/.test(controls), '1f. ≤640px fallback caps the subtitle chip (deliberate compact treatment)');
+  ok(/@media \(max-width: 640px\) \{[\s\S]*?\.select-control \{ height: 36px; padding: 0 10px; gap: 6px; \}/.test(controls) && /@media \(max-width: 640px\) \{[\s\S]*?\.select-control \.chip-label \{ display: none; \}/.test(controls), '1g. ≤640px fallback compacts the chips — the chip LABEL drops so the row fits portrait (round 37 B one-line contract)');
   // Round 24: the display-mode select is gone from the bottom row entirely
   // (moved to the top-right utility zone) — there is no in-row icon to fold.
   ok(!/\.select-control\.display-mode\s*[.{]/.test(controls) && /aria-label=\{`Display mode: \$\{displayMode\}`\}/.test(controls), '1g2. the display-mode control lives in the utility zone (round 24) — no in-row display select rules remain');

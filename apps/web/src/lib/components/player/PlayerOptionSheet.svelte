@@ -1,28 +1,41 @@
 <script lang="ts">
-  // Player selection-sheet chrome (focused player fixes 2026-10 — Issue 3).
+  // Player selection-sheet chrome (focused player fixes 2026-10 — Issue 3;
+  // approved-concept redesign round 50: ANCHORED POPOVER).
   //
   // ONE shared surface for every in-player choice list (subtitles, quality,
-  // speed, display mode, subtitle settings). Replaces the browser-default
-  // <select> popups with Mavero's own cinematic player styling — the same
-  // surface system the shell's source/episode sheets established (dark
-  // translucent panel, blurred backdrop, handle, eyebrow title, close
-  // button, accent selected-state).
+  // speed, display mode, subtitle settings) — now a CONTEXT-MENU-STYLE
+  // POPOVER anchored under (or above) the trigger chip instead of a
+  // full-width bottom sheet:
+  //   * `anchor` (the trigger chip) drives the placement via the
+  //     popoverAnchor action (fixed positioning, viewport-clamped, flips
+  //     above when there is no room below) — see popover-anchor.ts.
+  //   * The overlay stays a click-catcher but is now TRANSPARENT (no dark
+  //     scrim, no blur) — the video stays visible around the open menu,
+  //     which is what makes it read as a context menu rather than a modal.
+  //     The popover surface itself carries the single blur layer.
   //
   // CONTRACTS (mirroring the shell sheets):
   //   * Dismissal: selection (caller), outside click/tap on the overlay,
   //     Escape, and the close button.
   //   * Focus: on open, focus moves to the close button; on close, focus
-  //     restores to the element focused before opening (trigger restore).
+  //     restores to the ANCHOR chip when it is still mounted (the popover
+  //     is its context menu), else to the pre-open focused element.
   //   * Tab is TRAPPED inside the sheet while open; the shell's global
   //     shortcut handler stands down while a controls sheet is open (the
   //     shell receives the open state via onOpenChange).
-  //   * Scrolling: the body scrolls independently; the sheet fits the
-  //     viewport with safe-area insets (Android navigation bar included).
+  //   * Scrolling: the body scrolls independently; the popover fits the
+  //     viewport (max-height clamps, safe-area-aware body padding).
   import { onDestroy, onMount } from 'svelte';
   import { X } from 'lucide-svelte';
+  import { popoverAnchor } from './popover-anchor';
 
   /** Sheet title (eyebrow) + accessible dialog label. */
   export let title = '';
+  /** The trigger chip the popover anchors to (round 50). */
+  export let anchor: HTMLElement | null = null;
+  /** True while the parent is running the 90ms exit animation (round 50) —
+   *  the element stays mounted for the fade-out, then unmounts. */
+  export let closing = false;
   /** Fires on every open-state change so the shell can gate shortcuts/gestures. */
   export let onOpenChange: (open: boolean) => void = () => {};
   export let onClose: () => void = () => {};
@@ -38,7 +51,10 @@
   });
   onDestroy(() => {
     onOpenChange(false);
-    const target = previousFocus;
+    // Round 50 — focus returns to the ANCHOR chip first (the popover is its
+    // context menu — the user came from that chip); the pre-open focused
+    // element is the fallback when the anchor is gone.
+    const target = anchor && anchor.isConnected ? anchor : previousFocus;
     if (target && target.isConnected) {
       try { target.focus(); } catch { /* element not focusable */ }
     }
@@ -78,14 +94,15 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
-<!-- Overlay: outside click/tap dismisses. The sheet itself is a sibling,
-     so clicks inside never bubble into the overlay. -->
+<!-- Overlay: transparent click-catcher (round 50 — no dark scrim, no blur:
+     the video stays visible around the popover; only the popover surface
+     blurs). The sheet itself is a sibling, so clicks inside never bubble
+     into the overlay. -->
 <div class="option-sheet-overlay" role="presentation" onclick={onClose}></div>
-<div class="player-option-sheet" role="dialog" aria-modal="true" aria-label={title} tabindex="-1" onkeydown={handleKeydown}>
-  <div class="sheet-handle" aria-hidden="true"></div>
+<div class="player-option-sheet" class:closing use:popoverAnchor={{ anchor }} role="dialog" aria-label={title} tabindex="-1" onkeydown={handleKeydown}>
   <div class="sheet-head">
     <span class="eyebrow">{title}</span>
-    <button bind:this={closeBtn} class="close-button" type="button" aria-label={`Close ${title || 'menu'}`} onclick={onClose}><X size={17} /></button>
+    <button bind:this={closeBtn} class="close-button" type="button" aria-label={`Close ${title || 'menu'}`} onclick={onClose}><X size={15} /></button>
   </div>
   <div class="sheet-body"><slot /></div>
 </div>
@@ -97,35 +114,37 @@
      re-enable, every tap would fall through the sheet onto the video
      surface (the shell's own sheets hang off the shell and never had this
      problem). */
-  .option-sheet-overlay { position: absolute; z-index: 20; inset: 0; background: rgba(0, 0, 0, 0.4); backdrop-filter: blur(2px); pointer-events: auto; }
+  .option-sheet-overlay { position: absolute; z-index: 20; inset: 0; background: transparent; pointer-events: auto; }
   .player-option-sheet { pointer-events: auto; }
   .player-option-sheet {
-    position: absolute;
+    /* Round 50 — the popoverAnchor action owns position/left/top (fixed,
+       viewport-clamped); this rule owns the SURFACE only. */
+    position: fixed;
     z-index: 21;
-    bottom: 0;
-    left: 50%;
-    transform: translateX(-50%);
-    width: min(420px, 100%);
-    max-height: min(62dvh, 560px);
+    width: min(420px, calc(100vw - 24px));
+    max-height: min(70dvh, 560px);
     display: grid;
-    grid-template-rows: auto auto minmax(0, 1fr);
-    border: 1px solid var(--line-strong);
-    border-bottom: 0;
-    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-    background: rgba(13, 13, 13, 0.98);
-    box-shadow: var(--shadow-lg);
-    backdrop-filter: blur(28px);
-    padding-bottom: env(safe-area-inset-bottom);
-    animation: option-sheet-up var(--motion-normal, 200ms) var(--ease-out, ease-out);
+    grid-template-rows: auto minmax(0, 1fr);
+    border: 1px solid rgba(255, 255, 255, 0.13);
+    border-radius: 16px;
+    background: rgba(18, 18, 20, 0.92);
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.06) inset, 0 18px 48px rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(20px);
+    transform-origin: var(--popover-origin, center);
+    animation: option-sheet-pop 120ms cubic-bezier(0.2, 0.8, 0.2, 1);
   }
-  .sheet-handle { width: 36px; height: 4px; margin: 8px auto 4px; border-radius: 999px; background: var(--line-strong); }
-  .sheet-head { display: flex; align-items: center; justify-content: space-between; padding: 4px 18px 10px; }
-  .sheet-head .eyebrow { color: var(--muted); }
-  .close-button { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid var(--line); border-radius: var(--radius-sm); color: var(--muted); background: rgba(255, 255, 255, 0.04); cursor: pointer; }
-  .close-button:hover, .close-button:focus-visible { border-color: var(--line-strong); color: var(--ink); }
+  /* Exit (round 50): fade only — no scale, and `forwards` holds the faded
+     state until the parent's 90ms delayed unmount lands. */
+  .player-option-sheet.closing { animation: option-sheet-out 90ms ease-out forwards; }
+  .sheet-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px 8px 16px; }
+  .sheet-head .eyebrow { color: rgba(255, 255, 255, 0.45); font-size: 10.5px; font-weight: 700; letter-spacing: 1.6px; text-transform: uppercase; }
+  .close-button { display: grid; place-items: center; width: 30px; height: 30px; border: 0; border-radius: 9px; color: rgba(255, 255, 255, 0.8); background: rgba(255, 255, 255, 0.06); cursor: pointer; }
+  .close-button:hover, .close-button:focus-visible { background: rgba(255, 255, 255, 0.12); color: #fff; }
   .sheet-body { min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; padding: 0 12px max(14px, env(safe-area-inset-bottom)); }
-  @keyframes option-sheet-up { from { transform: translate(-50%, 100%); } to { transform: translate(-50%, 0); } }
+  @keyframes option-sheet-pop { from { opacity: 0; transform: scale(0.97); } to { opacity: 1; transform: scale(1); } }
+  @keyframes option-sheet-out { to { opacity: 0; } }
   @media (prefers-reduced-motion: reduce) {
     .player-option-sheet { animation: none; }
+    .player-option-sheet.closing { animation: none; }
   }
 </style>
