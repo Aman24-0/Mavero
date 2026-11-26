@@ -73,7 +73,10 @@
 // sacdn.hakunaymatata.com + cacdn.hakunaymatata.com serve the per-language DASH MPDs and their
 // segments (cacdn also serves the .srt subtitles, fetched by the same-origin converting proxy).
 // The manifest rewriter already rewrites DASH (.mpd) manifests (BaseURL + segment URLs proxied).
-const ALLOWED_HOST_SUFFIXES = ['hotstar.com', 'slivcdn.com', 'jio.com', 'jiocinema.com', 'premiumplugx.com', 'catbox.moe', 'cloudnestra.com', 'stellarconductornexus.com', 'vidsrc.party', 'cookiebakers23blog.xyz', 'cno.to', 'vidcore.org', 'hscow.com', 'fcxmb.com', 'fodcyy.com', 'fhxod.com', 'rivestream.app', 'aapanel.devcorp.me', 'media.thugtv.st', 'stream.hls.lol', 'sacdn.hakunaymatata.com', 'cacdn.hakunaymatata.com'];
+// 2026-11 round 48 — schooling.cfd is the alternate multi-CDN edge stream.hls.lol hands out
+// (paths look like /edge-<id>/hm-decoy/dash/...). Not allowlisting it made the Worker 403 every
+// DASH segment (shaka error 1001).
+const ALLOWED_HOST_SUFFIXES = ['hotstar.com', 'slivcdn.com', 'jio.com', 'jiocinema.com', 'premiumplugx.com', 'catbox.moe', 'cloudnestra.com', 'stellarconductornexus.com', 'vidsrc.party', 'cookiebakers23blog.xyz', 'cno.to', 'vidcore.org', 'hscow.com', 'fcxmb.com', 'fodcyy.com', 'fhxod.com', 'rivestream.app', 'aapanel.devcorp.me', 'media.thugtv.st', 'stream.hls.lol', 'sacdn.hakunaymatata.com', 'cacdn.hakunaymatata.com', 'schooling.cfd'];
 
 const REFERER_BY_HOST: ReadonlyArray<{ suffix: string; referer: string }> = [
         { suffix: 'slivcdn.com', referer: 'https://www.sonyliv.com/' },
@@ -425,6 +428,13 @@ export default {
                                 'upgrade-insecure-requests': '1'
                         };
 
+                // 2026-11 round 48 — VidBox (stream.hls.lol) is served a different CDN per request.
+                // Match a plain address-bar navigation (no Referer/Origin) for this host only.
+                if (target.hostname === 'stream.hls.lol' || target.hostname.endsWith('.stream.hls.lol')) {
+                        delete headers.referer;
+                        delete headers.origin;
+                }
+
                 // 2026-10 round 29 — forward the x-livetv-cookie header as the
                 // Cookie header to the upstream CDN. Browsers can't set the
                 // Cookie header directly, so the client passes it as
@@ -497,14 +507,40 @@ export default {
                 // pathLower is already declared above (round 15 document-header
                 // block) — reuse it here for manifest detection.
                 const isHlsManifest = contentType.includes('mpegurl') || pathLower.endsWith('.m3u8');
-                const isDashManifest = contentType.includes('dash') || pathLower.endsWith('.mpd') || (contentType.includes('xml') && upstream.ok && (await upstream.clone().text().catch(() => '')).includes('<MPD'));
+                // 2026-11 round 48 — DASH detection hardened for wrapper URLs (stream.hls.lol serves
+                // its MPD behind /mbox/mpd?q=<base64> with an ambiguous content-type).
+                const dashHint = contentType.includes('dash') || pathLower.endsWith('.mpd') || pathLower.endsWith('/mpd');
+                let dashBody: string | null = null;
+                if (!dashHint && upstream.ok && !isHlsManifest) {
+                        const peek = await upstream.clone().text().catch(() => '');
+                        if (peek.trimStart().startsWith('<?xml') || peek.includes('<MPD')) dashBody = peek;
+                }
+                const isDashManifest = dashHint || dashBody !== null;
 
                 // 2026-10 round 6 — Task 2: DASH (.mpd) manifest rewriting.
                 if (isDashManifest) {
                         if (!upstream.ok) {
                                 return new Response(null, { status: upstream.status, headers: CORS_HEADERS });
                         }
-                        const text = await upstream.text();
+                        let text = dashBody ?? (await upstream.text());
+                        // 2026-11 round 48 — "hm-decoy" is NOT fatal: the same string appears in
+                        // legitimate multi-CDN paths (schooling.cfd/edge-*/hm-decoy/...). Retry once
+                        // for a different edge, log, and always serve what we got.
+                        if (/hm-decoy|\/decoy\//i.test(text)) {
+                                console.warn(`[stream-proxy] DASH decoy-path manifest from ${target.host}${target.pathname} — retrying once`);
+                                try {
+                                        const retry = await fetch(target.toString(), { headers, redirect: 'follow' });
+                                        if (retry.ok) {
+                                                const retryText = await retry.text();
+                                                if (!/hm-decoy|\/decoy\//i.test(retryText)) {
+                                                        text = retryText;
+                                                        console.warn('[stream-proxy] DASH decoy-path avoided on retry');
+                                                }
+                                        }
+                                } catch {
+                                        /* serve the first body */
+                                }
+                        }
                         return new Response(rewriteDashManifest(text, target.toString(), url.origin, referer), {
                                 status: 200,
                                 headers: { 'content-type': 'application/dash+xml', ...CORS_HEADERS }
