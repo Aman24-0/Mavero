@@ -131,9 +131,10 @@ const labels = [...linksBlock![1].matchAll(/label: '([^']+)'/g)].map((m) => m[1]
 assert.deepEqual(labels, ['Discover', 'Movies', 'TV Shows', 'Anime', 'Live TV'], 'R-2: primary nav contains the five link labels (Search moved to the header; Live TV is conditional)');
 assert.match(appShell, /\.\.\.\(\(liveTvAvailable && \(isAdmin \|\| livetvNavVisible\)\) \?\s*\[\{ label: 'Live TV'[\s\S]{0,200}\] : \[\]\)/, 'R-2: Live TV is conditionally included via the liveTvAvailable + nav-visibility gate');
 assert.match(appShell, /class="topbar-account"/, 'the mobile/tablet topbar search control exists');
-assert.match(appShell, /class="sidebar-account"/, 'the desktop Account chip exists INSIDE the sidebar (2026-11 desktop-UX fix — the floating top-right chip is removed)');
-assert.match(appShell, /aria-haspopup="dialog"/, 'the account controls open the Account sheet (dialog)');
-ok('7. primary navigation: Discover, Movies, TV Shows, Anime, [Live TV when available], Search (sidebar + topbar) + sidebar Account chip (desktop) / pill entry (touch)');
+assert.doesNotMatch(appShell, /class="sidebar-account"/, 'the desktop Account chip is REMOVED from the sidebar (2026-11 account-IA pass — the user chip + the account option nav links replace it)');
+assert.match(appShell, /class="sidebar-user"/, 'the sidebar USER CHIP exists INSIDE the sidebar bottom (an /account link — the account page stays reachable on desktop)');
+assert.match(appShell, /aria-haspopup="dialog"/, 'the pill account control opens the Account sheet (dialog)');
+ok('7. primary navigation: Discover, Movies, TV Shows, Anime, [Live TV when available], Search (sidebar + topbar) + account option links + user chip (desktop) / pill entry (touch)');
 
 // ============================================================
 // 7b. ACCOUNT SHEET — the compact Phase 3 sheet contract
@@ -174,10 +175,21 @@ for (let i = 0; i < srcFiles.length; i += 1) {
   // /api/account/* endpoints (server API namespace), /settings/* subpaths
   // (canonical QR-login flow), and localStorage keys.
   const navRefs = srcFiles[i].match(/href="\/(profile|account)"|goto\(['"`]\/(profile|account)['"`]\)|redirect\([^)]*['"`]\/(profile|account)['"`]/g);
-  assert.equal(navRefs, null, `no navigation to legacy routes in source file #${i + 1}`);
+  // 2026-11 account-IA pass: the AppShell sidebar USER CHIP is the ONE
+  // intentional /account link (the task-audited destination — the /account
+  // route 308s to /settings) so the account page stays reachable from the
+  // desktop sidebar. In AppShell exactly that one href is allowed; every
+  // other file still allows ZERO /profile and /account navigation.
+  if (i === 0) {
+    assert.deepEqual(navRefs, ['href="/account"'], 'AppShell carries exactly ONE /account href (the sidebar user chip) and no legacy /profile navigation');
+  } else {
+    assert.equal(navRefs, null, `no navigation to legacy routes in source file #${i + 1}`);
+  }
 }
-assert.doesNotMatch(appShell, /href="\/(profile|account)"/, 'AppShell carries no legacy links');
-ok('8. zero internal navigation references to /profile or /account in app surfaces');
+assert.doesNotMatch(appShell, /href="\/profile"/, 'AppShell carries no legacy /profile links');
+assert.equal((appShell.match(/href="\/account"/g) ?? []).length, 1, 'AppShell carries exactly one /account link (the sidebar user chip)');
+assert.match(appShell, /<a class="sidebar-user" href="\/account"/, 'the /account link is the sidebar user chip (the audited account-IA destination)');
+ok('8. zero unintended navigation references to /profile or /account in app surfaces (the user chip is the one audited /account link)');
 
 // ============================================================
 // 9. SETTINGS ACTIONS — ?/profile, ?/email, ?/password intact

@@ -206,7 +206,7 @@ function sliceOf(source: string, start: string, end: string): string {
         // sticky-vs-fixed contract now holds on BOTH ranges by construction.
         assert.ok(!appShell.includes('.header-account'), 'the floating desktop chip is REMOVED from the shell (no .header-account class)');
         assert.ok(!appShell.includes('@media (min-width: 1025px) {'), 'no desktop floating-chrome media block remains');
-        assert.ok(appShell.includes('sidebar-account'), 'the desktop Account chip lives in the sidebar');
+        assert.ok(appShell.includes('sidebar-user'), 'the desktop user chip lives in the sidebar (2026-11 account-IA pass — it replaced the Account chip)');
         ok('3b. phone topbar: sticky like the tablet range, geometry verbatim, compensation removed, desktop chrome moved into the sidebar');
 }
 

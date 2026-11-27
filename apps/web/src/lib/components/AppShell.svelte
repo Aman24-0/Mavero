@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, type Snippet } from 'svelte';
-  import { Compass, Search, UserRound, Clapperboard, Film, PanelLeftClose, PanelLeft, Sparkles, Tv, Radio, Bookmark, CalendarClock, Settings } from 'lucide-svelte';
+  import { Compass, Search, UserRound, Clapperboard, Film, Sparkles, Tv, Radio, Bookmark, CalendarClock, Settings } from 'lucide-svelte';
   import AccountSheet from '$components/AccountSheet.svelte';
   import { haptic } from '$lib/client/haptics';
   // TV-UX pass (widget build only): the sidebar AUTO-EXPANDS when TV focus
@@ -11,7 +11,7 @@
   // never dispatched and the stored preference applies as before).
   import { IS_WGT_BUILD } from '$lib/shared/build-mode';
 
-  let { children, currentPath = '/', user = null, isAuthenticated = false, isAdmin = false, appConfig = null }: { children: Snippet; currentPath?: string; user?: { id: string; email?: string | null; displayName?: string | null } | null; isAuthenticated?: boolean; isAdmin?: boolean; appConfig?: { telegramUrl: string | null; discordUrl: string | null } | null } = $props();
+  let { children, currentPath = '/', user = null, isAuthenticated = false, isAdmin = false, appConfig = null }: { children: Snippet; currentPath?: string; user?: { id: string; email?: string | null; displayName?: string | null; avatarUrl?: string | null } | null; isAuthenticated?: boolean; isAdmin?: boolean; appConfig?: { telegramUrl: string | null; discordUrl: string | null } | null } = $props();
   let shell: HTMLElement;
 
   // R-2 — the Live TV availability state. Fetched ONCE per AppShell mount
@@ -105,16 +105,17 @@
   const isActive = (key: string) => currentPath === key || currentPath.startsWith(`${key}/`);
 
   // Phase 3 — the compact Account sheet, opened from the Account control:
-  // the bottom-pill Account entry (≤1024px) or the sidebar Account chip
-  // (≥1025px). Contains ONLY the identity block + My List + Settings per
-  // the plan; everything else lives on the /settings page.
+  // the bottom-pill Account entry (≤1024px). The former sidebar Account chip
+  // was replaced by the sidebar USER CHIP (an /account link) in the 2026-11
+  // account-IA pass — the sheet is now a touch-composition surface; the
+  // desktop account surface is the chip + the Upcoming / My List / Settings
+  // nav links.
   let accountSheetOpen = $state(false);
   const isAccountSurface = $derived(isActive('/settings'));
   // 2026-11 pass-4 fix (bug 9 — real web bug): the sheet anchors to the
   // control that opened it instead of parking at a detached top-right
-  // corner. Both triggers are bound; the VISIBLE one wins at open time
-  // (the hidden composition's element reports offsetParent null).
-  let sidebarAccountEl: HTMLButtonElement | undefined = $state();
+  // corner. The pill trigger is bound; when it is not visible (the hidden
+  // desktop composition reports offsetParent null) the sheet centres.
   let pillAccountEl: HTMLButtonElement | undefined = $state();
   let accountAnchorEl = $state<HTMLElement | null>(null);
 
@@ -122,12 +123,7 @@
     if (accountSheetOpen) return;
     haptic('light');
     try {
-      accountAnchorEl =
-        sidebarAccountEl && sidebarAccountEl.offsetParent
-          ? sidebarAccountEl
-          : pillAccountEl && pillAccountEl.offsetParent
-            ? pillAccountEl
-            : null;
+      accountAnchorEl = pillAccountEl && pillAccountEl.offsetParent ? pillAccountEl : null;
     } catch {
       accountAnchorEl = null;
     }
@@ -184,12 +180,31 @@
     }
   }
 
-  // TV-UX pass 6 (test pass 6, bug 9 — "SIDEBAR ACCOUNT LAYOUT"): the three
-  // account OPTIONS (Upcoming / My List / Settings) are now regular sidebar
-  // nav links below Search (not a separate expandable block). The guest/
-  // logged USER NAME renders as a footer chip in .sidebar-bottom. The
-  // inline-expand state + toggle from pass 5 are no longer needed.
+  // 2026-11 account-IA pass ("ACCOUNT OPTIONS INTO THE SIDEBAR"): the three
+  // account OPTIONS (Upcoming / My List / Settings) render on EVERY build as
+  // regular .sidebar-link entries below Search (the WGT-only wrapper is
+  // gone), and the sidebar bottom carries the social row + the tagline + a
+  // USER CHIP (avatar initials + name + secondary line, linking to
+  // /account). The former desktop Account chip + its AccountSheet trigger
+  // are REMOVED from the sidebar — the sheet stays reachable from the mobile
+  // pill below 1025px.
   const accountDisplayName = $derived(user?.displayName ?? (user?.email ? user.email.split('@')[0] : 'Guest'));
+  // Same initials model as AccountSheet's identity block — first letters of
+  // the first two words, else the first two characters.
+  const accountInitials = $derived((() => {
+    const name = accountDisplayName;
+    if (!name) return '·';
+    const parts = name.trim().split(/\s+/);
+    if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+    return name.slice(0, 2).toUpperCase();
+  })());
+  // The user chip's secondary line: "Guest" when signed out, the email
+  // otherwise (name fallback when the account carries no email).
+  const accountSecondary = $derived(!isAuthenticated ? 'Guest' : (user?.email ?? accountDisplayName));
+  // Social row inputs — the SAME appConfig URLs AccountSheet forwards (no
+  // new constants); the row renders nothing when both are null.
+  const telegramUrl = $derived(appConfig?.telegramUrl ?? null);
+  const discordUrl = $derived(appConfig?.discordUrl ?? null);
 
   // Update CSS variable for sidebar width
   $effect(() => {
@@ -210,18 +225,30 @@
 <div class="page-shell" class:sidebar-collapsed={sidebarCollapsed} bind:this={shell}>
   <!-- Desktop sidebar (fixed, 1025px+) -->
   <aside class="app-sidebar" aria-label="Primary navigation">
-    <a class="brand-lockup" href="/discover" aria-label="MAVERO home">
-      <span class="brand-symbol"><Clapperboard size={17} strokeWidth={2.1} /></span>
-      {#if !sidebarCollapsed}<span class="brand-word">MAVERO</span>{/if}
-    </a>
-    {#if !IS_WGT_BUILD}
-      <!-- TV-UX pass 5 (test pass 5, bug 5 — "REMOVE the manual expand/collapse
-           toggle button (the auto expand/collapse owns it now)"): the toggle
-           is hidden on the widget build — the focus manager's auto
-           expand/collapse contract owns the sidebar state there. Production web
-           keeps the manual toggle (the auto contract never fires there). -->
-      <button class="sidebar-toggle" type="button" onclick={toggleSidebar} aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}>
-        {#if sidebarCollapsed}<PanelLeft size={16} />{:else}<PanelLeftClose size={16} />{/if}
+    <!-- 2026-11 account-IA pass ("REPLACE THE COLLAPSE TOGGLE WITH THE BRAND"): the standalone
+         .sidebar-toggle button is GONE on every build. On the WEB build the brand
+         lockup IS the toggle — a <button> that flips the sidebar (collapsed →
+         expanded → collapsed, persisted through the existing toggleSidebar()
+         localStorage path) and navigates NOWHERE (Discover is the first nav
+         link). On the WGT/TV build the lockup stays a PLAIN non-interactive
+         element — the focus manager's auto-expand/collapse contract owns the
+         sidebar state there, so the brand neither toggles nor navigates. -->
+    {#if IS_WGT_BUILD}
+      <div class="brand-lockup">
+        <span class="brand-symbol"><Clapperboard size={17} strokeWidth={2.1} /></span>
+        {#if !sidebarCollapsed}<span class="brand-word">MAVERO</span>{/if}
+      </div>
+    {:else}
+      <button
+        type="button"
+        class="brand-lockup"
+        onclick={toggleSidebar}
+        aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        aria-expanded={!sidebarCollapsed}
+        title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+      >
+        <span class="brand-symbol"><Clapperboard size={17} strokeWidth={2.1} /></span>
+        {#if !sidebarCollapsed}<span class="brand-word">MAVERO</span>{/if}
       </button>
     {/if}
     <nav class="sidebar-nav">
@@ -247,71 +274,67 @@
         <span class="sidebar-icon"><Search size={19} strokeWidth={isActive('/search') ? 2.3 : 1.8} /></span>
         {#if !sidebarCollapsed}<span class="sidebar-label">Search</span>{/if}
       </a>
-      {#if IS_WGT_BUILD}
-        <!-- TV-UX pass 6 (test pass 6, bug 9 — "SIDEBAR ACCOUNT LAYOUT"):
-             the three account OPTIONS (Upcoming / My List / Settings)
-             render BELOW the Search item, styled like the other sidebar
-             nav buttons (not a separate block at the bottom). The guest/
-             logged USER NAME element sits at the BOTTOM of the sidebar
-             (footer area) — see .sidebar-bottom below. D-pad reachable via
-             the focus manager (sidebar region). Production web keeps the
-             bottom Account chip + AccountSheet (phone/tablet behavior
-             unchanged). -->
-        <a class:active={isActive('/upcoming')} class="sidebar-link" href="/upcoming" aria-current={isActive('/upcoming') ? 'page' : undefined} title={sidebarCollapsed ? 'Upcoming' : undefined}>
-          <span class="sidebar-icon"><CalendarClock size={19} strokeWidth={isActive('/upcoming') ? 2.3 : 1.8} /></span>
-          {#if !sidebarCollapsed}<span class="sidebar-label">Upcoming</span>{/if}
-        </a>
-        <a class:active={isActive('/my-list')} class="sidebar-link" href="/my-list" aria-current={isActive('/my-list') ? 'page' : undefined} title={sidebarCollapsed ? 'My List' : undefined}>
-          <span class="sidebar-icon"><Bookmark size={19} strokeWidth={isActive('/my-list') ? 2.3 : 1.8} /></span>
-          {#if !sidebarCollapsed}<span class="sidebar-label">My List</span>{/if}
-        </a>
-        <a class:active={isActive('/settings')} class="sidebar-link" href="/settings" aria-current={isActive('/settings') ? 'page' : undefined} title={sidebarCollapsed ? 'Settings' : undefined}>
-          <span class="sidebar-icon"><Settings size={19} strokeWidth={isActive('/settings') ? 2.3 : 1.8} /></span>
-          {#if !sidebarCollapsed}<span class="sidebar-label">Settings</span>{/if}
-        </a>
-      {/if}
+      <!-- 2026-11 account-IA pass ("ACCOUNT OPTIONS BECOME SIDEBAR LINKS"): the
+           three account OPTIONS (Upcoming / My List / Settings) render on
+           EVERY build directly BELOW Search as regular .sidebar-link items
+           (same icon size, active state, collapsed title) — the WGT-only
+           wrapper is gone. aria-current="page" stays on the active one. -->
+      <a class:active={isActive('/upcoming')} class="sidebar-link" href="/upcoming" aria-current={isActive('/upcoming') ? 'page' : undefined} title={sidebarCollapsed ? 'Upcoming' : undefined}>
+        <span class="sidebar-icon"><CalendarClock size={19} strokeWidth={isActive('/upcoming') ? 2.3 : 1.8} /></span>
+        {#if !sidebarCollapsed}<span class="sidebar-label">Upcoming</span>{/if}
+      </a>
+      <a class:active={isActive('/my-list')} class="sidebar-link" href="/my-list" aria-current={isActive('/my-list') ? 'page' : undefined} title={sidebarCollapsed ? 'My List' : undefined}>
+        <span class="sidebar-icon"><Bookmark size={19} strokeWidth={isActive('/my-list') ? 2.3 : 1.8} /></span>
+        {#if !sidebarCollapsed}<span class="sidebar-label">My List</span>{/if}
+      </a>
+      <a class:active={isActive('/settings')} class="sidebar-link" href="/settings" aria-current={isActive('/settings') ? 'page' : undefined} title={sidebarCollapsed ? 'Settings' : undefined}>
+        <span class="sidebar-icon"><Settings size={19} strokeWidth={isActive('/settings') ? 2.3 : 1.8} /></span>
+        {#if !sidebarCollapsed}<span class="sidebar-label">Settings</span>{/if}
+      </a>
     </nav>
+    <!-- 2026-11 account-IA pass ("SIDEBAR BOTTOM: SOCIAL ROW + USER CHIP"):
+         the former bottom area (desktop Account chip / WGT name chip + rule +
+         tagline) is replaced on EVERY build by, top to bottom:
+           a) SOCIAL ROW — Telegram + Discord icon squares from the appConfig
+              URLs AccountSheet already consumes (renders nothing when both
+              are null);
+           b) TAGLINE — expanded state only;
+           c) USER CHIP — the LAST element: a 36px avatar (initials, or the
+              user's avatarUrl when present) + the display name and a
+              secondary line, rendered as an /account link so the account page
+              stays reachable on desktop (the sheet's desktop chip is gone —
+              the pill keeps it below 1025px). -->
     <div class="sidebar-bottom">
-      {#if !IS_WGT_BUILD}
-        <!-- 2026-11 desktop-UX fix: the Account chip lives in the desktop
-             sidebar (it was MISSING entirely on desktop before — the mobile
-             pill's Account entry had no desktop counterpart). Opens the SAME
-             compact AccountSheet. Sits above the bottom rule so the sidebar
-             reads: navigation → search → account → tagline.
-             TV-UX pass 5 (test pass 5, bug 9): on the WGT build this chip is
-             REMOVED — the inline Account section above owns the Account
-             surface on TV.
-             TV-UX pass 6 (test pass 6, bug 9): the WGT build moves the
-             USER NAME to the footer (below) — the three account OPTIONS
-             are now nav links above (under Search). -->
-        <button
-          type="button"
-          bind:this={sidebarAccountEl}
-          class:active={isAccountSurface}
-          class="sidebar-account"
-          aria-haspopup="dialog"
-          aria-expanded={accountSheetOpen}
-          aria-label="Account"
-          onclick={openAccountSheet}
-          title={sidebarCollapsed ? 'Account' : undefined}
-        >
-          <span class="sidebar-icon"><UserRound size={19} strokeWidth={isAccountSurface ? 2.3 : 1.8} /></span>
-          {#if !sidebarCollapsed}<span class="sidebar-label">Account</span>{/if}
-        </button>
-      {:else}
-        <!-- TV-UX pass 6 (test pass 6, bug 9 — "the guest/logged USER NAME
-             element must sit at the BOTTOM of the sidebar (footer area)"):
-             on the WGT build the user name renders as a non-interactive
-             footer chip (the account OPTIONS are nav links above). The chip
-             shows the avatar icon + the display name (or "Guest"); when
-             collapsed it shows only the icon, centered on the panel's axis. -->
-        <div class="sidebar-account-name" title={accountDisplayName} aria-label={`Signed in as ${accountDisplayName}`}>
-          <span class="sidebar-icon"><UserRound size={19} strokeWidth={1.8} /></span>
-          {#if !sidebarCollapsed}<span class="sidebar-label">{accountDisplayName}</span>{/if}
+      {#if telegramUrl || discordUrl}
+        <div class="sidebar-social">
+          {#if telegramUrl}
+            <a class="social-btn" href={telegramUrl} target="_blank" rel="noreferrer" aria-label="Join us on Telegram" title="Join us on Telegram">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M9.78 18.65l.28-4.23 7.68-6.92c.34-.31-.07-.46-.52-.19L7.74 13.3 3.64 12c-.88-.25-.89-.86.2-1.3l15.97-6.16c.73-.33 1.43.18 1.15 1.3l-2.72 12.81c-.19.91-.74 1.13-1.5.71L12.6 16.3l-1.99 1.93c-.23.23-.42.42-.83.42z"/></svg>
+            </a>
+          {/if}
+          {#if discordUrl}
+            <a class="social-btn" href={discordUrl} target="_blank" rel="noreferrer" aria-label="Join our Discord" title="Join our Discord">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M20.3 4.4A19.8 19.8 0 0 0 15.4 3c-.2.4-.4.9-.6 1.3a18.3 18.3 0 0 0-5.5 0C9.1 3.9 8.9 3.4 8.7 3a19.7 19.7 0 0 0-4.9 1.5C.6 9.1-.2 13.7.2 18.3A19.9 19.9 0 0 0 6.3 21c.4-.6.8-1.2 1.1-1.9-.6-.2-1.2-.5-1.7-.9l.4-.3a14.2 14.2 0 0 0 12.2 0l.4.3c-.5.4-1.1.7-1.7.9.3.7.7 1.3 1.1 1.9a19.8 19.8 0 0 0 6.1-2.7c.5-5.3-.8-9.8-2.5-13.9zM8.5 15.3c-1.2 0-2.2-1.1-2.2-2.4s1-2.4 2.2-2.4 2.2 1.1 2.2 2.4-1 2.4-2.2 2.4zm7 0c-1.2 0-2.2-1.1-2.2-2.4s1-2.4 2.2-2.4 2.2 1.1 2.2 2.4-1 2.4-2.2 2.4z"/></svg>
+            </a>
+          {/if}
         </div>
       {/if}
-      <div class="sidebar-rule"></div>
       {#if !sidebarCollapsed}<span class="sidebar-caption">Your screen. Your story.</span>{/if}
+      <a class="sidebar-user" href="/account" aria-label={`Account: ${accountDisplayName}`} title={accountDisplayName}>
+        <span class="user-avatar">
+          {#if user?.avatarUrl}
+            <img class="user-avatar-img" src={user.avatarUrl} alt="" loading="lazy" />
+          {:else}
+            {accountInitials}
+          {/if}
+        </span>
+        {#if !sidebarCollapsed}
+          <span class="user-meta">
+            <span class="user-name">{accountDisplayName}</span>
+            <span class="user-sub">{accountSecondary}</span>
+          </span>
+        {/if}
+      </a>
     </div>
   </aside>
 
@@ -340,7 +363,7 @@
   <!-- Compact Account sheet (Phase 3 + LT-1): identity + Upcoming + My
        List + Settings. Anchored above the Account control that opened it
        (2026-11 pass-4 fix — bug 9). -->
-  <AccountSheet open={accountSheetOpen} onClose={closeAccountSheet} {user} {isAuthenticated} telegramUrl={appConfig?.telegramUrl ?? null} discordUrl={appConfig?.discordUrl ?? null} anchorEl={accountAnchorEl} />
+  <AccountSheet open={accountSheetOpen} onClose={closeAccountSheet} {user} {isAuthenticated} telegramUrl={telegramUrl} discordUrl={discordUrl} anchorEl={accountAnchorEl} />
 
   <!-- Mobile + tablet bottom nav (touch composition, ≤1024px).
        MAV-21 Workstream D — rendered UNCONDITIONALLY on every shell
@@ -405,17 +428,21 @@
     font-size: .92rem; font-weight: 900; letter-spacing: .04em;
     color: var(--color-text);
   }
-  .sidebar-toggle {
-    display: grid; place-items: center;
-    width: 28px; height: 28px; margin: 8px 0 0 6px;
-    border: 1px solid transparent; border-radius: 6px;
-    color: var(--color-text-muted); background: transparent; cursor: pointer;
+  /* 2026-11 account-IA pass — the WEB brand lockup IS the collapse toggle
+     (the standalone .sidebar-toggle is deleted on every build; WGT keeps a
+     plain non-interactive lockup above). Button reset + the SAME hover
+     surface / focus ring the old toggle used (transparent border keeps the
+     box metrics stable so the hover paint never shifts the layout). */
+  button.brand-lockup {
+    border: 1px solid transparent; border-radius: 10px;
+    background: transparent; cursor: pointer; font: inherit; text-align: left;
     transition: color var(--motion-fast), background var(--motion-fast), border-color var(--motion-fast);
   }
-  .sidebar-toggle:hover {
+  button.brand-lockup:hover {
     color: var(--color-primary); background: var(--color-primary-soft);
     border-color: var(--color-border);
   }
+  button.brand-lockup:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
   .sidebar-nav { display: grid; gap: 2px; margin-top: 22px; }
   /* Desktop hierarchy: a quiet section label above the six destinations.
      Hidden when collapsed (icon-only rail keeps no text chrome). */
@@ -443,32 +470,46 @@
   }
   .sidebar-link.active :global(svg) { color: var(--color-primary); }
   .sidebar-link:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
-  /* 2026-11 desktop-UX fix: the sidebar Account chip mirrors the link
-     styling exactly (same metrics, hover lift, active glow, focus ring)
-     so the sidebar reads as ONE balanced composition. It is a <button>
-     (opens the AccountSheet) instead of an <a>. */
-  .sidebar-account {
-    display: flex; align-items: center; gap: 13px; min-height: 44px; padding: 0 12px;
-    border: 1px solid transparent; border-radius: 10px;
-    color: var(--color-text-muted); font-size: .82rem; font-weight: 600;
-    background: transparent; cursor: pointer; text-align: left; width: 100%;
-    font-family: inherit;
-    transition: color var(--motion-fast), background var(--motion-fast), border-color var(--motion-fast), transform var(--motion-fast);
+  /* 2026-11 account-IA pass — the sidebar bottom. The desktop Account chip
+     is REMOVED (the sheet stays a touch-composition surface); the bottom
+     now reads: social row → tagline → USER CHIP (an /account link). */
+  .sidebar-social { display: flex; align-items: center; gap: 8px; }
+  .social-btn {
+    display: grid; place-items: center;
+    width: 32px; height: 32px; border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, .12);
+    color: var(--color-text-muted); background: transparent;
+    transition: color var(--motion-fast), background var(--motion-fast), border-color var(--motion-fast);
   }
-  .sidebar-account:hover {
+  .social-btn:hover { color: var(--color-text); background: var(--color-primary-soft); border-color: var(--color-border-strong); }
+  .social-btn:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+  .sidebar-user {
+    display: flex; align-items: center; gap: 11px; min-height: 44px; padding: 3px 8px;
+    border: 1px solid transparent; border-radius: 12px;
+    color: var(--color-text); text-decoration: none;
+    transition: background var(--motion-fast), border-color var(--motion-fast);
+  }
+  .sidebar-user:hover { background: var(--color-primary-soft); border-color: var(--color-border); }
+  .sidebar-user:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+  .user-avatar {
+    display: grid; place-items: center; flex-shrink: 0;
+    width: 36px; height: 36px; border-radius: 50%;
     color: var(--color-primary); background: var(--color-primary-soft);
-    transform: translateX(2px);
+    border: 1px solid var(--color-primary-border);
+    font-size: .72rem; font-weight: 800; letter-spacing: .02em;
+    overflow: hidden;
   }
-  .sidebar-account.active {
-    color: var(--color-primary); font-weight: 700;
-    border-color: var(--color-primary-border);
-    background: var(--color-primary-soft);
-    box-shadow: var(--glow-primary);
+  .user-avatar-img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .user-meta { display: grid; gap: 1px; min-width: 0; }
+  .user-name {
+    font-size: .78rem; font-weight: 700; color: var(--color-text);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  .sidebar-account.active :global(svg) { color: var(--color-primary); }
-  .sidebar-account:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+  .user-sub {
+    font-size: .62rem; font-weight: 500; color: var(--color-text-muted);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
   .sidebar-bottom { display: grid; gap: 14px; margin-top: auto; }
-  .sidebar-rule { height: 1px; background: var(--color-border); }
   .sidebar-caption {
     padding: 0 12px; max-width: 150px;
     color: var(--color-text-deep); font-size: .68rem; font-weight: 500; line-height: 1.4;
@@ -481,30 +522,18 @@
      so the collapsed icons never centered. The page-shell now carries an
      explicit `.sidebar-collapsed` class (bound to the sidebarCollapsed
      state) — engine-proof, identical behavior on every browser. Every
-     icon (search, nav, account, footer) centers on the same vertical axis. */
+     icon (search, nav, account options, footer) centers on the same
+     vertical axis; the tagline is markup-hidden; the social buttons and
+     the avatar circle center on the rail axis while the user chip keeps
+     its 44px hit area. */
   .sidebar-collapsed .sidebar-link {
     justify-content: center; padding: 0;
   }
-  .sidebar-collapsed .sidebar-account {
-    justify-content: center; padding: 0;
+  .sidebar-collapsed .sidebar-social {
+    justify-content: center;
   }
-  .sidebar-collapsed .sidebar-account-name {
-    justify-content: center; padding: 0;
-  }
-
-  /* TV-UX pass 6 (test pass 6, bug 9): the USER NAME footer chip. The three
-     account OPTIONS are now regular .sidebar-link entries (Upcoming / My
-     List / Settings under Search) — no separate styling needed. The user
-     name renders as a non-interactive footer chip styled like a sidebar
-     link (icon + label) but without hover/active states (it's informational,
-     not a navigation target). */
-  .sidebar-account-name {
-    display: flex; align-items: center; gap: 13px; min-height: 44px; padding: 0 12px;
-    color: var(--color-text-muted); font-size: .82rem; font-weight: 600;
-    opacity: .85;
-  }
-  .sidebar-account-name .sidebar-label {
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  .sidebar-collapsed .sidebar-user {
+    justify-content: center; padding: 3px 0;
   }
 
   /* ---- Mobile topbar (≤1024px) ---- */
@@ -646,10 +675,11 @@
 
   /* 2026-11 desktop-UX fix: the former fixed top-right glass chip (a
      Search link mis-named as the account control) is REMOVED; desktop
-     Search and Account live inside the sidebar now. No desktop floating
-     chrome remains. */
+     Search lives inside the sidebar, and the account surfaces are the
+     Upcoming / My List / Settings links + the user chip (2026-11
+     account-IA pass). No desktop floating chrome remains. */
 
   @media (prefers-reduced-motion: reduce) {
-    .sidebar-link, .sidebar-account, .topbar-account, .mobile-nav a { transition: none; }
+    .sidebar-link, .sidebar-user, .social-btn, button.brand-lockup, .topbar-account, .mobile-nav a { transition: none; }
   }
 </style>

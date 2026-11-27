@@ -12,17 +12,18 @@ import { readFileSync } from 'node:fs';
 //                navigation definitions anywhere.
 //   ORDER      — Discover, Movies, TV Shows, Anime, Live TV, Search
 //                (exact). Live TV takes slot #5 (LiveGT V1, LT-1);
-//                Upcoming left the primary nav and lives in the Account
-//                sheet. Movies / TV Shows / Anime are independent
+//                Upcoming left the primary nav and lives in the account
+//                options (sidebar links below Search + the Account sheet).
+//                Movies / TV Shows / Anime are independent
 //                first-class destinations (formerly /discover sub-pages).
 //   ICONS      — Compass, Film, Tv, Sparkles, Radio, Search
 //                (lucide-svelte only).
 //   REMOVALS   — My List and Account are NOT primary destinations anymore.
-//                My List is reachable from the Account page today and from
-//                the Account sheet in Phase 3. Account is reachable from
-//                the HEADER (Phase 2): the topbar control (≤1024px) and
-//                the fixed top-right header control (≥1025px). The
-//                sidebar carries ONLY the six content destinations.
+//                The account OPTIONS (Upcoming / My List / Settings) render
+//                as sidebar nav links below Search on EVERY build (2026-11
+//                account-IA pass), and the sidebar bottom carries the USER
+//                CHIP (an /account link). The AccountSheet stays reachable
+//                from the mobile pill's Account entry (≤1024px).
 //   ROUTES     — /discover/movies|series|anime are permanent 308
 //                compatibility redirects to /movies, /tv-shows, /anime
 //                (query strings preserved). The canonical page components
@@ -32,10 +33,11 @@ import { readFileSync } from 'node:fs';
 //                haptics preserved. Phase 2: the pill serves the ENTIRE
 //                touch range (phones AND tablets, ≤1024px) — the former
 //                641-1024px window with no navigation is closed.
-//   DESKTOP    — vertical sidebar (Browse hierarchy label, collapse
-//                behavior) — a composition intentionally DIFFERENT from
-//                the mobile pill. Account lives in the header right
-//                side, not the sidebar.
+//   DESKTOP    — vertical sidebar (Browse hierarchy label; the BRAND LOCKUP
+//                is the collapse toggle — 2026-11 account-IA pass) — a
+//                composition intentionally DIFFERENT from the mobile
+//                pill. The account surfaces are the nav links + the
+//                user chip at the bottom, not the header.
 //   ACCOUNT    — /settings is the canonical account-management route
 //                (Phase 3 flipped the old /account direction); /account and
 //                /profile are permanent redirects.
@@ -115,39 +117,61 @@ assert.match(appShell, /import \{[^}]*Film[^}]*\} from 'lucide-svelte'/, 'Film i
 assert.match(appShell, /import \{[^}]*\bTv\b[^}]*\} from 'lucide-svelte'/, 'Tv imported from lucide-svelte');
 assert.match(appShell, /import \{[^}]*Sparkles[^}]*\} from 'lucide-svelte'/, 'Sparkles imported from lucide-svelte');
 assert.match(appShell, /import \{[^}]*\bRadio\b[^}]*\} from 'lucide-svelte'/, 'Radio imported from lucide-svelte (Live TV icon)');
-// TV-UX pass 5 (test pass 5, bug 9): Bookmark + CalendarClock + Settings
-// return to AppShell — they are the icons for the inline Account section's
-// sub-links (My List / Upcoming / Settings) that render INSIDE the sidebar
-// below Search on the WGT build. They are NOT primary nav entries (the
-// primaryLinks array is still just Discover/Movies/TV Shows/Anime/Live TV).
+// TV-UX pass 5 (test pass 5, bug 9) + the 2026-11 account-IA pass: Bookmark
+// + CalendarClock + Settings return to AppShell — they are the icons for
+// the account OPTION sub-links (Upcoming / My List / Settings) that render
+// INSIDE the sidebar below Search on EVERY build. They are NOT primary nav
+// entries (the primaryLinks array is still just
+// Discover/Movies/TV Shows/Anime/Live TV).
 assert.doesNotMatch(linksBlock![1], /Bookmark/, 'Bookmark is not a primaryLinks icon (My List is a sub-link of the inline Account section, not a primary nav entry)');
 assert.doesNotMatch(linksBlock![1], /CalendarClock/, 'CalendarClock is not a primaryLinks icon (Upcoming is a sub-link of the inline Account section)');
 assert.doesNotMatch(linksBlock![1], /Settings/, 'Settings is not a primaryLinks icon (Settings is a sub-link of the inline Account section)');
 ok('3. lucide icons wired: Discover=Compass, Movies=Film, TV Shows=Tv, Anime=Sparkles, Live TV=Radio, Search=Search');
 
 // ============================================================
-// 4. REMOVALS — My List / Account are not primary nav destinations
+// 4. REMOVALS — My List / Account are not primary nav destinations;
+//    the account OPTIONS are sidebar nav links + the user chip
+//    (2026-11 account-IA pass)
 // ============================================================
 assert.doesNotMatch(appShell, /label: 'My List'/, 'no My List primary nav entry');
 assert.doesNotMatch(appShell, /label: 'Account'/, 'no Account primary nav entry');
 assert.doesNotMatch(linksBlock![1], /\/my-list/, 'primaryLinks carries no /my-list href');
 assert.doesNotMatch(linksBlock![1], /\/account/, 'primaryLinks carries no /account href');
-// Phase 2 — Account lives OUTSIDE the primary nav on every breakpoint
-// (2026-11 desktop-UX fix: the desktop Account chip moved INTO the sidebar
-// bottom — the former fixed top-right header chip is removed):
+// 2026-11 account-IA pass: the desktop Account CHIP is REMOVED — the
+// account OPTIONS (Upcoming / My List / Settings) render as regular
+// .sidebar-link entries below Search on EVERY build, the standalone
+// .sidebar-toggle is deleted (the brand lockup owns the collapse on web),
+// and the sidebar bottom carries the USER CHIP (an /account link):
 assert.match(appShell, /class="topbar-account"/, 'mobile/tablet topbar search control exists (≤1024px)');
-assert.match(appShell, /class="sidebar-account"/, 'desktop sidebar Account chip exists (≥1025px, inside the sidebar container)');
+assert.doesNotMatch(appShell, /class="sidebar-account"/, 'the desktop Account chip is REMOVED from the sidebar (the user chip replaces it)');
+assert.doesNotMatch(appShell, /class="sidebar-toggle"/, 'no standalone sidebar-toggle button on any build (the brand lockup owns the collapse on web)');
 assert.doesNotMatch(appShell, /class="header-account"/, 'the floating top-right header chip is REMOVED (Search moved into the sidebar)');
 assert.match(appShell, /class="account-sheet"|AccountSheet/, 'the compact Account sheet is mounted in the shell');
-assert.match(appShell, /aria-label="Account"/, 'the account control is announced to assistive tech');
-// The sidebar Account chip opens the SHEET — it is not an /account link
-// (that route is a 308 redirect to /settings).
-const sidebarBottom = appShell.match(/<div class="sidebar-bottom">([\s\S]*?)<\/div>/);
-assert.ok(sidebarBottom, 'sidebar-bottom block captured');
-assert.doesNotMatch(sidebarBottom![1], /\/account/, 'the sidebar bottom block carries no /account link (Account opens the sheet)');
-assert.match(sidebarBottom![1], /sidebar-account/, 'the sidebar bottom block carries the Account chip');
+assert.match(appShell, /aria-label="Account"/, 'the pill account control is announced to assistive tech');
+// The account OPTIONS render as NAV LINKS directly below Search on every
+// build — one block, no WGT-only wrapper, no duplicated set:
+const sidebarNav = appShell.match(/<nav class="sidebar-nav">([\s\S]*?)<\/nav>/);
+assert.ok(sidebarNav, 'sidebar-nav block captured');
+assert.doesNotMatch(sidebarNav![1], /\{#if IS_WGT_BUILD\}/, 'the account options render on EVERY build (the WGT-only wrapper is removed)');
+assert.match(sidebarNav![1], /href="\/search"[\s\S]{0,1000}href="\/upcoming"/, 'Upcoming renders as a nav link directly below Search');
+assert.match(sidebarNav![1], /href="\/upcoming"[\s\S]{0,600}href="\/my-list"[\s\S]{0,600}href="\/settings"/, 'account options order inside the nav: Upcoming → My List → Settings');
+assert.match(sidebarNav![1], /aria-current=\{isActive\('\/settings'\) \? 'page' : undefined\}/, 'the account option links keep the aria-current active state');
+// The sidebar BOTTOM: social row → tagline (expanded only) → USER CHIP
+// (the LAST element — an /account link so the account page stays
+// reachable on desktop):
+const sidebarBottom = appShell.match(/<div class="sidebar-bottom">([\s\S]*?)<\/div>\s*<\/aside>/);
+assert.ok(sidebarBottom, 'sidebar-bottom block captured (up to </aside>)');
+assert.match(sidebarBottom![1], /\{#if telegramUrl \|\| discordUrl\}/, 'the social row renders nothing when both URLs are null');
+assert.match(sidebarBottom![1], /class="social-btn"/, 'the sidebar bottom carries the social row icon buttons');
+assert.match(sidebarBottom![1], /aria-label="Join us on Telegram"/, 'the Telegram button is announced');
+assert.match(sidebarBottom![1], /aria-label="Join our Discord"/, 'the Discord button is announced');
+assert.match(sidebarBottom![1], /target="_blank" rel="noreferrer"/, 'the social buttons open in a new tab safely');
+assert.match(sidebarBottom![1], /\{#if !sidebarCollapsed\}<span class="sidebar-caption">Your screen\. Your story\.<\/span>\{\/if\}/, 'the tagline stays expanded-state only');
+assert.match(sidebarBottom![1], /href="\/account"/, 'the user chip links to /account (the account page stays reachable)');
+assert.match(sidebarBottom![1], /aria-label=\{`Account: \$\{accountDisplayName\}`\}/, 'the user chip announces the account name');
+assert.doesNotMatch(sidebarBottom![1], /sidebar-account/, 'the desktop Account chip is gone from the bottom (the user chip replaces it)');
 assert.match(appShell, /sidebar-section-label/, 'the desktop sidebar has a Browse hierarchy label (desktop-appropriate structure)');
-ok('4. My List + Account removed from primary navigation; Account is a sidebar chip on desktop + pill entry on touch');
+ok('4. My List + Account removed from primary navigation; account options are sidebar links + the user chip on desktop; the pill keeps the sheet');
 
 // ============================================================
 // 5. ROUTE ARCHITECTURE — legacy paths are 308 redirects (Phase 1)
@@ -195,25 +219,37 @@ ok('7. mobile + tablet pill: 6 columns across the ≤1024px touch range, nowrap 
 
 // ============================================================
 // 8. DESKTOP — vertical sidebar composition (intentionally different
-//    from the mobile pill) + Search & Account INSIDE the sidebar
+//    from the mobile pill) + Search & the account surfaces INSIDE
+//    the sidebar
 // ============================================================
 assert.match(appShell, /aria-label="Primary navigation"/, 'desktop rail landmark preserved');
 assert.match(appShell, /class="brand-lockup"/, 'brand lockup preserved');
 assert.match(appShell, /class="sidebar-nav"/, 'sidebar nav container preserved');
 assert.match(appShell, /class="sidebar-caption"/, 'sidebar caption preserved');
 assert.match(appShell, /class="sidebar-bottom"/, 'sidebar bottom container preserved');
-// 2026-11 desktop-UX fix: the floating top-right chip is GONE — Search and
-// Account live INSIDE the desktop sidebar (standard desktop IA). The
-// sidebar container is hidden ≤1024px, so the additions can never touch the
-// mobile/tablet composition (the desktop-only media contract).
+// 2026-11 desktop-UX fix: the floating top-right chip is GONE — Search
+// lives INSIDE the desktop sidebar and the account surfaces are the nav
+// links + the user chip. The sidebar container is hidden ≤1024px, so the
+// additions can never touch the mobile/tablet composition (the
+// desktop-only media contract).
 assert.doesNotMatch(appShell, /class="header-account"/, 'no floating top-right chip (removed from the desktop composition)');
 assert.match(appShell, /href="\/search"[\s\S]{0,400}sidebar-label">Search<\/span>/, 'Search is a sidebar link inside the nav (desktop)');
-assert.match(appShell, /\.sidebar-account \{/, 'the Account chip mirrors the sidebar-link styling');
+assert.match(appShell, /\.sidebar-user \{/, 'the user chip mirrors the sidebar-link styling');
 assert.match(appShell, /min-height: 44px/, 'sidebar links keep the 44px touch/keyboard target');
 assert.match(appShell, /\.sidebar-link:focus-visible/, 'sidebar links expose focus-visible outlines');
-assert.match(appShell, /\.sidebar-account:focus-visible/, 'the sidebar Account chip exposes focus-visible outlines');
-assert.match(appShell, /prefers-reduced-motion: reduce[\s\S]*?\.sidebar-account/, 'the sidebar Account chip honors reduced motion');
-ok('8. desktop: vertical sidebar (Browse label, collapse, 44px targets) with Search + Account INSIDE the sidebar — no floating chrome');
+assert.match(appShell, /\.sidebar-user:focus-visible/, 'the sidebar user chip exposes focus-visible outlines');
+assert.match(appShell, /\.social-btn:focus-visible/, 'the social buttons expose focus-visible outlines');
+assert.match(appShell, /prefers-reduced-motion: reduce[\s\S]*?\.sidebar-user/, 'the sidebar user chip honors reduced motion');
+// 2026-11 account-IA pass — the BRAND LOCKUP is the collapse toggle on the
+// web build (the standalone .sidebar-toggle button is deleted on every
+// build; WGT keeps a plain non-interactive lockup — the TV focus manager's
+// auto-expand contract owns the state there):
+assert.match(appShell, /<button\s+type="button"\s+class="brand-lockup"\s+onclick=\{toggleSidebar\}/, 'the brand lockup is a button that toggles the sidebar (web)');
+assert.match(appShell, /aria-label=\{sidebarCollapsed \? 'Expand sidebar' : 'Collapse sidebar'\}/, 'the brand toggle announces its state');
+assert.match(appShell, /aria-expanded=\{!sidebarCollapsed\}/, 'the brand toggle exposes aria-expanded');
+assert.doesNotMatch(appShell, /brand-lockup" href="\/discover"/, 'the brand lockup no longer navigates (Discover is the first nav link)');
+assert.match(appShell, /\{#if IS_WGT_BUILD\}\s*<div class="brand-lockup">/, 'on the WGT build the brand stays a plain non-interactive lockup');
+ok('8. desktop: vertical sidebar (Browse label, brand-lockup collapse, 44px targets) with Search + the account options + the user chip INSIDE the sidebar — no floating chrome');
 
 // ============================================================
 // 9. SETTINGS ROUTE — the canonical account-management experience
