@@ -89,20 +89,35 @@ console.log('\n3 — empty-orb is retired (single coherent loading presentation)
   ok(/<div class="empty-viewport" aria-hidden="true"><\/div>/.test(viewport), '3e. the empty-viewport div is now empty (no orb child)');
 }
 
-console.log('\n4 — spinner redesigned: clean Material/iOS-style ring with Mavero accent');
+console.log('\n4 — spinner redesigned: compact 22px WHITE ring (round 54 G3)');
 {
   const loadingRingRule = shell.slice(shell.indexOf('.loading-ring {'));
   // Border-style ring (not conic-gradient).
-  ok(/border:\s*2\.5px solid rgba\(255, 255, 255, 0\.12\)/.test(loadingRingRule), '4a. the spinner uses a 2.5px solid border (clean Material/iOS style)');
+  ok(/border:\s*2px solid rgba\(255, 255, 255, 0\.12\)/.test(loadingRingRule), '4a. the spinner uses a 2px solid border (compact Material/iOS style, round 54)');
   ok(!/conic-gradient/.test(loadingRingRule), '4b. the previous conic-gradient ring is GONE (was nearly invisible: --ink-soft on dark)');
-  // Mavero accent on the leading edge.
-  ok(/border-top-color:\s*var\(--accent/.test(loadingRingRule), '4c. the spinner leading edge uses the Mavero accent color directly (high contrast)');
-  // Sensible dimensions (not oversized).
-  ok(/width:\s*36px;\s*height:\s*36px;/.test(loadingRingRule), '4d. the spinner has sensible dimensions (36px — not the previous 72px empty-orb)');
-  // The spin animation is reused.
-  ok(/animation:\s*spin\b/.test(loadingRingRule), '4e. the spinner reuses the existing spin animation');
+  // WHITE leading edge (round 54 G3 — the spinner is white, not accent).
+  ok(/border-top-color:\s*#fff/.test(loadingRingRule), '4c. the spinner leading edge is WHITE (round 54 G3 — the card\'s glassy white-on-black language)');
+  // Sensible compact dimensions.
+  ok(/width:\s*22px;\s*height:\s*22px;/.test(loadingRingRule), '4d. the spinner is a compact 22px ring (round 54 G3)');
+  // The spin animation is reused, 900ms linear.
+  ok(/animation:\s*spin 0\.9s linear infinite;/.test(loadingRingRule), '4e. the spinner runs the existing spin animation at 900ms linear');
   // The loading-ring no longer has the inner `<span>` "hole" (the markup change).
   ok(!/<span class="loading-ring"[\s\S]*?<span><\/span><\/span>/.test(shell), '4f. the loading-ring markup no longer has the inner span (the conic-gradient "hole" is no longer needed)');
+}
+
+console.log('\n4b — round 54 (G3): the compact GLASS card surface');
+{
+  const loadingRule = shell.slice(shell.indexOf('.loading-card { position: absolute'));
+  ok(/border-radius: 16px;/.test(loadingRule), '4g. the card radius is 16px');
+  ok(/background: rgba\(18, 18, 20, 0\.86\);/.test(loadingRule), '4h. the card background is rgba(18,18,20,0.86) (the glass surface)');
+  ok(/border: 1px solid rgba\(255, 255, 255, 0\.12\);/.test(loadingRule), '4i. the card carries the 1px rgba(255,255,255,0.12) hairline border');
+  ok(/backdrop-filter: blur\(18px\);/.test(loadingRule), '4j. the card carries its single 18px backdrop blur');
+  ok(/padding: 18px 22px;/.test(loadingRule), '4k. the card padding is 18px 22px');
+  ok(/box-shadow: 0 16px 48px rgba\(0, 0, 0, 0\.45\), 0 2px 8px rgba\(0, 0, 0, 0\.3\);/.test(loadingRule), '4l. a soft layered shadow — NO full-screen dark overlay, just the card');
+  ok(/\.loading-copy strong \{ color: var\(--ink\); font-size: 14\.5px; font-weight: 600; \}/.test(shell), '4m. the title line is 14.5px/600');
+  ok(/\.loading-copy small \{ color: var\(--pl-ink-3[^;]*; font-family: 'Inter'[^;]*; font-size: 12\.5px; \}/.test(shell), '4n. the status line is 12.5px tertiary ink');
+  // The existing status strings are untouched.
+  ok(/Switching source…/.test(shell) && /Loading player…/.test(shell) && /Starting your stream…/.test(shell), '4o. the existing status strings are untouched');
 }
 
 console.log('\n5 — loading message stays concise and visually secondary');

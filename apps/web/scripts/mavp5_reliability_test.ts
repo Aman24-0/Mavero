@@ -312,12 +312,15 @@ ok(controlsPreviewMarkerStyle(null, 'back', 'portrait').includes('left:')
 ok(BACK_CONTROL_DEFAULT_SIZE_PX === 37 && LANDSCAPE_CONTROL_DEFAULT_SIZE_PX === 37,
   'RC-4 (superseded by MAVP-6): the Back/Landscape default sizes are 37px (user-tuned)');
 // The episode sheet opens from the LEFT at every viewport.
-ok(/\.episode-sheet\s*\{[^}]*top:\s*0;\s*bottom:\s*0;\s*left:\s*0;/.test(shellCode),
-  'RC-4: the episode sheet is a full-height LEFT drawer');
+// Round 54 (G1) supersession: the drawer became the floating glass sidebar
+// panel (12px safe-area insets, radius 20) — still a LEFT drawer at every
+// viewport, now inset from the edges instead of flush.
+ok(/\.episode-sheet\s*\{[^}]*top:\s*max\(12px, env\(safe-area-inset-top\)\);\s*bottom:\s*max\(12px, env\(safe-area-inset-bottom\)\);\s*left:\s*max\(12px, env\(safe-area-inset-left\)\);/.test(shellCode),
+  'RC-4: the episode sheet is a LEFT drawer at every viewport (round 54 G1: the floating safe-area-inset glass panel)');
 ok(shellCode.includes('@keyframes sheet-left { from { transform: translateX(-100%); } to { transform: translateX(0); } }'),
   'RC-4: the left drawer has a consistent slide-in animation');
-ok(/\.episode-sheet\s*\{[^}]*width:\s*min\(360px,\s*88vw\);/.test(shellCode),
-  'RC-4: the drawer width is bounded for narrow screens');
+ok(/\.episode-sheet\s*\{[^}]*width:\s*min\(360px,\s*calc\(100vw - 24px\)\);/.test(shellCode),
+  'RC-4: the drawer width is bounded for narrow screens (round 54 G1: viewport minus the two 12px insets)');
 ok(/\.source-sheet\s*\{[^}]*animation:\s*sheet-up/.test(shellCode),
   'RC-4: the source sheet\u2019s existing responsive behavior is untouched');
 // Keyboard/touch/a11y contracts preserved.

@@ -219,7 +219,7 @@ assert.doesNotMatch(shell, /landscape-controls-toggle/, 'Test 19: no landscape-c
 // viewport (its own documented contract), so the media query anchors the
 // source sheet alone.
 assert.match(shell, /@media \(min-width: 769px\) \{[\s\S]*?\.source-sheet \{ top: 0; right: 0; bottom: 0; left: auto;/, 'Test 21: source drawer right-anchored on wide viewports (MAVP-5: episode sheet moved to the left drawer)');
-assert.match(shell, /\.episode-sheet \{ position: absolute; z-index: 21; top: 0; bottom: 0; left: 0;/, 'Test 21-MAVP5: the episode sheet is a full-height LEFT drawer at every viewport');
+assert.match(shell, /\.episode-sheet \{ position: absolute; z-index: 21; top: max\(12px, env\(safe-area-inset-top\)\); bottom: max\(12px, env\(safe-area-inset-bottom\)\); left: max\(12px, env\(safe-area-inset-left\)\);/, 'Test 21-MAVP5+G1: the episode sheet stays a LEFT drawer at every viewport (round 54 G1: the floating 12px safe-area-inset glass panel)');
 
 // Test 22: Source drawer uses translateX.
 assert.match(shell, /@keyframes slide-right \{ from \{ transform: translateX\(100\%\)/, 'Test 22: slide-right uses translateX');

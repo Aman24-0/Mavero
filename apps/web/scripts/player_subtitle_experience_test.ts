@@ -218,11 +218,12 @@ console.log('\n§3 — component source contracts');
   const loadingRule = shell.slice(shell.indexOf('.loading-card { position: absolute'));
   ok(/top: 50%; left: 50%; right: auto; bottom: auto; transform: translate\(-50%, -50%\)/.test(loadingRule), '3z11. the loading layer is CENTERED in the playback viewport (was: top-center arbitrary offset; the empty-orb competing indicator is retired)');
   ok(/z-index: 7;/.test(loadingRule), '3z11b. the loading layer z-index stays at 7 — above the media surface, below the actionable controls');
-  // The spinner is now a clean Material/iOS-style ring with the Mavero accent.
+  // The spinner is a clean compact ring — round 54 (G3): 22px, 2px stroke,
+  // WHITE leading edge (the glassy card's white-on-black language).
   const loadingRingRule = shell.slice(shell.indexOf('.loading-ring {'));
-  ok(/border: 2\.5px solid rgba\(255, 255, 255, 0\.12\)/.test(loadingRingRule), '3z11c. the spinner uses a clean 2.5px border ring (no more oversized conic-gradient)');
-  ok(/border-top-color: var\(--accent/.test(loadingRingRule), '3z11d. the spinner leading edge uses the Mavero accent color (high contrast against the dark surface)');
-  ok(/width: 36px; height: 36px;/.test(loadingRingRule), '3z11e. the spinner has sensible dimensions (36px — not the previous 72px empty-orb)');
+  ok(/border: 2px solid rgba\(255, 255, 255, 0\.12\)/.test(loadingRingRule), '3z11c. the spinner uses a clean 2px border ring (no more oversized conic-gradient)');
+  ok(/border-top-color: #fff/.test(loadingRingRule), '3z11d. the spinner leading edge is WHITE (round 54 G3 — high contrast against the dark glass surface)');
+  ok(/width: 22px; height: 22px;/.test(loadingRingRule), '3z11e. the spinner is the compact 22px ring (round 54 G3 — not the previous 72px empty-orb)');
   // The empty-orb MARKUP is retired — the loading-card is the SINGLE loading indicator.
   // (The CSS rule for .empty-orb is also removed; only documentation references remain.)
   ok(!/<span class="empty-orb"><\/span>/.test(viewport) && !/class="empty-orb"/.test(viewport), '3z11f. the empty-orb markup is retired in PlayerViewport (the loading-card is the single coherent loading indicator)');

@@ -55,8 +55,11 @@ assert.match(shell, /\.source-sheet.*bottom: 0/, 'source sheet defaults to botto
 assert.match(shell, /@media \(min-width: 769px\)/, 'wide viewport breakpoint at 769px');
 // MAVP-5 Issue 4 supersession: the wide-viewport right drawer is the SOURCE
 // sheet alone; the episode sheet is a LEFT drawer at every viewport.
+// Round 54 (G1) supersession: the drawer became the floating glass sidebar
+// panel (12px safe-area insets, radius 20) — it KEEPS the left anchor and
+// the from-the-left slide at every viewport.
 assert.match(shell, /@media \(min-width: 769px\) \{[\s\S]*?\.source-sheet \{[^}]*top: 0; right: 0; bottom: 0/, 'wide viewport: source sheet becomes right drawer (MAVP-5)');
-assert.match(shell, /\.episode-sheet \{[^}]*top: 0;[^}]*left: 0;/, 'wide viewport: episode sheet stays a LEFT drawer (MAVP-5)');
+assert.match(shell, /\.episode-sheet \{[^}]*left: max\(12px, env\(safe-area-inset-left\)\);/, 'wide viewport: episode sheet stays a LEFT drawer (MAVP-5; round 54 G1: the floating glass panel keeps the left anchor)');
 
 // ============================================================
 // 7. No persistent header/footer

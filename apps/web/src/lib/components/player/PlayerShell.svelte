@@ -3351,7 +3351,11 @@
           <div class="sheet-season-state"><span>No episodes available for season {sheetDisplaySeason}.</span></div>
         {:else}
           {#each sheetEpisodes as episode (episode.id ?? `${episode.season}-${episode.number}`)}
-            <button class="sheet-option" class:active={currentEpisode?.season === episode.season && currentEpisode?.episode === episode.number} type="button" onclick={() => chooseEpisode({ season: episode.season, episode: episode.number, title: episode.title })}><span class="episode-number">{String(episode.number).padStart(2, '0')}</span><span><strong>{episode.title}</strong><small>S{episode.season} · {episode.runtime ?? 'Episode'}</small></span></button>
+            <!-- Round 54 (G1) — the episode row: 24px number badge + 15px/600
+                 title + 12.5px tertiary meta, ≥64px tall, hairline dividers
+                 BETWEEN rows (the current episode carries the 2px white left
+                 bar + the "now playing" dot + aria-current). -->
+            <button class="sheet-option episode-row" class:active={currentEpisode?.season === episode.season && currentEpisode?.episode === episode.number} aria-current={currentEpisode?.season === episode.season && currentEpisode?.episode === episode.number ? 'true' : undefined} type="button" onclick={() => chooseEpisode({ season: episode.season, episode: episode.number, title: episode.title })}><span class="episode-number" aria-hidden="true">{String(episode.number).padStart(2, '0')}</span><span class="episode-copy"><strong>{episode.title}</strong><small>S{episode.season} · {episode.runtime ?? 'Episode'}</small></span>{#if currentEpisode?.season === episode.season && currentEpisode?.episode === episode.number}<span class="now-playing-dot" title="Now playing" aria-hidden="true"></span>{/if}</button>
           {/each}
         {/if}
       </div>
@@ -3631,22 +3635,21 @@
      playback already started is the viewport's corner 'Buffering…'
      note (no two overlapping loading indicators). The empty-orb that
      used to render in PlayerViewport during the no-source state is
-     retired so the loading card alone owns the loading surface. */
-  .loading-card { position: absolute; z-index: 7; top: 50%; left: 50%; right: auto; bottom: auto; transform: translate(-50%, -50%); display: flex; align-items: center; gap: 12px; max-width: min(420px, calc(100% - 24px)); border: 1px solid var(--line); border-radius: var(--radius-md); padding: 14px 16px; color: var(--ink); background: rgba(13,13,13,.92); box-shadow: var(--shadow-lg); backdrop-filter: blur(22px); }
+     retired so the loading card alone owns the loading surface.
+     Round 54 (G3) — the compact GLASS card: radius 16, background
+     rgba(18,18,20,0.86), 1px rgba(255,255,255,0.12) border, blur 18px,
+     padding 18px 22px, soft layered shadow — NO full-screen dark
+     overlay, just the card. The status strings + the error state's
+     copy/handlers are untouched. */
+  .loading-card { position: absolute; z-index: 7; top: 50%; left: 50%; right: auto; bottom: auto; transform: translate(-50%, -50%); display: flex; align-items: center; gap: 12px; max-width: min(420px, calc(100% - 24px)); border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 16px; padding: 18px 22px; color: var(--ink); background: rgba(18, 18, 20, 0.86); box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45), 0 2px 8px rgba(0, 0, 0, 0.3); backdrop-filter: blur(18px); }
   .loading-card { min-width: min(260px, calc(100% - 36px)); justify-content: center; color: var(--ink-soft); font-size: .68rem; }
-  /* Focused fixes Issue 3 (2026-10): clean, modern Material/iOS-style
-     spinner — a 2.5px ring with the Mavero accent on the leading edge.
-     Replaces the previous conic-gradient ring (which was nearly
-     invisible: --ink-soft on a dark surface, 38px diameter, with a
-     28px inner hole). The new ring is 36px, brighter, and uses the
-     accent color directly so it reads at a glance against any
-     backdrop. Sensible dimensions (not oversized), appropriate
-     contrast (accent green on dark with a 0.12 white track for the
-     remaining arc), and the existing `spin` animation is reused. */
-  .loading-ring { flex: 0 0 36px; width: 36px; height: 36px; border: 2.5px solid rgba(255, 255, 255, 0.12); border-top-color: var(--accent, #00d18a); border-radius: 50%; animation: spin 0.9s linear infinite; }
+  /* Round 54 (G3) — the 22px WHITE spinner ring: 2px stroke, 900ms linear,
+     white leading edge over a quiet 12% white track, on the LEFT of the
+     copy. */
+  .loading-ring { flex: 0 0 22px; width: 22px; height: 22px; border: 2px solid rgba(255, 255, 255, 0.12); border-top-color: #fff; border-radius: 50%; animation: spin 0.9s linear infinite; }
   .loading-copy { display: grid; gap: 4px; text-align: left; }
-  .loading-copy strong { color: var(--ink); font-size: .72rem; }
-  .loading-copy small { color: var(--muted); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .53rem; }
+  .loading-copy strong { color: var(--ink); font-size: 14.5px; font-weight: 600; }
+  .loading-copy small { color: var(--pl-ink-3, rgba(255, 255, 255, 0.58)); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: 12.5px; }
   :global(.spin) { animation: spin 1s linear infinite; }
 
   /* Source/episode/streams sheets — responsive:
@@ -3704,19 +3707,25 @@
     height: 36px;
     box-sizing: border-box;
     padding: 0 14px;
-    border: 1px solid var(--line-strong);
-    border-radius: 999px;
-    background: transparent;
-    color: var(--ink);
-    font-size: 12px;
+    /* Round 54 (G1) — the season chip pair: the ACTIVE chip is WHITE with
+       dark text (fixes the reported white-on-white invisible label — the
+       active chip used the accent fill whose text vanished against the
+       glassy sheet); the INACTIVE chip is a translucent white square with
+       72% white text. Both 36px tall, radius 12, 13px/600 label. */
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.06);
+    color: rgba(255, 255, 255, 0.72);
+    font-size: 13px;
     font-weight: 600;
     line-height: 1;
     cursor: pointer;
     white-space: nowrap;
+    transition: background var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
   }
-  .season-chip:hover { border-color: var(--accent); }
-  .season-chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
-  .season-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .season-chip:hover { border-color: rgba(255, 255, 255, 0.2); background: rgba(255, 255, 255, 0.1); color: #fff; }
+  .season-chip.active { background: #fff; border-color: transparent; color: #0b0c0d; }
+  .season-chip:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
   .sheet-season-state {
     display: flex;
     flex-direction: column;
@@ -3774,7 +3783,6 @@
   .source-badge[data-variant='positive'] { color: var(--success); border-color: var(--accent-soft); }
   .source-badge[data-variant='warning'] { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 35%, transparent); }
   .source-badge[data-variant='neutral'] { color: var(--muted); border-color: var(--line-strong); }
-  .episode-number { flex: 0 0 28px; color: var(--accent); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .65rem; }
   @keyframes spin { to { transform: rotate(360deg); } }
   @keyframes sheet-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
 
@@ -3795,10 +3803,37 @@
      scrolling on long ones). A flex column sizes the handle/head/season
      row to content (flex: 0 0 auto) and gives the list the remaining
      space with min-height: 0 + overflow-y: auto — the correct contract
-     for BOTH three- and four-child sheets. */
-  .episode-sheet { position: absolute; z-index: 21; top: 0; bottom: 0; left: 0; right: auto; width: min(360px, 88vw); max-height: none; overflow: hidden; display: flex; flex-direction: column; border-top: 0; border-right: 1px solid var(--line-strong); border-radius: 0; background: rgba(13,13,13,.98); box-shadow: var(--shadow-lg); backdrop-filter: blur(28px); padding-bottom: 0; animation: sheet-left var(--motion-normal) var(--ease-out); }
-  .episode-sheet .sheet-head { flex: 0 0 auto; }
-  .episode-sheet .sheet-list { flex: 1 1 auto; min-height: 0; max-height: none; overflow-y: auto; padding-bottom: max(14px, env(safe-area-inset-bottom)); }
+     for BOTH three- and four-child sheets.
+
+     Round 54 (G1) — the panel becomes the glassy sidebar surface: floating
+     12px-inset drawer (safe-area aware), radius 20, background
+     rgba(16,16,18,0.92), ONE backdrop blur (24px — the sheet's single blur
+     layer), 1px rgba(255,255,255,0.12) border, layered shadow. */
+  .episode-sheet { position: absolute; z-index: 21; top: max(12px, env(safe-area-inset-top)); bottom: max(12px, env(safe-area-inset-bottom)); left: max(12px, env(safe-area-inset-left)); right: auto; width: min(360px, calc(100vw - 24px)); max-height: none; overflow: hidden; display: flex; flex-direction: column; border-top: 0; border-right: 1px solid rgba(255, 255, 255, 0.12); border-radius: 20px; background: rgba(16, 16, 18, 0.92); box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55), 0 4px 16px rgba(0, 0, 0, 0.35), 0 1px 0 rgba(255, 255, 255, 0.06) inset; backdrop-filter: blur(24px); padding-bottom: 0; animation: sheet-left var(--motion-normal) var(--ease-out); }
+  .episode-sheet .sheet-head { flex: 0 0 auto; padding: 8px 10px 10px 18px; }
+  /* Round 54 (G1) — the EPISODES · <n> eyebrow: small-caps 10.5px/700 with
+     1.6px tracking at 45% white (the same eyebrow typography the popover
+     sheets carry — one visual language). */
+  .episode-sheet .sheet-head .eyebrow { color: rgba(255, 255, 255, 0.45); font-size: 10.5px; font-weight: 700; letter-spacing: 1.6px; text-transform: uppercase; }
+  /* Round 54 (G1) — the close button styled like the popover close (a 30px
+     rounded square on the translucent white surface). */
+  .episode-sheet .close-button { display: grid; place-items: center; width: 30px; height: 30px; border: 0; border-radius: 9px; color: rgba(255, 255, 255, 0.8); background: rgba(255, 255, 255, 0.06); cursor: pointer; }
+  .episode-sheet .close-button:hover, .episode-sheet .close-button:focus-visible { background: rgba(255, 255, 255, 0.12); color: #fff; }
+  .episode-sheet .close-button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+  .episode-sheet .sheet-list { flex: 1 1 auto; min-height: 0; max-height: none; overflow-y: auto; padding-bottom: max(14px, env(safe-area-inset-bottom)); gap: 0; }
+  /* Round 54 (G1) — the episode rows: ≥64px tall, 24px number badge in a
+     rounded square, 15px/600 white title + 12.5px tertiary meta, hover =
+     a quiet white wash, hairline dividers BETWEEN rows (not boxes). */
+  .episode-sheet .sheet-list .sheet-option { position: relative; display: flex; align-items: center; gap: 12px; min-height: 64px; border: 0; border-radius: 12px; padding: 10px 12px; color: var(--ink-soft); background: transparent; }
+  .episode-sheet .sheet-list .sheet-option + .sheet-option { box-shadow: 0 -1px 0 rgba(255, 255, 255, 0.08); }
+  .episode-sheet .sheet-list .sheet-option:hover, .episode-sheet .sheet-list .sheet-option:focus-visible { border-color: transparent; background: rgba(255, 255, 255, 0.05); }
+  .episode-sheet .sheet-list .sheet-option.active { background: rgba(255, 255, 255, 0.08); }
+  .episode-sheet .sheet-list .sheet-option.active::before { content: ''; position: absolute; left: 0; top: 10px; bottom: 10px; width: 2px; border-radius: 1px; background: #fff; }
+  .episode-sheet .sheet-list .sheet-option strong { display: block; color: #fff; font-size: 15px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .episode-sheet .sheet-list .sheet-option small { display: block; margin-top: 2px; color: var(--pl-ink-3, rgba(255, 255, 255, 0.58)); font-size: 12.5px; }
+  .episode-number { flex: 0 0 24px; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 7px; color: var(--pl-ink-3, rgba(255, 255, 255, 0.58)); background: rgba(255, 255, 255, 0.06); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: 12px; font-weight: 600; }
+  .episode-copy { min-width: 0; flex: 1; }
+  .now-playing-dot { flex: 0 0 auto; width: 6px; height: 6px; border-radius: 50%; background: #fff; box-shadow: 0 0 8px rgba(255, 255, 255, 0.65); }
   @keyframes sheet-left { from { transform: translateX(-100%); } to { transform: translateX(0); } }
 
   /* Wide viewport (landscape/desktop/TV): the source sheet becomes a

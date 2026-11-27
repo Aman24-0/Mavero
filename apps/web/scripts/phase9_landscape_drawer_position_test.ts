@@ -97,10 +97,12 @@ for (const prop of ['top', 'bottom', 'left', 'height', 'max-height', 'animation'
 }
 
 // MAVP-5 Issue 4 supersession: the episode sheet's width contract is now
-// viewport-independent — a bounded min(360px, 88vw) LEFT drawer at every
-// viewport (narrow-screen-safe; the streams drawer contract was retired
-// with the streams sheet, 0111d7f).
-assert.match(shell, /\.episode-sheet \{[^}]*width: min\(360px, 88vw\);/, 'episode drawer width contract (MAVP-5 left drawer)');
+// viewport-independent — a bounded LEFT drawer at every viewport
+// (narrow-screen-safe; the streams drawer contract was retired with the
+// streams sheet, 0111d7f). Round 54 (G1) supersession: the floating glass
+// panel keeps the bounded 360px cap but insets itself 12px from each edge,
+// so the width caps to the viewport minus the two insets.
+assert.match(shell, /\.episode-sheet \{[^}]*width: min\(360px, calc\(100vw - 24px\)\);/, 'episode drawer width contract (MAVP-5 left drawer; round 54 G1 floating panel)');
 
 // ============================================================
 // 4. Backdrop is player-local

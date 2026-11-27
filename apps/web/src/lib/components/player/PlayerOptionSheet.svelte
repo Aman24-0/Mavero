@@ -121,18 +121,22 @@
   .player-option-sheet { pointer-events: auto; }
   .player-option-sheet {
     /* Round 50 — the popoverAnchor action owns position/left/top (fixed,
-       viewport-clamped); this rule owns the SURFACE only. */
+       viewport-clamped); this rule owns the SURFACE only.
+       Round 54 (G2) — the surface joins the glassy visual language of the
+       episode sheet (G1): background rgba(16,16,18,0.92), ONE backdrop blur
+       (24px), 1px rgba(255,255,255,0.12) border, layered shadow — the
+       episode sheet and the server sheet share ONE glassy look. */
     position: fixed;
     z-index: 21;
     width: min(420px, calc(100vw - 24px));
     max-height: min(70dvh, 560px);
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
-    border: 1px solid rgba(255, 255, 255, 0.13);
+    border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: 16px;
-    background: rgba(18, 18, 20, 0.92);
-    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.06) inset, 0 18px 48px rgba(0, 0, 0, 0.55);
-    backdrop-filter: blur(20px);
+    background: rgba(16, 16, 18, 0.92);
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.06) inset, 0 18px 48px rgba(0, 0, 0, 0.55), 0 4px 12px rgba(0, 0, 0, 0.32);
+    backdrop-filter: blur(24px);
     transform-origin: var(--popover-origin, center);
     animation: option-sheet-pop 120ms cubic-bezier(0.2, 0.8, 0.2, 1);
   }

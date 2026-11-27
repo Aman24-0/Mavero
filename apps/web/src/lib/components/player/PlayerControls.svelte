@@ -1001,16 +1001,29 @@
      inside the sheet body's existing scroll so the groups stay put while
      the rows scroll; the selected rail item carries a 2px white bar on its
      left edge (white text; inactive 66% white). The row markup is
-     unchanged (check mark, label, group sub-label). */
-  .server-pane { display: flex; align-items: flex-start; gap: 6px; }
+     unchanged (check mark, label, group sub-label).
+     Round 54 (G2) — the rail items and rows join the glassy visual language
+     of the episode sheet (G1): rail items are 36px-tall radius-12 pills at
+     13px/600 with a quiet white hover wash; the rows carry the 15px/600
+     white title + 12.5px tertiary meta, ≥56px tall, hairline dividers
+     BETWEEN rows (not boxes). NO layout change — the two-pane rail + list
+     structure stays exactly as it is. */
+  .server-pane { display: flex; align-items: flex-start; gap: 8px; }
   .server-rail-wrap { flex: 0 0 132px; position: sticky; top: 0; }
   .rail-label { display: block; padding: 4px 10px 8px 12px; color: rgba(255, 255, 255, 0.45); font-size: 10.5px; font-weight: 700; letter-spacing: 1.6px; text-transform: uppercase; }
   .server-rail { display: flex; flex-direction: column; gap: 2px; }
-  .rail-item { position: relative; display: block; min-height: 38px; padding: 8px 10px 8px 14px; border: 0; border-radius: 9px; color: rgba(255, 255, 255, 0.66); background: transparent; cursor: pointer; text-align: left; font: inherit; font-size: 12.5px; font-weight: 600; transition: color var(--motion-fast) var(--pl-ease), background var(--motion-fast) var(--pl-ease); }
-  .rail-item:hover, .rail-item:focus-visible { color: #fff; background: rgba(255, 255, 255, 0.06); }
-  .rail-item.active { color: #fff; }
+  .rail-item { position: relative; display: block; min-height: 36px; padding: 8px 10px 8px 14px; border: 0; border-radius: 12px; color: rgba(255, 255, 255, 0.72); background: transparent; cursor: pointer; text-align: left; font: inherit; font-size: 13px; font-weight: 600; transition: color var(--motion-fast) var(--pl-ease), background var(--motion-fast) var(--pl-ease); }
+  .rail-item:hover, .rail-item:focus-visible { color: #fff; background: rgba(255, 255, 255, 0.05); }
+  .rail-item.active { color: #fff; background: rgba(255, 255, 255, 0.06); }
   .rail-item.active::before { content: ''; position: absolute; left: 0; top: 9px; bottom: 9px; width: 2px; border-radius: 1px; background: #fff; }
   .server-list { flex: 1 1 auto; min-width: 0; }
+  .server-list .option-list { gap: 0; }
+  .server-list .option-row { min-height: 56px; border-radius: 12px; }
+  .server-list .option-row + .option-row { box-shadow: 0 -1px 0 rgba(255, 255, 255, 0.08); }
+  .server-list .option-row:hover, .server-list .option-row:focus-visible, .server-list .option-row.selected { border-color: transparent; background: rgba(255, 255, 255, 0.05); }
+  .server-list .option-row.selected { background: rgba(255, 255, 255, 0.08); }
+  .server-list .row-copy strong { display: block; color: #fff; font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
+  .server-list .row-copy small { display: block; margin-top: 2px; color: var(--pl-ink-3); font-size: 12.5px; }
   .row-copy { min-width: 0; }
   .row-copy strong { display: block; color: var(--ink); font-size: .72rem; overflow-wrap: anywhere; }
   .row-copy small { display: block; margin-top: 2px; color: var(--muted); font-size: .55rem; }
