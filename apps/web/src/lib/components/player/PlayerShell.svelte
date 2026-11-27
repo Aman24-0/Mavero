@@ -3293,12 +3293,13 @@
   {/if}
 
   {#if sourceMenuOpen}
-    <!-- Source sheet — responsive: bottom sheet on compact, right drawer on wide. -->
+    <!-- Source sheet — Round 57 (I5): a FLOATING glass panel (portrait/tablet)
+         that becomes the right-edge drawer mirroring the episode sheet at
+         ≥900px. No drag handle (the episode sheet language). -->
     <div class="sheet-overlay" role="presentation" onclick={() => closeSourceSheet()}></div>
     <div class="source-sheet" role="dialog" aria-modal="true" aria-label="Available playback sources">
-      <div class="sheet-handle" aria-hidden="true"></div>
       <div class="sheet-head"><span class="eyebrow">Source</span><button class="close-button" type="button" aria-label="Close source list" onclick={() => closeSourceSheet()}><X size={17} /></button></div>
-      <div class="sheet-list">{#each groupedSourceOptions as group}{#if groupedSourceOptions.length > 1 || group.name !== 'Other'}<div class="sheet-group-label" aria-hidden="true">{group.name}</div>{/if}{#each group.options as option}<div class="sheet-option-row"><button class="sheet-option" class:active={option.id === source?.sourceId && (!option.variants || option.variants.length === 0 || option.variants.includes(source?.metadata?.selectedVariant ?? ''))} type="button" onclick={() => chooseSource(option.id)}><span class="option-mark" class:selected={option.id === source?.sourceId}>{#if option.id === source?.sourceId}<Check size={14} />{:else}<SourceIcon icon={option.icon} size={15} />{/if}</span><span class="option-copy"><strong class="option-title"><span class="option-name">{option.name}</span>{#each option.badges ?? [] as badgeConfig (badgeConfig.id)}<span class="source-badge" data-variant={badgeConfig.variant}>{badgeConfig.label}</span>{/each}{#if option.badge && !(option.badges ?? []).length}<span class="source-badge" data-badge={option.badge}>{sourceBadgeLabel(option.badge)}</span>{/if}</strong></span></button>{#if option.variants && option.variants.length > 0}<div class="variant-row" role="group" aria-label={`${option.name} variants`}>{#each option.variants as variant}<button class="variant-button" class:active={option.id === source?.sourceId && source?.metadata?.selectedVariant === variant} type="button" aria-pressed={option.id === source?.sourceId && source?.metadata?.selectedVariant === variant} onclick={(e) => { e.stopPropagation(); chooseSource(option.id, variant); }}>{variant === 'sub' ? 'SUB' : variant === 'dub' ? 'DUB' : variant.toUpperCase()}</button>{/each}</div>{/if}</div>{/each}{/each}
+      <div class="sheet-list">{#each groupedSourceOptions as group}{#if groupedSourceOptions.length > 1 || group.name !== 'Other'}<div class="sheet-group-label" aria-hidden="true">{group.name}</div>{/if}{#each group.options as option}<div class="sheet-option-row"><button class="sheet-option" class:active={option.id === source?.sourceId && (!option.variants || option.variants.length === 0 || option.variants.includes(source?.metadata?.selectedVariant ?? ''))} type="button" onclick={() => chooseSource(option.id)}><span class="option-mark" class:selected={option.id === source?.sourceId}>{#if option.id === source?.sourceId}<Check size={18} />{:else}<SourceIcon icon={option.icon} size={30} />{/if}</span><span class="option-copy"><strong class="option-title"><span class="option-name">{option.name}</span>{#each option.badges ?? [] as badgeConfig (badgeConfig.id)}<span class="source-badge" data-variant={badgeConfig.variant}>{badgeConfig.label}</span>{/each}{#if option.badge && !(option.badges ?? []).length}<span class="source-badge" data-badge={option.badge}>{sourceBadgeLabel(option.badge)}</span>{/if}</strong></span></button>{#if option.variants && option.variants.length > 0}<div class="variant-row" role="group" aria-label={`${option.name} variants`}>{#each option.variants as variant}<button class="variant-button" class:active={option.id === source?.sourceId && source?.metadata?.selectedVariant === variant} type="button" aria-pressed={option.id === source?.sourceId && source?.metadata?.selectedVariant === variant} onclick={(e) => { e.stopPropagation(); chooseSource(option.id, variant); }}>{variant === 'sub' ? 'SUB' : variant === 'dub' ? 'DUB' : variant.toUpperCase()}</button>{/each}</div>{/if}</div>{/each}{/each}
       </div>
     </div>
   {/if}
@@ -3652,13 +3653,25 @@
   .loading-copy small { color: var(--pl-ink-3, rgba(255, 255, 255, 0.58)); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: 12.5px; }
   :global(.spin) { animation: spin 1s linear infinite; }
 
-  /* Source/episode/streams sheets — responsive:
-     compact viewport → bottom sheet; wide viewport → right drawer.
-     Based on actual viewport width (matchMedia), NOT landscapeMode.
-     MAVP-5 (Issue 4): the EPISODE sheet is removed from this shared rule —
-     it is now a LEFT drawer at every viewport (see below). */
+  /* Source/episode sheets — responsive surfaces.
+     Round 57 (I5): the SOURCE sheet is a FLOATING glass panel (portrait/
+     tablet) that mirrors the episode sheet on the right at ≥900px; the
+     EPISODE sheet is a LEFT drawer at every viewport (MAVP-5 Issue 4).
+     Based on actual viewport width (matchMedia), NOT landscapeMode. */
   .sheet-overlay { position: absolute; z-index: 20; inset: 0; background: rgba(0,0,0,.4); backdrop-filter: blur(2px); }
-  .source-sheet { position: absolute; z-index: 21; bottom: 0; left: 0; right: 0; top: auto; max-height: 60dvh; overflow: auto; border-top: 1px solid var(--line-strong); border-radius: var(--radius-lg) var(--radius-lg) 0 0; background: rgba(13,13,13,.98); box-shadow: var(--shadow-lg); backdrop-filter: blur(28px); padding-bottom: env(safe-area-inset-bottom); transform: none; animation: sheet-up var(--motion-normal) var(--ease-out); }
+  /* Round 57 (I5) — the source sheet joins the episode sheet's glass
+     treatment: a FLOATING panel (12px safe-area insets on every side),
+     radius 20 top AND bottom, rgba(16,16,18,0.92) surface, 1px
+     rgba(255,255,255,0.12) border, layered shadow, ONE 24px backdrop blur.
+     It is a flex column: the head stays fixed and the list scrolls INSIDE
+     the panel (overflow hidden on the panel, overflow-y: auto on the list),
+     replacing the old flush bottom sheet (bottom:0; left:0; right:0;
+     60dvh cap, square top corners). The sheet-up entry stays. */
+  .source-sheet { position: absolute; z-index: 21; top: max(12px, env(safe-area-inset-top)); bottom: max(12px, env(safe-area-inset-bottom)); left: max(12px, env(safe-area-inset-left)); right: max(12px, env(safe-area-inset-right)); max-height: none; overflow: hidden; display: flex; flex-direction: column; border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 20px; background: rgba(16, 16, 18, 0.92); box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55), 0 4px 16px rgba(0, 0, 0, 0.35), 0 1px 0 rgba(255, 255, 255, 0.06) inset; backdrop-filter: blur(24px); padding-bottom: 0; transform: none; animation: sheet-up var(--motion-normal) var(--ease-out); }
+  /* Round 57 (I5) — the head holds its size; the list takes the rest and
+     scrolls INSIDE the floating panel (same contract as the episode sheet). */
+  .source-sheet .sheet-head { flex: 0 0 auto; }
+  .source-sheet .sheet-list { flex: 1 1 auto; min-height: 0; max-height: none; overflow-y: auto; padding-bottom: max(14px, env(safe-area-inset-bottom)); }
   .sheet-handle { width: 36px; height: 4px; margin: 8px auto 4px; border-radius: 999px; background: var(--line-strong); }
   .sheet-head { display: flex; align-items: center; justify-content: space-between; padding: 4px 18px 10px; }
   .sheet-head .eyebrow { color: var(--muted); }
@@ -3755,7 +3768,11 @@
   .season-retry:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .sheet-group-label { color: var(--muted); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .54rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; padding: 10px 0 4px; border-top: 1px solid var(--line); margin-top: 6px; }
   .sheet-group-label:first-child { border-top: 0; margin-top: 0; padding-top: 0; }
-  .sheet-option { display: flex; align-items: center; gap: 11px; min-height: 52px; border: 1px solid transparent; border-radius: var(--radius-sm); padding: 7px 12px; color: var(--ink-soft); background: transparent; cursor: pointer; text-align: left; }
+  /* Round 57 (I6) — the source rows join the episode rows' sizing: ≥64px
+     tall, 14px gap, 10px 14px padding (the hover/active wash and the
+     selected border treatment are unchanged). The episode sheet's own
+     overrides below keep their exact values. */
+  .sheet-option { display: flex; align-items: center; gap: 14px; min-height: 64px; border: 1px solid transparent; border-radius: var(--radius-sm); padding: 10px 14px; color: var(--ink-soft); background: transparent; cursor: pointer; text-align: left; }
   .sheet-option:hover, .sheet-option:focus-visible, .sheet-option.active { border-color: var(--line-strong); background: var(--accent-soft); }
   .sheet-option strong, .sheet-option small { display: block; }
   .sheet-option strong { color: var(--ink); font-size: .72rem; }
@@ -3765,11 +3782,18 @@
   .variant-button { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; min-width: 56px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); color: var(--ink-soft); background: rgba(255,255,255,.02); cursor: pointer; font: inherit; font-size: .58rem; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out); }
   .variant-button:hover, .variant-button:focus-visible { border-color: var(--line-strong); background: var(--accent-soft); color: var(--ink); }
   .variant-button.active { border-color: var(--accent); background: var(--accent-soft); color: var(--ink); }
-  .option-mark { display: grid; flex: 0 0 24px; place-items: center; width: 24px; height: 24px; color: var(--muted); }
-  .option-mark.selected { border: 1px solid var(--line-strong); border-radius: 50%; color: var(--accent); }
+  /* Round 57 (I6) — the source icon tile: a 40×40 rounded square (radius 12)
+     on the translucent white surface, so the 64×64 source masters render at a
+     clearly visible 30px inside it; the selected state keeps the check icon
+     (18px) on the same tile. */
+  .option-mark { display: grid; flex: 0 0 40px; place-items: center; width: 40px; height: 40px; border: 1px solid rgba(255, 255, 255, 0.10); border-radius: 12px; background: rgba(255, 255, 255, 0.06); color: var(--muted); }
+  .option-mark.selected { border: 1px solid var(--line-strong); border-radius: 12px; color: var(--accent); }
   .option-copy { min-width: 0; flex: 1; }
-  .option-title { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
-  .option-name { min-width: 0; overflow-wrap: anywhere; }
+  /* Round 57 (I6) — one line per row at every width: the title row never
+     wraps (flex-wrap: nowrap) and the name ellipsizes; the badges keep their
+     size but gain 2px of separation (gap 6 → 8). */
+  .option-title { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; min-width: 0; }
+  .option-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 17px; font-weight: 600; }
   /* Task 13: user-facing source badge — visually small and secondary to the
      source name. Existing design tokens only; the amber tint re-uses the
      sheet's existing failed-state tone. */
@@ -3836,12 +3860,14 @@
   .now-playing-dot { flex: 0 0 auto; width: 6px; height: 6px; border-radius: 50%; background: #fff; box-shadow: 0 0 8px rgba(255, 255, 255, 0.65); }
   @keyframes sheet-left { from { transform: translateX(-100%); } to { transform: translateX(0); } }
 
-  /* Wide viewport (landscape/desktop/TV): the source sheet becomes a
-     right-edge drawer (the episode sheet is a LEFT drawer at every
-     viewport — MAVP-5 Issue 4). Based on viewport width, NOT landscapeMode. */
-  @media (min-width: 769px) {
-    .source-sheet { top: 0; right: 0; bottom: 0; left: auto; width: min(360px, 32vw); height: 100%; max-height: 100%; border-top: 0; border-radius: 0; border-left: 1px solid var(--line-strong); animation: slide-right var(--motion-normal) var(--ease-out); }
-    .source-sheet .sheet-list { max-height: 100%; overflow-y: auto; padding-bottom: max(14px, env(safe-area-inset-bottom)); }
+  /* Wide viewport (landscape/desktop/TV) — Round 57 (I5): the source sheet
+     mirrors the episode sheet on the RIGHT — a floating right-edge drawer
+     (12px safe-area insets, min(380px, 32vw) wide, height auto) sliding in
+     from the right with the SAME radius/surface as the base panel. Based on
+     viewport width, NOT landscapeMode (the ≥900px breakpoint matches the
+     episode sheet's chip-growth tier). */
+  @media (min-width: 900px) {
+    .source-sheet { top: max(12px, env(safe-area-inset-top)); bottom: max(12px, env(safe-area-inset-bottom)); right: max(12px, env(safe-area-inset-right)); left: auto; width: min(380px, 32vw); height: auto; border-radius: 20px; animation: slide-right var(--motion-normal) var(--ease-out); }
     @keyframes slide-right { from { transform: translateX(100%); } to { transform: translateX(0); } }
   }
 

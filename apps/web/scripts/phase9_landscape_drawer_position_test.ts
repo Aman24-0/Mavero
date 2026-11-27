@@ -56,43 +56,49 @@ assert.match(baseSheetsBody, /z-index: 21/, 'sheets z-index is 21 (above backdro
 assert.match(episodeSheetMatch[1], /position: absolute; z-index: 21;/, 'MAVP-5: the episode sheet keeps the same absolute/z-21 anchoring');
 assert.match(baseSheetsBody, /transform: none/, 'sheets carry no transform (no popover translation)');
 
-// Portrait bottom-sheet base: bottom-anchored, capped height, vertical entry.
-assert.match(baseSheetsBody, /bottom: 0/, 'base sheets anchored to player bottom edge');
-assert.match(baseSheetsBody, /left: 0/, 'base sheets span from left edge');
-assert.match(baseSheetsBody, /right: 0/, 'base sheets span to right edge');
-assert.match(baseSheetsBody, /top: auto/, 'base sheets do not stretch from the top');
-assert.match(baseSheetsBody, /max-height: 60dvh/, 'base sheets capped at 60dvh (portrait bottom sheet)');
+// Round 57 (I5): the base rule is now the FLOATING GLASS PANEL — 12px
+// safe-area insets on every side, radius 20 top AND bottom, the glassy
+// episode-sheet surface, and an internal list scroll (flex column).
+assert.match(baseSheetsBody, /top: max\(12px, env\(safe-area-inset-top\)\)/, 'base sheet floats 12px (safe-area) below the player top edge (round 57 I5)');
+assert.match(baseSheetsBody, /bottom: max\(12px, env\(safe-area-inset-bottom\)\)/, 'base sheet floats 12px (safe-area) above the player bottom edge');
+assert.match(baseSheetsBody, /left: max\(12px, env\(safe-area-inset-left\)\)/, 'base sheet insets 12px (safe-area) from the left edge');
+assert.match(baseSheetsBody, /right: max\(12px, env\(safe-area-inset-right\)\)/, 'base sheet insets 12px (safe-area) from the right edge');
+assert.match(baseSheetsBody, /border-radius: 20px/, 'rounded top AND bottom corners (radius 20 — no flush bottom sheet)');
+assert.match(baseSheetsBody, /background: rgba\(16, 16, 18, 0\.92\)/, 'the glassy episode-sheet surface (rgba(16,16,18,0.92))');
+assert.match(baseSheetsBody, /backdrop-filter: blur\(24px\)/, 'ONE 24px backdrop blur (the sheet\'s single blur layer)');
+assert.match(baseSheetsBody, /border: 1px solid rgba\(255, 255, 255, 0\.12\)/, 'the 1px rgba(255,255,255,0.12) hairline');
+assert.match(baseSheetsBody, /max-height: none/, 'no 60dvh cap — the floating panel spans the safe-area insets');
+assert.match(baseSheetsBody, /display: flex; flex-direction: column/, 'flex column: the head fixed, the list scrolls INSIDE the panel');
+assert.match(baseSheetsBody, /overflow: hidden/, 'the panel clips; the LIST scrolls (internal scroll)');
 assert.match(baseSheetsBody, /animation: sheet-up/, 'base sheets use sheet-up (vertical) entry');
 
 // ============================================================
-// 3. Wide viewport (landscape/desktop/TV): right-edge full-height drawer
+// 3. Wide viewport (≥900px): floating right-edge drawer mirroring the
+//    episode sheet (round 57 I5)
 // ============================================================
 
-// MAVP-5 Issue 4 supersession: the wide-viewport media query anchors the
-// SOURCE sheet alone (the episode sheet is a LEFT drawer at every viewport,
-// asserted above — full-height, top: 0 there).
-const wideRuleMatch = shell.match(/@media \(min-width: 769px\) \{[\s\S]*?\.source-sheet \{([^}]+)\}/);
-assert.ok(wideRuleMatch, 'wide-viewport drawer rule exists');
+// Round 57 (I5) supersession: the wide-viewport breakpoint moved to ≥900px
+// (the episode sheet's chip-growth tier) and the drawer MIRRORS the episode
+// sheet on the right — a floating right-edge panel with the SAME
+// radius/surface as the base rule (the episode sheet stays a LEFT drawer at
+// every viewport, asserted above).
+const wideRuleMatch = shell.match(/@media \(min-width: 900px\) \{[\s\S]*?\.source-sheet \{([^}]+)\}/);
+assert.ok(wideRuleMatch, 'wide-viewport drawer rule exists (≥900px, round 57 I5)');
 const wideRuleBody = wideRuleMatch[1];
 
-assert.match(wideRuleBody, /top: 0/, 'wide drawer starts at player top edge');
-assert.match(wideRuleBody, /right: 0/, 'wide drawer anchored to player right edge');
-assert.match(wideRuleBody, /bottom: 0/, 'wide drawer ends at player bottom edge');
+assert.match(wideRuleBody, /top: max\(12px, env\(safe-area-inset-top\)\)/, 'wide drawer floats 12px (safe-area) below the top edge');
+assert.match(wideRuleBody, /right: max\(12px, env\(safe-area-inset-right\)\)/, 'wide drawer anchored 12px (safe-area) from the right edge');
+assert.match(wideRuleBody, /bottom: max\(12px, env\(safe-area-inset-bottom\)\)/, 'wide drawer floats 12px (safe-area) above the bottom edge');
 assert.match(wideRuleBody, /left: auto/, 'wide drawer does NOT use left positioning (no left-side anchoring)');
-assert.match(wideRuleBody, /height: 100%/, 'wide drawer occupies full player height');
-assert.match(wideRuleBody, /max-height: 100%/, 'wide drawer max-height reset to 100% (NOT 60dvh)');
-assert.match(wideRuleBody, /width: min\(360px, 32vw\)/, 'wide drawer width is min(360px, 32vw) (280–420px range)');
-
-// Reset of conflicting portrait properties inside the wide rule.
-assert.match(wideRuleBody, /border-top: 0/, 'wide drawer border-top reset (no portrait bottom-sheet border)');
-assert.match(wideRuleBody, /border-radius: 0/, 'wide drawer border-radius reset (no rounded corners)');
-assert.match(wideRuleBody, /border-left: 1px solid var\(--line-strong\)/, 'wide drawer has a left border (visual drawer edge)');
+assert.match(wideRuleBody, /width: min\(380px, 32vw\)/, 'wide drawer width is min(380px, 32vw) (mirrors the episode sheet tier)');
+assert.match(wideRuleBody, /height: auto/, 'height auto — the top/bottom insets own the panel height');
+assert.match(wideRuleBody, /border-radius: 20px/, 'wide drawer KEEPS the rounded corners (radius 20 — no flush edge)');
 assert.match(wideRuleBody, /animation: slide-right/, 'wide drawer uses slide-right (horizontal) entry');
 
-// The wide rule overrides EVERY positioning property the base rule sets
-// (top/bottom/left/right/height/max-height/width/animation), so no portrait
-// geometry can leak into wide/landscape contexts.
-for (const prop of ['top', 'bottom', 'left', 'height', 'max-height', 'animation']) {
+// The wide rule overrides the base rule's anchoring/width/animation (the
+// border/background/blur/shadow surface is inherited, not restated), so no
+// portrait geometry can leak into wide/landscape contexts.
+for (const prop of ['top', 'bottom', 'left', 'height', 'width', 'animation']) {
   assert.match(wideRuleBody, new RegExp(`${prop}:`), `wide rule overrides ${prop} (no base-rule leak)`);
 }
 
@@ -150,18 +156,19 @@ assert.ok(!/episode-sheet[^\{]*\{[^\}]*translate\(-50%/.test(shell) && !/source-
 // 7. Drawer list is scrollable and respects the safe area (wide context)
 // ============================================================
 
-// MAVP-5 Issue 4 supersession: the wide media query scopes the source
-// sheet's list; the episode sheet's list scrolls via its own viewport-
-// independent rule (overflow-y: auto at every viewport).
-assert.match(shell, /@media \(min-width: 769px\) \{[\s\S]*?\.source-sheet \.sheet-list \{[^}]*overflow-y: auto/, 'wide drawer has its own scrollable list (overflow-y: auto)');
+// Round 57 (I5) supersession: the source list scrolls INSIDE the floating
+// panel at EVERY viewport (the ≥900px rule only changes the panel's
+// geometry); the episode sheet's list scrolls via its own viewport-
+// independent rule.
+assert.match(shell, /\.source-sheet \.sheet-list \{[^}]*overflow-y: auto/, 'the source list scrolls inside the floating panel (overflow-y: auto, every viewport)');
 assert.match(shell, /\.episode-sheet \.sheet-list \{[^}]*overflow-y: auto/, 'MAVP-5: the episode drawer list scrolls at every viewport');
-assert.match(shell, /@media \(min-width: 769px\) \{[\s\S]*?\.source-sheet \.sheet-list \{[^}]*padding-bottom: max\(14px, env\(safe-area-inset-bottom\)\)/, 'wide drawer list respects safe-area-inset-bottom');
+assert.match(shell, /\.source-sheet \.sheet-list \{[^}]*padding-bottom: max\(14px, env\(safe-area-inset-bottom\)\)/, 'source list respects safe-area-inset-bottom (every viewport)');
 
 // ============================================================
 // 8. Touch targets remain >=44px
 // ============================================================
 
-assert.match(shell, /\.sheet-option \{[^}]*min-height: 52px/, 'sheet-option min-height is 52px (>= 44px touch target)');
+assert.match(shell, /\.sheet-option \{[^}]*min-height: 64px/, 'sheet-option min-height is 64px (round 57 I6: >= 44px touch target)');
 // MAVP-5 Issue 4 supersession: the fab-item pill was replaced by the episode
 // chip — the chip keeps the same >=44px touch target (min-width 44px).
 assert.match(shell, /\.episode-chip \{[^}]*min-width: 44px/, 'episode chip keeps the >=44px touch target (MAVP-5)');
@@ -210,14 +217,14 @@ assert.doesNotMatch(shell, /bottom-bar/, 'no bottom bar');
 // Given:
 //   - .player-shell is position: relative (containing block).
 //   - Sheets are position: absolute at every viewport width.
-//   - Wide (>=769px): top: 0; right: 0; bottom: 0; left: auto;
-//     height: 100%; width: min(360px, 32vw).
-//   - Narrow (<769px): bottom: 0; left: 0; right: 0; max-height: 60dvh.
+//   - Wide (>=900px, round 57 I5): top/bottom/right: max(12px, safe-area);
+//     left: auto; height: auto; width: min(380px, 32vw).
+//   - Narrow (<900px): all four edges at max(12px, safe-area) — the floating
+//     glass panel (the list scrolls inside).
 //
 // The drawer is therefore guaranteed to be:
-//   - Right-aligned to the player shell's right edge (wide) or bottom sheet
-//     (narrow).
-//   - Full-height of the player shell (wide).
+//   - Right-aligned inside the player shell's safe-area insets (wide) or a
+//     floating panel inside them (narrow).
 //   - Completely inside the player shell in both contexts.
 //   - Never anchored to the browser viewport (nothing is position: fixed).
 //   - Never a centered popup (no translate(-50%, -50%) anywhere).

@@ -48,17 +48,23 @@ assert.match(shell, /3_000/, '3s auto-hide timer');
 assert.match(shell, /!sourceMenuOpen && !episodeMenuOpen && !controlsSheetsOpen && !focusWithinMaveroControls\(\)/, 'auto-hide checks all open states + focus guard');
 
 // ============================================================
-// 6. Source sheet: bottom on compact, right drawer on wide (media query)
+// 6. Source sheet: floating glass panel at every viewport; right drawer ≥900px (media query)
 // ============================================================
 
-assert.match(shell, /\.source-sheet.*bottom: 0/, 'source sheet defaults to bottom');
-assert.match(shell, /@media \(min-width: 769px\)/, 'wide viewport breakpoint at 769px');
+// Round 57 (I5): the source sheet joins the episode sheet's glass treatment
+// — a FLOATING 12px-inset panel (radius 20, rgba(16,16,18,0.92), 24px blur)
+// that becomes the right-edge drawer (same radius/surface) at the ≥900px
+// tier, sliding in from the right.
+assert.match(shell, /\.source-sheet \{[^}]*bottom: max\(12px, env\(safe-area-inset-bottom\)\)/, 'source sheet floats 12px above the player bottom edge (no flush bottom sheet)');
+assert.match(shell, /@media \(min-width: 900px\)/, 'wide viewport breakpoint at 900px (round 57 I5: the episode sheet tier)');
 // MAVP-5 Issue 4 supersession: the wide-viewport right drawer is the SOURCE
 // sheet alone; the episode sheet is a LEFT drawer at every viewport.
 // Round 54 (G1) supersession: the drawer became the floating glass sidebar
 // panel (12px safe-area insets, radius 20) — it KEEPS the left anchor and
 // the from-the-left slide at every viewport.
-assert.match(shell, /@media \(min-width: 769px\) \{[\s\S]*?\.source-sheet \{[^}]*top: 0; right: 0; bottom: 0/, 'wide viewport: source sheet becomes right drawer (MAVP-5)');
+// Round 57 (I5) supersession: the SOURCE sheet now mirrors it on the RIGHT —
+// floating, 12px-inset, radius 20, min(380px, 32vw), slide-right entry.
+assert.match(shell, /@media \(min-width: 900px\) \{[\s\S]*?\.source-sheet \{[^}]*right: max\(12px, env\(safe-area-inset-right\)\); left: auto;/, 'wide viewport: source sheet becomes the floating right drawer (round 57 I5)');
 assert.match(shell, /\.episode-sheet \{[^}]*left: max\(12px, env\(safe-area-inset-left\)\);/, 'wide viewport: episode sheet stays a LEFT drawer (MAVP-5; round 54 G1: the floating glass panel keeps the left anchor)');
 
 // ============================================================
