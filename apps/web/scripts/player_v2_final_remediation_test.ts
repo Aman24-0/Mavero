@@ -87,18 +87,22 @@ console.log('\nISSUE 1 — portrait secondary row');
   // Round 24: the display-mode select is gone from the bottom row entirely
   // (moved to the top-right utility zone) — there is no in-row icon to fold.
   ok(!/\.select-control\.display-mode\s*[.{]/.test(controls) && /aria-label=\{`Display mode: \$\{displayMode\}`\}/.test(controls), '1g2. the display-mode control lives in the utility zone (round 24) — no in-row display select rules remain');
-  // Round 24/25/32/37 order: the bottom secondary row keeps Volume · (Audio) ·
-  // Speed · Fullscreen. Subtitles/Quality/Server moved to the top utility zone
-  // (round 37 B) so the bottom row fits 360–430 px portrait without wrapping.
+  // Round 24/25/32/37/51 order: the bottom secondary row's LEFT group keeps
+  // Play · −10 s · +10 s · Volume and its RIGHT group keeps (Audio) ·
+  // Display mode · Speed · Fullscreen. Subtitles/Quality/Server stay in the
+  // top utility zone (round 37 B); round 51 moved display-mode DOWN into the
+  // right group (before Speed) and volume INTO the left group (after +10) so
+  // the portrait rows keep fitting one line without wrapping.
   const utilityStart = controls.indexOf('class="utility-zone"');
   const utility = controls.slice(utilityStart, controls.indexOf('class="bottom-zone"', utilityStart));
-  ok(utility.includes('aria-label={`Display mode: ${displayMode}`}'), '1h-pre. the display-mode control is in the top-right utility zone (round 24)');
   ok(utility.includes('aria-label={`Subtitles:'), '1h-pre2. the subtitles control moved to the utility zone (round 37 B)');
   ok(utility.includes('select-control quality'), '1h-pre3. the quality control moved to the utility zone (round 37 B)');
   ok(utility.includes('select-control server'), '1h-pre4. the server control moved to the utility zone (round 37 B)');
   const secondaryStart = controls.indexOf('class="secondary-row"');
   const secondaryEnd = controls.indexOf('<!-- In-player selection sheets', secondaryStart);
   const secondary = controls.slice(secondaryStart, secondaryEnd > secondaryStart ? secondaryEnd : undefined);
+  ok(secondary.includes('aria-label={`Display mode: ${displayMode}`}') && secondary.indexOf('aria-label={`Display mode: ${displayMode}`}') < secondary.indexOf('aria-label={`Playback speed'), '1h-pre. the display-mode control sits in the bottom row RIGHT group, BEFORE Speed (round 51 portrait control moves)');
+  ok(secondary.indexOf('volume-control') > secondary.indexOf('Seek forward 10 seconds') && secondary.indexOf('volume-control') < secondary.indexOf('class="right-controls"'), '1h-pre5. the volume control sits in the bottom row LEFT group, AFTER +10 (round 51 portrait control moves)');
   const order = ['volume-control', 'aria-label={`Playback speed', "'Enter fullscreen'"];
   let cursor = 0;
   let orderOk = true;
@@ -107,7 +111,7 @@ console.log('\nISSUE 1 — portrait secondary row');
     if (at < 0) { orderOk = false; break; }
     cursor = at;
   }
-  ok(orderOk, '1h. target order Volume · Speed · Fullscreen (round 37 B: Subtitles/Quality/Server moved to the utility zone; display mode already there)');
+  ok(orderOk, '1h. target order Volume · Speed · Fullscreen holds (round 51: LEFT group = Play · ±10 s · Volume; RIGHT group = Audio · Display mode · Speed · Fullscreen)');
   ok((secondary.match(/'Exit fullscreen' : 'Enter fullscreen'/g) ?? []).length === 1, '1i. exactly one fullscreen button in the secondary row');
   // "Off" must stay the FIRST entry of the subtitle sheet's track list; the
   // honest notice renders as a separate non-selectable status row only when

@@ -1,19 +1,26 @@
 <script lang="ts">
   // Player V2 corrections (real-device feedback): the approved wireframe
   // layout. The control surface is a THREE-ZONE overlay on the player shell:
-  //   * TOP-RIGHT utility zone  — Lock, PiP, Cast (never the center cluster
-  //     or the bottom bar; Cast renders only when the shell's eligibility
-  //     gates passed; PiP only when the browser supports it).
+  //   * TOP-RIGHT utility zone  — Subtitles, Quality, Server, Cast, PiP, Lock
+  //     (round 37 B moved Subtitles/Quality/Server here; round 51 moved the
+  //     display-mode control DOWN into the bottom row's right group). Cast
+  //     renders only when the shell's eligibility gates passed; PiP only
+  //     when the browser supports it.
   //   * CENTER cluster          — [−10 s] [Play/Pause] [+10 s] centered on the
   //     VIDEO VIEWPORT (absolute center of the shell), Play/Pause dominant.
   //     Seek icons are the recognizable RotateCcwSquare/RotateCwSquare pair
   //     with the 10-second count overlaid (replaces the ambiguous chevrons).
   //   * BOTTOM zone             — time + duration, the seek bar, and the
-  //     secondary row: volume, subtitles (ALWAYS rendered — Off / empty /
-  //     error states included), quality (engine levels or stream variants),
-  //     display mode (Fit/Fill/Stretch), speed (single label — no "1× 1×"),
-  //     fullscreen/landscape. flex-wrap gives compact portrait a second row
-  //     instead of overlap; the quality control is NEVER hidden on phones.
+  //     secondary row: LEFT group Play/Pause, ±10 s and volume (icon +
+  //     slider, moved to the left group in round 51); RIGHT group audio
+  //     (when the engine exposes tracks), display mode (Fit/Fill/Stretch,
+  //     moved down in round 51), speed (single label — no "1× 1×") and
+  //     fullscreen/landscape. Both rows stay ONE line in portrait; the
+  //     quality control is NEVER hidden on phones.
+  //   * PAUSED (round 51)       — while !playing NONE of the zones above
+  //     render: the paused metadata card (bottom-left) is the ONLY chrome.
+  //     While paused there is NO scrubber and no play row — the Resume
+  //     pill is the way back (intended consequence).
   // Back stays the shell's top-left FAB for EVERY provider (the Part 1
   // Blue Velvet in-row exception is retired by the approved layout — one
   // Back, one place, for all sources).
@@ -283,17 +290,53 @@
        the FAB line so it can never collide with the right-aligned chip row
        (the round 37 B one-line top row is untouched); ≥1024px it shares the
        FAB's line. Renders nothing when both strings are empty. -->
-  {#if title || metaLine}
+  {#if playing && (title || metaLine)}
     <div class="header-zone" aria-hidden="true">
       {#if title}<div class="header-title">{title}</div>{/if}
       {#if metaLine}<div class="header-meta">{metaLine}</div>{/if}
     </div>
   {/if}
-  <!-- TOP-RIGHT utility zone: Display Mode, Subtitles, Quality, Server, Cast, PiP, Lock.
+  <!-- Round 51 — PAUSED ZONE (approved-concept fix C1): while !playing the
+       paused metadata card is the ONLY chrome — the utility zone, the header
+       title block, the timeline row and the secondary control row are all
+       {#if playing}-gated below, so the card never competes with them.
+       While paused there is no scrubber — the Resume pill is the way back.
+       The zone itself is pointer-transparent (only the cards re-enable
+       pointer events), so a tap on the empty area still reaches the video
+       and toggles the chrome layer — the shell's tap-to-reveal behaviour is
+       unchanged and NO new play/pause-on-tap gesture is added. The zone's
+       TOP edge sits below the native back chip (back FAB bottom edge + 12px)
+       so the card can never collide with the back affordance in portrait,
+       and every card additionally caps at the zone height as a hard guard.
+       Renders only with no sheet open and not locked; `safeDuration > 0`
+       keeps it out of the initial load flash. The 4px white accent rule +
+       title/meta/overview come straight from the shell's already-available
+       metadata; the Resume pill reuses the EXISTING resume path (onResume)
+       and hides when it is absent. -->
+  {#if !playing && openSheet === null && !locked && safeDuration > 0 && (title || metaLine || overview)}
+    <div class="paused-zone">
+      <div class="paused-card">
+        {#if title}<div class="paused-title">{title}</div>{/if}
+        {#if metaLine}<div class="paused-meta">{metaLine}</div>{/if}
+        {#if overview}<p class="paused-overview">{overview}</p>{/if}
+        {#if onResume}
+          <button class="resume-pill" type="button" aria-label={resumeLabel || 'Resume'} onclick={onResume}>
+            <Play size={14} fill="currentColor" aria-hidden="true" />
+            <span>{resumeLabel || 'Resume'}</span>
+          </button>
+        {/if}
+      </div>
+    </div>
+  {/if}
+
+  <!-- TOP-RIGHT utility zone: Subtitles, Quality, Server, Cast, PiP, Lock.
        Round 37 B — Subtitles/Quality/Server moved here from the bottom row so
-       the bottom row fits a 360–430 px portrait width without wrapping. -->
+       the bottom row fits a 360–430 px portrait width without wrapping.
+       Round 51 — the display-mode control moved DOWN into the bottom row's
+       right group (before Speed); in portrait the zone carries a 56px left
+       inset so it can never slide behind the native back chip. -->
+  {#if playing}
   <div class="utility-zone">
-    <button bind:this={displayAnchor} class="control-button" type="button" aria-label={`Display mode: ${displayMode}`} aria-haspopup="dialog" onclick={() => openMenu('display')}><Expand size={17} strokeWidth={1.5} /></button>
     {#if !castActive}
       <button bind:this={subtitlesAnchor} class="select-control subtitles sheet-trigger" class:open={openSheet === 'subtitles'} type="button" aria-label={`Subtitles: ${subtitleButtonLabel}${subtitleNotice ? ` (${subtitleNotice})` : ''}`} aria-haspopup="dialog" title={subtitleNotice || undefined} onclick={() => openMenu('subtitles')}>
         <Captions size={16} strokeWidth={1.5} aria-hidden="true" />
@@ -329,33 +372,16 @@
     {/if}
     <button class="control-button lock-button" type="button" aria-label={locked ? 'Unlock player controls' : 'Lock player controls'} aria-pressed={locked} onclick={onToggleLock}>{#if locked}<LockOpen size={17} strokeWidth={1.5} />{:else}<Lock size={17} strokeWidth={1.5} />{/if}</button>
   </div>
+  {/if}
 
   <!-- BOTTOM zone: time + timeline, then the control row.
        Round 37 B — the bottom row keeps only Play/Pause, ±10s, Volume, Speed,
-       Fullscreen. Subtitles/Quality/Server moved to the top utility zone. -->
+       Fullscreen. Subtitles/Quality/Server moved to the top utility zone.
+       Round 51 — the whole zone is {#if playing}-gated (paused = card only)
+       and the groups swapped members: volume joined the LEFT group (after
+       +10) and display mode joined the RIGHT group (before Speed). -->
+  {#if playing}
   <div class="bottom-zone">
-    <!-- Round 50 — paused metadata card (approved concept): bottom-left,
-         anchored to the bottom zone's TOP edge so it sits directly above
-         the timeline row at every size. Renders only while PAUSED (and the
-         chrome layer is visible — this component lives inside the chrome
-         overlay, which owns the show/hide), with no sheet open and not
-         locked; `safeDuration > 0` keeps it out of the initial load flash.
-         The 4px white accent rule + title/meta/overview come straight from
-         the shell's already-available metadata; the Resume pill reuses the
-         EXISTING resume path (onResume) and hides when it is absent. -->
-    {#if !playing && openSheet === null && !locked && safeDuration > 0 && (title || metaLine || overview)}
-      <div class="paused-card">
-        {#if title}<div class="paused-title">{title}</div>{/if}
-        {#if metaLine}<div class="paused-meta">{metaLine}</div>{/if}
-        {#if overview}<p class="paused-overview">{overview}</p>{/if}
-        {#if onResume}
-          <button class="resume-pill" type="button" aria-label={resumeLabel || 'Resume'} onclick={onResume}>
-            <Play size={14} fill="currentColor" aria-hidden="true" />
-            <span>{resumeLabel || 'Resume'}</span>
-          </button>
-        {/if}
-      </div>
-    {/if}
     <div class="timeline-row">
       <span class="time-label" aria-live="off">{formatPlayerTime(currentTime)}</span>
       <div class="timeline-wrap">
@@ -369,7 +395,9 @@
     </div>
 
     <div class="secondary-row">
-      <!-- LEFT group: Play/Pause + ±10 s seek buttons. -->
+      <!-- LEFT group (round 51): Play/Pause, ±10 s and volume (icon +
+           slider, moved here from the right group so the left side owns
+           the listening controls). -->
       <div class="left-controls">
         <button class="control-button play-inline" type="button" aria-label={playing ? 'Pause' : 'Play'} onclick={onTogglePlay}>
           {#if playing}<Pause size={18} strokeWidth={1.5} aria-hidden="true" />{:else}<Play size={18} fill="currentColor" aria-hidden="true" />{/if}
@@ -380,9 +408,6 @@
         <button class="control-button seek-inline" type="button" aria-label="Seek forward 10 seconds" onclick={() => onStep(10)}>
           <RotateCwSquare size={18} strokeWidth={1.5} aria-hidden="true" />
         </button>
-      </div>
-      <!-- RIGHT group: Volume, Audio, Speed, Fullscreen. -->
-      <div class="right-controls">
         {#if !castActive}
           <div class="volume-control">
             <button class="control-button" type="button" aria-label={muted ? 'Unmute' : 'Mute'} onclick={onToggleMute}>
@@ -390,6 +415,13 @@
             </button>
             <input class="volume-input" type="range" min="0" max="1" step="0.05" value={muted ? 0 : volume} oninput={handleVolume} aria-label="Volume" style={`--volume-fill: ${volumeFillPercent}%;`} />
           </div>
+        {/if}
+      </div>
+      <!-- RIGHT group (round 51): Audio (only when the engine exposes
+           tracks), display mode (moved down from the utility zone, before
+           Speed), Speed, Fullscreen. -->
+      <div class="right-controls">
+        {#if !castActive}
           {#if audioMode === 'menu'}
             <button bind:this={audioAnchor} class="select-control audio sheet-trigger" class:open={openSheet === 'audio'} type="button" aria-label={`Audio track: ${audioButtonLabel}`} aria-haspopup="dialog" onclick={() => openMenu('audio')}>
               <AudioLines size={16} strokeWidth={1.5} aria-hidden="true" />
@@ -397,6 +429,9 @@
               <span class="chip-value">{audioButtonLabel}</span>
             </button>
           {/if}
+        {/if}
+        <button bind:this={displayAnchor} class="control-button" type="button" aria-label={`Display mode: ${displayMode}`} aria-haspopup="dialog" onclick={() => openMenu('display')}><Expand size={17} strokeWidth={1.5} /></button>
+        {#if !castActive}
           <button bind:this={speedAnchor} class="select-control speed sheet-trigger" class:open={openSheet === 'speed'} type="button" aria-label={`Playback speed: ${playbackRate}×`} aria-haspopup="dialog" onclick={() => openMenu('speed')}>
             <Gauge size={16} strokeWidth={1.5} aria-hidden="true" />
             <span class="chip-label">{playbackRate}×</span>
@@ -406,6 +441,7 @@
       </div>
     </div>
   </div>
+  {/if}
 
   <!-- In-player selection sheets (Issue 3): Mavero surfaces, rendered inside
        the control layer so they inherit its geometry (full-shell overlay). -->
@@ -437,28 +473,40 @@
     </PlayerOptionSheet>
   {/if}
   {#if openSheet === 'servers'}
-    <PlayerOptionSheet title="Server" anchor={serverAnchor ?? null} closing={sheetClosing} onClose={closeMenu}>
-      <!-- Round 36 — two-pane: server group tabs (Vidsrc | Vidstream) +
-           that group's source rows. Selecting a group filters the right
-           pane; clicking a source starts that stream. -->
-      {#if serverGroups.length > 1}
-        <div class="server-group-tabs" role="tablist">
-          <button class="server-group-tab" class:active={activeServerGroup === 'all'} type="button" onclick={() => (activeServerGroup = 'all')}>All</button>
-          {#each serverGroups as group (group)}
-            <button class="server-group-tab" class:active={activeServerGroup === group} type="button" onclick={() => (activeServerGroup = group)}>{group}</button>
-          {/each}
+    <PlayerOptionSheet title="Server" wide anchor={serverAnchor ?? null} closing={sheetClosing} onClose={closeMenu}>
+      <!-- Round 51 (approved-concept fix C2) — two-pane server popover: a
+           vertical group rail (All, then one entry per group present in
+           `servers`) + the selected group's rows in the right pane. Same
+           selection handler, same row markup and labels as before — "All"
+           shows every row exactly as today. The rail is sticky inside the
+           popover body's existing scroll so the groups stay put while the
+           rows scroll; the selected rail item carries a 2px white bar on
+           its left edge. -->
+      <div class="server-pane">
+        {#if serverGroups.length > 1}
+          <div class="server-rail-wrap">
+            <span class="rail-label" aria-hidden="true">SERVER</span>
+            <div class="server-rail" role="tablist" aria-label="Server groups">
+              <button class="rail-item" class:active={activeServerGroup === 'all'} type="button" onclick={() => (activeServerGroup = 'all')}>All</button>
+              {#each serverGroups as group (group)}
+                <button class="rail-item" class:active={activeServerGroup === group} type="button" onclick={() => (activeServerGroup = group)}>{group}</button>
+              {/each}
+            </div>
+          </div>
+        {/if}
+        <div class="server-list">
+          <div class="option-list" role="group" aria-label="Playback server">
+            {#each filteredServers as server (server.url)}
+              <button class="option-row" class:selected={server.url === selectedServer} type="button" onclick={() => chooseServer(server.url)}>
+                <span class="row-mark">{#if server.url === selectedServer}<Check size={15} />{/if}</span>
+                <span class="row-copy">
+                  <strong>{server.label}</strong>
+                  {#if server.server}<small>{server.server}</small>{/if}
+                </span>
+              </button>
+            {/each}
+          </div>
         </div>
-      {/if}
-      <div class="option-list" role="group" aria-label="Playback server">
-        {#each filteredServers as server (server.url)}
-          <button class="option-row" class:selected={server.url === selectedServer} type="button" onclick={() => chooseServer(server.url)}>
-            <span class="row-mark">{#if server.url === selectedServer}<Check size={15} />{/if}</span>
-            <span class="row-copy">
-              <strong>{server.label}</strong>
-              {#if server.server}<small>{server.server}</small>{/if}
-            </span>
-          </button>
-        {/each}
       </div>
     </PlayerOptionSheet>
   {/if}
@@ -494,25 +542,23 @@
      that miss every control reach the video surface (gestures/reveal).
      Round 50 — player-scope surface tokens (approved concept: white-only
      accent): s1/s2 surfaces, hairline, secondary/tertiary ink, radii, ease.
-     Children (chips, buttons, sheets) inherit them. */
+     Round 51 — the token DEFINITIONS moved to the shell's player root
+     (.player-shell) so the native back button and the chips share ONE set
+     of values (no duplicated magic numbers); children still inherit them. */
   .controls {
     position: absolute; inset: 0; z-index: 10; pointer-events: none; color: var(--ink);
-    --pl-s1: rgba(255, 255, 255, 0.055);
-    --pl-s2: rgba(255, 255, 255, 0.10);
-    --pl-line: rgba(255, 255, 255, 0.12);
-    --pl-ink-2: rgba(255, 255, 255, 0.72);
-    --pl-ink-3: rgba(255, 255, 255, 0.50);
-    --pl-r1: 12px;
-    --pl-r2: 16px;
-    --pl-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
   }
 
   /* ---- Top-right utility zone ----
-     Round 37 B — now holds Display Mode, Subtitles, Quality, Server, Cast,
-     PiP, Lock. In portrait these must fit one row (360–430 px); the zone
-     uses flex-wrap: nowrap and shrinks button size/gap. The select-control
-     labels truncate so the row never overflows. */
-  .utility-zone { position: absolute; z-index: 2; top: max(12px, env(safe-area-inset-top)); right: max(12px, env(safe-area-inset-right)); display: flex; align-items: center; flex-wrap: nowrap; gap: 8px; pointer-events: auto; max-width: calc(100vw - 24px); }
+     Round 37 B — holds Subtitles, Quality, Server, Cast, PiP, Lock. In
+     portrait these must fit one row (360–430 px); the zone uses
+     flex-wrap: nowrap and shrinks button size/gap. Round 51 — the
+     display-mode control moved down to the bottom row, the zone carries a
+     portrait 56px LEFT inset (≤640px block below) so it can never slide
+     behind the native back chip, and its TOP edge (16px; 12px in portrait)
+     matches the back chip so both sit on the SAME baseline. The
+     select-control labels truncate so the row never overflows. */
+  .utility-zone { position: absolute; z-index: 2; top: max(16px, env(safe-area-inset-top)); right: max(12px, env(safe-area-inset-right)); display: flex; align-items: center; flex-wrap: nowrap; gap: 8px; pointer-events: auto; max-width: calc(100vw - 24px); }
 
   /* 2026-10 round 20 — the center cluster + cluster-button CSS is REMOVED.
      Play/Pause moved to the bottom secondary row as .control-button.play-inline.
@@ -539,23 +585,33 @@
     .header-zone { top: max(14px, env(safe-area-inset-top)); left: calc(max(12px, env(safe-area-inset-left)) + 47px); max-width: min(460px, 38vw); }
   }
 
-  /* Round 50 — paused metadata card (approved concept): bottom-left over
-     the video, directly above the timeline row, fading in with the chrome.
-     Background-less (text + the 4px white accent rule on the bottom scrim)
-     so the video stays visible — same chrome language as the rest. */
+  /* Round 51 — paused zone (approved-concept fix C1): the while-paused
+     chrome is ONLY the cards inside. The zone is pointer-transparent (a tap
+     on the empty area reaches the video and toggles the chrome layer); its
+     TOP edge sits below the native back chip's bottom edge + 12px so the
+     cards can never collide with the back affordance in portrait, and every
+     card additionally caps at the zone height (overflow hidden) as a hard
+     guard. While !playing nothing else renders, so the card stands alone at
+     the bottom-left with no scrubber above it. */
+  .paused-zone { position: absolute; z-index: 2; top: 68px; left: 16px; right: 16px; bottom: max(20px, calc(env(safe-area-inset-bottom) + 16px)); pointer-events: none; }
+  .paused-zone > * { pointer-events: auto; }
+  /* Round 50 — paused metadata card (approved concept): bottom-left over the
+     video, fading in with the chrome. Background-less (text + the 4px white
+     accent rule on the video) so the video stays visible — same chrome
+     language as the rest. */
   .paused-card {
     position: absolute;
-    left: 4px;
-    bottom: calc(100% + 10px);
-    z-index: 1;
+    left: 0;
+    bottom: 0;
     display: flex;
     flex-direction: column;
     gap: 4px;
     max-width: 520px;
+    max-height: 100%;
+    overflow: hidden;
     padding: 6px 16px 6px 14px;
     border-left: 4px solid #fff;
     animation: paused-card-in 140ms var(--pl-ease);
-    pointer-events: auto;
   }
   .paused-title { font-size: 30px; font-weight: 650; letter-spacing: -0.3px; line-height: 1.12; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-shadow: 0 2px 14px rgba(0,0,0,0.5); }
   .paused-meta { font-size: 13px; color: var(--pl-ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-shadow: 0 1px 8px rgba(0,0,0,0.5); }
@@ -581,11 +637,11 @@
   .timeline-input::-moz-range-track { height: 4px; background: transparent; }
   .timeline-input::-moz-range-thumb { width: 14px; height: 14px; border: 0; border-radius: 50%; background: #fff; box-shadow: 0 0 0 3px rgba(0,0,0,0.35), 0 0 12px rgba(255,255,255,0.35); }
 
-  /* Secondary row: LEFT group (Play/Pause, ±10s) + RIGHT group (Volume,
-     Subtitles, Quality, Audio, Speed, Fullscreen) using space-between.
-     2026-10 round 25 — portrait uses nowrap (single row) with 8px gap.
-     The right group packs tightly with flex-shrink on labels so everything
-     fits on one line. Touch targets remain 36px+ minimum. */
+  /* Secondary row: LEFT group (Play/Pause, ±10s, Volume — round 51) +
+     RIGHT group (Audio, Display mode, Speed, Fullscreen — round 51) using
+     space-between. 2026-10 round 25 — portrait uses nowrap (single row)
+     with 8px gap. The right group packs tightly with flex-shrink on labels
+     so everything fits on one line. Touch targets remain 36px+ minimum. */
   .secondary-row { display: flex; align-items: center; flex-wrap: nowrap; justify-content: space-between; gap: 8px; }
   .left-controls { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
   .right-controls { display: flex; align-items: center; flex-wrap: nowrap; gap: 8px; justify-content: flex-end; min-width: 0; }
@@ -636,11 +692,21 @@
   .option-row.selected { color: var(--ink); }
   .row-mark { display: grid; flex: 0 0 22px; place-items: center; width: 22px; height: 22px; color: var(--muted); }
   .option-row.selected .row-mark { border: 1px solid var(--line-strong); border-radius: 50%; color: var(--accent); }
-  /* Round 36 — server group tabs (Vidsrc | Vidstream) */
-  .server-group-tabs { display: flex; gap: 4px; padding: 4px; margin-bottom: 8px; border-bottom: 1px solid var(--line-soft); }
-  .server-group-tab { flex: 1 1 auto; min-height: 36px; padding: 6px 12px; border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--ink-soft); background: transparent; font: inherit; font-size: .72rem; font-weight: 700; cursor: pointer; text-align: center; }
-  .server-group-tab:hover, .server-group-tab:focus-visible { border-color: var(--line-strong); background: var(--accent-soft); }
-  .server-group-tab.active { color: var(--ink); border-color: var(--accent); background: var(--accent-soft); }
+  /* Round 51 (approved-concept fix C2) — two-pane server popover: a
+     vertical group rail + the selected group's rows. The rail is sticky
+     inside the sheet body's existing scroll so the groups stay put while
+     the rows scroll; the selected rail item carries a 2px white bar on its
+     left edge (white text; inactive 66% white). The row markup is
+     unchanged (check mark, label, group sub-label). */
+  .server-pane { display: flex; align-items: flex-start; gap: 6px; }
+  .server-rail-wrap { flex: 0 0 132px; position: sticky; top: 0; }
+  .rail-label { display: block; padding: 4px 10px 8px 12px; color: rgba(255, 255, 255, 0.45); font-size: 10.5px; font-weight: 700; letter-spacing: 1.6px; text-transform: uppercase; }
+  .server-rail { display: flex; flex-direction: column; gap: 2px; }
+  .rail-item { position: relative; display: block; min-height: 38px; padding: 8px 10px 8px 14px; border: 0; border-radius: 9px; color: rgba(255, 255, 255, 0.66); background: transparent; cursor: pointer; text-align: left; font: inherit; font-size: 12.5px; font-weight: 600; transition: color var(--motion-fast) var(--pl-ease), background var(--motion-fast) var(--pl-ease); }
+  .rail-item:hover, .rail-item:focus-visible { color: #fff; background: rgba(255, 255, 255, 0.06); }
+  .rail-item.active { color: #fff; }
+  .rail-item.active::before { content: ''; position: absolute; left: 0; top: 9px; bottom: 9px; width: 2px; border-radius: 1px; background: #fff; }
+  .server-list { flex: 1 1 auto; min-width: 0; }
   .row-copy { min-width: 0; }
   .row-copy strong { display: block; color: var(--ink); font-size: .72rem; overflow-wrap: anywhere; }
   .row-copy small { display: block; margin-top: 2px; color: var(--muted); font-size: .55rem; }
@@ -672,7 +738,11 @@
     .secondary-row { gap: 6px; }
     .left-controls { gap: 6px; }
     .right-controls { gap: 4px; }
-    .utility-zone { gap: 4px; max-width: calc(100vw - 16px); }
+    /* Round 51 — 56px left inset + the 12px top edge: the native back chip
+    (top 12 + 40px wide) ends at 52px, so the chip row can never slide
+    behind it; the chips keep truncating so the row stays ONE line at
+    360px. */
+    .utility-zone { gap: 4px; top: max(12px, env(safe-area-inset-top)); left: max(56px, env(safe-area-inset-left)); max-width: calc(100vw - 68px); }
     .time-label { font-size: 11px; }
     .select-control { height: 36px; padding: 0 10px; gap: 6px; }
     .select-control .chip-label { display: none; }
@@ -683,8 +753,13 @@
     .select-control.audio { max-width: 72px; }
     .control-button { min-width: 32px; min-height: 32px; }
     .utility-zone .control-button { width: 32px; min-width: 32px; height: 32px; }
-    /* Round 50 — the paused card spans 82vw on mobile (still directly above
-       the timeline row). */
+    /* Round 51 — the server rail stays visible beside the list (104px);
+       the list takes the rest — still two columns, no tabs. */
+    .server-rail-wrap { flex: 0 0 104px; }
+    /* Round 51 — paused zone portrait: same edges as the back chip (12px)
+       and the card's top stays below the back chip's bottom edge + 12px
+       (12 + 40 + 12 = 64px). */
+    .paused-zone { top: 64px; left: 12px; right: 12px; bottom: max(12px, calc(env(safe-area-inset-bottom) + 8px)); }
     .paused-card { max-width: 82vw; padding: 4px 10px 4px 10px; }
     .paused-title { font-size: 24px; }
   }

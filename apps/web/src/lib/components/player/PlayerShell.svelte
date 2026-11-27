@@ -3029,8 +3029,8 @@
        FAB; every source without a custom profile keeps the safe-area-aware
        top-left default. While touch-locked the FAB stays reachable
        (essential navigation is never blocked). -->
-  <button class="back-fab" class:custom-position={Boolean(backControlStyle)} class:custom-size={backSizePx !== null} type="button" aria-label="Close player" style={backControlStyle} onclick={onClose}>
-    <ArrowLeft size={17} />
+  <button class="back-fab" class:native={source?.type === 'direct'} class:custom-position={Boolean(backControlStyle)} class:custom-size={backSizePx !== null} type="button" aria-label="Close player" style={backControlStyle} onclick={onClose}>
+    {#if source?.type === 'direct'}<ArrowLeft size={18} strokeWidth={1.5} />{:else}<ArrowLeft size={17} />{/if}
   </button>
 
   <!-- Immersive redesign: Direct source playback controls as an overlay (auto-hiding).
@@ -3191,7 +3191,7 @@
      fallback for browsers without dynamic viewport units), then 100dvh
      (tracks mobile browser UI); min-height mirrors the same chain. The
      scroll lock itself is the html[data-player-open] convention (app.css). */
-  .player-shell { --player-bg: var(--base); position: relative; width: 100%; height: 100vh; height: 100dvh; min-height: 100vh; min-height: 100svh; min-height: 100dvh; overflow: hidden; color: var(--ink); background: var(--player-bg); }
+  .player-shell { --player-bg: var(--base); --pl-s1: rgba(255, 255, 255, 0.055); --pl-s2: rgba(255, 255, 255, 0.10); --pl-line: rgba(255, 255, 255, 0.12); --pl-ink-2: rgba(255, 255, 255, 0.72); --pl-ink-3: rgba(255, 255, 255, 0.50); --pl-r1: 12px; --pl-r2: 16px; --pl-ease: cubic-bezier(0.2, 0.8, 0.2, 1); position: relative; width: 100%; height: 100vh; height: 100dvh; min-height: 100vh; min-height: 100svh; min-height: 100dvh; overflow: hidden; color: var(--ink); background: var(--player-bg); }
   .player-shell.landscape-mode { height: 100vh; height: 100dvh; }
 
   /* Stage: fills the ENTIRE shell — no header/footer space consumed.
@@ -3237,6 +3237,19 @@
   .back-fab { position: absolute; z-index: 12; top: max(12px, env(safe-area-inset-top)); left: max(12px, env(safe-area-inset-left)); display: grid; place-items: center; width: 37px; height: 37px; border: 1px solid var(--line-strong); border-radius: 50%; color: #fff; background: rgba(0,0,0,.55); cursor: pointer; backdrop-filter: blur(12px); visibility: visible; transition: opacity var(--motion-normal) var(--ease-out), transform var(--motion-normal) var(--ease-out), background var(--motion-fast) var(--ease-out), visibility 0s linear 0s; }
   .back-fab:hover, .back-fab:focus-visible { background: rgba(0,0,0,.75); border-color: var(--accent); }
   .back-fab:active { transform: scale(.94); }
+  /* Round 51 (approved-concept fix C3) — the NATIVE player's back control
+     matches the chip system: 40px square (radius 12) on the SAME --pl-*
+     surface tokens the chips use (defined on .player-shell above so the
+     back button and PlayerControls' chips share ONE set of values — no
+     duplicated magic numbers), icon 18px at 1.5 stroke, hover → s2, no blur
+     (the popover keeps the single blur layer). Only applied while the
+     NATIVE player is active (direct type) — embed sources keep the circular
+     translucent FAB above and the embed overlay is untouched. Per-source
+     Admin size overrides (.custom-size, below) still win; inline placement
+     overrides keep winning over everything. */
+  .back-fab.native { top: max(16px, env(safe-area-inset-top)); left: max(16px, env(safe-area-inset-left)); width: 40px; height: 40px; border-color: var(--pl-line); border-radius: var(--pl-r1); background: var(--pl-s1); backdrop-filter: none; }
+  .back-fab.native:hover, .back-fab.native:focus-visible { background: var(--pl-s2); border-color: rgba(255, 255, 255, 0.2); }
+  .back-fab.native:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
   /* MAVP-3 Issue 5: per-source Back-button SIZE (Admin "Player Controls
      Position" → size, px). The custom-size class is applied ONLY when the
      active source configures a size, so sources without custom sizing keep
@@ -3586,6 +3599,9 @@
   @media (max-width: 640px) {
     .message-card { bottom: 50%; flex-wrap: wrap; }
     .message-actions { width: 100%; margin-left: 46px; }
+    /* Round 51 (C3) — the native back chip drops to the portrait 12px
+       corner (aligned with the utility-zone left inset contract). */
+    .back-fab.native { top: max(12px, env(safe-area-inset-top)); left: max(12px, env(safe-area-inset-left)); }
   }
 
   /* Landscape phone — compact control positioning.
@@ -3596,6 +3612,10 @@
      keep winning over both defaults. */
   @media (orientation: landscape) and (max-height: 500px) {
     .back-fab { width: 37px; height: 37px; top: max(6px, env(safe-area-inset-top)); left: max(6px, env(safe-area-inset-left)); }
+    /* Round 51 (C3) — the native back chip keeps the tight landscape corner
+       floor (its 40px chip size is untouched; the embed FAB above keeps its
+       own compact 37px treatment). */
+    .back-fab.native { top: max(6px, env(safe-area-inset-top)); left: max(6px, env(safe-area-inset-left)); }
     .control-fab { width: 37px; height: 37px; }
     .source-chip { min-height: 56px; }
     .source-chip-bar { height: 48px; }

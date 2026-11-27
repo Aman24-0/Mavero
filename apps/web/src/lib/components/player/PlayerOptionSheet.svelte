@@ -31,6 +31,9 @@
 
   /** Sheet title (eyebrow) + accessible dialog label. */
   export let title = '';
+  /** Round 51 (server two-pane) — widen the popover to the two-pane width
+   *  (min(560px, viewport-safe)); every other sheet keeps the compact width. */
+  export let wide = false;
   /** The trigger chip the popover anchors to (round 50). */
   export let anchor: HTMLElement | null = null;
   /** True while the parent is running the 90ms exit animation (round 50) —
@@ -99,7 +102,7 @@
      blurs). The sheet itself is a sibling, so clicks inside never bubble
      into the overlay. -->
 <div class="option-sheet-overlay" role="presentation" onclick={onClose}></div>
-<div class="player-option-sheet" class:closing use:popoverAnchor={{ anchor }} role="dialog" aria-label={title} tabindex="-1" onkeydown={handleKeydown}>
+<div class="player-option-sheet" class:wide class:closing use:popoverAnchor={{ anchor }} role="dialog" aria-label={title} tabindex="-1" onkeydown={handleKeydown}>
   <div class="sheet-head">
     <span class="eyebrow">{title}</span>
     <button bind:this={closeBtn} class="close-button" type="button" aria-label={`Close ${title || 'menu'}`} onclick={onClose}><X size={15} /></button>
@@ -136,6 +139,10 @@
   /* Exit (round 50): fade only — no scale, and `forwards` holds the faded
      state until the parent's 90ms delayed unmount lands. */
   .player-option-sheet.closing { animation: option-sheet-out 90ms ease-out forwards; }
+  /* Round 51 (approved-concept fix C2) — the server sheet's two-pane width:
+     the 132px group rail + the row list need more room than the compact
+     420px popover. */
+  .player-option-sheet.wide { width: min(560px, calc(100vw - 24px)); }
   .sheet-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px 8px 16px; }
   .sheet-head .eyebrow { color: rgba(255, 255, 255, 0.45); font-size: 10.5px; font-weight: 700; letter-spacing: 1.6px; text-transform: uppercase; }
   .close-button { display: grid; place-items: center; width: 30px; height: 30px; border: 0; border-radius: 9px; color: rgba(255, 255, 255, 0.8); background: rgba(255, 255, 255, 0.06); cursor: pointer; }
