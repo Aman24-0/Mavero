@@ -202,14 +202,27 @@
       clearTimeout(sheetCloseTimer);
       sheetCloseTimer = undefined;
     }
+    // Round 56 (H1) — no pending hover close may outlive an open, and the
+    // geometry close watch belongs to HOVER-opened sheets ONLY: a
+    // click-opened sheet keeps the exact click semantics it always had.
+    if (hoverCloseTimer) {
+      clearTimeout(hoverCloseTimer);
+      hoverCloseTimer = undefined;
+    }
     sheetClosing = false;
     openSheet = kind;
     sheetOpenedByHover = viaHover;
+    if (viaHover) startHoverCloseWatch(); else stopHoverCloseWatch();
     onMenuOpenChange(true);
   }
   function closeMenu() {
     if (openSheet === null || sheetClosing) return;
     if (sheetCloseTimer) clearTimeout(sheetCloseTimer);
+    // Round 56 (H1) — no hover close may outlive a close.
+    if (hoverCloseTimer) {
+      clearTimeout(hoverCloseTimer);
+      hoverCloseTimer = undefined;
+    }
     sheetClosing = true;
     const reduced = typeof window !== 'undefined' && typeof window.matchMedia === 'function'
       && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -218,34 +231,58 @@
       openSheet = null;
       sheetClosing = false;
       sheetOpenedByHover = false;
+      // Round 56 (H1) — the geometry close watch (and its window listener)
+      // dies with the sheet.
+      stopHoverCloseWatch();
       onMenuOpenChange(false);
     }, reduced ? 0 : 90);
   }
 
-  // ----- Round 53 (F2): HOVER-TO-OPEN SHEETS (desktop only) -----
+  // ----- Round 53 (F2) / Round 56 (H1): HOVER-TO-OPEN SHEETS (desktop only) -----
   //
   // On `(hover: hover) and (pointer: fine)` devices ONLY: pointing at a chip
   // that opens a sheet (Subtitles, Quality, Server, Audio, Speed, Display)
-  // opens that sheet after a 120ms hover delay; leaving the chip AND the
-  // open panel closes a hover-opened sheet after 200ms. The hover zone is
-  // SHARED between the trigger chip and the popover panel (pointerover/
-  // pointerout delegation on this component's root — moving the pointer
-  // from the chip into the panel cancels the pending close), so:
+  // opens that sheet after a 120ms hover delay; a hover-opened sheet closes
+  // 220ms after the pointer leaves BOTH the trigger chip and the open panel.
+  //
+  // Round 56 (H1) — the CLOSE side is GEOMETRY, not DOM ancestry. The old
+  // pointerout/relatedTarget zone broke the moment a popover opened: the
+  // popover's full-surface click-catcher (.option-sheet-overlay,
+  // pointer-events:auto, z-index 20) sits ON TOP of the chip, so pointerout
+  // fired with relatedTarget = the overlay (outside the DOM zone) → 200ms
+  // close → the sheet unmounted → the pointer was suddenly over the chip
+  // again → reopen → an open/close flicker loop, and the 10px chip→panel gap
+  // counted as "outside" too. While a hover-opened sheet is on screen, a
+  // window-level `pointermove` listener now tests the pointer against the
+  // trigger chip's rect and the open panel's rect (getBoundingClientRect),
+  // each inflated by 8px (the gap counts as inside):
+  //   * inside  → the pending close timer is cleared (chip → panel transit
+  //               keeps the sheet open);
+  //   * outside → the 220ms close timer starts — ONLY if it is not already
+  //               running, so it fires 220ms after the pointer FIRST leaves.
+  // The overlay no longer influences hover AT ALL (it never matches a rect;
+  // it still handles click-outside dismissal on its own), so:
+  //   * hovering a chip opens the sheet and it STAYS open (no flicker loop);
+  //   * moving into the panel keeps it open and its options stay clickable;
+  //   * moving anywhere else closes it after ~220ms;
   //   * CLICK still works on every device (touch and mouse) with the exact
-  //     semantics it always had — a click-opened sheet does NOT auto-close
-  //     on pointer leave;
+  //     semantics it always had — a CLICK-opened sheet does NOT auto-close
+  //     on pointer leave (sheetOpenedByHover gates the geometry close);
   //   * keyboard focus + Enter keeps working (the chips stay real buttons);
-  //   * clicking anywhere outside still closes (the popover's own overlay);
   //   * exactly ONE sheet is open at a time (openMenu is the single writer);
   //   * hover-open NEVER fires while a gesture is active (gestureActive),
-  //     while the controls are locked, on touch devices, or mid-close.
+  //     while the controls are locked, on touch devices, or mid-close;
+  //   * every hover listener/timer is removed on destroy and whenever the
+  //     sheet closes (and when hover capability disappears mid-session).
   let hoverCapable = false;
   let hoverOpenTimer: ReturnType<typeof setTimeout> | undefined = undefined;
   let hoverCloseTimer: ReturnType<typeof setTimeout> | undefined = undefined;
   let hoverMediaQuery: MediaQueryList | undefined;
   let hoverMediaListener: ((event: MediaQueryListEvent) => void) | undefined;
+  let hoverMoveDetach: (() => void) | undefined = undefined;
   const HOVER_OPEN_DELAY_MS = 120;
-  const HOVER_CLOSE_DELAY_MS = 200;
+  const HOVER_CLOSE_DELAY_MS = 220;
+  const HOVER_RECT_INFLATE_PX = 8;
 
   function clearHoverTimers() {
     if (hoverOpenTimer) {
@@ -262,26 +299,20 @@
     return hoverCapable && !locked && !gestureActive && !sheetClosing;
   }
 
-  /** The hover zone element under a pointer target: a trigger chip or the
-   *  open popover panel — null anywhere else. */
-  function sheetHoverTarget(target: EventTarget | null): Element | null {
+  /** Round 56 (H1) — DOM matching is used ONLY for the OPEN trigger: the
+   *  `.sheet-trigger` chip under a pointer target (null anywhere else). */
+  function sheetTriggerTarget(target: EventTarget | null): HTMLElement | null {
     if (typeof Element === 'undefined' || !(target instanceof Element)) return null;
-    return target.closest('.sheet-trigger, .player-option-sheet');
+    const trigger = target.closest('.sheet-trigger');
+    return trigger instanceof HTMLElement ? trigger : null;
   }
 
   function handleHoverOver(event: PointerEvent | MouseEvent) {
     if (!hoverOpenAllowed()) return;
-    const target = sheetHoverTarget(event.target);
-    if (!target) return;
-    // The pointer is ON the shared hover zone (chip or panel) — a pending
-    // hover-close is cancelled (moving chip → panel keeps the sheet open).
-    if (hoverCloseTimer) {
-      clearTimeout(hoverCloseTimer);
-      hoverCloseTimer = undefined;
-    }
-    const trigger = target.closest('.sheet-trigger');
-    const kind = trigger instanceof HTMLElement ? (trigger.dataset.sheet as 'subtitles' | 'quality' | 'audio' | 'servers' | 'speed' | 'display' | undefined) : undefined;
-    if (!trigger || !kind) return; // inside the panel only — nothing to open
+    const trigger = sheetTriggerTarget(event.target);
+    if (!trigger) return;
+    const kind = trigger.dataset.sheet as 'subtitles' | 'quality' | 'audio' | 'servers' | 'speed' | 'display' | undefined;
+    if (!kind) return;
     if (hoverOpenTimer) clearTimeout(hoverOpenTimer);
     hoverOpenTimer = setTimeout(() => {
       hoverOpenTimer = undefined;
@@ -290,24 +321,75 @@
     }, HOVER_OPEN_DELAY_MS);
   }
 
-  function handleHoverOut(event: PointerEvent | MouseEvent) {
-    if (!hoverOpenAllowed()) return;
-    if (!sheetHoverTarget(event.target)) return;
-    // Still INSIDE the shared zone (chip → panel or panel → chip): the sheet
-    // stays open.
-    if (event.relatedTarget && sheetHoverTarget(event.relatedTarget)) return;
-    // Leaving the zone: a pending hover-open dies immediately; a
-    // HOVER-OPENED sheet closes after 200ms (re-entering cancels it).
-    if (hoverOpenTimer) {
-      clearTimeout(hoverOpenTimer);
-      hoverOpenTimer = undefined;
+  /** Round 56 (H1) — the open sheet's trigger chip (the anchor the popover
+   *  attached to): the geometry zone's first rect. */
+  function openSheetTriggerChip(): HTMLElement | null {
+    switch (openSheet) {
+      case 'subtitles': return subtitlesAnchor ?? null;
+      case 'quality': return qualityAnchor ?? null;
+      case 'audio': return audioAnchor ?? null;
+      case 'servers': return serverAnchor ?? null;
+      case 'speed': return speedAnchor ?? null;
+      case 'display': return displayAnchor ?? null;
+      default: return null;
     }
-    if (!sheetOpenedByHover || openSheet === null) return;
-    if (hoverCloseTimer) clearTimeout(hoverCloseTimer);
-    hoverCloseTimer = setTimeout(() => {
-      hoverCloseTimer = undefined;
-      if (openSheet !== null && sheetOpenedByHover) closeMenu();
-    }, HOVER_CLOSE_DELAY_MS);
+  }
+
+  /** Round 56 (H1) — the open sheet's panel element (`.player-option-sheet`):
+   *  the geometry zone's second rect. */
+  function openSheetPanel(): Element | null {
+    if (typeof document === 'undefined' || typeof document.querySelector !== 'function') return null;
+    return document.querySelector('.player-option-sheet');
+  }
+
+  /** Round 56 (H1) — the geometry zone test: the point against an element's
+   *  rect, inflated by HOVER_RECT_INFLATE_PX on every side. */
+  function pointInRect(x: number, y: number, element: Element | null | undefined): boolean {
+    if (!element || typeof element.getBoundingClientRect !== 'function') return false;
+    const rect = element.getBoundingClientRect();
+    return x >= rect.left - HOVER_RECT_INFLATE_PX
+      && x <= rect.right + HOVER_RECT_INFLATE_PX
+      && y >= rect.top - HOVER_RECT_INFLATE_PX
+      && y <= rect.bottom + HOVER_RECT_INFLATE_PX;
+  }
+
+  /** Round 56 (H1) — while a HOVER-opened sheet is on screen, watch
+   *  `pointermove` on window (desktop only): outside BOTH inflated rects
+   *  (trigger chip + open panel) for HOVER_CLOSE_DELAY_MS closes the sheet;
+   *  inside clears the pending close. An already-running close timer is
+   *  never restarted, so it fires 220ms after the pointer FIRST leaves the
+   *  zone. The window listener is removed on destroy, whenever the sheet
+   *  closes, and whenever a CLICK-opened sheet replaces a hover-opened one. */
+  function startHoverCloseWatch() {
+    if (hoverMoveDetach || typeof window === 'undefined' || typeof window.addEventListener !== 'function') return;
+    const onMove = (event: PointerEvent) => {
+      if (openSheet === null || !sheetOpenedByHover || sheetClosing) return;
+      const inside = pointInRect(event.clientX, event.clientY, openSheetTriggerChip())
+        || pointInRect(event.clientX, event.clientY, openSheetPanel());
+      if (inside) {
+        if (hoverCloseTimer) {
+          clearTimeout(hoverCloseTimer);
+          hoverCloseTimer = undefined;
+        }
+        return;
+      }
+      if (!hoverCloseTimer) {
+        hoverCloseTimer = setTimeout(() => {
+          hoverCloseTimer = undefined;
+          if (openSheet !== null && sheetOpenedByHover) closeMenu();
+        }, HOVER_CLOSE_DELAY_MS);
+      }
+    };
+    window.addEventListener('pointermove', onMove, true);
+    hoverMoveDetach = () => {
+      try { window.removeEventListener('pointermove', onMove, true); } catch { /* already removed */ }
+    };
+  }
+
+  function stopHoverCloseWatch() {
+    if (!hoverMoveDetach) return;
+    hoverMoveDetach();
+    hoverMoveDetach = undefined;
   }
 
   onMount(() => {
@@ -316,13 +398,17 @@
       hoverCapable = hoverMediaQuery.matches;
       hoverMediaListener = (event: MediaQueryListEvent) => {
         hoverCapable = event.matches;
-        if (!hoverCapable) clearHoverTimers();
+        if (!hoverCapable) {
+          clearHoverTimers();
+          stopHoverCloseWatch();
+        }
       };
       hoverMediaQuery.addEventListener('change', hoverMediaListener);
     }
   });
   onDestroy(() => {
     clearHoverTimers();
+    stopHoverCloseWatch();
     if (hoverMediaQuery && hoverMediaListener) {
       try { hoverMediaQuery.removeEventListener('change', hoverMediaListener); } catch { /* already removed */ }
       hoverMediaQuery = undefined;
@@ -485,7 +571,7 @@
   }
 </script>
 
-<div class="controls" class:casting={castActive} role="group" onpointerover={handleHoverOver} onpointerout={handleHoverOut} aria-label="Playback controls">
+<div class="controls" class:casting={castActive} role="group" onpointerover={handleHoverOver} aria-label="Playback controls">
   <!-- Round 50 — header (approved concept): title + meta line, TOP-LEFT of
        the utility-zone strip, before the right-aligned chips. The Back FAB
        keeps its own top-left spot: below 1024px the header sits just under
@@ -842,7 +928,11 @@
     position: absolute;
     z-index: 2;
     top: calc(max(12px, env(safe-area-inset-top)) + 50px);
-    left: max(16px, env(safe-area-inset-left));
+    /* Round 56 (H2) — the LEFT offset derives from the SAME shared tokens the
+       native back chip uses (--pl-chip-size), so the header can never slide
+       under it at any width (the old fixed-offset pair left a 1px overlap at
+       ≥1024px where the back chip is 44px wide). */
+    left: calc(max(16px, env(safe-area-inset-left)) + var(--pl-chip-size, 40px) + 16px);
     max-width: min(480px, calc(100vw - 32px));
     display: flex;
     flex-direction: column;
@@ -852,7 +942,11 @@
   .header-title { font-size: 20px; font-weight: 650; letter-spacing: -0.2px; line-height: 1.15; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-shadow: 0 2px 12px rgba(0,0,0,0.5); }
   .header-meta { font-size: 12.5px; color: var(--pl-ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-shadow: 0 1px 8px rgba(0,0,0,0.5); }
   @media (min-width: 1024px) {
-    .header-zone { top: max(14px, env(safe-area-inset-top)); left: calc(max(12px, env(safe-area-inset-left)) + 47px); max-width: min(460px, 38vw); }
+    /* Round 56 (H2) — same token-derived LEFT offset as the base rule, and a
+       width CAP that reserves the right-side 320px (the utility chip row) so
+       the title can never reach it: 100vw − (left offset) − 320px. The
+       vertical placement is unchanged. */
+    .header-zone { top: max(14px, env(safe-area-inset-top)); left: calc(max(16px, env(safe-area-inset-left)) + var(--pl-chip-size, 40px) + 16px); max-width: min(460px, calc(100vw - (max(16px, env(safe-area-inset-left)) + var(--pl-chip-size, 40px) + 16px) - 320px)); }
   }
 
   /* Round 51 — paused zone (approved-concept fix C1): the while-paused

@@ -244,33 +244,6 @@ export const vidsrcScrapeProviderAdapter: ProviderAdapter = {
     let firstSource: { url: string; quality?: string; server?: string; language?: string } | null = null;
     let resultReferer = '';
 
-    if (vidsrcEnabled) {
-      try {
-        result = await scrapeVidsrc(
-            tmdbId,
-            context.request.mediaType === 'movie' ? 'movie' : 'tv',
-            season,
-            episode,
-            config
-          );
-        if (result && result.sources.length > 0) {
-          firstSource = result.sources[0]!;
-          resultReferer = result.referer ?? '';
-        }
-      } catch (error) {
-        if (!vidstreamEnabled) {
-          // Vidsrc failed and Vidstream is disabled — propagate the error.
-          if (error instanceof ScraperError) throw mapScraperError(error);
-          throw new ResolverError('RESOLUTION_UNAVAILABLE', error);
-        }
-        // Vidsrc failed but Vidstream is enabled — continue to Vidstream.
-      }
-    }
-
-    if (!firstSource && !vidstreamEnabled) {
-      throw new ResolverError('RESOLUTION_UNAVAILABLE');
-    }
-
     // 2026-10 round 32/33 — MULTI-SERVER WIRE: every scraped source becomes a
     // playback candidate. `url` stays the FIRST source (validated below —
     // the primary stream, unchanged from the pre-round behaviour), and the
@@ -282,7 +255,66 @@ export const vidsrcScrapeProviderAdapter: ProviderAdapter = {
     // the server name with its audio language ("Tethys (English)",
     // "Enceladus (Hindi)") — the celestial roster's per-server language.
     const servers: Array<{ url: string; label: string; server?: string; language?: string; qualities?: Array<{ label: string; url: string }>; protocol?: 'hls' | 'dash' }> = [];
-    if (vidsrcEnabled && result && result.sources) {
+
+    // Round 56 (H3) — the Vidsrc scrape runs INSIDE the same Promise.allSettled
+    // as the adapter groups, so ALL FIVE resolves run CONCURRENTLY. The old
+    // form awaited the 2–4s scrape first and only then started the adapters
+    // (scrape + adapters serially — every DirectStream resolve paid both
+    // waits end to end); a title where Vidsrc is fast now starts ~2–3s
+    // sooner. BEHAVIOUR IS PRESERVED EXACTLY:
+    //   * firstSource / resultReferer come from the FULFILLED vidsrc result
+    //     only (null when the scrape was disabled or rejected);
+    //   * a rejected scrape maps to the SAME typed error exactly when it did
+    //     before (Vidstream disabled → mapScraperError; otherwise the
+    //     failure stays non-blocking);
+    //   * the server append order stays Vidsrc → Vidstream → VidVelvet →
+    //     VidBox under the 28 cap;
+    //   * the subtitles concat, defaultServer clamp and the diagnostic line
+    //     are unchanged. The adapters themselves are untouched.
+    let rivestreamSubtitles: Array<{ url: string; language?: string; label?: string }> | undefined;
+    let vidflixSubtitles: Array<{ url: string; language?: string; label?: string }> | undefined;
+    const [vidsrcOut, rivOut, vidOut, flxOut] = await Promise.allSettled([
+      vidsrcEnabled
+        ? scrapeVidsrc(
+            tmdbId,
+            context.request.mediaType === 'movie' ? 'movie' : 'tv',
+            season,
+            episode,
+            config
+          )
+        : Promise.resolve(null),
+      vidstreamEnabled ? rivestreamAdapter.resolve(context) : Promise.resolve(null),
+      vidstartEnabled ? vidstartAdapter.resolve(context) : Promise.resolve(null),
+      vidboxEnabled ? vidboxAdapter.resolve(context) : Promise.resolve(null),
+    ]);
+
+    // Vidsrc outcome — the primary source/referer come from the FULFILLED
+    // result only (null when the scrape was disabled or rejected). A
+    // rejected scrape propagates exactly as before: with Vidstream disabled
+    // it maps to the same typed error (mapScraperError); with Vidstream
+    // enabled the failure stays non-blocking (the remaining groups still
+    // deliver entries).
+    if (vidsrcOut.status === 'fulfilled') {
+      result = vidsrcOut.value;
+      if (result && result.sources.length > 0) {
+        firstSource = result.sources[0]!;
+        resultReferer = result.referer ?? '';
+      }
+    } else {
+      const error = vidsrcOut.reason;
+      if (!vidstreamEnabled) {
+        // Vidsrc failed and Vidstream is disabled — propagate the error.
+        if (error instanceof ScraperError) throw mapScraperError(error);
+        throw new ResolverError('RESOLUTION_UNAVAILABLE', error);
+      }
+      // Vidsrc failed but Vidstream is enabled — continue to Vidstream.
+    }
+
+    if (!firstSource && !vidstreamEnabled) {
+      throw new ResolverError('RESOLUTION_UNAVAILABLE');
+    }
+
+    if (result && result.sources) {
       for (const scraped of result.sources) {
         if (servers.length >= 28) break;
         const candidateUrl = buildPlaybackUrl(scraped.url, resultReferer);
@@ -300,20 +332,12 @@ export const vidsrcScrapeProviderAdapter: ProviderAdapter = {
       }
     }
 
-    // Round 40/41/42 — PARALLEL FETCH: the Rivestream, VidVelvet (ThugTV
-    // media) and VidBox (stream.hls.lol DASH) resolves run CONCURRENTLY
-    // (Promise.allSettled) — the old sequential form let a failing retry
-    // add its full backoff+attempt time to every resolve (observed 8.2s
-    // end-to-end). A rejected promise logs the same warn line as before
-    // and never blocks the other groups. Entries are still appended in
-    // the FIXED order Vidstream first, then VidVelvet, then VidBox.
-    let rivestreamSubtitles: Array<{ url: string; language?: string; label?: string }> | undefined;
-    let vidflixSubtitles: Array<{ url: string; language?: string; label?: string }> | undefined;
-    const [rivOut, vidOut, flxOut] = await Promise.allSettled([
-      vidstreamEnabled ? rivestreamAdapter.resolve(context) : Promise.resolve(null),
-      vidstartEnabled ? vidstartAdapter.resolve(context) : Promise.resolve(null),
-      vidboxEnabled ? vidboxAdapter.resolve(context) : Promise.resolve(null),
-    ]);
+    // Round 40/41/42/56 — PARALLEL FETCH: the Rivestream, VidVelvet (ThugTV
+    // media) and VidBox (stream.hls.lol DASH) resolves run CONCURRENTLY with
+    // the Vidsrc scrape (round 56 H3 — one shared Promise.allSettled, the
+    // five-settle above). A rejected promise logs the same warn line as
+    // before and never blocks the other groups. Entries are still appended
+    // in the FIXED order Vidstream first, then VidVelvet, then VidBox.
 
     // Vidstream (Rivestream) first — same merge as round 36. If
     // Rivestream failed, omit its entries entirely (never block Vidsrc).

@@ -17,9 +17,10 @@
  *   §2 F2 — HOVER-TO-OPEN SHEETS (desktop only): on (hover: hover) and
  *      (pointer: fine), pointing at a chip that opens a sheet opens it after
  *      120ms; leaving BOTH the chip and the open panel closes a
- *      hover-opened sheet after 200ms; the hover zone is shared (chip ↔
- *      panel); click / keyboard keep working; hover-open never fires while
- *      a gesture is active, while locked, or on touch devices.
+ *      hover-opened sheet after 220ms (round 56 H1: GEOMETRY zone — chip
+ *      rect ∪ panel rect, 8px inflated, window pointermove; pointerout
+ *      retired); click / keyboard keep working; hover-open never fires
+ *      while a gesture is active, while locked, or on touch devices.
  *
  *   §3 F3 — KEYBOARD SHORTCUTS: Space/K → play/pause, ←/→ → ∓10s through
  *      the existing step handlers, ignored while focus is inside an
@@ -226,18 +227,18 @@ console.log('\n§1 — F1: gesture HUD below the top row; wheel + mouse click ge
 console.log('\n§2 — F2: hover-to-open sheets (desktop only)');
 {
   ok(/window\.matchMedia\('\(hover: hover\) and \(pointer: fine\)'\)/.test(controls), '2a. hover-open is gated on (hover: hover) and (pointer: fine) — never on touch devices');
-  ok(/const HOVER_OPEN_DELAY_MS = 120;/.test(controls) && /const HOVER_CLOSE_DELAY_MS = 200;/.test(controls), '2b. the hover-open delay is 120ms and the leave-close delay is 200ms');
+  ok(/const HOVER_OPEN_DELAY_MS = 120;/.test(controls) && /const HOVER_CLOSE_DELAY_MS = 220;/.test(controls), '2b. the hover-open delay is 120ms and the leave-close delay is 220ms (round 56 H1: 200→220 with the geometry zone)');
   ok(/function openMenu\(kind: 'subtitles' \| 'quality' \| 'audio' \| 'servers' \| 'speed' \| 'display', viaHover = false\)/.test(controls), '2c. openMenu tracks HOW the sheet opened (hover vs click)');
-  ok(/if \(!sheetOpenedByHover \|\| openSheet === null\) return;/.test(controls), '2d. only a HOVER-opened sheet auto-closes on pointer leave — click keeps its exact semantics');
-  ok(/target\.closest\('\.sheet-trigger, \.player-option-sheet'\)/.test(controls), '2e. the hover zone is SHARED between the trigger chip and the popover panel (pointer into the panel keeps it open)');
+  ok(/if \(openSheet === null \|\| !sheetOpenedByHover \|\| sheetClosing\) return;/.test(controls), '2d. only a HOVER-opened sheet auto-closes on pointer leave — click keeps its exact semantics (round 56 H1: the geometry watch gates on sheetOpenedByHover)');
+  ok(/target\.closest\('\.sheet-trigger'\)/.test(controls) && !/closest\('\.sheet-trigger, \.player-option-sheet'\)/.test(controls), '2e. (round 56 H1) DOM matching is ONLY the open trigger chip (.sheet-trigger) — the panel joined the GEOMETRY zone (chip rect ∪ panel rect, 8px inflated), so the popover overlay can never feed the open/close loop');
   ok(/return hoverCapable && !locked && !gestureActive && !sheetClosing;/.test(controls), '2f. hover-open never fires while locked, while a gesture is active, or mid-close');
-  ok(/onpointerover=\{handleHoverOver\} onpointerout=\{handleHoverOut\}/.test(controls), '2g. hover is delegated on the control surface (pointerover/pointerout)');
+  ok(/onpointerover=\{handleHoverOver\}/.test(controls) && !/onpointerout=/.test(controls), '2g. (round 56 H1) hover-open is delegated via pointerover ONLY — the close side is the window pointermove GEOMETRY watch, never pointerout (the overlay sits on top of the chip and used to loop the sheet open/close)');
   ok(/export let gestureActive = false;/.test(controls) && /gestureActive=\{gestureIndicator !== null \|\| holdSpeedActive\}/.test(shell), '2h. the shell feeds its live gesture flag into the controls (hover stands down mid-gesture)');
   for (const kind of ['subtitles', 'quality', 'servers', 'audio', 'speed', 'display']) {
     ok(controls.includes(`data-sheet="${kind}"`), `2i. the ${kind} trigger carries data-sheet="${kind}" (hover target)`);
   }
   ok(/aria-label=\{`Subtitles: \$\{subtitleButtonLabel\}/.test(controls) && /onclick=\{\(\) => openMenu\('subtitles'\)\}/.test(controls), '2j. CLICK still opens (touch and mouse) — the literal onclick openMenu calls are untouched');
-  ok(/onDestroy\(\(\) => \{[\s\S]*?clearHoverTimers\(\);[\s\S]*?removeEventListener\('change', hoverMediaListener\)/.test(controls), '2k. the hover timers and the matchMedia listener are cleaned up in onDestroy');
+  ok(/onDestroy\(\(\) => \{[\s\S]*?clearHoverTimers\(\);[\s\S]*?stopHoverCloseWatch\(\);[\s\S]*?removeEventListener\('change', hoverMediaListener\)/.test(controls), '2k. the hover timers, the geometry close watch and the matchMedia listener are cleaned up in onDestroy');
 }
 
 // ===========================================================================

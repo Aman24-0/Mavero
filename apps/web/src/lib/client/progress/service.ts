@@ -116,8 +116,26 @@ export async function getResumeProgress(context: PlaybackContext) {
 }
 
 export async function getContinueWatching() {
-  const [progress, favorites] = await Promise.all([listProgress(), listFavorites()]);
-  return continueWatchingRecords(progress, favorites);
+  // Round 56 (H4) — the LOCAL derivation applies the SAME deletion filter as
+  // the cloud path (cloud.ts's Phase 20 tombstone filter): a watch-progress
+  // record whose favourite carries an active deletion tombstone is never
+  // returned. Discover paints these records FIRST (local-first, before the
+  // cloud sync converges) and the cloud path already filters them — without
+  // the same filter here, a title removed from My List painted from local
+  // storage and vanished a moment later when the sync landed (a 1–2s flash).
+  // The tombstone ALSO suppresses the favourite itself (the same suppression
+  // mergeFavorites applies on the cloud path), so a tombstoned favourite can
+  // never come back through the synthetic "watching" entries either. The
+  // stored watch progress itself is NOT deleted — the tombstone only hides
+  // it from the rail, and a re-favourite (which clears the tombstone via
+  // saveFavorite) resurrects the position. Same service exports, same
+  // canonical records — no parallel store.
+  const [progress, favorites, deletions] = await Promise.all([listProgress(), listFavorites(), listFavoriteDeletions()]);
+  if (deletions.length === 0) return continueWatchingRecords(progress, favorites);
+  const deletedKeys = new Set(deletions.map((record) => record.key));
+  const visibleProgress = progress.filter((record) => !deletedKeys.has(favoriteKey(record.contentType, record.contentId)));
+  const visibleFavorites = favorites.filter((record) => !deletedKeys.has(record.key));
+  return continueWatchingRecords(visibleProgress, visibleFavorites);
 }
 
 export async function getLocalProgressRecords() {
