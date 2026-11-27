@@ -34,7 +34,7 @@
   // Issues 1+2). Only REAL values are ever offered: the tracks, quality
   // levels and speeds of the ACTIVE source.
   import { AudioLines, Captions, Cast, Check, Expand, Lock, LockOpen, Maximize2, Minimize2, Pause, PictureInPicture2, Play, RotateCcwSquare, RotateCwSquare, Server, Settings2, Volume1, Volume2, VolumeX, Gauge } from 'lucide-svelte';
-  import { onDestroy } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import type { PlayerAudioTrackOption, PlayerInternalQualityOption, PlayerQualityOption, PlayerServerOption, PlayerSubtitleTrack } from '$lib/shared/player';
   import { formatPlayerTime, playbackSpeeds, PLAYER_AUTO_QUALITY_ID } from '$lib/shared/player';
   import PlayerOptionSheet from './PlayerOptionSheet.svelte';
@@ -55,6 +55,10 @@
   const PAUSE_SETTLE_MS = 400;
   /** Round 52 (F1): the shell's source/quality/audio/server switching flag (its loading-card condition, passed as-is). */
   export let switching = false;
+  // Round 53 (F2) — the shell's live gesture flag (the swipe/wheel indicator
+  // or the 2× hold). Hover-to-open sheets stand down while ANY gesture is
+  // active — the pointer belongs to the gesture, not to the chips.
+  export let gestureActive = false;
   export let muted = false;
   export let volume = 1;
   export let currentTime = 0;
@@ -187,13 +191,20 @@
   // close so a rapid chip switch mounts the next popover fresh.
   let sheetClosing = false;
   let sheetCloseTimer: ReturnType<typeof setTimeout> | undefined = undefined;
-  function openMenu(kind: 'subtitles' | 'quality' | 'audio' | 'servers' | 'speed' | 'display') {
+  // Round 53 (F2) — HOVER-TO-OPEN SHEETS (desktop only, see the hover block
+  // below). `sheetOpenedByHover` marks a sheet the POINTER opened (120ms
+  // hover on a chip): only such a sheet auto-closes when the pointer leaves
+  // BOTH the trigger and the panel (200ms) — a CLICK-opened sheet keeps the
+  // exact click semantics it always had (outside click / Escape / selection).
+  let sheetOpenedByHover = false;
+  function openMenu(kind: 'subtitles' | 'quality' | 'audio' | 'servers' | 'speed' | 'display', viaHover = false) {
     if (sheetCloseTimer) {
       clearTimeout(sheetCloseTimer);
       sheetCloseTimer = undefined;
     }
     sheetClosing = false;
     openSheet = kind;
+    sheetOpenedByHover = viaHover;
     onMenuOpenChange(true);
   }
   function closeMenu() {
@@ -206,9 +217,118 @@
       sheetCloseTimer = undefined;
       openSheet = null;
       sheetClosing = false;
+      sheetOpenedByHover = false;
       onMenuOpenChange(false);
     }, reduced ? 0 : 90);
   }
+
+  // ----- Round 53 (F2): HOVER-TO-OPEN SHEETS (desktop only) -----
+  //
+  // On `(hover: hover) and (pointer: fine)` devices ONLY: pointing at a chip
+  // that opens a sheet (Subtitles, Quality, Server, Audio, Speed, Display)
+  // opens that sheet after a 120ms hover delay; leaving the chip AND the
+  // open panel closes a hover-opened sheet after 200ms. The hover zone is
+  // SHARED between the trigger chip and the popover panel (pointerover/
+  // pointerout delegation on this component's root — moving the pointer
+  // from the chip into the panel cancels the pending close), so:
+  //   * CLICK still works on every device (touch and mouse) with the exact
+  //     semantics it always had — a click-opened sheet does NOT auto-close
+  //     on pointer leave;
+  //   * keyboard focus + Enter keeps working (the chips stay real buttons);
+  //   * clicking anywhere outside still closes (the popover's own overlay);
+  //   * exactly ONE sheet is open at a time (openMenu is the single writer);
+  //   * hover-open NEVER fires while a gesture is active (gestureActive),
+  //     while the controls are locked, on touch devices, or mid-close.
+  let hoverCapable = false;
+  let hoverOpenTimer: ReturnType<typeof setTimeout> | undefined = undefined;
+  let hoverCloseTimer: ReturnType<typeof setTimeout> | undefined = undefined;
+  let hoverMediaQuery: MediaQueryList | undefined;
+  let hoverMediaListener: ((event: MediaQueryListEvent) => void) | undefined;
+  const HOVER_OPEN_DELAY_MS = 120;
+  const HOVER_CLOSE_DELAY_MS = 200;
+
+  function clearHoverTimers() {
+    if (hoverOpenTimer) {
+      clearTimeout(hoverOpenTimer);
+      hoverOpenTimer = undefined;
+    }
+    if (hoverCloseTimer) {
+      clearTimeout(hoverCloseTimer);
+      hoverCloseTimer = undefined;
+    }
+  }
+
+  function hoverOpenAllowed(): boolean {
+    return hoverCapable && !locked && !gestureActive && !sheetClosing;
+  }
+
+  /** The hover zone element under a pointer target: a trigger chip or the
+   *  open popover panel — null anywhere else. */
+  function sheetHoverTarget(target: EventTarget | null): Element | null {
+    if (typeof Element === 'undefined' || !(target instanceof Element)) return null;
+    return target.closest('.sheet-trigger, .player-option-sheet');
+  }
+
+  function handleHoverOver(event: PointerEvent | MouseEvent) {
+    if (!hoverOpenAllowed()) return;
+    const target = sheetHoverTarget(event.target);
+    if (!target) return;
+    // The pointer is ON the shared hover zone (chip or panel) — a pending
+    // hover-close is cancelled (moving chip → panel keeps the sheet open).
+    if (hoverCloseTimer) {
+      clearTimeout(hoverCloseTimer);
+      hoverCloseTimer = undefined;
+    }
+    const trigger = target.closest('.sheet-trigger');
+    const kind = trigger instanceof HTMLElement ? (trigger.dataset.sheet as 'subtitles' | 'quality' | 'audio' | 'servers' | 'speed' | 'display' | undefined) : undefined;
+    if (!trigger || !kind) return; // inside the panel only — nothing to open
+    if (hoverOpenTimer) clearTimeout(hoverOpenTimer);
+    hoverOpenTimer = setTimeout(() => {
+      hoverOpenTimer = undefined;
+      if (!hoverOpenAllowed()) return;
+      openMenu(kind, true);
+    }, HOVER_OPEN_DELAY_MS);
+  }
+
+  function handleHoverOut(event: PointerEvent | MouseEvent) {
+    if (!hoverOpenAllowed()) return;
+    if (!sheetHoverTarget(event.target)) return;
+    // Still INSIDE the shared zone (chip → panel or panel → chip): the sheet
+    // stays open.
+    if (event.relatedTarget && sheetHoverTarget(event.relatedTarget)) return;
+    // Leaving the zone: a pending hover-open dies immediately; a
+    // HOVER-OPENED sheet closes after 200ms (re-entering cancels it).
+    if (hoverOpenTimer) {
+      clearTimeout(hoverOpenTimer);
+      hoverOpenTimer = undefined;
+    }
+    if (!sheetOpenedByHover || openSheet === null) return;
+    if (hoverCloseTimer) clearTimeout(hoverCloseTimer);
+    hoverCloseTimer = setTimeout(() => {
+      hoverCloseTimer = undefined;
+      if (openSheet !== null && sheetOpenedByHover) closeMenu();
+    }, HOVER_CLOSE_DELAY_MS);
+  }
+
+  onMount(() => {
+    if (typeof window !== 'undefined' && window.matchMedia) {
+      hoverMediaQuery = window.matchMedia('(hover: hover) and (pointer: fine)');
+      hoverCapable = hoverMediaQuery.matches;
+      hoverMediaListener = (event: MediaQueryListEvent) => {
+        hoverCapable = event.matches;
+        if (!hoverCapable) clearHoverTimers();
+      };
+      hoverMediaQuery.addEventListener('change', hoverMediaListener);
+    }
+  });
+  onDestroy(() => {
+    clearHoverTimers();
+    if (hoverMediaQuery && hoverMediaListener) {
+      try { hoverMediaQuery.removeEventListener('change', hoverMediaListener); } catch { /* already removed */ }
+      hoverMediaQuery = undefined;
+      hoverMediaListener = undefined;
+    }
+  });
 
   // ----- Round 52 (F1): the SETTLED-pause derivation -----
   //
@@ -249,6 +369,17 @@
   });
 
   $: safeDuration = Number.isFinite(duration) && duration > 0 ? duration : 0;
+  // Round 53 (F6) — the RIGHT time label toggles TOTAL ↔ REMAINING. The
+  // default shows the total duration exactly as before; clicking flips to
+  // "−MM:SS" (duration − currentTime), clicking again flips back. Session-only
+  // local state (no persistence); the LEFT (elapsed) label is unchanged.
+  let durationMode: 'total' | 'remaining' = 'total';
+  function toggleDurationMode() {
+    durationMode = durationMode === 'total' ? 'remaining' : 'total';
+  }
+  $: durationLabelText = durationMode === 'remaining' && safeDuration > 0
+    ? `−${formatPlayerTime(Math.max(0, safeDuration - currentTime))}`
+    : formatPlayerTime(safeDuration);
   $: progressPercent = safeDuration ? Math.min(100, Math.max(0, (currentTime / safeDuration) * 100)) : 0;
   $: bufferedPercent = safeDuration ? Math.min(100, Math.max(0, (buffered / safeDuration) * 100)) : 0;
   $: volumeIcon = muted || volume === 0 ? 'muted' : volume < 0.5 ? 'low' : 'high';
@@ -354,7 +485,7 @@
   }
 </script>
 
-<div class="controls" class:casting={castActive} aria-label="Playback controls">
+<div class="controls" class:casting={castActive} role="group" onpointerover={handleHoverOver} onpointerout={handleHoverOut} aria-label="Playback controls">
   <!-- Round 50 — header (approved concept): title + meta line, TOP-LEFT of
        the utility-zone strip, before the right-aligned chips. The Back FAB
        keeps its own top-left spot: below 1024px the header sits just under
@@ -441,13 +572,13 @@
   {#if !pausedSettled}
   <div class="utility-zone">
     {#if !castActive}
-      <button bind:this={subtitlesAnchor} class="select-control subtitles sheet-trigger" class:open={openSheet === 'subtitles'} type="button" aria-label={`Subtitles: ${subtitleButtonLabel}${subtitleNotice ? ` (${subtitleNotice})` : ''}`} aria-haspopup="dialog" title={subtitleNotice || undefined} onclick={() => openMenu('subtitles')}>
+      <button bind:this={subtitlesAnchor} class="select-control subtitles sheet-trigger" data-sheet="subtitles" class:open={openSheet === 'subtitles'} type="button" aria-label={`Subtitles: ${subtitleButtonLabel}${subtitleNotice ? ` (${subtitleNotice})` : ''}`} aria-haspopup="dialog" title={subtitleNotice || undefined} onclick={() => openMenu('subtitles')}>
         <Captions size={16} strokeWidth={1.5} aria-hidden="true" />
         <span class="chip-label">Subtitles</span>
         <span class="chip-value">{subtitleButtonLabel}</span>
       </button>
       {#if qualityMode !== 'none'}
-        <button bind:this={qualityAnchor} class="select-control quality sheet-trigger" class:open={openSheet === 'quality'} type="button" aria-label={`Playback quality: ${qualityButtonLabel}`} aria-haspopup="dialog" onclick={() => openMenu('quality')}>
+        <button bind:this={qualityAnchor} class="select-control quality sheet-trigger" data-sheet="quality" class:open={openSheet === 'quality'} type="button" aria-label={`Playback quality: ${qualityButtonLabel}`} aria-haspopup="dialog" onclick={() => openMenu('quality')}>
           <Settings2 size={16} strokeWidth={1.5} aria-hidden="true" />
           <span class="chip-label">Quality</span>
           <span class="chip-value">{qualityButtonLabel}</span>
@@ -460,7 +591,7 @@
         </button>
       {/if}
       {#if serverMode === 'menu'}
-        <button bind:this={serverAnchor} class="select-control server sheet-trigger" class:open={openSheet === 'servers'} type="button" aria-label={`Server: ${serverButtonLabel}`} aria-haspopup="dialog" onclick={() => openMenu('servers')}>
+        <button bind:this={serverAnchor} class="select-control server sheet-trigger" data-sheet="servers" class:open={openSheet === 'servers'} type="button" aria-label={`Server: ${serverButtonLabel}`} aria-haspopup="dialog" onclick={() => openMenu('servers')}>
           <Server size={16} strokeWidth={1.5} aria-hidden="true" />
           <span class="chip-label">Server</span>
           <span class="chip-value">{serverButtonLabel}</span>
@@ -501,21 +632,29 @@
         </div>
         <input class="timeline-input" type="range" min="0" max={safeDuration} step="0.1" value={currentTime} oninput={handleSeek} aria-label="Seek playback" />
       </div>
-      <span class="time-label" aria-live="off">{formatPlayerTime(safeDuration)}</span>
+      <!-- Round 53 (F6) — the RIGHT time label is a real toggle button: total
+           duration (default, exactly as before) ↔ remaining time ("−MM:SS" =
+           duration − currentTime). aria-pressed carries the mode; the label
+           describes the toggle. Session-only state; the left label is
+           unchanged. -->
+      <button class="time-label duration-toggle" type="button" aria-pressed={durationMode === 'remaining'} aria-label={durationMode === 'total' ? 'Show remaining time' : 'Show total duration'} onclick={toggleDurationMode}>{durationLabelText}</button>
     </div>
 
     <div class="secondary-row">
-      <!-- LEFT group (round 51): Play/Pause, ±10 s and volume (icon +
-           slider, moved here from the right group so the left side owns
-           the listening controls). -->
+      <!-- LEFT group — Round 53 (F5): −10 s, PLAY/PAUSE, +10 s, Volume (icon +
+           slider): Play/Pause moves BETWEEN the two seek buttons. Round 53
+           (F3): the play button carries aria-keyshortcuts="Space" and the two
+           seek buttons "ArrowLeft"/"ArrowRight" (the shell's existing keyboard
+           shortcuts — Space/K toggle, ←/→ step ±10 s — already drive them).
+           Same aria-labels and handlers as before. -->
       <div class="left-controls">
-        <button class="control-button play-inline" type="button" aria-label={playing ? 'Pause' : 'Play'} onclick={onTogglePlay}>
-          {#if playing}<Pause size={18} strokeWidth={1.5} aria-hidden="true" />{:else}<Play size={18} fill="currentColor" aria-hidden="true" />{/if}
-        </button>
-        <button class="control-button seek-inline" type="button" aria-label="Seek backward 10 seconds" onclick={() => onStep(-10)}>
+        <button class="control-button seek-inline" type="button" aria-label="Seek backward 10 seconds" aria-keyshortcuts="ArrowLeft" onclick={() => onStep(-10)}>
           <RotateCcwSquare size={18} strokeWidth={1.5} aria-hidden="true" />
         </button>
-        <button class="control-button seek-inline" type="button" aria-label="Seek forward 10 seconds" onclick={() => onStep(10)}>
+        <button class="control-button play-inline" type="button" aria-label={playing ? 'Pause' : 'Play'} aria-keyshortcuts="Space" onclick={onTogglePlay}>
+          {#if playing}<Pause size={18} strokeWidth={1.5} aria-hidden="true" />{:else}<Play size={18} fill="currentColor" aria-hidden="true" />{/if}
+        </button>
+        <button class="control-button seek-inline" type="button" aria-label="Seek forward 10 seconds" aria-keyshortcuts="ArrowRight" onclick={() => onStep(10)}>
           <RotateCwSquare size={18} strokeWidth={1.5} aria-hidden="true" />
         </button>
         {#if !castActive}
@@ -533,16 +672,16 @@
       <div class="right-controls">
         {#if !castActive}
           {#if audioMode === 'menu'}
-            <button bind:this={audioAnchor} class="select-control audio sheet-trigger" class:open={openSheet === 'audio'} type="button" aria-label={`Audio track: ${audioButtonLabel}`} aria-haspopup="dialog" onclick={() => openMenu('audio')}>
+            <button bind:this={audioAnchor} class="select-control audio sheet-trigger" data-sheet="audio" class:open={openSheet === 'audio'} type="button" aria-label={`Audio track: ${audioButtonLabel}`} aria-haspopup="dialog" onclick={() => openMenu('audio')}>
               <AudioLines size={16} strokeWidth={1.5} aria-hidden="true" />
               <span class="chip-label">Audio</span>
               <span class="chip-value">{audioButtonLabel}</span>
             </button>
           {/if}
         {/if}
-        <button bind:this={displayAnchor} class="control-button" type="button" aria-label={`Display mode: ${displayMode}`} aria-haspopup="dialog" onclick={() => openMenu('display')}><Expand size={17} strokeWidth={1.5} /></button>
+        <button bind:this={displayAnchor} class="control-button sheet-trigger" data-sheet="display" type="button" aria-label={`Display mode: ${displayMode}`} aria-haspopup="dialog" onclick={() => openMenu('display')}><Expand size={17} strokeWidth={1.5} /></button>
         {#if !castActive}
-          <button bind:this={speedAnchor} class="select-control speed sheet-trigger" class:open={openSheet === 'speed'} type="button" aria-label={`Playback speed: ${playbackRate}×`} aria-haspopup="dialog" onclick={() => openMenu('speed')}>
+          <button bind:this={speedAnchor} class="select-control speed sheet-trigger" data-sheet="speed" class:open={openSheet === 'speed'} type="button" aria-label={`Playback speed: ${playbackRate}×`} aria-haspopup="dialog" onclick={() => openMenu('speed')}>
             <Gauge size={16} strokeWidth={1.5} aria-hidden="true" />
             <span class="chip-label">{playbackRate}×</span>
           </button>
@@ -771,6 +910,13 @@
      tertiary ink right (duration — the row's last label, no markup change). */
   .time-label { color: var(--pl-ink-2); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }
   .timeline-row .time-label:last-child { color: var(--pl-ink-3); }
+  /* Round 53 (F6) — the RIGHT time label is a real toggle button (total ↔
+     remaining). It keeps the plain .time-label look (no chrome, no shift —
+     the row geometry is unchanged); only the hover colour, the pointer and
+     the focus ring reveal it is interactive. */
+  button.time-label.duration-toggle { border: 0; padding: 0; background: transparent; cursor: pointer; font: inherit; }
+  button.time-label.duration-toggle:hover, button.time-label.duration-toggle:focus-visible { color: #fff; }
+  button.time-label.duration-toggle:focus-visible { outline: 2px solid #fff; outline-offset: 2px; border-radius: 4px; }
   .timeline-wrap { position: relative; flex: 1; min-width: 0; height: 22px; display: grid; align-items: center; }
   .timeline-track { position: absolute; right: 0; left: 0; height: 4px; overflow: hidden; border-radius: 2px; background: rgba(255,255,255,0.18); pointer-events: none; }
   .timeline-buffered, .timeline-progress { position: absolute; inset: 0 auto 0 0; border-radius: inherit; }

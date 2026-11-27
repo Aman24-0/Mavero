@@ -301,7 +301,11 @@ function touch(id: number, x: number, y: number): FakeTouch {
   await sleep(HOLD_ACTIVATE_MS + 60);
   controller.destroy();
   ok(seen.includes('hold:end'), '3. destroy during a hold restores the speed (route change / unmount safety)');
-  ok(surface.removedCount() === 4 && surface.listenerCount('touchstart') === 0 && surface.listenerCount('touchmove') === 0, '3. destroy removes exactly the four listeners (no duplicates across mount cycles)');
+  // Round 53 (F1c) — the tap controller now also binds the FIVE mouse pointer
+  // listeners (pointerdown/move/up/cancel/leave) on top of the four touch
+  // listeners — destroy must remove exactly that set (no duplicates across
+  // mount cycles).
+  ok(surface.removedCount() === 9 && surface.listenerCount('touchstart') === 0 && surface.listenerCount('touchmove') === 0 && surface.listenerCount('pointerdown') === 0 && surface.listenerCount('pointerup') === 0, '3. destroy removes exactly the nine listeners (4 touch + 5 mouse pointer — no duplicates across mount cycles)');
   surface.fire('touchstart', { changedTouches: [touch(9, 500, 400)], target: {} });
   surface.fire('touchend', { changedTouches: [touch(9, 500, 400)], target: {} });
   ok(!seen.includes('tap'), '3. no events are handled after destroy (no stale gesture surface)');

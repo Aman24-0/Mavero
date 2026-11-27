@@ -57,7 +57,8 @@ const secondaryRow = controls.slice(controls.indexOf('class="secondary-row"'), c
 ok(secondaryRow.includes('Seek backward 10 seconds') && secondaryRow.includes('Seek forward 10 seconds'), '1a. the ±10 s seek buttons are in the secondary row');
 ok(secondaryRow.indexOf('Seek backward 10 seconds') < secondaryRow.indexOf('Seek forward 10 seconds'), '1a. −10s comes before +10s in the secondary row');
 ok(secondaryRow.includes("aria-label={playing ? 'Pause' : 'Play'}"), '1a. Play/Pause is in the secondary row (2026-10 round 20)');
-ok(secondaryRow.indexOf("aria-label={playing ? 'Pause' : 'Play'}") < secondaryRow.indexOf('Seek backward 10 seconds'), '1a. Play/Pause comes before the ±10s buttons in the secondary row');
+ok(secondaryRow.indexOf('Seek backward 10 seconds') < secondaryRow.indexOf("aria-label={playing ? 'Pause' : 'Play'}"), '1a. −10s comes before Play/Pause in the secondary row');
+ok(secondaryRow.indexOf("aria-label={playing ? 'Pause' : 'Play'}") < secondaryRow.indexOf('Seek forward 10 seconds'), '1a. Play/Pause sits BETWEEN the seek buttons (round 53 F5: −10 · Play · +10)');
 // 1b. Play/Pause is an inline control button (no longer a large center cluster button).
 ok(/class="control-button play-inline"/.test(controls), '1b. Play/Pause is an inline control button in the secondary row (2026-10 round 20)');
 // 1c. The ±10s controls are NOT hidden on mobile (they are part of the contract).
@@ -77,7 +78,9 @@ ok(/chooseSource\(option\.id\)/.test(shell), '1e. source switching (chooseSource
 // 1f. Retained controls: timeline, time labels, volume, subtitles, quality (internal + per-stream), PiP.
 ok(/class="timeline-input" type="range"/.test(controls), '1f. progress timeline retained');
 ok(/class="time-label" aria-live="off">\{formatPlayerTime\(currentTime\)\}<\/span>/.test(controls), '1f. current time label retained (bottom zone)');
-ok(/class="time-label" aria-live="off">\{formatPlayerTime\(safeDuration\)\}<\/span>/.test(controls), '1f. total duration label retained (finite-guarded safeDuration)');
+// Round 53 (F6) — the RIGHT time label is now a real toggle BUTTON (total ↔
+// remaining, aria-pressed state); the old plain duration span is gone.
+ok(/<button class="time-label duration-toggle" type="button" aria-pressed=\{durationMode === 'remaining'\}[^>]*>\{durationLabelText\}<\/button>/.test(controls), '1f. the total duration label became a toggle button (round 53 F6: total ↔ remaining, aria-pressed)');
 ok(/class="volume-input" type="range"/.test(controls), '1f. volume control retained');
 ok(/aria-label=\{`Subtitles: \$\{subtitleButtonLabel\}/.test(controls), '1f. subtitles control retained (sheet-trigger contract, Issue 3)');
 ok(/aria-label="Playback quality"/.test(controls) && /internalQualities\.length > 1/.test(controls), '1f. quality selection (engine internal + per-stream fallback) retained');

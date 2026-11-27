@@ -19,8 +19,11 @@
  *   * A HORIZONTAL drag is never treated as a vertical gesture (ratio guard).
  *   * Gestures starting on interactive surfaces (buttons, sliders, selects,
  *     links, labelled controls) are ignored entirely.
- *   * Only touch pointers trigger gestures (Touch Events — desktop mouse
- *     interaction is untouched).
+ *   * Touch gestures are Touch-Events only; desktop adds the WHEEL controller
+ *     (round 53 F1b — the same handlers/HUD, driven by the wheel, bound only
+ *     on pointer-fine devices) and mouse CLICKS through the tap controller's
+ *     pointer path (round 53 F1c — pointerType 'mouse' only, so a tap can
+ *     never double-fire on hybrid devices).
  *   * One gesture at a time; multi-touch is ignored until all touches end.
  *   * `enabled()` is consulted on every gesture start — the shell gates on
  *     the touch lock, direct-source ownership and open sheets, so locking,
@@ -246,6 +249,124 @@ export function createPlayerGestureController(options: GestureControllerOptions)
 }
 
 // ---------------------------------------------------------------------------
+// Round 53 (F1b) — DESKTOP WHEEL gestures: the SAME brightness/volume control
+// the touch swipe owns, driven by the mouse wheel over the player surface.
+//
+//   * LEFT half of the surface → simulated BRIGHTNESS down/up;
+//   * RIGHT half               → VOLUME down/up;
+//   * wheel UP (negative deltaY) increases, wheel DOWN decreases — ≈2% of the
+//     HUD range per notch (WHEEL_STEP), clamped 0–100 by the very SAME
+//     handlers the touch path already feeds (clampBrightness / setVolume);
+//   * `preventDefault()` on every owned notch so the page does not scroll
+//     while the pointer is over the player (the shell gates the controller
+//     OFF while a sheet is open, so a scrolling sheet body keeps scrolling);
+//   * ONE HUD (the shell's gesture indicator) — onGestureStart shows it,
+//     a quiet period of WHEEL_GESTURE_END_MS after the last notch ends the
+//     gesture (onGestureEnd → the shell's ~600ms fade-out);
+//   * The controller is created ONLY on `(pointer: fine)` devices (the shell's
+//     matchMedia gate) — never on touch devices, where the swipe owns it.
+// ---------------------------------------------------------------------------
+
+/** Wheel step per notch in VALUE units (≈2% of the HUD range — matches the touch feel). */
+export const WHEEL_STEP = 0.02;
+/** The wheel split is the LEFT HALF vs the RIGHT HALF of the surface. */
+export const WHEEL_ZONE_FRACTION = 0.5;
+/** Quiet period (ms) after the last wheel notch that ends a wheel gesture. */
+export const WHEEL_GESTURE_END_MS = 250;
+
+/** Pure: which half of the surface the pointer is on for the wheel gesture. */
+export function wheelZoneForX(x: number, surfaceWidth: number, zoneFraction = WHEEL_ZONE_FRACTION): GestureZone {
+  if (!Number.isFinite(x) || !Number.isFinite(surfaceWidth) || surfaceWidth <= 0) return 'none';
+  if (x < surfaceWidth * zoneFraction) return 'left';
+  return 'right';
+}
+
+/** Pure: one wheel notch's value delta (up = positive, down = negative). */
+export function wheelDelta(deltaY: number, step = WHEEL_STEP): number {
+  if (!Number.isFinite(deltaY) || !Number.isFinite(step) || step <= 0 || deltaY === 0) return 0;
+  return deltaY < 0 ? step : -step;
+}
+
+export type WheelGestureControllerOptions = {
+  /** The surface the listener attaches to (the player root). */
+  surface: HTMLElement;
+  /** Consulted on EVERY wheel notch — when false the event is fully ignored. */
+  enabled: () => boolean;
+  /** Brightness change (value delta, up = positive) — the SAME handler touch feeds. */
+  onBrightnessDelta: (delta: number) => void;
+  /** Volume change (value delta, up = positive) — the SAME handler touch feeds. */
+  onVolumeDelta: (delta: number) => void;
+  /** A wheel gesture started (kind) — the SAME HUD the swipe shows. */
+  onGestureStart: (gesture: GestureKind) => void;
+  /** The wheel gesture ended (kind, accumulated delta). */
+  onGestureEnd: (gesture: GestureKind, totalDelta: number) => void;
+  /** Step per notch in value units (defaults to WHEEL_STEP). */
+  step?: number;
+  /** Surface width provider (overridable for tests). */
+  surfaceWidth?: () => number;
+};
+
+/**
+ * Attach the desktop wheel-gesture controller to a surface. Same idempotent
+ * listener contract as the swipe/tap controllers; destroy() ends any active
+ * gesture (the HUD hides through the shell's own end path) and removes the
+ * listener exactly once.
+ */
+export function createPlayerWheelController(options: WheelGestureControllerOptions): PlayerGestureController {
+  const { surface, enabled, onBrightnessDelta, onVolumeDelta, onGestureStart, onGestureEnd } = options;
+  const step = options.step ?? WHEEL_STEP;
+  const surfaceWidth = options.surfaceWidth ?? (() => surface.clientWidth || (typeof window !== 'undefined' ? window.innerWidth : 0));
+
+  let active: { gesture: GestureKind; totalDelta: number } | null = null;
+  let endTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function clearEndTimer() {
+    if (endTimer !== undefined) {
+      clearTimeout(endTimer);
+      endTimer = undefined;
+    }
+  }
+
+  function endGesture() {
+    clearEndTimer();
+    const finished = active;
+    active = null;
+    if (finished) onGestureEnd(finished.gesture, finished.totalDelta);
+  }
+
+  function handleWheel(event: WheelEvent) {
+    if (!enabled()) return; // sheets open / locked / casting / embeds — the page keeps scrolling
+    if (typeof event.deltaY !== 'number' || event.deltaY === 0) return;
+    // The gesture owns the wheel while the pointer is over the player.
+    if (event.cancelable) event.preventDefault();
+    const gesture: GestureKind = wheelZoneForX(event.clientX, surfaceWidth()) === 'left' ? 'brightness' : 'volume';
+    if (!active || active.gesture !== gesture) {
+      // A zone switch ends the previous burst first (its HUD hides on its own
+      // end path) — one gesture kind at a time.
+      endGesture();
+      active = { gesture, totalDelta: 0 };
+      onGestureStart(gesture);
+    }
+    const delta = wheelDelta(event.deltaY, step);
+    active.totalDelta += delta;
+    if (gesture === 'brightness') onBrightnessDelta(delta);
+    else onVolumeDelta(delta);
+    // The gesture ends after a quiet period (there is no wheel-end event).
+    clearEndTimer();
+    endTimer = setTimeout(endGesture, WHEEL_GESTURE_END_MS);
+  }
+
+  surface.addEventListener('wheel', handleWheel, { passive: false });
+
+  return {
+    destroy() {
+      endGesture();
+      surface.removeEventListener('wheel', handleWheel);
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Player V2 corrections (real-device feedback) — TAP gestures over the video
 // surface: double-tap seek (left half = −10 s, right half = +10 s),
 // press-and-hold 2× playback, and single-tap play/pause toggle.
@@ -459,6 +580,14 @@ export function createPlayerTapGestureController(options: TapGestureControllerOp
     // half within the window; opposite sides never combine. A matched
     // double-tap cancels the first tap's pending single-tap toggle; an
     // unmatched tap arms the single-tap confirmation timer (round 52).
+    registerTap(startX, startWidth);
+  }
+
+  // Round 53 (F1c) — the shared TAP REGISTRATION (used by the touch end above
+  // and by the desktop POINTER click below): double-tap detection on the SAME
+  // half within DOUBLE_TAP_WINDOW_MS, else the single-tap confirmation timer.
+  // One arbitration path — a mouse click behaves exactly like a tap.
+  function registerTap(startX: number, startWidth: number) {
     const side = tapSideForX(startX, startWidth);
     if (!side) return;
     const timestamp = now();
@@ -480,10 +609,71 @@ export function createPlayerTapGestureController(options: TapGestureControllerOp
     cancel();
   }
 
+  // -------------------------------------------------------------------------
+  // Round 53 (F1c) — DESKTOP MOUSE clicks feed the SAME tap arbitration. The
+  // pointer listeners only ever act on `pointerType === 'mouse'` primary
+  // presses: touch pointers keep the Touch Events path above, so a tap can
+  // never double-fire on hybrid devices. A click that stays within the tap
+  // slop registers through the shared registerTap — a single click toggles
+  // play/pause after the double-tap window, a double-click seeks ±10 s; a
+  // click that becomes a drag (or leaves the surface before release) dies
+  // quietly. The same interactive-target exclusion and `enabled` gate apply,
+  // so buttons, chips, popovers, cards and locked/embed/cast states stay
+  // inert exactly as with touch.
+  // -------------------------------------------------------------------------
+  let activePointerId: number | null = null;
+  let pointerStartX = 0;
+  let pointerStartY = 0;
+  let pointerStartWidth = 0;
+
+  function handlePointerDown(event: PointerEvent) {
+    if (event.pointerType !== 'mouse' || event.button !== 0) return;
+    if (!enabled()) return;
+    if (activePointerId !== null) return; // one candidate at a time
+    const target = event.target;
+    if (typeof Element !== 'undefined' && target instanceof Element && target.closest(TAP_EXCLUDE_SELECTOR)) return;
+    // A new press ends any pending single-tap confirmation: it may become
+    // the second click of a double-click (same arbitration as touch).
+    clearSingleTapTimer();
+    activePointerId = event.pointerId;
+    pointerStartX = event.clientX;
+    pointerStartY = event.clientY;
+    pointerStartWidth = surfaceWidth();
+  }
+
+  function handlePointerMove(event: PointerEvent) {
+    if (activePointerId === null || event.pointerId !== activePointerId) return;
+    if (!withinTapSlop(event.clientX - pointerStartX, event.clientY - pointerStartY)) {
+      // The press became a drag — it dies quietly (no click, no toggle).
+      activePointerId = null;
+      clearSingleTapTimer();
+    }
+  }
+
+  function handlePointerUp(event: PointerEvent) {
+    if (activePointerId === null || event.pointerId !== activePointerId) return;
+    activePointerId = null;
+    if (event.pointerType !== 'mouse' || event.button !== 0) return;
+    if (!withinTapSlop(event.clientX - pointerStartX, event.clientY - pointerStartY)) return;
+    registerTap(pointerStartX, pointerStartWidth);
+  }
+
+  function handlePointerLeave(event: PointerEvent) {
+    if (activePointerId === null || event.pointerId !== activePointerId) return;
+    // The press left the surface before release — never a click.
+    activePointerId = null;
+    clearSingleTapTimer();
+  }
+
   surface.addEventListener('touchstart', handleTouchStart, { passive: true });
   surface.addEventListener('touchmove', handleTouchMove, { passive: true });
   surface.addEventListener('touchend', handleTouchEnd, { passive: true });
   surface.addEventListener('touchcancel', handleTouchCancel, { passive: true });
+  surface.addEventListener('pointerdown', handlePointerDown);
+  surface.addEventListener('pointermove', handlePointerMove);
+  surface.addEventListener('pointerup', handlePointerUp);
+  surface.addEventListener('pointercancel', handlePointerLeave);
+  surface.addEventListener('pointerleave', handlePointerLeave);
 
   return {
     cancel,
@@ -493,6 +683,11 @@ export function createPlayerTapGestureController(options: TapGestureControllerOp
       surface.removeEventListener('touchmove', handleTouchMove);
       surface.removeEventListener('touchend', handleTouchEnd);
       surface.removeEventListener('touchcancel', handleTouchCancel);
+      surface.removeEventListener('pointerdown', handlePointerDown);
+      surface.removeEventListener('pointermove', handlePointerMove);
+      surface.removeEventListener('pointerup', handlePointerUp);
+      surface.removeEventListener('pointercancel', handlePointerLeave);
+      surface.removeEventListener('pointerleave', handlePointerLeave);
     },
   };
 }

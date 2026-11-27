@@ -224,8 +224,12 @@ ok(/embedEverPlayed = false;/.test(shell.split('// Phase 6 audit fix 2: reset em
 // the tap-gesture controller and STOPS the media session (the background-
 // audio fix) — the window widens 2000 → 2400 chars; the contract (every
 // timer and listener removed in the SAME cleanup) is unchanged.
+// Round 53 (F1b) supersession (documented): the cleanup now also destroys the
+// desktop wheel-gesture controller — the window widens 2400 → 2700 chars;
+// the contract (every timer and listener removed in the SAME cleanup) is
+// unchanged.
 const cleanupStart = shell.indexOf('return () => {', shell.indexOf('window.addEventListener(\'blur\', handleWindowBlur);'));
-const cleanupBody = shell.slice(cleanupStart, cleanupStart + 2400);
+const cleanupBody = shell.slice(cleanupStart, cleanupStart + 2700);
 ok(/if \(hideTimer\) clearTimeout\(hideTimer\)/.test(cleanupBody), 'B14. inactivity timer cleared on destroy');
 ok(/orientationMediaQuery\.removeEventListener\('change', handleOrientationChange\)/.test(cleanupBody), 'B15. orientation profile listener removed on destroy (no leak across watch-route mounts)');
 ok(/window\.removeEventListener\('keydown', handleKeydown\)/.test(cleanupBody) && /window\.removeEventListener\('blur', handleWindowBlur\)/.test(cleanupBody) && /document\.removeEventListener\('focusin', handleFocusIn\)/.test(cleanupBody), 'B16. keydown + iframe-blur + focusin listeners removed on destroy');

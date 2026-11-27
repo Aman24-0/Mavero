@@ -19,7 +19,11 @@
   // brightness overlay, right = volume) + the pure helpers for the indicator.
   // Player V2 corrections: the tap-gesture controller adds double-tap seek
   // (left −10 s / right +10 s) and press-and-hold 2× with exact restore.
-  import { brightnessDimOpacity, clampBrightness, createPlayerGestureController, createPlayerTapGestureController, gestureIndicatorPercent, type GestureKind, type PlayerGestureController, type PlayerTapGestureController, type TapSeekDirection } from '$lib/client/player/touch/gestures';
+  // Round 53 (F1b): the wheel controller drives the SAME brightness/volume
+  // handlers + HUD from the desktop mouse wheel (pointer-fine devices only).
+  // Round 53 (F1c): the tap controller also feeds on mouse clicks (pointer
+  // events, pointerType 'mouse' only) so a desktop click toggles play/pause.
+  import { brightnessDimOpacity, clampBrightness, createPlayerGestureController, createPlayerTapGestureController, createPlayerWheelController, gestureIndicatorPercent, type GestureKind, type PlayerGestureController, type PlayerTapGestureController, type TapSeekDirection } from '$lib/client/player/touch/gestures';
   // Player UI V2 (Part 1, Phase 3A): external (VDRK) subtitle lists — same-origin
   // proxy tracks, bounded TTL cache, validated entries. The request-key
   // helper aliases the controller's OWN key space — the shell's stale guards
@@ -298,8 +302,15 @@
   // (Mavero-rendered black overlay — never a system/display brightness API).
   let brightness = 1;
   // Player UI V2 (Part 1, Phase 2A/2B): the transient gesture indicator.
+  // Round 53 (F1a) — the HUD now FADES OUT: `gestureIndicatorFading` flips on
+  // ~600 ms after the gesture ends (GESTURE_HUD_LINGER_MS) and the element
+  // unmounts after the short opacity transition (GESTURE_HUD_FADE_MS). A new
+  // gesture (or the next wheel notch) clears the flag instantly.
   let gestureIndicator: GestureKind | null = null;
+  let gestureIndicatorFading = false;
   let gestureIndicatorHideTimer: ReturnType<typeof setTimeout> | undefined;
+  const GESTURE_HUD_LINGER_MS = 600;
+  const GESTURE_HUD_FADE_MS = 180;
   // The polite live announcement fired ONCE per completed gesture.
   let gestureAnnouncement = '';
   // Player UI V2 (Part 1, Phase 3A): external (VDRK) subtitle tracks for the
@@ -330,10 +341,13 @@
   let introStatus: 'waiting-duration' | 'loading' | 'available' | 'no-data' | 'unavailable' = 'waiting-duration';
   let introErrorKind: 'api' | 'timeout' | 'invalid' | 'network' | null = null;
   // The attached gesture controllers (created in onMount; destroyed in
-  // cleanup): the swipe controller (brightness/volume) and the tap
-  // controller (double-tap seek + press-and-hold 2×).
+  // cleanup): the swipe controller (brightness/volume), the tap
+  // controller (double-tap seek + press-and-hold 2× + single-tap toggle,
+  // touch and mouse clicks) and — round 53 (F1b), pointer-fine devices
+  // only — the wheel controller (desktop wheel brightness/volume).
   let gestureController: PlayerGestureController | null = null;
   let tapGestureController: PlayerTapGestureController | null = null;
+  let wheelGestureController: PlayerGestureController | null = null;
   // Player V2 corrections: transient double-tap seek feedback (direction
   // pill near the tapped side) + press-and-hold 2× state. The exact speed
   // active before the hold is restored on release, cancel, lock, cast,
@@ -1307,6 +1321,9 @@
   function handleGestureStart(gesture: GestureKind) {
     if (gestureIndicatorHideTimer) clearTimeout(gestureIndicatorHideTimer);
     gestureIndicatorHideTimer = undefined;
+    // Round 53 (F1a) — a new gesture (touch swipe or the next wheel notch)
+    // cancels any pending fade and re-shows the HUD at full opacity.
+    gestureIndicatorFading = false;
     gestureIndicator = gesture;
   }
 
@@ -1315,10 +1332,17 @@
     // shortly after; the visual itself is aria-hidden).
     gestureAnnouncement = gesture === 'brightness' ? `Brightness ${gestureIndicatorPercent(brightness)}%` : `Volume ${gestureIndicatorPercent(muted ? 0 : volume)}%`;
     if (gestureIndicatorHideTimer) clearTimeout(gestureIndicatorHideTimer);
+    // Round 53 (F1a) — the HUD lingers ~600 ms after the gesture ends, then
+    // FADES OUT over GESTURE_HUD_FADE_MS before unmounting (a new gesture
+    // cancels the whole chain and re-shows it instantly).
     gestureIndicatorHideTimer = setTimeout(() => {
-      gestureIndicatorHideTimer = undefined;
-      gestureIndicator = null;
-    }, 600);
+      gestureIndicatorFading = true;
+      gestureIndicatorHideTimer = setTimeout(() => {
+        gestureIndicatorHideTimer = undefined;
+        gestureIndicator = null;
+        gestureIndicatorFading = false;
+      }, GESTURE_HUD_FADE_MS);
+    }, GESTURE_HUD_LINGER_MS);
   }
 
   // ----- Player V2 corrections: tap gestures (double-tap seek + hold 2×) -----
@@ -1393,6 +1417,17 @@
     // are DEV-only logged; marks remain inspectable in production.
     markPlayerMilestone('mavero:shell');
     measurePlayerStartup();
+    // Round 53 (F4) — autoplay-on-open bookkeeping: the open timestamp arms
+    // the "user pause within the first second" window, and an explicit
+    // BACK/FORWARD document navigation (NavigationTiming 'back_forward' —
+    // the fresh-document case of "navigated back to a paused state")
+    // suppresses autoplay entirely. NavigationTiming unavailable → autoplay
+    // proceeds.
+    shellOpenedAt = Date.now();
+    try {
+      const navEntry = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined;
+      if (navEntry && navEntry.type === 'back_forward') autoplaySuppressed = true;
+    } catch { /* NavigationTiming unavailable — autoplay proceeds */ }
     // Embed message defense-in-depth: register the resolver that lets every
     // PostMessageAdapterBase listener verify event.source against THIS
     // shell's active iframe. The closure reads the LIVE iframeElement binding
@@ -1446,6 +1481,23 @@
       onHoldStart: handleHoldStart,
       onHoldEnd: handleHoldEnd,
     });
+    // Round 53 (F1b) — desktop WHEEL gestures: the SAME brightness/volume
+    // handlers and the SAME HUD the touch swipe drives, fed by the mouse
+    // wheel (left half = brightness, right half = volume, ≈2% per notch,
+    // preventDefault so the page never scrolls under the pointer). Bound
+    // ONLY on pointer-fine devices (matchMedia gate at creation — never on
+    // touch devices) and gated per notch by the same eligibility flag as the
+    // swipe controller, so open sheets keep scrolling normally.
+    if (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(pointer: fine)').matches) {
+      wheelGestureController = createPlayerWheelController({
+        surface: playerRoot,
+        enabled: () => !touchLocked && source?.type === 'direct' && !sourceMenuOpen && !episodeMenuOpen && !controlsSheetsOpen && sourceReady && !castConnected,
+        onBrightnessDelta: (delta) => { brightness = clampBrightness(brightness + delta); },
+        onVolumeDelta: (delta) => { setVolume(volume + delta); },
+        onGestureStart: handleGestureStart,
+        onGestureEnd: handleGestureEnd,
+      });
+    }
     pictureInPictureSupported = Boolean(document.pictureInPictureEnabled && videoElement && 'requestPictureInPicture' in videoElement);
     // Immersive redesign: responsive viewport detection for source sheet placement.
     // compact (portrait) → bottom sheet; wide (landscape/desktop/TV) → right drawer.
@@ -1637,6 +1689,10 @@
       gestureController = null;
       tapGestureController?.destroy();
       tapGestureController = null;
+      // Round 53 (F1b) — the wheel controller dies with the shell (its
+      // in-flight HUD burst ends through the shared end path).
+      wheelGestureController?.destroy();
+      wheelGestureController = null;
       if (gestureIndicatorHideTimer) clearTimeout(gestureIndicatorHideTimer);
       // MAVP-4 Issue 1: clear the presentation fail-open timer on destroy.
       clearEmbedPresentFailOpen();
@@ -1730,7 +1786,12 @@
     }
     try {
       if (videoElement.paused) await videoElement.play();
-      else videoElement.pause();
+      else {
+        // Round 53 (F4): a user pause within the first second after open is
+        // a deliberate playback choice — autoplay stands down for good.
+        if (Date.now() - shellOpenedAt < AUTOPLAY_USER_PAUSE_WINDOW_MS) autoplaySuppressed = true;
+        videoElement.pause();
+      }
     } catch {
       playing = false;
       state = 'paused';
@@ -1739,6 +1800,55 @@
       // this catch only fires for non-error play() rejections. The "Playback
       // is ready" message is safe here.
       errorMessage = 'Playback is ready. Tap Play to start it.';
+    }
+  }
+
+  // ----- Round 53 (F4): AUTOPLAY ON OPEN -----
+  //
+  // When the player opens and a playable direct source is resolved, playback
+  // starts on its own instead of sitting paused on the metadata card:
+  //   * ONE attempt per shell mount, fired at the FIRST playable source's
+  //     loadedmetadata (a failed resolve never consumes it — a later retry
+  //     still autoplays);
+  //   * a normal play() first; if the browser rejects it (autoplay policy),
+  //     ONE retry muted; if that also rejects, playback stays paused and the
+  //     metadata card stays — never a throw, never a loop;
+  //   * the attempt NEVER fights the user: a pause the user pressed within
+  //     the first second after open suppresses it permanently, and a mount
+  //     reached through an explicit BACK/FORWARD navigation (the detectable
+  //     "navigated back to a paused state" — a fresh document with
+  //     NavigationTiming type 'back_forward') skips autoplay entirely.
+  //     (SPA-internal back navigation re-mounts as a plain navigate and
+  //     cannot be told apart honestly — documented policy bound.)
+  let shellOpenedAt = 0;
+  let autoplayAttempted = false;
+  let autoplaySuppressed = false;
+  const AUTOPLAY_USER_PAUSE_WINDOW_MS = 1000;
+
+  async function attemptOpenAutoplay(): Promise<void> {
+    if (autoplayAttempted) return;
+    autoplayAttempted = true;
+    if (!videoElement || !sourceReady || source?.type !== 'direct' || castConnected) return;
+    // The user already chose a state themselves — their intent wins.
+    if (autoplaySuppressed || !videoElement.paused) return;
+    const wasMuted = videoElement.muted;
+    try {
+      await videoElement.play();
+      return;
+    } catch {
+      // Autoplay policy rejection — retry ONCE muted.
+    }
+    if (autoplaySuppressed || !videoElement.paused) return;
+    try {
+      videoElement.muted = true;
+      muted = true;
+      await videoElement.play();
+      return;
+    } catch {
+      // Also rejected — stay paused on the metadata card. Restore the mute
+      // state the user had; never throw, never loop.
+      videoElement.muted = wasMuted;
+      muted = wasMuted;
     }
   }
 
@@ -1763,6 +1873,10 @@
     // setupMediaSession is a no-op when mediaSessionSupported is false.
     setupMediaSession();
     syncMediaSessionPositionState();
+    // Round 53 (F4): the playable source resolved — start playback on open
+    // (once per mount; suppressed by any user pause intent / explicit back
+    // navigation — see attemptOpenAutoplay).
+    void attemptOpenAutoplay();
   }
 
   // ----- Phase 9: reliable pending-seek application -----
@@ -3035,10 +3149,16 @@
     {/if}
 
     <!-- Player UI V2 (Part 1, Phase 2A/2B): compact transient gesture
-         indicator (brightness / volume). Visual layer is aria-hidden — the
-         completed gesture announces once through the polite live region. -->
+         indicator (brightness / volume). Round 53 (F1a) — the HUD is its own
+         pill BELOW the top control row (top edge = top-row bottom + 12px, via
+         the shared --pl-chrome-top/--pl-chip-size geometry tokens — it never
+         touches a control row and never moves the chips), horizontally
+         centred, ≤260px wide, 40px tall, radius 12, glass surface, icon +
+         4px bar + percentage; it fades out ~600ms after the gesture ends.
+         Visual layer is aria-hidden — the completed gesture announces once
+         through the polite live region. -->
     {#if gestureIndicator}
-      <div class="gesture-indicator" aria-hidden="true">
+      <div class:fading={gestureIndicatorFading} class="gesture-indicator" aria-hidden="true">
         {#if gestureIndicator === 'brightness'}<Sun size={14} />{:else}<Volume2 size={14} />{/if}
         <span class="gesture-indicator-bar"><span style={`width: ${gesturePercent}%`}></span></span>
         <span class="gesture-indicator-value">{gesturePercent}%</span>
@@ -3097,7 +3217,7 @@
        Subtitle menu receives native + external tracks. -->
   {#if source?.type === 'direct'}
     <div class="direct-controls-overlay" class:visible={controlsVisible}>
-      <PlayerControls playing={playing} {muted} {volume} {currentTime} {duration} {buffered} {playbackRate} {pictureInPictureSupported} {pictureInPicture} fullscreenActive={fullscreen} onFullscreen={() => { void toggleFullscreen(); }} locked={touchLocked} onToggleLock={toggleTouchLock} subtitles={mergedSubtitles} selectedSubtitle={selectedSubtitle} subtitleNotice={externalSubtitleNotice} subtitlePrefs={subtitlePrefs} onSubtitlePreferences={setSubtitlePreferences} onMenuOpenChange={(open) => { controlsSheetsOpen = open; }} qualities={qualities} selectedQuality={selectedQuality} internalQualities={engineQuality?.options ?? []} selectedInternalQuality={engineQuality?.selected ?? PLAYER_AUTO_QUALITY_ID} audioTracks={engineQuality?.audioTracks ?? []} selectedAudioTrack={engineQuality?.selectedAudioTrack ?? null} onAudioTrack={setAudioTrack} {servers} {selectedServer} onServer={setServer} {displayMode} onDisplayMode={setDisplayMode} castAvailable={castReady && Boolean(castEligibility?.eligible)} castActive={castConnected} onCast={() => { void handleCastAction(); }} onTogglePlay={togglePlay} onSeek={seek} onVolume={setVolume} onToggleMute={toggleMute} onPlaybackRate={setPlaybackRate} onSubtitle={setSubtitle} onQuality={setQuality} onInternalQuality={setInternalQuality} onPictureInPicture={togglePictureInPicture} onStep={seekBy} title={content.title} metaLine={playerMetaLine} overview={content.overview ?? ''} resumeLabel={playerResumeLabel} onResume={() => { void togglePlay(); }} upNext={upNextCard} onUpNext={upNextCard ? playNextEpisode : null} switching={switchingSource} />
+      <PlayerControls playing={playing} {muted} {volume} {currentTime} {duration} {buffered} {playbackRate} {pictureInPictureSupported} {pictureInPicture} fullscreenActive={fullscreen} onFullscreen={() => { void toggleFullscreen(); }} locked={touchLocked} onToggleLock={toggleTouchLock} gestureActive={gestureIndicator !== null || holdSpeedActive} subtitles={mergedSubtitles} selectedSubtitle={selectedSubtitle} subtitleNotice={externalSubtitleNotice} subtitlePrefs={subtitlePrefs} onSubtitlePreferences={setSubtitlePreferences} onMenuOpenChange={(open) => { controlsSheetsOpen = open; }} qualities={qualities} selectedQuality={selectedQuality} internalQualities={engineQuality?.options ?? []} selectedInternalQuality={engineQuality?.selected ?? PLAYER_AUTO_QUALITY_ID} audioTracks={engineQuality?.audioTracks ?? []} selectedAudioTrack={engineQuality?.selectedAudioTrack ?? null} onAudioTrack={setAudioTrack} {servers} {selectedServer} onServer={setServer} {displayMode} onDisplayMode={setDisplayMode} castAvailable={castReady && Boolean(castEligibility?.eligible)} castActive={castConnected} onCast={() => { void handleCastAction(); }} onTogglePlay={togglePlay} onSeek={seek} onVolume={setVolume} onToggleMute={toggleMute} onPlaybackRate={setPlaybackRate} onSubtitle={setSubtitle} onQuality={setQuality} onInternalQuality={setInternalQuality} onPictureInPicture={togglePictureInPicture} onStep={seekBy} title={content.title} metaLine={playerMetaLine} overview={content.overview ?? ''} resumeLabel={playerResumeLabel} onResume={() => { void togglePlay(); }} upNext={upNextCard} onUpNext={upNextCard ? playNextEpisode : null} switching={switchingSource} />
     </div>
   {/if}
 
@@ -3432,9 +3552,17 @@
   .brightness-overlay { position: absolute; z-index: 5; inset: 0; background: #000; pointer-events: none; transition: opacity 80ms linear; }
 
   /* Player UI V2 (Part 1, Phase 2A/2B): compact transient gesture indicator —
-     top-center pill, icon + bounded progress bar + percent. aria-hidden (the
-     polite announcement lives in the sr-only live region below). */
-  .gesture-indicator { position: absolute; z-index: 8; top: max(18px, env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; min-height: 34px; padding: 0 12px; border: 1px solid var(--line); border-radius: 999px; color: var(--ink); background: rgba(13,13,13,.88); box-shadow: var(--shadow-lg); backdrop-filter: blur(18px); pointer-events: none; }
+     round 53 (F1a) — the HUD is its OWN pill, horizontally CENTRED and
+     positioned BELOW the top control row (its TOP edge = the top row's
+     bottom + 12px, derived from the shared --pl-chrome-top +
+     --pl-chip-size geometry tokens so it tracks the chips row at EVERY
+     viewport and never overlaps a control), max-width 260px, height 40px,
+     radius 12, glass surface, icon + 4px bar + percentage. It fades out
+     (~600ms after the gesture ends) via the .fading opacity transition.
+     aria-hidden (the polite announcement lives in the sr-only live region
+     below). */
+  .gesture-indicator { position: absolute; z-index: 8; top: calc(var(--pl-chrome-top, max(16px, env(safe-area-inset-top))) + var(--pl-chip-size, 40px) + 12px); left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; height: 40px; max-width: 260px; box-sizing: border-box; padding: 0 14px; border: 1px solid var(--line); border-radius: 12px; color: var(--ink); background: rgba(13,13,13,.88); box-shadow: var(--shadow-lg); backdrop-filter: blur(18px); pointer-events: none; transition: opacity 180ms var(--pl-ease, var(--ease-out)); }
+  .gesture-indicator.fading { opacity: 0; }
   /* Player V2 corrections: double-tap seek feedback — a transient direction
      pill on the tapped half of the video surface (left = rewind, right =
      forward), vertically clear of the center cluster and the bottom zone. */
@@ -3735,7 +3863,7 @@
     .source-sheet, .episode-sheet { animation: none; }
     /* Player UI V2 (Part 1, Phase 2/3): new gesture/skip surfaces follow the
        same reduced-motion contract. */
-    .brightness-overlay, .gesture-indicator-bar > span, .skip-intro-button, .unlock-fab { transition: none; }
+    .brightness-overlay, .gesture-indicator, .gesture-indicator-bar > span, .skip-intro-button, .unlock-fab { transition: none; }
     /* Player V2 corrections: seek feedback + hold indicator join the
        reduced-motion contract. */
     .seek-feedback, .hold-indicator { transition: none; }
