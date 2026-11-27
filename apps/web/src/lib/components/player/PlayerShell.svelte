@@ -3221,8 +3221,22 @@
      fallback for browsers without dynamic viewport units), then 100dvh
      (tracks mobile browser UI); min-height mirrors the same chain. The
      scroll lock itself is the html[data-player-open] convention (app.css). */
-  .player-shell { --player-bg: var(--base); --pl-s1: rgba(255, 255, 255, 0.055); --pl-s2: rgba(255, 255, 255, 0.10); --pl-line: rgba(255, 255, 255, 0.12); --pl-ink-2: rgba(255, 255, 255, 0.72); --pl-ink-3: rgba(255, 255, 255, 0.50); --pl-r1: 12px; --pl-r2: 16px; --pl-ease: cubic-bezier(0.2, 0.8, 0.2, 1); position: relative; width: 100%; height: 100vh; height: 100dvh; min-height: 100vh; min-height: 100svh; min-height: 100dvh; overflow: hidden; color: var(--ink); background: var(--player-bg); }
+  .player-shell { --player-bg: var(--base); --pl-s1: rgba(255, 255, 255, 0.055); --pl-s2: rgba(255, 255, 255, 0.10); --pl-line: rgba(255, 255, 255, 0.12); --pl-ink-2: rgba(255, 255, 255, 0.72); --pl-ink-3: rgba(255, 255, 255, 0.58); --pl-r1: 12px; --pl-r2: 16px; --pl-ease: cubic-bezier(0.2, 0.8, 0.2, 1); position: relative; width: 100%; height: 100vh; height: 100dvh; min-height: 100vh; min-height: 100svh; min-height: 100dvh; overflow: hidden; color: var(--ink); background: var(--player-bg); }
   .player-shell.landscape-mode { height: 100vh; height: 100dvh; }
+  /* Round 51 (Phase 4 — preferences): the --pl-* tokens live here, so the
+     user-preference media queries override them at the ROOT and every
+     descendant (chips, buttons, timeline, paused cards) follows — no
+     duplicated magic numbers. Reduced transparency → the chip surfaces
+     become SOLID (no translucency); more contrast → the hairline bumps and
+     the secondary ink goes 100% white. (E4: --pl-ink-3 was raised from 0.50
+     to 0.58 above — tertiary text over the bottom scrim clears 4.5:1
+     against the scrim's dark end while the chip values stay legible.) */
+  @media (prefers-reduced-transparency: reduce) {
+    .player-shell { --pl-s1: rgba(24, 24, 27, 0.9); --pl-s2: rgba(36, 36, 41, 0.95); }
+  }
+  @media (prefers-contrast: more) {
+    .player-shell { --pl-line: rgba(255, 255, 255, 0.28); --pl-ink-2: #ffffff; }
+  }
 
   /* Stage: fills the ENTIRE shell — no header/footer space consumed.
      MAVP-4 Issue 2: the viewport inside the stage gets a DEFINITE grid

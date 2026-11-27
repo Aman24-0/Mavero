@@ -269,7 +269,7 @@
     box-shadow: 0 0 0 1px var(--accent-soft);
   }
   .tab:focus-visible {
-    outline: 2px solid var(--accent);
+    outline: 2px solid #fff;
     outline-offset: 2px;
   }
   .tab-panel {
@@ -319,4 +319,15 @@
   .source-tab { flex: 1 1 auto; min-height: 36px; padding: 6px 12px; border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--ink-soft); background: transparent; font: inherit; font-size: .72rem; font-weight: 700; cursor: pointer; text-align: center; }
   .source-tab:hover, .source-tab:focus-visible { border-color: var(--line-strong); background: var(--accent-soft); }
   .source-tab.active { color: var(--ink); border-color: var(--accent); background: var(--accent-soft); }
+  /* Round 51 (Phase 4 — keyboard focus): every control inside the subtitle
+     popover joins the focus ring system — 2px solid white, 2px offset, each
+     element's own radius (browsers round outlines to the element's
+     border-radius). */
+  .source-tab:focus-visible, .track-row:focus-visible, .step-button:focus-visible, .mini-reset:focus-visible, .swatch:focus-visible, .segment:focus-visible, .reset-all:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+  /* Round 51 (Phase 4 — preferences): more contrast → the sheet's internal
+     hairlines bump to the same 0.28 white the chips/popover border use
+     (reduced transparency is handled by the popover surface itself). */
+  @media (prefers-contrast: more) {
+    .tab-row, .section-label, .source-tabs { border-color: rgba(255, 255, 255, 0.28); }
+  }
 </style>

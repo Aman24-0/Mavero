@@ -147,11 +147,27 @@
   .sheet-head .eyebrow { color: rgba(255, 255, 255, 0.45); font-size: 10.5px; font-weight: 700; letter-spacing: 1.6px; text-transform: uppercase; }
   .close-button { display: grid; place-items: center; width: 30px; height: 30px; border: 0; border-radius: 9px; color: rgba(255, 255, 255, 0.8); background: rgba(255, 255, 255, 0.06); cursor: pointer; }
   .close-button:hover, .close-button:focus-visible { background: rgba(255, 255, 255, 0.12); color: #fff; }
+  /* Round 51 (Phase 4 — keyboard focus): the close control joins the focus
+     ring system (2px solid white, 2px offset, the element's own radius). */
+  .close-button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
   .sheet-body { min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; padding: 0 12px max(14px, env(safe-area-inset-bottom)); }
   @keyframes option-sheet-pop { from { opacity: 0; transform: scale(0.97); } to { opacity: 1; transform: scale(1); } }
+  @keyframes option-sheet-fade { from { opacity: 0; } to { opacity: 1; } }
   @keyframes option-sheet-out { to { opacity: 0; } }
+  /* Round 51 (Phase 4 — preferences): reduced transparency → the popover
+     becomes SOLID and DROPS its single blur layer; more contrast → the
+     hairline border bumps. (The token-driven chip surfaces + ink follow the
+     shell root's preference overrides.) */
+  @media (prefers-reduced-transparency: reduce) {
+    .player-option-sheet { background: rgba(20, 20, 23, 0.98); backdrop-filter: none; }
+  }
+  @media (prefers-contrast: more) {
+    .player-option-sheet { border-color: rgba(255, 255, 255, 0.28); }
+  }
   @media (prefers-reduced-motion: reduce) {
-    .player-option-sheet { animation: none; }
-    .player-option-sheet.closing { animation: none; }
+    /* Round 51 (Phase 4): no SCALE under reduced motion — the open animation
+       becomes an opacity-only fade; the exit is already opacity-only. */
+    .player-option-sheet { animation: option-sheet-fade 120ms ease-out; }
+    .player-option-sheet.closing { animation: option-sheet-out 90ms ease-out forwards; }
   }
 </style>

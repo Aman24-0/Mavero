@@ -415,6 +415,11 @@
        +10) and display mode joined the RIGHT group (before Speed). -->
   {#if playing}
   <div class="bottom-zone">
+    <!-- Round 51 (Phase 4 — scrubber detail): 2px chapter ticks would render
+         above the track ONLY when chapter marks are available from the shell;
+         the shell exposes NO chapter marks (its timeline data is only the
+         buffered/progress playhead), so NOTHING is rendered here — no
+         fabricated ticks. -->
     <div class="timeline-row">
       <span class="time-label" aria-live="off">{formatPlayerTime(currentTime)}</span>
       <div class="timeline-wrap">
@@ -752,6 +757,12 @@
   .select-control.quality .chip-value { max-width: 64px; }
   .select-control.server .chip-value { max-width: 64px; }
   .select-control.speed .chip-label { max-width: 44px; }
+  /* Round 51 (Phase 4 — keyboard focus): every chip, control button, popover
+     row and rail item gets a :focus-visible ring — 2px solid white, 2px
+     offset. The outline follows each element's own border-radius (browsers
+     round outlines to the element's radius), so no per-element radius is
+     restated here. (The native back chip's ring lives in the shell.) */
+  .select-control:focus-visible, .control-button:focus-visible, .option-row:focus-visible, .rail-item:focus-visible, .resume-pill:focus-visible, .upnext-play:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 
   /* In-player selection sheet option rows (shared shape across quality /
      display / speed sheets; the subtitle sheet carries its own richer
@@ -840,7 +851,7 @@
     .paused-card, .upnext-card { position: static; }
     .upnext-card { width: 280px; max-width: 82vw; }
   }
-  @media (prefers-reduced-motion: reduce) { .control-button { transition: none; } .select-control { transition: none; } .paused-card { animation: none; } }
+  @media (prefers-reduced-motion: reduce) { .control-button { transition: none; } .select-control { transition: none; } .paused-card { animation: none; } .upnext-card { animation: none; } .rail-item { transition: none; } }
   /* Landscape phone (Player V2 remaining fixes, 2026-10): the secondary row
      is ONE RIGHT-aligned compact group — the user's approved landscape
      layout puts the secondary controls on the RIGHT edge (the center cluster
