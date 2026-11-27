@@ -251,12 +251,42 @@
   // EXISTING resume path (togglePlay resumes from the playhead, which the
   // shell's existing auto-resume machinery already drove to the saved
   // position — in an error state togglePlay retries, the existing semantics).
-  $: playerMetaLine = [
-    content.year ? String(content.year) : '',
-    Array.isArray(content.genres) ? content.genres.filter((genre) => typeof genre === 'string' && genre.trim()).join(' · ') : '',
-    typeof content.runtime === 'string' ? content.runtime.trim() : ''
-  ].filter(Boolean).join(' · ');
+  // Round 51 (approved concept, Phase 3 — series context): for SERIES the
+  // meta line becomes the EPISODE line — "S<n> · E<m> · <episode title>"
+  // (the episode title drops when it does not exist; NEVER invented). A
+  // series' episode line replaces the movie line; movies keep the existing
+  // year · genres · runtime line untouched.
+  $: playerMetaLine = (content.type === 'series' || content.type === 'anime') && currentEpisode
+    ? [
+        `S${currentEpisode.season} · E${String(currentEpisode.episode).padStart(2, '0')}`,
+        currentEpisode.title?.trim() ?? ''
+      ].filter(Boolean).join(' · ')
+    : [
+        content.year ? String(content.year) : '',
+        Array.isArray(content.genres) ? content.genres.filter((genre) => typeof genre === 'string' && genre.trim()).join(' · ') : '',
+        typeof content.runtime === 'string' ? content.runtime.trim() : ''
+      ].filter(Boolean).join(' · ');
   $: playerResumeLabel = currentTime > 1 ? `Resume ${formatPlayerTime(currentTime)}` : 'Resume';
+  // Round 51 (approved concept, Phase 3 — series context): the Up-next
+  // card's target — the episode AFTER the current one in the CURRENT
+  // season's already-loaded `episodes` list (the exact data the episode
+  // selector already holds — D3: NO new fetching, nothing invented, and
+  // nothing fabricated across seasons: the LAST episode of a season has no
+  // next). Series-type content only (series + anime carry episode lists);
+  // movies never render the card. `playNextEpisode` switches via the
+  // EXISTING episode-change path (chooseEpisode → onEpisodeChange).
+  function findNextEpisode(): PlayerEpisode | null {
+    const current = currentEpisode;
+    if (!current) return null;
+    const index = episodes.findIndex((episode) => episode.season === current.season && episode.number === current.episode);
+    return index >= 0 && index + 1 < episodes.length ? episodes[index + 1] ?? null : null;
+  }
+  $: nextEpisode = source?.type === 'direct' && (content.type === 'series' || content.type === 'anime') ? findNextEpisode() : null;
+  $: upNextCard = nextEpisode ? { still: nextEpisode.still ?? '', title: nextEpisode.title, season: nextEpisode.season, episode: nextEpisode.number } : null;
+  function playNextEpisode(): void {
+    if (!nextEpisode) return;
+    chooseEpisode({ season: nextEpisode.season, episode: nextEpisode.number, title: nextEpisode.title });
+  }
   // Player UI V2 (Part 1, Phase 2C): touch lock. When locked, taps and swipes
   // are ignored (the gesture controller's enabled() gate + the reveal gate
   // below), the control row stays hidden, and ONE persistent unlock FAB stays
@@ -3041,7 +3071,7 @@
        Subtitle menu receives native + external tracks. -->
   {#if source?.type === 'direct'}
     <div class="direct-controls-overlay" class:visible={controlsVisible}>
-      <PlayerControls playing={playing} {muted} {volume} {currentTime} {duration} {buffered} {playbackRate} {pictureInPictureSupported} {pictureInPicture} fullscreenActive={fullscreen} onFullscreen={() => { void toggleFullscreen(); }} locked={touchLocked} onToggleLock={toggleTouchLock} subtitles={mergedSubtitles} selectedSubtitle={selectedSubtitle} subtitleNotice={externalSubtitleNotice} subtitlePrefs={subtitlePrefs} onSubtitlePreferences={setSubtitlePreferences} onMenuOpenChange={(open) => { controlsSheetsOpen = open; }} qualities={qualities} selectedQuality={selectedQuality} internalQualities={engineQuality?.options ?? []} selectedInternalQuality={engineQuality?.selected ?? PLAYER_AUTO_QUALITY_ID} audioTracks={engineQuality?.audioTracks ?? []} selectedAudioTrack={engineQuality?.selectedAudioTrack ?? null} onAudioTrack={setAudioTrack} {servers} {selectedServer} onServer={setServer} {displayMode} onDisplayMode={setDisplayMode} castAvailable={castReady && Boolean(castEligibility?.eligible)} castActive={castConnected} onCast={() => { void handleCastAction(); }} onTogglePlay={togglePlay} onSeek={seek} onVolume={setVolume} onToggleMute={toggleMute} onPlaybackRate={setPlaybackRate} onSubtitle={setSubtitle} onQuality={setQuality} onInternalQuality={setInternalQuality} onPictureInPicture={togglePictureInPicture} onStep={seekBy} title={content.title} metaLine={playerMetaLine} overview={content.overview ?? ''} resumeLabel={playerResumeLabel} onResume={() => { void togglePlay(); }} />
+      <PlayerControls playing={playing} {muted} {volume} {currentTime} {duration} {buffered} {playbackRate} {pictureInPictureSupported} {pictureInPicture} fullscreenActive={fullscreen} onFullscreen={() => { void toggleFullscreen(); }} locked={touchLocked} onToggleLock={toggleTouchLock} subtitles={mergedSubtitles} selectedSubtitle={selectedSubtitle} subtitleNotice={externalSubtitleNotice} subtitlePrefs={subtitlePrefs} onSubtitlePreferences={setSubtitlePreferences} onMenuOpenChange={(open) => { controlsSheetsOpen = open; }} qualities={qualities} selectedQuality={selectedQuality} internalQualities={engineQuality?.options ?? []} selectedInternalQuality={engineQuality?.selected ?? PLAYER_AUTO_QUALITY_ID} audioTracks={engineQuality?.audioTracks ?? []} selectedAudioTrack={engineQuality?.selectedAudioTrack ?? null} onAudioTrack={setAudioTrack} {servers} {selectedServer} onServer={setServer} {displayMode} onDisplayMode={setDisplayMode} castAvailable={castReady && Boolean(castEligibility?.eligible)} castActive={castConnected} onCast={() => { void handleCastAction(); }} onTogglePlay={togglePlay} onSeek={seek} onVolume={setVolume} onToggleMute={toggleMute} onPlaybackRate={setPlaybackRate} onSubtitle={setSubtitle} onQuality={setQuality} onInternalQuality={setInternalQuality} onPictureInPicture={togglePictureInPicture} onStep={seekBy} title={content.title} metaLine={playerMetaLine} overview={content.overview ?? ''} resumeLabel={playerResumeLabel} onResume={() => { void togglePlay(); }} upNext={upNextCard} onUpNext={upNextCard ? playNextEpisode : null} />
     </div>
   {/if}
 

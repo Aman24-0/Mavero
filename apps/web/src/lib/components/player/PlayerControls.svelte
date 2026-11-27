@@ -124,7 +124,8 @@
   // togglePlay) — when absent the Resume pill simply hides.
   /** Title shown in the top-left header while the chrome is visible. */
   export let title = '';
-  /** Meta line (year · genres · runtime) under the header title. */
+  /** Meta line under the header title — movies: year · genres · runtime;
+   *  series (round 51, Phase 3): S<n> · E<m> · <episode title>. */
   export let metaLine = '';
   /** One-line overview for the paused metadata card. */
   export let overview = '';
@@ -132,6 +133,13 @@
   export let resumeLabel = '';
   /** The existing resume path (the shell's togglePlay). Absent → no pill. */
   export let onResume: (() => void) | null = null;
+  // Round 51 (approved concept, Phase 3 — series context): the paused
+  // Up-next card. `upNext` is the episode AFTER the current one, exactly as
+  // the shell's EXISTING episode data holds it (no new fetching, nothing
+  // invented); null hides the card. `onUpNext` switches to that episode via
+  // the shell's EXISTING episode-change path; absent → no Play button.
+  export let upNext: { still: string; title: string; season: number; episode: number } | null = null;
+  export let onUpNext: (() => void) | null = null;
 
   // ----- Sheet state (Issue 3) -----
   // Exactly ONE sheet open at a time. openMenu/closeMenu are the SINGLE
@@ -313,19 +321,44 @@
        title/meta/overview come straight from the shell's already-available
        metadata; the Resume pill reuses the EXISTING resume path (onResume)
        and hides when it is absent. -->
-  {#if !playing && openSheet === null && !locked && safeDuration > 0 && (title || metaLine || overview)}
+  {#if !playing && openSheet === null && !locked && ((safeDuration > 0 && (title || metaLine || overview)) || (safeDuration > 0 && upNext))}
     <div class="paused-zone">
-      <div class="paused-card">
-        {#if title}<div class="paused-title">{title}</div>{/if}
-        {#if metaLine}<div class="paused-meta">{metaLine}</div>{/if}
-        {#if overview}<p class="paused-overview">{overview}</p>{/if}
-        {#if onResume}
-          <button class="resume-pill" type="button" aria-label={resumeLabel || 'Resume'} onclick={onResume}>
-            <Play size={14} fill="currentColor" aria-hidden="true" />
-            <span>{resumeLabel || 'Resume'}</span>
-          </button>
-        {/if}
-      </div>
+      <!-- Round 51 (Phase 3 — series context): the Up-next card — FIRST in
+           the DOM so the portrait column-reverse stack puts it ABOVE the
+           metadata card; on desktop it anchors to the zone's BOTTOM-RIGHT
+           (mirroring the metadata card). Hidden when there is no next
+           episode, a sheet is open, or the player is locked. The 16:9 still
+           is a fixed aspect box (no CLS; lazy); a missing still renders
+           nothing — never fabricated. -->
+      {#if upNext}
+        <div class="upnext-card">
+          {#if upNext.still}
+            <div class="upnext-still"><img src={upNext.still} alt="" loading="lazy" /></div>
+          {/if}
+          <span class="upnext-label">UP NEXT</span>
+          {#if upNext.title}<div class="upnext-title">{upNext.title}</div>{/if}
+          <div class="upnext-ep">S{upNext.season} · E{String(upNext.episode).padStart(2, '0')}</div>
+          {#if onUpNext}
+            <button class="upnext-play" type="button" aria-label={`Play ${upNext.title}`} onclick={onUpNext}>
+              <Play size={14} fill="currentColor" aria-hidden="true" />
+              <span>Play</span>
+            </button>
+          {/if}
+        </div>
+      {/if}
+      {#if safeDuration > 0 && (title || metaLine || overview)}
+        <div class="paused-card">
+          {#if title}<div class="paused-title">{title}</div>{/if}
+          {#if metaLine}<div class="paused-meta">{metaLine}</div>{/if}
+          {#if overview}<p class="paused-overview">{overview}</p>{/if}
+          {#if onResume}
+            <button class="resume-pill" type="button" aria-label={resumeLabel || 'Resume'} onclick={onResume}>
+              <Play size={14} fill="currentColor" aria-hidden="true" />
+              <span>{resumeLabel || 'Resume'}</span>
+            </button>
+          {/if}
+        </div>
+      {/if}
     </div>
   {/if}
 
@@ -621,6 +654,43 @@
   .resume-pill:active { transform: scale(.98); }
   @keyframes paused-card-in { from { opacity: 0; } to { opacity: 1; } }
 
+  /* Round 51 (approved concept, Phase 3 — series context): the Up-next
+     card — the paused chrome's second card at the BOTTOM-RIGHT, mirroring
+     the metadata card's accent-rule design language. The 16:9 still is a
+     FIXED aspect box (aspect-ratio + object-fit cover) so the lazy-loaded
+     image can never shift the layout (no CLS); a missing still renders
+     nothing — never fabricated. The Play button mirrors the Resume pill
+     and switches via the shell's EXISTING episode-change path. */
+  .upnext-card {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    width: 280px;
+    max-height: 100%;
+    overflow: hidden;
+    padding: 6px 14px 6px 16px;
+    border-left: 4px solid #fff;
+    animation: paused-card-in 140ms var(--pl-ease);
+  }
+  .upnext-still { aspect-ratio: 16 / 9; margin-bottom: 4px; border-radius: 8px; overflow: hidden; background: rgba(255, 255, 255, 0.06); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45); }
+  .upnext-still img { display: block; width: 100%; height: 100%; object-fit: cover; }
+  .upnext-label { font-size: 10.5px; font-weight: 700; letter-spacing: 1.6px; text-transform: uppercase; color: rgba(255, 255, 255, 0.45); text-shadow: 0 1px 8px rgba(0, 0, 0, 0.5); }
+  .upnext-title { font-size: 15px; font-weight: 650; letter-spacing: -0.2px; line-height: 1.2; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-shadow: 0 2px 12px rgba(0, 0, 0, 0.5); }
+  .upnext-ep { font-size: 13px; color: var(--pl-ink-2); text-shadow: 0 1px 8px rgba(0, 0, 0, 0.5); }
+  .upnext-play { display: inline-flex; align-items: center; gap: 7px; align-self: flex-start; height: 38px; margin-top: 6px; padding: 0 18px; border: 0; border-radius: 999px; color: #101013; background: #fff; font: inherit; font-size: 13px; font-weight: 650; cursor: pointer; box-shadow: 0 6px 22px rgba(0, 0, 0, 0.4); transition: transform var(--motion-fast) var(--pl-ease), box-shadow var(--motion-fast) var(--pl-ease); }
+  .upnext-play:hover, .upnext-play:focus-visible { transform: scale(1.02); box-shadow: 0 8px 26px rgba(0, 0, 0, 0.5); }
+  .upnext-play:active { transform: scale(.98); }
+  /* Round 51 — mid widths: the two bottom cards share the zone, so the
+     metadata card caps below (zone width − the 280px Up-next card − gap)
+     and the pair can never overlap between 641–899px. ≥900px both fit at
+     their full caps (868 ≥ 520 + 280 + 16). */
+  @media (min-width: 641px) and (max-width: 899px) {
+    .paused-card { max-width: min(520px, calc(100% - 312px)); }
+  }
+
   .timeline-row { display: flex; align-items: center; gap: 10px; }
   /* Round 50 — tabular 12px time labels: secondary ink left (position),
      tertiary ink right (duration — the row's last label, no markup change). */
@@ -762,6 +832,13 @@
     .paused-zone { top: 64px; left: 12px; right: 12px; bottom: max(12px, calc(env(safe-area-inset-bottom) + 8px)); }
     .paused-card { max-width: 82vw; padding: 4px 10px 4px 10px; }
     .paused-title { font-size: 24px; }
+    /* Round 51 (Phase 3) — portrait: the Up-next card stacks ABOVE the
+       metadata card at the same left edge (column-reverse keeps the
+       metadata card on the bottom); both cards become in-flow children
+       of the zone. */
+    .paused-zone { display: flex; flex-direction: column-reverse; align-items: flex-start; gap: 12px; }
+    .paused-card, .upnext-card { position: static; }
+    .upnext-card { width: 280px; max-width: 82vw; }
   }
   @media (prefers-reduced-motion: reduce) { .control-button { transition: none; } .select-control { transition: none; } .paused-card { animation: none; } }
   /* Landscape phone (Player V2 remaining fixes, 2026-10): the secondary row
