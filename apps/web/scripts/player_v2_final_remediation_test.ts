@@ -83,7 +83,12 @@ console.log('\nISSUE 1 — portrait secondary row');
   // value carry exactly the state text the old label carried) and every chip
   // gets an explicit cap so the top row stays ONE line on 360–430 px phones.
   ok(/@media \(max-width: 640px\) \{[\s\S]*?\.select-control\.subtitles \{ max-width: 80px; \}/.test(controls), '1f. ≤640px fallback caps the subtitle chip (deliberate compact treatment)');
-  ok(/@media \(max-width: 640px\) \{[\s\S]*?\.select-control \{ height: 36px; padding: 0 10px; gap: 6px; \}/.test(controls) && /@media \(max-width: 640px\) \{[\s\S]*?\.select-control \.chip-label \{ display: none; \}/.test(controls), '1g. ≤640px fallback compacts the chips — the chip LABEL drops so the row fits portrait (round 37 B one-line contract)');
+  // Round 52 (F3) supersession: the compact chip SIZE (36px) now rides the
+  // shell root's shared --pl-chip-size token override (the native back chip
+  // consumes the SAME token, so both rows compact together — one vertical
+  // reference); PlayerControls only tightens the compact paddings/gaps and
+  // still drops the chip LABEL so the row fits portrait.
+  ok(/@media \(max-width: 640px\) \{[\s\S]*?\.select-control \{ padding: 0 10px; gap: 6px; \}/.test(controls) && /@media \(max-width: 640px\) \{[\s\S]*?\.select-control \.chip-label \{ display: none; \}/.test(controls) && /\.select-control \{ display: inline-flex; align-items: center; gap: 8px; height: var\(--pl-chip-size, 40px\);/.test(controls), '1g. ≤640px fallback compacts the chips — the chip LABEL drops so the row fits portrait; the 36px compact size rides the shared --pl-chip-size token (round 52 F3 — the back chip compacts with them)');
   // Round 24: the display-mode select is gone from the bottom row entirely
   // (moved to the top-right utility zone) — there is no in-row icon to fold.
   ok(!/\.select-control\.display-mode\s*[.{]/.test(controls) && /aria-label=\{`Display mode: \$\{displayMode\}`\}/.test(controls), '1g2. the display-mode control lives in the utility zone (round 24) — no in-row display select rules remain');

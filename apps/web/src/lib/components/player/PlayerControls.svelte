@@ -34,13 +34,27 @@
   // Issues 1+2). Only REAL values are ever offered: the tracks, quality
   // levels and speeds of the ACTIVE source.
   import { AudioLines, Captions, Cast, Check, Expand, Lock, LockOpen, Maximize2, Minimize2, Pause, PictureInPicture2, Play, RotateCcwSquare, RotateCwSquare, Server, Settings2, Volume1, Volume2, VolumeX, Gauge } from 'lucide-svelte';
+  import { onDestroy } from 'svelte';
   import type { PlayerAudioTrackOption, PlayerInternalQualityOption, PlayerQualityOption, PlayerServerOption, PlayerSubtitleTrack } from '$lib/shared/player';
   import { formatPlayerTime, playbackSpeeds, PLAYER_AUTO_QUALITY_ID } from '$lib/shared/player';
   import PlayerOptionSheet from './PlayerOptionSheet.svelte';
   import PlayerSubtitleSheet from './PlayerSubtitleSheet.svelte';
+  import PlayerUpNextCard from './PlayerUpNextCard.svelte';
   import { DEFAULT_SUBTITLE_PREFERENCES, type SubtitlePreferences } from '$lib/client/player/subtitles/subtitle-preferences';
 
   export let playing = false;
+  // Round 52 (F1) — the SETTLED-pause derivation (see the derivation block
+  // under the sheet state below, where `openSheet` is in scope). A quality/
+  // audio/server switch re-prepares the stream and the engine reload briefly
+  // fires a `pause` event while the stream keeps playing; presenting
+  // "paused" on the raw `!playing` flag made the paused card flash up on
+  // every switch. The paused zone and the C1 "paused = card only" chrome
+  // hiding below are gated on `pausedSettled` instead of raw `!playing`.
+  let pausedSettled = false;
+  /** Round 52 (F1): a pause must persist this long before it is "settled". */
+  const PAUSE_SETTLE_MS = 400;
+  /** Round 52 (F1): the shell's source/quality/audio/server switching flag (its loading-card condition, passed as-is). */
+  export let switching = false;
   export let muted = false;
   export let volume = 1;
   export let currentTime = 0;
@@ -140,6 +154,17 @@
   // the shell's EXISTING episode-change path; absent → no Play button.
   export let upNext: { still: string; title: string; season: number; episode: number } | null = null;
   export let onUpNext: (() => void) | null = null;
+  // Round 52 (F4) — the AUTO Up-next card: while PLAYING a series episode
+  // with a next episode, when the remaining playback drops to
+  // UP_NEXT_REMAINING_S or less, the same card that shows while paused
+  // slides in on its own at the bottom-right (variant="auto" — a floating
+  // overlay above the bottom bar, it never shifts the timeline). Seeking
+  // back above the threshold hides it again; a sheet being open or the lock
+  // hides it; movies never have a next episode so they never see it. While
+  // paused the card keeps showing exactly as before (the paused zone's
+  // zone-variant instance).
+  const UP_NEXT_REMAINING_S = 180;
+  $: upNextAutoOpen = playing && upNext !== null && openSheet === null && !locked && safeDuration > 0 && safeDuration - currentTime <= UP_NEXT_REMAINING_S;
 
   // ----- Sheet state (Issue 3) -----
   // Exactly ONE sheet open at a time. openMenu/closeMenu are the SINGLE
@@ -184,6 +209,44 @@
       onMenuOpenChange(false);
     }, reduced ? 0 : 90);
   }
+
+  // ----- Round 52 (F1): the SETTLED-pause derivation -----
+  //
+  // `pausedSettled` is true ONLY when ALL of the following hold:
+  //   * `!playing` has been CONTINUOUSLY true for PAUSE_SETTLE_MS (400 ms) —
+  //     the transient pause a quality/audio/server engine reload fires can
+  //     never cross it;
+  //   * no selection sheet is open (`openSheet === null`);
+  //   * the shell is NOT switching sources/qualities/audios/servers (the
+  //     `switching` prop — the shell passes the exact flag that drives its
+  //     loading card, no second state machine).
+  // The timer is set/cleared by the reactive statement and cleared in
+  // onDestroy; pressing play clears the flag IMMEDIATELY (no delay). While
+  // playing (including during a quality switch) the normal chrome stays —
+  // the settled card appears only after a real, settled pause.
+  let pausedSettleTimer: ReturnType<typeof setTimeout> | undefined;
+  $: {
+    if (!playing && openSheet === null && !switching) {
+      if (!pausedSettled && pausedSettleTimer === undefined) {
+        pausedSettleTimer = setTimeout(() => {
+          pausedSettleTimer = undefined;
+          // Re-check every condition at fire time — the reactive statement
+          // clears the timer first on any change, but this guard keeps the
+          // flag honest even if a state landed between flushes.
+          if (!playing && openSheet === null && !switching) pausedSettled = true;
+        }, PAUSE_SETTLE_MS);
+      }
+    } else if (pausedSettled || pausedSettleTimer !== undefined) {
+      if (pausedSettleTimer !== undefined) {
+        clearTimeout(pausedSettleTimer);
+        pausedSettleTimer = undefined;
+      }
+      pausedSettled = false;
+    }
+  }
+  onDestroy(() => {
+    if (pausedSettleTimer !== undefined) clearTimeout(pausedSettleTimer);
+  });
 
   $: safeDuration = Number.isFinite(duration) && duration > 0 ? duration : 0;
   $: progressPercent = safeDuration ? Math.min(100, Math.max(0, (currentTime / safeDuration) * 100)) : 0;
@@ -297,56 +360,57 @@
        keeps its own top-left spot: below 1024px the header sits just under
        the FAB line so it can never collide with the right-aligned chip row
        (the round 37 B one-line top row is untouched); ≥1024px it shares the
-       FAB's line. Renders nothing when both strings are empty. -->
-  {#if playing && (title || metaLine)}
+       FAB's line. Renders nothing when both strings are empty.
+       Round 52 (F1) — the gate is `!pausedSettled` (not raw `playing`): the
+       chrome (header included) stays up during a quality/audio/server
+       switch (a transient pause), and steps aside only for a real, SETTLED
+       pause. -->
+  {#if !pausedSettled && (title || metaLine)}
     <div class="header-zone" aria-hidden="true">
       {#if title}<div class="header-title">{title}</div>{/if}
       {#if metaLine}<div class="header-meta">{metaLine}</div>{/if}
     </div>
   {/if}
-  <!-- Round 51 — PAUSED ZONE (approved-concept fix C1): while !playing the
+  <!-- Round 51 — PAUSED ZONE (approved-concept fix C1): while PAUSED the
        paused metadata card is the ONLY chrome — the utility zone, the header
        title block, the timeline row and the secondary control row are all
-       {#if playing}-gated below, so the card never competes with them.
+       gated on `!pausedSettled` below, so the card never competes with them.
+       Round 52 (F1) — the zone and the C1 chrome hiding are gated on
+       `pausedSettled` (a SETTLED pause: !playing held continuously for
+       400 ms, no sheet open, not switching) instead of raw `!playing`, so a
+       quality/audio/server switch (whose engine reload briefly fires a
+       pause event) can never flash the card or strip the chrome — the card
+       appears only after a real, settled pause, and pressing play brings the
+       chrome back IMMEDIATELY (no delay).
        While paused there is no scrubber — the Resume pill is the way back.
        The zone itself is pointer-transparent (only the cards re-enable
        pointer events), so a tap on the empty area still reaches the video
-       and toggles the chrome layer — the shell's tap-to-reveal behaviour is
-       unchanged and NO new play/pause-on-tap gesture is added. The zone's
-       TOP edge sits below the native back chip (back FAB bottom edge + 12px)
-       so the card can never collide with the back affordance in portrait,
-       and every card additionally caps at the zone height as a hard guard.
-       Renders only with no sheet open and not locked; `safeDuration > 0`
-       keeps it out of the initial load flash. The 4px white accent rule +
-       title/meta/overview come straight from the shell's already-available
-       metadata; the Resume pill reuses the EXISTING resume path (onResume)
-       and hides when it is absent. -->
-  {#if !playing && openSheet === null && !locked && ((safeDuration > 0 && (title || metaLine || overview)) || (safeDuration > 0 && upNext))}
+       and — round 52 (F5) — toggles playback through the shell's new
+       single-tap gesture (play and hide the cards immediately).
+       The zone's TOP edge sits below the native back chip (back FAB bottom
+       edge + 12px) so the card can never collide with the back affordance
+       in portrait, and every card additionally caps at the zone height as a
+       hard guard. Renders only while settled-paused and not locked;
+       `safeDuration > 0` keeps it out of the initial load flash. The 4px
+       white accent rule + title/meta/overview come straight from the
+       shell's already-available metadata; the Resume pill reuses the
+       EXISTING resume path (onResume) and hides when it is absent. -->
+  {#if pausedSettled && !locked && safeDuration > 0 && ((title || metaLine || overview) || upNext)}
     <div class="paused-zone">
       <!-- Round 51 (Phase 3 — series context): the Up-next card — FIRST in
            the DOM so the portrait column-reverse stack puts it ABOVE the
            metadata card; on desktop it anchors to the zone's BOTTOM-RIGHT
            (mirroring the metadata card). Hidden when there is no next
-           episode, a sheet is open, or the player is locked. The 16:9 still
-           is a fixed aspect box (no CLS; lazy); a missing still renders
-           nothing — never fabricated. -->
+           episode, a sheet is open, or the player is locked. Round 52 (F4):
+           the SAME card now lives in PlayerUpNextCard.svelte (the zone
+           variant anchors here; the auto variant shows near the end while
+           playing — see the instance below the zones). The 16:9 still is a
+           fixed aspect box (no CLS; lazy); a missing still renders nothing —
+           never fabricated. -->
       {#if upNext}
-        <div class="upnext-card">
-          {#if upNext.still}
-            <div class="upnext-still"><img src={upNext.still} alt="" loading="lazy" /></div>
-          {/if}
-          <span class="upnext-label">UP NEXT</span>
-          {#if upNext.title}<div class="upnext-title">{upNext.title}</div>{/if}
-          <div class="upnext-ep">S{upNext.season} · E{String(upNext.episode).padStart(2, '0')}</div>
-          {#if onUpNext}
-            <button class="upnext-play" type="button" aria-label={`Play ${upNext.title}`} onclick={onUpNext}>
-              <Play size={14} fill="currentColor" aria-hidden="true" />
-              <span>Play</span>
-            </button>
-          {/if}
-        </div>
+        <PlayerUpNextCard {upNext} onUpNext={onUpNext} />
       {/if}
-      {#if safeDuration > 0 && (title || metaLine || overview)}
+      {#if title || metaLine || overview}
         <div class="paused-card">
           {#if title}<div class="paused-title">{title}</div>{/if}
           {#if metaLine}<div class="paused-meta">{metaLine}</div>{/if}
@@ -362,13 +426,19 @@
     </div>
   {/if}
 
-  <!-- TOP-RIGHT utility zone: Subtitles, Quality, Server, Cast, PiP, Lock.
+  <!-- TOP-RIGHT utility zone: Subtitles, Quality, Server, Cast, Lock.
        Round 37 B — Subtitles/Quality/Server moved here from the bottom row so
        the bottom row fits a 360–430 px portrait width without wrapping.
        Round 51 — the display-mode control moved DOWN into the bottom row's
        right group (before Speed); in portrait the zone carries a 56px left
-       inset so it can never slide behind the native back chip. -->
-  {#if playing}
+       inset so it can never slide behind the native back chip.
+       Round 52 (F2) — PiP moved DOWN into the bottom row's right group as
+       well (immediately LEFT of Fullscreen) so the utility row fits a 360 px
+       portrait width entirely on screen; the zone keeps exactly Subtitles,
+       Quality, Server, Cast, Lock (and nothing else). The gate is
+       `!pausedSettled` (round 52 F1): the normal chrome stays up during a
+       quality/audio/server switch and steps aside only for a settled pause. -->
+  {#if !pausedSettled}
   <div class="utility-zone">
     {#if !castActive}
       <button bind:this={subtitlesAnchor} class="select-control subtitles sheet-trigger" class:open={openSheet === 'subtitles'} type="button" aria-label={`Subtitles: ${subtitleButtonLabel}${subtitleNotice ? ` (${subtitleNotice})` : ''}`} aria-haspopup="dialog" title={subtitleNotice || undefined} onclick={() => openMenu('subtitles')}>
@@ -400,9 +470,6 @@
     {#if castAvailable}
       <button class="control-button cast-button" class:casting={castActive} type="button" aria-label={castActive ? 'Disconnect cast session' : 'Cast to a device'} aria-pressed={castActive} onclick={onCast}><Cast size={17} strokeWidth={1.5} /></button>
     {/if}
-    {#if !castActive && pictureInPictureSupported}
-      <button class="control-button" type="button" aria-label={pictureInPicture ? 'Exit Picture-in-Picture' : 'Enter Picture-in-Picture'} aria-pressed={pictureInPicture} onclick={onPictureInPicture}><PictureInPicture2 size={17} strokeWidth={1.5} /></button>
-    {/if}
     <button class="control-button lock-button" type="button" aria-label={locked ? 'Unlock player controls' : 'Lock player controls'} aria-pressed={locked} onclick={onToggleLock}>{#if locked}<LockOpen size={17} strokeWidth={1.5} />{:else}<Lock size={17} strokeWidth={1.5} />{/if}</button>
   </div>
   {/if}
@@ -412,8 +479,13 @@
        Fullscreen. Subtitles/Quality/Server moved to the top utility zone.
        Round 51 — the whole zone is {#if playing}-gated (paused = card only)
        and the groups swapped members: volume joined the LEFT group (after
-       +10) and display mode joined the RIGHT group (before Speed). -->
-  {#if playing}
+       +10) and display mode joined the RIGHT group (before Speed).
+       Round 52 (F1) — the gate is `!pausedSettled` (the chrome stays during a
+       quality/audio/server switch; card-only only after a settled pause).
+       Round 52 (F2) — PiP moved into the RIGHT group, immediately LEFT of
+       Fullscreen (order: Volume · Audio · Display-mode · Speed · PiP ·
+       Fullscreen) so the top utility row fits 360 px portrait. -->
+  {#if !pausedSettled}
   <div class="bottom-zone">
     <!-- Round 51 (Phase 4 — scrubber detail): 2px chapter ticks would render
          above the track ONLY when chapter marks are available from the shell;
@@ -455,9 +527,9 @@
           </div>
         {/if}
       </div>
-      <!-- RIGHT group (round 51): Audio (only when the engine exposes
-           tracks), display mode (moved down from the utility zone, before
-           Speed), Speed, Fullscreen. -->
+      <!-- RIGHT group (rounds 51/49): Audio (only when the engine exposes
+           tracks), display mode (before Speed), Speed, PiP (immediately LEFT
+           of Fullscreen — round 52 F2), Fullscreen. -->
       <div class="right-controls">
         {#if !castActive}
           {#if audioMode === 'menu'}
@@ -475,10 +547,27 @@
             <span class="chip-label">{playbackRate}×</span>
           </button>
         {/if}
+        {#if !castActive && pictureInPictureSupported}
+          <button class="control-button" type="button" aria-label={pictureInPicture ? 'Exit Picture-in-Picture' : 'Enter Picture-in-Picture'} aria-pressed={pictureInPicture} onclick={onPictureInPicture}><PictureInPicture2 size={17} strokeWidth={1.5} /></button>
+        {/if}
         <button class="control-button" type="button" aria-label={fullscreenActive ? 'Exit fullscreen' : 'Enter fullscreen'} aria-pressed={fullscreenActive} onclick={onFullscreen}>{#if fullscreenActive}<Minimize2 size={18} strokeWidth={1.5} />{:else}<Maximize2 size={18} strokeWidth={1.5} />{/if}</button>
       </div>
     </div>
   </div>
+  {/if}
+
+  <!-- Round 52 (F4) — the AUTO Up-next card: while PLAYING a series episode
+       with a next episode and at most 180 s left, the SAME card that shows
+       while paused slides in on its own at the bottom-right (the component's
+       "auto" variant — a floating overlay ABOVE the bottom bar; it never
+       shifts the timeline). Seeking back above the threshold hides it; a
+       sheet being open or the lock hides it; movies never have a next
+       episode so they never see it. Rendered OUTSIDE the !pausedSettled
+       zones so it shows WITH the normal chrome while playing, and hidden
+       again the moment playback pauses into the settled zone instance
+       (same card, one place at a time — no duplicates). -->
+  {#if upNextAutoOpen && upNext}
+    <PlayerUpNextCard {upNext} onUpNext={onUpNext} variant="auto" />
   {/if}
 
   <!-- In-player selection sheets (Issue 3): Mavero surfaces, rendered inside
@@ -588,15 +677,19 @@
   }
 
   /* ---- Top-right utility zone ----
-     Round 37 B — holds Subtitles, Quality, Server, Cast, PiP, Lock. In
-     portrait these must fit one row (360–430 px); the zone uses
-     flex-wrap: nowrap and shrinks button size/gap. Round 51 — the
-     display-mode control moved down to the bottom row, the zone carries a
-     portrait 56px LEFT inset (≤640px block below) so it can never slide
-     behind the native back chip, and its TOP edge (16px; 12px in portrait)
-     matches the back chip so both sit on the SAME baseline. The
-     select-control labels truncate so the row never overflows. */
-  .utility-zone { position: absolute; z-index: 2; top: max(16px, env(safe-area-inset-top)); right: max(12px, env(safe-area-inset-right)); display: flex; align-items: center; flex-wrap: nowrap; gap: 8px; pointer-events: auto; max-width: calc(100vw - 24px); }
+     Round 37 B — holds Subtitles, Quality, Server, Cast, Lock. In portrait
+     these must fit one row (360–430 px); the zone uses flex-wrap: nowrap and
+     shrinks button size/gap. Round 51 — the display-mode control moved down
+     to the bottom row, the zone carries a portrait 56px LEFT inset (≤640px
+     block below) so it can never slide behind the native back chip. Round 52
+     (F2) — PiP moved down to the bottom row too, so the zone keeps exactly
+     Subtitles, Quality, Server, Cast, Lock. Round 52 (F3) — the TOP offset
+     comes from the shell root's shared --pl-chrome-top token (same value the
+     native back chip uses — one vertical reference; the compact 12px and
+     landscape 6px floors are token overrides on the ROOT, not per-component
+     magic numbers). The select-control labels truncate so the row never
+     overflows. */
+  .utility-zone { position: absolute; z-index: 2; top: var(--pl-chrome-top, max(16px, env(safe-area-inset-top))); right: max(12px, env(safe-area-inset-right)); display: flex; align-items: center; flex-wrap: nowrap; gap: 8px; pointer-events: auto; max-width: calc(100vw - 24px); }
 
   /* 2026-10 round 20 — the center cluster + cluster-button CSS is REMOVED.
      Play/Pause moved to the bottom secondary row as .control-button.play-inline.
@@ -659,35 +752,12 @@
   .resume-pill:active { transform: scale(.98); }
   @keyframes paused-card-in { from { opacity: 0; } to { opacity: 1; } }
 
-  /* Round 51 (approved concept, Phase 3 — series context): the Up-next
-     card — the paused chrome's second card at the BOTTOM-RIGHT, mirroring
-     the metadata card's accent-rule design language. The 16:9 still is a
-     FIXED aspect box (aspect-ratio + object-fit cover) so the lazy-loaded
-     image can never shift the layout (no CLS); a missing still renders
-     nothing — never fabricated. The Play button mirrors the Resume pill
-     and switches via the shell's EXISTING episode-change path. */
-  .upnext-card {
-    position: absolute;
-    right: 0;
-    bottom: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    width: 280px;
-    max-height: 100%;
-    overflow: hidden;
-    padding: 6px 14px 6px 16px;
-    border-left: 4px solid #fff;
-    animation: paused-card-in 140ms var(--pl-ease);
-  }
-  .upnext-still { aspect-ratio: 16 / 9; margin-bottom: 4px; border-radius: 8px; overflow: hidden; background: rgba(255, 255, 255, 0.06); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45); }
-  .upnext-still img { display: block; width: 100%; height: 100%; object-fit: cover; }
-  .upnext-label { font-size: 10.5px; font-weight: 700; letter-spacing: 1.6px; text-transform: uppercase; color: rgba(255, 255, 255, 0.45); text-shadow: 0 1px 8px rgba(0, 0, 0, 0.5); }
-  .upnext-title { font-size: 15px; font-weight: 650; letter-spacing: -0.2px; line-height: 1.2; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-shadow: 0 2px 12px rgba(0, 0, 0, 0.5); }
-  .upnext-ep { font-size: 13px; color: var(--pl-ink-2); text-shadow: 0 1px 8px rgba(0, 0, 0, 0.5); }
-  .upnext-play { display: inline-flex; align-items: center; gap: 7px; align-self: flex-start; height: 38px; margin-top: 6px; padding: 0 18px; border: 0; border-radius: 999px; color: #101013; background: #fff; font: inherit; font-size: 13px; font-weight: 650; cursor: pointer; box-shadow: 0 6px 22px rgba(0, 0, 0, 0.4); transition: transform var(--motion-fast) var(--pl-ease), box-shadow var(--motion-fast) var(--pl-ease); }
-  .upnext-play:hover, .upnext-play:focus-visible { transform: scale(1.02); box-shadow: 0 8px 26px rgba(0, 0, 0, 0.5); }
-  .upnext-play:active { transform: scale(.98); }
+  /* Round 52 (F4) — the Up-next card's own styles (shape, still, label,
+     title, episode line, Play pill and both anchor variants) moved WITH the
+     card into PlayerUpNextCard.svelte, so the paused-zone instance and the
+     auto-while-playing instance share ONE definition (no drift). The
+     card's sizing/stacking contracts are unchanged. */
+
   /* Round 51 — mid widths: the two bottom cards share the zone, so the
      metadata card caps below (zone width − the 280px Up-next card − gap)
      and the pair can never overlap between 641–899px. ≥900px both fit at
@@ -726,9 +796,14 @@
   .control-button { display: inline-grid; place-items: center; min-width: 40px; min-height: 40px; border: 1px solid transparent; border-radius: var(--pl-r1); color: rgba(255,255,255,0.88); background: transparent; cursor: pointer; transition: background var(--motion-fast) var(--pl-ease), color var(--motion-fast) var(--pl-ease), transform var(--motion-fast) var(--pl-ease); }
   .control-button:hover, .control-button:focus-visible { background: var(--pl-s1); color: #fff; }
   .control-button:active { transform: scale(.97); }
-  /* Round 50 — icon-only utility buttons (display, cast, PiP, lock): 40px
-     rounded squares on the chip surface tokens, icon 17px. */
-  .utility-zone .control-button { width: 40px; min-width: 40px; height: 40px; border-color: var(--pl-line); background: var(--pl-s1); }
+  /* Round 50 — icon-only utility buttons (cast, PiP-before-round-49, lock):
+     rounded squares on the chip surface tokens, icon 17px. Round 52 (F3) —
+     the SIZE comes from the shell root's shared --pl-chip-size token (40px
+     base; 44px ≥900px and 36px ≤640px are ROOT overrides) so the utility
+     chips and the native back chip keep the SAME height and one vertical
+     centre in portrait AND landscape (the back chip consumes the same
+     token on the shell side). */
+  .utility-zone .control-button { width: var(--pl-chip-size, 40px); min-width: var(--pl-chip-size, 40px); height: var(--pl-chip-size, 40px); border-color: var(--pl-line); background: var(--pl-s1); }
   .utility-zone .control-button:hover, .utility-zone .control-button:focus-visible { background: var(--pl-s2); border-color: rgba(255,255,255,0.2); color: #fff; }
   /* 2026-10 round 19 — inline ±10 s seek buttons in the secondary row. */
   .control-button.seek-inline { color: var(--ink-soft); }
@@ -748,7 +823,7 @@
      derives from the EXISTING aria-label text — nothing is invented. Speed
      has no separate value (single “1×” label). Truncation keeps the top and
      bottom rows ONE line at every width (round 37 B). */
-  .select-control { display: inline-flex; align-items: center; gap: 8px; height: 40px; max-width: 180px; padding: 0 14px; border: 1px solid var(--pl-line); border-radius: 13px; color: #fff; background: var(--pl-s1); cursor: pointer; font: inherit; transition: background var(--motion-fast) var(--pl-ease), border-color var(--motion-fast) var(--pl-ease); }
+  .select-control { display: inline-flex; align-items: center; gap: 8px; height: var(--pl-chip-size, 40px); max-width: 180px; padding: 0 14px; border: 1px solid var(--pl-line); border-radius: 13px; color: #fff; background: var(--pl-s1); cursor: pointer; font: inherit; transition: background var(--motion-fast) var(--pl-ease), border-color var(--motion-fast) var(--pl-ease); }
   .select-control:hover:not(:disabled), .select-control:focus-visible, .select-control.open { background: var(--pl-s2); border-color: rgba(255,255,255,0.2); }
   .select-control:disabled { opacity: .6; cursor: default; }
   .select-control .chip-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600; }
@@ -762,7 +837,9 @@
      offset. The outline follows each element's own border-radius (browsers
      round outlines to the element's radius), so no per-element radius is
      restated here. (The native back chip's ring lives in the shell.) */
-  .select-control:focus-visible, .control-button:focus-visible, .option-row:focus-visible, .rail-item:focus-visible, .resume-pill:focus-visible, .upnext-play:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+  .select-control:focus-visible, .control-button:focus-visible, .option-row:focus-visible, .rail-item:focus-visible, .resume-pill:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+  /* (The Up-next card's pill ring lives in PlayerUpNextCard.svelte — moved
+     with the card, round 52.) */
 
   /* In-player selection sheet option rows (shared shape across quality /
      display / speed sheets; the subtitle sheet carries its own richer
@@ -803,29 +880,33 @@
     .volume-input { display: none; }
   }
   /* Round 50 — ≥900px chips/utility squares grow to 44px (comfortable
-     desktop/TV hit area). */
-  @media (min-width: 900px) {
-    .select-control { height: 44px; }
-    .utility-zone .control-button { width: 44px; min-width: 44px; height: 44px; }
-  }
+     desktop/TV hit area). Round 52 (F3) — the growth is a --pl-chip-size
+     token override on the shell ROOT (PlayerShell.svelte) so the native
+     back chip grows WITH the utility chips and both rows stay on one
+     vertical reference; nothing to override here anymore. */
   /* Round 37 B — portrait (360–430 px): shrink the utility-zone + bottom-row
      buttons so both rows stay on ONE line. Round 50 — the chips keep the new
      chip surface but DROP the chip LABEL (the icon + value carry exactly the
      state text the old control-label carried, so the row fits portrait
      exactly as before); the values keep truncating so long names never
-     expand the row. Touch targets stay 32px+ minimum. */
+     expand the row. Round 52 (F3) — the compact TOP (12px) and chip SIZE
+     (36px) are --pl-chrome-top/--pl-chip-size token overrides on the shell
+     ROOT (the native back chip consumes the same tokens, so both rows keep
+     one vertical reference — nothing size/top-related is re-declared here);
+     this block only tightens padding, gaps and label widths. Touch targets
+     stay 32px+ minimum. */
   @media (max-width: 640px) {
     .bottom-zone { padding: 8px 8px calc(10px + env(safe-area-inset-bottom)); }
     .secondary-row { gap: 6px; }
     .left-controls { gap: 6px; }
     .right-controls { gap: 4px; }
-    /* Round 51 — 56px left inset + the 12px top edge: the native back chip
-    (top 12 + 40px wide) ends at 52px, so the chip row can never slide
-    behind it; the chips keep truncating so the row stays ONE line at
-    360px. */
-    .utility-zone { gap: 4px; top: max(12px, env(safe-area-inset-top)); left: max(56px, env(safe-area-inset-left)); max-width: calc(100vw - 68px); }
+    /* Round 51 — the 56px LEFT inset: the native back chip ends at 52px, so
+    the chip row can never slide behind it; the chips keep truncating so the
+    row stays ONE line at 360px. (The compact top offset rides the root's
+    --pl-chrome-top token — round 52 F3.) */
+    .utility-zone { gap: 4px; left: max(56px, env(safe-area-inset-left)); max-width: calc(100vw - 68px); }
     .time-label { font-size: 11px; }
-    .select-control { height: 36px; padding: 0 10px; gap: 6px; }
+    .select-control { padding: 0 10px; gap: 6px; }
     .select-control .chip-label { display: none; }
     .select-control .chip-value { font-size: 12px; }
     .select-control.subtitles { max-width: 80px; }
@@ -833,25 +914,26 @@
     .select-control.server { max-width: 72px; }
     .select-control.audio { max-width: 72px; }
     .control-button { min-width: 32px; min-height: 32px; }
-    .utility-zone .control-button { width: 32px; min-width: 32px; height: 32px; }
     /* Round 51 — the server rail stays visible beside the list (104px);
        the list takes the rest — still two columns, no tabs. */
     .server-rail-wrap { flex: 0 0 104px; }
     /* Round 51 — paused zone portrait: same edges as the back chip (12px)
-       and the card's top stays below the back chip's bottom edge + 12px
-       (12 + 40 + 12 = 64px). */
+       and the card's top stays safely below the back chip's bottom edge
+       (12 + 36 + 12 = 60px; 64px keeps a little slack). */
     .paused-zone { top: 64px; left: 12px; right: 12px; bottom: max(12px, calc(env(safe-area-inset-bottom) + 8px)); }
     .paused-card { max-width: 82vw; padding: 4px 10px 4px 10px; }
     .paused-title { font-size: 24px; }
     /* Round 51 (Phase 3) — portrait: the Up-next card stacks ABOVE the
        metadata card at the same left edge (column-reverse keeps the
-       metadata card on the bottom); both cards become in-flow children
-       of the zone. */
+       metadata card on the bottom); the card component itself joins the
+       zone's flow as a static in-flow child (the card's own :not(.auto)
+       compact rule — round 52 F4 moved it with the component). */
     .paused-zone { display: flex; flex-direction: column-reverse; align-items: flex-start; gap: 12px; }
-    .paused-card, .upnext-card { position: static; }
-    .upnext-card { width: 280px; max-width: 82vw; }
+    .paused-zone > :global(.paused-card) { position: static; }
   }
-  @media (prefers-reduced-motion: reduce) { .control-button { transition: none; } .select-control { transition: none; } .paused-card { animation: none; } .upnext-card { animation: none; } .rail-item { transition: none; } }
+  /* (The Up-next card's reduced-motion rule moved with the card into
+     PlayerUpNextCard.svelte — round 52 F4.) */
+  @media (prefers-reduced-motion: reduce) { .control-button { transition: none; } .select-control { transition: none; } .paused-card { animation: none; } .rail-item { transition: none; } }
   /* Landscape phone (Player V2 remaining fixes, 2026-10): the secondary row
      is ONE RIGHT-aligned compact group — the user's approved landscape
      layout puts the secondary controls on the RIGHT edge (the center cluster

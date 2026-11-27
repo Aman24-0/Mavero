@@ -82,11 +82,18 @@ ok(/class="volume-input" type="range"/.test(controls), '1f. volume control retai
 ok(/aria-label=\{`Subtitles: \$\{subtitleButtonLabel\}/.test(controls), '1f. subtitles control retained (sheet-trigger contract, Issue 3)');
 ok(/aria-label="Playback quality"/.test(controls) && /internalQualities\.length > 1/.test(controls), '1f. quality selection (engine internal + per-stream fallback) retained');
 ok(/Enter Picture-in-Picture/.test(controls), '1f. Picture-in-Picture retained');
-// 1g. APPROVED LAYOUT: top-right utility zone = Cast, PiP, Lock — never the
-//     center cluster or the bottom bar.
+// 1g. APPROVED LAYOUT (rounds 37B/51/49): top-right utility zone = Subtitles,
+//     Quality, Server, Cast, Lock — Display-mode (round 51) and PiP (round 52)
+//     live in the bottom row's right group so the top row fits 360 px portrait.
 ok(/class="utility-zone"/.test(controls), '1g. a dedicated top-right utility zone exists');
-const utilityZone = controls.slice(controls.indexOf('class="utility-zone"'), controls.indexOf('class="center-cluster"'));
-ok(utilityZone.indexOf('Cast to a device') > -1 && utilityZone.indexOf('Enter Picture-in-Picture') > -1 && utilityZone.indexOf('Lock player controls') > -1, '1g. Cast/PiP/Lock are ALL in the utility zone (never pushed into the cluster or bottom bar)');
+// Round 52 (F2) supersession: the slice boundary is the bottom zone (the
+// center cluster was removed 2026-10 round 20 — indexOf returns -1 and the
+// old slice silently spanned to EOF). PiP moved OUT of the utility zone into
+// the bottom row's RIGHT group (immediately LEFT of Fullscreen) so the top
+// row fits a 360 px portrait width; the utility zone keeps Subtitles,
+// Quality, Server, Cast, Lock (Display-mode already moved down in round 51).
+const utilityZone = controls.slice(controls.indexOf('class="utility-zone"'), controls.indexOf('class="bottom-zone"'));
+ok(utilityZone.indexOf('Cast to a device') > -1 && utilityZone.indexOf('Lock player controls') > -1 && utilityZone.indexOf('Enter Picture-in-Picture') === -1, '1g. Cast + Lock stay in the utility zone; PiP moved to the bottom row\'s right group, immediately LEFT of Fullscreen (round 52 portrait-fit contract)');
 ok(/aria-pressed=\{castActive\}/.test(utilityZone) && utilityZone.indexOf('Disconnect cast session') > -1, '1g. the Cast control mirrors the session state (aria-pressed + distinct labels)');
 // 1h. APPROVED LAYOUT: bottom zone = time + timeline + secondary row.
 ok(/class="bottom-zone"/.test(controls) && /class="timeline-row"/.test(controls) && /class="secondary-row"/.test(controls), '1h. the bottom zone carries the timeline row and the secondary control row');

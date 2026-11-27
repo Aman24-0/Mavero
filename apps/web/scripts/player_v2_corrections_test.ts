@@ -90,7 +90,11 @@ ok(tapSideForX(500, 1000) === 'right' && tapSideForX(999, 1000) === 'right', '3.
 ok(tapSideForX(100, 0) === null && tapSideForX(Number.NaN, 100) === null, '3. tapSideForX: degenerate widths/non-finite input are safe');
 ok(withinTapSlop(0, 0) === true && withinTapSlop(12, 0) === true, '3. withinTapSlop: movement up to the slop stays a tap');
 ok(withinTapSlop(13, 0) === false && withinTapSlop(0, -13) === false, '3. withinTapSlop: beyond the slop is a drag (the swipe controller owns it)');
-ok(DOUBLE_TAP_WINDOW_MS === 300 && HOLD_ACTIVATE_MS === 500 && TAP_SLOP_PX === 12, '3. documented policy bounds (double-tap window, hold activation, tap slop)');
+// Round 52 (F5): the double-tap window is 260 ms — it doubles as the
+// single-tap confirmation delay (ONE value so the second tap of a double-tap
+// can always cancel the pending play/pause toggle; 300 ms would have raced a
+// 260 ms toggle). See scripts/player_round52_paused_upnext_tap_test.ts.
+ok(DOUBLE_TAP_WINDOW_MS === 260 && HOLD_ACTIVATE_MS === 500 && TAP_SLOP_PX === 12, '3. documented policy bounds (double-tap window 260 ms — also the single-tap confirmation delay since round 52, hold activation, tap slop)');
 
 type FakeTouch = { identifier: number; clientX: number; clientY: number };
 type FakeEvent = { changedTouches: FakeTouch[]; target: unknown; preventDefault?: () => void };
@@ -357,7 +361,7 @@ function touch(id: number, x: number, y: number): FakeTouch {
 
 // Shell wiring of the tap controller.
 ok(/tapGestureController = createPlayerTapGestureController\(\{/.test(shell), '3. the shell creates the tap controller in onMount');
-ok(/onDoubleTap: handleDoubleTap,\s*\n\s*onHoldStart: handleHoldStart,\s*\n\s*onHoldEnd: handleHoldEnd,/.test(shell), '3. the shell wires double-tap → seek + feedback and hold → 2×/restore');
+ok(/onDoubleTap: handleDoubleTap,\s*\n\s*onSingleTap: handleSingleTap,\s*\n\s*onHoldStart: handleHoldStart,\s*\n\s*onHoldEnd: handleHoldEnd,/.test(shell), '3. the shell wires double-tap → seek + feedback, single-tap → play/pause toggle (round 52) and hold → 2×/restore');
 ok(/function handleDoubleTap\(direction: TapSeekDirection\) \{[\s\S]{0,200}seekBy\(direction === 'backward' \? -10 : 10\);/.test(shell), '3. double-tap seeks ±10 s through the existing clamped shell seek');
 ok(/function handleHoldStart\(\) \{[\s\S]{0,220}setPlaybackRate\(2\);/.test(shell), '3. the hold sets 2× through the EXISTING speed path (select stays correct, single label)');
 ok(/function handleHoldEnd\(\) \{[\s\S]{0,200}setPlaybackRate\(savedPlaybackRate\);/.test(shell), '3. release restores the EXACT pre-hold speed');

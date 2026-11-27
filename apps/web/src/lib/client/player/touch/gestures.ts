@@ -247,13 +247,14 @@ export function createPlayerGestureController(options: GestureControllerOptions)
 
 // ---------------------------------------------------------------------------
 // Player V2 corrections (real-device feedback) — TAP gestures over the video
-// surface: double-tap seek (left half = −10 s, right half = +10 s) and
-// press-and-hold 2× playback.
+// surface: double-tap seek (left half = −10 s, right half = +10 s),
+// press-and-hold 2× playback, and single-tap play/pause toggle.
 //
 // Arbitration contract (all unit-tested via the pure helpers):
 //   * Taps on interactive surfaces (buttons, sliders, selects, sheets, the
-//     seekbar, message cards) never trigger a tap gesture — the shared
-//     interactive-target exclusion plus the tap-specific surfaces below.
+//     seekbar, message cards, the up-next card) never trigger a tap gesture —
+//     the shared interactive-target exclusion plus the tap-specific surfaces
+//     below.
 //   * A touch that moves beyond the tap slop is a DRAG — it dies quietly
 //     (the vertical-swipe controller owns it; no preventDefault, no fight).
 //   * A hold activates only after HOLD_ACTIVATE_MS of stillness; any second
@@ -263,12 +264,24 @@ export function createPlayerGestureController(options: GestureControllerOptions)
 //   * The hold always restores the previous speed through onHoldEnd — on
 //     release, cancel, second finger, touchcancel and destroy. The shell
 //     additionally restores on lock/cast/source/episode switch/teardown.
-//   * Single taps have NO action here (the shell's reveal listeners handle
-//     them) — a double-tap can therefore never toggle show/hide twice.
+//   * Single tap TOGGLES play/pause through onSingleTap — but ONLY after the
+//     double-tap window elapses without a second tap (round 52): the action
+//     fires DOUBLE_TAP_WINDOW_MS after the tap's touchend, so a double-tap
+//     can never cause a spurious toggle (the second tap cancels the pending
+//     single-tap timer before it fires). A later touch that becomes a hold or
+//     a drag also cancels the pending single tap. While the shell's `enabled`
+//     gate is false (touch lock, embed ownership, open sheets, casting) taps
+//     stay inert.
 // ---------------------------------------------------------------------------
 
-/** Two taps within this window (ms) on the same half form a double-tap. */
-export const DOUBLE_TAP_WINDOW_MS = 300;
+/**
+ * Two taps within this window (ms) on the same half form a double-tap. Also
+ * the confirmation delay before a single tap's toggle action fires (round 52:
+ * the window and the single-tap delay are ONE value so the double-tap can
+ * always cancel the pending toggle — 300 ms would have raced a 260 ms
+ * single-tap delay).
+ */
+export const DOUBLE_TAP_WINDOW_MS = 260;
 /** Stillness duration (ms) before a press-and-hold activates 2×. */
 export const HOLD_ACTIVATE_MS = 500;
 /** Max movement (px) from the start point for a touch to remain a tap. */
@@ -290,7 +303,7 @@ export function withinTapSlop(dx: number, dy: number, slopPx = TAP_SLOP_PX): boo
 }
 
 /** Interactive surfaces a tap gesture must never own (superset of the swipe rule). */
-const TAP_EXCLUDE_SELECTOR = `${INTERACTIVE_SELECTOR}, .sheet-overlay, .message-card, .completion-card, .loading-card, .gesture-indicator, .seek-feedback, .skip-intro-button, .unlock-fab, .back-fab, .source-chip, .episode-chip`;
+const TAP_EXCLUDE_SELECTOR = `${INTERACTIVE_SELECTOR}, .sheet-overlay, .option-sheet-overlay, .message-card, .completion-card, .loading-card, .gesture-indicator, .seek-feedback, .skip-intro-button, .unlock-fab, .back-fab, .source-chip, .episode-chip, .upnext-card`;
 
 export type TapGestureControllerOptions = {
   /** The surface the listeners attach to (the player root). */
@@ -303,6 +316,13 @@ export type TapGestureControllerOptions = {
   enabled: () => boolean;
   /** A double-tap was recognized (side determines the seek direction). */
   onDoubleTap: (direction: TapSeekDirection) => void;
+  /**
+   * A SINGLE tap was confirmed: fired only after DOUBLE_TAP_WINDOW_MS elapses
+   * without a second tap (round 52 — the shell toggles play/pause here).
+   * Optional: consumers without the callback never arm the confirmation
+   * timer, so existing integrations keep their exact behavior.
+   */
+  onSingleTap?: () => void;
   /** The press-and-hold activated (shell switches to 2×). */
   onHoldStart: () => void;
   /** The hold ended (shell restores the exact previous speed). */
@@ -328,7 +348,7 @@ export type PlayerTapGestureController = {
  * destroy() removes exactly what was added and cancels pending state.
  */
 export function createPlayerTapGestureController(options: TapGestureControllerOptions): PlayerTapGestureController {
-  const { surface, enabled, onDoubleTap, onHoldStart, onHoldEnd } = options;
+  const { surface, enabled, onDoubleTap, onSingleTap, onHoldStart, onHoldEnd } = options;
   const surfaceWidth = options.surfaceWidth ?? (() => surface.clientWidth || (typeof window !== 'undefined' ? window.innerWidth : 0));
   const now = options.now ?? (() => Date.now());
 
@@ -340,6 +360,28 @@ export function createPlayerTapGestureController(options: TapGestureControllerOp
   let holdActive = false;
   let lastTapAt = 0;
   let lastTapSide: TapSide | null = null;
+  // Round 52 — the pending single-tap confirmation timer. Armed when a tap
+  // ends without matching a double-tap; cancelled by the second tap of a
+  // double-tap, by any later touchstart (which may still become the second
+  // tap, a hold or a drag), and by cancel()/destroy(). When it fires, the
+  // single-tap action runs — the double-tap window has fully elapsed.
+  let singleTapTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function clearSingleTapTimer() {
+    if (singleTapTimer) {
+      clearTimeout(singleTapTimer);
+      singleTapTimer = undefined;
+    }
+  }
+
+  function armSingleTapTimer() {
+    if (!onSingleTap) return;
+    clearSingleTapTimer();
+    singleTapTimer = setTimeout(() => {
+      singleTapTimer = undefined;
+      onSingleTap();
+    }, DOUBLE_TAP_WINDOW_MS);
+  }
 
   function clearHoldTimer() {
     if (holdTimer) {
@@ -356,6 +398,8 @@ export function createPlayerTapGestureController(options: TapGestureControllerOp
 
   function cancel() {
     clearHoldTimer();
+    // A cancelled pending tap never toggles playback (round 52).
+    clearSingleTapTimer();
     endHold();
     activeTouchId = null;
   }
@@ -372,6 +416,10 @@ export function createPlayerTapGestureController(options: TapGestureControllerOp
     if (!touch) return;
     const target = event.target;
     if (typeof Element !== 'undefined' && target instanceof Element && target.closest(TAP_EXCLUDE_SELECTOR)) return;
+    // A new touch ends any pending single-tap confirmation: it may become the
+    // second tap of a double-tap, a hold or a drag — in every one of those
+    // cases firing the previous tap's toggle would be wrong (round 52).
+    clearSingleTapTimer();
     activeTouchId = touch.identifier;
     startX = touch.clientX;
     startY = touch.clientY;
@@ -408,18 +456,22 @@ export function createPlayerTapGestureController(options: TapGestureControllerOp
       return;
     }
     // A tap (never moved beyond the slop): double-tap detection on the SAME
-    // half within the window; opposite sides never combine.
+    // half within the window; opposite sides never combine. A matched
+    // double-tap cancels the first tap's pending single-tap toggle; an
+    // unmatched tap arms the single-tap confirmation timer (round 52).
     const side = tapSideForX(startX, startWidth);
     if (!side) return;
     const timestamp = now();
     if (lastTapSide === side && timestamp - lastTapAt <= DOUBLE_TAP_WINDOW_MS) {
       lastTapAt = 0;
       lastTapSide = null;
+      clearSingleTapTimer();
       onDoubleTap(side === 'left' ? 'backward' : 'forward');
       return;
     }
     lastTapAt = timestamp;
     lastTapSide = side;
+    armSingleTapTimer();
   }
 
   function handleTouchCancel() {

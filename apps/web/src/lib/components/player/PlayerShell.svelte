@@ -650,6 +650,13 @@
   let everResolvedSource = false;
   $: if (source) everResolvedSource = true;
   $: effectiveState = resolving ? (everResolvedSource ? 'switching-source' : 'resolving') : resolutionError ? resolutionKind : state;
+  // Round 52 (F1) — the shell's EXISTING source/quality/audio/server switching
+  // flag: exactly the condition that drives the single loading card (the
+  // markup below). Passed to PlayerControls as its `switching` prop so the
+  // SETTLED-pause derivation can stand down while a switch re-prepares the
+  // stream — the same flag, no second state machine. A transient engine
+  // reload pause can then never flash the paused card or strip the chrome.
+  $: switchingSource = effectiveState === 'preparing' || effectiveState === 'resolving' || effectiveState === 'switching-source' || effectiveState === 'embed-loading';
   // Player UI V2 (Part 1, Phase 1B) — SUPERSEDED by the approved Player V2
   // corrections layout: the Blue Velvet provider-slug detection and its
   // in-row Back/Fullscreen + hidden-FAB exceptions are RETIRED. The approved
@@ -1336,6 +1343,20 @@
     showSeekFeedback(direction);
   }
 
+  // Round 52 (F5) — single tap on the video surface toggles play/pause:
+  // pausing shows the settled paused card (after the 400 ms settle);
+  // resuming hides it immediately (play clears pausedSettled with no delay).
+  // The controller only fires this AFTER the double-tap window (a double-tap
+  // seeks without toggling), and its interactive-target exclusion keeps
+  // every button, chip, sheet and the up-next card inert here. While the
+  // touch lock is engaged the controller's `enabled` gate stays false —
+  // locked taps NEVER toggle playback (the unlock FAB stays the only
+  // affordance).
+  function handleSingleTap() {
+    if (!sourceReady || source?.type !== 'direct') return;
+    void togglePlay();
+  }
+
   function handleHoldStart() {
     if (holdSpeedActive || !sourceReady || source?.type !== 'direct') return;
     holdSpeedActive = true;
@@ -1411,12 +1432,17 @@
     // Player V2 corrections: double-tap seek + press-and-hold 2×. Same
     // per-touch eligibility gate as the swipe controller (touch lock, direct
     // ownership, sheets, cast) plus the interactive-target exclusion inside
-    // the controller — buttons, the seekbar, selects and sheets never trigger
-    // a double-tap or a 2× hold.
+    // the controller — buttons, the seekbar, selects, sheets, the up-next
+    // card and every chip never trigger a tap action.
+    // Round 52 (F5): single tap TOGGLES play/pause through onSingleTap —
+    // fired by the controller only after the double-tap window (260 ms)
+    // elapses without a second tap, so a double-tap never both seeks AND
+    // toggles; the shell's reveal listeners still fire on the same touch.
     tapGestureController = createPlayerTapGestureController({
       surface: playerRoot,
       enabled: () => !touchLocked && source?.type === 'direct' && !sourceMenuOpen && !episodeMenuOpen && !controlsSheetsOpen && sourceReady && !castConnected,
       onDoubleTap: handleDoubleTap,
+      onSingleTap: handleSingleTap,
       onHoldStart: handleHoldStart,
       onHoldEnd: handleHoldEnd,
     });
@@ -3071,7 +3097,7 @@
        Subtitle menu receives native + external tracks. -->
   {#if source?.type === 'direct'}
     <div class="direct-controls-overlay" class:visible={controlsVisible}>
-      <PlayerControls playing={playing} {muted} {volume} {currentTime} {duration} {buffered} {playbackRate} {pictureInPictureSupported} {pictureInPicture} fullscreenActive={fullscreen} onFullscreen={() => { void toggleFullscreen(); }} locked={touchLocked} onToggleLock={toggleTouchLock} subtitles={mergedSubtitles} selectedSubtitle={selectedSubtitle} subtitleNotice={externalSubtitleNotice} subtitlePrefs={subtitlePrefs} onSubtitlePreferences={setSubtitlePreferences} onMenuOpenChange={(open) => { controlsSheetsOpen = open; }} qualities={qualities} selectedQuality={selectedQuality} internalQualities={engineQuality?.options ?? []} selectedInternalQuality={engineQuality?.selected ?? PLAYER_AUTO_QUALITY_ID} audioTracks={engineQuality?.audioTracks ?? []} selectedAudioTrack={engineQuality?.selectedAudioTrack ?? null} onAudioTrack={setAudioTrack} {servers} {selectedServer} onServer={setServer} {displayMode} onDisplayMode={setDisplayMode} castAvailable={castReady && Boolean(castEligibility?.eligible)} castActive={castConnected} onCast={() => { void handleCastAction(); }} onTogglePlay={togglePlay} onSeek={seek} onVolume={setVolume} onToggleMute={toggleMute} onPlaybackRate={setPlaybackRate} onSubtitle={setSubtitle} onQuality={setQuality} onInternalQuality={setInternalQuality} onPictureInPicture={togglePictureInPicture} onStep={seekBy} title={content.title} metaLine={playerMetaLine} overview={content.overview ?? ''} resumeLabel={playerResumeLabel} onResume={() => { void togglePlay(); }} upNext={upNextCard} onUpNext={upNextCard ? playNextEpisode : null} />
+      <PlayerControls playing={playing} {muted} {volume} {currentTime} {duration} {buffered} {playbackRate} {pictureInPictureSupported} {pictureInPicture} fullscreenActive={fullscreen} onFullscreen={() => { void toggleFullscreen(); }} locked={touchLocked} onToggleLock={toggleTouchLock} subtitles={mergedSubtitles} selectedSubtitle={selectedSubtitle} subtitleNotice={externalSubtitleNotice} subtitlePrefs={subtitlePrefs} onSubtitlePreferences={setSubtitlePreferences} onMenuOpenChange={(open) => { controlsSheetsOpen = open; }} qualities={qualities} selectedQuality={selectedQuality} internalQualities={engineQuality?.options ?? []} selectedInternalQuality={engineQuality?.selected ?? PLAYER_AUTO_QUALITY_ID} audioTracks={engineQuality?.audioTracks ?? []} selectedAudioTrack={engineQuality?.selectedAudioTrack ?? null} onAudioTrack={setAudioTrack} {servers} {selectedServer} onServer={setServer} {displayMode} onDisplayMode={setDisplayMode} castAvailable={castReady && Boolean(castEligibility?.eligible)} castActive={castConnected} onCast={() => { void handleCastAction(); }} onTogglePlay={togglePlay} onSeek={seek} onVolume={setVolume} onToggleMute={toggleMute} onPlaybackRate={setPlaybackRate} onSubtitle={setSubtitle} onQuality={setQuality} onInternalQuality={setInternalQuality} onPictureInPicture={togglePictureInPicture} onStep={seekBy} title={content.title} metaLine={playerMetaLine} overview={content.overview ?? ''} resumeLabel={playerResumeLabel} onResume={() => { void togglePlay(); }} upNext={upNextCard} onUpNext={upNextCard ? playNextEpisode : null} switching={switchingSource} />
     </div>
   {/if}
 
@@ -3221,7 +3247,19 @@
      fallback for browsers without dynamic viewport units), then 100dvh
      (tracks mobile browser UI); min-height mirrors the same chain. The
      scroll lock itself is the html[data-player-open] convention (app.css). */
-  .player-shell { --player-bg: var(--base); --pl-s1: rgba(255, 255, 255, 0.055); --pl-s2: rgba(255, 255, 255, 0.10); --pl-line: rgba(255, 255, 255, 0.12); --pl-ink-2: rgba(255, 255, 255, 0.72); --pl-ink-3: rgba(255, 255, 255, 0.58); --pl-r1: 12px; --pl-r2: 16px; --pl-ease: cubic-bezier(0.2, 0.8, 0.2, 1); position: relative; width: 100%; height: 100vh; height: 100dvh; min-height: 100vh; min-height: 100svh; min-height: 100dvh; overflow: hidden; color: var(--ink); background: var(--player-bg); }
+  .player-shell { --player-bg: var(--base); --pl-s1: rgba(255, 255, 255, 0.055); --pl-s2: rgba(255, 255, 255, 0.10); --pl-line: rgba(255, 255, 255, 0.12); --pl-ink-2: rgba(255, 255, 255, 0.72); --pl-ink-3: rgba(255, 255, 255, 0.58); --pl-r1: 12px; --pl-r2: 16px; --pl-ease: cubic-bezier(0.2, 0.8, 0.2, 1); --pl-chrome-top: max(16px, env(safe-area-inset-top)); --pl-chip-size: 40px; position: relative; width: 100%; height: 100vh; height: 100dvh; min-height: 100vh; min-height: 100svh; min-height: 100dvh; overflow: hidden; color: var(--ink); background: var(--player-bg); }
+  /* Round 52 (F3) — the shared --pl-chrome-top / --pl-chip-size GEOMETRY tokens:
+     the native back chip (below) and PlayerControls' top utility chips BOTH
+     derive their top offset and chip size from these custom properties, so
+     the two rows share ONE vertical reference — same top offset, same
+     height, optically centred in BOTH portrait and landscape. The viewport
+     overrides live HERE (the single root owner), cascading into the child
+     component: ≥900px grows the chips (and the back chip) to 44px; ≤640px
+     portrait compacts both to 36px at the 12px top floor; the landscape
+     phone block below drops the shared top offset to the 6px corner floor
+     for BOTH rows at once (was: the back chip sat at 6px/40px while the
+     utility chips stayed at 16px/40px — the back chip floated ~10px HIGH).
+     No per-control magic numbers anywhere else. */
   .player-shell.landscape-mode { height: 100vh; height: 100dvh; }
   /* Round 51 (Phase 4 — preferences): the --pl-* tokens live here, so the
      user-preference media queries override them at the ROOT and every
@@ -3282,16 +3320,21 @@
   .back-fab:hover, .back-fab:focus-visible { background: rgba(0,0,0,.75); border-color: var(--accent); }
   .back-fab:active { transform: scale(.94); }
   /* Round 51 (approved-concept fix C3) — the NATIVE player's back control
-     matches the chip system: 40px square (radius 12) on the SAME --pl-*
-     surface tokens the chips use (defined on .player-shell above so the
-     back button and PlayerControls' chips share ONE set of values — no
-     duplicated magic numbers), icon 18px at 1.5 stroke, hover → s2, no blur
-     (the popover keeps the single blur layer). Only applied while the
-     NATIVE player is active (direct type) — embed sources keep the circular
-     translucent FAB above and the embed overlay is untouched. Per-source
-     Admin size overrides (.custom-size, below) still win; inline placement
-     overrides keep winning over everything. */
-  .back-fab.native { top: max(16px, env(safe-area-inset-top)); left: max(16px, env(safe-area-inset-left)); width: 40px; height: 40px; border-color: var(--pl-line); border-radius: var(--pl-r1); background: var(--pl-s1); backdrop-filter: none; }
+     matches the chip system: a square (radius 12) on the SAME --pl-* surface
+     tokens the chips use (defined on .player-shell above so the back button
+     and PlayerControls' chips share ONE set of values — no duplicated magic
+     numbers), icon 18px at 1.5 stroke, hover → s2, no blur (the popover keeps
+     the single blur layer). Only applied while the NATIVE player is active
+     (direct type) — embed sources keep the circular translucent FAB above
+     and the embed overlay is untouched. Per-source Admin size overrides
+     (.custom-size, below) still win; inline placement overrides keep winning
+     over everything.
+     Round 52 (F3) — the TOP offset and SIZE derive from the shared
+     --pl-chrome-top / --pl-chip-size geometry tokens (same values the utility
+     chips consume), so the back chip's vertical centre equals the utility
+     chips' vertical centre — same top offset, same height — in both portrait
+     and landscape. */
+  .back-fab.native { top: var(--pl-chrome-top, max(16px, env(safe-area-inset-top))); left: max(16px, env(safe-area-inset-left)); width: var(--pl-chip-size, 40px); height: var(--pl-chip-size, 40px); border-color: var(--pl-line); border-radius: var(--pl-r1); background: var(--pl-s1); backdrop-filter: none; }
   .back-fab.native:hover, .back-fab.native:focus-visible { background: var(--pl-s2); border-color: rgba(255, 255, 255, 0.2); }
   .back-fab.native:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
   /* MAVP-3 Issue 5: per-source Back-button SIZE (Admin "Player Controls
@@ -3639,13 +3682,25 @@
     @keyframes slide-right { from { transform: translateX(100%); } to { transform: translateX(0); } }
   }
 
+  /* Round 52 (F3) — ≥900px comfort growth: the chip SIZE token grows to 44px
+     at the ROOT so the utility chips AND the native back chip grow TOGETHER
+     (one vertical reference kept; the old per-component 44px override is
+     gone). */
+  @media (min-width: 900px) {
+    .player-shell { --pl-chip-size: 44px; }
+  }
+
   /* Mobile: compact FAB sizing. */
   @media (max-width: 640px) {
     .message-card { bottom: 50%; flex-wrap: wrap; }
     .message-actions { width: 100%; margin-left: 46px; }
-    /* Round 51 (C3) — the native back chip drops to the portrait 12px
-       corner (aligned with the utility-zone left inset contract). */
-    .back-fab.native { top: max(12px, env(safe-area-inset-top)); left: max(12px, env(safe-area-inset-left)); }
+    /* Round 52 (F3) — the compact-portrait GEOMETRY override: one token pair
+       on the shell root drops the shared top offset to the 12px corner floor
+       and the chip size to 36px, so the native back chip AND the utility
+       chips compact TOGETHER (both rows keep one vertical reference at
+       360px). Only the back chip's LEFT inset stays a local rule. */
+    .player-shell { --pl-chrome-top: max(12px, env(safe-area-inset-top)); --pl-chip-size: 36px; }
+    .back-fab.native { left: max(12px, env(safe-area-inset-left)); }
   }
 
   /* Landscape phone — compact control positioning.
@@ -3653,13 +3708,20 @@
      viewport's left corner (6px floor instead of 8px, still under the
      max() contract so a REAL device safe-area inset always wins). Portrait
      placement is untouched; per-source Admin overrides (inline styles)
-     keep winning over both defaults. */
+     keep winning over both defaults.
+     Round 52 (F3) — the shared TOP offset drops to the 6px corner floor
+     through the root token, so the back chip AND the utility-zone chips
+     drop TOGETHER (the old bug: the back chip sat at 6px while the utility
+     chips stayed at 16px — the back chip floated ~10px ABOVE the chips
+     row). The chip SIZE stays token-driven (40px, or 36px when the ≤640px
+     width block also matches). */
   @media (orientation: landscape) and (max-height: 500px) {
+    .player-shell { --pl-chrome-top: max(6px, env(safe-area-inset-top)); }
     .back-fab { width: 37px; height: 37px; top: max(6px, env(safe-area-inset-top)); left: max(6px, env(safe-area-inset-left)); }
     /* Round 51 (C3) — the native back chip keeps the tight landscape corner
-       floor (its 40px chip size is untouched; the embed FAB above keeps its
-       own compact 37px treatment). */
-    .back-fab.native { top: max(6px, env(safe-area-inset-top)); left: max(6px, env(safe-area-inset-left)); }
+       floor on the LEFT (the top rides the shared --pl-chrome-top token); the
+       embed FAB above keeps its own compact 37px treatment. */
+    .back-fab.native { left: max(6px, env(safe-area-inset-left)); }
     .control-fab { width: 37px; height: 37px; }
     .source-chip { min-height: 56px; }
     .source-chip-bar { height: 48px; }
