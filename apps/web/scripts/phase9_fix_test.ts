@@ -218,11 +218,13 @@ assert.doesNotMatch(shell, /landscape-controls-toggle/, 'Test 19: no landscape-c
 // the SOURCE sheet only — the episode sheet is a LEFT drawer at every
 // viewport (its own documented contract), so the media query anchors the
 // source sheet alone.
-// Round 57 (I5) supersession: the wide-viewport source drawer MIRRORS the
-// episode sheet — floating, 12px safe-area inset, radius 20 — at the ≥900px
-// tier (the episode sheet stays a LEFT drawer at every viewport, its own
-// documented contract).
-assert.match(shell, /@media \(min-width: 900px\) \{[\s\S]*?\.source-sheet \{[^}]*right: max\(12px, env\(safe-area-inset-right\)\); left: auto; width: min\(380px, 32vw\); height: auto;/, 'Test 21: source drawer right-anchored on wide viewports (round 57 I5: the floating right drawer, mirroring the episode sheet)');
+// Round 59 (K2) supersession: the source sheet is the episode sheet's RIGHT
+// twin at EVERY viewport — ONE rule (right max(12px, safe-area), left auto,
+// width min(360px, calc(100vw - 24px)), slide-right entry); the ≥900px
+// override is gone (the episode sheet stays a LEFT drawer at every viewport,
+// its own documented contract).
+assert.match(shell, /\.source-sheet \{[^}]*right: max\(12px, env\(safe-area-inset-right\)\); left: auto; width: min\(360px, calc\(100vw - 24px\)\);/, 'Test 21: source drawer right-anchored at EVERY viewport (round 59 K2: the episode sheet\'s right twin)');
+assert.doesNotMatch(shell, /@media \(min-width: 900px\) \{[\s\S]{0,400}?\.source-sheet \{/, 'Test 21: no ≥900px source-sheet override remains (one rule for every viewport)');
 assert.match(shell, /\.episode-sheet \{ position: absolute; z-index: 21; top: max\(12px, env\(safe-area-inset-top\)\); bottom: max\(12px, env\(safe-area-inset-bottom\)\); left: max\(12px, env\(safe-area-inset-left\)\);/, 'Test 21-MAVP5+G1: the episode sheet stays a LEFT drawer at every viewport (round 54 G1: the floating 12px safe-area-inset glass panel)');
 
 // Test 22: Source drawer uses translateX.

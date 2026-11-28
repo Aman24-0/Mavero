@@ -491,6 +491,35 @@
   $: selectedSubtitleTrack = selectedSubtitle ? subtitles.find((track) => track.url === selectedSubtitle) : undefined;
   $: subtitleButtonLabel = selectedSubtitleTrack ? (selectedSubtitleTrack.label ?? selectedSubtitleTrack.language ?? 'Subtitles') : 'Off';
 
+  // Round 59 (K3) — SUBTITLE CHIP SHORT CODE: the chip shows the heading
+  // "Subtitles" plus a 2-letter language code (Off, en, hi, ta, te, ml, kn,
+  // bn, pa, ur, ko, fr, es, de, ru, ar, zh, ja, th, id, vi, tr, …) instead of
+  // the full language name, so the top row never runs out of width in
+  // landscape. The FULL name stays in the aria-label (unchanged) and the
+  // title attribute. Unknown languages fall back to the first two letters,
+  // uppercased; an already-2-letter code (BCP-47 primary subtag) is kept
+  // as-is.
+  const SUBTITLE_LANGUAGE_CODES: Record<string, string> = {
+    off: 'Off', english: 'en', hindi: 'hi', tamil: 'ta', telugu: 'te', malayalam: 'ml',
+    kannada: 'kn', bengali: 'bn', punjabi: 'pa', urdu: 'ur', korean: 'ko', french: 'fr',
+    spanish: 'es', german: 'de', russian: 'ru', arabic: 'ar', chinese: 'zh', japanese: 'ja',
+    thai: 'th', indonesian: 'id', vietnamese: 'vi', turkish: 'tr',
+  };
+  function subtitleShortCode(language: string | null | undefined): string {
+    const value = typeof language === 'string' ? language.trim() : '';
+    if (!value) return '';
+    const key = value.toLowerCase();
+    if (SUBTITLE_LANGUAGE_CODES[key]) return SUBTITLE_LANGUAGE_CODES[key];
+    const firstWord = key.split(/[\s\-_/,.]+/)[0] ?? '';
+    if (!firstWord) return '';
+    if (SUBTITLE_LANGUAGE_CODES[firstWord]) return SUBTITLE_LANGUAGE_CODES[firstWord];
+    if (/^[a-z]{2}$/.test(firstWord)) return firstWord;
+    return firstWord.slice(0, 2).toUpperCase();
+  }
+  $: subtitleChipValue = selectedSubtitleTrack
+    ? (subtitleShortCode(selectedSubtitleTrack.language) || subtitleShortCode(selectedSubtitleTrack.label) || 'Sub')
+    : 'Off';
+
   // Quality menu: engine levels (AUTO + manifest levels) when present, the
   // per-stream variant list otherwise. NEVER both; empty = no control.
   $: qualityMode = internalQualities.length > 1 ? 'internal' : qualities.length > 1 ? 'stream' : 'none';
@@ -658,10 +687,10 @@
   {#if !pausedSettled}
   <div class="utility-zone">
     {#if !castActive}
-      <button bind:this={subtitlesAnchor} class="select-control subtitles sheet-trigger" data-sheet="subtitles" class:open={openSheet === 'subtitles'} type="button" aria-label={`Subtitles: ${subtitleButtonLabel}${subtitleNotice ? ` (${subtitleNotice})` : ''}`} aria-haspopup="dialog" title={subtitleNotice || undefined} onclick={() => openMenu('subtitles')}>
+      <button bind:this={subtitlesAnchor} class="select-control subtitles sheet-trigger" data-sheet="subtitles" class:open={openSheet === 'subtitles'} type="button" aria-label={`Subtitles: ${subtitleButtonLabel}${subtitleNotice ? ` (${subtitleNotice})` : ''}`} aria-haspopup="dialog" title={subtitleNotice ? `${subtitleButtonLabel} (${subtitleNotice})` : subtitleButtonLabel} onclick={() => openMenu('subtitles')}>
         <Captions size={16} strokeWidth={1.5} aria-hidden="true" />
         <span class="chip-label">Subtitles</span>
-        <span class="chip-value">{subtitleButtonLabel}</span>
+        <span class="chip-value">{subtitleChipValue}</span>
       </button>
       {#if qualityMode !== 'none'}
         <button bind:this={qualityAnchor} class="select-control quality sheet-trigger" data-sheet="quality" class:open={openSheet === 'quality'} type="button" aria-label={`Playback quality: ${qualityButtonLabel}`} aria-haspopup="dialog" onclick={() => openMenu('quality')}>
@@ -899,6 +928,12 @@
      of values (no duplicated magic numbers); children still inherit them. */
   .controls {
     position: absolute; inset: 0; z-index: 10; pointer-events: none; color: var(--ink);
+    /* Round 59 (K1) — the shared TIME-LABEL size token: the LEFT (elapsed)
+       label and the RIGHT (duration-toggle) label read ONE value, so the
+       ≤640px compaction (11px) applies to BOTH at once (previously only the
+       plain .time-label got the override and the button fell back to the
+       inherited row font — visibly larger at every breakpoint). */
+    --pl-time-size: 12px;
   }
 
   /* ---- Top-right utility zone ----
@@ -1002,13 +1037,19 @@
   .timeline-row { display: flex; align-items: center; gap: 10px; }
   /* Round 50 — tabular 12px time labels: secondary ink left (position),
      tertiary ink right (duration — the row's last label, no markup change). */
-  .time-label { color: var(--pl-ink-2); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .time-label { color: var(--pl-ink-2); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: var(--pl-time-size, 12px); white-space: nowrap; font-variant-numeric: tabular-nums; }
   .timeline-row .time-label:last-child { color: var(--pl-ink-3); }
   /* Round 53 (F6) — the RIGHT time label is a real toggle button (total ↔
      remaining). It keeps the plain .time-label look (no chrome, no shift —
      the row geometry is unchanged); only the hover colour, the pointer and
-     the focus ring reveal it is interactive. */
-  button.time-label.duration-toggle { border: 0; padding: 0; background: transparent; cursor: pointer; font: inherit; }
+     the focus ring reveal it is interactive.
+     Round 59 (K1) — the old `font: inherit` inherited from the timeline ROW
+     (not from .time-label), so the right label rendered LARGER than the
+     left at every breakpoint. The button now spells out the exact .time-label
+     typography: the same family, the shared --pl-time-size token, weight
+     400, tabular-nums and letter-spacing 0 — a byte-identical match to the
+     left label at every viewport. */
+  button.time-label.duration-toggle { border: 0; padding: 0; background: transparent; cursor: pointer; font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: var(--pl-time-size, 12px); font-weight: 400; font-variant-numeric: tabular-nums; letter-spacing: 0; }
   button.time-label.duration-toggle:hover, button.time-label.duration-toggle:focus-visible { color: #fff; }
   button.time-label.duration-toggle:focus-visible { outline: 2px solid #fff; outline-offset: 2px; border-radius: 4px; }
   .timeline-wrap { position: relative; flex: 1; min-width: 0; height: 22px; display: grid; align-items: center; }
@@ -1158,7 +1199,9 @@
     row stays ONE line at 360px. (The compact top offset rides the root's
     --pl-chrome-top token — round 52 F3.) */
     .utility-zone { gap: 4px; left: max(56px, env(safe-area-inset-left)); max-width: calc(100vw - 68px); }
-    .time-label { font-size: 11px; }
+    /* Round 59 (K1) — the compact time size applies to BOTH labels through
+       the shared token (the LEFT label AND the right duration toggle). */
+    .controls { --pl-time-size: 11px; }
     .select-control { padding: 0 10px; gap: 6px; }
     .select-control .chip-label { display: none; }
     .select-control .chip-value { font-size: 12px; }
@@ -1205,5 +1248,47 @@
   /* Landscape phone: compact the bottom zone. */
   @media (orientation: landscape) and (max-height: 500px) {
     .bottom-zone { padding: 6px 12px calc(8px + env(safe-area-inset-bottom)); }
+  }
+
+  /* Round 59 (K3) — LANDSCAPE TOP ROW: back left, title fits on the row.
+     In landscape phones the utility chips keep their RIGHT anchor (the base
+     rule; the ≤640px portrait LEFT inset is cancelled) and the header joins
+     the SAME row as the chips — tight to the back chip (its 16px after-chip
+     gap drops to 8px, ~8px more usable row width) — while it TRUNCATES
+     (ellipsis) and caps its width so it can never reach the first chip
+     (a 352px reserve for the chips row + the 12px right inset). The meta
+     line HIDES (rather than cramming) while the header's available width
+     stays ≤ 520px: available = 100vw − left offset − 352 − 12, which is
+     ≤ 520px exactly at 100vw ≤ 940px. */
+  @media (orientation: landscape) and (max-height: 500px) {
+    .utility-zone { left: auto; }
+    .header-zone {
+      top: var(--pl-chrome-top, max(16px, env(safe-area-inset-top)));
+      left: calc(max(8px, env(safe-area-inset-left)) + var(--pl-chip-size, 40px) + 8px);
+      max-width: min(560px, calc(100vw - (max(8px, env(safe-area-inset-left)) + var(--pl-chip-size, 40px) + 8px) - 352px));
+    }
+  }
+  /* ≤ 940px-wide landscape viewports → the header's available width is
+     ≤ 520px — the meta line would only cram, so it stays hidden. */
+  @media (orientation: landscape) and (max-height: 500px) and (max-width: 940px) {
+    .header-meta { display: none; }
+  }
+  /* Round 59 (K3) — the FIT RULE for the landscape chips row: BEFORE the row
+     could ever overflow or wrap, the chips shrink to 36px height and DROP
+     their labels (icon + value only — the short subtitle code keeps even the
+     value tiny). Applies to the phone/tall-tablet landscape band (≤899px —
+     the ≥900px tier keeps its 44px chips with labels, which fit comfortably
+     on those widths). NEVER wrap, never clip: the values keep ellipsizing
+     inside their max-widths. */
+  @media (orientation: landscape) and (max-height: 500px) and (max-width: 899px) {
+    .utility-zone { gap: 6px; }
+    .select-control { height: 36px; padding: 0 10px; gap: 6px; }
+    .select-control .chip-label { display: none; }
+    .select-control .chip-value { font-size: 12px; }
+    .select-control.subtitles { max-width: 88px; }
+    .select-control.quality { max-width: 76px; }
+    .select-control.server { max-width: 96px; }
+    .select-control.audio { max-width: 96px; }
+    .utility-zone .control-button { width: 36px; min-width: 36px; height: 36px; }
   }
 </style>

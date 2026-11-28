@@ -35,12 +35,12 @@ assert.match(shell, /3_000/);
 // Sheet-open state + keyboard-focus guard prevent auto-hide.
 assert.match(shell, /sourceMenuOpen && !episodeMenuOpen/);
 assert.match(shell, /focusWithinMaveroControls\(\)/);
-// Source sheet: floating glass panel at every viewport (round 57 I5), right
-// drawer mirroring the episode sheet at ≥900px (media query, NOT
-// landscapeMode).
+// Source sheet: the episode sheet's RIGHT twin at EVERY viewport (round 59
+// K2 supersession — one rule, no ≥900px override; round 57 I5 made it float
+// with the glass treatment).
 assert.match(shell, /\.source-sheet \{[^}]*bottom: max\(12px, env\(safe-area-inset-bottom\)\)/);
 assert.match(shell, /@media \(min-width: 900px\)/);
-assert.match(shell, /@media \(min-width: 900px\) \{[\s\S]*?\.source-sheet \{[^}]*right: max\(12px, env\(safe-area-inset-right\)\)/);
+assert.match(shell, /\.source-sheet \{[^}]*right: max\(12px, env\(safe-area-inset-right\)\); left: auto; width: min\(360px, calc\(100vw - 24px\)\)/);
 // No persistent header/footer.
 assert.doesNotMatch(shell, /class="player-header"/, 'no persistent player-header');
 assert.doesNotMatch(shell, /class="bottom-bar"/, 'no persistent bottom-bar');

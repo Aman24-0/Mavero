@@ -147,7 +147,11 @@ console.log('\nISSUE 2 — landscape grouping + Back placement');
   // right group packs to the right edge (.right-controls) and the subtitle
   // select stops flexing so the leftover width is not absorbed.
   ok(/@media \(orientation: landscape\) and \(max-height: 500px\) \{\s*\.secondary-row \{ flex-wrap: nowrap; gap: 5px; \}\s*\.right-controls \{ flex-wrap: nowrap; \}\s*\.select-control\.subtitles \{ flex: 0 1 auto; \}/.test(controls), '2b. landscape phone: the secondary row is ONE non-wrapping right-packed group (round 25 contract)');
-  ok(/\.back-fab \{ width: 37px; height: 37px; top: max\(6px, env\(safe-area-inset-top\)\); left: max\(6px, env\(safe-area-inset-left\)\); \}/.test(shell), '2c. landscape-phone Back FAB sits at a 6px corner floor (37px, was 8px)');
+  // Round 59 (K3) supersession: the landscape Back FAB keeps its 37px compact
+  // size and the 6px TOP floor, but the LEFT floor moved 6px → 8px (the
+  // landscape top-row contract — the header block joins the row and gains
+  // ~8px of usable width).
+  ok(/\.back-fab \{ width: 37px; height: 37px; top: max\(6px, env\(safe-area-inset-top\)\); left: max\(8px, env\(safe-area-inset-left\)\); \}/.test(shell), '2c. landscape-phone Back FAB keeps the 37px compact size + 6px top floor, LEFT floor 8px (round 59 K3)');
   ok(/\.back-fab \{ position: absolute; z-index: 12; top: max\(12px, env\(safe-area-inset-top\)\); left: max\(12px, env\(safe-area-inset-left\)\);/.test(shell), '2d. portrait Back FAB default placement is untouched (12px safe-area floor)');
   ok(/class:custom-position=\{Boolean\(backControlStyle\)\}/.test(shell) && shell.indexOf('landscapeControlInlineStyle') > 0, '2e. per-source Admin placement overrides still resolve and apply');
   // 2026-10 round 20 — the center cluster is removed; the landscape lift

@@ -62,9 +62,11 @@ assert.match(shell, /@media \(min-width: 900px\)/, 'wide viewport breakpoint at 
 // Round 54 (G1) supersession: the drawer became the floating glass sidebar
 // panel (12px safe-area insets, radius 20) — it KEEPS the left anchor and
 // the from-the-left slide at every viewport.
-// Round 57 (I5) supersession: the SOURCE sheet now mirrors it on the RIGHT —
-// floating, 12px-inset, radius 20, min(380px, 32vw), slide-right entry.
-assert.match(shell, /@media \(min-width: 900px\) \{[\s\S]*?\.source-sheet \{[^}]*right: max\(12px, env\(safe-area-inset-right\)\); left: auto;/, 'wide viewport: source sheet becomes the floating right drawer (round 57 I5)');
+// Round 59 (K2) supersession: the SOURCE sheet is the episode sheet's RIGHT
+// twin at EVERY viewport — ONE rule (right max(12px), left auto, width
+// min(360px, calc(100vw - 24px)), slide-right entry); the ≥900px override is
+// gone.
+assert.match(shell, /\.source-sheet \{[^}]*right: max\(12px, env\(safe-area-inset-right\)\); left: auto; width: min\(360px, calc\(100vw - 24px\)\);/, 'source sheet is the right-side 360px drawer at EVERY viewport (round 59 K2)');
 assert.match(shell, /\.episode-sheet \{[^}]*left: max\(12px, env\(safe-area-inset-left\)\);/, 'wide viewport: episode sheet stays a LEFT drawer (MAVP-5; round 54 G1: the floating glass panel keeps the left anchor)');
 
 // ============================================================

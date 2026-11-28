@@ -376,6 +376,18 @@
   @media (min-width: 1025px) {
     .rail { grid-auto-columns: clamp(160px, 14vw, 200px); gap: 16px; }
     .rail.compact { grid-auto-columns: clamp(140px, 11vw, 170px); }
+    /* Round 59 (K4) — DESKTOP CONTINUE-WATCHING CARD HEIGHT: the compact
+       cards' absolutely-positioned "Details" link (MediaCard, bottom: -22px)
+       hangs below the grid row, and the rail's computed overflow-y (auto —
+       forced by overflow-x: auto) turned that 22px overhang into a VERTICAL
+       SCROLL inside the card frame (the container taller than the card).
+       On ≥1025px the rail's vertical axis CLIPS (overflow-y: hidden — the
+       wrap already clipped it visually; now nothing scrolls inside) so the
+       card frame is exactly the card's real height. Rails whose cards never
+       carry the overhang (no resumeHref items) render byte-identically —
+       there was no vertical overflow to remove. The title/meta row lives
+       INSIDE the card, so nothing beneath it shifts or clips. */
+    .rail { overflow-y: hidden; }
   }
 
   /* ---- LARGE DESKTOP / 4K / TV 1900px+ ---- */

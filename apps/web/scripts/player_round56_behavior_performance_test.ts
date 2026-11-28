@@ -119,8 +119,14 @@ console.log('\n§2 — H2: header title offset + width cap (PC collision dead)')
   const wideRule = controls.slice(controls.indexOf('@media (min-width: 1024px)'), controls.indexOf('/* Round 51 — paused zone'));
   ok(/\.header-zone \{ top: max\(14px, env\(safe-area-inset-top\)\); left: calc\(max\(16px, env\(safe-area-inset-left\)\) \+ var\(--pl-chip-size, 40px\) \+ 16px\); max-width: min\(460px, calc\(100vw - \(max\(16px, env\(safe-area-inset-left\)\) \+ var\(--pl-chip-size, 40px\) \+ 16px\) - 320px\)\); \}/.test(wideRule), '2d. ≥1024px rule: the SAME token-derived left offset AND the width cap 100vw − (left offset) − 320px (the right-side utility chips always keep their 320px)');
   ok(/top: max\(14px, env\(safe-area-inset-top\)\);/.test(wideRule), '2e. ≥1024px vertical placement unchanged');
-  const portraitBlock = controls.slice(controls.indexOf('@media (max-width: 640px)'));
-  ok(!/header-zone/.test(portraitBlock), '2f. the portrait rules are untouched (no header-zone override lives in the ≤640px block — none did before)');
+  // Round 59 (K3) re-point: the header-zone now has a LANDSCAPE rule (the
+  // K3 top-row contract, further down the stylesheet) — the original slice
+  // ran from the ≤640px block to EOF and wrongly swallowed it. The PORTRAIT
+  // ≤640px block itself (bounded at the next @media) still carries no
+  // header-zone override.
+  const portraitAll = controls.slice(controls.indexOf('@media (max-width: 640px)'));
+  const portraitBlock = portraitAll.slice(0, portraitAll.indexOf('@media', 1));
+  ok(!/header-zone/.test(portraitBlock), '2f. the portrait rules are untouched (no header-zone override lives in the ≤640px block — the landscape K3 block is a different tier)');
   // Geometry sanity: at ≥900px the back chip is 44px → header left = 16+44+16 =
   // 76px > the chip's right edge (60px) — no overlap at ANY width.
   ok(true, '2g. (derived) 16 + 44 + 16 = 76px header left vs the back chip\'s 60px right edge at ≥900px — the 1px overlap is structurally impossible now (both sides share --pl-chip-size)');

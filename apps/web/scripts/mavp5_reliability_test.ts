@@ -321,8 +321,8 @@ ok(shellCode.includes('@keyframes sheet-left { from { transform: translateX(-100
   'RC-4: the left drawer has a consistent slide-in animation');
 ok(/\.episode-sheet\s*\{[^}]*width:\s*min\(360px,\s*calc\(100vw - 24px\)\);/.test(shellCode),
   'RC-4: the drawer width is bounded for narrow screens (round 54 G1: viewport minus the two 12px insets)');
-ok(/\.source-sheet\s*\{[^}]*animation:\s*sheet-up/.test(shellCode),
-  'RC-4: the source sheet\u2019s existing responsive behavior is untouched');
+ok(/\.source-sheet\s*\{[^}]*animation:\s*slide-right/.test(shellCode),
+  'RC-4: the source sheet\u2019s existing responsive behavior is preserved (round 59 K2: the right drawer entry at every viewport)');
 // Keyboard/touch/a11y contracts preserved.
 ok(shellCode.includes('.back-fab, .control-fab-group, .source-chip, .episode-chip, .direct-controls-overlay'),
   'RC-4: the chip participates in the focus-within auto-hide guard');

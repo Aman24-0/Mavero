@@ -3740,20 +3740,20 @@
   :global(.spin) { animation: spin 1s linear infinite; }
 
   /* Source/episode sheets — responsive surfaces.
-     Round 57 (I5): the SOURCE sheet is a FLOATING glass panel (portrait/
-     tablet) that mirrors the episode sheet on the right at ≥900px; the
-     EPISODE sheet is a LEFT drawer at every viewport (MAVP-5 Issue 4).
-     Based on actual viewport width (matchMedia), NOT landscapeMode. */
+     Round 59 (K2): the SOURCE sheet is the exact MIRROR of the episode sheet
+     — a right-side 360px glass drawer at EVERY viewport (the episode sheet
+     opens from the left; the source sheet opens from the right). One rule
+     for every size: the old full-width base panel AND the ≥900px override
+     are replaced by this single right-drawer rule. Based on actual viewport
+     width (matchMedia), NOT landscapeMode. */
   .sheet-overlay { position: absolute; z-index: 20; inset: 0; background: rgba(0,0,0,.4); backdrop-filter: blur(2px); }
-  /* Round 57 (I5) — the source sheet joins the episode sheet's glass
-     treatment: a FLOATING panel (12px safe-area insets on every side),
-     radius 20 top AND bottom, rgba(16,16,18,0.92) surface, 1px
-     rgba(255,255,255,0.12) border, layered shadow, ONE 24px backdrop blur.
-     It is a flex column: the head stays fixed and the list scrolls INSIDE
-     the panel (overflow hidden on the panel, overflow-y: auto on the list),
-     replacing the old flush bottom sheet (bottom:0; left:0; right:0;
-     60dvh cap, square top corners). The sheet-up entry stays. */
-  .source-sheet { position: absolute; z-index: 21; top: max(12px, env(safe-area-inset-top)); bottom: max(12px, env(safe-area-inset-bottom)); left: max(12px, env(safe-area-inset-left)); right: max(12px, env(safe-area-inset-right)); max-height: none; overflow: hidden; display: flex; flex-direction: column; border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 20px; background: rgba(16, 16, 18, 0.92); box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55), 0 4px 16px rgba(0, 0, 0, 0.35), 0 1px 0 rgba(255, 255, 255, 0.06) inset; backdrop-filter: blur(24px); padding-bottom: 0; transform: none; animation: sheet-up var(--motion-normal) var(--ease-out); }
+  /* Round 59 (K2) — the source sheet as the episode sheet's RIGHT twin:
+     top/bottom/right float max(12px, safe-area), left auto, width
+     min(360px, calc(100vw - 24px)), radius 20, the same glass surface
+     (rgba(16,16,18,0.92), 1px rgba(255,255,255,0.12) border, ONE 24px
+     blur, layered shadow), internal list scroll, slide-in from the RIGHT
+     (the slide-right keyframe below — the episode sheet's sheet-left twin). */
+  .source-sheet { position: absolute; z-index: 21; top: max(12px, env(safe-area-inset-top)); bottom: max(12px, env(safe-area-inset-bottom)); right: max(12px, env(safe-area-inset-right)); left: auto; width: min(360px, calc(100vw - 24px)); max-height: none; overflow: hidden; display: flex; flex-direction: column; border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 20px; background: rgba(16, 16, 18, 0.92); box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55), 0 4px 16px rgba(0, 0, 0, 0.35), 0 1px 0 rgba(255, 255, 255, 0.06) inset; backdrop-filter: blur(24px); padding-bottom: 0; transform: none; animation: slide-right var(--motion-normal) var(--ease-out); }
   /* Round 57 (I5) — the head holds its size; the list takes the rest and
      scrolls INSIDE the floating panel (same contract as the episode sheet). */
   .source-sheet .sheet-head { flex: 0 0 auto; }
@@ -3855,15 +3855,22 @@
   .sheet-group-label { color: var(--muted); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .54rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; padding: 10px 0 4px; border-top: 1px solid var(--line); margin-top: 6px; }
   .sheet-group-label:first-child { border-top: 0; margin-top: 0; padding-top: 0; }
   /* Round 57 (I6) — the source rows join the episode rows' sizing: ≥64px
-     tall, 14px gap, 10px 14px padding (the hover/active wash and the
-     selected border treatment are unchanged). The episode sheet's own
-     overrides below keep their exact values. */
-  .sheet-option { display: flex; align-items: center; gap: 14px; min-height: 64px; border: 1px solid transparent; border-radius: var(--radius-sm); padding: 10px 14px; color: var(--ink-soft); background: transparent; cursor: pointer; text-align: left; }
-  .sheet-option:hover, .sheet-option:focus-visible, .sheet-option.active { border-color: var(--line-strong); background: var(--accent-soft); }
+     tall, 14px gap, 10px 14px padding. Round 59 (K2) — the per-row radius/box
+     look is GONE (the episode sheet's language: no border box, a quiet white
+     hover wash, the active row's stronger wash) — the hairline dividers
+     above separate rows instead. The episode sheet's own overrides below
+     keep their exact values. */
+  .sheet-option { display: flex; align-items: center; gap: 14px; min-height: 64px; border: 0; border-radius: 12px; padding: 10px 14px; color: var(--ink-soft); background: transparent; cursor: pointer; text-align: left; }
+  .sheet-option:hover, .sheet-option:focus-visible { border-color: transparent; background: rgba(255, 255, 255, 0.05); }
+  .sheet-option.active { border-color: transparent; background: rgba(255, 255, 255, 0.08); }
   .sheet-option strong, .sheet-option small { display: block; }
   .sheet-option strong { color: var(--ink); font-size: .72rem; }
   .sheet-option small { margin-top: 4px; color: var(--muted); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; font-size: .55rem; }
   .sheet-option-row { display: flex; flex-direction: column; gap: 6px; }
+  /* Round 59 (K2) — ROW DIVIDERS: the episode sheet's hairline BETWEEN rows
+     (a divider never splits a source row from its SUB/DUB variant buttons —
+     the variant row lives INSIDE its parent .sheet-option-row). */
+  .source-sheet .sheet-list .sheet-option-row + .sheet-option-row { border-top: 1px solid rgba(255, 255, 255, 0.08); }
   .variant-row { display: flex; gap: 6px; padding: 0 12px 6px; }
   .variant-button { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; min-width: 56px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); color: var(--ink-soft); background: rgba(255,255,255,.02); cursor: pointer; font: inherit; font-size: .58rem; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out); }
   .variant-button:hover, .variant-button:focus-visible { border-color: var(--line-strong); background: var(--accent-soft); color: var(--ink); }
@@ -3945,17 +3952,15 @@
   .episode-copy { min-width: 0; flex: 1; }
   .now-playing-dot { flex: 0 0 auto; width: 6px; height: 6px; border-radius: 50%; background: #fff; box-shadow: 0 0 8px rgba(255, 255, 255, 0.65); }
   @keyframes sheet-left { from { transform: translateX(-100%); } to { transform: translateX(0); } }
+  /* Round 59 (K2) — the source sheet's RIGHT-side entry (the episode sheet's
+     sheet-left twin) — global, because the source sheet is the right drawer
+     at EVERY viewport now. */
+  @keyframes slide-right { from { transform: translateX(100%); } to { transform: translateX(0); } }
 
-  /* Wide viewport (landscape/desktop/TV) — Round 57 (I5): the source sheet
-     mirrors the episode sheet on the RIGHT — a floating right-edge drawer
-     (12px safe-area insets, min(380px, 32vw) wide, height auto) sliding in
-     from the right with the SAME radius/surface as the base panel. Based on
-     viewport width, NOT landscapeMode (the ≥900px breakpoint matches the
-     episode sheet's chip-growth tier). */
-  @media (min-width: 900px) {
-    .source-sheet { top: max(12px, env(safe-area-inset-top)); bottom: max(12px, env(safe-area-inset-bottom)); right: max(12px, env(safe-area-inset-right)); left: auto; width: min(380px, 32vw); height: auto; border-radius: 20px; animation: slide-right var(--motion-normal) var(--ease-out); }
-    @keyframes slide-right { from { transform: translateX(100%); } to { transform: translateX(0); } }
-  }
+  /* Wide viewport (landscape/desktop/TV) — Round 59 (K2): the source sheet
+     is the RIGHT-side 360px drawer at EVERY viewport (the single base rule
+     above); no ≥900px override remains — the episode sheet's chip-growth
+     tier below is the only ≥900px rule left. */
 
   /* Round 52 (F3) — ≥900px comfort growth: the chip SIZE token grows to 44px
      at the ROOT so the utility chips AND the native back chip grow TOGETHER
@@ -3992,11 +3997,13 @@
      width block also matches). */
   @media (orientation: landscape) and (max-height: 500px) {
     .player-shell { --pl-chrome-top: max(6px, env(safe-area-inset-top)); }
-    .back-fab { width: 37px; height: 37px; top: max(6px, env(safe-area-inset-top)); left: max(6px, env(safe-area-inset-left)); }
-    /* Round 51 (C3) — the native back chip keeps the tight landscape corner
-       floor on the LEFT (the top rides the shared --pl-chrome-top token); the
-       embed FAB above keeps its own compact 37px treatment. */
-    .back-fab.native { left: max(6px, env(safe-area-inset-left)); }
+    .back-fab { width: 37px; height: 37px; top: max(6px, env(safe-area-inset-top)); left: max(8px, env(safe-area-inset-left)); }
+    /* Round 59 (K3) — the native back chip keeps the tight landscape corner
+       floor on the LEFT (6px → 8px, the K3 landscape top-row contract; the
+       top rides the shared --pl-chrome-top token) so the header block gains
+       ~8px of usable row width (the after-chip gap drops 16 → 8 in
+       PlayerControls' landscape header rule). */
+    .back-fab.native { left: max(8px, env(safe-area-inset-left)); }
     .control-fab { width: 37px; height: 37px; }
     .source-chip { min-height: 56px; }
     .source-chip-bar { height: 48px; }
