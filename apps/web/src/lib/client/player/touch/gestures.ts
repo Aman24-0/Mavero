@@ -380,6 +380,9 @@ export function createPlayerWheelController(options: WheelGestureControllerOptio
 //     (the vertical-swipe controller owns it; no preventDefault, no fight).
 //   * A hold activates only after HOLD_ACTIVATE_MS of stillness; any second
 //     finger, movement, or the touch ending before activation cancels it.
+//     Round 58 (J2) — the MOUSE left-button hold arms after
+//     MOUSE_HOLD_ACTIVATE_MS of stillness and follows the SAME restore
+//     contract (release / pointercancel / pointerleave / drag → onHoldEnd).
 //   * A double-tap requires two taps within DOUBLE_TAP_WINDOW_MS on the SAME
 //     half; opposite-side taps never seek.
 //   * The hold always restores the previous speed through onHoldEnd — on
@@ -405,6 +408,12 @@ export function createPlayerWheelController(options: WheelGestureControllerOptio
 export const DOUBLE_TAP_WINDOW_MS = 260;
 /** Stillness duration (ms) before a press-and-hold activates 2×. */
 export const HOLD_ACTIVATE_MS = 500;
+/**
+ * Stillness duration (ms) before a MOUSE left-button hold activates 2×
+ * (round 58 J2 — the desktop twin of the touch hold; shorter because a
+ * mouse press is already precise, while the touch window stays 500 ms).
+ */
+export const MOUSE_HOLD_ACTIVATE_MS = 350;
 /** Max movement (px) from the start point for a touch to remain a tap. */
 export const TAP_SLOP_PX = 12;
 
@@ -519,10 +528,14 @@ export function createPlayerTapGestureController(options: TapGestureControllerOp
 
   function cancel() {
     clearHoldTimer();
+    // Round 58 (J2) — a pending mouse hold dies with the touch paths too
+    // (lock / cast / source switch / destroy cancel every gesture).
+    clearPointerHoldTimer();
     // A cancelled pending tap never toggles playback (round 52).
     clearSingleTapTimer();
     endHold();
     activeTouchId = null;
+    activePointerId = null;
   }
 
   function handleTouchStart(event: TouchEvent) {
@@ -620,11 +633,37 @@ export function createPlayerTapGestureController(options: TapGestureControllerOp
   // quietly. The same interactive-target exclusion and `enabled` gate apply,
   // so buttons, chips, popovers, cards and locked/embed/cast states stay
   // inert exactly as with touch.
+  //
+  // Round 58 (J2) — the mouse LEFT-BUTTON HOLD joins the touch hold: after
+  // MOUSE_HOLD_ACTIVATE_MS of stillness on the video surface the press
+  // activates 2× (onHoldStart → the shell's hold indicator), and release /
+  // pointercancel / pointerleave / becoming a drag restores the exact
+  // previous speed (onHoldEnd). An activated hold cancels the pending
+  // single-tap toggle (a hold can never both speed up AND toggle), and
+  // right/middle buttons never start anything (pointerdown's button 0 gate).
   // -------------------------------------------------------------------------
   let activePointerId: number | null = null;
   let pointerStartX = 0;
   let pointerStartY = 0;
   let pointerStartWidth = 0;
+  let pointerHoldTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function clearPointerHoldTimer() {
+    if (pointerHoldTimer) {
+      clearTimeout(pointerHoldTimer);
+      pointerHoldTimer = undefined;
+    }
+  }
+
+  /** Round 58 (J2) — the pointer twin of the touch cancel: every pending
+   *  mouse candidate dies (hold timer, single-tap timer) and an ACTIVE hold
+   *  restores the previous speed. */
+  function pointerCancel() {
+    clearPointerHoldTimer();
+    clearSingleTapTimer();
+    endHold();
+    activePointerId = null;
+  }
 
   function handlePointerDown(event: PointerEvent) {
     if (event.pointerType !== 'mouse' || event.button !== 0) return;
@@ -639,30 +678,49 @@ export function createPlayerTapGestureController(options: TapGestureControllerOp
     pointerStartX = event.clientX;
     pointerStartY = event.clientY;
     pointerStartWidth = surfaceWidth();
+    // Round 58 (J2) — arm the mouse hold: ~350 ms of stillness on the video
+    // surface (never on a control/chip/popover/card — excluded above) and
+    // the press becomes a 2× hold.
+    clearPointerHoldTimer();
+    pointerHoldTimer = setTimeout(() => {
+      pointerHoldTimer = undefined;
+      if (activePointerId === null) return; // press already ended — never a hold
+      // The hold owns this press — a pending single-tap toggle must not fire.
+      clearSingleTapTimer();
+      holdActive = true;
+      onHoldStart();
+    }, MOUSE_HOLD_ACTIVATE_MS);
   }
 
   function handlePointerMove(event: PointerEvent) {
     if (activePointerId === null || event.pointerId !== activePointerId) return;
     if (!withinTapSlop(event.clientX - pointerStartX, event.clientY - pointerStartY)) {
-      // The press became a drag — it dies quietly (no click, no toggle).
-      activePointerId = null;
-      clearSingleTapTimer();
+      // The press became a drag — it dies quietly (no click, no toggle, and
+      // an active hold restores the speed, exactly like the touch path).
+      pointerCancel();
     }
   }
 
   function handlePointerUp(event: PointerEvent) {
     if (activePointerId === null || event.pointerId !== activePointerId) return;
     activePointerId = null;
+    clearPointerHoldTimer();
     if (event.pointerType !== 'mouse' || event.button !== 0) return;
+    if (holdActive) {
+      // Round 58 (J2) — releasing an active mouse hold restores the exact
+      // previous speed and never registers a tap (the hold owned the press).
+      endHold();
+      return;
+    }
     if (!withinTapSlop(event.clientX - pointerStartX, event.clientY - pointerStartY)) return;
     registerTap(pointerStartX, pointerStartWidth);
   }
 
   function handlePointerLeave(event: PointerEvent) {
     if (activePointerId === null || event.pointerId !== activePointerId) return;
-    // The press left the surface before release — never a click.
-    activePointerId = null;
-    clearSingleTapTimer();
+    // The press left the surface before release — never a click; an active
+    // hold restores the previous speed (round 58 J2).
+    pointerCancel();
   }
 
   surface.addEventListener('touchstart', handleTouchStart, { passive: true });

@@ -180,6 +180,75 @@
     }
   }
 
+  // ===========================================================================
+  // Round 58 (J3) — DESKTOP SIDEBAR HOVER EXPAND/COLLAPSE (web build only).
+  //
+  // On ≥1025px `(hover: hover) and (pointer: fine)` surfaces ONLY: entering
+  // the collapsed sidebar expands it after a 120ms hover delay (no flicker
+  // on pass-through pointers), and leaving returns it to the USER'S
+  // PERSISTED state (localStorage) — hover expansion is TEMPORARY and is
+  // never persisted. The brand-lockup toggle stays the persisted control:
+  // a click while hover-expanded flips AND persists the collapsed state
+  // exactly as before (the hover layer never fights it — it only ever
+  // writes the runtime flag). The restore never happens while focus is
+  // inside the sidebar (keyboard users keep it open). The TV/WGT build
+  // keeps its focus-manager auto-expand contract untouched — no pointer
+  // wiring exists there at all.
+  // ===========================================================================
+  let sidebarEl: HTMLElement;
+  let hoverExpandTimer: ReturnType<typeof setTimeout> | undefined;
+  let hoverDesktopMedia: MediaQueryList | undefined;
+  let hoverPointerMedia: MediaQueryList | undefined;
+  const SIDEBAR_HOVER_EXPAND_DELAY_MS = 120;
+
+  function readPersistedSidebarCollapsed(): boolean {
+    try { return localStorage.getItem(STORAGE_KEY) === 'true'; } catch { return false; }
+  }
+
+  function sidebarFocusInside(): boolean {
+    try {
+      return typeof document !== 'undefined'
+        && !!sidebarEl
+        && document.activeElement instanceof Node
+        && sidebarEl.contains(document.activeElement);
+    } catch { return false; }
+  }
+
+  function handleSidebarPointerEnter() {
+    if (IS_WGT_BUILD) return;
+    // Desktop hover-capable pointers only — never on ≤1024px (the sidebar is
+    // display: none there anyway) and never on touch.
+    if (!hoverPointerMedia?.matches || !hoverDesktopMedia?.matches) return;
+    if (!sidebarCollapsed) return;
+    if (hoverExpandTimer) clearTimeout(hoverExpandTimer);
+    hoverExpandTimer = setTimeout(() => {
+      hoverExpandTimer = undefined;
+      if (IS_WGT_BUILD || !hoverDesktopMedia?.matches) return;
+      if (!sidebarCollapsed) return;
+      sidebarCollapsed = false; // temporary — NEVER persisted (the brand toggle owns persistence)
+    }, SIDEBAR_HOVER_EXPAND_DELAY_MS);
+  }
+
+  function handleSidebarPointerLeave() {
+    if (IS_WGT_BUILD) return;
+    if (hoverExpandTimer) { clearTimeout(hoverExpandTimer); hoverExpandTimer = undefined; }
+    // Focus inside the sidebar (or a menu inside it): keep it expanded.
+    if (sidebarFocusInside()) return;
+    const persisted = readPersistedSidebarCollapsed();
+    if (persisted !== sidebarCollapsed) sidebarCollapsed = persisted;
+  }
+
+  onMount(() => {
+    if (IS_WGT_BUILD || typeof window === 'undefined' || !window.matchMedia) return;
+    hoverDesktopMedia = window.matchMedia('(min-width: 1025px)');
+    hoverPointerMedia = window.matchMedia('(hover: hover) and (pointer: fine)');
+    return () => {
+      if (hoverExpandTimer) { clearTimeout(hoverExpandTimer); hoverExpandTimer = undefined; }
+      hoverDesktopMedia = undefined;
+      hoverPointerMedia = undefined;
+    };
+  });
+
   // 2026-11 account-IA pass ("ACCOUNT OPTIONS INTO THE SIDEBAR"): the three
   // account OPTIONS (Upcoming / My List / Settings) render on EVERY build as
   // regular .sidebar-link entries below Search (the WGT-only wrapper is
@@ -224,7 +293,7 @@
 
 <div class="page-shell" class:sidebar-collapsed={sidebarCollapsed} bind:this={shell}>
   <!-- Desktop sidebar (fixed, 1025px+) -->
-  <aside class="app-sidebar" aria-label="Primary navigation">
+  <aside class="app-sidebar" aria-label="Primary navigation" bind:this={sidebarEl} onpointerenter={handleSidebarPointerEnter} onpointerleave={handleSidebarPointerLeave}>
     <!-- 2026-11 account-IA pass ("REPLACE THE COLLAPSE TOGGLE WITH THE BRAND"): the standalone
          .sidebar-toggle button is GONE on every build. On the WEB build the brand
          lockup IS the toggle — a <button> that flips the sidebar (collapsed →

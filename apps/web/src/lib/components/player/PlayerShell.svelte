@@ -222,6 +222,40 @@
   let selectedServerEntry: { url: string; label: string; server?: string; language?: string; qualities?: Array<{ label: string; url: string }>; protocol?: 'hls' | 'dash' } | undefined;
   let serverQualities: Array<{ label: string; url: string }> = [];
   let serverFallbackTried: string[] = [];
+  // Round 58 (J1) — the non-blocking SERVER-FALLBACK NOTICE ("VidVelvet
+  // unavailable — switched to Vidstream"): a small inline pill under the top
+  // chrome that lingers ~3.6 s then fades out over ~400 ms. It never blocks
+  // the pointer, never joins the focus order, and is cleared on source change
+  // and teardown.
+  let serverFallbackNotice = '';
+  let serverFallbackNoticeFading = false;
+  let serverFallbackNoticeFadeTimer: ReturnType<typeof setTimeout> | undefined;
+  let serverFallbackNoticeHideTimer: ReturnType<typeof setTimeout> | undefined;
+  const SERVER_FALLBACK_NOTICE_LINGER_MS = 3600;
+  const SERVER_FALLBACK_NOTICE_FADE_MS = 400;
+
+  function showServerFallbackNotice(failedLabel: string, nextLabel: string) {
+    serverFallbackNotice = `${failedLabel} unavailable — switched to ${nextLabel}`;
+    serverFallbackNoticeFading = false;
+    if (serverFallbackNoticeFadeTimer) clearTimeout(serverFallbackNoticeFadeTimer);
+    if (serverFallbackNoticeHideTimer) clearTimeout(serverFallbackNoticeHideTimer);
+    serverFallbackNoticeFadeTimer = setTimeout(() => {
+      serverFallbackNoticeFadeTimer = undefined;
+      serverFallbackNoticeFading = true;
+      serverFallbackNoticeHideTimer = setTimeout(() => {
+        serverFallbackNoticeHideTimer = undefined;
+        serverFallbackNotice = '';
+        serverFallbackNoticeFading = false;
+      }, SERVER_FALLBACK_NOTICE_FADE_MS);
+    }, SERVER_FALLBACK_NOTICE_LINGER_MS);
+  }
+
+  function clearServerFallbackNotice() {
+    if (serverFallbackNoticeFadeTimer) { clearTimeout(serverFallbackNoticeFadeTimer); serverFallbackNoticeFadeTimer = undefined; }
+    if (serverFallbackNoticeHideTimer) { clearTimeout(serverFallbackNoticeHideTimer); serverFallbackNoticeHideTimer = undefined; }
+    serverFallbackNotice = '';
+    serverFallbackNoticeFading = false;
+  }
   // Round 45 — has the CURRENT prepare session reached real playback? Set by
   // the first media arrival (loadedmetadata / play / playing) after a
   // server/quality/source switch; reset by every switch that re-prepares the
@@ -559,15 +593,19 @@
   // the LABELS are the display names the resolver stamps on the server tags
   // (VidVelvet / VidBox).
   const defaultServerLabels: Record<string, string> = { vidstream: 'Vidstream', vidstart: 'VidVelvet', vidflix: 'VidBox', vidsrc: 'Vidsrc' };
+  // Round 58 (J1) — a hinted group with NO entry for THIS title (e.g. the
+  // VidVelvet default on a title VidVelvet simply does not carry) is a
+  // NORMAL MISS, never an error: preselect servers[0] SILENTLY so playback
+  // starts on a real exposed row — the failure walk and the server sheet
+  // then anchor on a selected entry, and no error card or "source
+  // unavailable" flash can ever render for the miss itself.
   $: if (source && source.sourceId === sourceIdentity && !selectedServer && servers.length > 1) {
     const hint = source.metadata?.defaultServer;
-    if (hint) {
-      const target = defaultServerLabels[hint] ?? 'Vidsrc';
-      const match = servers.find((s) => (s.server || 'Vidsrc').toLowerCase() === target.toLowerCase());
-      if (match) {
-        selectedServer = match.url;
-      }
-    }
+    const target = hint ? defaultServerLabels[hint] ?? 'Vidsrc' : '';
+    const match = target
+      ? servers.find((s) => (s.server || 'Vidsrc').toLowerCase() === target.toLowerCase())
+      : undefined;
+    selectedServer = (match ?? servers[0]).url;
   }
   // Category grouping: sources that have a categoryName are grouped under
   // a category header in the source selector. Sources without a category
@@ -731,6 +769,8 @@
     // fallback ledger — servers from the OLD session can never leak in.
     selectedServer = '';
     serverFallbackTried = [];
+    // Round 58 (J1): a stale fallback notice belongs to the old session.
+    clearServerFallbackNotice();
     // MAVP-5 (Issue 5): stamp the source-switch window — a fullscreen loss
     // within LANDSCAPE_RESTORE_WINDOW_MS of this stamp while the landscape
     // intent is active is the switch-triggered loss (see handleFullscreen).
@@ -1694,6 +1734,8 @@
       wheelGestureController?.destroy();
       wheelGestureController = null;
       if (gestureIndicatorHideTimer) clearTimeout(gestureIndicatorHideTimer);
+      // Round 58 (J1): the server-fallback notice dies with the shell.
+      clearServerFallbackNotice();
       // MAVP-4 Issue 1: clear the presentation fail-open timer on destroy.
       clearEmbedPresentFailOpen();
       // Phase 2-I (PLR-02): remove the viewport MediaQueryList listener —
@@ -1993,7 +2035,51 @@
     handleMediaError();
   }
 
+  /**
+   * Round 58 (J1) — ONE server-fallback step: move to the next untried entry
+   * in `servers` order, show the non-blocking notice, and keep the prepare
+   * session alive ('preparing' before playback was established — the
+   * autoplay/loading card stays; 'switching-source' mid-playback, exactly
+   * like the round 32 walk). True when the walk moved to a new entry. The
+   * ledger (serverFallbackTried) keeps it finite: a URL is tried at most
+   * once per failure streak, and the ledger resets only when EVERY exposed
+   * entry failed (falling back to the existing re-resolve path) — or on a
+   * manual pick / source change / successful playback, as before.
+   */
+  function tryServerFallbackWalk(): boolean {
+    if (source?.type !== 'direct' || servers.length <= 1) return false;
+    const failedUrl = selectedServer || source.url || '';
+    if (!serverFallbackTried.includes(failedUrl)) serverFallbackTried.push(failedUrl);
+    const nextServer = servers.find((server) => server.url && !serverFallbackTried.includes(server.url));
+    if (!nextServer) {
+      // Every exposed server failed — reset the ledger and fall through to
+      // the existing error / re-resolve paths (a fresh token may revive them).
+      serverFallbackTried = [];
+      return false;
+    }
+    const failedLabel = servers.find((server) => server.url === failedUrl)?.label ?? 'This source';
+    console.warn(`[PlayerShell] playback failed on "${failedLabel}" — switching to server "${nextServer.label}" (${serverFallbackTried.length}/${servers.length} tried)`);
+    showServerFallbackNotice(failedLabel, nextServer.label);
+    state = playbackEstablished ? 'switching-source' : 'preparing';
+    errorMessage = '';
+    // Preserve the playhead only when one exists (a pre-establishment walk
+    // keeps the session's initial pending seek — capturing 0 would drop it).
+    if (currentTime > 0) capturePendingSeek(pendingSeekState, currentTime, Date.now());
+    selectedServer = nextServer.url;
+    return true;
+  }
+
   function handleMediaError() {
+    // Round 58 (J1) — the SERVER WALK runs FIRST for EVERY failure (a fatal
+    // engine error, STREAM_NOT_FOUND / expired-token manifests, a failed
+    // resolve of the active entry): while untried entries remain in `servers`
+    // order (Vidsrc → Vidstream → VidVelvet → VidBox as merged), playback
+    // moves to the next one and NO terminal error renders — this now covers
+    // pre-establishment failures too (round 45 previously went straight to
+    // the error card there, dead-ending a player whose other groups were
+    // fine). The ledger keeps the walk finite and a URL is never re-tried
+    // within a streak; single-server sources never enter it.
+    if (tryServerFallbackWalk()) return;
     // Round 45 — a failed SWITCH never enters the fallback/auto-retry walk:
     // the viewport reported an error while the overlay still holds the
     // loading/switching card and NO playback was established in this
@@ -2011,28 +2097,6 @@
       releaseWakeLock();
       syncMediaSessionPlaybackState('paused');
       return;
-    }
-    // Round 32 (VidCore Multi Stream) — SERVER fallback FIRST: when the
-    // resolver exposed more than one server, a dead server must never cost
-    // a full re-resolve while alternates remain. Walk the remaining servers
-    // in order (bounded by the ledger — a server is tried at most once per
-    // failure streak); the URL swap re-wires the HLS engine with the
-    // captured position, exactly like a manual server switch.
-    if (source?.type === 'direct' && servers.length > 1) {
-      const failedUrl = selectedServer || source.url || '';
-      if (!serverFallbackTried.includes(failedUrl)) serverFallbackTried.push(failedUrl);
-      const nextServer = servers.find((server) => server.url && !serverFallbackTried.includes(server.url));
-      if (nextServer) {
-        console.warn(`[PlayerShell] HLS fatal error — falling back to server "${nextServer.label}" (${serverFallbackTried.length}/${servers.length} tried)`);
-        state = 'switching-source';
-        errorMessage = '';
-        capturePendingSeek(pendingSeekState, currentTime, Date.now());
-        selectedServer = nextServer.url;
-        return;
-      }
-      // Every exposed server failed — reset the ledger and fall through to
-      // the existing re-resolve path (a fresh token may revive them).
-      serverFallbackTried = [];
     }
     // 2026-10 round 21 — if this is a direct HLS source and we haven't
     // exhausted the auto-retry budget, re-resolve the source automatically
@@ -2683,6 +2747,11 @@
       // Only a genuine still-preparing session transitions — ready/error
       // already flipped the state before firing.
       if (state !== 'preparing') return;
+      // Round 58 (J1) — a hung stream is a failure too: before the terminal
+      // error card, try the next untried server entry (the same walk the
+      // engine-error path takes). Single-server sources and exhausted ledgers
+      // keep the existing terminal behaviour.
+      if (tryServerFallbackWalk()) return;
       state = 'error';
       errorMessage = 'The video is taking too long to load. Try again or choose another source.';
       revealControls();
@@ -3089,7 +3158,7 @@
 
 <svelte:window onbeforeunload={() => emitProgress('close')} onvisibilitychange={() => { if (document.hidden) emitProgress('visibility'); handleVisibilityChangeForWakeLock(); }} />
 
-  <div bind:this={playerRoot} class="player-shell" class:landscape-mode={landscapeMode} class:controls-hidden={!controlsVisible} class:touch-locked={touchLocked} role="application" aria-label="MAVERO video player">
+  <div bind:this={playerRoot} class="player-shell" class:landscape-mode={landscapeMode} class:controls-hidden={!controlsVisible} class:touch-locked={touchLocked} role="application" aria-label="MAVERO video player" oncontextmenu={(event) => { event.preventDefault(); }}>
 
   <!-- Immersive redesign: stage fills the ENTIRE viewport — no header/footer consuming space. -->
   <section class="stage-wrap" aria-label="Player viewport">
@@ -3165,6 +3234,13 @@
       </div>
     {/if}
     <div class="gesture-announcement" role="status" aria-live="polite">{gestureAnnouncement}</div>
+
+    <!-- Round 58 (J1) — the non-blocking server-fallback notice: playback
+         moved on to the next group automatically; the pill lingers ~3.6s
+         then fades (~400ms). Non-interactive, politely announced. -->
+    {#if serverFallbackNotice}
+      <div class="server-fallback-notice" class:fading={serverFallbackNoticeFading} role="status">{serverFallbackNotice}</div>
+    {/if}
 
     <!-- Player V2 corrections: transient double-tap seek feedback — a brief
          direction pill on the tapped half (left = rewind, right = forward).
@@ -3373,6 +3449,11 @@
      (tracks mobile browser UI); min-height mirrors the same chain. The
      scroll lock itself is the html[data-player-open] convention (app.css). */
   .player-shell { --player-bg: var(--base); --pl-s1: rgba(255, 255, 255, 0.055); --pl-s2: rgba(255, 255, 255, 0.10); --pl-line: rgba(255, 255, 255, 0.12); --pl-ink-2: rgba(255, 255, 255, 0.72); --pl-ink-3: rgba(255, 255, 255, 0.58); --pl-r1: 12px; --pl-r2: 16px; --pl-ease: cubic-bezier(0.2, 0.8, 0.2, 1); --pl-chrome-top: max(16px, env(safe-area-inset-top)); --pl-chip-size: 40px; position: relative; width: 100%; height: 100vh; height: 100dvh; min-height: 100vh; min-height: 100svh; min-height: 100dvh; overflow: hidden; color: var(--ink); background: var(--player-bg); }
+  /* Round 58 (J2) — the player SURFACE owns the pointer: no native context
+     menu (the root's contextmenu handler preventDefaults it) and no iOS
+     long-press callout / text selection on the video surface. Scoped to the
+     player shell only — the rest of the site keeps the browser defaults. */
+  .player-shell { -webkit-touch-callout: none; user-select: none; -webkit-user-select: none; }
   /* Round 52 (F3) — the shared --pl-chrome-top / --pl-chip-size GEOMETRY tokens:
      the native back chip (below) and PlayerControls' top utility chips BOTH
      derive their top offset and chip size from these custom properties, so
@@ -3568,6 +3649,11 @@
      below). */
   .gesture-indicator { position: absolute; z-index: 8; top: calc(var(--pl-chrome-top, max(16px, env(safe-area-inset-top))) + var(--pl-chip-size, 40px) + 12px); left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; height: 40px; max-width: 260px; box-sizing: border-box; padding: 0 14px; border: 1px solid var(--line); border-radius: 12px; color: var(--ink); background: rgba(13,13,13,.88); box-shadow: var(--shadow-lg); backdrop-filter: blur(18px); pointer-events: none; transition: opacity 180ms var(--pl-ease, var(--ease-out)); }
   .gesture-indicator.fading { opacity: 0; }
+  /* Round 58 (J1) — the server-fallback notice: the SAME top-center pill
+     language (below the top control row, glass surface, pointer-transparent),
+     a quiet single line that lingers ~3.6s and fades out over ~400ms. */
+  .server-fallback-notice { position: absolute; z-index: 8; top: calc(var(--pl-chrome-top, max(16px, env(safe-area-inset-top))) + var(--pl-chip-size, 40px) + 12px); left: 50%; transform: translateX(-50%); display: flex; align-items: center; min-height: 34px; max-width: min(320px, calc(100vw - 32px)); box-sizing: border-box; padding: 4px 14px; border: 1px solid var(--line); border-radius: 999px; color: var(--ink); background: rgba(13,13,13,.88); box-shadow: var(--shadow-lg); backdrop-filter: blur(18px); font-size: .72rem; font-weight: 600; line-height: 1.3; text-align: center; pointer-events: none; transition: opacity 400ms var(--pl-ease, var(--ease-out)); }
+  .server-fallback-notice.fading { opacity: 0; }
   /* Player V2 corrections: double-tap seek feedback — a transient direction
      pill on the tapped half of the video surface (left = rewind, right =
      forward), vertically clear of the center cluster and the bottom zone. */
@@ -3928,5 +4014,7 @@
     /* Player V2 corrections: seek feedback + hold indicator join the
        reduced-motion contract. */
     .seek-feedback, .hold-indicator { transition: none; }
+    /* Round 58 (J1): the fallback notice hides without a fade. */
+    .server-fallback-notice { transition: none; }
   }
 </style>

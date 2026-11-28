@@ -726,6 +726,7 @@
       preload="metadata"
       playsinline
       aria-label={title}
+      on:contextmenu|preventDefault
       on:loadedmetadata={() => dispatch('loadedmetadata')}
       on:timeupdate={() => dispatch('timeupdate', { currentTime: videoElement?.currentTime ?? 0, duration: videoElement?.duration || 0 })}
       on:play={() => dispatch('play')}
